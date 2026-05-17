@@ -52,6 +52,8 @@ _REQUIRED_KEYS = {"direction", "features"}
 # Required keys in each feature entry
 _REQUIRED_FEATURE_KEYS = {"name", "mode", "score"}
 _VALID_DIRECTIONS = {"long", "short"}
+# Modes with small integer codewords — use discrete MI; others are continuous.
+_DISCRETE_FEATURE_MODES = frozenset({"binary", "ternary"})
 
 
 # ---------------------------------------------------------------------------
@@ -139,11 +141,16 @@ class Feature_Selector:
                 continue
 
             X = sym_df[feature_cols].values
-            y = sym_target.values
+            y = sym_target.values.astype(np.int32, copy=False)
+            discrete_mask = _mutual_info_discrete_mask(
+                feature_cols, feature_modes)
 
             try:
                 scores = mutual_info_classif(
-                    X, y, discrete_features=True, random_state=42
+                    X,
+                    y,
+                    discrete_features=discrete_mask,
+                    random_state=42,
                 )
             except Exception:
                 scores = np.zeros(len(feature_cols))
@@ -293,6 +300,23 @@ class Feature_Selector:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _mutual_info_discrete_mask(
+    feature_cols: list[str],
+    feature_modes: dict[str, str],
+) -> list[bool]:
+    """
+    Per-column ``discrete_features`` flags for ``mutual_info_classif``.
+
+    Only binary/ternary columns are treated as categorical. Continuous modes
+    (positive, signed, sparse_*) use k-NN MI and avoid sklearn's clustering
+    metric warning for float-valued "labels".
+    """
+    return [
+        feature_modes.get(col, "positive") in _DISCRETE_FEATURE_MODES
+        for col in feature_cols
+    ]
 
 
 def _remove_low_dispersion(

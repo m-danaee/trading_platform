@@ -28,6 +28,10 @@ Requirements: 13.1, 13.2, 13.3, 13.4, 13.5
 
 from __future__ import annotations
 
+from gpu_fuzzy_trader._jax_env import configure_jax_env
+
+configure_jax_env()
+
 import json
 import logging
 import os

@@ -59,9 +59,10 @@ _HISTORY_PATHS = {
 # ---------------------------------------------------------------------------
 
 try:
-    import evox  # type: ignore
+    from evox.core import Algorithm as EvoxAlgorithm  # type: ignore
     _EVOX_AVAILABLE = True
 except ImportError:
+    EvoxAlgorithm = None  # type: ignore[misc, assignment]
     _EVOX_AVAILABLE = False
 
 # ---------------------------------------------------------------------------
@@ -575,7 +576,7 @@ def _build_pool_from_archive(
 # ---------------------------------------------------------------------------
 
 if _EVOX_AVAILABLE:
-    class FuzzyRuleOptimizer(evox.Algorithm):  # type: ignore[misc]
+    class FuzzyRuleOptimizer(EvoxAlgorithm):  # type: ignore[misc]
         """
         EvoX-compatible multi-objective optimizer for fuzzy rule evolution.
 

@@ -19,6 +19,10 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from gpu_fuzzy_trader._jax_env import configure_jax_env
+
+configure_jax_env()
+
 try:
     import jax
     import jax.numpy as jnp

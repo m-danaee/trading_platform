@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -29,6 +30,7 @@ from gpu_fuzzy_trader.features.selector import (
     Feature_Selector,
     _build_target,
     _compute_stability,
+    _mutual_info_discrete_mask,
     _remove_low_dispersion,
     _remove_redundant_features,
     _validate_schema,
@@ -120,6 +122,40 @@ class TestRemoveLowDispersion:
 # ---------------------------------------------------------------------------
 # Tests: _build_target
 # ---------------------------------------------------------------------------
+
+class TestMutualInfoDiscreteMask:
+    def test_mode_aware_discrete_flags(self):
+        cols = ["bin_col", "ter_col", "pos_col", "signed_col"]
+        modes = {
+            "bin_col": "binary",
+            "ter_col": "ternary",
+            "pos_col": "positive",
+            "signed_col": "signed",
+        }
+        assert _mutual_info_discrete_mask(cols, modes) == [
+            True,
+            True,
+            False,
+            False,
+        ]
+
+    def test_unknown_mode_defaults_to_continuous(self):
+        assert _mutual_info_discrete_mask(["x"], {}) == [False]
+
+
+class TestSelectFeaturesNoSklearnClusteringWarning:
+    def test_no_clustering_metric_warning(self):
+        train_df = _make_train_df(n_rows=400, n_features=8)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", UserWarning)
+            Feature_Selector().select_features(train_df, "long")
+        clustering = [
+            w for w in caught
+            if issubclass(w.category, UserWarning)
+            and "Clustering metrics expects discrete" in str(w.message)
+        ]
+        assert clustering == []
+
 
 class TestBuildTarget:
     def _make_df(self, open_next, max_288, min_288, max_before_min):
