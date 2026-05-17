@@ -1,0 +1,333 @@
+"""
+writer.py — Output_Writer
+
+Serializes RuleSet dicts to JSON with exact schema validation and
+loads/validates existing JSON files.
+
+Schema (must match evaluator_v3.ipynb exactly):
+{
+  "direction": "long" | "short",
+  "rules_set": [
+    {
+      "tp": <float>,
+      "sl": <float>,
+      "capital_pct": <float>,
+      "conditions": ["[feature_name] IS Fuzzy Value Name", ...]
+    }
+  ]
+}
+
+Constraints (Requirements 12.1–12.9):
+  - direction must be "long" or "short"
+  - rules_set must contain 2–5 rule objects
+  - If > 5 rules, truncate to first 5 (log WARNING)
+  - Each rule must have exactly: tp, sl, capital_pct, conditions
+  - tp, sl, capital_pct must be floats
+  - If all three of tp/sl/capital_pct are zero → reject rule (log ERROR, raise ValidationError)
+  - conditions must be a non-empty list of strings matching [feature_name] IS Fuzzy Value Name
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Custom exception
+# ---------------------------------------------------------------------------
+
+class ValidationError(Exception):
+    """Raised when a rule set fails schema validation."""
+
+
+# ---------------------------------------------------------------------------
+# Condition string validation
+# ---------------------------------------------------------------------------
+
+# Pattern: starts with '[', contains '] IS ', feature name non-empty, value non-empty
+_CONDITION_RE = re.compile(r"^\[(.+?)\] IS (.+)$")
+
+
+def _validate_condition(condition: str) -> None:
+    """
+    Validate a single condition string.
+
+    Must match: [feature_name] IS Fuzzy Value Name
+      - Must start with '['
+      - Must contain '] IS '
+      - Feature name must be non-empty
+      - Fuzzy value name must be non-empty
+
+    Raises ValidationError if invalid.
+    """
+    if not isinstance(condition, str):
+        raise ValidationError(
+            f"Condition must be a string, got {type(condition).__name__!r}: {condition!r}"
+        )
+    m = _CONDITION_RE.match(condition)
+    if not m:
+        raise ValidationError(
+            f"Condition {condition!r} does not match the required pattern "
+            "'[feature_name] IS Fuzzy Value Name'. "
+            "Must start with '[', contain '] IS ', and have non-empty feature and value names."
+        )
+    feature_name = m.group(1).strip()
+    value_name = m.group(2).strip()
+    if not feature_name:
+        raise ValidationError(
+            f"Condition {condition!r} has an empty feature name."
+        )
+    if not value_name:
+        raise ValidationError(
+            f"Condition {condition!r} has an empty fuzzy value name."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Rule object validation
+# ---------------------------------------------------------------------------
+
+_REQUIRED_RULE_KEYS = {"tp", "sl", "capital_pct", "conditions"}
+
+
+def _validate_rule(rule: object, rule_index: int) -> dict:
+    """
+    Validate a single rule object.
+
+    Returns the validated rule dict (with numeric fields cast to float).
+    Raises ValidationError on any violation.
+    """
+    if not isinstance(rule, dict):
+        raise ValidationError(
+            f"Rule {rule_index}: expected a dict, got {type(rule).__name__!r}."
+        )
+
+    missing = _REQUIRED_RULE_KEYS - rule.keys()
+    if missing:
+        raise ValidationError(
+            f"Rule {rule_index}: missing required keys: {sorted(missing)}."
+        )
+
+    # Cast numeric fields
+    try:
+        tp = float(rule["tp"])
+    except (TypeError, ValueError) as exc:
+        raise ValidationError(
+            f"Rule {rule_index}: 'tp' must be a number, got {rule['tp']!r}."
+        ) from exc
+
+    try:
+        sl = float(rule["sl"])
+    except (TypeError, ValueError) as exc:
+        raise ValidationError(
+            f"Rule {rule_index}: 'sl' must be a number, got {rule['sl']!r}."
+        ) from exc
+
+    try:
+        capital_pct = float(rule["capital_pct"])
+    except (TypeError, ValueError) as exc:
+        raise ValidationError(
+            f"Rule {rule_index}: 'capital_pct' must be a number, got {rule['capital_pct']!r}."
+        ) from exc
+
+    # Requirement 12.9: reject if all three are zero
+    if tp == 0.0 and sl == 0.0 and capital_pct == 0.0:
+        logger.error(
+            "Rule %d has all-zero tp/sl/capital_pct — rejecting rule set.", rule_index
+        )
+        raise ValidationError(
+            f"Rule {rule_index}: all of tp, sl, and capital_pct are zero. "
+            "At least one must be non-zero."
+        )
+
+    # Validate conditions
+    conditions = rule.get("conditions")
+    if not isinstance(conditions, list) or len(conditions) == 0:
+        raise ValidationError(
+            f"Rule {rule_index}: 'conditions' must be a non-empty list of strings."
+        )
+
+    for i, cond in enumerate(conditions):
+        try:
+            _validate_condition(cond)
+        except ValidationError as exc:
+            raise ValidationError(
+                f"Rule {rule_index}, condition {i}: {exc}"
+            ) from exc
+
+    return {
+        "tp": tp,
+        "sl": sl,
+        "capital_pct": capital_pct,
+        "conditions": list(conditions),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Top-level rule set validation
+# ---------------------------------------------------------------------------
+
+def _validate_rule_set(rule_set: object) -> dict:
+    """
+    Validate and normalise a rule_set dict.
+
+    Applies all schema constraints (Requirements 12.1–12.9):
+      - Checks top-level keys
+      - Validates direction
+      - Truncates rules_set to 5 if needed (log WARNING)
+      - Validates 2–5 rules after truncation
+      - Validates each rule object
+
+    Returns a normalised dict ready for JSON serialisation.
+    Raises ValidationError on any violation.
+    """
+    if not isinstance(rule_set, dict):
+        raise ValidationError(
+            f"rule_set must be a dict, got {type(rule_set).__name__!r}."
+        )
+
+    # Requirement 12.1: top-level keys
+    missing_top = {"direction", "rules_set"} - rule_set.keys()
+    if missing_top:
+        raise ValidationError(
+            f"rule_set is missing required top-level keys: {sorted(missing_top)}."
+        )
+
+    # Requirement 12.2: direction
+    direction = rule_set.get("direction")
+    if direction not in ("long", "short"):
+        raise ValidationError(
+            f"'direction' must be 'long' or 'short', got {direction!r}."
+        )
+
+    # Requirement 12.3: rules_set is a list
+    rules_list = rule_set.get("rules_set")
+    if not isinstance(rules_list, list):
+        raise ValidationError(
+            f"'rules_set' must be a list, got {type(rules_list).__name__!r}."
+        )
+
+    # Requirement 12.8: truncate to 5 if > 5
+    if len(rules_list) > 5:
+        logger.warning(
+            "rules_set contains %d rules (max 5); truncating to first 5.", len(rules_list)
+        )
+        rules_list = rules_list[:5]
+
+    # Requirement 12.8: must have 2–5 rules
+    if len(rules_list) < 2:
+        raise ValidationError(
+            f"'rules_set' must contain at least 2 rules, got {len(rules_list)}."
+        )
+
+    # Validate each rule
+    validated_rules = []
+    for i, rule in enumerate(rules_list, start=1):
+        validated_rules.append(_validate_rule(rule, i))
+
+    return {
+        "direction": direction,
+        "rules_set": validated_rules,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Output_Writer
+# ---------------------------------------------------------------------------
+
+class Output_Writer:
+    """
+    Serializes RuleSet dicts to JSON and loads/validates existing JSON files.
+
+    Methods
+    -------
+    write(rule_set, path)
+        Validate rule_set and write to JSON at path.
+    load_and_validate(path)
+        Load JSON from path and run full schema validation.
+    """
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def write(self, rule_set: dict, path: str | Path) -> None:
+        """
+        Validate rule_set and write to JSON at path.
+
+        Parameters
+        ----------
+        rule_set : dict
+            Must conform to the output schema:
+            {
+              "direction": "long" | "short",
+              "rules_set": [
+                {"tp": float, "sl": float, "capital_pct": float,
+                 "conditions": ["[feature_name] IS Fuzzy Value Name", ...]}
+              ]
+            }
+        path : str or Path
+            Destination file path. Parent directories are created if needed.
+
+        Raises
+        ------
+        ValidationError
+            If rule_set fails schema validation.
+        """
+        validated = _validate_rule_set(rule_set)
+
+        dest = Path(path)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+
+        with dest.open("w", encoding="utf-8") as fh:
+            json.dump(validated, fh, indent=2)
+
+        logger.info(
+            "Wrote %d rules (%s) to %s",
+            len(validated["rules_set"]),
+            validated["direction"],
+            dest,
+        )
+
+    def load_and_validate(self, path: str | Path) -> dict:
+        """
+        Load JSON from path and run full schema validation.
+
+        Parameters
+        ----------
+        path : str or Path
+            Path to the JSON file to load.
+
+        Returns
+        -------
+        dict
+            Validated and normalised rule set dict.
+
+        Raises
+        ------
+        ValidationError
+            If the file cannot be read, is not valid JSON, or fails schema
+            validation.
+        """
+        src = Path(path)
+
+        if not src.exists():
+            raise ValidationError(f"File not found: {src}")
+
+        try:
+            with src.open("r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except json.JSONDecodeError as exc:
+            raise ValidationError(
+                f"File {src} is not valid JSON: {exc}"
+            ) from exc
+        except OSError as exc:
+            raise ValidationError(
+                f"Cannot read file {src}: {exc}"
+            ) from exc
+
+        return _validate_rule_set(data)

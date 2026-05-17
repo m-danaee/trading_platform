@@ -1,0 +1,705 @@
+"""
+Unit tests for gpu_fuzzy_trader.phases.phase5_oos.OOS_Evaluator
+
+Tests cover:
+  - OOS_Evaluator constructor (default and custom test_csv_path)
+  - load_strategies: missing files, valid files, invalid files, partial availability
+  - prepare_test_data: delegates to Data_Loader correctly
+  - _evaluate_strategy: zero-trade case, non-zero-trade case
+  - _build_per_symbol_rows: correct structure
+  - _save_report: creates file with correct keys
+  - _save_per_symbol_csv: creates CSV with correct columns
+  - run(): integration with tmp_path overrides
+"""
+
+from __future__ import annotations
+
+import json
+import os
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from gpu_fuzzy_trader import config as _cfg
+from gpu_fuzzy_trader.phases.phase5_oos import (
+    OOS_Evaluator,
+    _STRATEGY_PATHS,
+    _REPORT_PATHS,
+)
+
+
+# ---------------------------------------------------------------------------
+# Fixtures / helpers
+# ---------------------------------------------------------------------------
+
+def _make_rule_set(direction: str = "long", n_rules: int = 2) -> dict:
+    """Create a minimal valid rule set dict."""
+    rules = []
+    for i in range(n_rules):
+        rules.append({
+            "conditions": [f"[feat_{i}] IS Very High"],
+            "tp": _cfg.PHASE2_TP,
+            "sl": _cfg.PHASE2_SL,
+            "capital_pct": _cfg.PHASE2_CAPITAL_PCT,
+        })
+    return {"direction": direction, "rules_set": rules}
+
+
+def _write_rule_set(path: str, direction: str = "long", n_rules: int = 2) -> None:
+    """Write a valid rule set JSON to path."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as fh:
+        json.dump(_make_rule_set(direction, n_rules), fh)
+
+
+def _make_df(
+    n_rows: int = 200,
+    symbols: list[str] | None = None,
+    seed: int = 42,
+) -> pd.DataFrame:
+    """Create a minimal DataFrame with all required columns."""
+    rng = np.random.default_rng(seed)
+    if symbols is None:
+        symbols = ["SYM_A", "SYM_B"]
+
+    rows_per_sym = n_rows // len(symbols)
+    dfs = []
+    for sym in symbols:
+        n = rows_per_sym
+        open_next = rng.uniform(100, 200, size=n)
+        max_288 = open_next * rng.uniform(1.00, 1.10, size=n)
+        min_288 = open_next * rng.uniform(0.90, 1.00, size=n)
+        close_288 = open_next * rng.uniform(0.95, 1.05, size=n)
+        max_before_min = rng.integers(0, 2, size=n)
+
+        data = {
+            "datetime": pd.date_range("2020-01-01", periods=n, freq="5min"),
+            "symbol": sym,
+            "label_open_next": open_next,
+            "label_close_288": close_288,
+            "label_min_288": min_288,
+            "label_max_288": max_288,
+            "label_max_before_min": max_before_min.astype(float),
+            "_symbol_bar_index": np.arange(n),
+        }
+        for i in range(5):
+            data[f"feat_{i}"] = rng.uniform(0, 1, size=n)
+
+        dfs.append(pd.DataFrame(data))
+
+    return pd.concat(dfs, ignore_index=True)
+
+
+# ---------------------------------------------------------------------------
+# Tests: OOS_Evaluator constructor
+# ---------------------------------------------------------------------------
+
+class TestOOSEvaluatorInit:
+    def test_default_test_csv_path(self):
+        ev = OOS_Evaluator()
+        assert ev.test_csv_path == _cfg.TEST_CSV_PATH
+
+    def test_custom_test_csv_path(self):
+        ev = OOS_Evaluator(test_csv_path="custom/path.csv")
+        assert ev.test_csv_path == "custom/path.csv"
+
+    def test_none_uses_config_default(self):
+        ev = OOS_Evaluator(test_csv_path=None)
+        assert ev.test_csv_path == _cfg.TEST_CSV_PATH
+
+
+# ---------------------------------------------------------------------------
+# Tests: load_strategies
+# ---------------------------------------------------------------------------
+
+class TestLoadStrategies:
+    def test_returns_empty_when_no_files(self, tmp_path):
+        import gpu_fuzzy_trader.phases.phase5_oos as m
+        original = m._STRATEGY_PATHS.copy()
+        m._STRATEGY_PATHS["long"] = str(tmp_path / "long.json")
+        m._STRATEGY_PATHS["short"] = str(tmp_path / "short.json")
+        try:
+            result = OOS_Evaluator.load_strategies()
+            assert result == {}
+        finally:
+            m._STRATEGY_PATHS.update(original)
+
+    def test_loads_long_when_only_long_exists(self, tmp_path):
+        import gpu_fuzzy_trader.phases.phase5_oos as m
+        long_path = str(tmp_path / "long.json")
+        _write_rule_set(long_path, "long")
+        original = m._STRATEGY_PATHS.copy()
+        m._STRATEGY_PATHS["long"] = long_path
+        m._STRATEGY_PATHS["short"] = str(tmp_path / "short.json")
+        try:
+            result = OOS_Evaluator.load_strategies()
+            assert "long" in result
+            assert "short" not in result
+        finally:
+            m._STRATEGY_PATHS.update(original)
+
+    def test_loads_short_when_only_short_exists(self, tmp_path):
+        import gpu_fuzzy_trader.phases.phase5_oos as m
+        short_path = str(tmp_path / "short.json")
+        _write_rule_set(short_path, "short")
+        original = m._STRATEGY_PATHS.copy()
+        m._STRATEGY_PATHS["long"] = str(tmp_path / "long.json")
+        m._STRATEGY_PATHS["short"] = short_path
+        try:
+            result = OOS_Evaluator.load_strategies()
+            assert "short" in result
+            assert "long" not in result
+        finally:
+            m._STRATEGY_PATHS.update(original)
+
+    def test_loads_both_when_both_exist(self, tmp_path):
+        import gpu_fuzzy_trader.phases.phase5_oos as m
+        long_path = str(tmp_path / "long.json")
+        short_path = str(tmp_path / "short.json")
+        _write_rule_set(long_path, "long")
+        _write_rule_set(short_path, "short")
+        original = m._STRATEGY_PATHS.copy()
+        m._STRATEGY_PATHS["long"] = long_path
+        m._STRATEGY_PATHS["short"] = short_path
+        try:
+            result = OOS_Evaluator.load_strategies()
+            assert "long" in result
+            assert "short" in result
+        finally:
+            m._STRATEGY_PATHS.update(original)
+
+    def test_skips_invalid_json_file(self, tmp_path):
+        import gpu_fuzzy_trader.phases.phase5_oos as m
+        long_path = str(tmp_path / "long.json")
+        os.makedirs(os.path.dirname(long_path), exist_ok=True)
+        with open(long_path, "w") as fh:
+            fh.write("{corrupted json")
+        original = m._STRATEGY_PATHS.copy()
+        m._STRATEGY_PATHS["long"] = long_path
+        m._STRATEGY_PATHS["short"] = str(tmp_path / "short.json")
+        try:
+            result = OOS_Evaluator.load_strategies()
+            assert "long" not in result
+        finally:
+            m._STRATEGY_PATHS.update(original)
+
+    def test_loaded_strategy_has_direction_and_rules_set(self, tmp_path):
+        import gpu_fuzzy_trader.phases.phase5_oos as m
+        long_path = str(tmp_path / "long.json")
+        _write_rule_set(long_path, "long")
+        original = m._STRATEGY_PATHS.copy()
+        m._STRATEGY_PATHS["long"] = long_path
+        m._STRATEGY_PATHS["short"] = str(tmp_path / "short.json")
+        try:
+            result = OOS_Evaluator.load_strategies()
+            assert "direction" in result["long"]
+            assert "rules_set" in result["long"]
+        finally:
+            m._STRATEGY_PATHS.update(original)
+
+    def test_loaded_direction_matches_key(self, tmp_path):
+        import gpu_fuzzy_trader.phases.phase5_oos as m
+        long_path = str(tmp_path / "long.json")
+        _write_rule_set(long_path, "long")
+        original = m._STRATEGY_PATHS.copy()
+        m._STRATEGY_PATHS["long"] = long_path
+        m._STRATEGY_PATHS["short"] = str(tmp_path / "short.json")
+        try:
+            result = OOS_Evaluator.load_strategies()
+            assert result["long"]["direction"] == "long"
+        finally:
+            m._STRATEGY_PATHS.update(original)
+
+
+# ---------------------------------------------------------------------------
+# Tests: prepare_test_data
+# ---------------------------------------------------------------------------
+
+class TestPrepareTestData:
+    def test_returns_dataframe(self, tmp_path):
+        """prepare_test_data should return a DataFrame."""
+        # Write a minimal CSV
+        df = _make_df(n_rows=600, symbols=["SYM_A"])
+        # Add extra rows so tail-drop leaves something
+        csv_path = str(tmp_path / "test.csv")
+        df.to_csv(csv_path, index=False)
+        result = OOS_Evaluator.prepare_test_data(csv_path)
+        assert isinstance(result, pd.DataFrame)
+
+    def test_has_symbol_bar_index_column(self, tmp_path):
+        df = _make_df(n_rows=600, symbols=["SYM_A"])
+        csv_path = str(tmp_path / "test.csv")
+        df.to_csv(csv_path, index=False)
+        result = OOS_Evaluator.prepare_test_data(csv_path)
+        assert "_symbol_bar_index" in result.columns
+
+    def test_no_nan_in_label_columns(self, tmp_path):
+        df = _make_df(n_rows=600, symbols=["SYM_A"])
+        csv_path = str(tmp_path / "test.csv")
+        df.to_csv(csv_path, index=False)
+        result = OOS_Evaluator.prepare_test_data(csv_path)
+        for col in _cfg.LABEL_COLUMNS:
+            if col in result.columns:
+                assert result[col].isna().sum() == 0, f"NaN found in {col}"
+
+    def test_sorted_by_symbol_and_datetime(self, tmp_path):
+        df = _make_df(n_rows=600, symbols=["SYM_A", "SYM_B"])
+        # Shuffle to test sorting
+        df = df.sample(frac=1, random_state=0).reset_index(drop=True)
+        csv_path = str(tmp_path / "test.csv")
+        df.to_csv(csv_path, index=False)
+        result = OOS_Evaluator.prepare_test_data(csv_path)
+        for sym, grp in result.groupby("symbol"):
+            dts = grp["datetime"].values
+            assert all(dts[i] <= dts[i + 1] for i in range(len(dts) - 1)), (
+                f"Symbol {sym} is not sorted by datetime"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Tests: _evaluate_strategy (via OOS_Evaluator internals)
+# ---------------------------------------------------------------------------
+
+class TestEvaluateStrategy:
+    def _make_evaluator(self) -> OOS_Evaluator:
+        return OOS_Evaluator(test_csv_path=_cfg.TEST_CSV_PATH)
+
+    def test_returns_metrics_dict(self):
+        ev = self._make_evaluator()
+        df = _make_df(n_rows=200)
+        strategy = _make_rule_set("long")
+        metrics, _, _log = ev._evaluate_strategy(df, strategy, "long")
+        assert isinstance(metrics, dict)
+
+    def test_metrics_has_required_keys(self):
+        ev = self._make_evaluator()
+        df = _make_df(n_rows=200)
+        strategy = _make_rule_set("long")
+        metrics, _, _log = ev._evaluate_strategy(df, strategy, "long")
+        for key in ("total_return_pct", "max_drawdown_pct", "win_rate",
+                    "profit_factor", "executed_trades", "account_ruined"):
+            assert key in metrics, f"Missing key: {key}"
+
+    def test_zero_trade_case_no_account_ruin(self):
+        """When no trades are executed, account_ruined must be False."""
+        ev = self._make_evaluator()
+        df = _make_df(n_rows=200)
+        # Use a condition that will never match (feat_99 doesn't exist → skip)
+        # Instead use a condition that matches nothing: feat_0 IS Very High
+        # but set feat_0 to all zeros (Very Low range)
+        df["feat_0"] = 0.0  # Very Low, not Very High
+        strategy = {
+            "direction": "long",
+            "rules_set": [
+                {
+                    "conditions": ["[feat_0] IS Very High"],
+                    "tp": 4.0,
+                    "sl": 2.0,
+                    "capital_pct": 50.0,
+                }
+            ],
+        }
+        metrics, _, _log = ev._evaluate_strategy(df, strategy, "long")
+        if metrics["executed_trades"] == 0:
+            assert metrics["account_ruined"] is False
+            assert metrics["total_return_pct"] == 0.0
+
+    def test_zero_trade_case_total_return_is_zero(self):
+        """When no trades are executed, total_return_pct must be 0.0."""
+        ev = self._make_evaluator()
+        df = _make_df(n_rows=200)
+        df["feat_0"] = 0.0
+        strategy = {
+            "direction": "long",
+            "rules_set": [
+                {
+                    "conditions": ["[feat_0] IS Very High"],
+                    "tp": 4.0,
+                    "sl": 2.0,
+                    "capital_pct": 50.0,
+                }
+            ],
+        }
+        metrics, _, _log = ev._evaluate_strategy(df, strategy, "long")
+        if metrics["executed_trades"] == 0:
+            assert metrics["total_return_pct"] == 0.0
+
+    def test_returns_per_symbol_rows(self):
+        ev = self._make_evaluator()
+        df = _make_df(n_rows=200)
+        strategy = _make_rule_set("long")
+        _, per_symbol_rows, _log = ev._evaluate_strategy(df, strategy, "long")
+        assert isinstance(per_symbol_rows, list)
+
+    def test_per_symbol_rows_have_required_keys(self):
+        ev = self._make_evaluator()
+        df = _make_df(n_rows=200)
+        strategy = _make_rule_set("long")
+        _, per_symbol_rows, _log = ev._evaluate_strategy(df, strategy, "long")
+        for row in per_symbol_rows:
+            for key in ("direction", "symbol", "trade_count", "win_rate", "net_pnl"):
+                assert key in row, f"Missing key: {key}"
+
+    def test_per_symbol_rows_direction_matches(self):
+        ev = self._make_evaluator()
+        df = _make_df(n_rows=200)
+        strategy = _make_rule_set("short")
+        _, per_symbol_rows, _log = ev._evaluate_strategy(df, strategy, "short")
+        for row in per_symbol_rows:
+            assert row["direction"] == "short"
+
+
+# ---------------------------------------------------------------------------
+# Tests: _build_per_symbol_rows
+# ---------------------------------------------------------------------------
+
+class TestBuildPerSymbolRows:
+    def test_empty_per_symbol_metrics_returns_empty_list(self):
+        metrics = {"per_symbol_metrics": {}}
+        rows = OOS_Evaluator._build_per_symbol_rows(metrics, "long", pd.DataFrame())
+        assert rows == []
+
+    def test_missing_per_symbol_metrics_returns_empty_list(self):
+        metrics = {}
+        rows = OOS_Evaluator._build_per_symbol_rows(metrics, "long", pd.DataFrame())
+        assert rows == []
+
+    def test_returns_one_row_per_symbol(self):
+        metrics = {
+            "per_symbol_metrics": {
+                "SYM_A": {"trade_count": 5, "win_rate": 60.0, "net_pnl": 10.0},
+                "SYM_B": {"trade_count": 3, "win_rate": 33.3, "net_pnl": -2.0},
+            }
+        }
+        rows = OOS_Evaluator._build_per_symbol_rows(metrics, "long", pd.DataFrame())
+        assert len(rows) == 2
+
+    def test_row_has_correct_direction(self):
+        metrics = {
+            "per_symbol_metrics": {
+                "SYM_A": {"trade_count": 5, "win_rate": 60.0, "net_pnl": 10.0},
+            }
+        }
+        rows = OOS_Evaluator._build_per_symbol_rows(metrics, "short", pd.DataFrame())
+        assert rows[0]["direction"] == "short"
+
+    def test_row_has_correct_symbol(self):
+        metrics = {
+            "per_symbol_metrics": {
+                "SYM_X": {"trade_count": 2, "win_rate": 50.0, "net_pnl": 5.0},
+            }
+        }
+        rows = OOS_Evaluator._build_per_symbol_rows(metrics, "long", pd.DataFrame())
+        assert rows[0]["symbol"] == "SYM_X"
+
+    def test_row_values_match_metrics(self):
+        metrics = {
+            "per_symbol_metrics": {
+                "SYM_A": {"trade_count": 7, "win_rate": 71.4, "net_pnl": 15.5},
+            }
+        }
+        rows = OOS_Evaluator._build_per_symbol_rows(metrics, "long", pd.DataFrame())
+        assert rows[0]["trade_count"] == 7
+        assert abs(rows[0]["win_rate"] - 71.4) < 1e-6
+        assert abs(rows[0]["net_pnl"] - 15.5) < 1e-6
+
+
+# ---------------------------------------------------------------------------
+# Tests: _save_report
+# ---------------------------------------------------------------------------
+
+class TestSaveReport:
+    def _make_metrics(self, account_ruined: bool = False) -> dict:
+        return {
+            "direction": "long",
+            "total_return_pct": 5.0,
+            "max_drawdown_pct": 2.0,
+            "win_rate": 55.0,
+            "profit_factor": 1.5,
+            "executed_trades": 10,
+            "account_ruined": account_ruined,
+            "final_equity": 1050.0,
+            "per_symbol_metrics": {
+                "SYM_A": {"trade_count": 5, "win_rate": 60.0, "net_pnl": 30.0},
+            },
+        }
+
+    def test_creates_report_file(self, tmp_path):
+        import gpu_fuzzy_trader.phases.phase5_oos as m
+        original = m._REPORT_PATHS.copy()
+        report_path = str(tmp_path / "reports" / "test_long_report.json")
+        m._REPORT_PATHS["long"] = report_path
+        try:
+            ev = OOS_Evaluator()
+            ev._save_report(self._make_metrics(), "long")
+            assert os.path.exists(report_path)
+        finally:
+            m._REPORT_PATHS.update(original)
+
+    def test_report_is_valid_json(self, tmp_path):
+        import gpu_fuzzy_trader.phases.phase5_oos as m
+        original = m._REPORT_PATHS.copy()
+        report_path = str(tmp_path / "reports" / "test_long_report.json")
+        m._REPORT_PATHS["long"] = report_path
+        try:
+            ev = OOS_Evaluator()
+            ev._save_report(self._make_metrics(), "long")
+            with open(report_path) as fh:
+                data = json.load(fh)
+            assert isinstance(data, dict)
+        finally:
+            m._REPORT_PATHS.update(original)
+
+    def test_report_has_required_keys(self, tmp_path):
+        import gpu_fuzzy_trader.phases.phase5_oos as m
+        original = m._REPORT_PATHS.copy()
+        report_path = str(tmp_path / "reports" / "test_long_report.json")
+        m._REPORT_PATHS["long"] = report_path
+        try:
+            ev = OOS_Evaluator()
+            ev._save_report(self._make_metrics(), "long")
+            with open(report_path) as fh:
+                data = json.load(fh)
+            for key in ("direction", "total_return_pct", "max_drawdown_pct",
+                        "win_rate", "profit_factor", "executed_trades",
+                        "account_status", "final_equity"):
+                assert key in data, f"Missing key: {key}"
+        finally:
+            m._REPORT_PATHS.update(original)
+
+    def test_account_status_survived_when_not_ruined(self, tmp_path):
+        import gpu_fuzzy_trader.phases.phase5_oos as m
+        original = m._REPORT_PATHS.copy()
+        report_path = str(tmp_path / "reports" / "test_long_report.json")
+        m._REPORT_PATHS["long"] = report_path
+        try:
+            ev = OOS_Evaluator()
+            ev._save_report(self._make_metrics(account_ruined=False), "long")
+            with open(report_path) as fh:
+                data = json.load(fh)
+            assert data["account_status"] == "survived"
+        finally:
+            m._REPORT_PATHS.update(original)
+
+    def test_account_status_ruined_when_ruined(self, tmp_path):
+        import gpu_fuzzy_trader.phases.phase5_oos as m
+        original = m._REPORT_PATHS.copy()
+        report_path = str(tmp_path / "reports" / "test_long_report.json")
+        m._REPORT_PATHS["long"] = report_path
+        try:
+            ev = OOS_Evaluator()
+            ev._save_report(self._make_metrics(account_ruined=True), "long")
+            with open(report_path) as fh:
+                data = json.load(fh)
+            assert data["account_status"] == "ruined"
+        finally:
+            m._REPORT_PATHS.update(original)
+
+
+# ---------------------------------------------------------------------------
+# Tests: _save_per_symbol_csv
+# ---------------------------------------------------------------------------
+
+class TestSavePerSymbolCsv:
+    def test_creates_csv_file(self, tmp_path):
+        import gpu_fuzzy_trader.phases.phase5_oos as m
+        original = m._REPORT_PATHS.copy()
+        csv_path = str(tmp_path / "reports" / "test_per_symbol_performance.csv")
+        m._REPORT_PATHS["per_symbol"] = csv_path
+        try:
+            rows = [
+                {"direction": "long", "symbol": "SYM_A",
+                 "trade_count": 5, "win_rate": 60.0, "net_pnl": 10.0},
+            ]
+            OOS_Evaluator._save_per_symbol_csv(rows)
+            assert os.path.exists(csv_path)
+        finally:
+            m._REPORT_PATHS.update(original)
+
+    def test_csv_has_correct_columns(self, tmp_path):
+        import gpu_fuzzy_trader.phases.phase5_oos as m
+        original = m._REPORT_PATHS.copy()
+        csv_path = str(tmp_path / "reports" / "test_per_symbol_performance.csv")
+        m._REPORT_PATHS["per_symbol"] = csv_path
+        try:
+            rows = [
+                {"direction": "long", "symbol": "SYM_A",
+                 "trade_count": 5, "win_rate": 60.0, "net_pnl": 10.0},
+            ]
+            OOS_Evaluator._save_per_symbol_csv(rows)
+            df = pd.read_csv(csv_path)
+            for col in ("direction", "symbol", "trade_count", "win_rate", "net_pnl"):
+                assert col in df.columns, f"Missing column: {col}"
+        finally:
+            m._REPORT_PATHS.update(original)
+
+    def test_empty_rows_creates_empty_csv_with_columns(self, tmp_path):
+        import gpu_fuzzy_trader.phases.phase5_oos as m
+        original = m._REPORT_PATHS.copy()
+        csv_path = str(tmp_path / "reports" / "test_per_symbol_performance.csv")
+        m._REPORT_PATHS["per_symbol"] = csv_path
+        try:
+            OOS_Evaluator._save_per_symbol_csv([])
+            df = pd.read_csv(csv_path)
+            assert len(df) == 0
+            for col in ("direction", "symbol", "trade_count", "win_rate", "net_pnl"):
+                assert col in df.columns
+        finally:
+            m._REPORT_PATHS.update(original)
+
+    def test_csv_row_count_matches_input(self, tmp_path):
+        import gpu_fuzzy_trader.phases.phase5_oos as m
+        original = m._REPORT_PATHS.copy()
+        csv_path = str(tmp_path / "reports" / "test_per_symbol_performance.csv")
+        m._REPORT_PATHS["per_symbol"] = csv_path
+        try:
+            rows = [
+                {"direction": "long", "symbol": "SYM_A",
+                 "trade_count": 5, "win_rate": 60.0, "net_pnl": 10.0},
+                {"direction": "short", "symbol": "SYM_B",
+                 "trade_count": 3, "win_rate": 33.3, "net_pnl": -2.0},
+            ]
+            OOS_Evaluator._save_per_symbol_csv(rows)
+            df = pd.read_csv(csv_path)
+            assert len(df) == 2
+        finally:
+            m._REPORT_PATHS.update(original)
+
+
+# ---------------------------------------------------------------------------
+# Tests: OOS_Evaluator.run() — integration
+# ---------------------------------------------------------------------------
+
+def _write_synthetic_test_csv(tmp_path: "Path", n_rows: int = 600) -> str:
+    """
+    Write a synthetic test CSV with all required columns (including feat_0..4)
+    to a temp file and return its path.  n_rows must be > 288 per symbol so
+    the tail-drop leaves data to evaluate.
+    """
+    df = _make_df(n_rows=n_rows, symbols=["SYM_A", "SYM_B"])
+    csv_path = str(tmp_path / "synthetic_test.csv")
+    df.to_csv(csv_path, index=False)
+    return csv_path
+
+
+class TestOOSEvaluatorRun:
+    """Integration tests using tmp_path overrides for all output paths."""
+
+    def _setup_paths(self, m, tmp_path, directions=("long", "short")):
+        """Override module-level path dicts and return originals."""
+        orig_strategy = m._STRATEGY_PATHS.copy()
+        orig_report = m._REPORT_PATHS.copy()
+
+        for d in ("long", "short"):
+            m._STRATEGY_PATHS[d] = str(tmp_path / f"{d}.json")
+        m._REPORT_PATHS["long"] = str(tmp_path / "reports" / "test_long_report.json")
+        m._REPORT_PATHS["short"] = str(tmp_path / "reports" / "test_short_report.json")
+        m._REPORT_PATHS["per_symbol"] = str(
+            tmp_path / "reports" / "test_per_symbol_performance.csv"
+        )
+
+        for d in directions:
+            _write_rule_set(str(tmp_path / f"{d}.json"), d)
+
+        return orig_strategy, orig_report
+
+    def _restore_paths(self, m, orig_strategy, orig_report):
+        m._STRATEGY_PATHS.update(orig_strategy)
+        m._REPORT_PATHS.update(orig_report)
+
+    def test_run_returns_empty_when_no_strategies(self, tmp_path):
+        import gpu_fuzzy_trader.phases.phase5_oos as m
+        orig_s, orig_r = self._setup_paths(m, tmp_path, directions=())
+        csv_path = _write_synthetic_test_csv(tmp_path)
+        try:
+            ev = OOS_Evaluator(test_csv_path=csv_path)
+            result = ev.run()
+            assert result == {}
+        finally:
+            self._restore_paths(m, orig_s, orig_r)
+
+    def test_run_returns_dict_with_long_key(self, tmp_path):
+        import gpu_fuzzy_trader.phases.phase5_oos as m
+        orig_s, orig_r = self._setup_paths(m, tmp_path, directions=("long",))
+        csv_path = _write_synthetic_test_csv(tmp_path)
+        try:
+            ev = OOS_Evaluator(test_csv_path=csv_path)
+            result = ev.run()
+            assert "long" in result
+        finally:
+            self._restore_paths(m, orig_s, orig_r)
+
+    def test_run_returns_dict_with_both_keys(self, tmp_path):
+        import gpu_fuzzy_trader.phases.phase5_oos as m
+        orig_s, orig_r = self._setup_paths(m, tmp_path, directions=("long", "short"))
+        csv_path = _write_synthetic_test_csv(tmp_path)
+        try:
+            ev = OOS_Evaluator(test_csv_path=csv_path)
+            result = ev.run()
+            assert "long" in result
+            assert "short" in result
+        finally:
+            self._restore_paths(m, orig_s, orig_r)
+
+    def test_run_creates_long_report_file(self, tmp_path):
+        import gpu_fuzzy_trader.phases.phase5_oos as m
+        orig_s, orig_r = self._setup_paths(m, tmp_path, directions=("long",))
+        csv_path = _write_synthetic_test_csv(tmp_path)
+        try:
+            ev = OOS_Evaluator(test_csv_path=csv_path)
+            ev.run()
+            assert os.path.exists(m._REPORT_PATHS["long"])
+        finally:
+            self._restore_paths(m, orig_s, orig_r)
+
+    def test_run_creates_per_symbol_csv(self, tmp_path):
+        import gpu_fuzzy_trader.phases.phase5_oos as m
+        orig_s, orig_r = self._setup_paths(m, tmp_path, directions=("long",))
+        csv_path = _write_synthetic_test_csv(tmp_path)
+        try:
+            ev = OOS_Evaluator(test_csv_path=csv_path)
+            ev.run()
+            assert os.path.exists(m._REPORT_PATHS["per_symbol"])
+        finally:
+            self._restore_paths(m, orig_s, orig_r)
+
+    def test_run_metrics_has_required_keys(self, tmp_path):
+        import gpu_fuzzy_trader.phases.phase5_oos as m
+        orig_s, orig_r = self._setup_paths(m, tmp_path, directions=("long",))
+        csv_path = _write_synthetic_test_csv(tmp_path)
+        try:
+            ev = OOS_Evaluator(test_csv_path=csv_path)
+            result = ev.run()
+            metrics = result["long"]
+            for key in ("total_return_pct", "max_drawdown_pct", "win_rate",
+                        "executed_trades", "account_ruined"):
+                assert key in metrics, f"Missing key: {key}"
+        finally:
+            self._restore_paths(m, orig_s, orig_r)
+
+    def test_run_long_report_is_valid_json(self, tmp_path):
+        import gpu_fuzzy_trader.phases.phase5_oos as m
+        orig_s, orig_r = self._setup_paths(m, tmp_path, directions=("long",))
+        csv_path = _write_synthetic_test_csv(tmp_path)
+        try:
+            ev = OOS_Evaluator(test_csv_path=csv_path)
+            ev.run()
+            with open(m._REPORT_PATHS["long"]) as fh:
+                data = json.load(fh)
+            assert isinstance(data, dict)
+        finally:
+            self._restore_paths(m, orig_s, orig_r)
+
+    def test_run_per_symbol_csv_has_correct_columns(self, tmp_path):
+        import gpu_fuzzy_trader.phases.phase5_oos as m
+        orig_s, orig_r = self._setup_paths(m, tmp_path, directions=("long",))
+        csv_path = _write_synthetic_test_csv(tmp_path)
+        try:
+            ev = OOS_Evaluator(test_csv_path=csv_path)
+            ev.run()
+            df = pd.read_csv(m._REPORT_PATHS["per_symbol"])
+            for col in ("direction", "symbol", "trade_count", "win_rate", "net_pnl"):
+                assert col in df.columns, f"Missing column: {col}"
+        finally:
+            self._restore_paths(m, orig_s, orig_r)
