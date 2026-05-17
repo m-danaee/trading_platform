@@ -182,8 +182,8 @@ def test_property_21_rule_set_size_bounds(
                 val_df=val_df,
                 pool=pool,
                 direction=direction,
-                pop_size=6,
-                n_generations=3,
+                refine_pop_size=6,
+                refine_generations=3,
                 seed=0,
             )
             result = selector.run()
@@ -236,8 +236,8 @@ def test_property_22_rule_set_uniqueness(
                 val_df=val_df,
                 pool=pool,
                 direction=direction,
-                pop_size=6,
-                n_generations=3,
+                refine_pop_size=6,
+                refine_generations=3,
                 seed=0,
             )
             result = selector.run()

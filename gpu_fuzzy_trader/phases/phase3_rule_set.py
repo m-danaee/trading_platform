@@ -1,8 +1,9 @@
 """
 phase3_rule_set.py — Rule_Set_Selector (Phase 3)
 
-NSGA-II combinatorial search over ordered combinations of 2–5 rules from the
-Phase 2 pool.  Evaluated on the **validation split** using CPUBacktestEngine.
+Greedy rule-set construction plus short Pareto refinement over ordered
+combinations of 2–5 rules from the Phase 2 pool.  Evaluated on the
+**validation split** using CPUBacktestEngine.
 
 Search space:
     All ordered combinations of PHASE3_MIN_RULES–PHASE3_MAX_RULES rules from
@@ -42,6 +43,7 @@ import pandas as pd
 
 from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
+from gpu_fuzzy_trader.phases.phase3_greedy import greedy_rule_set_search
 from gpu_fuzzy_trader.reporting.reporter import Reporter
 
 logger = logging.getLogger(__name__)
@@ -131,10 +133,38 @@ def _count_symbols_with_trades(metrics: dict) -> int:
     return sum(1 for v in per_sym.values() if v.get("trade_count", 0) > 0)
 
 
+def _build_phase3_engines(
+    train_df: pd.DataFrame,
+    val_df: pd.DataFrame,
+    direction: str,
+) -> tuple[CPUBacktestEngine | object, CPUBacktestEngine | object, bool]:
+    """Create validation/train engines; GPU batch when configured and available."""
+    feature_modes: dict[str, str] = {}
+    use_gpu = bool(_cfg.PHASE3_USE_GPU)
+
+    if use_gpu:
+        try:
+            from gpu_fuzzy_trader.backtest.gpu_engine import GPUBacktestEngine
+
+            val_engine = GPUBacktestEngine(val_df, feature_modes, direction)
+            train_engine = GPUBacktestEngine(
+                train_df, feature_modes, direction)
+            logger.info(
+                "Phase 3 using GPUBacktestEngine (batch rule-set eval)")
+            return val_engine, train_engine, True
+        except ImportError:
+            logger.warning(
+                "PHASE3_USE_GPU=True but JAX unavailable; using CPU.")
+
+    val_engine = CPUBacktestEngine(val_df, feature_modes, direction)
+    train_engine = CPUBacktestEngine(train_df, feature_modes, direction)
+    return val_engine, train_engine, False
+
+
 def _evaluate_rule_set(
     rule_set: list[dict],
-    val_engine: CPUBacktestEngine,
-    train_engine: CPUBacktestEngine,
+    val_engine,
+    train_engine,
 ) -> tuple[np.ndarray, dict]:
     """
     Evaluate a candidate rule set and return (objectives, val_metrics).
@@ -428,15 +458,34 @@ def _mutate_rule_set(
 # NSGA-II combinatorial search
 # ---------------------------------------------------------------------------
 
+def _seed_population_from_greedy(
+    greedy_set: list[dict],
+    pool: list[dict],
+    pop_size: int,
+    min_rules: int,
+    max_rules: int,
+    rng: random.Random,
+) -> list[list[dict]]:
+    """Build initial population centred on the greedy solution."""
+    population: list[list[dict]] = [list(greedy_set)]
+    while len(population) < pop_size:
+        child = _mutate_rule_set(
+            list(greedy_set), pool, rng, min_rules, max_rules)
+        population.append(child)
+    return population
+
+
 def _run_nsga2_combinatorial(
     pool: list[dict],
-    val_engine: CPUBacktestEngine,
-    train_engine: CPUBacktestEngine,
+    val_engine,
+    train_engine,
     pop_size: int,
     n_generations: int,
     min_rules: int,
     max_rules: int,
     seed: int = 42,
+    initial_population: list[list[dict]] | None = None,
+    use_batch: bool = False,
 ) -> tuple[list[dict], list[dict]]:
     """
     Run NSGA-II combinatorial search over rule set combinations.
@@ -473,10 +522,19 @@ def _run_nsga2_combinatorial(
     effective_pop = min(pop_size, max(4, len(pool) * 2))
 
     # Initialise population
-    population: list[list[dict]] = [
-        _random_rule_set(pool, rng, min_rules, max_rules)
-        for _ in range(effective_pop)
-    ]
+    if initial_population:
+        population = [
+            list(rs) for rs in initial_population[:effective_pop]
+        ]
+        while len(population) < effective_pop:
+            population.append(
+                _random_rule_set(pool, rng, min_rules, max_rules)
+            )
+    else:
+        population = [
+            _random_rule_set(pool, rng, min_rules, max_rules)
+            for _ in range(effective_pop)
+        ]
 
     objectives = np.full((effective_pop, 3), np.inf)
     history: list[dict] = []
@@ -488,8 +546,26 @@ def _run_nsga2_combinatorial(
 
     for gen in range(n_generations):
         # Evaluate unevaluated individuals
-        for i in range(effective_pop):
-            if np.any(np.isinf(objectives[i])):
+        pending = [i for i in range(effective_pop)
+                   if np.any(np.isinf(objectives[i]))]
+        if pending and use_batch and hasattr(val_engine, "simulate_rule_set_batch"):
+            fmts = [_rule_set_to_engine_format(population[i]) for i in pending]
+            val_list = val_engine.simulate_rule_set_batch(fmts)
+            if hasattr(train_engine, "simulate_rule_set_batch"):
+                train_list = train_engine.simulate_rule_set_batch(fmts)
+            else:
+                train_list = [
+                    train_engine.simulate_rule_set(f) for f in fmts
+                ]
+            from gpu_fuzzy_trader.phases.phase3_greedy import _objectives_from_metrics
+
+            for j, i in enumerate(pending):
+                obj = _objectives_from_metrics(
+                    val_list[j], train_list[j], population[i]
+                )
+                objectives[i] = obj
+        else:
+            for i in pending:
                 engine_fmt = _rule_set_to_engine_format(population[i])
                 obj, _ = _evaluate_rule_set(engine_fmt, val_engine, train_engine)
                 objectives[i] = obj
@@ -614,7 +690,7 @@ def _build_output_dict(rule_set: list[dict], direction: str) -> dict:
 
 class Rule_Set_Selector:
     """
-    Phase 3: NSGA-II combinatorial search over rule set combinations.
+    Phase 3: greedy construction + Pareto refinement over rule set combinations.
 
     Selects the best ordered combination of 2–5 rules from the Phase 2 pool,
     evaluated on the validation split using CPUBacktestEngine.
@@ -631,10 +707,10 @@ class Rule_Set_Selector:
         (defaults to Phase 2 static values if absent).
     direction : str
         "long" or "short".
-    pop_size : int, optional
-        Override PHASE3_POPULATION_SIZE (useful for testing).
-    n_generations : int, optional
-        Override PHASE3_GENERATIONS (useful for testing).
+    refine_pop_size : int, optional
+        Override PHASE3_REFINE_POP_SIZE (useful for testing).
+    refine_generations : int, optional
+        Override PHASE3_REFINE_GENERATIONS (useful for testing).
     seed : int, optional
         Random seed for reproducibility.
     """
@@ -645,8 +721,8 @@ class Rule_Set_Selector:
         val_df: pd.DataFrame,
         pool: list[dict],
         direction: str,
-        pop_size: int | None = None,
-        n_generations: int | None = None,
+        refine_pop_size: int | None = None,
+        refine_generations: int | None = None,
         seed: int = 42,
     ) -> None:
         if direction not in ("long", "short"):
@@ -661,18 +737,19 @@ class Rule_Set_Selector:
 
         self.direction = direction
         self.pool = pool
-        self.pop_size = pop_size if pop_size is not None else _cfg.PHASE3_POPULATION_SIZE
-        self.n_generations = (
-            n_generations if n_generations is not None else _cfg.PHASE3_GENERATIONS
+        self.refine_pop_size = (
+            refine_pop_size if refine_pop_size is not None else _cfg.PHASE3_REFINE_POP_SIZE
+        )
+        self.refine_generations = (
+            refine_generations
+            if refine_generations is not None
+            else _cfg.PHASE3_REFINE_GENERATIONS
         )
         self.seed = seed
 
-        # Build feature_modes dict (empty — CPUBacktestEngine uses threshold logic)
-        feature_modes: dict[str, str] = {}
-
-        # Initialise backtest engines
-        self._val_engine = CPUBacktestEngine(val_df, feature_modes, direction)
-        self._train_engine = CPUBacktestEngine(train_df, feature_modes, direction)
+        self._val_engine, self._train_engine, self._use_gpu_batch = _build_phase3_engines(
+            train_df, val_df, direction
+        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -680,7 +757,7 @@ class Rule_Set_Selector:
 
     def run(self) -> dict:
         """
-        Run NSGA-II combinatorial search.
+        Run greedy construction and Pareto refinement.
 
         Returns the best rule set dict (evaluator_v3.ipynb compatible format).
         Also persists to outputs/{direction}.json.
@@ -691,19 +768,47 @@ class Rule_Set_Selector:
             {"direction": ..., "rules_set": [...]}
         """
         logger.info(
-            "Phase 3 [%s]: pool=%d, pop=%d, gen=%d",
-            self.direction, len(self.pool), self.pop_size, self.n_generations,
+            "Phase 3 [%s]: pool=%d, refine_pop=%d, refine_gen=%d, gpu_batch=%s",
+            self.direction,
+            len(self.pool),
+            self.refine_pop_size,
+            self.refine_generations,
+            self._use_gpu_batch,
+        )
+
+        greedy_set, n_greedy_evals = greedy_rule_set_search(
+            pool=self.pool,
+            val_engine=self._val_engine,
+            train_engine=self._train_engine,
+            min_rules=_cfg.PHASE3_MIN_RULES,
+            max_rules=_cfg.PHASE3_MAX_RULES,
+            use_batch=self._use_gpu_batch,
+        )
+        logger.info(
+            "Phase 3 [%s]: greedy done (%d evals), refining...",
+            self.direction,
+            n_greedy_evals,
+        )
+        initial_pop = _seed_population_from_greedy(
+            greedy_set,
+            self.pool,
+            self.refine_pop_size,
+            _cfg.PHASE3_MIN_RULES,
+            _cfg.PHASE3_MAX_RULES,
+            random.Random(self.seed),
         )
 
         pareto_rule_sets, history = _run_nsga2_combinatorial(
             pool=self.pool,
             val_engine=self._val_engine,
             train_engine=self._train_engine,
-            pop_size=self.pop_size,
-            n_generations=self.n_generations,
+            pop_size=self.refine_pop_size,
+            n_generations=self.refine_generations,
             min_rules=_cfg.PHASE3_MIN_RULES,
             max_rules=_cfg.PHASE3_MAX_RULES,
             seed=self.seed,
+            initial_population=initial_pop,
+            use_batch=self._use_gpu_batch,
         )
 
         if not pareto_rule_sets:

@@ -728,12 +728,22 @@ class Rule_Pool_Generator:
             self.direction, self.pop_size, self.n_generations, len(self.feature_infos)
         )
 
-        pool, history = _run_nsga2(
+        from gpu_fuzzy_trader.evolution.evox_runner import (
+            resolve_phase2_runner,
+            run_phase2_evolution,
+        )
+
+        runner = resolve_phase2_runner(_cfg.PHASE2_ALGORITHM, self.pop_size)
+        logger.info("Phase 2 [%s]: algorithm=%s (config=%s)",
+                    self.direction, runner, _cfg.PHASE2_ALGORITHM)
+
+        pool, history = run_phase2_evolution(
             feature_infos=self.feature_infos,
             engine=self._engine,
             pop_size=self.pop_size,
             n_generations=self.n_generations,
             rng=rng,
+            algorithm=_cfg.PHASE2_ALGORITHM,
         )
 
         # Persist

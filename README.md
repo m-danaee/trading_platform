@@ -30,7 +30,7 @@ This project is a **rule-mining trading system**, not a conventional predictive 
 - Use future labels **only** for scoring and backtesting — never as model inputs.
 - Select stable, direction-specific features per output type.
 - Evolve a large pool of candidate fuzzy rules using GPU-accelerated multi-objective evolutionary algorithms.
-- Assemble compact rule teams (2–5 rules) via combinatorial NSGA-II search.
+- Assemble compact rule teams (2–5 rules) via greedy construction and Pareto refinement.
 - Fine-tune risk parameters (TP, SL, capital allocation) using a deep RL agent.
 - Evaluate the final strategy on a held-out test set.
 
@@ -62,7 +62,7 @@ gpu_fuzzy_trader/
 │
 ├── phases/
 │   ├── phase2_rule_pool.py      # Rule_Pool_Generator: NSGA-II evolutionary search
-│   ├── phase3_rule_set.py       # Rule_Set_Selector: combinatorial NSGA-II on validation
+│   ├── phase3_rule_set.py       # Rule_Set_Selector: greedy + refinement on validation
 │   ├── phase4_rl_optimizer.py   # RL_Agent: DDPG/PPO with Elbow Method stopping
 │   └── phase5_oos.py            # OOS_Evaluator: final test.csv evaluation
 │
@@ -212,7 +212,7 @@ dont_care_i = num_classes_i  (inactive condition)
 
 **Module:** `gpu_fuzzy_trader/phases/phase3_rule_set.py` → `Rule_Set_Selector`
 
-Selects the best ordered combination of 2–5 rules from the Phase 2 pool using combinatorial NSGA-II. Evaluated on the **validation split** using `CPUBacktestEngine`.
+Selects the best ordered combination of 2–5 rules from the Phase 2 pool using greedy construction followed by short Pareto refinement. Evaluated on the **validation split** using `CPUBacktestEngine`.
 
 **Search space:** All ordered combinations of 2–5 rules from the pool, with no duplicate rules (order-independent condition set equality).
 
@@ -398,16 +398,18 @@ All hyperparameters live in `gpu_fuzzy_trader/config.py`. Edit this file to tune
 | `MIN_CONDITIONS` | `2` | Minimum active conditions per rule |
 | `MAX_CONDITIONS` | `5` | Maximum active conditions per rule |
 | `MIN_TRADE_SUPPORT` | `20` | Minimum trades for a rule to be kept |
-| `PHASE2_POPULATION_SIZE` | `200` | NSGA-II population size |
+| `PHASE2_POPULATION_SIZE` | `200` | Evolution population size |
 | `PHASE2_GENERATIONS` | `500` | Number of generations |
-| `PHASE2_ALGORITHM` | `"NSGA-II"` | Algorithm: `"MOEAD"`, `"MOPSO"`, or `"RVEA"` |
+| `PHASE2_ALGORITHM` | `"RVEA"` | Algorithm: `"RVEA"`, `"NSGA2"`, `"NSGA3"`, `"MOEAD"`, `"MOPSO"` |
+| `PHASE2_LARGE_POP_THRESHOLD` | `1000` | Use NSGA-III when pop ≥ this (if `PHASE2_TENSOR_NSGA3`) |
 
 ### Phase 3 — Rule Set Selection
 
 | Constant | Default | Description |
 |----------|---------|-------------|
-| `PHASE3_POPULATION_SIZE` | `100` | NSGA-II population size |
-| `PHASE3_GENERATIONS` | `200` | Number of generations |
+| `PHASE3_REFINE_POP_SIZE` | `40` | Refinement population after greedy |
+| `PHASE3_REFINE_GENERATIONS` | `15` | Refinement generations after greedy |
+| `PHASE3_USE_GPU` | `False` | Enable GPU batched rule-set eval (after parity tests) |
 | `PHASE3_MIN_RULES` | `2` | Minimum rules in a rule set |
 | `PHASE3_MAX_RULES` | `5` | Maximum rules in a rule set |
 | `PHASE3_MIN_SYMBOL_COVERAGE` | `7` | Minimum symbols with ≥1 trade |

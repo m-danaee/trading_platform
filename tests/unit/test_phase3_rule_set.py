@@ -471,28 +471,32 @@ class TestRuleSetSelectorInit:
     def test_valid_construction_long(self):
         pool = _make_pool(4)
         df = _make_df()
-        sel = Rule_Set_Selector(df, df, pool, "long", pop_size=4, n_generations=2)
+        sel = Rule_Set_Selector(
+            df, df, pool, "long", refine_pop_size=4, refine_generations=2
+        )
         assert sel.direction == "long"
-        assert sel.pop_size == 4
-        assert sel.n_generations == 2
+        assert sel.refine_pop_size == 4
+        assert sel.refine_generations == 2
 
     def test_valid_construction_short(self):
         pool = _make_pool(4)
         df = _make_df()
-        sel = Rule_Set_Selector(df, df, pool, "short", pop_size=4, n_generations=2)
+        sel = Rule_Set_Selector(
+            df, df, pool, "short", refine_pop_size=4, refine_generations=2
+        )
         assert sel.direction == "short"
 
-    def test_default_pop_size_from_config(self):
+    def test_default_refine_pop_size_from_config(self):
         pool = _make_pool(4)
         df = _make_df()
         sel = Rule_Set_Selector(df, df, pool, "long")
-        assert sel.pop_size == _cfg.PHASE3_POPULATION_SIZE
+        assert sel.refine_pop_size == _cfg.PHASE3_REFINE_POP_SIZE
 
-    def test_default_n_generations_from_config(self):
+    def test_default_refine_generations_from_config(self):
         pool = _make_pool(4)
         df = _make_df()
         sel = Rule_Set_Selector(df, df, pool, "long")
-        assert sel.n_generations == _cfg.PHASE3_GENERATIONS
+        assert sel.refine_generations == _cfg.PHASE3_REFINE_GENERATIONS
 
 
 # ---------------------------------------------------------------------------
@@ -506,15 +510,15 @@ class TestRuleSetSelectorRun:
         self,
         direction: str = "long",
         n_pool: int = 6,
-        pop_size: int = 6,
-        n_generations: int = 3,
+        refine_pop_size: int = 6,
+        refine_generations: int = 3,
     ) -> Rule_Set_Selector:
         pool = _make_pool(n_pool)
         df = _make_df(n_rows=200, symbols=["SYM_A", "SYM_B"])
         return Rule_Set_Selector(
             df, df, pool, direction,
-            pop_size=pop_size,
-            n_generations=n_generations,
+            refine_pop_size=refine_pop_size,
+            refine_generations=refine_generations,
             seed=42,
         )
 
@@ -568,6 +572,20 @@ class TestRuleSetSelectorRun:
             )
         finally:
             m._OUTPUT_PATHS.update(original)
+
+    def test_greedy_eval_count(self):
+        from gpu_fuzzy_trader.phases.phase3_greedy import greedy_rule_set_search
+
+        pool = _make_pool(10)
+        df = _make_df(n_rows=200)
+        val_eng, train_eng, _ = __import__(
+            "gpu_fuzzy_trader.phases.phase3_rule_set", fromlist=["_build_phase3_engines"]
+        )._build_phase3_engines(df, df, "long")
+        _, n_evals = greedy_rule_set_search(
+            pool, val_eng, train_eng, 2, 5, use_batch=False
+        )
+        # 10 singles + 9 pairs + 8 triples + 7 quads + 6 fives = 40
+        assert n_evals == 40
 
     def test_run_creates_output_file(self, tmp_path):
         import gpu_fuzzy_trader.phases.phase3_rule_set as m

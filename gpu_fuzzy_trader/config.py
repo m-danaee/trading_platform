@@ -53,16 +53,27 @@ MAX_CONDITIONS = 5
 MIN_TRADE_SUPPORT = 20
 PHASE2_POPULATION_SIZE = 200
 PHASE2_GENERATIONS = 500
-PHASE2_ALGORITHM = "MOEAD"  # alternatives: "MOPSO", "RVEA"
+PHASE2_ALGORITHM = "RVEA"  # alternatives: "NSGA2", "NSGA3", "MOEAD", "MOPSO"
+PHASE2_LARGE_POP_THRESHOLD = 1000
+PHASE2_TENSOR_NSGA3 = True  # use NSGA-III when pop >= threshold
 
 # ---------------------------------------------------------------------------
 # Phase 3 Rule Set Selection
 # ---------------------------------------------------------------------------
-PHASE3_POPULATION_SIZE = 100
-PHASE3_GENERATIONS = 200
 PHASE3_MIN_RULES = 2
 PHASE3_MAX_RULES = 5
 PHASE3_MIN_SYMBOL_COVERAGE = 7  # out of 10 symbols must have >= 1 trade
+PHASE3_USE_GPU = False  # set True after GPU rule-set batch parity tests pass
+PHASE3_REFINE_GENERATIONS = 15
+PHASE3_REFINE_POP_SIZE = 40
+PHASE3_GREEDY_WEIGHTS = (1.0, 0.5, 0.3)  # return, drawdown, win_rate
+
+# ---------------------------------------------------------------------------
+# Phase 2 MOME (deferred — future native 4×10 descriptor grid)
+# ---------------------------------------------------------------------------
+# Descriptors: n_active_conditions (2–5) × symbol_coverage (0–10).
+# Each cell holds a local Pareto archive; Phase 3 samples one rule per cell.
+# See plan milestone 4; not implemented in this release.
 
 # ---------------------------------------------------------------------------
 # Phase 4 RL Risk Optimization

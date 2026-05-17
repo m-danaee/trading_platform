@@ -16,6 +16,8 @@ JAX availability:
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+
 import numpy as np
 import pandas as pd
 
@@ -790,6 +792,47 @@ class GPUBacktestEngine:
 
         return results
 
+    # ------------------------------------------------------------------
+    # Batched rule-set evaluation (Phase 3)
+    # ------------------------------------------------------------------
+
+    def simulate_rule_set_batch(
+        self,
+        rule_sets: list[list[dict]],
+        max_workers: int | None = None,
+    ) -> list[dict]:
+        """Evaluate multiple rule sets; numerically identical to sequential CPU calls.
+
+        Uses parallel CPU simulation via the embedded CPUBacktestEngine reference.
+        Phase 3 enables this path when ``PHASE3_USE_GPU`` is True (parity-gated).
+
+        Parameters
+        ----------
+        rule_sets : list[list[dict]]
+            Each element is a rule set in CPUBacktestEngine format.
+        max_workers : int, optional
+            Thread pool size (default: min(32, len(rule_sets))).
+
+        Returns
+        -------
+        list[dict]
+            Metrics dict per rule set, including ``per_symbol_metrics``.
+        """
+        if not rule_sets:
+            return []
+
+        if len(rule_sets) == 1:
+            return [self._cpu_engine_ref.simulate_rule_set(rule_sets[0])]
+
+        workers = max_workers
+        if workers is None:
+            workers = min(32, len(rule_sets))
+
+        def _eval_one(rs: list[dict]) -> dict:
+            return self._cpu_engine_ref.simulate_rule_set(rs)
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            return list(pool.map(_eval_one, rule_sets))
 
     # ------------------------------------------------------------------
     # Compatibility interface (delegates to CPUBacktestEngine)
