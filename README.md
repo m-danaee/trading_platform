@@ -400,7 +400,7 @@ All hyperparameters live in `gpu_fuzzy_trader/config.py`. Edit this file to tune
 | `MIN_TRADE_SUPPORT` | `20` | Minimum trades for a rule to be kept |
 | `PHASE2_POPULATION_SIZE` | `200` | NSGA-II population size |
 | `PHASE2_GENERATIONS` | `500` | Number of generations |
-| `PHASE2_ALGORITHM` | `"MOEAD"` | Algorithm: `"MOEAD"`, `"MOPSO"`, or `"RVEA"` |
+| `PHASE2_ALGORITHM` | `"NSGA-II"` | Algorithm: `"MOEAD"`, `"MOPSO"`, or `"RVEA"` |
 
 ### Phase 3 — Rule Set Selection
 
