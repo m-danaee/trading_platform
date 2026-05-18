@@ -29,6 +29,7 @@ import math
 
 import pandas as pd
 
+from gpu_fuzzy_trader.backtest.df_slim import downcast_numeric_df
 from gpu_fuzzy_trader.config import TRAIN_75_PATH, VALIDATION_25_PATH
 
 
@@ -83,7 +84,10 @@ class Data_Splitter:
             else pd.DataFrame(columns=df.columns)
         )
 
-        # Persist to Parquet
+        train_df = downcast_numeric_df(train_df)
+        validation_df = downcast_numeric_df(validation_df)
+
+        # Persist to Parquet (float32 schema for lower RAM on reload)
         train_df.to_parquet(TRAIN_75_PATH, index=False)
         validation_df.to_parquet(VALIDATION_25_PATH, index=False)
 

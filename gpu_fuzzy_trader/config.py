@@ -26,6 +26,8 @@ LABEL_COLUMNS = [
     "label_max_before_min",
 ]
 META_COLUMNS = ["datetime", "symbol"]
+# Loader / pipeline internal columns — not trading features (excluded from Phase 1, etc.)
+INTERNAL_COLUMNS = ("_symbol_bar_index",)
 TAIL_DROP_ROWS = 288  # rows dropped per symbol (no labels available)
 
 # ---------------------------------------------------------------------------
@@ -52,7 +54,7 @@ MIN_CONDITIONS = 2
 MAX_CONDITIONS = 5
 MIN_TRADE_SUPPORT = 20
 PHASE2_POPULATION_SIZE = 200
-PHASE2_GENERATIONS = 500
+PHASE2_GENERATIONS = 100
 PHASE2_ALGORITHM = "RVEA"  # alternatives: "NSGA2", "NSGA3", "MOEAD", "MOPSO"
 PHASE2_LARGE_POP_THRESHOLD = 1000
 PHASE2_TENSOR_NSGA3 = True  # use NSGA-III when pop >= threshold
@@ -89,8 +91,20 @@ PHASE4_TOTAL_TIMESTEPS = 500_000
 PHASE4_ELBOW_WINDOW = 20
 
 # ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+# 0 = auto-throttle generation progress; positive int = log every N generations
+LOG_GENERATION_INTERVAL = 0
+
+# ---------------------------------------------------------------------------
 # Phase 1 Feature Selection
 # ---------------------------------------------------------------------------
 PHASE1_DISPERSION_THRESHOLD = 0.95
 PHASE1_TOP_K_FEATURES = 30
-PHASE1_SAMPLING_TOTAL = 300_000  # shared across symbols (e.g. 30k per symbol for 10)
+# Rows sampled per Phase 2 backtest engine (distributed across symbols).
+# Emergency RAM knob if OOM persists after df slimming: try 150_000.
+PHASE1_SAMPLING_TOTAL = 300_000
+
+# Emergency RAM knobs (last resort; prefer code slimming in df_slim.py):
+# PHASE2_POPULATION_SIZE = 100
+# PHASE2_GENERATIONS = 50

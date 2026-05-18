@@ -27,36 +27,37 @@ Requirements: 13.1, 13.2, 13.3, 13.4, 13.5
 """
 
 from __future__ import annotations
+from gpu_fuzzy_trader.phases.phase5_oos import OOS_Evaluator
+from gpu_fuzzy_trader.phases.phase4_rl_optimizer import RL_Agent
+from gpu_fuzzy_trader.phases.phase3_rule_set import Rule_Set_Selector
+from gpu_fuzzy_trader.phases.phase2_rule_pool import Rule_Pool_Generator
+from gpu_fuzzy_trader.features.selector import Feature_Selector
+from gpu_fuzzy_trader.data.splitter import Data_Splitter
+from gpu_fuzzy_trader.data.loader import Data_Loader
+from gpu_fuzzy_trader import config as _cfg
+import pandas as pd
+from typing import Any
+from datetime import datetime, timezone
+import time
+import sys
+import os
+import logging
+import json
 
 from gpu_fuzzy_trader._jax_env import configure_jax_env
 
 configure_jax_env()
 
-import json
-import logging
-import os
-import sys
-import time
-from datetime import datetime, timezone
-from typing import Any
-
-import pandas as pd
-
-from gpu_fuzzy_trader import config as _cfg
-from gpu_fuzzy_trader.data.loader import Data_Loader
-from gpu_fuzzy_trader.data.splitter import Data_Splitter
-from gpu_fuzzy_trader.features.selector import Feature_Selector
-from gpu_fuzzy_trader.phases.phase2_rule_pool import Rule_Pool_Generator
-from gpu_fuzzy_trader.phases.phase3_rule_set import Rule_Set_Selector
-from gpu_fuzzy_trader.phases.phase4_rl_optimizer import RL_Agent
-from gpu_fuzzy_trader.phases.phase5_oos import OOS_Evaluator
 
 # ---------------------------------------------------------------------------
 # Logging setup
 # ---------------------------------------------------------------------------
 
+_LOG_LEVEL_NAME = os.environ.get("GPU_FUZZY_LOG_LEVEL", "INFO").upper()
+_LOG_LEVEL = getattr(logging, _LOG_LEVEL_NAME, logging.INFO)
+
 logging.basicConfig(
-    level=logging.INFO,
+    level=_LOG_LEVEL,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
@@ -72,6 +73,25 @@ _PIPELINE_LOG_PATH = os.path.join(_cfg.OUTPUTS_DIR, "pipeline.log")
 def _now_iso() -> str:
     """Return current UTC time as ISO 8601 string."""
     return datetime.now(timezone.utc).isoformat()
+
+
+def _log_pipeline_config() -> None:
+    """Log key hyperparameters at pipeline start."""
+    logger.info(
+        "Pipeline config: PHASE1 top_k=%d | PHASE2 algo=%s pop=%d gen=%d | "
+        "PHASE3 refine pop=%d gen=%d gpu_batch=%s | "
+        "PHASE4 algo=%s timesteps=%d elbow_window=%d",
+        _cfg.PHASE1_TOP_K_FEATURES,
+        _cfg.PHASE2_ALGORITHM,
+        _cfg.PHASE2_POPULATION_SIZE,
+        _cfg.PHASE2_GENERATIONS,
+        _cfg.PHASE3_REFINE_POP_SIZE,
+        _cfg.PHASE3_REFINE_GENERATIONS,
+        _cfg.PHASE3_USE_GPU,
+        _cfg.PHASE4_RL_ALGORITHM,
+        _cfg.PHASE4_TOTAL_TIMESTEPS,
+        _cfg.PHASE4_ELBOW_WINDOW,
+    )
 
 
 def _log_phase_entry(
@@ -171,6 +191,7 @@ class Pipeline_Orchestrator:
         logger.info("=" * 60)
         logger.info("GPU-Fuzzy Trading Pipeline — starting")
         logger.info("=" * 60)
+        _log_pipeline_config()
 
         pipeline_start = time.monotonic()
         results: dict[str, Any] = {}
@@ -194,6 +215,7 @@ class Pipeline_Orchestrator:
         # ------------------------------------------------------------------
         phase1_result = self._run_phase1(train_df)
         results["phase1"] = phase1_result
+        train_df = self._prune_train_df_after_phase1(train_df, phase1_result)
 
         # ------------------------------------------------------------------
         # Phase 2: Rule Pool Generation
@@ -265,13 +287,23 @@ class Pipeline_Orchestrator:
         tuple[pd.DataFrame, pd.DataFrame]
             (train_df, val_df)
         """
+        cached_split = self._load_cached_split_if_fresh()
+        if cached_split is not None:
+            logger.info(
+                "Using cached train/validation split from %s and %s",
+                _cfg.TRAIN_75_PATH,
+                _cfg.VALIDATION_25_PATH,
+            )
+            return cached_split
+
         logger.info("Loading training data from %s …", _cfg.TRAIN_CSV_PATH)
         loader = Data_Loader()
         train_full = loader.load_dataset(_cfg.TRAIN_CSV_PATH)
         logger.info(
             "Loaded %d rows, %d symbols",
             len(train_full),
-            train_full["symbol"].nunique() if "symbol" in train_full.columns else 0,
+            train_full["symbol"].nunique(
+            ) if "symbol" in train_full.columns else 0,
         )
 
         logger.info("Splitting into train (75%%) / validation (25%%) …")
@@ -283,6 +315,59 @@ class Pipeline_Orchestrator:
             len(val_df),
         )
         return train_df, val_df
+
+    @staticmethod
+    def _load_cached_split_if_fresh() -> tuple[pd.DataFrame, pd.DataFrame] | None:
+        """Load cached split files when they are newer than the source CSV."""
+        csv_path = _cfg.TRAIN_CSV_PATH
+        train_path = _cfg.TRAIN_75_PATH
+        val_path = _cfg.VALIDATION_25_PATH
+
+        if not (os.path.exists(csv_path) and os.path.exists(train_path) and os.path.exists(val_path)):
+            return None
+
+        try:
+            csv_mtime = os.path.getmtime(csv_path)
+            cache_mtime = min(os.path.getmtime(train_path),
+                              os.path.getmtime(val_path))
+        except OSError:
+            return None
+
+        if cache_mtime < csv_mtime:
+            return None
+
+        from gpu_fuzzy_trader.backtest.df_slim import downcast_numeric_df
+
+        train_df = downcast_numeric_df(pd.read_parquet(train_path))
+        val_df = downcast_numeric_df(pd.read_parquet(val_path))
+        return train_df, val_df
+
+    @staticmethod
+    def _prune_train_df_after_phase1(
+        train_df: pd.DataFrame,
+        phase1_result: dict[str, list[dict]],
+    ) -> pd.DataFrame:
+        """Drop unused feature columns from train split to reduce RAM."""
+        from gpu_fuzzy_trader.backtest.df_slim import prune_train_columns
+
+        names: list[str] = []
+        for direction in ("long", "short"):
+            for fi in phase1_result.get(direction, []):
+                n = fi.get("name")
+                if n and n not in names:
+                    names.append(n)
+        if not names:
+            return train_df
+        pruned = prune_train_columns(train_df, names)
+        logger.info(
+            "Pruned train_df columns after Phase 1: %d -> %d columns",
+            len(train_df.columns),
+            len(pruned.columns),
+        )
+        from gpu_fuzzy_trader._memory import log_memory_rss
+
+        log_memory_rss("after Phase 1 column prune")
+        return pruned
 
     # ------------------------------------------------------------------
     # Phase 1
@@ -304,6 +389,17 @@ class Pipeline_Orchestrator:
         # Try to skip
         existing = Feature_Selector.skip_if_valid()
         if existing is not None:
+            long_path = os.path.join(
+                _cfg.OUTPUTS_DIR, "selected_features_long.json")
+            short_path = os.path.join(
+                _cfg.OUTPUTS_DIR, "selected_features_short.json")
+            logger.info(
+                "Skipping %s: valid outputs at %s and %s (%d long, %d short features). "
+                "Delete those files to force Phase 1 to recompute.",
+                phase_name, long_path, short_path,
+                len(existing.get("long", [])),
+                len(existing.get("short", [])),
+            )
             elapsed = time.monotonic() - t0
             _log_phase_entry(
                 self._log_path, phase_name, start_ts, _now_iso(),
@@ -366,6 +462,13 @@ class Pipeline_Orchestrator:
             # Try to skip
             existing_pool = Rule_Pool_Generator.skip_if_valid(direction)
             if existing_pool is not None:
+                pool_path = os.path.join(
+                    _cfg.OUTPUTS_DIR, "phase2_%s_pool.json" % direction,
+                )
+                logger.info(
+                    "Skipping %s: valid pool at %s (%d rules)",
+                    dir_phase_name, pool_path, len(existing_pool),
+                )
                 dir_elapsed = time.monotonic() - dir_t0
                 _log_phase_entry(
                     self._log_path, dir_phase_name, dir_start_ts, _now_iso(),
@@ -386,7 +489,10 @@ class Pipeline_Orchestrator:
                 continue
 
             # Run Phase 2 for this direction
-            logger.info("Running %s …", dir_phase_name)
+            logger.info(
+                "Running %s … (%d features from Phase 1)",
+                dir_phase_name, len(feature_infos),
+            )
             try:
                 generator = Rule_Pool_Generator(
                     train_df=train_df,
@@ -446,6 +552,16 @@ class Pipeline_Orchestrator:
         # Try to skip (both or partial)
         existing = Rule_Set_Selector.skip_if_valid()
         if existing is not None:
+            long_path = os.path.join(_cfg.OUTPUTS_DIR, "long.json")
+            short_path = os.path.join(_cfg.OUTPUTS_DIR, "short.json")
+            logger.info(
+                "Skipping %s: valid rule sets at %s and %s (%s)",
+                phase_name, long_path, short_path,
+                ", ".join(
+                    "%s=%d rules" % (d, len(rs.get("rules_set", [])))
+                    for d, rs in existing.items()
+                ),
+            )
             elapsed = time.monotonic() - t0
             _log_phase_entry(
                 self._log_path, phase_name, start_ts, _now_iso(),
@@ -484,7 +600,10 @@ class Pipeline_Orchestrator:
                 for entry in pool
             ]
 
-            logger.info("Running %s …", dir_phase_name)
+            logger.info(
+                "Running %s … (pool_size=%d from Phase 2)",
+                dir_phase_name, len(enriched_pool),
+            )
             try:
                 selector = Rule_Set_Selector(
                     train_df=train_df,
@@ -505,7 +624,8 @@ class Pipeline_Orchestrator:
                 _log_phase_entry(
                     self._log_path, dir_phase_name, dir_start_ts, _now_iso(),
                     dir_elapsed, skipped=False,
-                    result_summary={"rules": len(rule_set.get("rules_set", []))},
+                    result_summary={"rules": len(
+                        rule_set.get("rules_set", []))},
                 )
             else:
                 _log_phase_entry(
@@ -557,11 +677,19 @@ class Pipeline_Orchestrator:
             # Try to skip
             existing = RL_Agent.skip_if_valid(direction)
             if existing is not None:
+                out_path = os.path.join(
+                    _cfg.OUTPUTS_DIR, "%s.json" % direction)
+                logger.info(
+                    "Skipping %s: valid optimized rules at %s (%d rules)",
+                    dir_phase_name, out_path,
+                    len(existing.get("rules_set", [])),
+                )
                 dir_elapsed = time.monotonic() - dir_t0
                 _log_phase_entry(
                     self._log_path, dir_phase_name, dir_start_ts, _now_iso(),
                     dir_elapsed, skipped=True,
-                    result_summary={"rules": len(existing.get("rules_set", []))},
+                    result_summary={"rules": len(
+                        existing.get("rules_set", []))},
                 )
                 optimized[direction] = existing
                 continue
@@ -575,7 +703,11 @@ class Pipeline_Orchestrator:
                 )
                 continue
 
-            logger.info("Running %s …", dir_phase_name)
+            n_rules = len(rule_set.get("rules_set", []))
+            logger.info(
+                "Running %s … (%d rules from Phase 3)",
+                dir_phase_name, n_rules,
+            )
             try:
                 agent = RL_Agent(
                     train_df=train_df,
@@ -680,7 +812,8 @@ def main() -> None:
             print("  No OOS results (check outputs/pipeline.log for details)")
         print(f"\nStructured log saved to: {_PIPELINE_LOG_PATH}")
     except Exception as exc:
-        logger.error("Pipeline failed with unhandled exception: %s", exc, exc_info=True)
+        logger.error("Pipeline failed with unhandled exception: %s",
+                     exc, exc_info=True)
         sys.exit(1)
 
 

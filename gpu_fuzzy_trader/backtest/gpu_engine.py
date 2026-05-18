@@ -176,36 +176,29 @@ def _jax_compute_trade_outcomes(
     tp_f = jnp.float32(tp)
     sl_f = jnp.float32(sl)
 
-    if is_long:
-        hit_tp = max_ret >= tp_f
-        hit_sl = min_ret <= -sl_f
-        both_hit = hit_tp & hit_sl
-        # Both hit: mbm==1 → TP first (+tp), else SL first (-sl)
-        both_result = jnp.where(max_before_min == 1, tp_f, -sl_f)
-        # Single hit
-        tp_result = tp_f
-        sl_result = -sl_f
-        time_result = close_ret
-    else:
-        # Short
-        hit_tp = min_ret <= -tp_f
-        hit_sl = max_ret >= sl_f
-        both_hit = hit_tp & hit_sl
-        # Both hit: mbm==1 → SL first (-sl), else TP first (+tp)
-        both_result = jnp.where(max_before_min == 1, -sl_f, tp_f)
-        tp_result = tp_f
-        sl_result = -sl_f
-        time_result = -close_ret
-
-    # Priority: both_hit > tp_only > sl_only > time_exit
-    result = jnp.where(
-        both_hit, both_result,
-        jnp.where(
-            hit_tp, tp_result,
-            jnp.where(hit_sl, sl_result, time_result)
-        )
+    # Long path
+    long_hit_tp = max_ret >= tp_f
+    long_hit_sl = min_ret <= -sl_f
+    long_both_hit = long_hit_tp & long_hit_sl
+    long_both_result = jnp.where(max_before_min == 1, tp_f, -sl_f)
+    long_result = jnp.where(
+        long_both_hit,
+        long_both_result,
+        jnp.where(long_hit_tp, tp_f, jnp.where(long_hit_sl, -sl_f, close_ret)),
     )
-    return result
+
+    # Short path
+    short_hit_tp = min_ret <= -tp_f
+    short_hit_sl = max_ret >= sl_f
+    short_both_hit = short_hit_tp & short_hit_sl
+    short_both_result = jnp.where(max_before_min == 1, -sl_f, tp_f)
+    short_result = jnp.where(
+        short_both_hit,
+        short_both_result,
+        jnp.where(short_hit_tp, tp_f, jnp.where(short_hit_sl, -sl_f, -close_ret)),
+    )
+
+    return jnp.where(is_long, long_result, short_result)
 
 
 # ---------------------------------------------------------------------------
@@ -404,11 +397,21 @@ class GPUBacktestEngine:
             df["label_max_before_min"].values, dtype=jnp.int32
         )
 
-        # --- Feature names (ordered, only those present in feature_modes) ---
-        self._feature_names: list[str] = [
-            col for col in df.columns
-            if col in feature_modes
+        # --- Feature names in chromosome order ---
+        # Phase 2 chromosomes are encoded in the same order as feature_modes,
+        # which is built from the Phase 1 selected-feature list.
+        self._feature_names: list[str] = list(feature_modes.keys())
+        missing_features = [
+            name for name in self._feature_names
+            if name not in df.columns
         ]
+        if missing_features:
+            preview = ", ".join(missing_features[:5])
+            suffix = "" if len(missing_features) <= 5 else ", ..."
+            raise ValueError(
+                "Feature columns missing from dataframe: "
+                f"{preview}{suffix}"
+            )
 
         # --- Build data matrix (N, K) ---
         if self._feature_names:
@@ -425,11 +428,25 @@ class GPUBacktestEngine:
             self._data_matrix_jax = jnp.zeros((len(df), 0), dtype=jnp.int32)
             self._dont_cares_jax = jnp.zeros((0,), dtype=jnp.int32)
 
-        # --- Pre-compute release indices (same logic as CPU engine) ---
-        self._cpu_engine_ref = CPUBacktestEngine(
-            df, feature_modes, direction, **constants
+        # --- Pre-compute release indices (no full CPU engine unless needed) ---
+        from gpu_fuzzy_trader.backtest.cpu_engine import precompute_release_indices
+
+        if "symbol" in df.columns:
+            sym_arr = df["symbol"].astype(str).values
+        else:
+            sym_arr = np.array(["UNKNOWN"] * len(df))
+        if "_symbol_bar_index" in df.columns:
+            bar_arr = df["_symbol_bar_index"].values.astype(int)
+        else:
+            bar_arr = np.arange(len(df))
+        self._release_indices = precompute_release_indices(
+            sym_arr,
+            bar_arr,
+            len(df),
+            self.max_hold_candles,
         )
-        self._release_indices = self._cpu_engine_ref.release_index
+        self._cpu_engine_ref: CPUBacktestEngine | None = None
+        self._cpu_engine_constants = constants
 
     # ------------------------------------------------------------------
     # Public: device info
@@ -439,6 +456,18 @@ class GPUBacktestEngine:
     def backend(self) -> str:
         """Return the JAX backend in use ('gpu', 'cpu', or 'tpu')."""
         return self._backend
+
+    @property
+    def _lazy_cpu_engine(self) -> CPUBacktestEngine:
+        """CPU engine for rule-set simulation (Phase 3+); created on first use."""
+        if self._cpu_engine_ref is None:
+            self._cpu_engine_ref = CPUBacktestEngine(
+                self.df,
+                self.feature_modes,
+                self.trade_direction,
+                **self._cpu_engine_constants,
+            )
+        return self._cpu_engine_ref
 
 
     # ------------------------------------------------------------------
@@ -645,6 +674,13 @@ class GPUBacktestEngine:
             chromosomes = chromosomes[None, :]  # (1, K)
 
         B, K = chromosomes.shape
+        expected_k = len(self._feature_names)
+        if K != expected_k:
+            raise ValueError(
+                f"Chromosome width {K} does not match engine feature count "
+                f"{expected_k}."
+            )
+
         capital_rate = capital_pct / 100.0
         max_exposure_rate = self.max_total_exposure_pct / 100.0
 
@@ -655,9 +691,8 @@ class GPUBacktestEngine:
 
             # --- Rule matching ---
             if K > 0 and self._data_matrix_jax.shape[1] > 0:
-                # Use only the first K columns of data_matrix if K < total features
-                dm = self._data_matrix_jax[:, :K]
-                dc = self._dont_cares_jax[:K]
+                dm = self._data_matrix_jax
+                dc = self._dont_cares_jax
                 signal_mask = _jax_compute_rule_signals(dm, chrom_jax, dc)
                 signal_mask_np = np.asarray(signal_mask, dtype=bool)
             else:
@@ -822,14 +857,14 @@ class GPUBacktestEngine:
             return []
 
         if len(rule_sets) == 1:
-            return [self._cpu_engine_ref.simulate_rule_set(rule_sets[0])]
+            return [self._lazy_cpu_engine.simulate_rule_set(rule_sets[0])]
 
         workers = max_workers
         if workers is None:
             workers = min(32, len(rule_sets))
 
         def _eval_one(rs: list[dict]) -> dict:
-            return self._cpu_engine_ref.simulate_rule_set(rs)
+            return self._lazy_cpu_engine.simulate_rule_set(rs)
 
         with ThreadPoolExecutor(max_workers=workers) as pool:
             return list(pool.map(_eval_one, rule_sets))
@@ -862,4 +897,4 @@ class GPUBacktestEngine:
         dict or tuple[dict, pd.DataFrame]
             Same as CPUBacktestEngine.simulate_rule_set.
         """
-        return self._cpu_engine_ref.simulate_rule_set(rule_set, return_logs=return_logs)
+        return self._lazy_cpu_engine.simulate_rule_set(rule_set, return_logs=return_logs)

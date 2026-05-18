@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import time
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -60,8 +61,10 @@ def _make_rule_set(direction: str = "long") -> dict:
     return {
         "direction": direction,
         "rules_set": [
-            {"conditions": ["[feat_0] IS Very High"], "tp": 4.0, "sl": 2.0, "capital_pct": 50.0},
-            {"conditions": ["[feat_1] IS Low"], "tp": 4.0, "sl": 2.0, "capital_pct": 50.0},
+            {"conditions": ["[feat_0] IS Very High"],
+                "tp": 4.0, "sl": 2.0, "capital_pct": 50.0},
+            {"conditions": ["[feat_1] IS Low"], "tp": 4.0,
+                "sl": 2.0, "capital_pct": 50.0},
         ],
     }
 
@@ -162,14 +165,16 @@ class TestLogPhaseEntry:
 class TestCreateOutputDirs:
     def test_creates_outputs_dir(self, tmp_path, monkeypatch):
         monkeypatch.setattr(_cfg, "OUTPUTS_DIR", str(tmp_path / "outputs"))
-        monkeypatch.setattr(_cfg, "REPORTS_DIR", str(tmp_path / "outputs" / "reports"))
+        monkeypatch.setattr(_cfg, "REPORTS_DIR", str(
+            tmp_path / "outputs" / "reports"))
         orch = Pipeline_Orchestrator()
         orch._create_output_dirs()
         assert os.path.isdir(str(tmp_path / "outputs"))
 
     def test_creates_reports_dir(self, tmp_path, monkeypatch):
         monkeypatch.setattr(_cfg, "OUTPUTS_DIR", str(tmp_path / "outputs"))
-        monkeypatch.setattr(_cfg, "REPORTS_DIR", str(tmp_path / "outputs" / "reports"))
+        monkeypatch.setattr(_cfg, "REPORTS_DIR", str(
+            tmp_path / "outputs" / "reports"))
         orch = Pipeline_Orchestrator()
         orch._create_output_dirs()
         assert os.path.isdir(str(tmp_path / "outputs" / "reports"))
@@ -295,10 +300,14 @@ class TestPipelineOrchestratorRun:
         orch._create_output_dirs = MagicMock()
         orch._load_and_split_data = MagicMock(return_value=(train_df, val_df))
         orch._run_phase1 = MagicMock(return_value={"long": [], "short": []})
-        orch._run_phase2 = MagicMock(return_value={"long": _make_pool(3), "short": _make_pool(3)})
-        orch._run_phase3 = MagicMock(return_value={"long": _make_rule_set("long")})
-        orch._run_phase4 = MagicMock(return_value={"long": _make_rule_set("long")})
-        orch._run_phase5 = MagicMock(return_value={"long": {"total_return_pct": 1.0}})
+        orch._run_phase2 = MagicMock(
+            return_value={"long": _make_pool(3), "short": _make_pool(3)})
+        orch._run_phase3 = MagicMock(
+            return_value={"long": _make_rule_set("long")})
+        orch._run_phase4 = MagicMock(
+            return_value={"long": _make_rule_set("long")})
+        orch._run_phase5 = MagicMock(
+            return_value={"long": {"total_return_pct": 1.0}})
         result = orch.run()
         for key in ("data", "phase1", "phase2", "phase3", "phase4", "phase5"):
             assert key in result, f"Missing key: {key}"
@@ -318,6 +327,86 @@ class TestPipelineOrchestratorRun:
         assert result["data"]["train_rows"] == 200
         assert result["data"]["val_rows"] == 100
 
+
+class TestLoadAndSplitDataCache:
+    def _make_orch(self, tmp_path) -> Pipeline_Orchestrator:
+        orch = Pipeline_Orchestrator()
+        orch._log_path = str(tmp_path / "pipeline.log")
+        return orch
+
+    def test_uses_cached_split_when_fresh(self, tmp_path, monkeypatch):
+        train_df = _make_df(n_rows=120)
+        val_df = _make_df(n_rows=40)
+
+        csv_path = tmp_path / "train.csv"
+        train_path = tmp_path / "train_75.parquet"
+        val_path = tmp_path / "validation_25.parquet"
+
+        _make_df(n_rows=120).to_csv(csv_path, index=False)
+        train_df.to_parquet(train_path, index=False)
+        val_df.to_parquet(val_path, index=False)
+
+        now = time.time()
+        os.utime(csv_path, (now - 100, now - 100))
+        os.utime(train_path, (now, now))
+        os.utime(val_path, (now, now))
+
+        monkeypatch.setattr(_cfg, "TRAIN_CSV_PATH", str(csv_path))
+        monkeypatch.setattr(_cfg, "TRAIN_75_PATH", str(train_path))
+        monkeypatch.setattr(_cfg, "VALIDATION_25_PATH", str(val_path))
+
+        with patch("gpu_fuzzy_trader.run_pipeline.Data_Loader.load_dataset") as load_mock, \
+                patch("gpu_fuzzy_trader.run_pipeline.Data_Splitter.split_and_persist") as split_mock:
+            load_mock.side_effect = AssertionError(
+                "load_dataset should not be called when cache is fresh")
+            split_mock.side_effect = AssertionError(
+                "split_and_persist should not be called when cache is fresh")
+
+            orch = Pipeline_Orchestrator()
+            train_out, val_out = orch._load_and_split_data()
+
+        from gpu_fuzzy_trader.backtest.df_slim import downcast_numeric_df
+
+        expected_train = downcast_numeric_df(train_df)
+        expected_val = downcast_numeric_df(val_df)
+        pd.testing.assert_frame_equal(
+            train_out.reset_index(drop=True),
+            expected_train.reset_index(drop=True),
+            check_dtype=False,
+        )
+        pd.testing.assert_frame_equal(
+            val_out.reset_index(drop=True),
+            expected_val.reset_index(drop=True),
+            check_dtype=False,
+        )
+
+    def test_rebuilds_split_when_cache_missing(self, tmp_path, monkeypatch):
+        train_df = _make_df(n_rows=120)
+        val_df = _make_df(n_rows=40)
+
+        csv_path = tmp_path / "train.csv"
+        csv_path.write_text(_make_df(n_rows=120).to_csv(
+            index=False), encoding="utf-8")
+
+        train_path = tmp_path / "train_75.parquet"
+        val_path = tmp_path / "validation_25.parquet"
+
+        monkeypatch.setattr(_cfg, "TRAIN_CSV_PATH", str(csv_path))
+        monkeypatch.setattr(_cfg, "TRAIN_75_PATH", str(train_path))
+        monkeypatch.setattr(_cfg, "VALIDATION_25_PATH", str(val_path))
+
+        with patch("gpu_fuzzy_trader.run_pipeline.Data_Loader.load_dataset", return_value=train_df) as load_mock, \
+                patch("gpu_fuzzy_trader.run_pipeline.Data_Splitter.split_and_persist", return_value=(train_df, val_df)) as split_mock:
+            orch = Pipeline_Orchestrator()
+            train_out, val_out = orch._load_and_split_data()
+
+        load_mock.assert_called_once_with(str(csv_path))
+        split_mock.assert_called_once_with(train_df)
+        pd.testing.assert_frame_equal(train_out.reset_index(
+            drop=True), train_df.reset_index(drop=True))
+        pd.testing.assert_frame_equal(val_out.reset_index(
+            drop=True), val_df.reset_index(drop=True))
+
     def test_phase5_always_runs_even_with_empty_pool(self, tmp_path):
         """Phase 5 must run even when Phase 2 produces no rules."""
         train_df = _make_df()
@@ -327,7 +416,8 @@ class TestPipelineOrchestratorRun:
         orch._load_and_split_data = MagicMock(return_value=(train_df, val_df))
         orch._run_phase1 = MagicMock(return_value={"long": [], "short": []})
         orch._run_phase2 = MagicMock(return_value={"long": [], "short": []})
-        phase5_mock = MagicMock(return_value={"long": {"total_return_pct": 0.0}})
+        phase5_mock = MagicMock(
+            return_value={"long": {"total_return_pct": 0.0}})
         orch._run_phase5 = phase5_mock
         orch.run()
         phase5_mock.assert_called_once()
@@ -362,7 +452,8 @@ class TestPipelineOrchestratorRun:
         orch._create_output_dirs = MagicMock()
         orch._load_and_split_data = MagicMock(return_value=(train_df, val_df))
         orch._run_phase1 = MagicMock(return_value={"long": [], "short": []})
-        orch._run_phase2 = MagicMock(return_value={"long": _make_pool(3), "short": []})
+        orch._run_phase2 = MagicMock(
+            return_value={"long": _make_pool(3), "short": []})
         phase3_mock = MagicMock(return_value={"long": _make_rule_set("long")})
         phase4_mock = MagicMock(return_value={"long": _make_rule_set("long")})
         orch._run_phase3 = phase3_mock
@@ -403,8 +494,8 @@ class TestPhase1SkipLogic:
         train_df = _make_df()
         with patch("gpu_fuzzy_trader.run_pipeline.Feature_Selector.skip_if_valid",
                    return_value=None), \
-             patch("gpu_fuzzy_trader.run_pipeline.Feature_Selector.run",
-                   return_value=expected):
+            patch("gpu_fuzzy_trader.run_pipeline.Feature_Selector.run",
+                  return_value=expected):
             result = orch._run_phase1(train_df)
         assert result == expected
 
@@ -428,8 +519,8 @@ class TestPhase1SkipLogic:
         train_df = _make_df()
         with patch("gpu_fuzzy_trader.run_pipeline.Feature_Selector.skip_if_valid",
                    return_value=None), \
-             patch("gpu_fuzzy_trader.run_pipeline.Feature_Selector.run",
-                   return_value={"long": [], "short": []}):
+            patch("gpu_fuzzy_trader.run_pipeline.Feature_Selector.run",
+                  return_value={"long": [], "short": []}):
             orch._run_phase1(train_df)
         with open(orch._log_path) as fh:
             entries = [json.loads(l) for l in fh if l.strip()]
@@ -610,7 +701,8 @@ class TestPipelineLogFile:
         log_path = str(tmp_path / "pipeline.log")
         orch._log_path = log_path
         orch._create_output_dirs = MagicMock()
-        orch._load_and_split_data = MagicMock(return_value=(_make_df(), _make_df()))
+        orch._load_and_split_data = MagicMock(
+            return_value=(_make_df(), _make_df()))
         orch._run_phase1 = MagicMock(return_value={"long": [], "short": []})
         orch._run_phase2 = MagicMock(return_value={"long": [], "short": []})
         orch._run_phase5 = MagicMock(return_value={})

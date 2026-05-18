@@ -109,7 +109,9 @@ def dataset_with_label_and_meta_columns(draw: st.DrawFn) -> pd.DataFrame:
 
         dfs.append(pd.DataFrame(data))
 
-    return pd.concat(dfs, ignore_index=True)
+    out = pd.concat(dfs, ignore_index=True)
+    out["_symbol_bar_index"] = out.groupby("symbol").cumcount()
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -154,6 +156,11 @@ def test_property_17_label_and_meta_column_exclusion_long(
             f"Selected: {sorted(selected_names)}"
         )
 
+    assert "_symbol_bar_index" not in selected_names, (
+        f"Internal column '_symbol_bar_index' must not be selected (direction='long'). "
+        f"Selected: {sorted(selected_names)}"
+    )
+
 
 @given(train_df=dataset_with_label_and_meta_columns())
 @settings(
@@ -187,6 +194,11 @@ def test_property_17_label_and_meta_column_exclusion_short(
             f"Meta column '{col}' appeared in selected features for direction='short'. "
             f"Selected: {sorted(selected_names)}"
         )
+
+    assert "_symbol_bar_index" not in selected_names, (
+        f"Internal column '_symbol_bar_index' must not be selected (direction='short'). "
+        f"Selected: {sorted(selected_names)}"
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -21,7 +21,12 @@ import pytest
 from hypothesis import given, settings, HealthCheck
 from hypothesis import strategies as st
 
-from gpu_fuzzy_trader.config import LABEL_COLUMNS, META_COLUMNS, TAIL_DROP_ROWS
+from gpu_fuzzy_trader.config import (
+    INTERNAL_COLUMNS,
+    LABEL_COLUMNS,
+    META_COLUMNS,
+    TAIL_DROP_ROWS,
+)
 from gpu_fuzzy_trader.data.loader import Data_Loader
 
 
@@ -528,7 +533,8 @@ def test_property_4_no_nan_features_after_loading(raw_df: pd.DataFrame) -> None:
     )
 
     # Identify feature columns: everything that is not a label or meta column
-    non_feature = set(LABEL_COLUMNS) | set(META_COLUMNS) | {"_symbol_bar_index"}
+    non_feature = set(LABEL_COLUMNS) | set(
+        META_COLUMNS) | set(INTERNAL_COLUMNS)
     feature_cols_present = [c for c in loaded_df.columns if c not in non_feature]
 
     assert feature_cols_present, (

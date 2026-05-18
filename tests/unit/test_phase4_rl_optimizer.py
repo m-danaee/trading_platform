@@ -255,10 +255,25 @@ class TestParamsWithinBounds:
     def test_missing_rules_set_returns_false(self):
         assert _params_within_bounds({}) is False
 
+    def test_malformed_rules_set_returns_false(self):
+        assert _params_within_bounds({"rules_set": None}) is False
+        assert _params_within_bounds({"rules_set": {}}) is False
+        assert _params_within_bounds({"rules_set": [None]}) is False
+
+    def test_non_numeric_values_return_false(self):
+        rs = {
+            "rules_set": [
+                {"tp": "bad", "sl": 1.0, "capital_pct": 50.0,
+                 "conditions": ["[feat_0] IS Very High"]},
+            ]
+        }
+        assert _params_within_bounds(rs) is False
+
     def test_midpoint_values_valid(self):
         tp_mid = (_cfg.PHASE4_TP_MIN + _cfg.PHASE4_TP_MAX) / 2.0
         sl_mid = (_cfg.PHASE4_SL_MIN + _cfg.PHASE4_SL_MAX) / 2.0
-        cap_mid = (_cfg.PHASE4_CAPITAL_PCT_MIN + _cfg.PHASE4_CAPITAL_PCT_MAX) / 2.0
+        cap_mid = (_cfg.PHASE4_CAPITAL_PCT_MIN +
+                   _cfg.PHASE4_CAPITAL_PCT_MAX) / 2.0
         rs = {
             "rules_set": [
                 {"tp": tp_mid, "sl": sl_mid, "capital_pct": cap_mid,
@@ -435,7 +450,8 @@ class TestRLAgentInit:
     def test_valid_construction_long(self):
         df = _make_df()
         rs = _make_rule_set(direction="long")
-        agent = RL_Agent(df, df, rs, "long", total_timesteps=10, elbow_window=5)
+        agent = RL_Agent(df, df, rs, "long",
+                         total_timesteps=10, elbow_window=5)
         assert agent.direction == "long"
         assert agent.total_timesteps == 10
         assert agent.elbow_window == 5
@@ -443,7 +459,8 @@ class TestRLAgentInit:
     def test_valid_construction_short(self):
         df = _make_df()
         rs = _make_rule_set(direction="short")
-        agent = RL_Agent(df, df, rs, "short", total_timesteps=10, elbow_window=5)
+        agent = RL_Agent(df, df, rs, "short",
+                         total_timesteps=10, elbow_window=5)
         assert agent.direction == "short"
 
     def test_default_timesteps_from_config(self):
@@ -552,7 +569,8 @@ class TestRLAgentSkipIfValid:
     def test_returns_none_when_capital_pct_out_of_bounds(self, tmp_path):
         import gpu_fuzzy_trader.phases.phase4_rl_optimizer as m
         path = str(tmp_path / "long.json")
-        self._write_rule_set(path, "long", cap=_cfg.PHASE4_CAPITAL_PCT_MAX + 1.0)
+        self._write_rule_set(
+            path, "long", cap=_cfg.PHASE4_CAPITAL_PCT_MAX + 1.0)
         original = m._OUTPUT_PATHS.copy()
         m._OUTPUT_PATHS["long"] = path
         try:
@@ -712,7 +730,8 @@ class TestRLAgentTrain:
         original = m._OUTPUT_PATHS.copy()
         m._OUTPUT_PATHS["long"] = str(tmp_path / "long.json")
         try:
-            agent = self._make_agent("long", total_timesteps=40, elbow_window=10)
+            agent = self._make_agent(
+                "long", total_timesteps=40, elbow_window=10)
             agent.train()
             assert len(agent.validation_returns) > 0
         finally:
@@ -723,7 +742,8 @@ class TestRLAgentTrain:
         original = m._OUTPUT_PATHS.copy()
         m._OUTPUT_PATHS["long"] = str(tmp_path / "long.json")
         try:
-            agent = self._make_agent("long", total_timesteps=40, elbow_window=10)
+            agent = self._make_agent(
+                "long", total_timesteps=40, elbow_window=10)
             agent.train()
             assert 0 <= agent.elbow_idx < len(agent.validation_returns)
         finally:
@@ -763,4 +783,3 @@ class TestRLAgentTrain:
             assert len(result["rules_set"]) == 3
         finally:
             m._OUTPUT_PATHS.update(original)
-

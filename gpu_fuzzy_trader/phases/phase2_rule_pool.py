@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from typing import Optional
 
 import numpy as np
@@ -37,6 +38,7 @@ import pandas as pd
 
 from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.features.encoder import decode_chromosome, get_dont_care
+from gpu_fuzzy_trader.log_progress import maybe_log_generation
 from gpu_fuzzy_trader.reporting.reporter import Reporter
 
 logger = logging.getLogger(__name__)
@@ -380,6 +382,7 @@ def _run_nsga2(
     pop_size: int,
     n_generations: int,
     rng: np.random.Generator,
+    log_tag: str | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """
     Run a simple NSGA-II evolutionary search.
@@ -407,14 +410,17 @@ def _run_nsga2(
     # Initialise population
     population = _init_population(pop_size, feature_infos, rng)
     objectives = np.full((pop_size, 3), np.inf)
-    metrics_cache: list[dict] = [{}] * pop_size
+    metrics_cache: list[dict] = [{} for _ in range(pop_size)]
 
     # Pareto front archive (chromosomes only, for diversity penalty)
     pareto_archive: list[np.ndarray] = []
 
     history: list[dict] = []
 
-    logger.info("NSGA-II: %d features, pop=%d, gen=%d", K, pop_size, n_generations)
+    tag = log_tag or "NSGA-II"
+    logger.info("%s: %d features, pop=%d, gen=%d",
+                tag, K, pop_size, n_generations)
+    gen_loop_start = time.monotonic()
 
     for gen in range(n_generations):
         # Evaluate unevaluated individuals (first gen: all; later: offspring)
@@ -441,11 +447,11 @@ def _run_nsga2(
             "mean_f3": float(np.mean(pareto_obj[:, 2])),
         })
 
-        if gen % 10 == 0:
-            logger.debug(
-                "Gen %d: pareto_size=%d, mean_return=%.2f%%",
-                gen, len(pareto_indices), -float(np.mean(pareto_obj[:, 0]))
-            )
+        mean_f1 = float(np.mean(pareto_obj[:, 0])) if len(pareto_obj) else 0.0
+        maybe_log_generation(
+            logger, tag, gen, n_generations, len(pareto_indices), mean_f1,
+            loop_start=gen_loop_start,
+        )
 
         if gen == n_generations - 1:
             break  # No need to generate offspring on last generation
@@ -492,11 +498,29 @@ def _run_nsga2(
         population = new_population
         objectives = new_objectives
 
-    # Build Pareto pool from final archive
+    metrics_by_chrom = _metrics_dict_from_population(
+        population, metrics_cache
+    )
     pareto_pool = _build_pool_from_archive(
-        pareto_archive, feature_infos, dont_cares, engine
+        pareto_archive,
+        feature_infos,
+        dont_cares,
+        engine,
+        metrics_by_chrom=metrics_by_chrom,
     )
     return pareto_pool, history
+
+
+def _metrics_dict_from_population(
+    population: np.ndarray,
+    metrics_cache: list[dict],
+) -> dict[tuple, dict]:
+    """Map chromosome tuples to cached fitness metrics."""
+    out: dict[tuple, dict] = {}
+    for i, met in enumerate(metrics_cache):
+        if met:
+            out[tuple(population[i].tolist())] = met
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -508,6 +532,7 @@ def _build_pool_from_archive(
     feature_infos: list[dict],
     dont_cares: np.ndarray,
     engine,
+    metrics_by_chrom: dict[tuple, dict] | None = None,
 ) -> list[dict]:
     """
     Convert a list of Pareto-front chromosomes into pool JSON entries.
@@ -533,17 +558,20 @@ def _build_pool_from_archive(
         if active < _cfg.MIN_CONDITIONS or active > _cfg.MAX_CONDITIONS:
             continue
 
-        # Re-evaluate to get clean metrics (no penalties)
-        try:
-            metrics_list = engine.simulate_rule_batch(
-                chromosomes=chrom[None, :],
-                tp=_cfg.PHASE2_TP,
-                sl=_cfg.PHASE2_SL,
-                capital_pct=_cfg.PHASE2_CAPITAL_PCT,
-            )
-            metrics = metrics_list[0]
-        except Exception:
-            continue
+        metrics = None
+        if metrics_by_chrom is not None:
+            metrics = metrics_by_chrom.get(key)
+        if metrics is None:
+            try:
+                metrics_list = engine.simulate_rule_batch(
+                    chromosomes=chrom[None, :],
+                    tp=_cfg.PHASE2_TP,
+                    sl=_cfg.PHASE2_SL,
+                    capital_pct=_cfg.PHASE2_CAPITAL_PCT,
+                )
+                metrics = metrics_list[0]
+            except Exception:
+                continue
 
         executed = int(metrics.get("executed_trades", 0))
         if executed < _cfg.MIN_TRADE_SUPPORT:
@@ -671,14 +699,21 @@ class Rule_Pool_Generator:
         self.n_generations = n_generations if n_generations is not None else _cfg.PHASE2_GENERATIONS
         self.seed = seed
 
-        # Sample training data to budget
-        self._train_df = _sample_df(train_df, _cfg.PHASE1_SAMPLING_TOTAL)
+        # Sample training data to budget, then slim to backtest-only columns
+        sampled = _sample_df(train_df, _cfg.PHASE1_SAMPLING_TOTAL)
+        feature_names = [fi["name"] for fi in feature_infos]
+        from gpu_fuzzy_trader.backtest.df_slim import slim_backtest_df
+
+        self._train_df = slim_backtest_df(sampled, feature_names)
 
         # Build feature_modes dict for engine
         self._feature_modes = {fi["name"]: fi["mode"] for fi in feature_infos}
 
         # Initialise backtest engine (GPU preferred, CPU fallback)
         self._engine = self._build_engine()
+        from gpu_fuzzy_trader._memory import log_memory_rss
+
+        log_memory_rss(f"Phase2 [{direction}] engine init")
 
     # ------------------------------------------------------------------
     # Engine construction
@@ -737,6 +772,7 @@ class Rule_Pool_Generator:
         logger.info("Phase 2 [%s]: algorithm=%s (config=%s)",
                     self.direction, runner, _cfg.PHASE2_ALGORITHM)
 
+        progress_tag = "Phase 2 [%s] %s" % (self.direction, runner.upper())
         pool, history = run_phase2_evolution(
             feature_infos=self.feature_infos,
             engine=self._engine,
@@ -744,6 +780,7 @@ class Rule_Pool_Generator:
             n_generations=self.n_generations,
             rng=rng,
             algorithm=_cfg.PHASE2_ALGORITHM,
+            log_tag=progress_tag,
         )
 
         # Persist
@@ -767,7 +804,17 @@ class Rule_Pool_Generator:
         except Exception as exc:
             logger.warning("Reporter.plot_phase2_metrics failed (non-fatal): %s", exc)
 
+        self._release_resources()
         return pool
+
+    def _release_resources(self) -> None:
+        """Drop engine and sampled data to free RAM before the next direction."""
+        self._engine = None
+        self._train_df = None
+        from gpu_fuzzy_trader._memory import log_memory_rss, release_phase2_resources
+
+        log_memory_rss(f"Phase2 [{self.direction}] after release")
+        release_phase2_resources()
 
     @staticmethod
     def load_pool(direction: str) -> Optional[list[dict]]:

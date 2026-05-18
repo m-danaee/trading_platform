@@ -340,6 +340,38 @@ class TestGPUBacktestEngineInit:
         # 2 features: feat_signed, feat_binary
         assert eng._data_matrix_jax.shape == (15, 2)
 
+    def test_feature_order_follows_feature_modes(self):
+        """Chromosome positions must follow feature_modes insertion order."""
+        df = _make_df(n=10, feature_val=0.9)
+        df = df[
+            [
+                "symbol", "datetime", "_symbol_bar_index",
+                "label_open_next", "label_max_288", "label_min_288",
+                "label_close_288", "label_max_before_min",
+                "feat_binary", "feat_signed",
+            ]
+        ]
+        feature_modes = {
+            "feat_signed": "signed",
+            "feat_binary": "binary",
+        }
+        eng = GPUBacktestEngine(df, feature_modes, "long")
+
+        assert eng._feature_names == ["feat_signed", "feat_binary"]
+
+        # If dataframe order were used, [9, 1] would be evaluated as
+        # feat_binary=9 and feat_signed=1, producing no matches.
+        chrom = np.array([[9, 1]], dtype=np.int32)
+        result = eng.simulate_rule_batch(chrom, tp=4.0, sl=2.0, capital_pct=50.0)[0]
+        assert result["raw_signal_count"] == len(df)
+        assert result["executed_trades"] > 0
+
+    def test_missing_feature_raises_clear_error(self):
+        df = _make_df(n=10)
+        feature_modes = {"feat_missing": "binary"}
+        with pytest.raises(ValueError, match="Feature columns missing"):
+            GPUBacktestEngine(df, feature_modes, "long")
+
     def test_dont_cares_shape(self):
         df = _make_df(n=10)
         eng = _make_engine(df)
@@ -439,6 +471,13 @@ class TestSimulateRuleBatch:
         chrom = np.array([10, 2], dtype=np.int32)  # 1D
         results = eng.simulate_rule_batch(chrom, tp=4.0, sl=2.0, capital_pct=50.0)
         assert len(results) == 1
+
+    def test_chromosome_width_mismatch_raises(self):
+        df = _make_df(n=10)
+        eng = _make_engine(df)
+        chrom = np.array([[10]], dtype=np.int32)
+        with pytest.raises(ValueError, match="Chromosome width"):
+            eng.simulate_rule_batch(chrom, tp=4.0, sl=2.0, capital_pct=50.0)
 
     def test_max_drawdown_non_negative(self):
         df = _make_df(n=20)

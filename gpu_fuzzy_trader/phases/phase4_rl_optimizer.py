@@ -38,6 +38,7 @@ import pandas as pd
 
 from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
+from gpu_fuzzy_trader.log_progress import iteration_log_interval, should_log_step
 from gpu_fuzzy_trader.reporting.reporter import Reporter
 
 logger = logging.getLogger(__name__)
@@ -212,7 +213,11 @@ class TradingEnv:
         self.n_rules = len(self.rules)
 
         # Detect feature columns (exclude label/meta/internal columns)
-        _exclude = set(_cfg.LABEL_COLUMNS) | set(_cfg.META_COLUMNS) | {"_symbol_bar_index"}
+        _exclude = (
+            set(_cfg.LABEL_COLUMNS)
+            | set(_cfg.META_COLUMNS)
+            | set(_cfg.INTERNAL_COLUMNS)
+        )
         if feature_cols is not None:
             self.feature_cols = [c for c in feature_cols if c in df.columns]
         else:
@@ -262,6 +267,10 @@ class TradingEnv:
         self._peak_equity = _cfg.INITIAL_CAPITAL
         self._current_tp_sl_cap = self._default_action()
 
+        from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
+
+        self._backtest_engine = CPUBacktestEngine(self.df, {}, self.direction)
+
     def _default_action(self) -> np.ndarray:
         """Return midpoint action values as default."""
         action = []
@@ -278,8 +287,10 @@ class TradingEnv:
         for i in range(self.n_rules):
             base = i * 3
             clipped[base] = np.clip(clipped[base], self._tp_min, self._tp_max)
-            clipped[base + 1] = np.clip(clipped[base + 1], self._sl_min, self._sl_max)
-            clipped[base + 2] = np.clip(clipped[base + 2], self._cap_min, self._cap_max)
+            clipped[base + 1] = np.clip(clipped[base + 1],
+                                        self._sl_min, self._sl_max)
+            clipped[base + 2] = np.clip(clipped[base + 2],
+                                        self._cap_min, self._cap_max)
         return clipped
 
     def _compute_rule_activations(self, row: pd.Series) -> np.ndarray:
@@ -381,12 +392,16 @@ class TradingEnv:
                 return obs, 0.0, terminated, False, {}
             return obs, 0.0, terminated, {}
 
-        window_df = self.df.iloc[self._current_idx: self._current_idx + window_size].copy()
+        row_end = self._current_idx + window_size
         try:
-            engine = CPUBacktestEngine(window_df, {}, self.direction,
-                                       initial_capital=self._equity)
-            metrics = engine.simulate_rule_set(current_rule_set)
-            net_pnl = metrics.get("total_return_pct", 0.0) * self._equity / 100.0
+            metrics = self._backtest_engine.simulate_rule_set_slice(
+                current_rule_set,
+                self._current_idx,
+                row_end,
+                initial_capital=self._equity,
+            )
+            net_pnl = metrics.get("total_return_pct",
+                                  0.0) * self._equity / 100.0
             drawdown = metrics.get("max_drawdown_pct", 0.0)
         except Exception:
             net_pnl = 0.0
@@ -395,7 +410,8 @@ class TradingEnv:
         # Update equity
         self._equity = max(self._equity + net_pnl, 0.01)
         self._peak_equity = max(self._peak_equity, self._equity)
-        current_dd = (self._peak_equity - self._equity) / self._peak_equity * 100.0
+        current_dd = (self._peak_equity - self._equity) / \
+            self._peak_equity * 100.0
 
         # Reward
         net_pnl_norm = net_pnl / _cfg.INITIAL_CAPITAL * 100.0
@@ -500,6 +516,9 @@ def _random_search_optimize(
 
     window_best_return = -np.inf
     window_best_params = current_params
+    sample_log_iv = iteration_log_interval(n_samples, target_logs=20)
+    n_checkpoints = max(1, n_samples // elbow_window)
+    ckpt_log_iv = iteration_log_interval(n_checkpoints, target_logs=20)
 
     for sample_idx in range(n_samples):
         # Sample random TP/SL/capital_pct for each rule
@@ -507,7 +526,8 @@ def _random_search_optimize(
         for _ in range(n_rules):
             tp = rng.uniform(_cfg.PHASE4_TP_MIN, _cfg.PHASE4_TP_MAX)
             sl = rng.uniform(_cfg.PHASE4_SL_MIN, _cfg.PHASE4_SL_MAX)
-            cap = rng.uniform(_cfg.PHASE4_CAPITAL_PCT_MIN, _cfg.PHASE4_CAPITAL_PCT_MAX)
+            cap = rng.uniform(_cfg.PHASE4_CAPITAL_PCT_MIN,
+                              _cfg.PHASE4_CAPITAL_PCT_MAX)
             candidate_params.append({"tp": tp, "sl": sl, "capital_pct": cap})
 
         # Build rule set for evaluation
@@ -536,24 +556,32 @@ def _random_search_optimize(
             best_val_return = val_return
             best_params = candidate_rule_set
 
+        if should_log_step(sample_idx, n_samples, sample_log_iv):
+            logger.info(
+                "Random search [%s]: sample %d/%d, best_val=%.2f%%",
+                direction, sample_idx + 1, n_samples, best_val_return,
+            )
+
         # Record checkpoint every elbow_window samples
         if (sample_idx + 1) % elbow_window == 0:
             validation_returns.append(window_best_return)
             checkpoint_params.append(window_best_params)
-            logger.debug(
-                "Random search checkpoint %d/%d: best_val_return=%.2f%%",
-                len(validation_returns),
-                n_samples // elbow_window,
-                window_best_return,
-            )
+            ckpt_idx = len(validation_returns) - 1
+            if should_log_step(ckpt_idx, n_checkpoints, ckpt_log_iv):
+                logger.info(
+                    "Random search [%s]: checkpoint %d/%d, window_best=%.2f%%",
+                    direction, ckpt_idx + 1, n_checkpoints, window_best_return,
+                )
             # Reset window tracker
             window_best_return = -np.inf
             window_best_params = current_params
 
     # Final checkpoint if not already recorded
     if len(validation_returns) == 0 or (n_samples % elbow_window != 0):
-        validation_returns.append(window_best_return if window_best_return > -np.inf else best_val_return)
-        checkpoint_params.append(window_best_params if window_best_return > -np.inf else best_params)
+        validation_returns.append(
+            window_best_return if window_best_return > -np.inf else best_val_return)
+        checkpoint_params.append(
+            window_best_params if window_best_return > -np.inf else best_params)
 
     # Apply Elbow Method to identify optimal checkpoint
     elbow_idx = find_elbow_point(validation_returns)
@@ -605,9 +633,11 @@ def _sb3_train_optimize(
     """
     try:
         from stable_baselines3 import DDPG, PPO  # type: ignore[import]
-        from stable_baselines3.common.env_checker import check_env  # type: ignore[import]
+        # type: ignore[import]
+        from stable_baselines3.common.env_checker import check_env
     except ImportError:
-        logger.warning("stable-baselines3 not available; falling back to random search.")
+        logger.warning(
+            "stable-baselines3 not available; falling back to random search.")
         rng = random.Random(42)
         return _random_search_optimize(
             train_df, val_df, rule_set, direction,
@@ -632,7 +662,8 @@ def _sb3_train_optimize(
     try:
         model = AlgoClass("MlpPolicy", train_env, verbose=0)
     except Exception as exc:
-        logger.warning("SB3 model init failed (%s); falling back to random search.", exc)
+        logger.warning(
+            "SB3 model init failed (%s); falling back to random search.", exc)
         rng = random.Random(42)
         return _random_search_optimize(
             train_df, val_df, rule_set, direction,
@@ -643,12 +674,17 @@ def _sb3_train_optimize(
 
     validation_returns: list[float] = []
     checkpoint_params: list[list[dict]] = []
-    steps_per_window = max(1, total_timesteps // max(1, total_timesteps // elbow_window))
+    steps_per_window = max(1, total_timesteps //
+                           max(1, total_timesteps // elbow_window))
 
     n_windows = total_timesteps // steps_per_window
+    window_log_iv = iteration_log_interval(n_windows, target_logs=20)
+    best_val_return = -np.inf
+
     for window_i in range(n_windows):
         try:
-            model.learn(total_timesteps=steps_per_window, reset_num_timesteps=(window_i == 0))
+            model.learn(total_timesteps=steps_per_window,
+                        reset_num_timesteps=(window_i == 0))
         except Exception as exc:
             logger.warning("SB3 learn step %d failed: %s", window_i, exc)
             break
@@ -661,7 +697,8 @@ def _sb3_train_optimize(
         # Extract current action from model
         try:
             action, _ = model.predict(obs, deterministic=True)
-            clipped = train_env._clip_action(np.asarray(action, dtype=np.float32))
+            clipped = train_env._clip_action(
+                np.asarray(action, dtype=np.float32))
         except Exception:
             clipped = train_env._default_action()
 
@@ -682,13 +719,19 @@ def _sb3_train_optimize(
         except Exception:
             val_return = 0.0
 
+        if val_return > best_val_return:
+            best_val_return = val_return
+
         validation_returns.append(val_return)
         checkpoint_params.append(candidate_rule_set)
 
-        logger.debug(
-            "SB3 [%s] window %d/%d: val_return=%.2f%%",
-            direction, window_i + 1, n_windows, val_return,
-        )
+        if should_log_step(window_i, n_windows, window_log_iv):
+            cum_steps = (window_i + 1) * steps_per_window
+            logger.info(
+                "SB3 [%s]: window %d/%d (%d timesteps), val_return=%.2f%%, best=%.2f%%",
+                direction, window_i + 1, n_windows, cum_steps,
+                val_return, best_val_return,
+            )
 
     if not validation_returns:
         rng = random.Random(42)
@@ -700,7 +743,8 @@ def _sb3_train_optimize(
         )
 
     elbow_idx = find_elbow_point(validation_returns)
-    elbow_params = checkpoint_params[elbow_idx] if elbow_idx < len(checkpoint_params) else checkpoint_params[-1]
+    elbow_params = checkpoint_params[elbow_idx] if elbow_idx < len(
+        checkpoint_params) else checkpoint_params[-1]
 
     return elbow_params, validation_returns, elbow_idx
 
@@ -726,13 +770,23 @@ def _params_within_bounds(rule_set: dict) -> bool:
     Return True if all TP/SL/capital_pct values in the rule set are within
     the Phase 4 config bounds.
     """
+    if not isinstance(rule_set, dict):
+        return False
+
     rules = rule_set.get("rules_set", [])
-    if not rules:
+    if not isinstance(rules, list) or not rules:
         return False
     for rule in rules:
-        tp = float(rule.get("tp", 0.0))
-        sl = float(rule.get("sl", 0.0))
-        cap = float(rule.get("capital_pct", 0.0))
+        if not isinstance(rule, dict):
+            return False
+
+        try:
+            tp = float(rule.get("tp", 0.0))
+            sl = float(rule.get("sl", 0.0))
+            cap = float(rule.get("capital_pct", 0.0))
+        except (TypeError, ValueError):
+            return False
+
         if not (_cfg.PHASE4_TP_MIN <= tp <= _cfg.PHASE4_TP_MAX):
             return False
         if not (_cfg.PHASE4_SL_MIN <= sl <= _cfg.PHASE4_SL_MAX):
@@ -784,11 +838,13 @@ class RL_Agent:
         seed: int = 42,
     ) -> None:
         if direction not in ("long", "short"):
-            raise ValueError(f"direction must be 'long' or 'short', got {direction!r}")
+            raise ValueError(
+                f"direction must be 'long' or 'short', got {direction!r}")
 
         rules = rule_set.get("rules_set", [])
         if not rules:
-            raise ValueError("rule_set must contain at least one rule in 'rules_set'.")
+            raise ValueError(
+                "rule_set must contain at least one rule in 'rules_set'.")
 
         self.train_df = train_df
         self.val_df = val_df
@@ -890,7 +946,8 @@ class RL_Agent:
         try:
             Reporter().plot_rl_curve(val_returns, elbow_idx, self.direction)
         except Exception as exc:
-            logger.warning("Reporter.plot_rl_curve failed (non-fatal): %s", exc)
+            logger.warning(
+                "Reporter.plot_rl_curve failed (non-fatal): %s", exc)
 
         return output_dict
 
@@ -929,7 +986,8 @@ class RL_Agent:
             Loaded rule set if valid and within bounds, None otherwise.
         """
         if direction not in _OUTPUT_PATHS:
-            raise ValueError(f"direction must be 'long' or 'short', got {direction!r}")
+            raise ValueError(
+                f"direction must be 'long' or 'short', got {direction!r}")
 
         path = _OUTPUT_PATHS[direction]
         data = _load_rule_set(path)

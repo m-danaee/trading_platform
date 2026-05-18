@@ -77,7 +77,9 @@ def _make_train_df(
 
         dfs.append(pd.DataFrame(data))
 
-    return pd.concat(dfs, ignore_index=True)
+    out = pd.concat(dfs, ignore_index=True)
+    out["_symbol_bar_index"] = out.groupby("symbol").cumcount()
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -575,6 +577,17 @@ class TestSelectFeatures:
         names = [e["name"] for e in result]
         for meta_col in config.META_COLUMNS:
             assert meta_col not in names
+
+    def test_excludes_internal_and_underscore_prefixed_columns(self):
+        """Loader internal columns and ``_``-prefixed names are not candidates."""
+        train_df = _make_train_df(n_rows=200, n_features=5)
+        train_df["_ghost"] = 0.0
+        selector = Feature_Selector()
+        result = selector.select_features(train_df, "long")
+        names = {e["name"] for e in result}
+        for col in config.INTERNAL_COLUMNS:
+            assert col not in names
+        assert "_ghost" not in names
 
     def test_returns_list_of_dicts(self):
         train_df = _make_train_df(n_rows=200, n_features=5)

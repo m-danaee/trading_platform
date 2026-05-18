@@ -9,11 +9,13 @@ Falls back to NumPy NSGA-II when EvoX is unavailable or algorithm is NSGA2.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Literal
 
 import numpy as np
 
 from gpu_fuzzy_trader import config as _cfg
+from gpu_fuzzy_trader.log_progress import maybe_log_generation
 
 logger = logging.getLogger(__name__)
 
@@ -233,6 +235,7 @@ def _run_reference_vector_moea(
     n_generations: int,
     rng: np.random.Generator,
     runner: RunnerKind,
+    log_tag: str | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """RVEA or NSGA-III style loop (NSGA3 uses same mating, RVEA selection for now)."""
     from gpu_fuzzy_trader.phases.phase2_rule_pool import (
@@ -240,6 +243,7 @@ def _run_reference_vector_moea(
         _crossover,
         _get_dont_cares,
         _init_population,
+        _metrics_dict_from_population,
         _mutate,
         _non_dominated_sort,
     )
@@ -257,9 +261,11 @@ def _run_reference_vector_moea(
     adapt_every = max(1, int(round(1.0 / 0.1)))  # fr=0.1
     alpha = 2.0
 
-    tag = "RVEA" if runner == "rvea" else "NSGA-III"
+    algo_tag = "RVEA" if runner == "rvea" else "NSGA-III"
+    tag = log_tag or algo_tag
     logger.info("%s: %d features, pop=%d, gen=%d",
                 tag, K, pop_size, n_generations)
+    gen_loop_start = time.monotonic()
 
     for gen in range(n_generations):
         _evaluate_population_indices(
@@ -283,8 +289,14 @@ def _run_reference_vector_moea(
             "mean_f1": float(np.mean(pareto_obj[:, 0])) if len(pareto_obj) else 0.0,
             "mean_f2": float(np.mean(pareto_obj[:, 1])) if len(pareto_obj) else 0.0,
             "mean_f3": float(np.mean(pareto_obj[:, 2])) if len(pareto_obj) else 0.0,
-            "algorithm": tag,
+            "algorithm": algo_tag,
         })
+
+        mean_f1 = float(np.mean(pareto_obj[:, 0])) if len(pareto_obj) else 0.0
+        maybe_log_generation(
+            logger, tag, gen, n_generations, len(pareto_indices), mean_f1,
+            loop_start=gen_loop_start,
+        )
 
         if gen == n_generations - 1:
             break
@@ -343,8 +355,13 @@ def _run_reference_vector_moea(
         )
         metrics_cache = [{} for _ in range(pop_size)]
 
+    metrics_by_chrom = _metrics_dict_from_population(population, metrics_cache)
     pareto_pool = _build_pool_from_archive(
-        pareto_archive, feature_infos, dont_cares, engine
+        pareto_archive,
+        feature_infos,
+        dont_cares,
+        engine,
+        metrics_by_chrom=metrics_by_chrom,
     )
     return pareto_pool, history
 
@@ -400,6 +417,7 @@ def run_phase2_evolution(
     n_generations: int,
     rng: np.random.Generator,
     algorithm: str | None = None,
+    log_tag: str | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """
     Run Phase 2 evolution with the configured algorithm.
@@ -411,14 +429,21 @@ def run_phase2_evolution(
     if kind == "nsga2":
         from gpu_fuzzy_trader.phases.phase2_rule_pool import _run_nsga2
 
-        return _run_nsga2(feature_infos, engine, pop_size, n_generations, rng)
+        return _run_nsga2(
+            feature_infos, engine, pop_size, n_generations, rng,
+            log_tag=log_tag,
+        )
 
     if not _EVOX_AVAILABLE:
         logger.warning("EvoX not available; falling back to NumPy NSGA-II.")
         from gpu_fuzzy_trader.phases.phase2_rule_pool import _run_nsga2
 
-        return _run_nsga2(feature_infos, engine, pop_size, n_generations, rng)
+        return _run_nsga2(
+            feature_infos, engine, pop_size, n_generations, rng,
+            log_tag=log_tag,
+        )
 
     return _run_reference_vector_moea(
-        feature_infos, engine, pop_size, n_generations, rng, kind
+        feature_infos, engine, pop_size, n_generations, rng, kind,
+        log_tag=log_tag,
     )

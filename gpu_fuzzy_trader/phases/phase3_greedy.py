@@ -158,6 +158,11 @@ def greedy_rule_set_search(
             best_score = score
             best_set = [pool[i]]
 
+    logger.info(
+        "Phase 3 greedy round 1/%d: %d candidates, best_val=%.2f%% (1 rule)",
+        max_rules, len(candidates), best_score,
+    )
+
     p3 = _helpers()
     used_keys = {p3._conditions_key(r["conditions"]) for r in best_set}
 
@@ -191,6 +196,10 @@ def greedy_rule_set_search(
         if round_best is not None:
             best_set = round_best
             used_keys = {p3._conditions_key(r["conditions"]) for r in best_set}
+            logger.info(
+                "Phase 3 greedy round %d/%d: %d candidates, best_val=%.2f%% (%d rules)",
+                k, max_rules, len(extensions), round_best_score, len(best_set),
+            )
 
     while len(best_set) < min_rules:
         for rule in pool:

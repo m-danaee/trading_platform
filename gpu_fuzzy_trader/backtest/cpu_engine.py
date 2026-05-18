@@ -27,6 +27,39 @@ def _normalize_direction(direction: str) -> str:
     return direction
 
 
+def precompute_release_indices(
+    symbols: np.ndarray,
+    symbol_bar_index: np.ndarray,
+    n_rows: int,
+    max_hold_candles: int,
+) -> np.ndarray:
+    """
+    For each row, find the row index where symbol_bar_index + max_hold_candles
+    is first reached within the same symbol.
+    """
+    release_index = np.full(n_rows, n_rows, dtype=np.int64)
+    row_index = np.arange(n_rows, dtype=np.int64)
+    symbol_codes, _ = pd.factorize(symbols, sort=False)
+
+    for sym_code in np.unique(symbol_codes):
+        sym_mask = symbol_codes == sym_code
+        rows = row_index[sym_mask]
+        bars = symbol_bar_index[sym_mask].astype(np.int64, copy=False)
+
+        order = np.argsort(bars, kind="mergesort")
+        rows_sorted = rows[order]
+        bars_sorted = bars[order]
+
+        target_bars = bars_sorted + max_hold_candles
+        target_positions = np.searchsorted(bars_sorted, target_bars, side="left")
+
+        valid = target_positions < len(rows_sorted)
+        if np.any(valid):
+            release_index[rows_sorted[valid]] = rows_sorted[target_positions[valid]]
+
+    return release_index
+
+
 def _safe_profit_factor(gross_wins: float, gross_losses: float) -> float:
     if gross_losses <= 0 and gross_wins > 0:
         return 99.0
@@ -284,45 +317,12 @@ class CPUBacktestEngine:
         else:
             self.datetimes = np.arange(len(df))
 
-        self.release_index = self._precompute_release_indices()
-
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _precompute_release_indices(self) -> np.ndarray:
-        """
-        For each row, find the row index where symbol_bar_index + MAX_HOLD_CANDLES
-        is first reached within the same symbol.
-
-        Mirrors evaluator_v3.ipynb's _precompute_release_indices exactly.
-        """
-        n = len(self.df)
-        release_index = np.full(n, n, dtype=np.int64)
-
-        row_index = np.arange(n, dtype=np.int64)
-        symbol_codes, _ = pd.factorize(self.symbols, sort=False)
-
-        for sym_code in np.unique(symbol_codes):
-            sym_mask = symbol_codes == sym_code
-            rows = row_index[sym_mask]
-            bars = self.symbol_bar_index[sym_mask].astype(np.int64, copy=False)
-
-            order = np.argsort(bars, kind="mergesort")
-            rows_sorted = rows[order]
-            bars_sorted = bars[order]
-
-            target_bars = bars_sorted + self.max_hold_candles
-            target_positions = np.searchsorted(bars_sorted, target_bars, side="left")
-
-            valid = target_positions < len(rows_sorted)
-            if np.any(valid):
-                release_index[rows_sorted[valid]] = rows_sorted[
-                    target_positions[valid]
-                ]
-
-        return release_index
+        self.release_index = precompute_release_indices(
+            self.symbols,
+            self.symbol_bar_index,
+            len(self.df),
+            self.max_hold_candles,
+        )
 
     def _build_trade_outcome_single(
         self, idx: int, tp: float, sl: float
@@ -492,6 +492,28 @@ class CPUBacktestEngine:
     # Public API
     # ------------------------------------------------------------------
 
+    def simulate_rule_set_slice(
+        self,
+        rule_set: list[dict],
+        row_start: int,
+        row_end: int,
+        initial_capital: float | None = None,
+    ) -> dict:
+        """
+        Simulate a rule set on rows [row_start, row_end) without copying the df.
+
+        Used by Phase 4 RL env to avoid per-step DataFrame/engine allocation.
+        """
+        entries = _build_entries_from_rule_set(self.df, rule_set)
+        entries = [
+            e for e in entries
+            if row_start <= int(e["idx"]) < row_end
+        ]
+        cap = self.initial_capital if initial_capital is None else float(
+            initial_capital
+        )
+        return self._simulate_rule_set_entries(entries, return_logs=False, initial_capital=cap)
+
     def simulate_rule_set(
         self,
         rule_set: list[dict],
@@ -521,7 +543,16 @@ class CPUBacktestEngine:
             If return_logs=True, also returns the trade log DataFrame.
         """
         entries = _build_entries_from_rule_set(self.df, rule_set)
+        return self._simulate_rule_set_entries(
+            entries, return_logs=return_logs, initial_capital=self.initial_capital
+        )
 
+    def _simulate_rule_set_entries(
+        self,
+        entries: list[dict],
+        return_logs: bool,
+        initial_capital: float,
+    ) -> "dict | tuple[dict, pd.DataFrame]":
         _empty_metrics = {
             "direction": self.trade_direction,
             "total_return_pct": 0.0,
@@ -532,7 +563,7 @@ class CPUBacktestEngine:
             "time_closed_count": 0,
             "raw_signal_count": 0,
             "executed_trades": 0,
-            "final_equity": self.initial_capital,
+            "final_equity": initial_capital,
             "profit_factor": 0.0,
             "avg_position_notional": 0.0,
             "skipped_min_notional_count": 0,
@@ -545,8 +576,8 @@ class CPUBacktestEngine:
             return (_empty_metrics, pd.DataFrame()) if return_logs else _empty_metrics
 
         # --- Simulation state ---
-        equity = self.initial_capital
-        peak_equity = self.initial_capital
+        equity = initial_capital
+        peak_equity = initial_capital
         max_drawdown_pct = 0.0
 
         open_positions: list[dict] = []
@@ -740,7 +771,7 @@ class CPUBacktestEngine:
         )
 
         # --- Summary metrics ---
-        total_return_pct = (equity / self.initial_capital - 1.0) * 100.0
+        total_return_pct = (equity / initial_capital - 1.0) * 100.0
         win_rate = (
             (stats["wins"] / executed_trades) * 100.0 if executed_trades > 0 else 0.0
         )

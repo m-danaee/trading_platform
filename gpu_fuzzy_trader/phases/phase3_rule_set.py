@@ -36,6 +36,7 @@ import json
 import logging
 import os
 import random
+import time
 from typing import Optional
 
 import numpy as np
@@ -43,6 +44,7 @@ import pandas as pd
 
 from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
+from gpu_fuzzy_trader.log_progress import maybe_log_generation
 from gpu_fuzzy_trader.phases.phase3_greedy import greedy_rule_set_search
 from gpu_fuzzy_trader.reporting.reporter import Reporter
 
@@ -486,6 +488,7 @@ def _run_nsga2_combinatorial(
     seed: int = 42,
     initial_population: list[list[dict]] | None = None,
     use_batch: bool = False,
+    log_tag: str | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """
     Run NSGA-II combinatorial search over rule set combinations.
@@ -539,10 +542,12 @@ def _run_nsga2_combinatorial(
     objectives = np.full((effective_pop, 3), np.inf)
     history: list[dict] = []
 
+    tag = log_tag or "Phase 3 NSGA-II"
     logger.info(
-        "Phase 3 NSGA-II: pool=%d, pop=%d, gen=%d",
-        len(pool), effective_pop, n_generations,
+        "%s: pool=%d, pop=%d, gen=%d",
+        tag, len(pool), effective_pop, n_generations,
     )
+    gen_loop_start = time.monotonic()
 
     for gen in range(n_generations):
         # Evaluate unevaluated individuals
@@ -584,11 +589,11 @@ def _run_nsga2_combinatorial(
             "mean_f3": float(np.mean(pareto_obj[:, 2])),
         })
 
-        if gen % 10 == 0:
-            logger.debug(
-                "Gen %d: pareto_size=%d, mean_val_return=%.2f%%",
-                gen, len(pareto_indices), -float(np.mean(pareto_obj[:, 0]))
-            )
+        mean_f1 = float(np.mean(pareto_obj[:, 0])) if len(pareto_obj) else 0.0
+        maybe_log_generation(
+            logger, tag, gen, n_generations, len(pareto_indices), mean_f1,
+            loop_start=gen_loop_start,
+        )
 
         if gen == n_generations - 1:
             break
@@ -798,6 +803,7 @@ class Rule_Set_Selector:
             random.Random(self.seed),
         )
 
+        refine_tag = "Phase 3 [%s] refine" % self.direction
         pareto_rule_sets, history = _run_nsga2_combinatorial(
             pool=self.pool,
             val_engine=self._val_engine,
@@ -809,6 +815,11 @@ class Rule_Set_Selector:
             seed=self.seed,
             initial_population=initial_pop,
             use_batch=self._use_gpu_batch,
+            log_tag=refine_tag,
+        )
+        logger.info(
+            "Phase 3 [%s]: refine complete, pareto_front=%d rule sets",
+            self.direction, len(pareto_rule_sets),
         )
 
         if not pareto_rule_sets:

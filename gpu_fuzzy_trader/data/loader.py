@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from gpu_fuzzy_trader.backtest.df_slim import downcast_numeric_df
 from gpu_fuzzy_trader.config import (
     LABEL_COLUMNS,
     META_COLUMNS,
@@ -103,7 +104,7 @@ class Data_Loader:
         # ------------------------------------------------------------------
         df["_symbol_bar_index"] = df.groupby("symbol").cumcount()
 
-        return df
+        return downcast_numeric_df(df)
 
 
 # ---------------------------------------------------------------------------

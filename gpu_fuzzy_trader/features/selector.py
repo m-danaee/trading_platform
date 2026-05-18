@@ -4,7 +4,7 @@ selector.py — Feature_Selector (Phase 1)
 Direction-specific feature scoring and ranking.
 
 Algorithm:
-  1. Exclude LABEL_COLUMNS and META_COLUMNS
+  1. Exclude LABEL_COLUMNS, META_COLUMNS, INTERNAL_COLUMNS, and ``_``-prefixed names
   2. Detect feature modes (from training split only)
   3. Remove features where >95% of values are identical (near-zero dispersion)
   4. Build direction-specific binary success targets
@@ -24,6 +24,7 @@ Skip logic:
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Optional
 
@@ -34,6 +35,7 @@ from sklearn.feature_selection import mutual_info_classif
 from gpu_fuzzy_trader import config
 from gpu_fuzzy_trader.features.detector import Feature_Detector
 
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Output paths
@@ -90,13 +92,25 @@ class Feature_Selector:
         if direction not in _VALID_DIRECTIONS:
             raise ValueError(f"direction must be 'long' or 'short', got {direction!r}")
 
+        logger.info("Phase 1 [%s]: starting feature selection", direction)
+
         # ----------------------------------------------------------------
         # Step 1: Identify candidate feature columns
         # ----------------------------------------------------------------
-        exclude = set(config.LABEL_COLUMNS) | set(config.META_COLUMNS)
-        feature_cols = [c for c in train_df.columns if c not in exclude]
+        exclude = (
+            set(config.LABEL_COLUMNS)
+            | set(config.META_COLUMNS)
+            | set(config.INTERNAL_COLUMNS)
+        )
+        feature_cols = [
+            c for c in train_df.columns
+            if c not in exclude and not c.startswith("_")
+        ]
+        n_candidates = len(feature_cols)
 
         if not feature_cols:
+            logger.warning(
+                "Phase 1 [%s]: no candidate feature columns", direction)
             return []
 
         # ----------------------------------------------------------------
@@ -111,8 +125,14 @@ class Feature_Selector:
         feature_cols = _remove_low_dispersion(
             train_df, feature_cols, config.PHASE1_DISPERSION_THRESHOLD
         )
+        logger.info(
+            "Phase 1 [%s]: %d candidates → %d after dispersion filter",
+            direction, n_candidates, len(feature_cols),
+        )
 
         if not feature_cols:
+            logger.warning(
+                "Phase 1 [%s]: all features removed by dispersion filter", direction)
             return []
 
         # ----------------------------------------------------------------
@@ -124,6 +144,11 @@ class Feature_Selector:
         # Step 5 & 6: Score per symbol, compute stability
         # ----------------------------------------------------------------
         symbols = train_df["symbol"].unique() if "symbol" in train_df.columns else [None]
+        n_symbols = len(symbols) if symbols[0] is not None else 1
+        logger.info(
+            "Phase 1 [%s]: scoring %d features across %d symbol(s) (MI) …",
+            direction, len(feature_cols), n_symbols,
+        )
 
         per_symbol_scores: dict[str, list[float]] = {col: [] for col in feature_cols}
 
@@ -180,7 +205,12 @@ class Feature_Selector:
         # ----------------------------------------------------------------
         # Step 8: Within-mode redundancy removal (pairwise corr > 0.95)
         # ----------------------------------------------------------------
+        n_before_redundancy = len(scored)
         scored = _remove_redundant_features(train_df, scored, threshold=0.95)
+        logger.info(
+            "Phase 1 [%s]: redundancy filter %d → %d features",
+            direction, n_before_redundancy, len(scored),
+        )
 
         # ----------------------------------------------------------------
         # Step 9: Select top K features
@@ -188,6 +218,15 @@ class Feature_Selector:
         scored.sort(key=lambda x: x["score"], reverse=True)
         top_k = config.PHASE1_TOP_K_FEATURES
         selected = scored[:top_k]
+
+        if selected:
+            top = selected[0]
+            logger.info(
+                "Phase 1 [%s]: selected top %d (best: %s, score=%.4f)",
+                direction, len(selected), top["name"], top["score"],
+            )
+        else:
+            logger.warning("Phase 1 [%s]: no features selected", direction)
 
         return selected
 
@@ -218,6 +257,10 @@ class Feature_Selector:
             payload = {"direction": direction, "features": features}
             with open(out_path, "w", encoding="utf-8") as fh:
                 json.dump(payload, fh, indent=2)
+            logger.info(
+                "Phase 1 [%s]: saved %d features to %s",
+                direction, len(features), out_path,
+            )
 
         return results
 
