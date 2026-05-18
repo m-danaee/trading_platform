@@ -505,9 +505,11 @@ class TestRLAgentFindElbowPoint:
 
 class TestRLAgentSkipIfValid:
     def _write_rule_set(self, path: str, direction: str, tp: float = 5.0,
-                        sl: float = 2.5, cap: float = 50.0):
+                        sl: float = 2.5, cap: float = 50.0,
+                        risk_optimized: bool = True):
         data = {
             "direction": direction,
+            "risk_optimized": risk_optimized,
             "rules_set": [
                 {"tp": tp, "sl": sl, "capital_pct": cap,
                  "conditions": ["[feat_0] IS Very High"]},
@@ -571,6 +573,40 @@ class TestRLAgentSkipIfValid:
         path = str(tmp_path / "long.json")
         self._write_rule_set(
             path, "long", cap=_cfg.PHASE4_CAPITAL_PCT_MAX + 1.0)
+        original = m._OUTPUT_PATHS.copy()
+        m._OUTPUT_PATHS["long"] = path
+        try:
+            result = RL_Agent.skip_if_valid("long")
+            assert result is None
+        finally:
+            m._OUTPUT_PATHS.update(original)
+
+    def test_returns_none_when_risk_optimized_false(self, tmp_path):
+        import gpu_fuzzy_trader.phases.phase4_rl_optimizer as m
+        path = str(tmp_path / "long.json")
+        self._write_rule_set(path, "long", risk_optimized=False)
+        original = m._OUTPUT_PATHS.copy()
+        m._OUTPUT_PATHS["long"] = path
+        try:
+            result = RL_Agent.skip_if_valid("long")
+            assert result is None
+        finally:
+            m._OUTPUT_PATHS.update(original)
+
+    def test_returns_none_when_risk_optimized_missing(self, tmp_path):
+        import gpu_fuzzy_trader.phases.phase4_rl_optimizer as m
+        path = str(tmp_path / "long.json")
+        data = {
+            "direction": "long",
+            "rules_set": [
+                {"tp": 5.0, "sl": 2.5, "capital_pct": 50.0,
+                 "conditions": ["[feat_0] IS Very High"]},
+                {"tp": 5.0, "sl": 2.5, "capital_pct": 50.0,
+                 "conditions": ["[feat_1] IS Low"]},
+            ],
+        }
+        with open(path, "w") as fh:
+            json.dump(data, fh)
         original = m._OUTPUT_PATHS.copy()
         m._OUTPUT_PATHS["long"] = path
         try:
@@ -651,6 +687,7 @@ class TestRLAgentTrain:
             result = agent.train()
             assert "rules_set" in result
             assert len(result["rules_set"]) == 2
+            assert result["risk_optimized"] is True
         finally:
             m._OUTPUT_PATHS.update(original)
 

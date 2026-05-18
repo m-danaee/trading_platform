@@ -29,7 +29,7 @@ This project is a **rule-mining trading system**, not a conventional predictive 
 - Start with pre-engineered, already-discretized feature columns.
 - Use future labels **only** for scoring and backtesting — never as model inputs.
 - Select stable, direction-specific features per output type.
-- Evolve a large pool of candidate fuzzy rules using GPU-accelerated multi-objective evolutionary algorithms.
+- Evolve a large pool of candidate fuzzy rules using GPU-accelerated **NSGA-III** multi-objective search (EvoX).
 - Assemble compact rule teams (2–5 rules) via greedy construction and Pareto refinement.
 - Fine-tune risk parameters (TP, SL, capital allocation) using a deep RL agent.
 - Evaluate the final strategy on a held-out test set.
@@ -60,8 +60,11 @@ gpu_fuzzy_trader/
 │   ├── cpu_engine.py            # CPUBacktestEngine: exact evaluator_v3.ipynb semantics
 │   └── gpu_engine.py            # GPUBacktestEngine: JAX-accelerated, numerically equivalent
 │
+├── evolution/
+│   └── evox_runner.py           # Phase 2 NSGA-III loop (EvoX ranking + reference vectors)
+│
 ├── phases/
-│   ├── phase2_rule_pool.py      # Rule_Pool_Generator: NSGA-II evolutionary search
+│   ├── phase2_rule_pool.py      # Rule_Pool_Generator: orchestrates Phase 2 evolution
 │   ├── phase3_rule_set.py       # Rule_Set_Selector: greedy + refinement on validation
 │   ├── phase4_rl_optimizer.py   # RL_Agent: DDPG/PPO with Elbow Method stopping
 │   └── phase5_oos.py            # OOS_Evaluator: final test.csv evaluation
@@ -162,7 +165,7 @@ Produces two independent feature lists (long and short) from the training split.
 6. Compute cross-symbol stability = `1 − (std / mean)` of per-symbol scores.
 7. Final score = `relevance × stability`.
 8. Within-mode redundancy removal (pairwise correlation > 0.95 → drop lower-scored).
-9. Select top `PHASE1_TOP_K_FEATURES` (default: 30) per direction.
+9. Select top `PHASE1_TOP_K_FEATURES` (default: 25) per direction.
 
 **Outputs:**
 - `outputs/selected_features_long.json`
@@ -174,9 +177,16 @@ Produces two independent feature lists (long and short) from the training split.
 
 ### Phase 2 — GPU-Accelerated Rule Pool Generation
 
-**Module:** `gpu_fuzzy_trader/phases/phase2_rule_pool.py` → `Rule_Pool_Generator`
+**Modules:**
+- `gpu_fuzzy_trader/phases/phase2_rule_pool.py` → `Rule_Pool_Generator` (orchestration, persistence, reporting)
+- `gpu_fuzzy_trader/evolution/evox_runner.py` → `run_phase2_evolution` (NSGA-III evolutionary loop)
 
-Evolves a large, diverse pool of candidate fuzzy rules using NSGA-II multi-objective evolutionary search. Uses `GPUBacktestEngine` (JAX) for fast fitness evaluation; falls back to `CPUBacktestEngine` when JAX is unavailable.
+Evolves a large, diverse pool of candidate fuzzy rules using **NSGA-III** (Non-dominated Sorting Genetic Algorithm III). Each generation:
+1. Evaluates the population with `GPUBacktestEngine` (JAX) when available, else `CPUBacktestEngine`.
+2. Builds offspring via rank/crowding tournament mating, crossover, and mutation on integer chromosomes.
+3. Merges parents + offspring and applies **NSGA-III environmental selection** (EvoX non-dominated ranking + reference-vector niche filling on the last front).
+
+**Requires `evox`** (and `torch`) for the NSGA-III survivor step. If EvoX is not installed, Phase 2 logs a warning and falls back to a built-in **NumPy NSGA-II** loop (history records `"NSGA-II (fallback)"`).
 
 **Chromosome encoding:**
 ```
@@ -191,9 +201,9 @@ dont_care_i = num_classes_i  (inactive condition)
 - `f3 = −win_rate`
 
 **Penalties applied to all objectives:**
-- **Support penalty** — if `executed_trades < MIN_TRADE_SUPPORT` (default: 20)
+- **Support penalty** — if `executed_trades < MIN_TRADE_SUPPORT` (default: 120)
 - **Diversity penalty** — Hamming distance to nearest Pareto-front member
-- **Condition count penalty** — if active conditions outside `[MIN_CONDITIONS, MAX_CONDITIONS]` (default: 2–5)
+- **Condition count penalty** — if active conditions outside `[MIN_CONDITIONS, MAX_CONDITIONS]` (default: 2–4)
 
 **Static risk parameters during Phase 2** (isolates predictive alpha from risk tuning):
 - TP = 4.0%, SL = 2.0%, capital_pct = 50.0%
@@ -337,7 +347,15 @@ The canonical reference implementation. Exactly mirrors `evaluator_v3.ipynb`'s `
 
 ### `gpu_fuzzy_trader/backtest/gpu_engine.py` — `GPUBacktestEngine`
 
-JAX-accelerated backtest engine used exclusively during Phase 2. Produces results within 1e-4 relative tolerance of `CPUBacktestEngine`. Falls back to CPU transparently when no GPU is available. Raises `ImportError` if JAX cannot be imported.
+JAX-accelerated backtest engine used during Phase 2 (and optionally Phase 3 when `PHASE3_USE_GPU=True`). Produces results within 1e-4 relative tolerance of `CPUBacktestEngine`. Falls back to CPU transparently when no GPU is available. Raises `ImportError` if JAX cannot be imported.
+
+### `gpu_fuzzy_trader/evolution/evox_runner.py` — `run_phase2_evolution`
+
+Phase 2 multi-objective evolutionary search. Implements NSGA-III with EvoX reference vectors and niche-based truncation on the critical front. Shared helpers in the same module cover offspring generation (tournament mating on Pareto rank/crowding), integer chromosome repair, and NSGA-II environmental selection used only when EvoX is missing.
+
+### `gpu_fuzzy_trader/phases/phase2_rule_pool.py` — `Rule_Pool_Generator`
+
+Loads Phase 1 features, runs `run_phase2_evolution` separately for long and short directions, and writes pool/history JSON plus generation metric plots.
 
 ### `gpu_fuzzy_trader/output/writer.py` — `Output_Writer`
 
@@ -397,11 +415,10 @@ All hyperparameters live in `gpu_fuzzy_trader/config.py`. Edit this file to tune
 | `PHASE2_CAPITAL_PCT` | `50.0` | Static capital allocation during Phase 2 (%) |
 | `MIN_CONDITIONS` | `2` | Minimum active conditions per rule |
 | `MAX_CONDITIONS` | `5` | Maximum active conditions per rule |
-| `MIN_TRADE_SUPPORT` | `20` | Minimum trades for a rule to be kept |
+| `MIN_TRADE_SUPPORT` | `120` | Minimum trades for a rule to be kept |
 | `PHASE2_POPULATION_SIZE` | `200` | Evolution population size |
-| `PHASE2_GENERATIONS` | `500` | Number of generations |
-| `PHASE2_ALGORITHM` | `"RVEA"` | Algorithm: `"RVEA"`, `"NSGA2"`, `"NSGA3"`, `"MOEAD"`, `"MOPSO"` |
-| `PHASE2_LARGE_POP_THRESHOLD` | `1000` | Use NSGA-III when pop ≥ this (if `PHASE2_TENSOR_NSGA3`) |
+| `PHASE2_GENERATIONS` | `100` | Number of generations |
+| `PHASE2_ALGORITHM` | `"NSGA3"` | Fixed identifier; Phase 2 always uses NSGA-III when EvoX is installed |
 
 ### Phase 3 — Rule Set Selection
 
@@ -410,8 +427,8 @@ All hyperparameters live in `gpu_fuzzy_trader/config.py`. Edit this file to tune
 | `PHASE3_REFINE_POP_SIZE` | `40` | Refinement population after greedy |
 | `PHASE3_REFINE_GENERATIONS` | `15` | Refinement generations after greedy |
 | `PHASE3_USE_GPU` | `False` | Enable GPU batched rule-set eval (after parity tests) |
-| `PHASE3_MIN_RULES` | `2` | Minimum rules in a rule set |
-| `PHASE3_MAX_RULES` | `5` | Maximum rules in a rule set |
+| `PHASE3_MIN_RULES` | `1` | Minimum rules during Phase 3 search |
+| `PHASE3_MAX_RULES` | `3` | Maximum rules during Phase 3 search |
 | `PHASE3_MIN_SYMBOL_COVERAGE` | `7` | Minimum symbols with ≥1 trade |
 
 ### Phase 4 — RL Risk Optimization
@@ -430,7 +447,7 @@ All hyperparameters live in `gpu_fuzzy_trader/config.py`. Edit this file to tune
 | Constant | Default | Description |
 |----------|---------|-------------|
 | `PHASE1_DISPERSION_THRESHOLD` | `0.95` | Drop features with >95% identical values |
-| `PHASE1_TOP_K_FEATURES` | `30` | Features selected per direction |
+| `PHASE1_TOP_K_FEATURES` | `25` | Features selected per direction |
 | `PHASE1_SAMPLING_TOTAL` | `300,000` | Total rows for Phase 2 evaluation (30k/symbol) |
 
 
@@ -857,7 +874,7 @@ The internal `CPUBacktestEngine` exactly mirrors `evaluator_v3.ipynb`'s `Capital
 
 ### GPU-First with Transparent Fallback
 
-JAX + NSGA-II for evolutionary search in Phase 2. CPU fallback is transparent — the same code path runs on CPU when no GPU is available. All tests pass on CPU-only environments.
+**Phase 2:** JAX batch backtests when available; **NSGA-III** via EvoX for survivor selection. Without EvoX, Phase 2 falls back to NumPy **NSGA-II** (same objectives and mating operators). **Phase 3** refinement still uses NSGA-II over rule-set combinations. CPU-only environments are supported; GPU/JAX tests skip automatically when JAX is not installed.
 
 ### Phase Isolation
 

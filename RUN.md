@@ -43,7 +43,7 @@ pip install pandas numpy scikit-learn matplotlib pyarrow pytest hypothesis
 | `scikit-learn`                            | Phase 1 feature selection (mutual information)                       |
 | `matplotlib`                              | Reports and equity-curve plots                                       |
 | `jax`, `jaxlib`                           | Phase 2 GPU backtest engine (falls back to CPU if missing)           |
-| `evox`                                    | Phase 2 RVEA / NSGA-III search (falls back to NumPy NSGA-II if missing) |
+| `evox`, `torch`                           | Phase 2 NSGA-III (reference vectors + niche selection; falls back to NumPy NSGA-II if missing) |
 | `stable-baselines3`, `gymnasium`, `torch` | Phase 4 RL (falls back to random search if missing)                  |
 | `pytest`, `hypothesis`                    | Test suite                                                           |
 
@@ -75,7 +75,7 @@ Runs all five phases in order:
 
 1. **Data prep** — load `data/train.csv`, per-symbol 75/25 chronological split → `data/train_75.parquet`, `data/validation_25.parquet`
 2. **Phase 1** — direction-specific feature selection
-3. **Phase 2** — rule pool generation via **RVEA** (EvoX reference-vector MOEA; long + short)
+3. **Phase 2** — rule pool generation via **NSGA-III** (`evolution/evox_runner.py` + EvoX; long + short)
 4. **Phase 3** — **greedy** rule-set construction + short Pareto refinement → `outputs/long.json`, `outputs/short.json`
 5. **Phase 4** — RL risk optimization (TP / SL / capital per rule)
 6. **Phase 5** — out-of-sample evaluation on `data/test.csv` (always runs)
@@ -109,9 +109,9 @@ Edit `gpu_fuzzy_trader/config.py` before running. Common settings:
 | `TRAIN_CSV_PATH` | `data/train.csv` | Training CSV |
 | `TEST_CSV_PATH` | `data/test.csv` | Test CSV |
 | `PHASE1_TOP_K_FEATURES` | `30` | Features per direction |
-| `PHASE2_ALGORITHM` | `"RVEA"` | Phase 2 MOEA: `"RVEA"`, `"NSGA2"`, `"NSGA3"` (NSGA-III when `PHASE2_POPULATION_SIZE` ≥ `PHASE2_LARGE_POP_THRESHOLD`) |
+| `PHASE2_ALGORITHM` | `"NSGA3"` | Fixed; NSGA-III when EvoX is installed |
 | `PHASE2_POPULATION_SIZE` | `200` | Phase 2 population |
-| `PHASE2_GENERATIONS` | `500` | Phase 2 generations |
+| `PHASE2_GENERATIONS` | `100` | Phase 2 generations |
 | `PHASE3_REFINE_GENERATIONS` | `15` | Refinement generations after greedy |
 | `PHASE3_REFINE_POP_SIZE` | `40` | Refinement population size |
 | `PHASE3_USE_GPU` | `False` | Batched rule-set eval via `GPUBacktestEngine` (enable after parity tests pass) |
@@ -192,8 +192,9 @@ Run individual phases — see [README.md § Running Individual Phases](README.md
 | ----------------------------------------------------------- | ------------------------------------------------------------------------------ |
 | `ModuleNotFoundError: No module named 'pandas'` (or others) | Activate venv and install dependencies (see Setup)                             |
 | `FileNotFoundError` for `data/train.csv`                    | Run from project root; ensure data files exist                                 |
-| Phase 2 very slow on CPU                                    | Install `jax` + `jaxlib` and `evox`; optional GPU/CUDA build for faster Phase 2 |
-| Phase 2 uses NSGA-II instead of RVEA                        | Install `evox`; otherwise falls back to NumPy NSGA-II (`PHASE2_ALGORITHM=NSGA2` forces it) |
+| Phase 2 very slow on CPU                                    | Install `jax` + `jaxlib` and `evox` + `torch`; optional GPU/CUDA build for faster backtests |
+| Phase 2 uses NSGA-II instead of NSGA-III                    | Install `evox` and `torch`; check `phase2_*_history.json` — `"NSGA-II (fallback)"` means EvoX was unavailable |
+| Stale Phase 2 pools after code changes                      | `rm outputs/phase2_{long,short}_{pool,history}.json` and re-run |
 | Phase 3 still slow                                          | Lower `PHASE3_REFINE_GENERATIONS` / `PHASE3_REFINE_POP_SIZE`, or set `PHASE3_USE_GPU=True` after parity tests for batched eval |
 | Phase 4 uses random search                                  | Install `stable-baselines3`, `gymnasium`, and `torch` for DDPG/PPO             |
 | Want fresh OOS only                                         | Keep `outputs/long.json` / `short.json`; re-run pipeline (Phase 5 always runs) |

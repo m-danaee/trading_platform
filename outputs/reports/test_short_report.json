@@ -1,0 +1,17 @@
+{
+  "direction": "short",
+  "total_return_pct": -15.521174550709826,
+  "max_drawdown_pct": 26.50130781333943,
+  "win_rate": 29.411764705882355,
+  "profit_factor": 0.8450918746163883,
+  "executed_trades": 170,
+  "account_status": "survived",
+  "final_equity": 844.7882544929017,
+  "per_symbol_metrics": {
+    "1": {
+      "trade_count": 170,
+      "win_rate": 29.411764705882355,
+      "net_pnl": -155.21174550709807
+    }
+  }
+}

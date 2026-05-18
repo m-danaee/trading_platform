@@ -18,7 +18,7 @@ The `gpu-fuzzy-trading-pipeline` is a ground-up rewrite of the previous `bigdata
 ```
 Phase 1: Feature Selection (direction-specific, mode-aware)
     ↓
-Phase 2: Rule Pool Generation (GPU-accelerated MOPSO/MOEA/D/RVEA via EvoX)
+Phase 2: Rule Pool Generation (GPU-accelerated NSGA-III via EvoX)
     ↓
 Phase 3: Rule Set Selection (combinatorial NSGA-II on validation split)
     ↓
@@ -47,9 +47,11 @@ gpu_fuzzy_trader/
 ├── backtest/
 │   ├── cpu_engine.py            # CPU Backtest_Engine: exact evaluator_v3.ipynb semantics
 │   └── gpu_engine.py            # GPU_Backtest_Engine: JAX-accelerated, numerically equivalent
+├── evolution/
+│   └── evox_runner.py           # run_phase2_evolution: NSGA-III (NSGA-II fallback)
 ├── phases/
-│   ├── phase2_rule_pool.py      # Rule_Pool_Generator: EvoX MOEA/D/MOPSO/RVEA
-│   ├── phase3_rule_set.py       # Rule_Set_Selector: NSGA-II combinatorial search
+│   ├── phase2_rule_pool.py      # Rule_Pool_Generator: Phase 2 orchestration
+│   ├── phase3_rule_set.py       # Rule_Set_Selector: greedy + NSGA-II refinement
 │   ├── phase4_rl_optimizer.py   # RL_Agent: DDPG/PPO with Elbow Method stopping
 │   └── phase5_oos.py            # OOS_Evaluator: final test.csv evaluation
 ├── output/
@@ -71,7 +73,7 @@ flowchart TD
     G --> H[outputs/selected_features_long.json\noutputs/selected_features_short.json]
     H --> I[Encoder]
     I --> J[chromosome ↔ rule mapping]
-    J --> K[Rule_Pool_Generator\nPhase 2 - GPU EvoX]
+    J --> K[Rule_Pool_Generator\nPhase 2 - NSGA-III / EvoX]
     D --> K
     K --> L[outputs/phase2_long_pool.json\noutputs/phase2_short_pool.json]
     L --> M[Rule_Set_Selector\nPhase 3 - NSGA-II CPU]
@@ -125,11 +127,11 @@ PHASE2_CAPITAL_PCT = 50.0
 
 # --- Phase 2 Rule Constraints ---
 MIN_CONDITIONS = 2
-MAX_CONDITIONS = 5
-MIN_TRADE_SUPPORT = 20
+MAX_CONDITIONS = 4
+MIN_TRADE_SUPPORT = 120
 PHASE2_POPULATION_SIZE = 200
-PHASE2_GENERATIONS = 500
-PHASE2_ALGORITHM = "MOEAD"  # or "MOPSO", "RVEA"
+PHASE2_GENERATIONS = 100
+PHASE2_ALGORITHM = "NSGA3"  # NSGA-III when EvoX installed; NumPy NSGA-II fallback otherwise
 
 # --- Phase 3 Rule Set Selection ---
 PHASE3_POPULATION_SIZE = 100
@@ -464,7 +466,7 @@ class GPUBacktestEngine:
 
 ### 9. `phases/phase2_rule_pool.py` — Rule_Pool_Generator
 
-**Algorithm**: Multi-objective evolutionary search using EvoX (JAX-based). Generates separate pools for long and short directions.
+**Algorithm**: NSGA-III multi-objective evolutionary search (`evolution/evox_runner.py`). Uses EvoX for non-dominated ranking and Das–Dennis-style reference vectors with niche-based truncation on the last front. Generates separate pools for long and short directions. Without EvoX/torch, falls back to a built-in NumPy NSGA-II loop (history: `"NSGA-II (fallback)"`).
 
 **Chromosome encoding**:
 ```
@@ -493,20 +495,11 @@ Penalties (added to f1, f2, f3 proportionally):
 
 This isolates predictive alpha from risk parameter tuning.
 
-**EvoX integration**:
-```python
-import evox
-
-class FuzzyRuleOptimizer(evox.Algorithm):
-    """EvoX-compatible MOEA/D or MOPSO algorithm for fuzzy rule evolution."""
-
-    def setup(self, key):
-        # Initialize population with random chromosomes
-        # Enforce dont_care distribution for sparsity
-
-    def step(self, state):
-        # Standard EvoX step: generate offspring, evaluate, update archive
-```
+**Implementation** (`evolution/evox_runner.py`):
+- `run_phase2_evolution()` — entry point called by `Rule_Pool_Generator`
+- `_run_nsga3()` — (μ+λ) loop: batch backtest → offspring via tournament/crossover/mutation → `_nsga3_environmental_selection()`
+- EvoX: `uniform_sampling` (reference vectors), `non_dominate_rank` (fronts)
+- Shared operators: integer chromosome repair, rank/crowding tournament mating
 
 **Sampling strategy**: Total evaluation budget = `PHASE1_SAMPLING_TOTAL` rows (e.g., 300k). Distributed equally across symbols (e.g., 30k per symbol for 10 symbols). This ensures no symbol dominates the fitness signal.
 
@@ -1364,7 +1357,7 @@ settings.register_profile("thorough", max_examples=500)
 ## Design Decisions and Rationale
 
 ### Why JAX + EvoX for GPU acceleration?
-JAX provides JIT compilation and automatic differentiation on GPU/CPU with a NumPy-compatible API. EvoX is a JAX-native evolutionary computation library that supports MOEA/D, MOPSO, and RVEA out of the box. This combination avoids reimplementing evolutionary algorithms from scratch while leveraging GPU parallelism for fitness evaluation.
+JAX provides JIT compilation and automatic differentiation on GPU/CPU with a NumPy-compatible API. EvoX supplies reference-vector sampling and non-dominated ranking used by Phase 2 NSGA-III environmental selection, while fitness evaluation uses JAX batch backtests. A NumPy NSGA-II fallback runs when EvoX is not installed.
 
 ### Why static TP/SL in Phase 2?
 Using fixed TP=4%, SL=2%, capital_pct=50% during rule pool generation isolates the predictive signal in the rule conditions from the risk parameter optimization. This prevents the evolutionary search from finding rules that only work with specific TP/SL values, making the pool more robust for Phase 3 selection.

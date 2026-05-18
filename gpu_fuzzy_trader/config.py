@@ -51,24 +51,22 @@ PHASE2_CAPITAL_PCT = 50.0
 # Phase 2 Rule Constraints
 # ---------------------------------------------------------------------------
 MIN_CONDITIONS = 2
-MAX_CONDITIONS = 5
-MIN_TRADE_SUPPORT = 20
+MAX_CONDITIONS = 4
+MIN_TRADE_SUPPORT = 120
 PHASE2_POPULATION_SIZE = 200
 PHASE2_GENERATIONS = 100
-PHASE2_ALGORITHM = "RVEA"  # alternatives: "NSGA2", "NSGA3", "MOEAD", "MOPSO"
-PHASE2_LARGE_POP_THRESHOLD = 1000
-PHASE2_TENSOR_NSGA3 = True  # use NSGA-III when pop >= threshold
+PHASE2_ALGORITHM = "NSGA3"  # NSGA-III
 
 # ---------------------------------------------------------------------------
 # Phase 3 Rule Set Selection
 # ---------------------------------------------------------------------------
-PHASE3_MIN_RULES = 2
-PHASE3_MAX_RULES = 5
+PHASE3_MIN_RULES = 1
+PHASE3_MAX_RULES = 3
 PHASE3_MIN_SYMBOL_COVERAGE = 7  # out of 10 symbols must have >= 1 trade
 PHASE3_USE_GPU = False  # set True after GPU rule-set batch parity tests pass
 PHASE3_REFINE_GENERATIONS = 15
 PHASE3_REFINE_POP_SIZE = 40
-PHASE3_GREEDY_WEIGHTS = (1.0, 0.5, 0.3)  # return, drawdown, win_rate
+PHASE3_GREEDY_WEIGHTS = (1.0, 0.7, 0.5)  # return, drawdown, win_rate
 
 # ---------------------------------------------------------------------------
 # Phase 2 MOME (deferred — future native 4×10 descriptor grid)
@@ -100,7 +98,7 @@ LOG_GENERATION_INTERVAL = 0
 # Phase 1 Feature Selection
 # ---------------------------------------------------------------------------
 PHASE1_DISPERSION_THRESHOLD = 0.95
-PHASE1_TOP_K_FEATURES = 30
+PHASE1_TOP_K_FEATURES = 25
 # Rows sampled per Phase 2 backtest engine (distributed across symbols).
 # Emergency RAM knob if OOM persists after df slimming: try 150_000.
 PHASE1_SAMPLING_TOTAL = 300_000

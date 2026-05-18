@@ -13,7 +13,7 @@
 | `scikit-learn` | Phase 1 feature selection (mutual information) |
 | `matplotlib` | Reports and equity-curve plots (Agg backend) |
 | `jax`, `jaxlib` | Phase 2 GPU backtest engine (optional, falls back to CPU) |
-| `evox` | Phase 2 evolutionary search (optional, falls back to NumPy NSGA-II) |
+| `evox`, `torch` | Phase 2 NSGA-III (optional; falls back to NumPy NSGA-II without EvoX) |
 | `stable-baselines3`, `gymnasium`, `torch` | Phase 4 RL (optional, falls back to random search) |
 | `pytest`, `hypothesis` | Unit and property-based testing |
 
@@ -51,5 +51,5 @@ Phases 1-4 skip automatically when their output files exist and pass validation.
 
 The pipeline gracefully degrades when GPU/RL packages are missing:
 - Without JAX: Phase 2 uses CPU backtest engine
-- Without evox: Phase 2 uses built-in NumPy NSGA-II
+- Without evox/torch: Phase 2 uses built-in NumPy NSGA-II (history: `"NSGA-II (fallback)"`)
 - Without stable-baselines3: Phase 4 uses random search with Elbow Method stopping

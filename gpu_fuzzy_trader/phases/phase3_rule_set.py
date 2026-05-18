@@ -107,6 +107,10 @@ def _validate_rule_set_schema(data: object, path: str) -> None:
             raise ValueError(
                 f"Rule set entry {i} 'conditions' must be a non-empty list: {path}"
             )
+    if "risk_optimized" in data and not isinstance(data["risk_optimized"], bool):
+        raise ValueError(
+            f"Rule set 'risk_optimized' must be a bool if present: {path}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -685,6 +689,7 @@ def _build_output_dict(rule_set: list[dict], direction: str) -> dict:
         })
     return {
         "direction": direction,
+        "risk_optimized": False,
         "rules_set": rules_list,
     }
 

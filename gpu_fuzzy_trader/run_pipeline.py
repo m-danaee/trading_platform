@@ -680,7 +680,7 @@ class Pipeline_Orchestrator:
                 out_path = os.path.join(
                     _cfg.OUTPUTS_DIR, "%s.json" % direction)
                 logger.info(
-                    "Skipping %s: valid optimized rules at %s (%d rules)",
+                    "Skipping %s: risk-optimized rules at %s (%d rules)",
                     dir_phase_name, out_path,
                     len(existing.get("rules_set", [])),
                 )

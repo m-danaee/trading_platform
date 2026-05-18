@@ -3,8 +3,8 @@ phase2_rule_pool.py — Rule_Pool_Generator (Phase 2)
 
 GPU-accelerated multi-objective evolutionary search for fuzzy trading rules.
 
-Uses EvoX (JAX-based) if available; falls back to a pure-NumPy NSGA-II
-implementation when EvoX is not installed.
+Uses NSGA-III via EvoX when available; falls back to NumPy NSGA-II when EvoX
+is not installed.
 
 Chromosome encoding:
     chromosome = [gene_0, gene_1, ..., gene_{K-1}]
@@ -85,6 +85,23 @@ def _count_active_conditions(chromosome: np.ndarray, dont_cares: np.ndarray) -> 
 def _hamming_distance(a: np.ndarray, b: np.ndarray) -> int:
     """Hamming distance between two integer arrays."""
     return int(np.sum(a != b))
+
+
+def _pareto_return_stats(
+    pareto_indices: list[int],
+    metrics_cache: list[dict],
+) -> dict[str, float]:
+    """Aggregate raw backtest return (%) over the current Pareto front."""
+    if not pareto_indices:
+        return {"mean_total_return_pct": 0.0, "best_total_return_pct": 0.0}
+    returns = [
+        float(metrics_cache[i].get("total_return_pct", 0.0))
+        for i in pareto_indices
+    ]
+    return {
+        "mean_total_return_pct": float(np.mean(returns)),
+        "best_total_return_pct": float(np.max(returns)),
+    }
 
 
 def _sample_df(df: pd.DataFrame, total_rows: int) -> pd.DataFrame:
@@ -376,141 +393,6 @@ def _mutate(
 # Fallback evolutionary algorithm (NSGA-II style)
 # ---------------------------------------------------------------------------
 
-def _run_nsga2(
-    feature_infos: list[dict],
-    engine,
-    pop_size: int,
-    n_generations: int,
-    rng: np.random.Generator,
-    log_tag: str | None = None,
-) -> tuple[list[dict], list[dict]]:
-    """
-    Run a simple NSGA-II evolutionary search.
-
-    Parameters
-    ----------
-    feature_infos : list[dict]
-        Feature descriptors with "name" and "mode".
-    engine : GPUBacktestEngine | CPUBacktestEngine
-        Backtest engine for fitness evaluation.
-    pop_size : int
-    n_generations : int
-    rng : np.random.Generator
-
-    Returns
-    -------
-    pareto_pool : list[dict]
-        Pareto-front rules in pool JSON schema.
-    history : list[dict]
-        Per-generation metrics.
-    """
-    K = len(feature_infos)
-    dont_cares = _get_dont_cares(feature_infos)
-
-    # Initialise population
-    population = _init_population(pop_size, feature_infos, rng)
-    objectives = np.full((pop_size, 3), np.inf)
-    metrics_cache: list[dict] = [{} for _ in range(pop_size)]
-
-    # Pareto front archive (chromosomes only, for diversity penalty)
-    pareto_archive: list[np.ndarray] = []
-
-    history: list[dict] = []
-
-    tag = log_tag or "NSGA-II"
-    logger.info("%s: %d features, pop=%d, gen=%d",
-                tag, K, pop_size, n_generations)
-    gen_loop_start = time.monotonic()
-
-    for gen in range(n_generations):
-        # Evaluate unevaluated individuals (first gen: all; later: offspring)
-        for i in range(pop_size):
-            if np.any(np.isinf(objectives[i])):
-                obj, met = _evaluate_chromosome(
-                    population[i], dont_cares, engine, pareto_archive
-                )
-                objectives[i] = obj
-                metrics_cache[i] = met
-
-        # Non-dominated sort
-        fronts = _non_dominated_sort(objectives)
-        pareto_indices = fronts[0]
-        pareto_archive = [population[i].copy() for i in pareto_indices]
-
-        # Record history
-        pareto_obj = objectives[pareto_indices]
-        history.append({
-            "generation": gen,
-            "pareto_size": len(pareto_indices),
-            "mean_f1": float(np.mean(pareto_obj[:, 0])),
-            "mean_f2": float(np.mean(pareto_obj[:, 1])),
-            "mean_f3": float(np.mean(pareto_obj[:, 2])),
-        })
-
-        mean_f1 = float(np.mean(pareto_obj[:, 0])) if len(pareto_obj) else 0.0
-        maybe_log_generation(
-            logger, tag, gen, n_generations, len(pareto_indices), mean_f1,
-            loop_start=gen_loop_start,
-        )
-
-        if gen == n_generations - 1:
-            break  # No need to generate offspring on last generation
-
-        # Build next generation via tournament selection + crossover + mutation
-        new_population = np.empty_like(population)
-        new_objectives = np.full_like(objectives, np.inf)
-
-        # Elitism: keep Pareto front
-        elite_count = min(len(pareto_indices), pop_size // 2)
-        # Sort Pareto front by crowding distance (descending)
-        cd = _crowding_distance(objectives, pareto_indices)
-        cd_order = np.argsort(-cd)
-        elite_indices = [pareto_indices[j] for j in cd_order[:elite_count]]
-
-        for j, idx in enumerate(elite_indices):
-            new_population[j] = population[idx].copy()
-            new_objectives[j] = objectives[idx].copy()
-
-        # Fill rest with offspring
-        offspring_start = elite_count
-        n_offspring = pop_size - offspring_start
-        all_indices = list(range(pop_size))
-
-        for j in range(0, n_offspring, 2):
-            # Tournament selection (size 2)
-            cands_a = rng.choice(all_indices, size=2, replace=False)
-            cands_b = rng.choice(all_indices, size=2, replace=False)
-            # Pick better by front rank then crowding distance
-            pa = cands_a[0] if objectives[cands_a[0], 0] <= objectives[cands_a[1], 0] else cands_a[1]
-            pb = cands_b[0] if objectives[cands_b[0], 0] <= objectives[cands_b[1], 0] else cands_b[1]
-
-            child_a, child_b = _crossover(population[pa], population[pb], rng)
-            child_a = _mutate(child_a, feature_infos, dont_cares, rng)
-            child_b = _mutate(child_b, feature_infos, dont_cares, rng)
-
-            idx_a = offspring_start + j
-            idx_b = offspring_start + j + 1
-            if idx_a < pop_size:
-                new_population[idx_a] = child_a
-            if idx_b < pop_size:
-                new_population[idx_b] = child_b
-
-        population = new_population
-        objectives = new_objectives
-
-    metrics_by_chrom = _metrics_dict_from_population(
-        population, metrics_cache
-    )
-    pareto_pool = _build_pool_from_archive(
-        pareto_archive,
-        feature_infos,
-        dont_cares,
-        engine,
-        metrics_by_chrom=metrics_by_chrom,
-    )
-    return pareto_pool, history
-
-
 def _metrics_dict_from_population(
     population: np.ndarray,
     metrics_cache: list[dict],
@@ -763,23 +645,20 @@ class Rule_Pool_Generator:
             self.direction, self.pop_size, self.n_generations, len(self.feature_infos)
         )
 
-        from gpu_fuzzy_trader.evolution.evox_runner import (
-            resolve_phase2_runner,
-            run_phase2_evolution,
+        from gpu_fuzzy_trader.evolution.evox_runner import run_phase2_evolution
+
+        logger.info(
+            "Phase 2 [%s]: algorithm=%s",
+            self.direction, _cfg.PHASE2_ALGORITHM,
         )
 
-        runner = resolve_phase2_runner(_cfg.PHASE2_ALGORITHM, self.pop_size)
-        logger.info("Phase 2 [%s]: algorithm=%s (config=%s)",
-                    self.direction, runner, _cfg.PHASE2_ALGORITHM)
-
-        progress_tag = "Phase 2 [%s] %s" % (self.direction, runner.upper())
+        progress_tag = "Phase 2 [%s] NSGA-III" % self.direction
         pool, history = run_phase2_evolution(
             feature_infos=self.feature_infos,
             engine=self._engine,
             pop_size=self.pop_size,
             n_generations=self.n_generations,
             rng=rng,
-            algorithm=_cfg.PHASE2_ALGORITHM,
             log_tag=progress_tag,
         )
 
@@ -800,9 +679,12 @@ class Rule_Pool_Generator:
 
         # Reporter: plot Phase 2 generation metrics
         try:
-            Reporter().plot_phase2_metrics(history, self.direction)
+            reporter = Reporter()
+            reporter.plot_phase2_metrics(history, self.direction)
+            reporter.plot_phase2_pnl(history, self.direction)
         except Exception as exc:
-            logger.warning("Reporter.plot_phase2_metrics failed (non-fatal): %s", exc)
+            logger.warning(
+                "Reporter Phase 2 plots failed (non-fatal): %s", exc)
 
         self._release_resources()
         return pool

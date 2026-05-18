@@ -3,6 +3,7 @@ reporter.py — Reporting and visualization for the GPU-Fuzzy Trading Pipeline.
 
 Generates:
   - Phase 2 generation metrics plots (objectives vs. generation)
+  - Phase 2 PnL plots (mean/best Pareto return vs. generation)
   - Equity curve plots (train, validation, test)
   - Per-symbol performance CSVs
   - Phase 4 RL training curve plots with elbow point marked
@@ -112,6 +113,83 @@ class Reporter:
         plt.close(fig)
 
         logger.info("Saved Phase 2 metrics plot: %s", out_path)
+        return out_path
+
+    def plot_phase2_pnl(
+        self,
+        history: List[dict],
+        direction: str,
+        output_dir: str | None = None,
+    ) -> str:
+        """
+        Plot Phase 2 mean/best Pareto return vs. generation and save to PNG.
+
+        Parameters
+        ----------
+        history:
+            List of dicts, each with keys ``"generation"``,
+            ``"mean_total_return_pct"``, and ``"best_total_return_pct"``.
+        direction:
+            ``"long"`` or ``"short"``.
+        output_dir:
+            Override the output directory (used in tests).
+
+        Returns
+        -------
+        str
+            Absolute path to the saved PNG file.
+        """
+        reports_dir = output_dir if output_dir is not None else _REPORTS_DIR
+        out_path = os.path.join(reports_dir, f"phase2_{direction}_pnl.png")
+        self._ensure_dir(out_path)
+
+        fig, ax = plt.subplots(figsize=(10, 6))
+
+        if not history:
+            ax.set_title(f"Phase 2 PnL per Generation — {direction} (no data)")
+            ax.set_xlabel("Generation")
+            ax.set_ylabel("Return (%)")
+            fig.tight_layout()
+            fig.savefig(out_path, dpi=100)
+            plt.close(fig)
+            logger.warning(
+                "plot_phase2_pnl: empty history for direction=%s", direction)
+            return out_path
+
+        generations = [entry.get("generation", i)
+                       for i, entry in enumerate(history)]
+        mean_return = [
+            entry.get("mean_total_return_pct", 0.0) for entry in history
+        ]
+        best_return = [
+            entry.get("best_total_return_pct", 0.0) for entry in history
+        ]
+
+        ax.plot(
+            generations,
+            mean_return,
+            label="Mean Pareto return (%)",
+            color="tab:blue",
+        )
+        ax.plot(
+            generations,
+            best_return,
+            label="Best Pareto return (%)",
+            color="tab:orange",
+        )
+        ax.axhline(y=0.0, color="gray", linestyle="--", linewidth=0.8)
+
+        ax.set_title(f"Phase 2 PnL per Generation — {direction}")
+        ax.set_xlabel("Generation")
+        ax.set_ylabel("Return (%)")
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+
+        fig.tight_layout()
+        fig.savefig(out_path, dpi=100)
+        plt.close(fig)
+
+        logger.info("Saved Phase 2 PnL plot: %s", out_path)
         return out_path
 
     def plot_equity_curve(

@@ -21,8 +21,8 @@ Reward:
   net_pnl_normalized - drawdown_penalty
 
 Skip logic:
-  If outputs/{direction}.json exists and TP/SL/capital_pct values are within
-  valid ranges, Phase 4 is skipped.
+  If outputs/{direction}.json exists, TP/SL/capital_pct values are within valid
+  ranges, and risk_optimized is true, Phase 4 is skipped.
 """
 
 from __future__ import annotations
@@ -796,6 +796,11 @@ def _params_within_bounds(rule_set: dict) -> bool:
     return True
 
 
+def _is_risk_optimized(rule_set: dict) -> bool:
+    """Return True if the rule set was saved after Phase 4 risk optimization."""
+    return rule_set.get("risk_optimized") is True
+
+
 # ---------------------------------------------------------------------------
 # RL_Agent
 # ---------------------------------------------------------------------------
@@ -924,6 +929,7 @@ class RL_Agent:
         # Build output dict
         output_dict = {
             "direction": self.direction,
+            "risk_optimized": True,
             "rules_set": optimized_params,
         }
 
@@ -973,7 +979,7 @@ class RL_Agent:
     @staticmethod
     def skip_if_valid(direction: str) -> Optional[dict]:
         """
-        Return loaded rule set if valid and TP/SL/capital_pct within bounds.
+        Return loaded rule set if risk params were already optimized by Phase 4.
 
         Parameters
         ----------
@@ -983,7 +989,8 @@ class RL_Agent:
         Returns
         -------
         dict | None
-            Loaded rule set if valid and within bounds, None otherwise.
+            Loaded rule set if risk_optimized is true and params in bounds,
+            None otherwise.
         """
         if direction not in _OUTPUT_PATHS:
             raise ValueError(
@@ -1002,8 +1009,17 @@ class RL_Agent:
             )
             return None
 
+        if not _is_risk_optimized(data):
+            logger.info(
+                "Phase 4 [%s]: existing file has not been risk-optimized; "
+                "will re-run.",
+                direction,
+            )
+            return None
+
         logger.info(
-            "Phase 4 [%s]: existing file is valid and within bounds; skipping.",
+            "Phase 4 [%s]: existing file is risk-optimized and within bounds; "
+            "skipping.",
             direction,
         )
         return data

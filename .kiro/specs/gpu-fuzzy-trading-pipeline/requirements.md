@@ -180,7 +180,7 @@ All hyperparameters are controlled through a single `config.py` file. No runtime
 #### Acceptance Criteria
 
 1. THE Rule_Pool_Generator SHALL generate separate rule pools for the long direction and the short direction.
-2. THE Rule_Pool_Generator SHALL use a multi-objective evolutionary algorithm (MOPSO, MOEA/D, or RVEA) implemented via EvoX/EvoMO (JAX-based, preferred) or EvoTorch/PyTorch.
+2. THE Rule_Pool_Generator SHALL use NSGA-III multi-objective evolutionary search implemented in `evolution/evox_runner.py` with EvoX (JAX-based, preferred). IF EvoX is unavailable, THE system SHALL fall back to a built-in NumPy NSGA-II implementation with the same objectives and mating operators.
 3. THE Rule_Pool_Generator SHALL optimize three objectives simultaneously: maximize total return, minimize maximum drawdown, and maximize win rate.
 4. DURING Phase 2, THE Rule_Pool_Generator SHALL use static risk parameters: TP=4%, SL=2%, capital_pct=50%.
 5. EACH candidate rule chromosome SHALL encode: a feature selection mask (which features are active) and a value assignment for each active feature (one of the valid discretized values for that feature's mode).

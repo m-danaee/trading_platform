@@ -147,7 +147,7 @@ Implement the `gpu_fuzzy_trader` Python package end-to-end: project scaffold and
 
 - [x] 9. Implement Phase 2 — Rule Pool Generator
   - [x] 9.1 Implement `gpu_fuzzy_trader/phases/phase2_rule_pool.py` — `Rule_Pool_Generator`
-    - `FuzzyRuleOptimizer(evox.Algorithm)`: EvoX-compatible MOEA/D (or MOPSO/RVEA per `PHASE2_ALGORITHM`) with chromosome encoding (feature mask + value assignment), `setup(key)` initializing population with dont_care sparsity, `step(state)` running standard EvoX step
+    - `evolution/evox_runner.py`: `run_phase2_evolution()` NSGA-III loop with EvoX reference vectors and niche selection; NumPy NSGA-II fallback when EvoX is missing
     - Fitness function: three objectives (−total_return_pct, max_drawdown_pct, −win_rate) evaluated via `GPUBacktestEngine.simulate_rule_batch()` using static `PHASE2_TP`, `PHASE2_SL`, `PHASE2_CAPITAL_PCT`
     - Penalties: support penalty (trades < `MIN_TRADE_SUPPORT`), diversity penalty (Hamming distance in chromosome space + crowding distance in objective space), condition count penalty (active conditions outside [MIN_CONDITIONS, MAX_CONDITIONS])
     - Sampling: distribute `PHASE1_SAMPLING_TOTAL` rows equally across symbols

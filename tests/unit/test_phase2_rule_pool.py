@@ -36,6 +36,7 @@ from gpu_fuzzy_trader.phases.phase2_rule_pool import (
     _init_population,
     _mutate,
     _non_dominated_sort,
+    _pareto_return_stats,
     _sample_df,
     _validate_pool_schema,
 )
@@ -164,6 +165,33 @@ class TestHammingDistance:
         a = np.array([1, 2, 3])
         b = np.array([1, 5, 3])
         assert _hamming_distance(a, b) == 1
+
+
+# ---------------------------------------------------------------------------
+# Tests: _pareto_return_stats
+# ---------------------------------------------------------------------------
+
+class TestParetoReturnStats:
+    def test_empty_pareto_front(self):
+        stats = _pareto_return_stats([], [{"total_return_pct": 10.0}])
+        assert stats == {"mean_total_return_pct": 0.0,
+                         "best_total_return_pct": 0.0}
+
+    def test_mean_and_best_from_cache(self):
+        metrics_cache = [
+            {"total_return_pct": 10.0},
+            {"total_return_pct": 30.0},
+            {"total_return_pct": 20.0},
+        ]
+        stats = _pareto_return_stats([0, 2], metrics_cache)
+        assert stats["mean_total_return_pct"] == 15.0
+        assert stats["best_total_return_pct"] == 20.0
+
+    def test_missing_total_return_defaults_to_zero(self):
+        metrics_cache = [{"total_return_pct": 12.0}, {}]
+        stats = _pareto_return_stats([0, 1], metrics_cache)
+        assert stats["mean_total_return_pct"] == 6.0
+        assert stats["best_total_return_pct"] == 12.0
 
 
 # ---------------------------------------------------------------------------

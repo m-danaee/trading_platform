@@ -26,8 +26,11 @@ trading_platform/
 │   │   ├── cpu_engine.py          # CPUBacktestEngine (canonical reference)
 │   │   └── gpu_engine.py          # GPUBacktestEngine (JAX-accelerated)
 │   │
+│   ├── evolution/                 # Phase 2 MOEA
+│   │   └── evox_runner.py         # NSGA-III loop (EvoX; NSGA-II fallback)
+│   │
 │   ├── phases/                    # Five-phase pipeline modules
-│   │   ├── phase2_rule_pool.py    # Rule_Pool_Generator: NSGA-II/MOEAD search
+│   │   ├── phase2_rule_pool.py    # Rule_Pool_Generator: Phase 2 orchestration
 │   │   ├── phase3_rule_set.py     # Rule_Set_Selector: combinatorial optimization
 │   │   ├── phase4_rl_optimizer.py # RL_Agent: DDPG/PPO risk tuning
 │   │   └── phase5_oos.py          # OOS_Evaluator: final test

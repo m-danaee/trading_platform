@@ -283,6 +283,7 @@ class TestBuildOutputDict:
         result = _build_output_dict(pool, "long")
         assert "direction" in result
         assert "rules_set" in result
+        assert result["risk_optimized"] is False
 
     def test_direction_is_correct(self):
         pool = _make_pool(2)

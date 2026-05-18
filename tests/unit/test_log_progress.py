@@ -62,7 +62,7 @@ class TestIterationLogInterval:
 class TestLogGeneration:
     def test_emits_info(self):
         log = MagicMock(spec=logging.Logger)
-        log_generation(log, "Phase 2 [long] RVEA",
+        log_generation(log, "Phase 2 [long] NSGA-III",
                        24, 500, 38, 2.14, elapsed_s=45.2)
         log.info.assert_called_once()
         msg = log.info.call_args[0][0]

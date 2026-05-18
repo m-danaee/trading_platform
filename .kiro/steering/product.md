@@ -5,7 +5,7 @@ GPU-Fuzzy Trading Pipeline is a rule-mining trading system that discovers, optim
 ## Key Capabilities
 
 - **Direction-specific feature selection** — mode-aware scoring and ranking for long/short strategies
-- **GPU-accelerated rule pool generation** — NSGA-II/MOEAD evolutionary search with JAX
+- **GPU-accelerated rule pool generation** — NSGA-III evolutionary search (EvoX) with JAX backtests
 - **Rule set assembly** — combinatorial optimization for 2-5 rule teams
 - **RL-based risk optimization** — DDPG/PPO tuning of TP/SL/capital allocation with Elbow Method stopping
 - **Out-of-sample evaluation** — final test on held-out data

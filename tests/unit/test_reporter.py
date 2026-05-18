@@ -3,6 +3,7 @@ Unit tests for gpu_fuzzy_trader.reporting.reporter.Reporter
 
 Tests cover:
   - plot_phase2_metrics: normal case, empty history, single entry
+  - plot_phase2_pnl: normal case, empty history, single entry
   - plot_equity_curve: normal case, empty trade_log, missing column, None trade_log
   - write_per_symbol_csv: normal case, empty metrics, missing key
   - plot_rl_curve: normal case, empty validation_returns, elbow_idx clamping
@@ -34,6 +35,18 @@ def _make_history(n: int = 5) -> list[dict]:
             "mean_f1": -float(i) * 0.5,
             "mean_f2": float(i) * 0.1,
             "mean_f3": -float(i) * 0.3,
+        }
+        for i in range(n)
+    ]
+
+
+def _make_pnl_history(n: int = 5) -> list[dict]:
+    """Create a minimal Phase 2 history list with PnL fields."""
+    return [
+        {
+            "generation": i,
+            "mean_total_return_pct": float(i) * 2.0,
+            "best_total_return_pct": float(i) * 3.0 + 5.0,
         }
         for i in range(n)
     ]
@@ -112,6 +125,68 @@ class TestPlotPhase2Metrics:
         history = [{"generation": 0}, {"generation": 1, "mean_f1": -0.5}]
         reporter.plot_phase2_metrics(history, "long", output_dir=str(tmp_path))
         assert os.path.exists(tmp_path / "phase2_long_metrics.png")
+
+
+# ---------------------------------------------------------------------------
+# Tests: plot_phase2_pnl
+# ---------------------------------------------------------------------------
+
+class TestPlotPhase2Pnl:
+    def test_creates_long_png_file(self, tmp_path):
+        reporter = Reporter()
+        reporter.plot_phase2_pnl(
+            _make_pnl_history(), "long", output_dir=str(tmp_path))
+        assert os.path.exists(tmp_path / "phase2_long_pnl.png")
+
+    def test_creates_short_png_file(self, tmp_path):
+        reporter = Reporter()
+        reporter.plot_phase2_pnl(
+            _make_pnl_history(), "short", output_dir=str(tmp_path))
+        assert os.path.exists(tmp_path / "phase2_short_pnl.png")
+
+    def test_returns_correct_path(self, tmp_path):
+        reporter = Reporter()
+        result = reporter.plot_phase2_pnl(
+            _make_pnl_history(), "long", output_dir=str(tmp_path))
+        expected = os.path.join(str(tmp_path), "phase2_long_pnl.png")
+        assert result == expected
+
+    def test_empty_history_still_creates_file(self, tmp_path):
+        reporter = Reporter()
+        reporter.plot_phase2_pnl([], "long", output_dir=str(tmp_path))
+        assert os.path.exists(tmp_path / "phase2_long_pnl.png")
+
+    def test_single_entry_history(self, tmp_path):
+        reporter = Reporter()
+        history = [{
+            "generation": 0,
+            "mean_total_return_pct": 10.0,
+            "best_total_return_pct": 15.0,
+        }]
+        reporter.plot_phase2_pnl(history, "long", output_dir=str(tmp_path))
+        assert os.path.exists(tmp_path / "phase2_long_pnl.png")
+
+    def test_file_is_nonzero_size(self, tmp_path):
+        reporter = Reporter()
+        reporter.plot_phase2_pnl(_make_pnl_history(
+            10), "long", output_dir=str(tmp_path))
+        size = os.path.getsize(tmp_path / "phase2_long_pnl.png")
+        assert size > 0
+
+    def test_creates_parent_dirs(self, tmp_path):
+        reporter = Reporter()
+        nested_dir = str(tmp_path / "a" / "b" / "c")
+        reporter.plot_phase2_pnl(
+            _make_pnl_history(), "long", output_dir=nested_dir)
+        assert os.path.exists(os.path.join(nested_dir, "phase2_long_pnl.png"))
+
+    def test_missing_keys_in_history_entries(self, tmp_path):
+        """History entries with missing keys should not raise."""
+        reporter = Reporter()
+        history = [{"generation": 0}, {
+            "generation": 1, "mean_total_return_pct": 5.0}]
+        reporter.plot_phase2_pnl(history, "long", output_dir=str(tmp_path))
+        assert os.path.exists(tmp_path / "phase2_long_pnl.png")
 
 
 # ---------------------------------------------------------------------------
