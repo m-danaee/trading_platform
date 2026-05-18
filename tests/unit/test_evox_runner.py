@@ -77,3 +77,50 @@ class TestRunPhase2EvolutionFallback:
             )
         assert len(history) == 1
         assert history[0].get("algorithm") == "NSGA-II (fallback)"
+
+    def test_seed_chromosomes_forwarded_to_fallback(self):
+        feature_infos = [
+            {"name": "feat_0", "mode": "binary", "score": 0.5},
+        ]
+
+        class FakeEngine:
+            def simulate_rule_batch(self, chromosomes, tp, sl, capital_pct):
+                B = chromosomes.shape[0]
+                return [
+                    {
+                        "total_return_pct": 1.0,
+                        "max_drawdown_pct": 2.0,
+                        "win_rate": 50.0,
+                        "executed_trades": 25,
+                    }
+                    for _ in range(B)
+                ]
+
+        rng = np.random.default_rng(2)
+        seeds = np.array([[0]], dtype=np.int32)
+        captured = {}
+
+        def fake_fallback(
+            feature_infos,
+            engine,
+            pop_size,
+            n_generations,
+            rng,
+            seed_chromosomes=None,
+            log_tag=None,
+        ):
+            captured["seed_chromosomes"] = seed_chromosomes
+            return [], []
+
+        with mock.patch("gpu_fuzzy_trader.evolution.evox_runner._EVOX_AVAILABLE", False), \
+                mock.patch("gpu_fuzzy_trader.evolution.evox_runner._run_nsga2_fallback", side_effect=fake_fallback):
+            run_phase2_evolution(
+                feature_infos=feature_infos,
+                engine=FakeEngine(),
+                pop_size=6,
+                n_generations=1,
+                rng=rng,
+                seed_chromosomes=seeds,
+            )
+
+        assert np.array_equal(captured["seed_chromosomes"], seeds)

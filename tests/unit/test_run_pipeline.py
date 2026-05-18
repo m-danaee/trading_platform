@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
 import time
 from unittest.mock import MagicMock, patch
 
@@ -24,6 +23,13 @@ import numpy as np
 import pytest
 
 from gpu_fuzzy_trader import config as _cfg
+from gpu_fuzzy_trader import run_pipeline as run_pipeline_module
+from gpu_fuzzy_trader.features import selector as selector_module
+from gpu_fuzzy_trader.phases import phase2_rule_pool as phase2_module
+from gpu_fuzzy_trader.phases import phase3_rule_set as phase3_module
+from gpu_fuzzy_trader.phases import phase4_rl_optimizer as phase4_module
+from gpu_fuzzy_trader.phases import phase5_oos as phase5_module
+from gpu_fuzzy_trader.reporting import reporter as reporter_module
 from gpu_fuzzy_trader.run_pipeline import Pipeline_Orchestrator, _log_phase_entry
 
 
@@ -755,3 +761,85 @@ class TestMainEntryPoint:
             from gpu_fuzzy_trader.run_pipeline import main
             main()
         run_mock.assert_called_once()
+
+    def test_main_forwards_custom_output_dir(self, tmp_path):
+        """main() should pass --output through to Pipeline_Orchestrator."""
+        custom_output = str(tmp_path / "run_a")
+
+        with patch("gpu_fuzzy_trader.run_pipeline.Pipeline_Orchestrator") as orch_cls:
+            orch_instance = orch_cls.return_value
+            orch_instance.run.return_value = {"phase5": {}}
+            orch_instance._log_path = str(tmp_path / "run_a" / "pipeline.log")
+
+            from gpu_fuzzy_trader.run_pipeline import main
+            main(["--output", custom_output])
+
+        orch_cls.assert_called_once_with(output_dir=custom_output)
+        orch_instance.run.assert_called_once()
+
+    def test_main_defaults_to_config_output_dir(self, tmp_path):
+        """main() should keep the default output root when --output is omitted."""
+        with patch("gpu_fuzzy_trader.run_pipeline.Pipeline_Orchestrator") as orch_cls:
+            orch_instance = orch_cls.return_value
+            orch_instance.run.return_value = {"phase5": {}}
+            orch_instance._log_path = str(tmp_path / "pipeline.log")
+
+            from gpu_fuzzy_trader.run_pipeline import main
+            main([])
+
+        orch_cls.assert_called_once_with(output_dir=None)
+        orch_instance.run.assert_called_once()
+
+
+class TestTemporaryOutputPaths:
+    def test_rebinds_and_restores_cached_output_paths(self, tmp_path):
+        original_outputs = _cfg.OUTPUTS_DIR
+        original_reports = _cfg.REPORTS_DIR
+        original_log_path = run_pipeline_module._PIPELINE_LOG_PATH
+        original_selector_long = selector_module._LONG_PATH
+        original_phase2_pool = phase2_module._POOL_PATHS
+        original_phase3_output = phase3_module._OUTPUT_PATHS
+        original_phase4_output = phase4_module._OUTPUT_PATHS
+        original_phase5_strategy = phase5_module._STRATEGY_PATHS
+        original_phase5_report = phase5_module._REPORT_PATHS
+        original_reporter_dir = reporter_module._REPORTS_DIR
+
+        custom_output = str(tmp_path / "custom_run")
+        expected_reports = os.path.join(custom_output, "reports")
+
+        with run_pipeline_module._temporary_output_paths(custom_output):
+            assert _cfg.OUTPUTS_DIR == custom_output
+            assert _cfg.REPORTS_DIR == expected_reports
+            assert run_pipeline_module._PIPELINE_LOG_PATH == os.path.join(
+                custom_output, "pipeline.log"
+            )
+            assert selector_module._LONG_PATH == os.path.join(
+                custom_output, "selected_features_long.json"
+            )
+            assert phase2_module._POOL_PATHS["long"] == os.path.join(
+                custom_output, "phase2_long_pool.json"
+            )
+            assert phase3_module._OUTPUT_PATHS["short"] == os.path.join(
+                custom_output, "short.json"
+            )
+            assert phase4_module._OUTPUT_PATHS["long"] == os.path.join(
+                custom_output, "long.json"
+            )
+            assert phase5_module._STRATEGY_PATHS["short"] == os.path.join(
+                custom_output, "short.json"
+            )
+            assert phase5_module._REPORT_PATHS["per_symbol"] == os.path.join(
+                expected_reports, "test_per_symbol_performance.csv"
+            )
+            assert reporter_module._REPORTS_DIR == expected_reports
+
+        assert _cfg.OUTPUTS_DIR == original_outputs
+        assert _cfg.REPORTS_DIR == original_reports
+        assert run_pipeline_module._PIPELINE_LOG_PATH == original_log_path
+        assert selector_module._LONG_PATH == original_selector_long
+        assert phase2_module._POOL_PATHS == original_phase2_pool
+        assert phase3_module._OUTPUT_PATHS == original_phase3_output
+        assert phase4_module._OUTPUT_PATHS == original_phase4_output
+        assert phase5_module._STRATEGY_PATHS == original_phase5_strategy
+        assert phase5_module._REPORT_PATHS == original_phase5_report
+        assert reporter_module._REPORTS_DIR == original_reporter_dir

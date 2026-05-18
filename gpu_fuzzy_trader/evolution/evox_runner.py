@@ -36,7 +36,6 @@ except ImportError:
     non_dominate_rank = None  # type: ignore[assignment]
 
 
-
 def _build_rank_and_crowding(
     objectives: np.ndarray,
     fronts: list[list[int]],
@@ -358,6 +357,7 @@ def _run_nsga2_fallback(
     pop_size: int,
     n_generations: int,
     rng: np.random.Generator,
+    seed_chromosomes: np.ndarray | None = None,
     log_tag: str | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """NumPy NSGA-II loop when EvoX is not installed."""
@@ -372,7 +372,12 @@ def _run_nsga2_fallback(
 
     K = len(feature_infos)
     dont_cares = _get_dont_cares(feature_infos)
-    population = _init_population(pop_size, feature_infos, rng)
+    population = _init_population(
+        pop_size,
+        feature_infos,
+        rng,
+        seeded_chromosomes=seed_chromosomes,
+    )
     objectives = np.full((pop_size, 3), np.inf)
     metrics_cache: list[dict] = [{} for _ in range(pop_size)]
     pareto_archive: list[np.ndarray] = []
@@ -456,6 +461,7 @@ def _run_nsga3(
     pop_size: int,
     n_generations: int,
     rng: np.random.Generator,
+    seed_chromosomes: np.ndarray | None = None,
     log_tag: str | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """NSGA-III evolutionary loop for Phase 2 rule pool generation."""
@@ -470,7 +476,12 @@ def _run_nsga3(
 
     K = len(feature_infos)
     dont_cares = _get_dont_cares(feature_infos)
-    population = _init_population(pop_size, feature_infos, rng)
+    population = _init_population(
+        pop_size,
+        feature_infos,
+        rng,
+        seeded_chromosomes=seed_chromosomes,
+    )
     objectives = np.full((pop_size, 3), np.inf)
     metrics_cache: list[dict] = [{} for _ in range(pop_size)]
     pareto_archive: list[np.ndarray] = []
@@ -566,6 +577,7 @@ def run_phase2_evolution(
     pop_size: int,
     n_generations: int,
     rng: np.random.Generator,
+    seed_chromosomes: np.ndarray | None = None,
     log_tag: str | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Run Phase 2 NSGA-III evolution. Returns (pareto_pool, history)."""
@@ -575,9 +587,11 @@ def run_phase2_evolution(
         )
         return _run_nsga2_fallback(
             feature_infos, engine, pop_size, n_generations, rng,
+            seed_chromosomes=seed_chromosomes,
             log_tag=log_tag or "NSGA-II (fallback)",
         )
 
     return _run_nsga3(
-        feature_infos, engine, pop_size, n_generations, rng, log_tag=log_tag,
+        feature_infos, engine, pop_size, n_generations, rng,
+        seed_chromosomes=seed_chromosomes, log_tag=log_tag,
     )

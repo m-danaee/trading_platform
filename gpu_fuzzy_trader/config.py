@@ -5,6 +5,13 @@ No module may define its own defaults that override these values.
 All paths, constants, and behavioral settings live here.
 """
 
+from __future__ import annotations
+
+import os
+
+_PROJECT_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), os.pardir))
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
@@ -14,6 +21,11 @@ TRAIN_75_PATH = "data/train_75.parquet"
 VALIDATION_25_PATH = "data/validation_25.parquet"
 OUTPUTS_DIR = "outputs"
 REPORTS_DIR = "outputs/reports"
+PHASE2_ARCHIVE_DIR = os.path.join(_PROJECT_ROOT, "phase2_rule_archive")
+PHASE2_ARCHIVE_PATHS = {
+    "long": os.path.join(PHASE2_ARCHIVE_DIR, "phase2_long_archive.json"),
+    "short": os.path.join(PHASE2_ARCHIVE_DIR, "phase2_short_archive.json"),
+}
 
 # ---------------------------------------------------------------------------
 # Schema
@@ -52,20 +64,23 @@ PHASE2_CAPITAL_PCT = 50.0
 # ---------------------------------------------------------------------------
 MIN_CONDITIONS = 2
 MAX_CONDITIONS = 4
-MIN_TRADE_SUPPORT = 120
+# minimum number of trades across all symbols (after applying condition filters)
+MIN_TRADE_SUPPORT = 200
 PHASE2_POPULATION_SIZE = 200
 PHASE2_GENERATIONS = 100
+PHASE2_ARCHIVE_MAX_SIZE = 500
+PHASE2_ARCHIVE_SEED_FRACTION = 0.35
 PHASE2_ALGORITHM = "NSGA3"  # NSGA-III
 
 # ---------------------------------------------------------------------------
 # Phase 3 Rule Set Selection
 # ---------------------------------------------------------------------------
-PHASE3_MIN_RULES = 1
+PHASE3_MIN_RULES = 2
 PHASE3_MAX_RULES = 3
 PHASE3_MIN_SYMBOL_COVERAGE = 7  # out of 10 symbols must have >= 1 trade
 PHASE3_USE_GPU = False  # set True after GPU rule-set batch parity tests pass
-PHASE3_REFINE_GENERATIONS = 15
-PHASE3_REFINE_POP_SIZE = 40
+PHASE3_REFINE_GENERATIONS = 40
+PHASE3_REFINE_POP_SIZE = 100
 PHASE3_GREEDY_WEIGHTS = (1.0, 0.7, 0.5)  # return, drawdown, win_rate
 
 # ---------------------------------------------------------------------------
@@ -86,7 +101,7 @@ PHASE4_SL_MAX = 5.0
 PHASE4_CAPITAL_PCT_MIN = 10.0
 PHASE4_CAPITAL_PCT_MAX = 100.0
 PHASE4_TOTAL_TIMESTEPS = 500_000
-PHASE4_ELBOW_WINDOW = 20
+PHASE4_ELBOW_WINDOW = 15
 
 # ---------------------------------------------------------------------------
 # Logging

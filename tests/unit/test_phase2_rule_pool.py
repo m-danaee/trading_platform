@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -90,6 +91,20 @@ def _make_train_df(
         dfs.append(pd.DataFrame(data))
 
     return pd.concat(dfs, ignore_index=True)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_phase2_archive_paths(tmp_path):
+    """Keep persistent archive files under the per-test temp directory."""
+    import gpu_fuzzy_trader.phases.phase2_rule_pool as m
+
+    original_archive = m._ARCHIVE_PATHS.copy()
+    m._ARCHIVE_PATHS["long"] = str(tmp_path / "phase2_long_archive.json")
+    m._ARCHIVE_PATHS["short"] = str(tmp_path / "phase2_short_archive.json")
+    try:
+        yield
+    finally:
+        m._ARCHIVE_PATHS.update(original_archive)
 
 
 # ---------------------------------------------------------------------------
@@ -323,6 +338,32 @@ class TestInitPopulation:
         pop = _init_population(20, fi, rng, dont_care_prob=0.0)
         assert not np.any(pop == dc[0])
 
+    def test_seeded_chromosomes_fill_requested_fraction(self):
+        fi = _make_feature_infos(["positive"] * 4)
+        seeds = np.array(
+            [
+                [0, 1, 2, 3],
+                [1, 2, 3, 4],
+                [4, 3, 2, 1],
+            ],
+            dtype=np.int32,
+        )
+        rng = np.random.default_rng(0)
+        pop = _init_population(
+            10,
+            fi,
+            rng,
+            dont_care_prob=1.0,
+            seeded_chromosomes=seeds,
+        )
+
+        seed_matches = sum(
+            any(np.array_equal(row, seed) for row in pop)
+            for seed in seeds
+        )
+        assert seed_matches == len(seeds)
+        assert np.sum(np.all(pop == 5, axis=1)) == 7
+
 
 # ---------------------------------------------------------------------------
 # Tests: _mutate
@@ -466,7 +507,8 @@ class TestLoadPool:
 
     def test_load_pool_returns_none_when_missing(self, tmp_path, monkeypatch):
         monkeypatch.setitem(
-            __import__("gpu_fuzzy_trader.phases.phase2_rule_pool", fromlist=["_POOL_PATHS"])
+            __import__("gpu_fuzzy_trader.phases.phase2_rule_pool",
+                       fromlist=["_POOL_PATHS"])
             .__dict__["_POOL_PATHS"],
             "long",
             str(tmp_path / "phase2_long_pool.json"),
@@ -549,6 +591,95 @@ class TestLoadPool:
             Rule_Pool_Generator.load_pool("both")
 
 
+class TestArchivePersistence:
+    def _entry(
+        self,
+        chromosome: list[int],
+        total_return_pct: float,
+        max_drawdown_pct: float,
+        win_rate: float,
+        executed_trades: int,
+    ) -> dict:
+        return {
+            "chromosome": chromosome,
+            "conditions": ["[feat_0] IS Medium"],
+            "objectives": {
+                "total_return_pct": total_return_pct,
+                "max_drawdown_pct": max_drawdown_pct,
+                "win_rate": win_rate,
+            },
+            "executed_trades": executed_trades,
+        }
+
+    def test_save_and_load_archive_round_trip(self):
+        fi = _make_feature_infos(
+            ["positive", "positive", "positive", "positive"])
+        rules = [
+            self._entry([0, 1, 2, 3], 12.0, 3.0, 61.0, 240),
+            self._entry([1, 2, 3, 4], 11.0, 4.0, 60.0, 260),
+        ]
+
+        merged = Rule_Pool_Generator.save_archive("long", fi, rules)
+        loaded = Rule_Pool_Generator.load_archive("long", fi)
+
+        assert len(merged) == 2
+        assert loaded is not None
+        assert loaded["direction"] == "long"
+        assert loaded["feature_signature"] == [
+            {"name": "feat_0", "mode": "positive"},
+            {"name": "feat_1", "mode": "positive"},
+            {"name": "feat_2", "mode": "positive"},
+            {"name": "feat_3", "mode": "positive"},
+        ]
+        assert len(loaded["rules"]) == 2
+
+    def test_save_archive_keeps_best_duplicate(self):
+        fi = _make_feature_infos(
+            ["positive", "positive", "positive", "positive"])
+        rules = [
+            self._entry([0, 1, 2, 3], 10.0, 5.0, 58.0, 250),
+            self._entry([0, 1, 2, 3], 13.0, 3.0, 64.0, 260),
+            self._entry([0, 1, 2, 3], 9.0, 6.0, 55.0, 240),
+        ]
+
+        merged = Rule_Pool_Generator.save_archive("long", fi, rules)
+
+        assert len(merged) == 1
+        assert merged[0]["objectives"]["total_return_pct"] == 13.0
+        assert merged[0]["objectives"]["max_drawdown_pct"] == 3.0
+        assert merged[0]["objectives"]["win_rate"] == 64.0
+
+    def test_save_archive_prunes_to_max_size(self):
+        fi = _make_feature_infos(
+            ["positive", "positive", "positive", "positive"])
+        rules = []
+        for i in range(_cfg.PHASE2_ARCHIVE_MAX_SIZE + 20):
+            chromosome = [
+                i % 6,
+                (i // 6) % 6,
+                (i // 36) % 6,
+                (i // 216) % 6,
+            ]
+            rules.append(self._entry(chromosome, 1.0, 1.0, 50.0, 250))
+
+        merged = Rule_Pool_Generator.save_archive("long", fi, rules)
+
+        assert len(merged) == _cfg.PHASE2_ARCHIVE_MAX_SIZE
+        assert len({tuple(entry["chromosome"])
+                   for entry in merged}) == len(merged)
+
+    def test_load_archive_ignores_feature_signature_mismatch(self):
+        fi_long = _make_feature_infos(["positive", "positive"])
+        fi_short = _make_feature_infos(["binary", "positive"])
+        Rule_Pool_Generator.save_archive(
+            "long",
+            fi_long,
+            [self._entry([0, 1], 5.0, 1.0, 55.0, 230)],
+        )
+
+        assert Rule_Pool_Generator.load_archive("long", fi_short) is None
+
+
 # ---------------------------------------------------------------------------
 # Tests: Rule_Pool_Generator constructor
 # ---------------------------------------------------------------------------
@@ -600,7 +731,8 @@ class TestRulePoolGeneratorRun:
     """Integration tests using tiny population and generation counts."""
 
     def _make_generator(self, direction: str = "long", tmp_path=None) -> Rule_Pool_Generator:
-        fi = _make_feature_infos(["positive", "positive", "positive", "positive"])
+        fi = _make_feature_infos(
+            ["positive", "positive", "positive", "positive"])
         df = _make_train_df(n_rows=200, n_features=4, symbols=["A", "B"])
         gen = Rule_Pool_Generator(
             df, fi, direction,
@@ -620,6 +752,117 @@ class TestRulePoolGeneratorRun:
             gen = self._make_generator("long")
             result = gen.run()
             assert isinstance(result, list)
+        finally:
+            m._POOL_PATHS.update(original_pool)
+            m._HISTORY_PATHS.update(original_hist)
+
+    def test_run_uses_archive_seeds(self, tmp_path):
+        import gpu_fuzzy_trader.phases.phase2_rule_pool as m
+        original_pool = m._POOL_PATHS.copy()
+        original_hist = m._HISTORY_PATHS.copy()
+        m._POOL_PATHS["long"] = str(tmp_path / "phase2_long_pool.json")
+        m._HISTORY_PATHS["long"] = str(tmp_path / "phase2_long_history.json")
+
+        class StubReporter:
+            def plot_phase2_metrics(self, *args, **kwargs):
+                return None
+
+            def plot_phase2_pnl(self, *args, **kwargs):
+                return None
+
+        captured = {}
+
+        def fake_run_phase2_evolution(
+            feature_infos,
+            engine,
+            pop_size,
+            n_generations,
+            rng,
+            seed_chromosomes=None,
+            log_tag=None,
+        ):
+            captured["seed_chromosomes"] = seed_chromosomes
+            return [
+                {
+                    "chromosome": [0, 1, 2, 3],
+                    "conditions": ["[feat_0] IS Medium"],
+                    "objectives": {
+                        "total_return_pct": 10.0,
+                        "max_drawdown_pct": 4.0,
+                        "win_rate": 60.0,
+                    },
+                    "executed_trades": 220,
+                },
+                {
+                    "chromosome": [1, 2, 3, 4],
+                    "conditions": ["[feat_0] IS Medium"],
+                    "objectives": {
+                        "total_return_pct": 11.0,
+                        "max_drawdown_pct": 3.0,
+                        "win_rate": 61.0,
+                    },
+                    "executed_trades": 230,
+                },
+            ], [
+                {
+                    "generation": 0,
+                    "pareto_size": 2,
+                    "mean_f1": 0.0,
+                    "mean_f2": 0.0,
+                    "mean_f3": 0.0,
+                    "algorithm": "NSGA-III",
+                    "mean_total_return_pct": 0.0,
+                    "best_total_return_pct": 0.0,
+                }
+            ]
+
+        try:
+            fi = _make_feature_infos(
+                ["positive", "positive", "positive", "positive"])
+            Rule_Pool_Generator.save_archive(
+                "long",
+                fi,
+                [
+                    {
+                        "chromosome": [0, 1, 2, 3],
+                        "conditions": ["[feat_0] IS Medium"],
+                        "objectives": {
+                            "total_return_pct": 12.0,
+                            "max_drawdown_pct": 3.0,
+                            "win_rate": 61.0,
+                        },
+                        "executed_trades": 240,
+                    },
+                    {
+                        "chromosome": [1, 2, 3, 4],
+                        "conditions": ["[feat_0] IS Medium"],
+                        "objectives": {
+                            "total_return_pct": 11.0,
+                            "max_drawdown_pct": 4.0,
+                            "win_rate": 60.0,
+                        },
+                        "executed_trades": 250,
+                    },
+                ],
+            )
+
+            with patch(
+                "gpu_fuzzy_trader.evolution.evox_runner.run_phase2_evolution",
+                side_effect=fake_run_phase2_evolution,
+            ), patch(
+                "gpu_fuzzy_trader.phases.phase2_rule_pool.Reporter",
+                return_value=StubReporter(),
+            ):
+                gen = self._make_generator("long")
+                result = gen.run()
+
+            assert isinstance(result, list)
+            assert captured["seed_chromosomes"] is not None
+            assert captured["seed_chromosomes"].shape == (2, 4)
+            assert np.array_equal(captured["seed_chromosomes"][0], np.array(
+                [0, 1, 2, 3], dtype=np.int32))
+            assert np.array_equal(captured["seed_chromosomes"][1], np.array(
+                [1, 2, 3, 4], dtype=np.int32))
         finally:
             m._POOL_PATHS.update(original_pool)
             m._HISTORY_PATHS.update(original_hist)
@@ -694,7 +937,8 @@ class TestRulePoolGeneratorRun:
         try:
             fi = _make_feature_infos(["positive"] * 6)
             df = _make_train_df(n_rows=200, n_features=6, symbols=["A", "B"])
-            gen = Rule_Pool_Generator(df, fi, "long", pop_size=10, n_generations=3, seed=0)
+            gen = Rule_Pool_Generator(
+                df, fi, "long", pop_size=10, n_generations=3, seed=0)
             result = gen.run()
             for entry in result:
                 n_conditions = len(entry["conditions"])
@@ -734,7 +978,8 @@ class TestRulePoolGeneratorRun:
         try:
             fi = _make_feature_infos(["positive", "positive"])
             df = _make_train_df(n_rows=100, n_features=2, symbols=["A"])
-            gen = Rule_Pool_Generator(df, fi, "long", pop_size=4, n_generations=2, seed=0)
+            gen = Rule_Pool_Generator(
+                df, fi, "long", pop_size=4, n_generations=2, seed=0)
             gen._engine = MockEngine()
             gen.run()
 
@@ -804,7 +1049,8 @@ class TestRulePoolGeneratorRun:
         try:
             fi = _make_feature_infos(["positive"] * 4)
             df = _make_train_df(n_rows=200, n_features=4, symbols=["A", "B"])
-            gen = Rule_Pool_Generator(df, fi, "long", pop_size=8, n_generations=3, seed=0)
+            gen = Rule_Pool_Generator(
+                df, fi, "long", pop_size=8, n_generations=3, seed=0)
             result = gen.run()
             for entry in result:
                 assert entry["executed_trades"] >= _cfg.MIN_TRADE_SUPPORT, (

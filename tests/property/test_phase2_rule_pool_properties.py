@@ -21,6 +21,7 @@ import tempfile
 
 import numpy as np
 import pandas as pd
+import pytest
 from hypothesis import given, settings, HealthCheck
 from hypothesis import strategies as st
 
@@ -91,6 +92,22 @@ def _make_train_df(
     return pd.concat(dfs, ignore_index=True)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_phase2_archive_paths(tmp_path):
+    """Keep persistent Phase 2 archive files under the per-test temp directory."""
+    import gpu_fuzzy_trader.phases.phase2_rule_pool as m
+
+    original_archive = m._ARCHIVE_PATHS.copy()
+    m._ARCHIVE_PATHS["long"] = os.path.join(
+        tmp_path, "phase2_long_archive.json")
+    m._ARCHIVE_PATHS["short"] = os.path.join(
+        tmp_path, "phase2_short_archive.json")
+    try:
+        yield
+    finally:
+        m._ARCHIVE_PATHS.update(original_archive)
+
+
 # ---------------------------------------------------------------------------
 # Mock engine that records every simulate_rule_batch call
 # ---------------------------------------------------------------------------
@@ -131,7 +148,8 @@ class _RecordingEngine:
 # ---------------------------------------------------------------------------
 
 # Supported feature modes (must match encoder.get_dont_care)
-_MODES = ["binary", "ternary", "positive", "sparse_positive", "sparse_signed", "signed"]
+_MODES = ["binary", "ternary", "positive",
+          "sparse_positive", "sparse_signed", "signed"]
 
 
 @st.composite
@@ -175,7 +193,9 @@ def feature_infos_and_train_df(draw: st.DrawFn):
 @given(args=feature_infos_and_train_df())
 @settings(
     max_examples=20,
-    suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture],
+    suppress_health_check=[HealthCheck.too_slow,
+                           HealthCheck.function_scoped_fixture],
+    deadline=None,
 )
 def test_property_19_phase2_static_risk_parameters(
     args: tuple[list[dict], pd.DataFrame],
@@ -201,8 +221,10 @@ def test_property_19_phase2_static_risk_parameters(
         original_pool = m._POOL_PATHS.copy()
         original_hist = m._HISTORY_PATHS.copy()
         direction = "long"
-        m._POOL_PATHS[direction] = os.path.join(tmp_dir, f"phase2_{direction}_pool.json")
-        m._HISTORY_PATHS[direction] = os.path.join(tmp_dir, f"phase2_{direction}_history.json")
+        m._POOL_PATHS[direction] = os.path.join(
+            tmp_dir, f"phase2_{direction}_pool.json")
+        m._HISTORY_PATHS[direction] = os.path.join(
+            tmp_dir, f"phase2_{direction}_history.json")
 
         try:
             gen = Rule_Pool_Generator(
@@ -250,7 +272,9 @@ def test_property_19_phase2_static_risk_parameters(
 @given(args=feature_infos_and_train_df())
 @settings(
     max_examples=20,
-    suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture],
+    suppress_health_check=[HealthCheck.too_slow,
+                           HealthCheck.function_scoped_fixture],
+    deadline=None,
 )
 def test_property_20_rule_condition_count_bounds(
     args: tuple[list[dict], pd.DataFrame],
@@ -275,8 +299,10 @@ def test_property_20_rule_condition_count_bounds(
         original_pool = m._POOL_PATHS.copy()
         original_hist = m._HISTORY_PATHS.copy()
         direction = "long"
-        m._POOL_PATHS[direction] = os.path.join(tmp_dir, f"phase2_{direction}_pool.json")
-        m._HISTORY_PATHS[direction] = os.path.join(tmp_dir, f"phase2_{direction}_history.json")
+        m._POOL_PATHS[direction] = os.path.join(
+            tmp_dir, f"phase2_{direction}_pool.json")
+        m._HISTORY_PATHS[direction] = os.path.join(
+            tmp_dir, f"phase2_{direction}_history.json")
 
         try:
             gen = Rule_Pool_Generator(

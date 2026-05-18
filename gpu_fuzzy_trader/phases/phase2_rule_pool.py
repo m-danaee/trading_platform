@@ -55,6 +55,7 @@ _HISTORY_PATHS = {
     "long": os.path.join(_cfg.OUTPUTS_DIR, "phase2_long_history.json"),
     "short": os.path.join(_cfg.OUTPUTS_DIR, "phase2_short_history.json"),
 }
+_ARCHIVE_PATHS = dict(_cfg.PHASE2_ARCHIVE_PATHS)
 
 # ---------------------------------------------------------------------------
 # EvoX optional import
@@ -181,7 +182,8 @@ def _evaluate_chromosome(
     # Diversity penalty: Hamming distance to nearest Pareto-front member
     diversity_penalty = 0.0
     if pareto_front:
-        min_hamming = min(_hamming_distance(chromosome, pf) for pf in pareto_front)
+        min_hamming = min(_hamming_distance(chromosome, pf)
+                          for pf in pareto_front)
         if min_hamming == 0:
             diversity_penalty = 5.0  # identical rule already in front
 
@@ -303,6 +305,8 @@ def _init_population(
     feature_infos: list[dict],
     rng: np.random.Generator,
     dont_care_prob: float = 0.5,
+    seeded_chromosomes: np.ndarray | list[np.ndarray] | None = None,
+    seed_fraction: float | None = None,
 ) -> np.ndarray:
     """
     Initialise a population of chromosomes.
@@ -318,6 +322,10 @@ def _init_population(
     rng : np.random.Generator
     dont_care_prob : float
         Probability that a gene is set to dont_care (inactive).
+    seeded_chromosomes : np.ndarray | list[np.ndarray] | None
+        Optional archive chromosomes to seed into the initial population.
+    seed_fraction : float | None
+        Fraction of the population to seed from *seeded_chromosomes*.
 
     Returns
     -------
@@ -327,11 +335,56 @@ def _init_population(
     K = len(feature_infos)
     dont_cares = _get_dont_cares(feature_infos)
     population = np.zeros((pop_size, K), dtype=np.int32)
+    if seed_fraction is None:
+        seed_fraction = _cfg.PHASE2_ARCHIVE_SEED_FRACTION
+
+    seed_rows: list[np.ndarray] = []
+    if seeded_chromosomes is not None:
+        seed_array = np.asarray(seeded_chromosomes, dtype=np.int32)
+        if seed_array.ndim == 1:
+            seed_array = seed_array[None, :]
+        if seed_array.ndim != 2:
+            raise ValueError(
+                "seeded_chromosomes must be a 1D or 2D array-like value")
+        if seed_array.shape[1] != K:
+            raise ValueError(
+                f"seeded_chromosomes must have {K} genes per chromosome, got {seed_array.shape[1]}"
+            )
+
+        seen: set[tuple[int, ...]] = set()
+        for row in seed_array:
+            key = tuple(int(v) for v in row.tolist())
+            if key in seen:
+                continue
+            seen.add(key)
+            repaired = row.astype(np.int32, copy=True)
+            for k, dc in enumerate(dont_cares):
+                gene = int(repaired[k])
+                if gene < 0:
+                    repaired[k] = 0
+                elif gene > int(dc):
+                    repaired[k] = int(dc)
+            seed_rows.append(repaired)
+
+    seed_count = 0
+    if seed_rows and pop_size > 0 and seed_fraction > 0:
+        seed_count = min(
+            pop_size,
+            max(1, int(round(pop_size * seed_fraction))),
+            len(seed_rows),
+        )
+
+    seeded_mask = np.zeros(pop_size, dtype=bool)
+    if seed_count > 0:
+        seed_positions = rng.choice(pop_size, size=seed_count, replace=False)
+        for position, chrom in zip(seed_positions, seed_rows[:seed_count]):
+            population[position] = chrom
+        seeded_mask[seed_positions] = True
 
     for k, fi in enumerate(feature_infos):
         dc = dont_cares[k]
         num_classes = dc  # dont_care = num_classes
-        for i in range(pop_size):
+        for i in np.where(~seeded_mask)[0]:
             if rng.random() < dont_care_prob:
                 population[i, k] = dc
             else:
@@ -481,6 +534,135 @@ def _build_pool_from_archive(
     return pool
 
 
+def _archive_feature_signature(feature_infos: list[dict]) -> list[dict[str, str]]:
+    """Return the ordered feature signature used to validate archive reuse."""
+    return [
+        {"name": fi["name"], "mode": fi["mode"]}
+        for fi in feature_infos
+    ]
+
+
+def _read_json_payload(path: str) -> object | None:
+    """Read JSON from *path* and return None when the file cannot be loaded."""
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _archive_objective_vector(entry: dict) -> np.ndarray:
+    """Convert an archive entry into the minimisation objectives used for ranking."""
+    objectives = entry.get("objectives", {})
+    return np.array(
+        [
+            -float(objectives.get("total_return_pct", 0.0)),
+            float(objectives.get("max_drawdown_pct", 0.0)),
+            -float(objectives.get("win_rate", 0.0)),
+        ],
+        dtype=np.float64,
+    )
+
+
+def _is_better_archive_entry(candidate: dict, incumbent: dict) -> bool:
+    """Return True when *candidate* should replace *incumbent* for the same chromosome."""
+    candidate_vec = _archive_objective_vector(candidate)
+    incumbent_vec = _archive_objective_vector(incumbent)
+    if _dominates(candidate_vec, incumbent_vec):
+        return True
+    if _dominates(incumbent_vec, candidate_vec):
+        return False
+    return tuple(candidate_vec.tolist()) < tuple(incumbent_vec.tolist())
+
+
+def _merge_archive_entries(
+    entries: list[dict],
+    max_size: int = _cfg.PHASE2_ARCHIVE_MAX_SIZE,
+) -> list[dict]:
+    """Deduplicate and rank archive entries, keeping the best *max_size* rules."""
+    if not entries:
+        return []
+
+    deduped: dict[tuple, dict] = {}
+    for entry in entries:
+        key = tuple(entry["chromosome"])
+        current = deduped.get(key)
+        if current is None or _is_better_archive_entry(entry, current):
+            deduped[key] = entry
+
+    unique_entries = list(deduped.values())
+    if not unique_entries:
+        return []
+
+    objectives = np.vstack([
+        _archive_objective_vector(entry) for entry in unique_entries
+    ])
+    fronts = _non_dominated_sort(objectives)
+
+    selected: list[int] = []
+    for front in fronts:
+        if not front:
+            continue
+        if len(selected) + len(front) <= max_size:
+            selected.extend(front)
+        else:
+            crowding = _crowding_distance(objectives, front)
+            order = np.argsort(-crowding)
+            need = max_size - len(selected)
+            selected.extend(int(front[j]) for j in order[:need])
+            break
+
+    return [unique_entries[i] for i in selected[:max_size]]
+
+
+def _validate_archive_payload(
+    payload: object,
+    path: str,
+    feature_infos: list[dict],
+) -> None:
+    """Validate the archive JSON structure and feature compatibility."""
+    if not isinstance(payload, dict):
+        raise ValueError(
+            f"Phase 2 archive must be a JSON object, got {type(payload).__name__}: {path}"
+        )
+
+    required_keys = {"version", "direction", "feature_signature", "rules"}
+    missing = required_keys - set(payload.keys())
+    if missing:
+        raise ValueError(f"Phase 2 archive missing keys {missing}: {path}")
+
+    if payload["direction"] not in _ARCHIVE_PATHS:
+        raise ValueError(
+            f"Phase 2 archive has invalid direction {payload['direction']!r}: {path}"
+        )
+
+    expected_signature = _archive_feature_signature(feature_infos)
+    if payload["feature_signature"] != expected_signature:
+        raise ValueError(f"Phase 2 archive feature signature mismatch: {path}")
+
+    if not isinstance(payload["rules"], list):
+        raise ValueError(f"Phase 2 archive 'rules' must be a list: {path}")
+
+    _validate_pool_schema(payload["rules"], path)
+
+    dont_cares = _get_dont_cares(feature_infos)
+    for i, entry in enumerate(payload["rules"]):
+        chromosome = entry["chromosome"]
+        if len(chromosome) != len(feature_infos):
+            raise ValueError(
+                f"Phase 2 archive entry {i} chromosome length mismatch: {path}"
+            )
+        for j, gene in enumerate(chromosome):
+            if not isinstance(gene, (int, np.integer)):
+                raise ValueError(
+                    f"Phase 2 archive entry {i} gene {j} must be an int: {path}"
+                )
+            if gene < 0 or gene > int(dont_cares[j]):
+                raise ValueError(
+                    f"Phase 2 archive entry {i} gene {j} out of range: {path}"
+                )
+
+
 # ---------------------------------------------------------------------------
 # EvoX-compatible optimizer (optional)
 # ---------------------------------------------------------------------------
@@ -571,7 +753,8 @@ class Rule_Pool_Generator:
         seed: int = 42,
     ) -> None:
         if direction not in ("long", "short"):
-            raise ValueError(f"direction must be 'long' or 'short', got {direction!r}")
+            raise ValueError(
+                f"direction must be 'long' or 'short', got {direction!r}")
         if not feature_infos:
             raise ValueError("feature_infos must not be empty.")
 
@@ -580,6 +763,7 @@ class Rule_Pool_Generator:
         self.pop_size = pop_size if pop_size is not None else _cfg.PHASE2_POPULATION_SIZE
         self.n_generations = n_generations if n_generations is not None else _cfg.PHASE2_GENERATIONS
         self.seed = seed
+        self._feature_signature = _archive_feature_signature(feature_infos)
 
         # Sample training data to budget, then slim to backtest-only columns
         sampled = _sample_df(train_df, _cfg.PHASE1_SAMPLING_TOTAL)
@@ -610,10 +794,12 @@ class Rule_Pool_Generator:
                 self._feature_modes,
                 self.direction,
             )
-            logger.info("Phase 2 using GPUBacktestEngine (backend: %s)", engine.backend)
+            logger.info(
+                "Phase 2 using GPUBacktestEngine (backend: %s)", engine.backend)
             return engine
         except ImportError:
-            logger.warning("JAX not available; falling back to CPUBacktestEngine for Phase 2.")
+            logger.warning(
+                "JAX not available; falling back to CPUBacktestEngine for Phase 2.")
             from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
             return CPUBacktestEngine(
                 self._train_df,
@@ -642,7 +828,8 @@ class Rule_Pool_Generator:
 
         logger.info(
             "Phase 2 [%s]: pop=%d, gen=%d, features=%d",
-            self.direction, self.pop_size, self.n_generations, len(self.feature_infos)
+            self.direction, self.pop_size, self.n_generations, len(
+                self.feature_infos)
         )
 
         from gpu_fuzzy_trader.evolution.evox_runner import run_phase2_evolution
@@ -652,6 +839,19 @@ class Rule_Pool_Generator:
             self.direction, _cfg.PHASE2_ALGORITHM,
         )
 
+        archive_state = self.load_archive(self.direction, self.feature_infos)
+        seed_chromosomes = None
+        if archive_state and archive_state["rules"]:
+            seed_chromosomes = np.asarray(
+                [entry["chromosome"] for entry in archive_state["rules"]],
+                dtype=np.int32,
+            )
+            logger.info(
+                "Phase 2 [%s]: seeding from archive with %d rules",
+                self.direction,
+                len(archive_state["rules"]),
+            )
+
         progress_tag = "Phase 2 [%s] NSGA-III" % self.direction
         pool, history = run_phase2_evolution(
             feature_infos=self.feature_infos,
@@ -660,6 +860,7 @@ class Rule_Pool_Generator:
             n_generations=self.n_generations,
             rng=rng,
             log_tag=progress_tag,
+            seed_chromosomes=seed_chromosomes,
         )
 
         # Persist
@@ -719,7 +920,8 @@ class Rule_Pool_Generator:
             If the file exists but is corrupted or has an invalid schema.
         """
         if direction not in _POOL_PATHS:
-            raise ValueError(f"direction must be 'long' or 'short', got {direction!r}")
+            raise ValueError(
+                f"direction must be 'long' or 'short', got {direction!r}")
 
         path = _POOL_PATHS[direction]
         if not os.path.exists(path):
@@ -735,6 +937,89 @@ class Rule_Pool_Generator:
 
         _validate_pool_schema(pool, path)
         return pool
+
+    @staticmethod
+    def load_archive(
+        direction: str,
+        feature_infos: list[dict],
+    ) -> Optional[dict]:
+        """
+        Load a compatible persistent archive if it exists, otherwise return None.
+
+        Archive files are ignored when they are corrupt or were built from an
+        incompatible feature signature.
+        """
+        if direction not in _ARCHIVE_PATHS:
+            raise ValueError(
+                f"direction must be 'long' or 'short', got {direction!r}")
+
+        path = _ARCHIVE_PATHS[direction]
+        if not os.path.exists(path):
+            return None
+
+        payload = _read_json_payload(path)
+        if payload is None:
+            logger.warning(
+                "Phase 2 archive file is unreadable or corrupted: %s", path)
+            return None
+
+        try:
+            _validate_archive_payload(payload, path, feature_infos)
+        except ValueError as exc:
+            logger.info("Ignoring Phase 2 archive at %s: %s", path, exc)
+            return None
+
+        rules = _merge_archive_entries(payload["rules"])
+        return {
+            "version": int(payload.get("version", 1)),
+            "direction": direction,
+            "feature_signature": _archive_feature_signature(feature_infos),
+            "rules": rules,
+        }
+
+    @staticmethod
+    def save_archive(
+        direction: str,
+        feature_infos: list[dict],
+        rules: list[dict],
+    ) -> list[dict]:
+        """Merge the latest pool into the persistent archive and write it atomically."""
+        if direction not in _ARCHIVE_PATHS:
+            raise ValueError(
+                f"direction must be 'long' or 'short', got {direction!r}")
+
+        path = _ARCHIVE_PATHS[direction]
+        existing_rules: list[dict] = []
+        raw_payload = _read_json_payload(path)
+        if raw_payload is not None:
+            try:
+                _validate_archive_payload(raw_payload, path, feature_infos)
+            except ValueError as exc:
+                logger.info(
+                    "Replacing invalid Phase 2 archive at %s: %s", path, exc)
+            else:
+                existing_rules = list(raw_payload["rules"])
+
+        merged = _merge_archive_entries(existing_rules + list(rules))
+        if not merged:
+            return []
+
+        payload = {
+            "version": 1,
+            "direction": direction,
+            "feature_signature": _archive_feature_signature(feature_infos),
+            "rules": merged,
+        }
+
+        archive_dir = os.path.dirname(path)
+        if archive_dir:
+            os.makedirs(archive_dir, exist_ok=True)
+
+        tmp_path = f"{path}.tmp"
+        with open(tmp_path, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, indent=2)
+        os.replace(tmp_path, path)
+        return merged
 
     @staticmethod
     def skip_if_valid(direction: str) -> Optional[list[dict]]:
@@ -777,7 +1062,8 @@ def _validate_pool_schema(pool: object, path: str) -> None:
             raise ValueError(
                 f"Phase 2 pool entry {i} must be a dict: {path}"
             )
-        required_keys = {"chromosome", "conditions", "objectives", "executed_trades"}
+        required_keys = {"chromosome", "conditions",
+                         "objectives", "executed_trades"}
         missing = required_keys - set(entry.keys())
         if missing:
             raise ValueError(
@@ -795,7 +1081,8 @@ def _validate_pool_schema(pool: object, path: str) -> None:
             raise ValueError(
                 f"Phase 2 pool entry {i} 'objectives' must be a dict: {path}"
             )
-        required_obj_keys = {"total_return_pct", "max_drawdown_pct", "win_rate"}
+        required_obj_keys = {"total_return_pct",
+                             "max_drawdown_pct", "win_rate"}
         missing_obj = required_obj_keys - set(entry["objectives"].keys())
         if missing_obj:
             raise ValueError(

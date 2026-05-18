@@ -27,14 +27,9 @@ Requirements: 13.1, 13.2, 13.3, 13.4, 13.5
 """
 
 from __future__ import annotations
-from gpu_fuzzy_trader.phases.phase5_oos import OOS_Evaluator
-from gpu_fuzzy_trader.phases.phase4_rl_optimizer import RL_Agent
-from gpu_fuzzy_trader.phases.phase3_rule_set import Rule_Set_Selector
-from gpu_fuzzy_trader.phases.phase2_rule_pool import Rule_Pool_Generator
-from gpu_fuzzy_trader.features.selector import Feature_Selector
-from gpu_fuzzy_trader.data.splitter import Data_Splitter
-from gpu_fuzzy_trader.data.loader import Data_Loader
-from gpu_fuzzy_trader import config as _cfg
+
+import argparse
+from contextlib import contextmanager
 import pandas as pd
 from typing import Any
 from datetime import datetime, timezone
@@ -43,6 +38,21 @@ import sys
 import os
 import logging
 import json
+
+from gpu_fuzzy_trader.phases.phase5_oos import OOS_Evaluator
+from gpu_fuzzy_trader.phases.phase4_rl_optimizer import RL_Agent
+from gpu_fuzzy_trader.phases.phase3_rule_set import Rule_Set_Selector
+from gpu_fuzzy_trader.phases.phase2_rule_pool import Rule_Pool_Generator
+from gpu_fuzzy_trader.features.selector import Feature_Selector
+from gpu_fuzzy_trader.data.splitter import Data_Splitter
+from gpu_fuzzy_trader.data.loader import Data_Loader
+from gpu_fuzzy_trader import config as _cfg
+from gpu_fuzzy_trader.features import selector as _selector_module
+from gpu_fuzzy_trader.phases import phase2_rule_pool as _phase2_module
+from gpu_fuzzy_trader.phases import phase3_rule_set as _phase3_module
+from gpu_fuzzy_trader.phases import phase4_rl_optimizer as _phase4_module
+from gpu_fuzzy_trader.phases import phase5_oos as _phase5_module
+from gpu_fuzzy_trader.reporting import reporter as _reporter_module
 
 from gpu_fuzzy_trader._jax_env import configure_jax_env
 
@@ -64,6 +74,103 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 _PIPELINE_LOG_PATH = os.path.join(_cfg.OUTPUTS_DIR, "pipeline.log")
+
+
+def _resolve_output_root(output_dir: str | None) -> str:
+    """Return the active output root for this run."""
+    if output_dir is None:
+        return _cfg.OUTPUTS_DIR
+    return os.path.abspath(os.path.expanduser(output_dir))
+
+
+@contextmanager
+def _temporary_output_paths(output_dir: str | None):
+    """Temporarily rebind all cached output paths for one pipeline run."""
+    global _PIPELINE_LOG_PATH
+
+    output_root = _resolve_output_root(output_dir)
+    reports_root = os.path.join(output_root, "reports")
+
+    previous_state = {
+        "cfg_outputs": _cfg.OUTPUTS_DIR,
+        "cfg_reports": _cfg.REPORTS_DIR,
+        "pipeline_log_path": _PIPELINE_LOG_PATH,
+        "selector_long": _selector_module._LONG_PATH,
+        "selector_short": _selector_module._SHORT_PATH,
+        "selector_paths": _selector_module._DIRECTION_PATHS,
+        "phase2_pool_paths": _phase2_module._POOL_PATHS,
+        "phase2_history_paths": _phase2_module._HISTORY_PATHS,
+        "phase3_output_paths": _phase3_module._OUTPUT_PATHS,
+        "phase4_output_paths": _phase4_module._OUTPUT_PATHS,
+        "phase5_strategy_paths": _phase5_module._STRATEGY_PATHS,
+        "phase5_report_paths": _phase5_module._REPORT_PATHS,
+        "reporter_reports_dir": _reporter_module._REPORTS_DIR,
+    }
+
+    try:
+        _cfg.OUTPUTS_DIR = output_root
+        _cfg.REPORTS_DIR = reports_root
+        _PIPELINE_LOG_PATH = os.path.join(output_root, "pipeline.log")
+
+        _selector_module._LONG_PATH = os.path.join(
+            output_root, "selected_features_long.json"
+        )
+        _selector_module._SHORT_PATH = os.path.join(
+            output_root, "selected_features_short.json"
+        )
+        _selector_module._DIRECTION_PATHS = {
+            "long": _selector_module._LONG_PATH,
+            "short": _selector_module._SHORT_PATH,
+        }
+
+        _phase2_module._POOL_PATHS = {
+            "long": os.path.join(output_root, "phase2_long_pool.json"),
+            "short": os.path.join(output_root, "phase2_short_pool.json"),
+        }
+        _phase2_module._HISTORY_PATHS = {
+            "long": os.path.join(output_root, "phase2_long_history.json"),
+            "short": os.path.join(output_root, "phase2_short_history.json"),
+        }
+
+        _phase3_module._OUTPUT_PATHS = {
+            "long": os.path.join(output_root, "long.json"),
+            "short": os.path.join(output_root, "short.json"),
+        }
+
+        _phase4_module._OUTPUT_PATHS = {
+            "long": os.path.join(output_root, "long.json"),
+            "short": os.path.join(output_root, "short.json"),
+        }
+
+        _phase5_module._STRATEGY_PATHS = {
+            "long": os.path.join(output_root, "long.json"),
+            "short": os.path.join(output_root, "short.json"),
+        }
+        _phase5_module._REPORT_PATHS = {
+            "long": os.path.join(reports_root, "test_long_report.json"),
+            "short": os.path.join(reports_root, "test_short_report.json"),
+            "per_symbol": os.path.join(
+                reports_root, "test_per_symbol_performance.csv"
+            ),
+        }
+
+        _reporter_module._REPORTS_DIR = reports_root
+
+        yield output_root
+    finally:
+        _cfg.OUTPUTS_DIR = previous_state["cfg_outputs"]
+        _cfg.REPORTS_DIR = previous_state["cfg_reports"]
+        _PIPELINE_LOG_PATH = previous_state["pipeline_log_path"]
+        _selector_module._LONG_PATH = previous_state["selector_long"]
+        _selector_module._SHORT_PATH = previous_state["selector_short"]
+        _selector_module._DIRECTION_PATHS = previous_state["selector_paths"]
+        _phase2_module._POOL_PATHS = previous_state["phase2_pool_paths"]
+        _phase2_module._HISTORY_PATHS = previous_state["phase2_history_paths"]
+        _phase3_module._OUTPUT_PATHS = previous_state["phase3_output_paths"]
+        _phase4_module._OUTPUT_PATHS = previous_state["phase4_output_paths"]
+        _phase5_module._STRATEGY_PATHS = previous_state["phase5_strategy_paths"]
+        _phase5_module._REPORT_PATHS = previous_state["phase5_report_paths"]
+        _reporter_module._REPORTS_DIR = previous_state["reporter_reports_dir"]
 
 
 # ---------------------------------------------------------------------------
@@ -170,8 +277,9 @@ class Pipeline_Orchestrator:
         python -m gpu_fuzzy_trader.run_pipeline
     """
 
-    def __init__(self) -> None:
-        self._log_path = _PIPELINE_LOG_PATH
+    def __init__(self, output_dir: str | None = None) -> None:
+        self._output_dir = _resolve_output_root(output_dir)
+        self._log_path = os.path.join(self._output_dir, "pipeline.log")
 
     # ------------------------------------------------------------------
     # Public API
@@ -188,81 +296,85 @@ class Pipeline_Orchestrator:
             the primary output of that phase (feature lists, pools, rule
             sets, OOS metrics, etc.).
         """
-        logger.info("=" * 60)
-        logger.info("GPU-Fuzzy Trading Pipeline — starting")
-        logger.info("=" * 60)
-        _log_pipeline_config()
+        with _temporary_output_paths(self._output_dir):
+            logger.info("=" * 60)
+            logger.info("GPU-Fuzzy Trading Pipeline — starting")
+            logger.info("=" * 60)
+            _log_pipeline_config()
 
-        pipeline_start = time.monotonic()
-        results: dict[str, Any] = {}
-
-        # ------------------------------------------------------------------
-        # Step 0: Create output directories
-        # ------------------------------------------------------------------
-        self._create_output_dirs()
-
-        # ------------------------------------------------------------------
-        # Step 1: Load and prepare data
-        # ------------------------------------------------------------------
-        train_df, val_df = self._load_and_split_data()
-        results["data"] = {
-            "train_rows": len(train_df),
-            "val_rows": len(val_df),
-        }
-
-        # ------------------------------------------------------------------
-        # Phase 1: Feature Selection
-        # ------------------------------------------------------------------
-        phase1_result = self._run_phase1(train_df)
-        results["phase1"] = phase1_result
-        train_df = self._prune_train_df_after_phase1(train_df, phase1_result)
-
-        # ------------------------------------------------------------------
-        # Phase 2: Rule Pool Generation
-        # ------------------------------------------------------------------
-        phase2_result = self._run_phase2(train_df, phase1_result)
-        results["phase2"] = phase2_result
-
-        # Check if Phase 2 produced any rules; if not, skip Phases 3 and 4
-        long_pool = phase2_result.get("long", [])
-        short_pool = phase2_result.get("short", [])
-        pool_empty = (not long_pool) and (not short_pool)
-
-        if pool_empty:
-            logger.warning(
-                "Phase 2 produced no rules for either direction. "
-                "Skipping Phases 3 and 4."
-            )
-            results["phase3"] = {}
-            results["phase4"] = {}
-        else:
-            # ------------------------------------------------------------------
-            # Phase 3: Rule Set Selection
-            # ------------------------------------------------------------------
-            phase3_result = self._run_phase3(train_df, val_df, phase2_result)
-            results["phase3"] = phase3_result
+            pipeline_start = time.monotonic()
+            results: dict[str, Any] = {}
 
             # ------------------------------------------------------------------
-            # Phase 4: RL Risk Optimization
+            # Step 0: Create output directories
             # ------------------------------------------------------------------
-            phase4_result = self._run_phase4(train_df, val_df, phase3_result)
-            results["phase4"] = phase4_result
+            self._create_output_dirs()
 
-        # ------------------------------------------------------------------
-        # Phase 5: Out-of-Sample Evaluation (always runs)
-        # ------------------------------------------------------------------
-        phase5_result = self._run_phase5()
-        results["phase5"] = phase5_result
+            # ------------------------------------------------------------------
+            # Step 1: Load and prepare data
+            # ------------------------------------------------------------------
+            train_df, val_df = self._load_and_split_data()
+            results["data"] = {
+                "train_rows": len(train_df),
+                "val_rows": len(val_df),
+            }
 
-        # ------------------------------------------------------------------
-        # Summary
-        # ------------------------------------------------------------------
-        total_elapsed = time.monotonic() - pipeline_start
-        logger.info("=" * 60)
-        logger.info("Pipeline complete in %.2fs", total_elapsed)
-        logger.info("=" * 60)
+            # ------------------------------------------------------------------
+            # Phase 1: Feature Selection
+            # ------------------------------------------------------------------
+            phase1_result = self._run_phase1(train_df)
+            results["phase1"] = phase1_result
+            train_df = self._prune_train_df_after_phase1(
+                train_df, phase1_result)
 
-        return results
+            # ------------------------------------------------------------------
+            # Phase 2: Rule Pool Generation
+            # ------------------------------------------------------------------
+            phase2_result = self._run_phase2(train_df, phase1_result)
+            results["phase2"] = phase2_result
+
+            # Check if Phase 2 produced any rules; if not, skip Phases 3 and 4
+            long_pool = phase2_result.get("long", [])
+            short_pool = phase2_result.get("short", [])
+            pool_empty = (not long_pool) and (not short_pool)
+
+            if pool_empty:
+                logger.warning(
+                    "Phase 2 produced no rules for either direction. "
+                    "Skipping Phases 3 and 4."
+                )
+                results["phase3"] = {}
+                results["phase4"] = {}
+            else:
+                # ------------------------------------------------------------------
+                # Phase 3: Rule Set Selection
+                # ------------------------------------------------------------------
+                phase3_result = self._run_phase3(
+                    train_df, val_df, phase2_result)
+                results["phase3"] = phase3_result
+
+                # ------------------------------------------------------------------
+                # Phase 4: RL Risk Optimization
+                # ------------------------------------------------------------------
+                phase4_result = self._run_phase4(
+                    train_df, val_df, phase3_result)
+                results["phase4"] = phase4_result
+
+            # ------------------------------------------------------------------
+            # Phase 5: Out-of-Sample Evaluation (always runs)
+            # ------------------------------------------------------------------
+            phase5_result = self._run_phase5()
+            results["phase5"] = phase5_result
+
+            # ------------------------------------------------------------------
+            # Summary
+            # ------------------------------------------------------------------
+            total_elapsed = time.monotonic() - pipeline_start
+            logger.info("=" * 60)
+            logger.info("Pipeline complete in %.2fs", total_elapsed)
+            logger.info("=" * 60)
+
+            return results
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -792,9 +904,20 @@ class Pipeline_Orchestrator:
 # CLI entry point
 # ---------------------------------------------------------------------------
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     """Run the full pipeline from the command line."""
-    orchestrator = Pipeline_Orchestrator()
+    parser = argparse.ArgumentParser(
+        prog="python -m gpu_fuzzy_trader.run_pipeline",
+        description="Run the GPU-Fuzzy Trading pipeline.",
+    )
+    parser.add_argument(
+        "--output",
+        default=None,
+        help="Base output directory for this run (defaults to outputs/).",
+    )
+
+    args = parser.parse_args([] if argv is None else argv)
+    orchestrator = Pipeline_Orchestrator(output_dir=args.output)
     try:
         results = orchestrator.run()
         # Print a brief summary to stdout
@@ -809,8 +932,9 @@ def main() -> None:
                     f"drawdown={metrics.get('max_drawdown_pct', 0.0):.2f}%"
                 )
         else:
-            print("  No OOS results (check outputs/pipeline.log for details)")
-        print(f"\nStructured log saved to: {_PIPELINE_LOG_PATH}")
+            print(
+                f"  No OOS results (check {orchestrator._log_path} for details)")
+        print(f"\nStructured log saved to: {orchestrator._log_path}")
     except Exception as exc:
         logger.error("Pipeline failed with unhandled exception: %s",
                      exc, exc_info=True)
@@ -818,4 +942,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])

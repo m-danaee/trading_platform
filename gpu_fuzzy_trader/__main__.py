@@ -7,7 +7,9 @@ Allows the pipeline to be invoked as:
 Requirements: 13.4
 """
 
+import sys
+
 from gpu_fuzzy_trader.run_pipeline import main
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])
