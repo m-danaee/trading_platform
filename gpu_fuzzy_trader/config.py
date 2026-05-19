@@ -21,6 +21,15 @@ TRAIN_75_PATH = "data/train_75.parquet"
 VALIDATION_25_PATH = "data/validation_25.parquet"
 OUTPUTS_DIR = "outputs"
 REPORTS_DIR = "outputs/reports"
+PHASE2_POOL_DIR = os.path.join(_PROJECT_ROOT, "pools")
+PHASE2_POOL_PATHS = {
+    "long": os.path.join(PHASE2_POOL_DIR, "phase2_long_pool.json"),
+    "short": os.path.join(PHASE2_POOL_DIR, "phase2_short_pool.json"),
+}
+PHASE2_HISTORY_PATHS = {
+    "long": os.path.join(PHASE2_POOL_DIR, "phase2_long_history.json"),
+    "short": os.path.join(PHASE2_POOL_DIR, "phase2_short_history.json"),
+}
 PHASE2_ARCHIVE_DIR = os.path.join(_PROJECT_ROOT, "phase2_rule_archive")
 PHASE2_ARCHIVE_PATHS = {
     "long": os.path.join(PHASE2_ARCHIVE_DIR, "phase2_long_archive.json"),
@@ -62,7 +71,7 @@ PHASE2_CAPITAL_PCT = 50.0
 # ---------------------------------------------------------------------------
 # Phase 2 Rule Constraints
 # ---------------------------------------------------------------------------
-MIN_CONDITIONS = 2
+MIN_CONDITIONS = 3
 MAX_CONDITIONS = 4
 # minimum number of trades across all symbols (after applying condition filters)
 MIN_TRADE_SUPPORT = 200

@@ -84,19 +84,19 @@ On success, a short summary is printed to stdout. Structured timing is appended 
 
 ### Resume / skip behavior
 
-Phases **1–4** skip automatically when their output files already exist and pass validation. **Phase 5 always runs.**
+Phases **1–4** skip automatically when their cached files already exist and pass validation. **Phase 5 always runs.**
 
-To force a phase to re-run, delete its outputs under `outputs/` (and split files if you need to rebuild data):
+To force a phase to re-run, delete its cached artifacts (`outputs/` for Phases 1, 3, and 4; `pools/` for Phase 2) and split files if you need to rebuild data:
 
 ```bash
 # Re-run everything from Phase 1
 rm -rf outputs/ data/train_75.parquet data/validation_25.parquet
 
 # Re-run only Phase 2 (long)
-rm outputs/phase2_long_pool.json outputs/phase2_long_history.json
+rm pools/phase2_long_pool.json pools/phase2_long_history.json
 ```
 
-Phase 2 also keeps a persistent best-rules archive in the project root at `phase2_rule_archive/phase2_{long,short}_archive.json`. That archive is separate from the per-run `outputs/` files, so repeated runs do not overwrite each other’s remembered best rules. When a compatible archive exists, Phase 2 seeds about 35% of the initial population from that archive before filling the rest randomly.
+Phase 2 keeps its main long/short pool files in the project-root `pools/` folder at `pools/phase2_{long,short}_pool.json` and `pools/phase2_{long,short}_history.json`, so they are not lost when you run the pipeline with different `outputs/` directories. Phase 2 also keeps a persistent best-rules archive in the project root at `phase2_rule_archive/phase2_{long,short}_archive.json`. That archive is separate from the per-run `outputs/` files, so repeated runs do not overwrite each other’s remembered best rules. When a compatible archive exists, Phase 2 seeds about 35% of the initial population from that archive before filling the rest randomly.
 
 There are **no CLI flags** — tune hyperparameters in `gpu_fuzzy_trader/config.py`.
 
@@ -114,6 +114,7 @@ Edit `gpu_fuzzy_trader/config.py` before running. Common settings:
 | `PHASE2_ALGORITHM`             | `"NSGA3"`              | Fixed; NSGA-III when EvoX is installed                                         |
 | `PHASE2_POPULATION_SIZE`       | `200`                  | Phase 2 population                                                             |
 | `PHASE2_GENERATIONS`           | `100`                  | Phase 2 generations                                                            |
+| `PHASE2_POOL_DIR`              | `pools/`               | Persistent Phase 2 pool/history files in the project root                      |
 | `PHASE2_ARCHIVE_DIR`           | `phase2_rule_archive/` | Persistent Phase 2 archive in the project root                                 |
 | `PHASE2_ARCHIVE_MAX_SIZE`      | `500`                  | Max archive size per direction                                                 |
 | `PHASE2_ARCHIVE_SEED_FRACTION` | `0.35`                 | Fraction of Phase 2 population seeded from archive                             |
@@ -131,7 +132,8 @@ After a full run, expect artifacts under `outputs/`:
 | Path                                                   | Phase                           |
 | ------------------------------------------------------ | ------------------------------- |
 | `outputs/selected_features_{long,short}.json`          | 1                               |
-| `outputs/phase2_{long,short}_pool.json`                | 2                               |
+| `pools/phase2_{long,short}_pool.json`                  | 2                               |
+| `pools/phase2_{long,short}_history.json`               | 2                               |
 | `phase2_rule_archive/phase2_{long,short}_archive.json` | 2 persistent archive            |
 | `outputs/long.json`, `outputs/short.json`              | 3–4                             |
 | `outputs/reports/test_*`                               | 5 (metrics, equity plots, CSVs) |
@@ -200,7 +202,7 @@ Run individual phases — see [README.md § Running Individual Phases](README.md
 | `FileNotFoundError` for `data/train.csv`                    | Run from project root; ensure data files exist                                                                                 |
 | Phase 2 very slow on CPU                                    | Install `jax` + `jaxlib` and `evox` + `torch`; optional GPU/CUDA build for faster backtests                                    |
 | Phase 2 uses NSGA-II instead of NSGA-III                    | Install `evox` and `torch`; check `phase2_*_history.json` — `"NSGA-II (fallback)"` means EvoX was unavailable                  |
-| Stale Phase 2 pools after code changes                      | `rm outputs/phase2_{long,short}_{pool,history}.json` and re-run                                                                |
+| Stale Phase 2 pools after code changes                      | `rm pools/phase2_{long,short}_{pool,history}.json` and re-run                                                                  |
 | Phase 3 still slow                                          | Lower `PHASE3_REFINE_GENERATIONS` / `PHASE3_REFINE_POP_SIZE`, or set `PHASE3_USE_GPU=True` after parity tests for batched eval |
 | Phase 4 uses random search                                  | Install `stable-baselines3`, `gymnasium`, and `torch` for DDPG/PPO                                                             |
 | Want fresh OOS only                                         | Keep `outputs/long.json` / `short.json`; re-run pipeline (Phase 5 always runs)                                                 |

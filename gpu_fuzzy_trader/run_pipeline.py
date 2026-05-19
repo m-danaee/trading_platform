@@ -98,8 +98,6 @@ def _temporary_output_paths(output_dir: str | None):
         "selector_long": _selector_module._LONG_PATH,
         "selector_short": _selector_module._SHORT_PATH,
         "selector_paths": _selector_module._DIRECTION_PATHS,
-        "phase2_pool_paths": _phase2_module._POOL_PATHS,
-        "phase2_history_paths": _phase2_module._HISTORY_PATHS,
         "phase3_output_paths": _phase3_module._OUTPUT_PATHS,
         "phase4_output_paths": _phase4_module._OUTPUT_PATHS,
         "phase5_strategy_paths": _phase5_module._STRATEGY_PATHS,
@@ -121,15 +119,6 @@ def _temporary_output_paths(output_dir: str | None):
         _selector_module._DIRECTION_PATHS = {
             "long": _selector_module._LONG_PATH,
             "short": _selector_module._SHORT_PATH,
-        }
-
-        _phase2_module._POOL_PATHS = {
-            "long": os.path.join(output_root, "phase2_long_pool.json"),
-            "short": os.path.join(output_root, "phase2_short_pool.json"),
-        }
-        _phase2_module._HISTORY_PATHS = {
-            "long": os.path.join(output_root, "phase2_long_history.json"),
-            "short": os.path.join(output_root, "phase2_short_history.json"),
         }
 
         _phase3_module._OUTPUT_PATHS = {
@@ -164,8 +153,6 @@ def _temporary_output_paths(output_dir: str | None):
         _selector_module._LONG_PATH = previous_state["selector_long"]
         _selector_module._SHORT_PATH = previous_state["selector_short"]
         _selector_module._DIRECTION_PATHS = previous_state["selector_paths"]
-        _phase2_module._POOL_PATHS = previous_state["phase2_pool_paths"]
-        _phase2_module._HISTORY_PATHS = previous_state["phase2_history_paths"]
         _phase3_module._OUTPUT_PATHS = previous_state["phase3_output_paths"]
         _phase4_module._OUTPUT_PATHS = previous_state["phase4_output_paths"]
         _phase5_module._STRATEGY_PATHS = previous_state["phase5_strategy_paths"]
@@ -574,9 +561,7 @@ class Pipeline_Orchestrator:
             # Try to skip
             existing_pool = Rule_Pool_Generator.skip_if_valid(direction)
             if existing_pool is not None:
-                pool_path = os.path.join(
-                    _cfg.OUTPUTS_DIR, "phase2_%s_pool.json" % direction,
-                )
+                pool_path = _phase2_module._POOL_PATHS[direction]
                 logger.info(
                     "Skipping %s: valid pool at %s (%d rules)",
                     dir_phase_name, pool_path, len(existing_pool),

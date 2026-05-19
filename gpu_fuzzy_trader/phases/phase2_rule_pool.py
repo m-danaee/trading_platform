@@ -48,12 +48,12 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _POOL_PATHS = {
-    "long": os.path.join(_cfg.OUTPUTS_DIR, "phase2_long_pool.json"),
-    "short": os.path.join(_cfg.OUTPUTS_DIR, "phase2_short_pool.json"),
+    "long": _cfg.PHASE2_POOL_PATHS["long"],
+    "short": _cfg.PHASE2_POOL_PATHS["short"],
 }
 _HISTORY_PATHS = {
-    "long": os.path.join(_cfg.OUTPUTS_DIR, "phase2_long_history.json"),
-    "short": os.path.join(_cfg.OUTPUTS_DIR, "phase2_short_history.json"),
+    "long": _cfg.PHASE2_HISTORY_PATHS["long"],
+    "short": _cfg.PHASE2_HISTORY_PATHS["short"],
 }
 _ARCHIVE_PATHS = dict(_cfg.PHASE2_ARCHIVE_PATHS)
 
@@ -816,8 +816,8 @@ class Rule_Pool_Generator:
         Run the evolutionary search and return the Pareto-front pool.
 
         Also persists results to:
-          outputs/phase2_{direction}_pool.json
-          outputs/phase2_{direction}_history.json
+                    pools/phase2_{direction}_pool.json
+                    pools/phase2_{direction}_history.json
 
         Returns
         -------
@@ -863,10 +863,14 @@ class Rule_Pool_Generator:
             seed_chromosomes=seed_chromosomes,
         )
 
-        # Persist
-        os.makedirs(_cfg.OUTPUTS_DIR, exist_ok=True)
         pool_path = _POOL_PATHS[self.direction]
         history_path = _HISTORY_PATHS[self.direction]
+        pool_dir = os.path.dirname(pool_path)
+        history_dir = os.path.dirname(history_path)
+        if pool_dir:
+            os.makedirs(pool_dir, exist_ok=True)
+        if history_dir and history_dir != pool_dir:
+            os.makedirs(history_dir, exist_ok=True)
 
         with open(pool_path, "w", encoding="utf-8") as fh:
             json.dump(pool, fh, indent=2)

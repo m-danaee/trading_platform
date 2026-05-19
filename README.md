@@ -30,12 +30,11 @@ This project is a **rule-mining trading system**, not a conventional predictive 
 - Use future labels **only** for scoring and backtesting — never as model inputs.
 - Select stable, direction-specific features per output type.
 - Evolve a large pool of candidate fuzzy rules using GPU-accelerated **NSGA-III** multi-objective search (EvoX).
-- Assemble compact rule teams (2–5 rules) via greedy construction and Pareto refinement.
+- Assemble compact rule teams (default: 2–3 rules; strategy schema supports up to 5) via greedy construction and Pareto refinement.
 - Fine-tune risk parameters (TP, SL, capital allocation) using a deep RL agent.
 - Evaluate the final strategy on a held-out test set.
 
 The strongest design choices are the **symbol-aware chronological split**, **mode-aware feature selection**, **explicit fuzzy rule encoding**, and a **backtest engine that exactly mirrors `evaluator_v3.ipynb`** so optimization scores match final evaluation scores.
-
 
 ---
 
@@ -91,7 +90,7 @@ data/train.csv ──► Data_Loader ──► Data_Splitter ──► train_75.
                                          │                                     │
                                   Rule_Pool_Generator (Phase 2, GPU)           │
                                          │                                     │
-                                  phase2_long_pool.json              phase2_short_pool.json
+                                      pools/phase2_long_pool.json      pools/phase2_short_pool.json
                                          │                                     │
                                   Rule_Set_Selector (Phase 3, CPU validation)  │
                                          │                                     │
@@ -106,27 +105,28 @@ data/train.csv ──► Data_Loader ──► Data_Splitter ──► train_75.
                                   outputs/reports/test_*.json / *.png / *.csv
 ```
 
-
 ---
 
 ## 3. Dataset
 
 ### Files
 
-| File | Purpose |
-|------|---------|
-| `data/train.csv` | Training data — used for feature selection, rule pool generation, rule set selection, and RL training |
-| `data/test.csv` | Held-out test data — used **only** in Phase 5 (out-of-sample evaluation) |
-| `data/train_75.parquet` | Auto-generated: 75% chronological training split per symbol |
-| `data/validation_25.parquet` | Auto-generated: 25% chronological validation split per symbol |
+| File                         | Purpose                                                                                               |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `data/train.csv`             | Training data — used for feature selection, rule pool generation, rule set selection, and RL training |
+| `data/test.csv`              | Held-out test data — used **only** in Phase 5 (out-of-sample evaluation)                              |
+| `data/train_75.parquet`      | Auto-generated: 75% chronological training split per symbol                                           |
+| `data/validation_25.parquet` | Auto-generated: 25% chronological validation split per symbol                                         |
 
 ### Column Groups
 
 **Meta columns** (excluded from all modeling):
+
 - `datetime` — timestamp of the candle
 - `symbol` — one of 10 trading instruments
 
 **Label columns** (look-ahead values, used only for trade simulation):
+
 - `label_open_next` — entry price (next candle open)
 - `label_close_288` — close price 288 candles ahead (24 hours at 5-min bars)
 - `label_min_288` — minimum price over the next 288 candles
@@ -143,7 +143,6 @@ The last 288 rows per symbol have no valid labels (the look-ahead window extends
 
 The `_288` suffix means a 24-hour look-ahead window: 288 bars × 5 minutes = 1,440 minutes. This captures daily price cycles and significant intraday trends.
 
-
 ---
 
 ## 4. Five-Phase Pipeline
@@ -155,6 +154,7 @@ The `_288` suffix means a 24-hour look-ahead window: 288 bars × 5 minutes = 1,4
 Produces two independent feature lists (long and short) from the training split. The selection is mode-aware and symbol-aware.
 
 **Algorithm:**
+
 1. Exclude all label and meta columns.
 2. Detect each feature's fuzzy mode from its value distribution (training split only).
 3. Remove near-zero dispersion features (>95% identical values).
@@ -168,6 +168,7 @@ Produces two independent feature lists (long and short) from the training split.
 9. Select top `PHASE1_TOP_K_FEATURES` (default: 25) per direction.
 
 **Outputs:**
+
 - `outputs/selected_features_long.json`
 - `outputs/selected_features_short.json`
 
@@ -178,10 +179,12 @@ Produces two independent feature lists (long and short) from the training split.
 ### Phase 2 — GPU-Accelerated Rule Pool Generation
 
 **Modules:**
+
 - `gpu_fuzzy_trader/phases/phase2_rule_pool.py` → `Rule_Pool_Generator` (orchestration, persistence, reporting)
 - `gpu_fuzzy_trader/evolution/evox_runner.py` → `run_phase2_evolution` (NSGA-III evolutionary loop)
 
 Evolves a large, diverse pool of candidate fuzzy rules using **NSGA-III** (Non-dominated Sorting Genetic Algorithm III). Each generation:
+
 1. Evaluates the population with `GPUBacktestEngine` (JAX) when available, else `CPUBacktestEngine`.
 2. Builds offspring via rank/crowding tournament mating, crossover, and mutation on integer chromosomes.
 3. Merges parents + offspring and applies **NSGA-III environmental selection** (EvoX non-dominated ranking + reference-vector niche filling on the last front).
@@ -189,6 +192,7 @@ Evolves a large, diverse pool of candidate fuzzy rules using **NSGA-III** (Non-d
 **Requires `evox`** (and `torch`) for the NSGA-III survivor step. If EvoX is not installed, Phase 2 logs a warning and falls back to a built-in **NumPy NSGA-II** loop (history records `"NSGA-II (fallback)"`).
 
 **Chromosome encoding:**
+
 ```
 chromosome = [gene_0, gene_1, ..., gene_{K-1}]
 gene_i ∈ {0, ..., num_classes_i − 1, dont_care_i}
@@ -196,25 +200,29 @@ dont_care_i = num_classes_i  (inactive condition)
 ```
 
 **Three objectives (all minimized):**
+
 - `f1 = −total_return_pct`
 - `f2 = max_drawdown_pct`
 - `f3 = −win_rate`
 
 **Penalties applied to all objectives:**
-- **Support penalty** — if `executed_trades < MIN_TRADE_SUPPORT` (default: 120)
+
+- **Support penalty** — if `executed_trades < MIN_TRADE_SUPPORT` (default: 200)
 - **Diversity penalty** — Hamming distance to nearest Pareto-front member
-- **Condition count penalty** — if active conditions outside `[MIN_CONDITIONS, MAX_CONDITIONS]` (default: 2–4)
+- **Condition count penalty** — if active conditions outside `[MIN_CONDITIONS, MAX_CONDITIONS]` (default: 3–4)
 
 **Static risk parameters during Phase 2** (isolates predictive alpha from risk tuning):
+
 - TP = 4.0%, SL = 2.0%, capital_pct = 50.0%
 
 **Outputs:**
-- `outputs/phase2_long_pool.json` / `outputs/phase2_short_pool.json`
-- `outputs/phase2_long_history.json` / `outputs/phase2_short_history.json`
+
+- `pools/phase2_long_pool.json` / `pools/phase2_short_pool.json`
+- `pools/phase2_long_history.json` / `pools/phase2_short_history.json`
+- `phase2_rule_archive/phase2_long_archive.json` / `phase2_rule_archive/phase2_short_archive.json`
 - `outputs/reports/phase2_long_metrics.png` / `outputs/reports/phase2_short_metrics.png`
 
-**Skip logic:** If pool files exist and are valid, Phase 2 is skipped.
-
+**Skip logic:** If pool files exist and are valid, Phase 2 is skipped. The root-level archive is persistent across output directories; compatible archived rules seed part of the next Phase 2 population before the rest is initialized randomly.
 
 ---
 
@@ -222,22 +230,25 @@ dont_care_i = num_classes_i  (inactive condition)
 
 **Module:** `gpu_fuzzy_trader/phases/phase3_rule_set.py` → `Rule_Set_Selector`
 
-Selects the best ordered combination of 2–5 rules from the Phase 2 pool using greedy construction followed by short Pareto refinement. Evaluated on the **validation split** using `CPUBacktestEngine`.
+Selects the best ordered combination of rules from the Phase 2 pool using greedy construction followed by short Pareto refinement. By default, the search uses 2–3 rules (`PHASE3_MIN_RULES`–`PHASE3_MAX_RULES`), while the output schema remains compatible with 2–5 rules. Evaluated on the **validation split** using `CPUBacktestEngine`.
 
-**Search space:** All ordered combinations of 2–5 rules from the pool, with no duplicate rules (order-independent condition set equality).
+**Search space:** All ordered combinations of `PHASE3_MIN_RULES`–`PHASE3_MAX_RULES` rules from the pool, with no duplicate rules (order-independent condition set equality).
 
 **Three objectives (all minimized):**
+
 - `f1 = −validation_total_return_pct`
 - `f2 = validation_max_drawdown_pct`
 - `f3 = −validation_win_rate`
 
 **Penalties:**
+
 - **Coverage penalty** — if `symbols_with_trades < PHASE3_MIN_SYMBOL_COVERAGE` (default: 7 of 10)
 - **Zero-trade penalty** — if no trades executed at all
 - **Overfitting penalty** — `|train_return − val_return| / max(|train_return|, 1.0)`
 - **Duplicate rule penalty** — if any two rules share identical condition sets
 
 **Outputs:**
+
 - `outputs/long.json` / `outputs/short.json` (Phase 2 static TP/SL/capital_pct at this stage)
 - `outputs/reports/train_long_equity.png` / `outputs/reports/validation_long_equity.png`
 - `outputs/reports/train_per_symbol_performance.csv` / `outputs/reports/validation_per_symbol_performance.csv`
@@ -253,16 +264,19 @@ Selects the best ordered combination of 2–5 rules from the Phase 2 pool using 
 Fine-tunes TP, SL, and `capital_pct` for each rule using a DDPG or PPO agent (stable-baselines3 when available; random search with Elbow Method stopping as fallback).
 
 **State vector:**
+
 ```
 [K market features, R rule activation strengths, equity_normalized, open_exposure_normalized]
 ```
 
 **Action vector (continuous, per rule):**
+
 ```
 [tp_i, sl_i, capital_pct_i]  for i in 0..R-1
 ```
 
 **Action bounds (from `config.py`):**
+
 - TP: [1.0%, 10.0%]
 - SL: [0.5%, 5.0%]
 - capital_pct: [10.0%, 100.0%]
@@ -272,6 +286,7 @@ Fine-tunes TP, SL, and `capital_pct` for each rule using a DDPG or PPO agent (st
 **Elbow Method stopping:** Finds the optimal training checkpoint by computing perpendicular distances from the line connecting the first and last point of the validation returns curve. Returns the index of maximum curvature — preventing overfitting to the training split.
 
 **Outputs:**
+
 - `outputs/long.json` / `outputs/short.json` (updated with RL-optimized TP/SL/capital_pct)
 - `outputs/reports/phase4_long_rl_curve.png` / `outputs/reports/phase4_short_rl_curve.png`
 
@@ -286,6 +301,7 @@ Fine-tunes TP, SL, and `capital_pct` for each rule using a DDPG or PPO agent (st
 Loads the final strategies and evaluates them on the held-out `data/test.csv`. This is the only phase that should be treated as out-of-sample truth.
 
 **Data preparation** (identical to training pipeline):
+
 1. Load `data/test.csv`
 2. Sort by (symbol, datetime)
 3. Drop last 288 rows per symbol
@@ -294,6 +310,7 @@ Loads the final strategies and evaluates them on the held-out `data/test.csv`. T
 6. Compute `_symbol_bar_index`
 
 **Metrics reported:**
+
 - Total return %, max drawdown %, win rate %, profit factor
 - Executed trades, account status (survived / ruined)
 - Per-symbol: trade count, win rate, net PnL
@@ -301,10 +318,10 @@ Loads the final strategies and evaluates them on the held-out `data/test.csv`. T
 **Zero-trade handling:** Reports 0% total return; does NOT report account ruin unless equity actually reached zero.
 
 **Outputs:**
+
 - `outputs/reports/test_long_report.json` / `outputs/reports/test_short_report.json`
 - `outputs/reports/test_per_symbol_performance.csv`
 - `outputs/reports/test_long_equity.png` / `outputs/reports/test_short_equity.png`
-
 
 ---
 
@@ -317,6 +334,7 @@ Single source of truth. No module may define its own defaults that override thes
 ### `gpu_fuzzy_trader/data/loader.py` — `Data_Loader`
 
 Stateless CSV loader with a 7-step preparation pipeline:
+
 1. Read CSV (comma-separated)
 2. Parse `datetime` column
 3. Sort by `(symbol, datetime)`
@@ -369,7 +387,6 @@ Generates all visual and tabular reports. Uses matplotlib with the `Agg` backend
 
 Top-level orchestrator. Runs all five phases in order with skip logic, phase timing, and structured JSON-lines logging to `outputs/pipeline.log`.
 
-
 ---
 
 ## 6. Configuration
@@ -378,78 +395,82 @@ All hyperparameters live in `gpu_fuzzy_trader/config.py`. Edit this file to tune
 
 ### Paths
 
-| Constant | Default | Description |
-|----------|---------|-------------|
-| `TRAIN_CSV_PATH` | `"data/train.csv"` | Raw training data |
-| `TEST_CSV_PATH` | `"data/test.csv"` | Held-out test data |
-| `TRAIN_75_PATH` | `"data/train_75.parquet"` | Auto-generated 75% split |
+| Constant             | Default                        | Description              |
+| -------------------- | ------------------------------ | ------------------------ |
+| `TRAIN_CSV_PATH`     | `"data/train.csv"`             | Raw training data        |
+| `TEST_CSV_PATH`      | `"data/test.csv"`              | Held-out test data       |
+| `TRAIN_75_PATH`      | `"data/train_75.parquet"`      | Auto-generated 75% split |
 | `VALIDATION_25_PATH` | `"data/validation_25.parquet"` | Auto-generated 25% split |
-| `OUTPUTS_DIR` | `"outputs"` | Root output directory |
-| `REPORTS_DIR` | `"outputs/reports"` | Reports subdirectory |
+| `OUTPUTS_DIR`        | `"outputs"`                    | Root output directory    |
+| `REPORTS_DIR`        | `"outputs/reports"`            | Reports subdirectory     |
+| `PHASE2_POOL_DIR`    | `"pools"`                      | Root-level Phase 2 pools |
+| `PHASE2_ARCHIVE_DIR` | `"phase2_rule_archive"`        | Root-level Phase 2 archive |
 
 ### Schema
 
-| Constant | Value | Description |
-|----------|-------|-------------|
-| `LABEL_COLUMNS` | 5 columns | Look-ahead label columns |
-| `META_COLUMNS` | `["datetime", "symbol"]` | Non-feature columns |
-| `TAIL_DROP_ROWS` | `288` | Rows dropped per symbol (no labels) |
+| Constant         | Value                    | Description                         |
+| ---------------- | ------------------------ | ----------------------------------- |
+| `LABEL_COLUMNS`  | 5 columns                | Look-ahead label columns            |
+| `META_COLUMNS`   | `["datetime", "symbol"]` | Non-feature columns                 |
+| `TAIL_DROP_ROWS` | `288`                    | Rows dropped per symbol (no labels) |
 
 ### Backtest Constants (must match `evaluator_v3.ipynb`)
 
-| Constant | Default | Description |
-|----------|---------|-------------|
-| `INITIAL_CAPITAL` | `1000.0` | Starting equity |
-| `LEVERAGE` | `1.0` | Position leverage multiplier |
-| `FEE_PCT` | `0.20` | Round-trip fee percentage |
-| `MAX_HOLD_CANDLES` | `288` | Maximum candles a trade is held |
-| `MAX_TOTAL_EXPOSURE_PCT` | `100.0` | Max total notional exposure as % of equity |
-| `MIN_POSITION_NOTIONAL` | `1.0` | Minimum trade size (dust filter) |
+| Constant                 | Default  | Description                                |
+| ------------------------ | -------- | ------------------------------------------ |
+| `INITIAL_CAPITAL`        | `1000.0` | Starting equity                            |
+| `LEVERAGE`               | `1.0`    | Position leverage multiplier               |
+| `FEE_PCT`                | `0.20`   | Round-trip fee percentage                  |
+| `MAX_HOLD_CANDLES`       | `288`    | Maximum candles a trade is held            |
+| `MAX_TOTAL_EXPOSURE_PCT` | `100.0`  | Max total notional exposure as % of equity |
+| `MIN_POSITION_NOTIONAL`  | `1.0`    | Minimum trade size (dust filter)           |
 
 ### Phase 2 — Rule Pool Generation
 
-| Constant | Default | Description |
-|----------|---------|-------------|
-| `PHASE2_TP` | `4.0` | Static TP during Phase 2 (%) |
-| `PHASE2_SL` | `2.0` | Static SL during Phase 2 (%) |
-| `PHASE2_CAPITAL_PCT` | `50.0` | Static capital allocation during Phase 2 (%) |
-| `MIN_CONDITIONS` | `2` | Minimum active conditions per rule |
-| `MAX_CONDITIONS` | `5` | Maximum active conditions per rule |
-| `MIN_TRADE_SUPPORT` | `120` | Minimum trades for a rule to be kept |
-| `PHASE2_POPULATION_SIZE` | `200` | Evolution population size |
-| `PHASE2_GENERATIONS` | `100` | Number of generations |
-| `PHASE2_ALGORITHM` | `"NSGA3"` | Fixed identifier; Phase 2 always uses NSGA-III when EvoX is installed |
+| Constant                       | Default   | Description                                                           |
+| ------------------------------ | --------- | --------------------------------------------------------------------- |
+| `PHASE2_TP`                    | `4.0`     | Static TP during Phase 2 (%)                                          |
+| `PHASE2_SL`                    | `2.0`     | Static SL during Phase 2 (%)                                          |
+| `PHASE2_CAPITAL_PCT`           | `50.0`    | Static capital allocation during Phase 2 (%)                          |
+| `MIN_CONDITIONS`               | `3`       | Minimum active conditions per rule                                    |
+| `MAX_CONDITIONS`               | `4`       | Maximum active conditions per rule                                    |
+| `MIN_TRADE_SUPPORT`            | `200`     | Minimum trades for a rule to be kept                                  |
+| `PHASE2_POPULATION_SIZE`       | `200`     | Evolution population size                                             |
+| `PHASE2_GENERATIONS`           | `100`     | Number of generations                                                 |
+| `PHASE2_ARCHIVE_MAX_SIZE`      | `500`     | Maximum archived rules per direction                                  |
+| `PHASE2_ARCHIVE_SEED_FRACTION` | `0.35`    | Initial population fraction seeded from the archive                   |
+| `PHASE2_ALGORITHM`             | `"NSGA3"` | Fixed identifier; Phase 2 always uses NSGA-III when EvoX is installed |
 
 ### Phase 3 — Rule Set Selection
 
-| Constant | Default | Description |
-|----------|---------|-------------|
-| `PHASE3_REFINE_POP_SIZE` | `40` | Refinement population after greedy |
-| `PHASE3_REFINE_GENERATIONS` | `15` | Refinement generations after greedy |
-| `PHASE3_USE_GPU` | `False` | Enable GPU batched rule-set eval (after parity tests) |
-| `PHASE3_MIN_RULES` | `1` | Minimum rules during Phase 3 search |
-| `PHASE3_MAX_RULES` | `3` | Maximum rules during Phase 3 search |
-| `PHASE3_MIN_SYMBOL_COVERAGE` | `7` | Minimum symbols with ≥1 trade |
+| Constant                     | Default | Description                                           |
+| ---------------------------- | ------- | ----------------------------------------------------- |
+| `PHASE3_REFINE_POP_SIZE`     | `100`   | Refinement population after greedy                    |
+| `PHASE3_REFINE_GENERATIONS`  | `40`    | Refinement generations after greedy                   |
+| `PHASE3_USE_GPU`             | `False` | Enable GPU batched rule-set eval (after parity tests) |
+| `PHASE3_MIN_RULES`           | `2`     | Minimum rules during Phase 3 search                   |
+| `PHASE3_MAX_RULES`           | `3`     | Maximum rules during Phase 3 search                   |
+| `PHASE3_MIN_SYMBOL_COVERAGE` | `7`     | Minimum symbols with ≥1 trade                         |
+| `PHASE3_GREEDY_WEIGHTS`      | `(1.0, 0.7, 0.5)` | Greedy scoring weights for return, drawdown, win rate |
 
 ### Phase 4 — RL Risk Optimization
 
-| Constant | Default | Description |
-|----------|---------|-------------|
-| `PHASE4_RL_ALGORITHM` | `"DDPG"` | RL algorithm: `"DDPG"` or `"PPO"` |
-| `PHASE4_TP_MIN` / `PHASE4_TP_MAX` | `1.0` / `10.0` | TP action bounds (%) |
-| `PHASE4_SL_MIN` / `PHASE4_SL_MAX` | `0.5` / `5.0` | SL action bounds (%) |
-| `PHASE4_CAPITAL_PCT_MIN` / `PHASE4_CAPITAL_PCT_MAX` | `10.0` / `100.0` | Capital allocation bounds (%) |
-| `PHASE4_TOTAL_TIMESTEPS` | `500,000` | Total RL training steps |
-| `PHASE4_ELBOW_WINDOW` | `20` | Validation evaluation frequency (episodes) |
+| Constant                                            | Default          | Description                                |
+| --------------------------------------------------- | ---------------- | ------------------------------------------ |
+| `PHASE4_RL_ALGORITHM`                               | `"DDPG"`         | RL algorithm: `"DDPG"` or `"PPO"`          |
+| `PHASE4_TP_MIN` / `PHASE4_TP_MAX`                   | `1.0` / `10.0`   | TP action bounds (%)                       |
+| `PHASE4_SL_MIN` / `PHASE4_SL_MAX`                   | `0.5` / `5.0`    | SL action bounds (%)                       |
+| `PHASE4_CAPITAL_PCT_MIN` / `PHASE4_CAPITAL_PCT_MAX` | `10.0` / `100.0` | Capital allocation bounds (%)              |
+| `PHASE4_TOTAL_TIMESTEPS`                            | `500,000`        | Total RL training steps                    |
+| `PHASE4_ELBOW_WINDOW`                               | `15`             | Validation evaluation frequency (episodes) |
 
 ### Phase 1 — Feature Selection
 
-| Constant | Default | Description |
-|----------|---------|-------------|
-| `PHASE1_DISPERSION_THRESHOLD` | `0.95` | Drop features with >95% identical values |
-| `PHASE1_TOP_K_FEATURES` | `25` | Features selected per direction |
-| `PHASE1_SAMPLING_TOTAL` | `300,000` | Total rows for Phase 2 evaluation (30k/symbol) |
-
+| Constant                      | Default   | Description                                    |
+| ----------------------------- | --------- | ---------------------------------------------- |
+| `PHASE1_DISPERSION_THRESHOLD` | `0.95`    | Drop features with >95% identical values       |
+| `PHASE1_TOP_K_FEATURES`       | `25`      | Features selected per direction                |
+| `PHASE1_SAMPLING_TOTAL`       | `300,000` | Total rows for Phase 2 evaluation (30k/symbol) |
 
 ---
 
@@ -460,10 +481,6 @@ outputs/
 ├── pipeline.log                          # JSON-lines phase timing log
 ├── selected_features_long.json           # Phase 1: selected features for long direction
 ├── selected_features_short.json          # Phase 1: selected features for short direction
-├── phase2_long_pool.json                 # Phase 2: Pareto-front rule pool (long)
-├── phase2_short_pool.json                # Phase 2: Pareto-front rule pool (short)
-├── phase2_long_history.json              # Phase 2: per-generation metrics (long)
-├── phase2_short_history.json             # Phase 2: per-generation metrics (short)
 ├── long.json                             # Phase 3/4: final long strategy
 ├── short.json                            # Phase 3/4: final short strategy
 └── reports/
@@ -482,6 +499,16 @@ outputs/
     ├── test_per_symbol_performance.csv   # Phase 5: per-symbol OOS metrics
     ├── test_long_equity.png              # Phase 5: equity curve on test set (long)
     └── test_short_equity.png             # Phase 5: equity curve on test set (short)
+
+pools/
+├── phase2_long_pool.json                 # Phase 2: Pareto-front rule pool (long)
+├── phase2_short_pool.json                # Phase 2: Pareto-front rule pool (short)
+├── phase2_long_history.json              # Phase 2: per-generation metrics (long)
+└── phase2_short_history.json             # Phase 2: per-generation metrics (short)
+
+phase2_rule_archive/
+├── phase2_long_archive.json              # Phase 2: persistent best-rule archive (long)
+└── phase2_short_archive.json             # Phase 2: persistent best-rule archive (short)
 ```
 
 ---
@@ -518,6 +545,7 @@ The final output files (`long.json` and `short.json`) are fully compatible with 
 ```
 
 **Schema constraints:**
+
 - `direction`: `"long"` or `"short"` (lowercase)
 - `rules_set`: array of 2–5 rule objects
 - Each rule: exactly `"tp"`, `"sl"`, `"capital_pct"`, `"conditions"`
@@ -525,7 +553,6 @@ The final output files (`long.json` and `short.json`) are fully compatible with 
 - `capital_pct`: float representing % of equity to allocate (e.g., `50.0` = 50%)
 - `conditions`: non-empty array of `"[feature_name] IS Fuzzy Value Name"` strings
 - At least one of `tp`, `sl`, `capital_pct` must be non-zero per rule
-
 
 ---
 
@@ -540,12 +567,14 @@ For each candle, the first rule in the ordered rule set whose conditions all mat
 ### Trade Outcome Logic
 
 **Long direction:**
+
 - TP hit: `label_max_288 ≥ entry × (1 + tp/100)`
 - SL hit: `label_min_288 ≤ entry × (1 − sl/100)`
 - Both hit: `label_max_before_min == 1` → TP first; else SL first
 - Neither hit: time exit at `label_close_288`
 
 **Short direction:**
+
 - TP hit: `label_min_288 ≤ entry × (1 − tp/100)`
 - SL hit: `label_max_288 ≥ entry × (1 + sl/100)`
 - Both hit: `label_max_before_min == 1` → SL first; else TP first
@@ -579,13 +608,12 @@ Simulation stops and marks the account as ruined when `equity ≤ 0`.
 
 ### Performance Metrics
 
-| Metric | Formula |
-|--------|---------|
-| Total Return % | `(final_equity / INITIAL_CAPITAL − 1) × 100` |
-| Win Rate | `wins / executed_trades × 100` |
-| Profit Factor | `gross_profit_sum / gross_loss_sum` (99.0 if no losses with wins) |
-| Max Drawdown % | `max((peak_equity − equity) / peak_equity × 100)` |
-
+| Metric         | Formula                                                           |
+| -------------- | ----------------------------------------------------------------- |
+| Total Return % | `(final_equity / INITIAL_CAPITAL − 1) × 100`                      |
+| Win Rate       | `wins / executed_trades × 100`                                    |
+| Profit Factor  | `gross_profit_sum / gross_loss_sum` (99.0 if no losses with wins) |
+| Max Drawdown % | `max((peak_equity − equity) / peak_equity × 100)`                 |
 
 ---
 
@@ -750,10 +778,9 @@ optimized = RL_Agent.skip_if_valid("long")
 Each run appends structured JSON lines to `outputs/pipeline.log`:
 
 ```json
-{"phase": "Phase 1: Feature Selection", "start_time": "...", "end_time": "...", "elapsed_seconds": 12.4, "skipped": false, "result_summary": {"long_features": 30, "short_features": 28}}
+{"phase": "Phase 1: Feature Selection", "start_time": "...", "end_time": "...", "elapsed_seconds": 12.4, "skipped": false, "result_summary": {"long_features": 25, "short_features": 25}}
 {"phase": "Phase 2: Rule Pool Generation [long]", "start_time": "...", "end_time": "...", "elapsed_seconds": 847.2, "skipped": false, "result_summary": {"pool_size": 43}}
 ```
-
 
 ---
 
@@ -819,38 +846,37 @@ pytest tests/unit/test_cpu_engine.py -v
 
 The property tests use [Hypothesis](https://hypothesis.readthedocs.io/) to verify universal correctness properties:
 
-| Property | Description | Validates |
-|----------|-------------|-----------|
-| 1 | Per-symbol chronological sort | Req 2.2 |
-| 2 | Last-288-row drop | Req 2.3 |
-| 3 | No NaN labels after loading | Req 2.4 |
-| 4 | No NaN features after loading | Req 2.5 |
-| 5 | Per-symbol split ratio and no overlap | Req 2.6, 2.7 |
-| 6 | Feature mode classification completeness | Req 3.1 |
-| 7 | Feature mode classification correctness | Req 3.2 |
-| 8 | Fuzzy value name encoding round-trip | Req 4.1, 4.2 |
-| 9 | Don't-care sentinel correctness | Req 4.3 |
-| 10 | Priority-based rule assignment exclusivity | Req 5.1 |
-| 11 | Trade outcome correctness | Req 5.2 |
-| 12 | Capital-managed position sizing | Req 5.4, 5.9 |
-| 13 | Exposure reservation invariant | Req 5.5 |
-| 14 | Fee deduction correctness | Req 5.6 |
-| 15 | Equity tracking consistency | Req 5.7 |
-| 16 | GPU-CPU numerical parity | Req 6.1 |
-| 17 | Label and meta column exclusion | Req 7.2 |
-| 18 | Low-dispersion feature exclusion | Req 7.5 |
-| 19 | Phase 2 static risk parameters | Req 8.4 |
-| 20 | Rule condition count bounds | Req 8.6 |
-| 21 | Rule set size bounds | Req 9.1, 12.8 |
-| 22 | Rule set uniqueness | Req 9.4 |
-| 23 | JSON output schema validity | Req 12.1–12.9 |
-| 24 | RL action bounds | Req 10.3 |
-| 25 | RL state vector completeness | Req 10.2 |
-| 26 | Elbow method correctness | Req 10.5 |
-| 27 | Test data preparation consistency | Req 11.2 |
-| 28 | Per-symbol metrics consistency | Req 15.1 |
-| 29 | Symbol coverage penalty application | Req 9.5, 15.4 |
-
+| Property | Description                                | Validates     |
+| -------- | ------------------------------------------ | ------------- |
+| 1        | Per-symbol chronological sort              | Req 2.2       |
+| 2        | Last-288-row drop                          | Req 2.3       |
+| 3        | No NaN labels after loading                | Req 2.4       |
+| 4        | No NaN features after loading              | Req 2.5       |
+| 5        | Per-symbol split ratio and no overlap      | Req 2.6, 2.7  |
+| 6        | Feature mode classification completeness   | Req 3.1       |
+| 7        | Feature mode classification correctness    | Req 3.2       |
+| 8        | Fuzzy value name encoding round-trip       | Req 4.1, 4.2  |
+| 9        | Don't-care sentinel correctness            | Req 4.3       |
+| 10       | Priority-based rule assignment exclusivity | Req 5.1       |
+| 11       | Trade outcome correctness                  | Req 5.2       |
+| 12       | Capital-managed position sizing            | Req 5.4, 5.9  |
+| 13       | Exposure reservation invariant             | Req 5.5       |
+| 14       | Fee deduction correctness                  | Req 5.6       |
+| 15       | Equity tracking consistency                | Req 5.7       |
+| 16       | GPU-CPU numerical parity                   | Req 6.1       |
+| 17       | Label and meta column exclusion            | Req 7.2       |
+| 18       | Low-dispersion feature exclusion           | Req 7.5       |
+| 19       | Phase 2 static risk parameters             | Req 8.4       |
+| 20       | Rule condition count bounds                | Req 8.6       |
+| 21       | Rule set size bounds                       | Req 9.1, 12.8 |
+| 22       | Rule set uniqueness                        | Req 9.4       |
+| 23       | JSON output schema validity                | Req 12.1–12.9 |
+| 24       | RL action bounds                           | Req 10.3      |
+| 25       | RL state vector completeness               | Req 10.2      |
+| 26       | Elbow method correctness                   | Req 10.5      |
+| 27       | Test data preparation consistency          | Req 11.2      |
+| 28       | Per-symbol metrics consistency             | Req 15.1      |
+| 29       | Symbol coverage penalty application        | Req 9.5, 15.4 |
 
 ---
 
@@ -887,6 +913,7 @@ All backtest evaluations track per-symbol metrics. Feature selection scores feat
 ### Separation of Concerns
 
 The pipeline separates:
+
 1. **Feature mining** (Phase 1) — which features are predictive and stable
 2. **Rule generation** (Phase 2) — what individual rules look like
 3. **Ensemble selection** (Phase 3) — which combination of rules works best as a team
@@ -901,15 +928,15 @@ Each layer can be inspected independently, making it easier to diagnose where th
 
 This package (`gpu_fuzzy_trader`) is a complete ground-up rewrite of the previous `bigdata_trader` package, incorporating lessons learned from that implementation:
 
-| Aspect | `bigdata_trader` (old) | `gpu_fuzzy_trader` (new) |
-|--------|----------------------|--------------------------|
-| GPU acceleration | Optional, partial | JAX-first, transparent CPU fallback |
-| Feature selection | Global, single direction | Direction-specific (long/short) |
-| Rule encoding | Mixed | Strict chromosome encoding with don't-care sentinels |
-| Risk optimization | Static TP/SL | RL agent with Elbow Method stopping |
-| Test coverage | Limited | 713 tests, 29 property-based properties |
-| Config | Mixed flags + config | Single `config.py`, no runtime flags |
-| Evaluator parity | Approximate | Exact mirror of `evaluator_v3.ipynb` |
-| Skip logic | Basic | Per-phase validation before skipping |
+| Aspect            | `bigdata_trader` (old)   | `gpu_fuzzy_trader` (new)                             |
+| ----------------- | ------------------------ | ---------------------------------------------------- |
+| GPU acceleration  | Optional, partial        | JAX-first, transparent CPU fallback                  |
+| Feature selection | Global, single direction | Direction-specific (long/short)                      |
+| Rule encoding     | Mixed                    | Strict chromosome encoding with don't-care sentinels |
+| Risk optimization | Static TP/SL             | RL agent with Elbow Method stopping                  |
+| Test coverage     | Limited                  | 713 tests, 29 property-based properties              |
+| Config            | Mixed flags + config     | Single `config.py`, no runtime flags                 |
+| Evaluator parity  | Approximate              | Exact mirror of `evaluator_v3.ipynb`                 |
+| Skip logic        | Basic                    | Per-phase validation before skipping                 |
 
 The output format (`long.json` / `short.json`) is identical between both implementations and fully compatible with `evaluator_v3.ipynb`.

@@ -816,9 +816,8 @@ class TestTemporaryOutputPaths:
             assert selector_module._LONG_PATH == os.path.join(
                 custom_output, "selected_features_long.json"
             )
-            assert phase2_module._POOL_PATHS["long"] == os.path.join(
-                custom_output, "phase2_long_pool.json"
-            )
+            assert phase2_module._POOL_PATHS["long"] == _cfg.PHASE2_POOL_PATHS["long"]
+            assert phase2_module._HISTORY_PATHS["short"] == _cfg.PHASE2_HISTORY_PATHS["short"]
             assert phase3_module._OUTPUT_PATHS["short"] == os.path.join(
                 custom_output, "short.json"
             )
