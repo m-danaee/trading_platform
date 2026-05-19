@@ -3,7 +3,7 @@ reporter.py — Reporting and visualization for the GPU-Fuzzy Trading Pipeline.
 
 Generates:
   - Phase 2 generation metrics plots (objectives vs. generation)
-  - Phase 2 PnL plots (mean/best Pareto return vs. generation)
+    - Phase 2 PnL plots (mean/best Pareto Sortino vs. generation)
   - Equity curve plots (train, validation, test)
   - Per-symbol performance CSVs
   - Phase 4 RL training curve plots with elbow point marked
@@ -12,17 +12,18 @@ All plots are saved as PNG files (not displayed).
 """
 
 from __future__ import annotations
+from gpu_fuzzy_trader import config as _cfg
+import pandas as pd
+import matplotlib.pyplot as plt
 
 import logging
 import os
 from typing import List
 
 import matplotlib
-matplotlib.use("Agg")  # Non-interactive backend — must be set before importing pyplot
-import matplotlib.pyplot as plt
-import pandas as pd
+# Non-interactive backend — must be set before importing pyplot
+matplotlib.use("Agg")
 
-from gpu_fuzzy_trader import config as _cfg
 
 logger = logging.getLogger(__name__)
 
@@ -90,17 +91,22 @@ class Reporter:
             fig.tight_layout()
             fig.savefig(out_path, dpi=100)
             plt.close(fig)
-            logger.warning("plot_phase2_metrics: empty history for direction=%s", direction)
+            logger.warning(
+                "plot_phase2_metrics: empty history for direction=%s", direction)
             return out_path
 
-        generations = [entry.get("generation", i) for i, entry in enumerate(history)]
+        generations = [entry.get("generation", i)
+                       for i, entry in enumerate(history)]
         mean_f1 = [entry.get("mean_f1", 0.0) for entry in history]
         mean_f2 = [entry.get("mean_f2", 0.0) for entry in history]
         mean_f3 = [entry.get("mean_f3", 0.0) for entry in history]
 
-        ax.plot(generations, mean_f1, label="mean_f1 (−return)", color="tab:blue")
-        ax.plot(generations, mean_f2, label="mean_f2 (drawdown)", color="tab:orange")
-        ax.plot(generations, mean_f3, label="mean_f3 (−win_rate)", color="tab:green")
+        ax.plot(generations, mean_f1,
+                label="mean_f1 (−Sortino)", color="tab:blue")
+        ax.plot(generations, mean_f2,
+                label="mean_f2 (drawdown)", color="tab:orange")
+        ax.plot(generations, mean_f3,
+                label="mean_f3 (−win_rate)", color="tab:green")
 
         ax.set_title(f"Phase 2 Objectives vs. Generation — {direction}")
         ax.set_xlabel("Generation")
@@ -122,13 +128,13 @@ class Reporter:
         output_dir: str | None = None,
     ) -> str:
         """
-        Plot Phase 2 mean/best Pareto return vs. generation and save to PNG.
+        Plot Phase 2 mean/best Pareto Sortino Ratio vs. generation and save to PNG.
 
         Parameters
         ----------
         history:
             List of dicts, each with keys ``"generation"``,
-            ``"mean_total_return_pct"``, and ``"best_total_return_pct"``.
+            ``"mean_sortino_ratio"``, and ``"best_sortino_ratio"``.
         direction:
             ``"long"`` or ``"short"``.
         output_dir:
@@ -146,9 +152,10 @@ class Reporter:
         fig, ax = plt.subplots(figsize=(10, 6))
 
         if not history:
-            ax.set_title(f"Phase 2 PnL per Generation — {direction} (no data)")
+            ax.set_title(
+                f"Phase 2 Sortino per Generation — {direction} (no data)")
             ax.set_xlabel("Generation")
-            ax.set_ylabel("Return (%)")
+            ax.set_ylabel("Sortino Ratio")
             fig.tight_layout()
             fig.savefig(out_path, dpi=100)
             plt.close(fig)
@@ -159,29 +166,33 @@ class Reporter:
         generations = [entry.get("generation", i)
                        for i, entry in enumerate(history)]
         mean_return = [
-            entry.get("mean_total_return_pct", 0.0) for entry in history
+            entry.get("mean_sortino_ratio", entry.get(
+                "mean_total_return_pct", 0.0))
+            for entry in history
         ]
         best_return = [
-            entry.get("best_total_return_pct", 0.0) for entry in history
+            entry.get("best_sortino_ratio", entry.get(
+                "best_total_return_pct", 0.0))
+            for entry in history
         ]
 
         ax.plot(
             generations,
             mean_return,
-            label="Mean Pareto return (%)",
+            label="Mean Pareto Sortino Ratio",
             color="tab:blue",
         )
         ax.plot(
             generations,
             best_return,
-            label="Best Pareto return (%)",
+            label="Best Pareto Sortino Ratio",
             color="tab:orange",
         )
         ax.axhline(y=0.0, color="gray", linestyle="--", linewidth=0.8)
 
-        ax.set_title(f"Phase 2 PnL per Generation — {direction}")
+        ax.set_title(f"Phase 2 Sortino per Generation — {direction}")
         ax.set_xlabel("Generation")
-        ax.set_ylabel("Return (%)")
+        ax.set_ylabel("Sortino Ratio")
         ax.legend()
         ax.grid(True, alpha=0.3)
 
@@ -289,7 +300,8 @@ class Reporter:
             Absolute path to the saved CSV file.
         """
         reports_dir = output_dir if output_dir is not None else _REPORTS_DIR
-        out_path = os.path.join(reports_dir, f"{split}_per_symbol_performance.csv")
+        out_path = os.path.join(
+            reports_dir, f"{split}_per_symbol_performance.csv")
         self._ensure_dir(out_path)
 
         per_symbol = metrics.get("per_symbol_metrics", {})
@@ -342,7 +354,8 @@ class Reporter:
             Absolute path to the saved PNG file.
         """
         reports_dir = output_dir if output_dir is not None else _REPORTS_DIR
-        out_path = os.path.join(reports_dir, f"phase4_{direction}_rl_curve.png")
+        out_path = os.path.join(
+            reports_dir, f"phase4_{direction}_rl_curve.png")
         self._ensure_dir(out_path)
 
         fig, ax = plt.subplots(figsize=(10, 5))

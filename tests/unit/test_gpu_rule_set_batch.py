@@ -89,6 +89,9 @@ class TestSimulateRuleSetBatchParity:
         for rs, metrics in zip(rule_sets, batch):
             ref = cpu.simulate_rule_set(rs)
             assert metrics["executed_trades"] == ref["executed_trades"]
+            assert metrics["sortino_ratio"] == pytest.approx(
+                ref["sortino_ratio"], rel=1e-4, abs=1e-4
+            )
             assert metrics["total_return_pct"] == pytest.approx(
                 ref["total_return_pct"], rel=1e-4, abs=1e-4
             )

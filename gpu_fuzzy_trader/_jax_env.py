@@ -15,6 +15,7 @@ def configure_jax_env() -> None:
       version parse errors from XLA on WSL.
     """
     os.environ.setdefault("JAX_PLATFORMS", "cuda,cpu")
+    os.environ.setdefault("JAX_ENABLE_X64", "True")
     os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
     os.environ.setdefault("ABSL_MIN_LOGLEVEL", "3")
     logging.getLogger("jax._src.xla_bridge").setLevel(logging.WARNING)

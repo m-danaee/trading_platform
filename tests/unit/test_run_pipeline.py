@@ -80,7 +80,7 @@ def _make_pool(n: int = 3) -> list[dict]:
         {
             "chromosome": [0, 1, 2],
             "conditions": [f"[feat_{i}] IS Very High"],
-            "objectives": {"total_return_pct": 1.0, "max_drawdown_pct": 1.0, "win_rate": 50.0},
+            "objectives": {"sortino_ratio": 1.0, "total_return_pct": 1.0, "max_drawdown_pct": 1.0, "win_rate": 50.0},
             "executed_trades": 25,
             "tp": _cfg.PHASE2_TP,
             "sl": _cfg.PHASE2_SL,

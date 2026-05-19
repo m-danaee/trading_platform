@@ -12,7 +12,7 @@ Chromosome encoding:
     dont_care_i = num_classes_i  (inactive condition)
 
 Three objectives (all minimised):
-    f1 = -total_return_pct
+    f1 = -sortino_ratio
     f2 = max_drawdown_pct
     f3 = -win_rate
 
@@ -88,21 +88,25 @@ def _hamming_distance(a: np.ndarray, b: np.ndarray) -> int:
     return int(np.sum(a != b))
 
 
-def _pareto_return_stats(
+def _pareto_sortino_stats(
     pareto_indices: list[int],
     metrics_cache: list[dict],
 ) -> dict[str, float]:
-    """Aggregate raw backtest return (%) over the current Pareto front."""
+    """Aggregate raw Sortino Ratio over the current Pareto front."""
     if not pareto_indices:
-        return {"mean_total_return_pct": 0.0, "best_total_return_pct": 0.0}
+        return {"mean_sortino_ratio": 0.0, "best_sortino_ratio": 0.0}
     returns = [
-        float(metrics_cache[i].get("total_return_pct", 0.0))
+        float(metrics_cache[i].get("sortino_ratio",
+              metrics_cache[i].get("total_return_pct", 0.0)))
         for i in pareto_indices
     ]
     return {
-        "mean_total_return_pct": float(np.mean(returns)),
-        "best_total_return_pct": float(np.max(returns)),
+        "mean_sortino_ratio": float(np.mean(returns)),
+        "best_sortino_ratio": float(np.max(returns)),
     }
+
+
+_pareto_return_stats = _pareto_sortino_stats
 
 
 def _sample_df(df: pd.DataFrame, total_rows: int) -> pd.DataFrame:
@@ -163,13 +167,15 @@ def _evaluate_chromosome(
     except Exception as exc:
         logger.debug("simulate_rule_batch failed: %s", exc)
         metrics = {
+            "sortino_ratio": 0.0,
             "total_return_pct": 0.0,
             "max_drawdown_pct": 100.0,
             "win_rate": 0.0,
             "executed_trades": 0,
         }
 
-    total_return = float(metrics.get("total_return_pct", 0.0))
+    sortino_ratio = float(metrics.get(
+        "sortino_ratio", metrics.get("total_return_pct", 0.0)))
     max_dd = float(metrics.get("max_drawdown_pct", 100.0))
     win_rate = float(metrics.get("win_rate", 0.0))
     executed = int(metrics.get("executed_trades", 0))
@@ -187,7 +193,7 @@ def _evaluate_chromosome(
         if min_hamming == 0:
             diversity_penalty = 5.0  # identical rule already in front
 
-    f1 = -total_return + support_penalty + diversity_penalty + cond_penalty
+    f1 = -sortino_ratio + support_penalty + diversity_penalty + cond_penalty
     f2 = max_dd + support_penalty + diversity_penalty + cond_penalty
     f3 = -win_rate + support_penalty + diversity_penalty + cond_penalty
 
@@ -476,7 +482,7 @@ def _build_pool_from_archive(
     {
         "chromosome": [...],
         "conditions": [...],
-        "objectives": {"total_return_pct": ..., "max_drawdown_pct": ..., "win_rate": ...},
+        "objectives": {"sortino_ratio": ..., "max_drawdown_pct": ..., "win_rate": ...},
         "executed_trades": ...
     }
     """
@@ -524,6 +530,7 @@ def _build_pool_from_archive(
             "chromosome": chrom.tolist(),
             "conditions": conditions,
             "objectives": {
+                "sortino_ratio": float(metrics.get("sortino_ratio", metrics.get("total_return_pct", 0.0))),
                 "total_return_pct": float(metrics.get("total_return_pct", 0.0)),
                 "max_drawdown_pct": float(metrics.get("max_drawdown_pct", 0.0)),
                 "win_rate": float(metrics.get("win_rate", 0.0)),
@@ -554,9 +561,11 @@ def _read_json_payload(path: str) -> object | None:
 def _archive_objective_vector(entry: dict) -> np.ndarray:
     """Convert an archive entry into the minimisation objectives used for ranking."""
     objectives = entry.get("objectives", {})
+    sortino_ratio = float(objectives.get(
+        "sortino_ratio", objectives.get("total_return_pct", 0.0)))
     return np.array(
         [
-            -float(objectives.get("total_return_pct", 0.0)),
+            -sortino_ratio,
             float(objectives.get("max_drawdown_pct", 0.0)),
             -float(objectives.get("win_rate", 0.0)),
         ],
@@ -1085,7 +1094,7 @@ def _validate_pool_schema(pool: object, path: str) -> None:
             raise ValueError(
                 f"Phase 2 pool entry {i} 'objectives' must be a dict: {path}"
             )
-        required_obj_keys = {"total_return_pct",
+        required_obj_keys = {"sortino_ratio",
                              "max_drawdown_pct", "win_rate"}
         missing_obj = required_obj_keys - set(entry["objectives"].keys())
         if missing_obj:

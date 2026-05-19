@@ -222,7 +222,8 @@ def _evaluate_population_indices(
             elif active > _cfg.MAX_CONDITIONS:
                 cond_penalty = (active - _cfg.MAX_CONDITIONS) * 10.0
 
-            total_return = float(metrics.get("total_return_pct", 0.0))
+            sortino_ratio = float(metrics.get(
+                "sortino_ratio", metrics.get("total_return_pct", 0.0)))
             max_dd = float(metrics.get("max_drawdown_pct", 100.0))
             win_rate = float(metrics.get("win_rate", 0.0))
             executed = int(metrics.get("executed_trades", 0))
@@ -241,7 +242,7 @@ def _evaluate_population_indices(
 
             pen = support_penalty + diversity_penalty + cond_penalty
             objectives[i] = np.array(
-                [-total_return + pen, max_dd + pen, -win_rate + pen],
+                [-sortino_ratio + pen, max_dd + pen, -win_rate + pen],
                 dtype=np.float64,
             )
             metrics_cache[i] = metrics
@@ -367,7 +368,7 @@ def _run_nsga2_fallback(
         _get_dont_cares,
         _init_population,
         _metrics_dict_from_population,
-        _pareto_return_stats,
+        _pareto_sortino_stats,
     )
 
     K = len(feature_infos)
@@ -409,7 +410,7 @@ def _run_nsga2_fallback(
             "mean_f2": float(np.mean(pareto_obj[:, 1])),
             "mean_f3": float(np.mean(pareto_obj[:, 2])),
             "algorithm": "NSGA-II (fallback)",
-            **_pareto_return_stats(pareto_indices, metrics_cache),
+            **_pareto_sortino_stats(pareto_indices, metrics_cache),
         })
 
         mean_f1 = float(np.mean(pareto_obj[:, 0])) if len(pareto_obj) else 0.0
@@ -471,7 +472,7 @@ def _run_nsga3(
         _init_population,
         _metrics_dict_from_population,
         _non_dominated_sort,
-        _pareto_return_stats,
+        _pareto_sortino_stats,
     )
 
     K = len(feature_infos)
@@ -516,7 +517,7 @@ def _run_nsga3(
             "mean_f2": float(np.mean(pareto_obj[:, 1])) if len(pareto_obj) else 0.0,
             "mean_f3": float(np.mean(pareto_obj[:, 2])) if len(pareto_obj) else 0.0,
             "algorithm": "NSGA-III",
-            **_pareto_return_stats(pareto_indices, metrics_cache),
+            **_pareto_sortino_stats(pareto_indices, metrics_cache),
         })
 
         mean_f1 = float(np.mean(pareto_obj[:, 0])) if len(pareto_obj) else 0.0

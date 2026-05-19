@@ -26,6 +26,7 @@ class TestRunPhase2EvolutionSmoke:
                 B = chromosomes.shape[0]
                 return [
                     {
+                        "sortino_ratio": 1.0,
                         "total_return_pct": 1.0,
                         "max_drawdown_pct": 2.0,
                         "win_rate": 50.0,
@@ -58,6 +59,7 @@ class TestRunPhase2EvolutionFallback:
                 B = chromosomes.shape[0]
                 return [
                     {
+                        "sortino_ratio": 1.0,
                         "total_return_pct": 1.0,
                         "max_drawdown_pct": 2.0,
                         "win_rate": 50.0,
@@ -88,6 +90,7 @@ class TestRunPhase2EvolutionFallback:
                 B = chromosomes.shape[0]
                 return [
                     {
+                        "sortino_ratio": 1.0,
                         "total_return_pct": 1.0,
                         "max_drawdown_pct": 2.0,
                         "win_rate": 50.0,

@@ -169,7 +169,6 @@ class TestBuildDataMatrix:
         assert all(matrix[:, 1] == 0)  # feat_b
 
 
-
 # ---------------------------------------------------------------------------
 # Test: compute_rule_signals
 # ---------------------------------------------------------------------------
@@ -306,7 +305,6 @@ class TestComputeTradeOutcomes:
         assert result[2] == pytest.approx(1.5)   # Time exit
 
 
-
 # ---------------------------------------------------------------------------
 # Test: GPUBacktestEngine initialization
 # ---------------------------------------------------------------------------
@@ -362,7 +360,8 @@ class TestGPUBacktestEngineInit:
         # If dataframe order were used, [9, 1] would be evaluated as
         # feat_binary=9 and feat_signed=1, producing no matches.
         chrom = np.array([[9, 1]], dtype=np.int32)
-        result = eng.simulate_rule_batch(chrom, tp=4.0, sl=2.0, capital_pct=50.0)[0]
+        result = eng.simulate_rule_batch(
+            chrom, tp=4.0, sl=2.0, capital_pct=50.0)[0]
         assert result["raw_signal_count"] == len(df)
         assert result["executed_trades"] > 0
 
@@ -400,7 +399,8 @@ class TestSimulateRuleBatch:
         # feat_signed=0.9 → bin 8 (Strong Bullish); feat_binary=1 → bin 1
         # Chromosome [0, 0] won't match (signed bin 0 ≠ 8, binary bin 0 ≠ 1)
         chrom = np.array([[0, 0]], dtype=np.int32)
-        results = eng.simulate_rule_batch(chrom, tp=4.0, sl=2.0, capital_pct=50.0)
+        results = eng.simulate_rule_batch(
+            chrom, tp=4.0, sl=2.0, capital_pct=50.0)
         assert len(results) == 1
         assert results[0]["executed_trades"] == 0
         assert results[0]["total_return_pct"] == pytest.approx(0.0)
@@ -413,8 +413,10 @@ class TestSimulateRuleBatch:
         # Use dont_care for both to match everything
         dont_care_signed = 10
         dont_care_binary = 2
-        chrom = np.array([[dont_care_signed, dont_care_binary]], dtype=np.int32)
-        results = eng.simulate_rule_batch(chrom, tp=4.0, sl=2.0, capital_pct=50.0)
+        chrom = np.array(
+            [[dont_care_signed, dont_care_binary]], dtype=np.int32)
+        results = eng.simulate_rule_batch(
+            chrom, tp=4.0, sl=2.0, capital_pct=50.0)
         assert results[0]["executed_trades"] > 0
 
     def test_batch_returns_one_result_per_chromosome(self):
@@ -423,7 +425,8 @@ class TestSimulateRuleBatch:
         eng = _make_engine(df)
         B = 5
         chroms = np.zeros((B, 2), dtype=np.int32)
-        results = eng.simulate_rule_batch(chroms, tp=4.0, sl=2.0, capital_pct=50.0)
+        results = eng.simulate_rule_batch(
+            chroms, tp=4.0, sl=2.0, capital_pct=50.0)
         assert len(results) == B
 
     def test_result_keys_present(self):
@@ -431,9 +434,10 @@ class TestSimulateRuleBatch:
         df = _make_df(n=10)
         eng = _make_engine(df)
         chrom = np.array([[10, 2]], dtype=np.int32)  # all dont_care
-        results = eng.simulate_rule_batch(chrom, tp=4.0, sl=2.0, capital_pct=50.0)
+        results = eng.simulate_rule_batch(
+            chrom, tp=4.0, sl=2.0, capital_pct=50.0)
         required_keys = {
-            "direction", "total_return_pct", "max_drawdown_pct", "win_rate",
+            "direction", "total_return_pct", "sortino_ratio", "max_drawdown_pct", "win_rate",
             "profit_factor", "executed_trades", "final_equity", "account_ruined",
             "raw_signal_count", "skipped_min_notional_count",
         }
@@ -443,7 +447,8 @@ class TestSimulateRuleBatch:
         df = _make_df(n=10)
         eng = _make_engine(df, direction="short")
         chrom = np.array([[10, 2]], dtype=np.int32)
-        results = eng.simulate_rule_batch(chrom, tp=4.0, sl=2.0, capital_pct=50.0)
+        results = eng.simulate_rule_batch(
+            chrom, tp=4.0, sl=2.0, capital_pct=50.0)
         assert results[0]["direction"] == "short"
 
     def test_winning_trades_positive_return(self):
@@ -451,8 +456,10 @@ class TestSimulateRuleBatch:
         df = _make_df(n=20, label_max=106.0, label_min=99.0, label_close=104.0,
                       max_before_min=1)
         eng = _make_engine(df)
-        chrom = np.array([[10, 2]], dtype=np.int32)  # all dont_care → match all
-        results = eng.simulate_rule_batch(chrom, tp=4.0, sl=2.0, capital_pct=50.0)
+        # all dont_care → match all
+        chrom = np.array([[10, 2]], dtype=np.int32)
+        results = eng.simulate_rule_batch(
+            chrom, tp=4.0, sl=2.0, capital_pct=50.0)
         assert results[0]["total_return_pct"] > 0.0
 
     def test_losing_trades_negative_return(self):
@@ -461,7 +468,8 @@ class TestSimulateRuleBatch:
                       max_before_min=0)
         eng = _make_engine(df)
         chrom = np.array([[10, 2]], dtype=np.int32)
-        results = eng.simulate_rule_batch(chrom, tp=4.0, sl=2.0, capital_pct=50.0)
+        results = eng.simulate_rule_batch(
+            chrom, tp=4.0, sl=2.0, capital_pct=50.0)
         assert results[0]["total_return_pct"] < 0.0
 
     def test_1d_chromosome_accepted(self):
@@ -469,7 +477,8 @@ class TestSimulateRuleBatch:
         df = _make_df(n=10)
         eng = _make_engine(df)
         chrom = np.array([10, 2], dtype=np.int32)  # 1D
-        results = eng.simulate_rule_batch(chrom, tp=4.0, sl=2.0, capital_pct=50.0)
+        results = eng.simulate_rule_batch(
+            chrom, tp=4.0, sl=2.0, capital_pct=50.0)
         assert len(results) == 1
 
     def test_chromosome_width_mismatch_raises(self):
@@ -483,16 +492,17 @@ class TestSimulateRuleBatch:
         df = _make_df(n=20)
         eng = _make_engine(df)
         chrom = np.array([[10, 2]], dtype=np.int32)
-        results = eng.simulate_rule_batch(chrom, tp=4.0, sl=2.0, capital_pct=50.0)
+        results = eng.simulate_rule_batch(
+            chrom, tp=4.0, sl=2.0, capital_pct=50.0)
         assert results[0]["max_drawdown_pct"] >= 0.0
 
     def test_win_rate_in_range(self):
         df = _make_df(n=20, label_max=106.0, label_min=99.0, label_close=104.0)
         eng = _make_engine(df)
         chrom = np.array([[10, 2]], dtype=np.int32)
-        results = eng.simulate_rule_batch(chrom, tp=4.0, sl=2.0, capital_pct=50.0)
+        results = eng.simulate_rule_batch(
+            chrom, tp=4.0, sl=2.0, capital_pct=50.0)
         assert 0.0 <= results[0]["win_rate"] <= 100.0
-
 
 
 # ---------------------------------------------------------------------------
@@ -645,19 +655,21 @@ class TestGPUCPUNumericalParity:
 
         # GPU: chromosome [1] (binary gene=1 → Active (1))
         chrom = np.array([[1]], dtype=np.int32)
-        gpu_results = gpu_eng.simulate_rule_batch(chrom, tp=4.0, sl=2.0, capital_pct=50.0)
+        gpu_results = gpu_eng.simulate_rule_batch(
+            chrom, tp=4.0, sl=2.0, capital_pct=50.0)
 
         cpu_ret = cpu_metrics["total_return_pct"]
         gpu_ret = gpu_results[0]["total_return_pct"]
 
         # Both should have same number of matched signals
         assert gpu_results[0]["raw_signal_count"] == cpu_metrics["executed_trades"] + \
-               cpu_metrics.get("skipped_min_notional_count", 0) or True  # approximate
+            cpu_metrics.get("skipped_min_notional_count",
+                            0) or True  # approximate
 
         # Numerical parity within 1e-4 relative tolerance
         if abs(cpu_ret) > 1e-6:
             assert abs(gpu_ret - cpu_ret) / abs(cpu_ret) < 1e-4 or \
-                   abs(gpu_ret - cpu_ret) < 0.01, (
+                abs(gpu_ret - cpu_ret) < 0.01, (
                 f"GPU return {gpu_ret:.6f} vs CPU return {cpu_ret:.6f} "
                 f"exceeds tolerance"
             )
@@ -677,7 +689,8 @@ class TestGPUCPUNumericalParity:
         cpu_metrics = cpu_eng.simulate_rule_set(rule_set)
 
         chrom = np.array([[1]], dtype=np.int32)
-        gpu_results = gpu_eng.simulate_rule_batch(chrom, tp=4.0, sl=2.0, capital_pct=50.0)
+        gpu_results = gpu_eng.simulate_rule_batch(
+            chrom, tp=4.0, sl=2.0, capital_pct=50.0)
 
         # Both should execute trades (not necessarily identical due to exposure model)
         assert gpu_results[0]["executed_trades"] >= 0
@@ -700,6 +713,7 @@ class TestGPUCPUNumericalParity:
         assert gpu_metrics["total_return_pct"] == pytest.approx(
             cpu_metrics["total_return_pct"])
         assert gpu_metrics["executed_trades"] == cpu_metrics["executed_trades"]
-        assert gpu_metrics["win_rate"] == pytest.approx(cpu_metrics["win_rate"])
+        assert gpu_metrics["win_rate"] == pytest.approx(
+            cpu_metrics["win_rate"])
         assert gpu_metrics["max_drawdown_pct"] == pytest.approx(
             cpu_metrics["max_drawdown_pct"])

@@ -311,7 +311,8 @@ class TestBuildOutputDict:
         pool = [{"conditions": ["[feat_0] IS Very High", "[feat_1] IS Low"],
                  "tp": 4.0, "sl": 2.0, "capital_pct": 50.0}]
         result = _build_output_dict(pool, "long")
-        assert result["rules_set"][0]["conditions"] == ["[feat_0] IS Very High", "[feat_1] IS Low"]
+        assert result["rules_set"][0]["conditions"] == [
+            "[feat_0] IS Very High", "[feat_1] IS Low"]
 
 
 # ---------------------------------------------------------------------------
@@ -346,7 +347,7 @@ class TestRuleSetToEngineFormat:
             "conditions": ["[feat_0] IS Very High"],
             "tp": 4.0, "sl": 2.0, "capital_pct": 50.0,
             "chromosome": [1, 2, 3],
-            "objectives": {"total_return_pct": 5.0},
+            "objectives": {"sortino_ratio": 5.0, "total_return_pct": 5.0},
         }]
         result = _rule_set_to_engine_format(pool)
         assert "chromosome" not in result[0]

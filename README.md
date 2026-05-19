@@ -201,7 +201,7 @@ dont_care_i = num_classes_i  (inactive condition)
 
 **Three objectives (all minimized):**
 
-- `f1 = −total_return_pct`
+- `f1 = −sortino_ratio`
 - `f2 = max_drawdown_pct`
 - `f3 = −win_rate`
 
@@ -236,7 +236,7 @@ Selects the best ordered combination of rules from the Phase 2 pool using greedy
 
 **Three objectives (all minimized):**
 
-- `f1 = −validation_total_return_pct`
+- `f1 = −validation_sortino_ratio`
 - `f2 = validation_max_drawdown_pct`
 - `f3 = −validation_win_rate`
 
@@ -395,15 +395,15 @@ All hyperparameters live in `gpu_fuzzy_trader/config.py`. Edit this file to tune
 
 ### Paths
 
-| Constant             | Default                        | Description              |
-| -------------------- | ------------------------------ | ------------------------ |
-| `TRAIN_CSV_PATH`     | `"data/train.csv"`             | Raw training data        |
-| `TEST_CSV_PATH`      | `"data/test.csv"`              | Held-out test data       |
-| `TRAIN_75_PATH`      | `"data/train_75.parquet"`      | Auto-generated 75% split |
-| `VALIDATION_25_PATH` | `"data/validation_25.parquet"` | Auto-generated 25% split |
-| `OUTPUTS_DIR`        | `"outputs"`                    | Root output directory    |
-| `REPORTS_DIR`        | `"outputs/reports"`            | Reports subdirectory     |
-| `PHASE2_POOL_DIR`    | `"pools"`                      | Root-level Phase 2 pools |
+| Constant             | Default                        | Description                |
+| -------------------- | ------------------------------ | -------------------------- |
+| `TRAIN_CSV_PATH`     | `"data/train.csv"`             | Raw training data          |
+| `TEST_CSV_PATH`      | `"data/test.csv"`              | Held-out test data         |
+| `TRAIN_75_PATH`      | `"data/train_75.parquet"`      | Auto-generated 75% split   |
+| `VALIDATION_25_PATH` | `"data/validation_25.parquet"` | Auto-generated 25% split   |
+| `OUTPUTS_DIR`        | `"outputs"`                    | Root output directory      |
+| `REPORTS_DIR`        | `"outputs/reports"`            | Reports subdirectory       |
+| `PHASE2_POOL_DIR`    | `"pools"`                      | Root-level Phase 2 pools   |
 | `PHASE2_ARCHIVE_DIR` | `"phase2_rule_archive"`        | Root-level Phase 2 archive |
 
 ### Schema
@@ -443,14 +443,14 @@ All hyperparameters live in `gpu_fuzzy_trader/config.py`. Edit this file to tune
 
 ### Phase 3 — Rule Set Selection
 
-| Constant                     | Default | Description                                           |
-| ---------------------------- | ------- | ----------------------------------------------------- |
-| `PHASE3_REFINE_POP_SIZE`     | `100`   | Refinement population after greedy                    |
-| `PHASE3_REFINE_GENERATIONS`  | `40`    | Refinement generations after greedy                   |
-| `PHASE3_USE_GPU`             | `False` | Enable GPU batched rule-set eval (after parity tests) |
-| `PHASE3_MIN_RULES`           | `2`     | Minimum rules during Phase 3 search                   |
-| `PHASE3_MAX_RULES`           | `3`     | Maximum rules during Phase 3 search                   |
-| `PHASE3_MIN_SYMBOL_COVERAGE` | `7`     | Minimum symbols with ≥1 trade                         |
+| Constant                     | Default           | Description                                           |
+| ---------------------------- | ----------------- | ----------------------------------------------------- |
+| `PHASE3_REFINE_POP_SIZE`     | `100`             | Refinement population after greedy                    |
+| `PHASE3_REFINE_GENERATIONS`  | `40`              | Refinement generations after greedy                   |
+| `PHASE3_USE_GPU`             | `False`           | Enable GPU batched rule-set eval (after parity tests) |
+| `PHASE3_MIN_RULES`           | `2`               | Minimum rules during Phase 3 search                   |
+| `PHASE3_MAX_RULES`           | `3`               | Maximum rules during Phase 3 search                   |
+| `PHASE3_MIN_SYMBOL_COVERAGE` | `7`               | Minimum symbols with ≥1 trade                         |
 | `PHASE3_GREEDY_WEIGHTS`      | `(1.0, 0.7, 0.5)` | Greedy scoring weights for return, drawdown, win rate |
 
 ### Phase 4 — RL Risk Optimization
@@ -642,22 +642,22 @@ def detect_feature_mode(series):
 
 ### Fuzzy Value Name Mappings
 
-| Mode | Gene → Fuzzy Value Name |
-|------|------------------------|
-| `binary` | 0 → "Inactive (0)", 1 → "Active (1)" |
-| `ternary` | 0 → "Negative (-1)", 1 → "Neutral (0)", 2 → "Positive (1)" |
-| `positive` / `sparse_positive` | 0 → "Very Low", 1 → "Low", 2 → "Medium", 3 → "High", 4 → "Very High" |
-| `sparse_signed` | 0 → "Strong Negative", 1 → "Weak Negative", 2 → "Exactly Zero", 3 → "Weak Positive", 4 → "Strong Positive" |
-| `signed` | 0 → "Extreme Bearish", 1 → "Strong Bearish", 2 → "Bearish", 3 → "Weak Bearish", 4 → "Neutral Negative", 5 → "Neutral Positive", 6 → "Weak Bullish", 7 → "Bullish", 8 → "Strong Bullish", 9 → "Extreme Bullish" |
+| Mode                           | Gene → Fuzzy Value Name                                                                                                                                                                                        |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `binary`                       | 0 → "Inactive (0)", 1 → "Active (1)"                                                                                                                                                                           |
+| `ternary`                      | 0 → "Negative (-1)", 1 → "Neutral (0)", 2 → "Positive (1)"                                                                                                                                                     |
+| `positive` / `sparse_positive` | 0 → "Very Low", 1 → "Low", 2 → "Medium", 3 → "High", 4 → "Very High"                                                                                                                                           |
+| `sparse_signed`                | 0 → "Strong Negative", 1 → "Weak Negative", 2 → "Exactly Zero", 3 → "Weak Positive", 4 → "Strong Positive"                                                                                                     |
+| `signed`                       | 0 → "Extreme Bearish", 1 → "Strong Bearish", 2 → "Bearish", 3 → "Weak Bearish", 4 → "Neutral Negative", 5 → "Neutral Positive", 6 → "Weak Bullish", 7 → "Bullish", 8 → "Strong Bullish", 9 → "Extreme Bullish" |
 
 ### Don't-Care Sentinels
 
-| Mode | num_classes | dont_care |
-|------|-------------|-----------|
-| `binary` | 2 | 2 |
-| `ternary` | 3 | 3 |
-| `positive`, `sparse_positive`, `sparse_signed` | 5 | 5 |
-| `signed` | 10 | 10 |
+| Mode                                           | num_classes | dont_care |
+| ---------------------------------------------- | ----------- | --------- |
+| `binary`                                       | 2           | 2         |
+| `ternary`                                      | 3           | 3         |
+| `positive`, `sparse_positive`, `sparse_signed` | 5           | 5         |
+| `signed`                                       | 10          | 10        |
 
 A gene equal to `dont_care` means that condition is inactive (the feature is not part of the rule). This allows the evolutionary algorithm to discover rules with varying numbers of active conditions.
 
@@ -670,10 +670,10 @@ All conditions follow the exact format recognized by `evaluator_v3.ipynb`'s `app
 ```
 
 Examples:
+
 - `[amihud_illiquidity_20] IS Very High`
 - `[rsi_centered_14] IS Weak Bullish`
 - `[mom_tl_break_bull_30] IS Active (1)`
-
 
 ---
 

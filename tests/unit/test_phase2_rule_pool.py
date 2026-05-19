@@ -37,7 +37,7 @@ from gpu_fuzzy_trader.phases.phase2_rule_pool import (
     _init_population,
     _mutate,
     _non_dominated_sort,
-    _pareto_return_stats,
+    _pareto_sortino_stats,
     _sample_df,
     _validate_pool_schema,
 )
@@ -183,30 +183,30 @@ class TestHammingDistance:
 
 
 # ---------------------------------------------------------------------------
-# Tests: _pareto_return_stats
+# Tests: _pareto_sortino_stats
 # ---------------------------------------------------------------------------
 
-class TestParetoReturnStats:
+class TestParetoSortinoStats:
     def test_empty_pareto_front(self):
-        stats = _pareto_return_stats([], [{"total_return_pct": 10.0}])
-        assert stats == {"mean_total_return_pct": 0.0,
-                         "best_total_return_pct": 0.0}
+        stats = _pareto_sortino_stats([], [{"sortino_ratio": 10.0}])
+        assert stats == {"mean_sortino_ratio": 0.0,
+                         "best_sortino_ratio": 0.0}
 
     def test_mean_and_best_from_cache(self):
         metrics_cache = [
-            {"total_return_pct": 10.0},
-            {"total_return_pct": 30.0},
-            {"total_return_pct": 20.0},
+            {"sortino_ratio": 10.0},
+            {"sortino_ratio": 30.0},
+            {"sortino_ratio": 20.0},
         ]
-        stats = _pareto_return_stats([0, 2], metrics_cache)
-        assert stats["mean_total_return_pct"] == 15.0
-        assert stats["best_total_return_pct"] == 20.0
+        stats = _pareto_sortino_stats([0, 2], metrics_cache)
+        assert stats["mean_sortino_ratio"] == 15.0
+        assert stats["best_sortino_ratio"] == 20.0
 
     def test_missing_total_return_defaults_to_zero(self):
-        metrics_cache = [{"total_return_pct": 12.0}, {}]
-        stats = _pareto_return_stats([0, 1], metrics_cache)
-        assert stats["mean_total_return_pct"] == 6.0
-        assert stats["best_total_return_pct"] == 12.0
+        metrics_cache = [{"sortino_ratio": 12.0}, {}]
+        stats = _pareto_sortino_stats([0, 1], metrics_cache)
+        assert stats["mean_sortino_ratio"] == 6.0
+        assert stats["best_sortino_ratio"] == 12.0
 
 
 # ---------------------------------------------------------------------------
@@ -442,6 +442,7 @@ class TestValidatePoolSchema:
             "chromosome": [2, 5, 1],
             "conditions": ["[feat_0] IS Medium"],
             "objectives": {
+                "sortino_ratio": 5.0,
                 "total_return_pct": 5.0,
                 "max_drawdown_pct": 2.0,
                 "win_rate": 55.0,
@@ -494,6 +495,7 @@ class TestLoadPool:
                 "chromosome": [2, 5, 1],
                 "conditions": ["[feat_0] IS Medium"],
                 "objectives": {
+                    "sortino_ratio": 5.0,
                     "total_return_pct": 5.0,
                     "max_drawdown_pct": 2.0,
                     "win_rate": 55.0,
@@ -604,6 +606,7 @@ class TestArchivePersistence:
             "chromosome": chromosome,
             "conditions": ["[feat_0] IS Medium"],
             "objectives": {
+                "sortino_ratio": total_return_pct,
                 "total_return_pct": total_return_pct,
                 "max_drawdown_pct": max_drawdown_pct,
                 "win_rate": win_rate,
@@ -645,6 +648,7 @@ class TestArchivePersistence:
         merged = Rule_Pool_Generator.save_archive("long", fi, rules)
 
         assert len(merged) == 1
+        assert merged[0]["objectives"]["sortino_ratio"] == 13.0
         assert merged[0]["objectives"]["total_return_pct"] == 13.0
         assert merged[0]["objectives"]["max_drawdown_pct"] == 3.0
         assert merged[0]["objectives"]["win_rate"] == 64.0
@@ -787,6 +791,7 @@ class TestRulePoolGeneratorRun:
                     "chromosome": [0, 1, 2, 3],
                     "conditions": ["[feat_0] IS Medium"],
                     "objectives": {
+                        "sortino_ratio": 10.0,
                         "total_return_pct": 10.0,
                         "max_drawdown_pct": 4.0,
                         "win_rate": 60.0,
@@ -797,6 +802,7 @@ class TestRulePoolGeneratorRun:
                     "chromosome": [1, 2, 3, 4],
                     "conditions": ["[feat_0] IS Medium"],
                     "objectives": {
+                        "sortino_ratio": 11.0,
                         "total_return_pct": 11.0,
                         "max_drawdown_pct": 3.0,
                         "win_rate": 61.0,
@@ -811,8 +817,8 @@ class TestRulePoolGeneratorRun:
                     "mean_f2": 0.0,
                     "mean_f3": 0.0,
                     "algorithm": "NSGA-III",
-                    "mean_total_return_pct": 0.0,
-                    "best_total_return_pct": 0.0,
+                    "mean_sortino_ratio": 0.0,
+                    "best_sortino_ratio": 0.0,
                 }
             ]
 
@@ -827,6 +833,7 @@ class TestRulePoolGeneratorRun:
                         "chromosome": [0, 1, 2, 3],
                         "conditions": ["[feat_0] IS Medium"],
                         "objectives": {
+                            "sortino_ratio": 12.0,
                             "total_return_pct": 12.0,
                             "max_drawdown_pct": 3.0,
                             "win_rate": 61.0,
@@ -837,6 +844,7 @@ class TestRulePoolGeneratorRun:
                         "chromosome": [1, 2, 3, 4],
                         "conditions": ["[feat_0] IS Medium"],
                         "objectives": {
+                            "sortino_ratio": 11.0,
                             "total_return_pct": 11.0,
                             "max_drawdown_pct": 4.0,
                             "win_rate": 60.0,
@@ -918,6 +926,7 @@ class TestRulePoolGeneratorRun:
                 assert "conditions" in entry
                 assert "objectives" in entry
                 assert "executed_trades" in entry
+                assert "sortino_ratio" in entry["objectives"]
                 assert "total_return_pct" in entry["objectives"]
                 assert "max_drawdown_pct" in entry["objectives"]
                 assert "win_rate" in entry["objectives"]
@@ -969,6 +978,7 @@ class TestRulePoolGeneratorRun:
             def simulate_rule_batch(self, chromosomes, tp, sl, capital_pct):
                 calls.append({"tp": tp, "sl": sl, "capital_pct": capital_pct})
                 return [{
+                    "sortino_ratio": 1.0,
                     "total_return_pct": 1.0,
                     "max_drawdown_pct": 0.5,
                     "win_rate": 55.0,

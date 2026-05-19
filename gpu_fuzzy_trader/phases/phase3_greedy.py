@@ -41,11 +41,13 @@ def _scalar_score(
 ) -> float:
     """Higher is better."""
     w1, w2, w3 = weights
-    val_return = float(val_metrics.get("total_return_pct", 0.0))
+    val_sortino = float(val_metrics.get(
+        "sortino_ratio", val_metrics.get("total_return_pct", 0.0)))
     val_dd = float(val_metrics.get("max_drawdown_pct", 0.0))
     val_wr = float(val_metrics.get("win_rate", 0.0))
-    penalty = float(objectives[0] + val_return)  # excess penalty vs raw return
-    return w1 * val_return - w2 * val_dd + w3 * val_wr - penalty
+    # excess penalty vs raw Sortino
+    penalty = float(objectives[0] + val_sortino)
+    return w1 * val_sortino - w2 * val_dd + w3 * val_wr - penalty
 
 
 def _evaluate_candidates_batch(
@@ -91,7 +93,8 @@ def _objectives_from_metrics(
     p3 = _helpers()
     dup_penalty = 50.0 if p3._has_duplicate_rules(rule_set_template) else 0.0
 
-    val_return = float(val_metrics.get("total_return_pct", 0.0))
+    val_sortino = float(val_metrics.get(
+        "sortino_ratio", val_metrics.get("total_return_pct", 0.0)))
     val_dd = float(val_metrics.get("max_drawdown_pct", 100.0))
     val_wr = float(val_metrics.get("win_rate", 0.0))
     val_trades = int(val_metrics.get("executed_trades", 0))
@@ -104,14 +107,15 @@ def _objectives_from_metrics(
             (_cfg.PHASE3_MIN_SYMBOL_COVERAGE - symbols_with_trades) * 5.0
         )
 
-    train_return = float(train_metrics.get("total_return_pct", 0.0))
-    overfitting_penalty = abs(train_return - val_return) / \
-        max(abs(train_return), 1.0)
+    train_sortino = float(train_metrics.get(
+        "sortino_ratio", train_metrics.get("total_return_pct", 0.0)))
+    overfitting_penalty = abs(train_sortino - val_sortino) / \
+        max(abs(train_sortino), 1.0)
 
     total_penalty = zero_penalty + coverage_penalty + \
         overfitting_penalty + dup_penalty
     return np.array(
-        [-val_return + total_penalty, val_dd +
+        [-val_sortino + total_penalty, val_dd +
             total_penalty, -val_wr + total_penalty],
         dtype=np.float64,
     )

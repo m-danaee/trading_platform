@@ -15,6 +15,11 @@ JAX availability:
 """
 
 from __future__ import annotations
+from gpu_fuzzy_trader.backtest.cpu_engine import (
+    CPUBacktestEngine,
+    _sortino_ratio_from_returns,
+)
+from gpu_fuzzy_trader import config as _cfg
 
 from concurrent.futures import ThreadPoolExecutor
 
@@ -30,15 +35,13 @@ try:
     import jax.numpy as jnp
     from jax import jit, vmap
     import jax.lax as lax
+    jax.config.update("jax_enable_x64", True)
 except ImportError as _jax_err:
     raise ImportError(
         "JAX is required for GPUBacktestEngine but could not be imported. "
         "Install it with: pip install jax jaxlib\n"
         f"Original error: {_jax_err}"
     ) from _jax_err
-
-from gpu_fuzzy_trader import config as _cfg
-from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
 
 
 # ---------------------------------------------------------------------------
@@ -53,7 +56,8 @@ _MODE_BINS: dict[str, list[float]] = {
     "positive":       [0.2, 0.4, 0.6, 0.8],        # 5 bins: 0-4
     "sparse_positive": [0.2, 0.4, 0.6, 0.8],        # 5 bins: 0-4
     "sparse_signed":  [-0.25, -1e-5, 1e-5, 0.25],   # 5 bins: 0-4
-    "signed":         [-0.8, -0.6, -0.4, -0.2, 0.0, 0.2, 0.4, 0.6, 0.8],  # 10 bins: 0-9
+    # 10 bins: 0-9
+    "signed":         [-0.8, -0.6, -0.4, -0.2, 0.0, 0.2, 0.4, 0.6, 0.8],
 }
 
 # Number of classes per mode (= dont_care sentinel value)
@@ -150,16 +154,17 @@ def _jax_compute_rule_signals(
     # data_matrix == chromosome broadcasts to (N, K)
     condition_match = data_matrix == chromosome[None, :]  # (N, K)
     # Where inactive, treat as True (don't care)
-    effective_match = jnp.where(active_mask[None, :], condition_match, True)  # (N, K)
+    effective_match = jnp.where(
+        active_mask[None, :], condition_match, True)  # (N, K)
     return jnp.all(effective_match, axis=-1)  # (N,)
 
 
 @jit
 def _jax_compute_trade_outcomes(
-    max_ret: jnp.ndarray,        # (N,) float32
-    min_ret: jnp.ndarray,        # (N,) float32
-    close_ret: jnp.ndarray,      # (N,) float32
-    max_before_min: jnp.ndarray, # (N,) int32
+    max_ret: jnp.ndarray,        # (N,) float64
+    min_ret: jnp.ndarray,        # (N,) float64
+    close_ret: jnp.ndarray,      # (N,) float64
+    max_before_min: jnp.ndarray,  # (N,) int32
     tp: float,
     sl: float,
     is_long: bool,
@@ -171,10 +176,10 @@ def _jax_compute_trade_outcomes(
     Returns
     -------
     jnp.ndarray
-        Shape (N,) float32 — price_return_pct for each row.
+        Shape (N,) float64 — price_return_pct for each row.
     """
-    tp_f = jnp.float32(tp)
-    sl_f = jnp.float32(sl)
+    tp_f = jnp.float64(tp)
+    sl_f = jnp.float64(sl)
 
     # Long path
     long_hit_tp = max_ret >= tp_f
@@ -195,7 +200,8 @@ def _jax_compute_trade_outcomes(
     short_result = jnp.where(
         short_both_hit,
         short_both_result,
-        jnp.where(short_hit_tp, tp_f, jnp.where(short_hit_sl, -sl_f, -close_ret)),
+        jnp.where(short_hit_tp, tp_f, jnp.where(
+            short_hit_sl, -sl_f, -close_ret)),
     )
 
     return jnp.where(is_long, long_result, short_result)
@@ -302,7 +308,8 @@ def _build_scan_fn(
         new_gross_loss = gross_loss + jnp.where(
             can_trade & (net_pnl < jnp.float32(0.0)), jnp.abs(net_pnl), jnp.float32(0.0))
 
-        new_executed = executed + jnp.where(can_trade, jnp.int32(1), jnp.int32(0))
+        new_executed = executed + \
+            jnp.where(can_trade, jnp.int32(1), jnp.int32(0))
         new_skipped = skipped + jnp.where(
             (~account_ruined) & (position_notional < min_notional_f),
             jnp.int32(1), jnp.int32(0))
@@ -373,7 +380,8 @@ class GPUBacktestEngine:
             constants.get("max_hold_candles", _cfg.MAX_HOLD_CANDLES)
         )
         self.max_total_exposure_pct = float(
-            constants.get("max_total_exposure_pct", _cfg.MAX_TOTAL_EXPOSURE_PCT)
+            constants.get("max_total_exposure_pct",
+                          _cfg.MAX_TOTAL_EXPOSURE_PCT)
         )
         self.min_position_notional = float(
             constants.get("min_position_notional", _cfg.MIN_POSITION_NOTIONAL)
@@ -383,15 +391,15 @@ class GPUBacktestEngine:
         self._backend = jax.default_backend()
 
         # --- Pre-extract label arrays as JAX arrays ---
-        entry = df["label_open_next"].values.astype(np.float32)
+        entry = df["label_open_next"].values.astype(np.float64)
         self._max_ret_jax = jnp.array(
-            (df["label_max_288"].values - entry) / entry * 100.0, dtype=jnp.float32
+            (df["label_max_288"].values - entry) / entry * 100.0, dtype=jnp.float64
         )
         self._min_ret_jax = jnp.array(
-            (df["label_min_288"].values - entry) / entry * 100.0, dtype=jnp.float32
+            (df["label_min_288"].values - entry) / entry * 100.0, dtype=jnp.float64
         )
         self._close_ret_jax = jnp.array(
-            (df["label_close_288"].values - entry) / entry * 100.0, dtype=jnp.float32
+            (df["label_close_288"].values - entry) / entry * 100.0, dtype=jnp.float64
         )
         self._max_before_min_jax = jnp.array(
             df["label_max_before_min"].values, dtype=jnp.int32
@@ -421,7 +429,8 @@ class GPUBacktestEngine:
             )
             # dont_care sentinels per feature (K,)
             self._dont_cares_jax = jnp.array(
-                [_MODE_NUM_CLASSES[feature_modes[f]] for f in self._feature_names],
+                [_MODE_NUM_CLASSES[feature_modes[f]]
+                    for f in self._feature_names],
                 dtype=jnp.int32,
             )
         else:
@@ -468,7 +477,6 @@ class GPUBacktestEngine:
                 **self._cpu_engine_constants,
             )
         return self._cpu_engine_ref
-
 
     # ------------------------------------------------------------------
     # Core JAX methods
@@ -556,12 +564,13 @@ class GPUBacktestEngine:
         Returns
         -------
         dict
-            Keys: total_return_pct, max_drawdown_pct, win_rate,
+            Keys: total_return_pct, sortino_ratio, max_drawdown_pct, win_rate,
             profit_factor, executed_trades, final_equity, account_ruined.
         """
         if len(entries) == 0:
             return {
                 "total_return_pct": 0.0,
+                "sortino_ratio": 0.0,
                 "max_drawdown_pct": 0.0,
                 "win_rate": 0.0,
                 "profit_factor": 0.0,
@@ -622,6 +631,10 @@ class GPUBacktestEngine:
 
         return {
             "total_return_pct": (float(final_equity) / initial_capital - 1.0) * 100.0,
+            "sortino_ratio": _sortino_ratio_from_returns(
+                [float(net_pnl) / float(initial_capital)
+                 for net_pnl in net_pnls]
+            ),
             "max_drawdown_pct": float(max_dd),
             "win_rate": win_rate,
             "profit_factor": profit_factor,
@@ -629,7 +642,6 @@ class GPUBacktestEngine:
             "final_equity": float(final_equity),
             "account_ruined": bool(ruined),
         }
-
 
     # ------------------------------------------------------------------
     # Primary GPU-accelerated batch evaluation
@@ -705,6 +717,7 @@ class GPUBacktestEngine:
                 results.append({
                     "direction": self.trade_direction,
                     "total_return_pct": 0.0,
+                    "sortino_ratio": 0.0,
                     "max_drawdown_pct": 0.0,
                     "win_rate": 0.0,
                     "profit_factor": 0.0,
@@ -726,7 +739,7 @@ class GPUBacktestEngine:
                 matched_max_ret, matched_min_ret, matched_close_ret,
                 matched_mbm, tp, sl, self.is_long,
             )
-            price_returns_np = np.asarray(price_returns, dtype=np.float32)
+            price_returns_np = np.asarray(price_returns, dtype=np.float64)
 
             # --- Capital-managed sequential simulation ---
             equity = self.initial_capital
@@ -740,6 +753,7 @@ class GPUBacktestEngine:
             gross_profit = 0.0
             gross_loss = 0.0
             account_ruined = False
+            trade_returns: list[float] = []
 
             # Open positions queue: list of (release_idx, position_notional, net_pnl)
             open_positions: list[tuple[int, float, float]] = []
@@ -756,13 +770,15 @@ class GPUBacktestEngine:
                     if pos_release <= idx:
                         equity += pos_net_pnl
                         peak_equity = max(peak_equity, equity)
-                        dd = (peak_equity - equity) / peak_equity * 100.0 if peak_equity > 0 else 100.0
+                        dd = (peak_equity - equity) / peak_equity * \
+                            100.0 if peak_equity > 0 else 100.0
                         max_drawdown_pct = max(max_drawdown_pct, dd)
                         open_total_exposure -= pos_notional
                         if equity <= 0.0:
                             account_ruined = True
                     else:
-                        still_open.append((pos_release, pos_notional, pos_net_pnl))
+                        still_open.append(
+                            (pos_release, pos_notional, pos_net_pnl))
                 open_positions = still_open
 
                 if account_ruined:
@@ -782,8 +798,10 @@ class GPUBacktestEngine:
                 gross_pnl = position_notional * price_return_pct / 100.0
                 fee = position_notional * self.fee_rate
                 net_pnl = gross_pnl - fee
+                trade_returns.append(net_pnl / equity if equity > 0.0 else 0.0)
 
-                open_positions.append((release_idx, position_notional, net_pnl))
+                open_positions.append(
+                    (release_idx, position_notional, net_pnl))
                 open_total_exposure += position_notional
                 executed_trades += 1
 
@@ -798,13 +816,16 @@ class GPUBacktestEngine:
             for pos_release, pos_notional, pos_net_pnl in open_positions:
                 equity += pos_net_pnl
                 peak_equity = max(peak_equity, equity)
-                dd = (peak_equity - equity) / peak_equity * 100.0 if peak_equity > 0 else 100.0
+                dd = (peak_equity - equity) / peak_equity * \
+                    100.0 if peak_equity > 0 else 100.0
                 max_drawdown_pct = max(max_drawdown_pct, dd)
                 if equity <= 0.0:
                     account_ruined = True
 
             total_return_pct = (equity / self.initial_capital - 1.0) * 100.0
-            win_rate = (wins / executed_trades * 100.0) if executed_trades > 0 else 0.0
+            sortino_ratio = _sortino_ratio_from_returns(trade_returns)
+            win_rate = (wins / executed_trades *
+                        100.0) if executed_trades > 0 else 0.0
             if gross_loss <= 0.0 and gross_profit > 0.0:
                 profit_factor = 99.0
             elif gross_loss <= 0.0:
@@ -815,6 +836,7 @@ class GPUBacktestEngine:
             results.append({
                 "direction": self.trade_direction,
                 "total_return_pct": total_return_pct,
+                "sortino_ratio": sortino_ratio,
                 "max_drawdown_pct": max_drawdown_pct,
                 "win_rate": win_rate,
                 "profit_factor": profit_factor,

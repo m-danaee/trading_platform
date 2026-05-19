@@ -137,6 +137,7 @@ def _assert_parity(
     and absolute tolerance (abs_tol) when the reference is near zero.
     """
     metrics_to_check = [
+        "sortino_ratio",
         "total_return_pct",
         "max_drawdown_pct",
         "win_rate",
@@ -185,9 +186,12 @@ def parity_scenario_strategy(draw: st.DrawFn) -> dict:
     and the CPU condition "[feat_binary] IS Active (1)" match identical rows.
     """
     n_rows = draw(st.integers(min_value=5, max_value=40))
-    tp = draw(st.floats(min_value=0.5, max_value=8.0, allow_nan=False, allow_infinity=False))
-    sl = draw(st.floats(min_value=0.5, max_value=5.0, allow_nan=False, allow_infinity=False))
-    capital_pct = draw(st.floats(min_value=10.0, max_value=80.0, allow_nan=False, allow_infinity=False))
+    tp = draw(st.floats(min_value=0.5, max_value=8.0,
+              allow_nan=False, allow_infinity=False))
+    sl = draw(st.floats(min_value=0.5, max_value=5.0,
+              allow_nan=False, allow_infinity=False))
+    capital_pct = draw(st.floats(min_value=10.0, max_value=80.0,
+                       allow_nan=False, allow_infinity=False))
     direction = draw(st.sampled_from(["long", "short"]))
 
     entry = 100.0
@@ -237,7 +241,9 @@ def parity_scenario_strategy(draw: st.DrawFn) -> dict:
 @given(scenario=parity_scenario_strategy())
 @settings(
     max_examples=100,
-    suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
+    deadline=None,
+    suppress_health_check=[HealthCheck.too_slow,
+                           HealthCheck.large_base_example],
 )
 def test_property_16_gpu_cpu_total_return_parity(scenario: dict) -> None:
     """
@@ -284,7 +290,8 @@ def test_property_16_gpu_cpu_total_return_parity(scenario: dict) -> None:
 
     # GPU path: chromosome-based matching (binary gene=1 → Active (1))
     chrom = np.array([[1]], dtype=np.int32)
-    gpu_results = gpu_eng.simulate_rule_batch(chrom, tp=tp, sl=sl, capital_pct=capital_pct)
+    gpu_results = gpu_eng.simulate_rule_batch(
+        chrom, tp=tp, sl=sl, capital_pct=capital_pct)
     gpu_result = gpu_results[0]
 
     context = (
@@ -311,7 +318,9 @@ def test_property_16_gpu_cpu_total_return_parity(scenario: dict) -> None:
 @given(scenario=parity_scenario_strategy())
 @settings(
     max_examples=100,
-    suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
+    deadline=None,
+    suppress_health_check=[HealthCheck.too_slow,
+                           HealthCheck.large_base_example],
 )
 def test_property_16_gpu_cpu_max_drawdown_parity(scenario: dict) -> None:
     """
@@ -350,7 +359,8 @@ def test_property_16_gpu_cpu_max_drawdown_parity(scenario: dict) -> None:
     cpu_result = cpu_eng.simulate_rule_set(cpu_rule_set)
 
     chrom = np.array([[1]], dtype=np.int32)
-    gpu_results = gpu_eng.simulate_rule_batch(chrom, tp=tp, sl=sl, capital_pct=capital_pct)
+    gpu_results = gpu_eng.simulate_rule_batch(
+        chrom, tp=tp, sl=sl, capital_pct=capital_pct)
     gpu_result = gpu_results[0]
 
     context = (
@@ -380,7 +390,9 @@ def test_property_16_gpu_cpu_max_drawdown_parity(scenario: dict) -> None:
 @given(scenario=parity_scenario_strategy())
 @settings(
     max_examples=100,
-    suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
+    deadline=None,
+    suppress_health_check=[HealthCheck.too_slow,
+                           HealthCheck.large_base_example],
 )
 def test_property_16_gpu_cpu_win_rate_parity(scenario: dict) -> None:
     """
@@ -419,7 +431,8 @@ def test_property_16_gpu_cpu_win_rate_parity(scenario: dict) -> None:
     cpu_result = cpu_eng.simulate_rule_set(cpu_rule_set)
 
     chrom = np.array([[1]], dtype=np.int32)
-    gpu_results = gpu_eng.simulate_rule_batch(chrom, tp=tp, sl=sl, capital_pct=capital_pct)
+    gpu_results = gpu_eng.simulate_rule_batch(
+        chrom, tp=tp, sl=sl, capital_pct=capital_pct)
     gpu_result = gpu_results[0]
 
     context = (
@@ -451,7 +464,9 @@ def test_property_16_gpu_cpu_win_rate_parity(scenario: dict) -> None:
 @given(scenario=parity_scenario_strategy())
 @settings(
     max_examples=100,
-    suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
+    deadline=None,
+    suppress_health_check=[HealthCheck.too_slow,
+                           HealthCheck.large_base_example],
 )
 def test_property_16_gpu_cpu_profit_factor_parity(scenario: dict) -> None:
     """
@@ -493,7 +508,8 @@ def test_property_16_gpu_cpu_profit_factor_parity(scenario: dict) -> None:
     cpu_result = cpu_eng.simulate_rule_set(cpu_rule_set)
 
     chrom = np.array([[1]], dtype=np.int32)
-    gpu_results = gpu_eng.simulate_rule_batch(chrom, tp=tp, sl=sl, capital_pct=capital_pct)
+    gpu_results = gpu_eng.simulate_rule_batch(
+        chrom, tp=tp, sl=sl, capital_pct=capital_pct)
     gpu_result = gpu_results[0]
 
     context = (
@@ -523,7 +539,9 @@ def test_property_16_gpu_cpu_profit_factor_parity(scenario: dict) -> None:
 @given(scenario=parity_scenario_strategy())
 @settings(
     max_examples=100,
-    suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
+    deadline=None,
+    suppress_health_check=[HealthCheck.too_slow,
+                           HealthCheck.large_base_example],
 )
 def test_property_16_gpu_cpu_all_metrics_parity(scenario: dict) -> None:
     """
@@ -565,7 +583,8 @@ def test_property_16_gpu_cpu_all_metrics_parity(scenario: dict) -> None:
     cpu_result = cpu_eng.simulate_rule_set(cpu_rule_set)
 
     chrom = np.array([[1]], dtype=np.int32)
-    gpu_results = gpu_eng.simulate_rule_batch(chrom, tp=tp, sl=sl, capital_pct=capital_pct)
+    gpu_results = gpu_eng.simulate_rule_batch(
+        chrom, tp=tp, sl=sl, capital_pct=capital_pct)
     gpu_result = gpu_results[0]
 
     context = (
@@ -579,7 +598,9 @@ def test_property_16_gpu_cpu_all_metrics_parity(scenario: dict) -> None:
 @given(scenario=parity_scenario_strategy())
 @settings(
     max_examples=50,
-    suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
+    deadline=None,
+    suppress_health_check=[HealthCheck.too_slow,
+                           HealthCheck.large_base_example],
 )
 def test_property_16_zero_trades_parity(scenario: dict) -> None:
     """
@@ -623,7 +644,8 @@ def test_property_16_zero_trades_parity(scenario: dict) -> None:
 
     # GPU: chromosome gene=0 (Inactive) → no match since all feat_binary=1
     chrom = np.array([[0]], dtype=np.int32)
-    gpu_results = gpu_eng.simulate_rule_batch(chrom, tp=tp, sl=sl, capital_pct=capital_pct)
+    gpu_results = gpu_eng.simulate_rule_batch(
+        chrom, tp=tp, sl=sl, capital_pct=capital_pct)
     gpu_result = gpu_results[0]
 
     context = (

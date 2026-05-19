@@ -129,7 +129,8 @@ def selector_args(draw: st.DrawFn):
     """
     n_symbols = draw(st.integers(min_value=1, max_value=4))
     rows_per_sym = draw(st.integers(min_value=30, max_value=80))
-    pool_size = draw(st.integers(min_value=PHASE3_MIN_RULES, max_value=PHASE3_MAX_RULES + 3))
+    pool_size = draw(st.integers(min_value=PHASE3_MIN_RULES,
+                     max_value=PHASE3_MAX_RULES + 3))
     direction = draw(st.sampled_from(["long", "short"]))
     seed = draw(st.integers(min_value=0, max_value=2**31 - 1))
 
@@ -152,7 +153,8 @@ def selector_args(draw: st.DrawFn):
 @settings(
     max_examples=20,
     deadline=None,
-    suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture],
+    suppress_health_check=[HealthCheck.too_slow,
+                           HealthCheck.function_scoped_fixture],
 )
 def test_property_21_rule_set_size_bounds(
     args: tuple[pd.DataFrame, pd.DataFrame, list[dict], str],
@@ -208,7 +210,8 @@ def test_property_21_rule_set_size_bounds(
 @settings(
     max_examples=20,
     deadline=None,
-    suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture],
+    suppress_health_check=[HealthCheck.too_slow,
+                           HealthCheck.function_scoped_fixture],
 )
 def test_property_22_rule_set_uniqueness(
     args: tuple[pd.DataFrame, pd.DataFrame, list[dict], str],
@@ -264,6 +267,7 @@ def test_property_22_rule_set_uniqueness(
 
 def _make_mock_engine(
     total_return_pct: float = 5.0,
+    sortino_ratio: float = 5.0,
     max_drawdown_pct: float = 2.0,
     win_rate: float = 55.0,
     executed_trades: int = 30,
@@ -275,6 +279,7 @@ def _make_mock_engine(
     """
     engine = MagicMock()
     engine.simulate_rule_set.return_value = {
+        "sortino_ratio": sortino_ratio,
         "total_return_pct": total_return_pct,
         "max_drawdown_pct": max_drawdown_pct,
         "win_rate": win_rate,
@@ -300,7 +305,8 @@ def coverage_penalty_scenario(draw: st.DrawFn):
             max_value=PHASE3_MIN_SYMBOL_COVERAGE + 3,
         )
     )
-    symbols_with_trades = draw(st.integers(min_value=0, max_value=total_symbols))
+    symbols_with_trades = draw(st.integers(
+        min_value=0, max_value=total_symbols))
     # When symbols_with_trades > 0, executed_trades must be > 0
     if symbols_with_trades > 0:
         executed_trades = draw(st.integers(min_value=1, max_value=100))
@@ -313,7 +319,8 @@ def coverage_penalty_scenario(draw: st.DrawFn):
 @given(scenario=coverage_penalty_scenario())
 @settings(
     max_examples=20,
-    suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture],
+    suppress_health_check=[HealthCheck.too_slow,
+                           HealthCheck.function_scoped_fixture],
 )
 def test_property_29_symbol_coverage_penalty_application(
     scenario: tuple[int, int, int],
@@ -347,14 +354,18 @@ def test_property_29_symbol_coverage_penalty_application(
     for i in range(total_symbols):
         sym = f"SYM_{i}"
         if i < symbols_with_trades:
-            per_symbol_metrics[sym] = {"trade_count": 5, "win_rate": 50.0, "net_pnl": 10.0}
+            per_symbol_metrics[sym] = {
+                "trade_count": 5, "win_rate": 50.0, "net_pnl": 10.0}
         else:
-            per_symbol_metrics[sym] = {"trade_count": 0, "win_rate": 0.0, "net_pnl": 0.0}
+            per_symbol_metrics[sym] = {
+                "trade_count": 0, "win_rate": 0.0, "net_pnl": 0.0}
 
     # A simple rule set (content doesn't matter — mock engine ignores it)
     rule_set = [
-        {"conditions": ["[feat_0] IS Very High"], "tp": 4.0, "sl": 2.0, "capital_pct": 50.0},
-        {"conditions": ["[feat_1] IS Low"], "tp": 4.0, "sl": 2.0, "capital_pct": 50.0},
+        {"conditions": ["[feat_0] IS Very High"],
+            "tp": 4.0, "sl": 2.0, "capital_pct": 50.0},
+        {"conditions": ["[feat_1] IS Low"], "tp": 4.0,
+            "sl": 2.0, "capital_pct": 50.0},
     ]
 
     # Val engine returns the scenario metrics
@@ -375,7 +386,8 @@ def test_property_29_symbol_coverage_penalty_application(
         per_symbol_metrics=per_symbol_metrics,
     )
 
-    objectives, val_metrics = _evaluate_rule_set(rule_set, val_engine, train_engine)
+    objectives, val_metrics = _evaluate_rule_set(
+        rule_set, val_engine, train_engine)
 
     # Compute expected penalties
     expected_coverage_penalty = 0.0

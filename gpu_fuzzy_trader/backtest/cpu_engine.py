@@ -51,11 +51,13 @@ def precompute_release_indices(
         bars_sorted = bars[order]
 
         target_bars = bars_sorted + max_hold_candles
-        target_positions = np.searchsorted(bars_sorted, target_bars, side="left")
+        target_positions = np.searchsorted(
+            bars_sorted, target_bars, side="left")
 
         valid = target_positions < len(rows_sorted)
         if np.any(valid):
-            release_index[rows_sorted[valid]] = rows_sorted[target_positions[valid]]
+            release_index[rows_sorted[valid]
+                          ] = rows_sorted[target_positions[valid]]
 
     return release_index
 
@@ -66,6 +68,26 @@ def _safe_profit_factor(gross_wins: float, gross_losses: float) -> float:
     if gross_losses <= 0:
         return 0.0
     return gross_wins / gross_losses
+
+
+def _sortino_ratio_from_returns(
+    trade_returns: list[float] | np.ndarray,
+    target_return: float = 0.0,
+) -> float:
+    """Compute a non-annualized Sortino Ratio from per-trade returns."""
+    returns = np.asarray(trade_returns, dtype=np.float64)
+    if returns.size == 0:
+        return 0.0
+
+    excess_returns = returns - float(target_return)
+    mean_excess_return = float(np.mean(excess_returns))
+    downside_returns = np.minimum(excess_returns, 0.0)
+    downside_deviation = float(np.sqrt(np.mean(np.square(downside_returns))))
+
+    if downside_deviation <= 0.0:
+        return 999.0 if mean_excess_return > 0.0 else 0.0
+
+    return mean_excess_return / downside_deviation
 
 
 def _parse_condition(condition: str) -> tuple[str, str]:
@@ -279,7 +301,8 @@ class CPUBacktestEngine:
             constants.get("max_hold_candles", _cfg.MAX_HOLD_CANDLES)
         )
         self.max_total_exposure_pct = float(
-            constants.get("max_total_exposure_pct", _cfg.MAX_TOTAL_EXPOSURE_PCT)
+            constants.get("max_total_exposure_pct",
+                          _cfg.MAX_TOTAL_EXPOSURE_PCT)
         )
         self.max_total_exposure_rate = self.max_total_exposure_pct / 100.0
         self.min_position_notional = float(
@@ -388,7 +411,6 @@ class CPUBacktestEngine:
         }
         return position_notional, sizing_info
 
-
     def _release_due_positions(
         self,
         open_positions: list,
@@ -444,7 +466,8 @@ class CPUBacktestEngine:
                         close_time = self.datetimes[release_idx]
                     else:
                         close_time = (
-                            self.datetimes[-1] if len(self.datetimes) > 0 else np.nan
+                            self.datetimes[-1] if len(
+                                self.datetimes) > 0 else np.nan
                         )
 
                     logs[log_idx].update(
@@ -469,7 +492,8 @@ class CPUBacktestEngine:
 
                 open_total_exposure -= pos["position_notional"]
                 sym = pos["symbol"]
-                new_sym_exp = symbol_exposure.get(sym, 0.0) - pos["position_notional"]
+                new_sym_exp = symbol_exposure.get(
+                    sym, 0.0) - pos["position_notional"]
                 if new_sym_exp > 0:
                     symbol_exposure[sym] = new_sym_exp
                 elif sym in symbol_exposure:
@@ -486,7 +510,6 @@ class CPUBacktestEngine:
             symbol_exposure,
             stats,
         )
-
 
     # ------------------------------------------------------------------
     # Public API
@@ -534,7 +557,7 @@ class CPUBacktestEngine:
         -------
         dict
             Metrics dict with keys: direction, total_return_pct,
-            max_drawdown_pct, win_rate, account_ruined, loss_count,
+            sortino_ratio, max_drawdown_pct, win_rate, account_ruined, loss_count,
             time_closed_count, raw_signal_count, executed_trades,
             final_equity, profit_factor, avg_position_notional,
             skipped_min_notional_count, max_simultaneous_positions,
@@ -556,6 +579,7 @@ class CPUBacktestEngine:
         _empty_metrics = {
             "direction": self.trade_direction,
             "total_return_pct": 0.0,
+            "sortino_ratio": 0.0,
             "max_drawdown_pct": 0.0,
             "win_rate": 0.0,
             "account_ruined": False,
@@ -599,12 +623,12 @@ class CPUBacktestEngine:
         max_total_open_exposure = 0.0
         open_total_exposure = 0.0
         symbol_exposure: dict[str, float] = {}
+        trade_returns: list[float] = []
 
         # Per-symbol tracking (Requirement 15.1)
         sym_trades: dict[str, int] = {}
         sym_wins: dict[str, int] = {}
         sym_net_pnl: dict[str, float] = {}
-
 
         # --- Main simulation loop ---
         for entry in entries:
@@ -659,6 +683,7 @@ class CPUBacktestEngine:
             gross_pnl = position_notional * price_return_rate
             fee = position_notional * self.round_trip_fee_rate
             net_pnl = gross_pnl - fee
+            trade_returns.append(net_pnl / equity if equity > 0.0 else 0.0)
             margin_used = position_notional / max(self.leverage, 1e-9)
 
             release_idx = int(self.release_index[idx])
@@ -747,7 +772,6 @@ class CPUBacktestEngine:
                 max_total_open_exposure, open_total_exposure
             )
 
-
         # --- Final release: close all remaining open positions ---
         (
             open_positions,
@@ -772,8 +796,10 @@ class CPUBacktestEngine:
 
         # --- Summary metrics ---
         total_return_pct = (equity / initial_capital - 1.0) * 100.0
+        sortino_ratio = _sortino_ratio_from_returns(trade_returns)
         win_rate = (
-            (stats["wins"] / executed_trades) * 100.0 if executed_trades > 0 else 0.0
+            (stats["wins"] / executed_trades) *
+            100.0 if executed_trades > 0 else 0.0
         )
         profit_factor = _safe_profit_factor(
             stats["gross_profit_sum"], stats["gross_loss_sum"]
@@ -790,9 +816,11 @@ class CPUBacktestEngine:
             for sym, grp in logs_df_tmp.groupby("Symbol"):
                 realized = grp[grp["Realized"] == True]
                 s_trades = len(grp)
-                s_wins = int((realized["Net_PnL"] > 0).sum()) if len(realized) > 0 else 0
+                s_wins = int((realized["Net_PnL"] > 0).sum()) if len(
+                    realized) > 0 else 0
                 s_net_pnl = float(grp["Net_PnL"].sum())
-                s_win_rate = (s_wins / s_trades * 100.0) if s_trades > 0 else 0.0
+                s_win_rate = (s_wins / s_trades *
+                              100.0) if s_trades > 0 else 0.0
                 per_symbol_metrics[str(sym)] = {
                     "trade_count": s_trades,
                     "win_rate": s_win_rate,
@@ -812,6 +840,7 @@ class CPUBacktestEngine:
         metrics = {
             "direction": self.trade_direction,
             "total_return_pct": total_return_pct,
+            "sortino_ratio": sortino_ratio,
             "max_drawdown_pct": max_drawdown_pct,
             "win_rate": win_rate,
             "account_ruined": bool(stats["account_ruined"]),

@@ -11,7 +11,7 @@ Search space:
     equality).
 
 Fitness function (three objectives, all minimised):
-    f1 = -validation_total_return_pct
+    f1 = -validation_sortino_ratio
     f2 = validation_max_drawdown_pct
     f3 = -validation_win_rate
 
@@ -62,6 +62,7 @@ _OUTPUT_PATHS = {
 # ---------------------------------------------------------------------------
 # Output JSON schema validation
 # ---------------------------------------------------------------------------
+
 
 def _validate_rule_set_schema(data: object, path: str) -> None:
     """
@@ -188,6 +189,7 @@ def _evaluate_rule_set(
     except Exception as exc:
         logger.debug("val simulate_rule_set failed: %s", exc)
         val_metrics = {
+            "sortino_ratio": 0.0,
             "total_return_pct": 0.0,
             "max_drawdown_pct": 100.0,
             "win_rate": 0.0,
@@ -195,7 +197,8 @@ def _evaluate_rule_set(
             "per_symbol_metrics": {},
         }
 
-    val_return = float(val_metrics.get("total_return_pct", 0.0))
+    val_sortino = float(val_metrics.get(
+        "sortino_ratio", val_metrics.get("total_return_pct", 0.0)))
     val_dd = float(val_metrics.get("max_drawdown_pct", 100.0))
     val_wr = float(val_metrics.get("win_rate", 0.0))
     val_trades = int(val_metrics.get("executed_trades", 0))
@@ -217,15 +220,18 @@ def _evaluate_rule_set(
     overfitting_penalty = 0.0
     try:
         train_metrics = train_engine.simulate_rule_set(rule_set)
-        train_return = float(train_metrics.get("total_return_pct", 0.0))
-        overfitting_penalty = abs(train_return - val_return) / max(abs(train_return), 1.0)
+        train_sortino = float(train_metrics.get(
+            "sortino_ratio", train_metrics.get("total_return_pct", 0.0)))
+        overfitting_penalty = abs(
+            train_sortino - val_sortino) / max(abs(train_sortino), 1.0)
     except Exception as exc:
         logger.debug("train simulate_rule_set failed: %s", exc)
         overfitting_penalty = 10.0  # penalise if train eval fails
 
-    total_penalty = zero_penalty + coverage_penalty + overfitting_penalty + dup_penalty
+    total_penalty = zero_penalty + coverage_penalty + \
+        overfitting_penalty + dup_penalty
 
-    f1 = -val_return + total_penalty
+    f1 = -val_sortino + total_penalty
     f2 = val_dd + total_penalty
     f3 = -val_wr + total_penalty
 
@@ -338,14 +344,16 @@ def _random_rule_set(
             seen.add(key)
             unique.append(rule)
     # If deduplication reduced below min_rules, pad from remaining pool
-    remaining = [r for r in pool if _conditions_key(r["conditions"]) not in seen]
+    remaining = [r for r in pool if _conditions_key(
+        r["conditions"]) not in seen]
     while len(unique) < min_rules and remaining:
         r = rng.choice(remaining)
         key = _conditions_key(r["conditions"])
         if key not in seen:
             seen.add(key)
             unique.append(r)
-            remaining = [x for x in remaining if _conditions_key(x["conditions"]) != key]
+            remaining = [x for x in remaining if _conditions_key(
+                x["conditions"]) != key]
     return unique
 
 
@@ -397,14 +405,16 @@ def _crossover_rule_sets(
         unique = unique[:max_rules]
 
     # Pad to min_rules if needed
-    remaining = [r for r in pool if _conditions_key(r["conditions"]) not in seen]
+    remaining = [r for r in pool if _conditions_key(
+        r["conditions"]) not in seen]
     while len(unique) < min_rules and remaining:
         r = rng.choice(remaining)
         key = _conditions_key(r["conditions"])
         if key not in seen:
             seen.add(key)
             unique.append(r)
-            remaining = [x for x in remaining if _conditions_key(x["conditions"]) != key]
+            remaining = [x for x in remaining if _conditions_key(
+                x["conditions"]) != key]
 
     return unique
 
@@ -422,7 +432,8 @@ def _mutate_rule_set(
     """
     child = list(rule_set)
     seen = {_conditions_key(r["conditions"]) for r in child}
-    remaining = [r for r in pool if _conditions_key(r["conditions"]) not in seen]
+    remaining = [r for r in pool if _conditions_key(
+        r["conditions"]) not in seen]
 
     if rng.random() < mutation_rate:
         # Replace a random rule
@@ -432,7 +443,8 @@ def _mutate_rule_set(
             seen.discard(_conditions_key(child[idx]["conditions"]))
             child[idx] = new_rule
             seen.add(_conditions_key(new_rule["conditions"]))
-            remaining = [r for r in pool if _conditions_key(r["conditions"]) not in seen]
+            remaining = [r for r in pool if _conditions_key(
+                r["conditions"]) not in seen]
 
     if rng.random() < mutation_rate and len(child) < max_rules and remaining:
         # Add a rule
@@ -452,7 +464,8 @@ def _mutate_rule_set(
         if key not in seen:
             seen.add(key)
             child.append(r)
-            remaining = [x for x in remaining if _conditions_key(x["conditions"]) != key]
+            remaining = [x for x in remaining if _conditions_key(
+                x["conditions"]) != key]
 
     if len(child) > max_rules:
         child = child[:max_rules]
@@ -576,7 +589,8 @@ def _run_nsga2_combinatorial(
         else:
             for i in pending:
                 engine_fmt = _rule_set_to_engine_format(population[i])
-                obj, _ = _evaluate_rule_set(engine_fmt, val_engine, train_engine)
+                obj, _ = _evaluate_rule_set(
+                    engine_fmt, val_engine, train_engine)
                 objectives[i] = obj
 
         # Non-dominated sort
@@ -622,8 +636,10 @@ def _run_nsga2_combinatorial(
             # Tournament selection (size 2)
             cands_a = rng.sample(all_indices, min(2, len(all_indices)))
             cands_b = rng.sample(all_indices, min(2, len(all_indices)))
-            pa = cands_a[0] if objectives[cands_a[0], 0] <= objectives[cands_a[-1], 0] else cands_a[-1]
-            pb = cands_b[0] if objectives[cands_b[0], 0] <= objectives[cands_b[-1], 0] else cands_b[-1]
+            pa = cands_a[0] if objectives[cands_a[0],
+                                          0] <= objectives[cands_a[-1], 0] else cands_a[-1]
+            pb = cands_b[0] if objectives[cands_b[0],
+                                          0] <= objectives[cands_b[-1], 0] else cands_b[-1]
 
             child = _crossover_rule_sets(
                 population[pa], population[pb], pool, rng, min_rules, max_rules
@@ -654,7 +670,8 @@ def _select_best_from_pareto(
     If the Pareto front is empty, fall back to the first rule set.
     """
     if not pareto_rule_sets:
-        raise ValueError("Pareto front is empty — cannot select best rule set.")
+        raise ValueError(
+            "Pareto front is empty — cannot select best rule set.")
 
     best_idx = 0
     best_f1 = np.inf
@@ -736,7 +753,8 @@ class Rule_Set_Selector:
         seed: int = 42,
     ) -> None:
         if direction not in ("long", "short"):
-            raise ValueError(f"direction must be 'long' or 'short', got {direction!r}")
+            raise ValueError(
+                f"direction must be 'long' or 'short', got {direction!r}")
         if not pool:
             raise ValueError("pool must not be empty.")
         if len(pool) < _cfg.PHASE3_MIN_RULES:
@@ -900,7 +918,8 @@ class Rule_Set_Selector:
             If the file exists but is corrupted or has an invalid schema.
         """
         if direction not in _OUTPUT_PATHS:
-            raise ValueError(f"direction must be 'long' or 'short', got {direction!r}")
+            raise ValueError(
+                f"direction must be 'long' or 'short', got {direction!r}")
 
         path = _OUTPUT_PATHS[direction]
         if not os.path.exists(path):

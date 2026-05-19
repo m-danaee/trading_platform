@@ -134,6 +134,7 @@ class _RecordingEngine:
         # Return a plausible metrics dict for each chromosome in the batch
         return [
             {
+                "sortino_ratio": 1.0,
                 "total_return_pct": 1.0,
                 "max_drawdown_pct": 0.5,
                 "win_rate": 55.0,
