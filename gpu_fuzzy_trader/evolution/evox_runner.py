@@ -12,6 +12,7 @@ from gpu_fuzzy_trader.phases.phase2_rule_pool import (
     _crossover,
     _mutate,
     _non_dominated_sort,
+    trade_support_penalty,
 )
 
 import logging
@@ -228,9 +229,7 @@ def _evaluate_population_indices(
             win_rate = float(metrics.get("win_rate", 0.0))
             executed = int(metrics.get("executed_trades", 0))
 
-            support_penalty = 0.0
-            if executed < _cfg.MIN_TRADE_SUPPORT:
-                support_penalty = (_cfg.MIN_TRADE_SUPPORT - executed) * 0.5
+            support_penalty = trade_support_penalty(executed)
 
             diversity_penalty = 0.0
             if pareto_archive:

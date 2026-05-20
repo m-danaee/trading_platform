@@ -63,10 +63,26 @@ From the project root:
 python -m gpu_fuzzy_trader.run_pipeline
 ```
 
+Write outputs to another directory:
+
+```bash
+python -m gpu_fuzzy_trader.run_pipeline --output outputs
+```
+
 Equivalent entry point (same behavior):
 
 ```bash
 python -m gpu_fuzzy_trader
+```
+
+Run one phase only after its prerequisite files already exist:
+
+```bash
+python -m gpu_fuzzy_trader.run_pipeline --phase 1
+python -m gpu_fuzzy_trader.run_pipeline --phase 2
+python -m gpu_fuzzy_trader.run_pipeline --phase 3
+python -m gpu_fuzzy_trader.run_pipeline --phase 4
+python -m gpu_fuzzy_trader.run_pipeline --phase 5
 ```
 
 ### What it does
@@ -84,9 +100,13 @@ On success, a short summary is printed to stdout. Structured timing is appended 
 
 ### Resume / skip behavior
 
-Phases **1–4** skip automatically when their cached files already exist and pass validation. **Phase 5 always runs.**
+The default `python -m gpu_fuzzy_trader.run_pipeline` command always reruns Phases **1–5** into the default `outputs/` tree. Pass `--output DIR` if you want to write somewhere else. It does not skip a phase just because its output file already exists.
 
-To force a phase to re-run, delete its cached artifacts (`outputs/` for Phases 1, 3, and 4; `pools/` for Phase 2) and split files if you need to rebuild data:
+To run a single phase, pass `--phase 1` through `--phase 5`. The selected phase will rerun, but it will not auto-run earlier phases, so its prerequisite artifacts must already exist on disk.
+
+Phase 2 still stores its pool/history files in the root-level `pools/` folder, and its archive remains in `phase2_rule_archive/`. Those files are persistent caches for the evolutionary search, not a reason for the default CLI to skip Phase 2.
+
+To rebuild data or inspect a specific phase, delete the files for that phase manually or use the matching phase command:
 
 ```bash
 # Re-run everything from Phase 1
@@ -96,9 +116,7 @@ rm -rf outputs/ data/train_75.parquet data/validation_25.parquet
 rm pools/phase2_long_pool.json pools/phase2_long_history.json
 ```
 
-Phase 2 keeps its main long/short pool files in the project-root `pools/` folder at `pools/phase2_{long,short}_pool.json` and `pools/phase2_{long,short}_history.json`, so they are not lost when you run the pipeline with different `outputs/` directories. Phase 2 also keeps a persistent best-rules archive in the project root at `phase2_rule_archive/phase2_{long,short}_archive.json`. That archive is separate from the per-run `outputs/` files, so repeated runs do not overwrite each other’s remembered best rules. When a compatible archive exists, Phase 2 seeds about 35% of the initial population from that archive before filling the rest randomly.
-
-There are **no CLI flags** — tune hyperparameters in `gpu_fuzzy_trader/config.py`.
+Phase 2 seeds about 35% of the initial population from the persistent archive when a compatible archive exists. Tune hyperparameters in `gpu_fuzzy_trader/config.py`.
 
 ---
 

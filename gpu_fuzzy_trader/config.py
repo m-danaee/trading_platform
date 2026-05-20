@@ -74,7 +74,12 @@ PHASE2_CAPITAL_PCT = 48.0
 MIN_CONDITIONS = 3
 MAX_CONDITIONS = 4
 # minimum number of trades across all symbols (after applying condition filters)
-MIN_TRADE_SUPPORT = 200
+MIN_TRADE_SUPPORT = 150
+SUPPORT_PENALTY_MAX = 10.0
+MIN_TRADE_POOL_FLOOR = 38  # archive hard filter (~ MIN // 2)
+
+# Maximum Sortino ratio (prevents sentinel-driven Pareto distortion)
+SORTINO_CAP = 10.0
 PHASE2_POPULATION_SIZE = 200
 PHASE2_GENERATIONS = 100
 PHASE2_ARCHIVE_MAX_SIZE = 500
@@ -91,6 +96,7 @@ PHASE3_USE_GPU = False  # set True after GPU rule-set batch parity tests pass
 PHASE3_REFINE_GENERATIONS = 40
 PHASE3_REFINE_POP_SIZE = 100
 PHASE3_GREEDY_WEIGHTS = (1.0, 0.7, 0.5)  # sortino, drawdown, win_rate
+PHASE3_SYMBOL_CONSISTENCY_WEIGHT = 10.0
 
 # ---------------------------------------------------------------------------
 # Phase 2 MOME (deferred — future native 4×10 descriptor grid)
@@ -108,7 +114,11 @@ PHASE4_TP_MAX = 5.0
 PHASE4_SL_MIN = 1.0
 PHASE4_SL_MAX = 2.5
 PHASE4_CAPITAL_PCT_MIN = 10.0
-PHASE4_CAPITAL_PCT_MAX = 100.0
+PHASE4_CAPITAL_PCT_MAX = 50.0
+PHASE4_TOTAL_CAP_PENALTY = 2.0
+PHASE4_RL_EVAL_WINDOW = 288
+PHASE4_VAL_SORTINO_WEIGHT = 0.2
+PHASE4_VAL_SORTINO_BONUS_CAP = 5.0
 PHASE4_TOTAL_TIMESTEPS = 500_000
 PHASE4_ELBOW_WINDOW = 15
 
@@ -123,6 +133,7 @@ LOG_GENERATION_INTERVAL = 0
 # ---------------------------------------------------------------------------
 PHASE1_DISPERSION_THRESHOLD = 0.95
 PHASE1_TOP_K_FEATURES = 25
+PHASE1_MAX_FEATURE_OVERLAP = 0.50
 # Rows sampled per Phase 2 backtest engine (distributed across symbols).
 # Emergency RAM knob if OOM persists after df slimming: try 150_000.
 PHASE1_SAMPLING_TOTAL = 300_000

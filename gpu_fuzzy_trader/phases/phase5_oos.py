@@ -131,6 +131,15 @@ class OOS_Evaluator:
             results[direction] = metrics
             all_per_symbol.extend(per_symbol_rows)
 
+            test_return = float(metrics.get("total_return_pct", 0.0))
+            if test_return < -5.0:
+                logger.warning(
+                    "Phase 5 [%s]: FAIL — test return %.2f%% is negative. "
+                    "Strategy does not generalize.",
+                    direction,
+                    test_return,
+                )
+
             # 4. Save per-direction report
             self._save_report(metrics, direction)
 

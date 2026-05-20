@@ -172,7 +172,7 @@ Produces two independent feature lists (long and short) from the training split.
 - `outputs/selected_features_long.json`
 - `outputs/selected_features_short.json`
 
-**Skip logic:** If both files exist and pass schema validation, Phase 1 is skipped.
+**Skip logic:** The `skip_if_valid()` helper can validate these files for programmatic use, but the default CLI full run forces Phase 1 to rerun.
 
 ---
 
@@ -222,7 +222,7 @@ dont_care_i = num_classes_i  (inactive condition)
 - `phase2_rule_archive/phase2_long_archive.json` / `phase2_rule_archive/phase2_short_archive.json`
 - `outputs/reports/phase2_long_metrics.png` / `outputs/reports/phase2_short_metrics.png`
 
-**Skip logic:** If pool files exist and are valid, Phase 2 is skipped. The root-level archive is persistent across output directories; compatible archived rules seed part of the next Phase 2 population before the rest is initialized randomly.
+**Skip logic:** The `skip_if_valid()` helper can validate the pool files for programmatic use, but the default CLI full run forces Phase 2 to rerun. The root-level archive is persistent across output directories; compatible archived rules still seed part of the next Phase 2 population before the rest is initialized randomly.
 
 ---
 
@@ -253,7 +253,7 @@ Selects the best ordered combination of rules from the Phase 2 pool using greedy
 - `outputs/reports/train_long_equity.png` / `outputs/reports/validation_long_equity.png`
 - `outputs/reports/train_per_symbol_performance.csv` / `outputs/reports/validation_per_symbol_performance.csv`
 
-**Skip logic:** If both files exist and pass schema validation, Phase 3 is skipped. If only one exists, the pipeline proceeds with the available file.
+**Skip logic:** The `skip_if_valid()` helper can validate these files for programmatic use, but the default CLI full run forces Phase 3 to rerun. The `--phase 3` command expects the Phase 2 pool files to already exist.
 
 ---
 
@@ -290,7 +290,7 @@ Fine-tunes TP, SL, and `capital_pct` for each rule using a DDPG or PPO agent (st
 - `outputs/long.json` / `outputs/short.json` (updated with RL-optimized TP/SL/capital_pct)
 - `outputs/reports/phase4_long_rl_curve.png` / `outputs/reports/phase4_short_rl_curve.png`
 
-**Skip logic:** If output files exist and all TP/SL/capital_pct values are within valid Phase 4 bounds, Phase 4 is skipped.
+**Skip logic:** The `skip_if_valid()` helper can validate these files for programmatic use, but the default CLI full run forces Phase 4 to rerun. The `--phase 4` command expects the Phase 3 strategy files to already exist.
 
 ---
 
@@ -385,7 +385,7 @@ Generates all visual and tabular reports. Uses matplotlib with the `Agg` backend
 
 ### `gpu_fuzzy_trader/run_pipeline.py` — `Pipeline_Orchestrator`
 
-Top-level orchestrator. Runs all five phases in order with skip logic, phase timing, and structured JSON-lines logging to `outputs/pipeline.log`.
+Top-level orchestrator. Runs all five phases in order, or a single requested phase, with forced full rebuilds on the default CLI path and structured JSON-lines logging to `outputs/pipeline.log`.
 
 ---
 
@@ -685,7 +685,7 @@ Examples:
 python -m gpu_fuzzy_trader.run_pipeline
 ```
 
-This runs all five phases in order. Phases with valid existing outputs are automatically skipped.
+This runs all five phases in order and forces a fresh rebuild into `outputs/` by default. Pass `--output DIR` to write into another directory. The CLI does not skip a phase just because cached outputs already exist. Use `--phase 1` through `--phase 5` to run a single phase after its prerequisite files already exist.
 
 ### Programmatic Usage
 
@@ -693,13 +693,25 @@ This runs all five phases in order. Phases with valid existing outputs are autom
 from gpu_fuzzy_trader.run_pipeline import Pipeline_Orchestrator
 
 orchestrator = Pipeline_Orchestrator()
-results = orchestrator.run()
+results = orchestrator.run(force=True)
 
 # results keys: "data", "phase1", "phase2", "phase3", "phase4", "phase5"
 print(results["phase5"])  # OOS metrics
 ```
 
 ### Running Individual Phases
+
+CLI phase runs:
+
+```bash
+python -m gpu_fuzzy_trader.run_pipeline --phase 1
+python -m gpu_fuzzy_trader.run_pipeline --phase 2
+python -m gpu_fuzzy_trader.run_pipeline --phase 3
+python -m gpu_fuzzy_trader.run_pipeline --phase 4
+python -m gpu_fuzzy_trader.run_pipeline --phase 5
+```
+
+Each phase command expects its prerequisite outputs to already be present on disk. The CLI will not auto-run earlier phases for you.
 
 ```python
 from gpu_fuzzy_trader.data.loader import Data_Loader
@@ -755,7 +767,7 @@ oos_results = evaluator.run()
 
 ### Skip Logic
 
-Each phase checks for valid existing outputs before running:
+The `skip_if_valid()` helpers still exist for validation and programmatic use, but the default CLI run now forces a rebuild:
 
 ```python
 # Check if Phase 1 can be skipped
@@ -937,6 +949,6 @@ This package (`gpu_fuzzy_trader`) is a complete ground-up rewrite of the previou
 | Test coverage     | Limited                  | 713 tests, 29 property-based properties              |
 | Config            | Mixed flags + config     | Single `config.py`, no runtime flags                 |
 | Evaluator parity  | Approximate              | Exact mirror of `evaluator_v3.ipynb`                 |
-| Skip logic        | Basic                    | Per-phase validation before skipping                 |
+| Skip logic        | Basic                    | Validation helpers remain; default CLI forces rerun  |
 
 The output format (`long.json` / `short.json`) is identical between both implementations and fully compatible with `evaluator_v3.ipynb`.

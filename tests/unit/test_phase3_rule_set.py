@@ -37,6 +37,7 @@ from gpu_fuzzy_trader.phases.phase3_rule_set import (
     _non_dominated_sort,
     _random_rule_set,
     _rule_set_to_engine_format,
+    _symbol_consistency_penalty,
     _validate_rule_set_schema,
     _OUTPUT_PATHS,
 )
@@ -271,6 +272,32 @@ class TestCountSymbolsWithTrades:
     def test_missing_per_symbol_metrics(self):
         metrics = {}
         assert _count_symbols_with_trades(metrics) == 0
+
+
+class TestSymbolConsistencyPenalty:
+    def _metrics(self, symbols: set[str]) -> dict:
+        return {
+            "per_symbol_metrics": {
+                s: {"trade_count": 1} for s in symbols
+            }
+        }
+
+    def test_full_overlap_zero_penalty(self):
+        syms = {"A", "B"}
+        pen = _symbol_consistency_penalty(
+            self._metrics(syms), self._metrics(syms))
+        assert pen == 0.0
+
+    def test_zero_overlap_max_penalty(self):
+        pen = _symbol_consistency_penalty(
+            self._metrics({"A", "B"}), self._metrics({"C", "D"}))
+        assert pen == _cfg.PHASE3_SYMBOL_CONSISTENCY_WEIGHT
+
+    def test_partial_overlap_between_extremes(self):
+        train = self._metrics({"A", "B"})
+        val = self._metrics({"B", "C"})
+        pen = _symbol_consistency_penalty(train, val)
+        assert 0.0 < pen < _cfg.PHASE3_SYMBOL_CONSISTENCY_WEIGHT
 
 
 # ---------------------------------------------------------------------------

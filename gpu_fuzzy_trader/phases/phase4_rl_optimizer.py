@@ -163,6 +163,32 @@ def find_elbow_point(validation_returns: list[float]) -> int:
     return elbow_idx
 
 
+def _phase4_sample_count(total_timesteps: int, elbow_window: int) -> int:
+    """Minimum trials/samples for Phase 4 search fallbacks."""
+    return max(elbow_window, total_timesteps // 100)
+
+
+def _phase4_val_score(
+    val_metrics: dict,
+    candidate_params: list[dict],
+) -> float:
+    """Validation objective: return + Sortino bonus - overallocation penalty."""
+    val_return = float(val_metrics.get("total_return_pct", 0.0))
+    sortino = min(
+        float(val_metrics.get("sortino_ratio", 0.0)),
+        _cfg.PHASE4_VAL_SORTINO_BONUS_CAP,
+    )
+    total_cap = sum(float(p.get("capital_pct", 0.0)) for p in candidate_params)
+    overalloc = (
+        max(0.0, total_cap - 100.0) / 100.0 * _cfg.PHASE4_TOTAL_CAP_PENALTY
+    )
+    return (
+        val_return
+        + sortino * _cfg.PHASE4_VAL_SORTINO_WEIGHT
+        - overalloc
+    )
+
+
 # ---------------------------------------------------------------------------
 # TradingEnv (gym-compatible, optional)
 # ---------------------------------------------------------------------------
@@ -383,8 +409,10 @@ class TradingEnv:
                 "capital_pct": float(clipped[base + 2]),
             })
 
-        # Evaluate on a small window around current index
-        window_size = min(50, len(self.df) - self._current_idx)
+        window_size = min(
+            _cfg.PHASE4_RL_EVAL_WINDOW,
+            len(self.df) - self._current_idx,
+        )
         if window_size <= 0:
             obs = self._get_observation()
             terminated = True
@@ -413,10 +441,16 @@ class TradingEnv:
         current_dd = (self._peak_equity - self._equity) / \
             self._peak_equity * 100.0
 
-        # Reward
         net_pnl_norm = net_pnl / _cfg.INITIAL_CAPITAL * 100.0
         drawdown_penalty = max(0.0, current_dd - 5.0) * 0.1
-        reward = float(net_pnl_norm - drawdown_penalty)
+        total_cap = sum(
+            float(self._current_tp_sl_cap[r * 3 + 2])
+            for r in range(self.n_rules)
+        )
+        allocation_penalty = (
+            max(0.0, total_cap - 100.0) / 100.0 * _cfg.PHASE4_TOTAL_CAP_PENALTY
+        )
+        reward = float(net_pnl_norm - drawdown_penalty - allocation_penalty)
 
         self._current_idx += window_size
         terminated = self._current_idx >= len(self.df)
@@ -440,6 +474,106 @@ class TradingEnv:
                 "capital_pct": float(self._current_tp_sl_cap[base + 2]),
             })
         return result
+
+
+# ---------------------------------------------------------------------------
+# Bayesian optimization fallback (Optuna TPE, optional)
+# ---------------------------------------------------------------------------
+
+def _bayesian_optimize(
+    train_df: pd.DataFrame,
+    val_df: pd.DataFrame,
+    rule_set: dict,
+    direction: str,
+    n_trials: int,
+    elbow_window: int,
+    seed: int = 42,
+) -> tuple[list[dict], list[float], int]:
+    """Bayesian optimization over TP/SL/capital_pct; falls back to random search."""
+    try:
+        import optuna
+        optuna.logging.set_verbosity(optuna.logging.WARNING)
+    except ImportError:
+        logger.warning("Optuna not available; falling back to random search.")
+        rng = random.Random(seed)
+        return _random_search_optimize(
+            train_df, val_df, rule_set, direction,
+            n_samples=n_trials, elbow_window=elbow_window, rng=rng,
+        )
+
+    rules = rule_set.get("rules_set", [])
+    n_rules = len(rules)
+    if n_rules == 0:
+        return [], [], 0
+
+    val_engine = CPUBacktestEngine(val_df, {}, direction)
+    validation_returns: list[float] = []
+    checkpoint_params: list[list[dict]] = []
+    trial_records: list[tuple[int, float, list[dict]]] = []
+
+    def objective(trial: "optuna.Trial") -> float:
+        candidate_params: list[dict] = []
+        for r_idx in range(n_rules):
+            tp = trial.suggest_float(
+                f"tp_{r_idx}", _cfg.PHASE4_TP_MIN, _cfg.PHASE4_TP_MAX)
+            sl = trial.suggest_float(
+                f"sl_{r_idx}", _cfg.PHASE4_SL_MIN, _cfg.PHASE4_SL_MAX)
+            cap = trial.suggest_float(
+                f"cap_{r_idx}",
+                _cfg.PHASE4_CAPITAL_PCT_MIN,
+                _cfg.PHASE4_CAPITAL_PCT_MAX,
+            )
+            candidate_params.append({"tp": tp, "sl": sl, "capital_pct": cap})
+
+        candidate_rule_set = [
+            {
+                "conditions": rules[i]["conditions"],
+                "tp": candidate_params[i]["tp"],
+                "sl": candidate_params[i]["sl"],
+                "capital_pct": candidate_params[i]["capital_pct"],
+            }
+            for i in range(n_rules)
+        ]
+
+        try:
+            val_metrics = val_engine.simulate_rule_set(candidate_rule_set)
+            score = _phase4_val_score(val_metrics, candidate_params)
+        except Exception:
+            score = -100.0
+
+        trial.set_user_attr("params", candidate_rule_set)
+        trial_records.append((trial.number, score, candidate_rule_set))
+        return score
+
+    sampler = optuna.samplers.TPESampler(seed=seed)
+    study = optuna.create_study(direction="maximize", sampler=sampler)
+    study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
+
+    trials_sorted = sorted(trial_records, key=lambda x: x[0])
+    for i in range(0, len(trials_sorted), elbow_window):
+        window = trials_sorted[i:i + elbow_window]
+        best = max(window, key=lambda x: x[1])
+        validation_returns.append(best[1])
+        checkpoint_params.append(best[2])
+
+    if not validation_returns and trial_records:
+        best = max(trial_records, key=lambda x: x[1])
+        validation_returns.append(best[1])
+        checkpoint_params.append(best[2])
+
+    elbow_idx = find_elbow_point(validation_returns)
+    if checkpoint_params and elbow_idx < len(checkpoint_params):
+        elbow_params = checkpoint_params[elbow_idx]
+    elif study.best_trial is not None:
+        elbow_params = study.best_trial.user_attrs.get("params", [])
+    else:
+        elbow_params = []
+
+    logger.info(
+        "Bayesian opt [%s]: %d trials, %d checkpoints, elbow at idx=%d",
+        direction, n_trials, len(validation_returns), elbow_idx,
+    )
+    return elbow_params, validation_returns, elbow_idx
 
 
 # ---------------------------------------------------------------------------
@@ -543,7 +677,7 @@ def _random_search_optimize(
 
         try:
             val_metrics = val_engine.simulate_rule_set(candidate_rule_set)
-            val_return = float(val_metrics.get("total_return_pct", 0.0))
+            val_return = _phase4_val_score(val_metrics, candidate_params)
         except Exception as exc:
             logger.debug("Random search sample %d failed: %s", sample_idx, exc)
             val_return = -100.0
@@ -641,7 +775,7 @@ def _sb3_train_optimize(
         rng = random.Random(42)
         return _random_search_optimize(
             train_df, val_df, rule_set, direction,
-            n_samples=total_timesteps // 100,
+            n_samples=_phase4_sample_count(total_timesteps, elbow_window),
             elbow_window=elbow_window,
             rng=rng,
         )
@@ -667,7 +801,7 @@ def _sb3_train_optimize(
         rng = random.Random(42)
         return _random_search_optimize(
             train_df, val_df, rule_set, direction,
-            n_samples=total_timesteps // 100,
+            n_samples=_phase4_sample_count(total_timesteps, elbow_window),
             elbow_window=elbow_window,
             rng=rng,
         )
@@ -713,9 +847,17 @@ def _sb3_train_optimize(
                 "capital_pct": float(clipped[base + 2]),
             })
 
+        sb3_params = [
+            {
+                "tp": float(clipped[r_idx * 3]),
+                "sl": float(clipped[r_idx * 3 + 1]),
+                "capital_pct": float(clipped[r_idx * 3 + 2]),
+            }
+            for r_idx in range(n_rules)
+        ]
         try:
             val_metrics = val_engine.simulate_rule_set(candidate_rule_set)
-            val_return = float(val_metrics.get("total_return_pct", 0.0))
+            val_return = _phase4_val_score(val_metrics, sb3_params)
         except Exception:
             val_return = 0.0
 
@@ -737,7 +879,7 @@ def _sb3_train_optimize(
         rng = random.Random(42)
         return _random_search_optimize(
             train_df, val_df, rule_set, direction,
-            n_samples=total_timesteps // 100,
+            n_samples=_phase4_sample_count(total_timesteps, elbow_window),
             elbow_window=elbow_window,
             rng=rng,
         )
@@ -906,20 +1048,19 @@ class RL_Agent:
         else:
             logger.info(
                 "Phase 4 [%s]: stable-baselines3/gymnasium not available; "
-                "using random search fallback.",
+                "using Bayesian optimization (Optuna) with random-search fallback.",
                 self.direction,
             )
-            rng = random.Random(self.seed)
-            # Scale n_samples: use total_timesteps / 100 as proxy for sample count
-            n_samples = max(self.elbow_window, self.total_timesteps // 100)
-            optimized_params, val_returns, elbow_idx = _random_search_optimize(
+            n_trials = _phase4_sample_count(
+                self.total_timesteps, self.elbow_window)
+            optimized_params, val_returns, elbow_idx = _bayesian_optimize(
                 train_df=self.train_df,
                 val_df=self.val_df,
                 rule_set=self.rule_set,
                 direction=self.direction,
-                n_samples=n_samples,
+                n_trials=n_trials,
                 elbow_window=self.elbow_window,
-                rng=rng,
+                seed=self.seed,
             )
 
         self._validation_returns = val_returns

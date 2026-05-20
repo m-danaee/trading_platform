@@ -760,7 +760,21 @@ class TestMainEntryPoint:
                    run_mock):
             from gpu_fuzzy_trader.run_pipeline import main
             main()
-        run_mock.assert_called_once()
+        run_mock.assert_called_once_with(force=True)
+
+    def test_main_runs_selected_phase(self, tmp_path):
+        """main() should dispatch to run_phase() when --phase is provided."""
+        run_phase_mock = MagicMock(return_value={
+            "phase3": {"long": _make_rule_set("long")}
+        })
+        with patch("gpu_fuzzy_trader.run_pipeline.Pipeline_Orchestrator.run",
+                   MagicMock()) as run_mock, \
+                patch("gpu_fuzzy_trader.run_pipeline.Pipeline_Orchestrator.run_phase",
+                      run_phase_mock):
+            from gpu_fuzzy_trader.run_pipeline import main
+            main(["--phase", "3"])
+        run_mock.assert_not_called()
+        run_phase_mock.assert_called_once_with(3)
 
     def test_main_forwards_custom_output_dir(self, tmp_path):
         """main() should pass --output through to Pipeline_Orchestrator."""
@@ -775,7 +789,7 @@ class TestMainEntryPoint:
             main(["--output", custom_output])
 
         orch_cls.assert_called_once_with(output_dir=custom_output)
-        orch_instance.run.assert_called_once()
+        orch_instance.run.assert_called_once_with(force=True)
 
     def test_main_defaults_to_config_output_dir(self, tmp_path):
         """main() should keep the default output root when --output is omitted."""
@@ -788,7 +802,44 @@ class TestMainEntryPoint:
             main([])
 
         orch_cls.assert_called_once_with(output_dir=None)
-        orch_instance.run.assert_called_once()
+        orch_instance.run.assert_called_once_with(force=True)
+
+
+class TestSinglePhaseDispatch:
+    def _make_orch(self, tmp_path) -> Pipeline_Orchestrator:
+        orch = Pipeline_Orchestrator()
+        orch._log_path = str(tmp_path / "pipeline.log")
+        return orch
+
+    def test_run_phase2_loads_phase1_outputs(self, tmp_path):
+        train_df = _make_df()
+        val_df = _make_df()
+        orch = self._make_orch(tmp_path)
+        orch._create_output_dirs = MagicMock()
+        orch._load_and_split_data = MagicMock(return_value=(train_df, val_df))
+        orch._load_phase1_outputs = MagicMock(return_value={
+            "long": [{"name": "f", "mode": "positive", "score": 0.9}],
+            "short": [{"name": "g", "mode": "positive", "score": 0.8}],
+        })
+        orch._prune_train_df_after_phase1 = MagicMock(return_value=train_df)
+        phase2_result = {"long": _make_pool(3), "short": _make_pool(3)}
+        orch._run_phase2 = MagicMock(return_value=phase2_result)
+
+        result = orch.run_phase(2)
+
+        orch._load_phase1_outputs.assert_called_once()
+        orch._run_phase2.assert_called_once()
+        assert orch._run_phase2.call_args.kwargs["force"] is True
+        assert result["phase2"] == phase2_result
+
+    def test_run_phase5_requires_optimized_strategies(self, tmp_path):
+        orch = self._make_orch(tmp_path)
+        orch._create_output_dirs = MagicMock()
+
+        with patch("gpu_fuzzy_trader.run_pipeline.OOS_Evaluator.load_strategies",
+                   return_value={}):
+            with pytest.raises(FileNotFoundError, match="Phase 5 requires"):
+                orch.run_phase(5)
 
 
 class TestTemporaryOutputPaths:

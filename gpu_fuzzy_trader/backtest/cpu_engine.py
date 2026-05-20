@@ -84,10 +84,12 @@ def _sortino_ratio_from_returns(
     downside_returns = np.minimum(excess_returns, 0.0)
     downside_deviation = float(np.sqrt(np.mean(np.square(downside_returns))))
 
-    if downside_deviation <= 0.0:
-        return 999.0 if mean_excess_return > 0.0 else 0.0
+    from gpu_fuzzy_trader import config as _cfg
 
-    return mean_excess_return / downside_deviation
+    if downside_deviation <= 0.0:
+        return _cfg.SORTINO_CAP if mean_excess_return > 0.0 else 0.0
+
+    return min(mean_excess_return / downside_deviation, _cfg.SORTINO_CAP)
 
 
 def _parse_condition(condition: str) -> tuple[str, str]:

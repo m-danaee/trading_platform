@@ -140,6 +140,25 @@ def _count_symbols_with_trades(metrics: dict) -> int:
     return sum(1 for v in per_sym.values() if v.get("trade_count", 0) > 0)
 
 
+def _symbols_with_trades(metrics: dict) -> set:
+    """Return symbol IDs with at least one trade."""
+    per_sym = metrics.get("per_symbol_metrics", {})
+    return {
+        s for s, v in per_sym.items()
+        if v.get("trade_count", 0) > 0
+    }
+
+
+def _symbol_consistency_penalty(train_metrics: dict, val_metrics: dict) -> float:
+    """Penalise rule sets that trade different symbols on train vs validation."""
+    train_syms = _symbols_with_trades(train_metrics)
+    val_syms = _symbols_with_trades(val_metrics)
+    if not train_syms or not val_syms:
+        return 0.0
+    overlap = len(train_syms & val_syms) / len(train_syms | val_syms)
+    return (1.0 - overlap) * _cfg.PHASE3_SYMBOL_CONSISTENCY_WEIGHT
+
+
 def _build_phase3_engines(
     train_df: pd.DataFrame,
     val_df: pd.DataFrame,
@@ -216,8 +235,8 @@ def _evaluate_rule_set(
             (_cfg.PHASE3_MIN_SYMBOL_COVERAGE - symbols_with_trades) * 5.0
         )
 
-    # Overfitting penalty: evaluate on training split
     overfitting_penalty = 0.0
+    train_metrics: dict = {}
     try:
         train_metrics = train_engine.simulate_rule_set(rule_set)
         train_sortino = float(train_metrics.get(
@@ -226,10 +245,15 @@ def _evaluate_rule_set(
             train_sortino - val_sortino) / max(abs(train_sortino), 1.0)
     except Exception as exc:
         logger.debug("train simulate_rule_set failed: %s", exc)
-        overfitting_penalty = 10.0  # penalise if train eval fails
+        overfitting_penalty = 10.0
 
-    total_penalty = zero_penalty + coverage_penalty + \
-        overfitting_penalty + dup_penalty
+    symbol_consistency_penalty = _symbol_consistency_penalty(
+        train_metrics, val_metrics)
+
+    total_penalty = (
+        zero_penalty + coverage_penalty + overfitting_penalty
+        + dup_penalty + symbol_consistency_penalty
+    )
 
     f1 = -val_sortino + total_penalty
     f2 = val_dd + total_penalty

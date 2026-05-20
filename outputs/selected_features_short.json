@@ -42,11 +42,6 @@
       "score": 0.0034185633583016053
     },
     {
-      "name": "roc_10",
-      "mode": "signed",
-      "score": 0.0029365688997699947
-    },
-    {
       "name": "channel_pos_20",
       "mode": "positive",
       "score": 0.002925287674519445
@@ -72,11 +67,6 @@
       "score": 0.0018185164500876725
     },
     {
-      "name": "up_close_ratio_5",
-      "mode": "sparse_positive",
-      "score": 0.0014449859429977484
-    },
-    {
       "name": "efficiency_ratio_20",
       "mode": "positive",
       "score": 0.0013559077969847388
@@ -90,11 +80,6 @@
       "name": "lower_wick_to_tr",
       "mode": "positive",
       "score": 0.0006801884875626426
-    },
-    {
-      "name": "cand_up_down_vol_ratio_20",
-      "mode": "positive",
-      "score": 0.0006337986338899802
     },
     {
       "name": "close_location_value",
@@ -122,9 +107,24 @@
       "score": 0.00032075695858885164
     },
     {
-      "name": "ret_autocorr_1_30",
-      "mode": "signed",
-      "score": 0.00030570907063124725
+      "name": "absret_ema_ratio_20_100",
+      "mode": "positive",
+      "score": 0.0001920476500467227
+    },
+    {
+      "name": "atr_pct_14",
+      "mode": "positive",
+      "score": 0.00014806906951676305
+    },
+    {
+      "name": "open_gap_atr_14",
+      "mode": "sparse_signed",
+      "score": 0.0001098432112544926
+    },
+    {
+      "name": "vol_ratio_20_100",
+      "mode": "positive",
+      "score": 6.447010849119182e-05
     }
   ]
 }

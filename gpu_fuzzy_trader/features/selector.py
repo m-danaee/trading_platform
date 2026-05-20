@@ -58,6 +58,53 @@ _VALID_DIRECTIONS = {"long", "short"}
 _DISCRETE_FEATURE_MODES = frozenset({"binary", "ternary"})
 
 
+def _reduce_overlap(
+    ranked: dict[str, list[dict]],
+    max_overlap_pct: float,
+    top_k: int,
+) -> dict[str, list[dict]]:
+    """
+    Cap long/short feature overlap and backfill each direction to top_k features.
+    """
+    long_feats = list(ranked.get("long", []))
+    short_feats = list(ranked.get("short", []))
+    long_names = {f["name"] for f in long_feats}
+    short_names = {f["name"] for f in short_feats}
+    shared = long_names & short_names
+    max_shared = int(top_k * max_overlap_pct)
+
+    if len(shared) > max_shared:
+        long_scores = {f["name"]: f["score"] for f in long_feats}
+        short_scores = {f["name"]: f["score"] for f in short_feats}
+        shared_ranked = sorted(
+            shared,
+            key=lambda name: abs(
+                long_scores.get(name, 0.0) - short_scores.get(name, 0.0)
+            ),
+        )
+        to_remove = len(shared) - max_shared
+        for name in shared_ranked[:to_remove]:
+            if long_scores.get(name, 0.0) <= short_scores.get(name, 0.0):
+                long_feats = [f for f in long_feats if f["name"] != name]
+            else:
+                short_feats = [f for f in short_feats if f["name"] != name]
+
+    def _backfill(selected: list[dict], pool: list[dict]) -> list[dict]:
+        chosen = {f["name"] for f in selected}
+        for feat in pool:
+            if len(selected) >= top_k:
+                break
+            if feat["name"] not in chosen:
+                selected.append(feat)
+                chosen.add(feat["name"])
+        return selected[:top_k]
+
+    return {
+        "long": _backfill(long_feats, ranked.get("long", [])),
+        "short": _backfill(short_feats, ranked.get("short", [])),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -216,8 +263,8 @@ class Feature_Selector:
         # Step 9: Select top K features
         # ----------------------------------------------------------------
         scored.sort(key=lambda x: x["score"], reverse=True)
-        top_k = config.PHASE1_TOP_K_FEATURES
-        selected = scored[:top_k]
+        candidate_k = config.PHASE1_TOP_K_FEATURES * 2
+        selected = scored[:candidate_k]
 
         if selected:
             top = selected[0]
@@ -245,11 +292,28 @@ class Feature_Selector:
             {"long": [...], "short": [...]}
             Also persists results to outputs/selected_features_{direction}.json.
         """
-        results: dict[str, list[dict]] = {}
+        ranked: dict[str, list[dict]] = {}
+        for direction in ("long", "short"):
+            ranked[direction] = self.select_features(train_df, direction)
+
+        results = _reduce_overlap(
+            ranked,
+            config.PHASE1_MAX_FEATURE_OVERLAP,
+            config.PHASE1_TOP_K_FEATURES,
+        )
+
+        shared = (
+            {f["name"] for f in results["long"]}
+            & {f["name"] for f in results["short"]}
+        )
+        logger.info(
+            "Phase 1: overlap reduction complete — %d shared of %d max allowed",
+            len(shared),
+            int(config.PHASE1_TOP_K_FEATURES * config.PHASE1_MAX_FEATURE_OVERLAP),
+        )
 
         for direction in ("long", "short"):
-            features = self.select_features(train_df, direction)
-            results[direction] = features
+            features = results[direction]
 
             # Persist
             out_path = _DIRECTION_PATHS[direction]

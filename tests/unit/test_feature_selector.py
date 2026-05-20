@@ -31,6 +31,7 @@ from gpu_fuzzy_trader.features.selector import (
     _build_target,
     _compute_stability,
     _mutual_info_discrete_mask,
+    _reduce_overlap,
     _remove_low_dispersion,
     _remove_redundant_features,
     _validate_schema,
@@ -614,14 +615,13 @@ class TestSelectFeatures:
         scores = [e["score"] for e in result]
         assert scores == sorted(scores, reverse=True)
 
-    def test_at_most_top_k_features(self):
-        """Result should have at most PHASE1_TOP_K_FEATURES entries."""
-        # Use more features than K to test truncation
+    def test_at_most_candidate_pool_features(self):
+        """select_features returns up to 2×TOP_K candidates before overlap reduction."""
         n_features = config.PHASE1_TOP_K_FEATURES + 10
         train_df = _make_train_df(n_rows=400, n_features=n_features)
         selector = Feature_Selector()
         result = selector.select_features(train_df, "long")
-        assert len(result) <= config.PHASE1_TOP_K_FEATURES
+        assert len(result) <= config.PHASE1_TOP_K_FEATURES * 2
 
     def test_fewer_features_than_k_returns_all(self):
         """If fewer features than K remain after filtering, return all."""
@@ -746,3 +746,26 @@ class TestFeatureSelectorRun:
         assert set(result.keys()) == {"long", "short"}
         assert isinstance(result["long"], list)
         assert isinstance(result["short"], list)
+
+
+class TestReduceOverlap:
+    def _feat(self, name: str, score: float) -> dict:
+        return {"name": name, "mode": "positive", "score": score}
+
+    def test_caps_overlap_and_backfills_to_top_k(self):
+        top_k = config.PHASE1_TOP_K_FEATURES
+        ranked = {
+            "long": [self._feat(f"L{i}", 1.0 - i * 0.01) for i in range(30)],
+            "short": [self._feat(f"S{i}", 1.0 - i * 0.01) for i in range(30)],
+        }
+        for i in range(20):
+            ranked["long"].append(self._feat(f"shared_{i}", 0.5))
+            ranked["short"].append(self._feat(f"shared_{i}", 0.4))
+
+        result = _reduce_overlap(ranked, config.PHASE1_MAX_FEATURE_OVERLAP, top_k)
+        long_names = {f["name"] for f in result["long"]}
+        short_names = {f["name"] for f in result["short"]}
+        shared = long_names & short_names
+        assert len(result["long"]) == top_k
+        assert len(result["short"]) == top_k
+        assert len(shared) <= int(top_k * config.PHASE1_MAX_FEATURE_OVERLAP)

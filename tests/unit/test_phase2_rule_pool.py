@@ -1048,7 +1048,7 @@ class TestRulePoolGeneratorRun:
             m._HISTORY_PATHS.update(original_hist)
 
     def test_run_min_trade_support_enforced(self, tmp_path):
-        """Pool entries must have executed_trades >= MIN_TRADE_SUPPORT."""
+        """Pool entries must have executed_trades >= MIN_TRADE_POOL_FLOOR."""
         import gpu_fuzzy_trader.phases.phase2_rule_pool as m
         pool_path = str(tmp_path / "phase2_long_pool.json")
         hist_path = str(tmp_path / "phase2_long_history.json")
@@ -1063,9 +1063,9 @@ class TestRulePoolGeneratorRun:
                 df, fi, "long", pop_size=8, n_generations=3, seed=0)
             result = gen.run()
             for entry in result:
-                assert entry["executed_trades"] >= _cfg.MIN_TRADE_SUPPORT, (
+                assert entry["executed_trades"] >= _cfg.MIN_TRADE_POOL_FLOOR, (
                     f"Entry has {entry['executed_trades']} trades, "
-                    f"expected >= {_cfg.MIN_TRADE_SUPPORT}"
+                    f"expected >= {_cfg.MIN_TRADE_POOL_FLOOR}"
                 )
         finally:
             m._POOL_PATHS.update(original_pool)

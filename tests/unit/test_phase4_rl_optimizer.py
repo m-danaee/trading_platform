@@ -27,6 +27,7 @@ from gpu_fuzzy_trader.phases.phase4_rl_optimizer import (
     find_elbow_point,
     _load_rule_set,
     _params_within_bounds,
+    _phase4_val_score,
     _OUTPUT_PATHS,
 )
 
@@ -190,6 +191,14 @@ class TestFindElbowPoint:
     def test_two_equal_elements_returns_zero(self):
         """Two equal elements → plateau → first point."""
         assert find_elbow_point([5.0, 5.0]) == 0
+
+
+class TestPhase4ValScore:
+    def test_overallocation_reduces_score(self):
+        metrics = {"total_return_pct": 10.0, "sortino_ratio": 1.0}
+        within = [{"capital_pct": 40.0}, {"capital_pct": 50.0}]
+        over = [{"capital_pct": 50.0}, {"capital_pct": 50.0}, {"capital_pct": 50.0}]
+        assert _phase4_val_score(metrics, over) < _phase4_val_score(metrics, within)
 
 
 # ---------------------------------------------------------------------------

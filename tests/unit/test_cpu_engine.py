@@ -20,12 +20,14 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.backtest.cpu_engine import (
     CPUBacktestEngine,
     _apply_dynamic_rule,
     _build_entries_from_rule_set,
     _normalize_direction,
     _safe_profit_factor,
+    _sortino_ratio_from_returns,
 )
 
 
@@ -798,4 +800,29 @@ class TestMetricsCorrectness:
         df["label_open_next"] = [100.0, 0.0, 100.0]  # zero entry price is invalid
         with pytest.raises(ValueError, match="Invalid label_open_next"):
             _make_engine(df)
+
+
+class TestSortinoRatioCap:
+    def test_zero_downside_returns_sortino_cap_not_999(self):
+        returns = [0.05, 0.03, 0.02]
+        assert _sortino_ratio_from_returns(returns) == _cfg.SORTINO_CAP
+
+    def test_zero_downside_non_positive_mean_returns_zero(self):
+        returns = [0.0, 0.0, 0.0]
+        assert _sortino_ratio_from_returns(returns) == 0.0
+
+    def test_high_sortino_capped_at_sortino_cap(self):
+        returns = [10.0, 8.0, -0.01]
+        assert _sortino_ratio_from_returns(returns) == _cfg.SORTINO_CAP
+
+
+class TestTradeSupportPenalty:
+    def test_at_threshold_zero_penalty(self):
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import trade_support_penalty
+        assert trade_support_penalty(_cfg.MIN_TRADE_SUPPORT) == 0.0
+
+    def test_below_threshold_positive_penalty_capped(self):
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import trade_support_penalty
+        pen = trade_support_penalty(0)
+        assert 0.0 < pen <= _cfg.SUPPORT_PENALTY_MAX
 

@@ -43,6 +43,15 @@ from gpu_fuzzy_trader.reporting.reporter import Reporter
 
 logger = logging.getLogger(__name__)
 
+
+def trade_support_penalty(executed: int) -> float:
+    """Graduated penalty when executed trades fall below MIN_TRADE_SUPPORT."""
+    if executed >= _cfg.MIN_TRADE_SUPPORT:
+        return 0.0
+    shortfall = (_cfg.MIN_TRADE_SUPPORT - executed) / _cfg.MIN_TRADE_SUPPORT
+    return min(shortfall ** 2 * _cfg.SUPPORT_PENALTY_MAX, _cfg.SUPPORT_PENALTY_MAX)
+
+
 # ---------------------------------------------------------------------------
 # Output paths
 # ---------------------------------------------------------------------------
@@ -180,10 +189,7 @@ def _evaluate_chromosome(
     win_rate = float(metrics.get("win_rate", 0.0))
     executed = int(metrics.get("executed_trades", 0))
 
-    # Support penalty
-    support_penalty = 0.0
-    if executed < _cfg.MIN_TRADE_SUPPORT:
-        support_penalty = (_cfg.MIN_TRADE_SUPPORT - executed) * 0.5
+    support_penalty = trade_support_penalty(executed)
 
     # Diversity penalty: Hamming distance to nearest Pareto-front member
     diversity_penalty = 0.0
@@ -515,7 +521,7 @@ def _build_pool_from_archive(
                 continue
 
         executed = int(metrics.get("executed_trades", 0))
-        if executed < _cfg.MIN_TRADE_SUPPORT:
+        if executed < _cfg.MIN_TRADE_POOL_FLOOR:
             continue
 
         try:

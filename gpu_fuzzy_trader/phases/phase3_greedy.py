@@ -112,8 +112,13 @@ def _objectives_from_metrics(
     overfitting_penalty = abs(train_sortino - val_sortino) / \
         max(abs(train_sortino), 1.0)
 
-    total_penalty = zero_penalty + coverage_penalty + \
-        overfitting_penalty + dup_penalty
+    symbol_consistency_penalty = p3._symbol_consistency_penalty(
+        train_metrics, val_metrics)
+
+    total_penalty = (
+        zero_penalty + coverage_penalty + overfitting_penalty
+        + dup_penalty + symbol_consistency_penalty
+    )
     return np.array(
         [-val_sortino + total_penalty, val_dd +
             total_penalty, -val_wr + total_penalty],
