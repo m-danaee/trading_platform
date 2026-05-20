@@ -12,6 +12,7 @@ All plots are saved as PNG files (not displayed).
 """
 
 from __future__ import annotations
+from scipy.stats import spearmanr
 from gpu_fuzzy_trader import config as _cfg
 import pandas as pd
 import numpy as np
@@ -25,7 +26,6 @@ import matplotlib
 # Non-interactive backend — must be set before importing pyplot
 matplotlib.use("Agg")
 
-from scipy.stats import spearmanr
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +150,8 @@ class Reporter:
         }
 
         for split in _SPLITS:
-            log = trade_logs_by_split.get(split) if trade_logs_by_split else None
+            log = trade_logs_by_split.get(
+                split) if trade_logs_by_split else None
 
             # Treat None or empty DataFrame as zero-trade log
             if log is None or (isinstance(log, pd.DataFrame) and log.empty):
@@ -174,7 +175,8 @@ class Reporter:
                     metrics[split]["num_trades"].append(0)
                     metrics[split]["mdd_pct"].append(0.0)
                 else:
-                    total_pnl = float(filtered["Net_PnL"].sum()) if "Net_PnL" in filtered.columns else 0.0
+                    total_pnl = float(filtered["Net_PnL"].sum(
+                    )) if "Net_PnL" in filtered.columns else 0.0
                     win_rate = (
                         float((filtered["Net_PnL"] > 0).mean() * 100)
                         if "Net_PnL" in filtered.columns
@@ -742,7 +744,8 @@ class Reporter:
         if mask.sum() < 2:
             return float("nan")
         result = spearmanr(a[mask].values, b[mask].values)
-        stat = getattr(result, "statistic", None) or getattr(result, "correlation", float("nan"))
+        stat = getattr(result, "statistic", None) or getattr(
+            result, "correlation", float("nan"))
         return float(stat)
 
     def write_spearman_correlation_report(
@@ -842,7 +845,8 @@ class Reporter:
         # Step 5 — Build DataFrame
         df = pd.DataFrame(
             rows,
-            columns=["feature", "train_spearman", "validation_spearman", "test_spearman"],
+            columns=["feature", "train_spearman",
+                     "validation_spearman", "test_spearman"],
         )
 
         # Step 6 — Sort: abs(train_spearman) descending, then feature ascending (stable)
@@ -869,7 +873,8 @@ class Reporter:
         output_dir: str | None = None,
     ) -> list[str]:
         """Plot concurrent-positions histogram, time-between-trades histogram,
-        and annotated equity curve for each non-empty split.
+        and an equity curve annotated with trade entry / exit points for each
+        non-empty split.
 
         Parameters
         ----------
@@ -928,17 +933,25 @@ class Reporter:
                 self._ensure_dir(out_path)
 
             # Step 4a — Compute Concurrent_Open_Positions
-            max_idx = int(log["Release_Index"].max())
-            concurrent = [
-                int(
-                    ((log["Entry_Index"] <= idx) & (log["Release_Index"] > idx)).sum()
-                )
-                for idx in range(max_idx + 1)
-            ]
+            if "Release_Index" in log.columns and not log["Release_Index"].empty:
+                max_idx = int(log["Release_Index"].max())
+                concurrent = [
+                    int(
+                        ((log["Entry_Index"] <= idx) &
+                         (log["Release_Index"] > idx)).sum()
+                    )
+                    for idx in range(max_idx + 1)
+                ]
+            else:
+                concurrent = []
 
             # Step 4b — Compute Time_Between_Trades
-            sorted_log = log.sort_values("Entry_Index", kind="stable")
-            diffs = sorted_log["Entry_Index"].diff().dropna()
+            if "Entry_Index" in log.columns:
+                sorted_log = log.sort_values("Entry_Index", kind="stable")
+                diffs = sorted_log["Entry_Index"].diff().dropna()
+            else:
+                sorted_log = log
+                diffs = pd.Series(dtype=float)
 
             # Step 5 — Build 3-panel figure
             fig = plt.figure(figsize=(14, 10))
@@ -946,12 +959,16 @@ class Reporter:
                 f"Distribution & Equity — {split.capitalize()} / {direction.capitalize()}"
             )
 
-            ax_conc = fig.add_subplot(2, 2, 1)   # top-left: concurrent positions
-            ax_time = fig.add_subplot(2, 2, 2)   # top-right: time between trades
-            ax_eq   = fig.add_subplot(2, 1, 2)   # bottom: equity curve (full width)
+            # top-left: concurrent positions
+            ax_conc = fig.add_subplot(2, 2, 1)
+            # top-right: time between trades
+            ax_time = fig.add_subplot(2, 2, 2)
+            # bottom: equity curve (full width)
+            ax_eq = fig.add_subplot(2, 1, 2)
 
             # Concurrent positions histogram
-            ax_conc.hist(concurrent, bins="auto", color="#4C72B0", edgecolor="white")
+            ax_conc.hist(concurrent, bins="auto",
+                         color="#4C72B0", edgecolor="white")
             ax_conc.set_title("Concurrent Open Positions")
             ax_conc.set_xlabel("Concurrent Positions")
             ax_conc.set_ylabel("Frequency")
@@ -959,7 +976,8 @@ class Reporter:
 
             # Time-between-trades histogram
             if len(diffs) > 0:
-                ax_time.hist(diffs.values, bins="auto", color="#DD8452", edgecolor="white")
+                ax_time.hist(diffs.values, bins="auto",
+                             color="#DD8452", edgecolor="white")
             ax_time.set_title("Time Between Trades (candles)")
             ax_time.set_xlabel("Candles Between Entries")
             ax_time.set_ylabel("Frequency")
@@ -970,37 +988,45 @@ class Reporter:
             seq = np.arange(1, n_trades + 1)
             equity_vals = log["Equity_After"].values
 
-            ax_eq.plot(seq, equity_vals, color="tab:blue", linewidth=1.2, zorder=1)
+            ax_eq.plot(seq, equity_vals, color="tab:blue",
+                       linewidth=1.2, zorder=1)
+
+            if "Equity_Before_Entry" in log.columns:
+                entry_vals = log["Equity_Before_Entry"].values
+                ax_eq.vlines(
+                    seq,
+                    entry_vals,
+                    equity_vals,
+                    color="#A0A0A0",
+                    alpha=0.25,
+                    linewidth=0.8,
+                    zorder=1,
+                )
+                ax_eq.scatter(
+                    seq,
+                    entry_vals,
+                    marker="o",
+                    facecolors="none",
+                    edgecolors="#4C72B0",
+                    s=28,
+                    linewidths=0.9,
+                    zorder=3,
+                    label="Entry",
+                )
+
+            ax_eq.scatter(
+                seq,
+                equity_vals,
+                marker="x",
+                color="#C44E52",
+                s=30,
+                zorder=3,
+                label="Exit",
+            )
             ax_eq.set_title("Equity Curve")
             ax_eq.set_xlabel("Trade #")
             ax_eq.set_ylabel("Equity")
             ax_eq.grid(True, alpha=0.3)
-
-            # Step 5e — Annotate equity curve
-            net_pnl = log["Net_PnL"].values
-            win_mask  = net_pnl > 0
-            loss_mask = ~win_mask
-
-            if win_mask.any():
-                ax_eq.scatter(
-                    seq[win_mask],
-                    equity_vals[win_mask],
-                    marker="^",
-                    color="#55A868",
-                    s=30,
-                    zorder=2,
-                    label="Win",
-                )
-            if loss_mask.any():
-                ax_eq.scatter(
-                    seq[loss_mask],
-                    equity_vals[loss_mask],
-                    marker="v",
-                    color="#C44E52",
-                    s=30,
-                    zorder=2,
-                    label="Loss",
-                )
             ax_eq.legend(loc="best")
 
             fig.tight_layout()
@@ -1142,7 +1168,8 @@ class Reporter:
 
                 # Get unique non-NaN string values in this feature column
                 raw_vals = dataset[feat_name].dropna()
-                fuzzy_values = [v for v in raw_vals.unique() if isinstance(v, str)]
+                fuzzy_values = [
+                    v for v in raw_vals.unique() if isinstance(v, str)]
 
                 if not fuzzy_values:
                     continue
@@ -1173,19 +1200,22 @@ class Reporter:
                     # total_return_pct
                     if _cfg.INITIAL_CAPITAL != 0:
                         total_return_pct = float(
-                            stratum["Net_PnL"].sum() / _cfg.INITIAL_CAPITAL * 100
+                            stratum["Net_PnL"].sum() /
+                            _cfg.INITIAL_CAPITAL * 100
                         )
                     else:
                         total_return_pct = 0.0
 
                     # win_rate
-                    win_rate = float((stratum["Net_PnL"] > 0).sum()) / num_trades
+                    win_rate = float(
+                        (stratum["Net_PnL"] > 0).sum()) / num_trades
 
                     # sharpe_ratio: mean(r) / std(r, ddof=1) where r = Net_PnL / Equity_Before_Entry
                     sharpe_ratio = 0.0
                     if num_trades >= 2:
                         try:
-                            r = stratum["Net_PnL"] / stratum["Equity_Before_Entry"]
+                            r = stratum["Net_PnL"] / \
+                                stratum["Equity_Before_Entry"]
                             std_r = r.std(ddof=1)
                             if std_r != 0 and not pd.isna(std_r):
                                 sharpe_ratio = float(r.mean() / std_r)
