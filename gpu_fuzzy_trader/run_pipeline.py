@@ -94,6 +94,7 @@ def _temporary_output_paths(output_dir: str | None):
     previous_state = {
         "cfg_outputs": _cfg.OUTPUTS_DIR,
         "cfg_reports": _cfg.REPORTS_DIR,
+        "cfg_run_log_path": _cfg.RUN_LOG_PATH,
         "pipeline_log_path": _PIPELINE_LOG_PATH,
         "selector_long": _selector_module._LONG_PATH,
         "selector_short": _selector_module._SHORT_PATH,
@@ -108,6 +109,7 @@ def _temporary_output_paths(output_dir: str | None):
     try:
         _cfg.OUTPUTS_DIR = output_root
         _cfg.REPORTS_DIR = reports_root
+        _cfg.RUN_LOG_PATH = os.path.join(output_root, "run.log")
         _PIPELINE_LOG_PATH = os.path.join(output_root, "pipeline.log")
 
         _selector_module._LONG_PATH = os.path.join(
@@ -149,6 +151,7 @@ def _temporary_output_paths(output_dir: str | None):
     finally:
         _cfg.OUTPUTS_DIR = previous_state["cfg_outputs"]
         _cfg.REPORTS_DIR = previous_state["cfg_reports"]
+        _cfg.RUN_LOG_PATH = previous_state["cfg_run_log_path"]
         _PIPELINE_LOG_PATH = previous_state["pipeline_log_path"]
         _selector_module._LONG_PATH = previous_state["selector_long"]
         _selector_module._SHORT_PATH = previous_state["selector_short"]
@@ -375,71 +378,86 @@ class Pipeline_Orchestrator:
             self._create_output_dirs()
 
             # ------------------------------------------------------------------
-            # Step 1: Load and prepare data
+            # Attach run.log FileHandler (must come after output dirs exist)
             # ------------------------------------------------------------------
-            train_df, val_df = self._load_and_split_data()
-            results["data"] = {
-                "train_rows": len(train_df),
-                "val_rows": len(val_df),
-            }
+            _run_log_handler = self._attach_run_log_handler()
+            _sep = "=" * 80
+            _start_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            _run_log_handler.stream.write(f"{_sep}\n[{_start_ts}] Pipeline run START\n{_sep}\n")
+            _run_log_handler.stream.flush()
 
-            # ------------------------------------------------------------------
-            # Phase 1: Feature Selection
-            # ------------------------------------------------------------------
-            phase1_result = self._run_phase1(train_df, force=force)
-            results["phase1"] = phase1_result
-            train_df = self._prune_train_df_after_phase1(
-                train_df, phase1_result)
-
-            # ------------------------------------------------------------------
-            # Phase 2: Rule Pool Generation
-            # ------------------------------------------------------------------
-            phase2_result = self._run_phase2(
-                train_df, phase1_result, force=force)
-            results["phase2"] = phase2_result
-
-            # Check if Phase 2 produced any rules; if not, skip Phases 3 and 4
-            long_pool = phase2_result.get("long", [])
-            short_pool = phase2_result.get("short", [])
-            pool_empty = (not long_pool) and (not short_pool)
-
-            if pool_empty:
-                logger.warning(
-                    "Phase 2 produced no rules for either direction. "
-                    "Skipping Phases 3 and 4."
-                )
-                results["phase3"] = {}
-                results["phase4"] = {}
-            else:
+            try:
                 # ------------------------------------------------------------------
-                # Phase 3: Rule Set Selection
+                # Step 1: Load and prepare data
                 # ------------------------------------------------------------------
-                phase3_result = self._run_phase3(
-                    train_df, val_df, phase2_result, force=force)
-                results["phase3"] = phase3_result
+                train_df, val_df = self._load_and_split_data()
+                results["data"] = {
+                    "train_rows": len(train_df),
+                    "val_rows": len(val_df),
+                }
 
                 # ------------------------------------------------------------------
-                # Phase 4: RL Risk Optimization
+                # Phase 1: Feature Selection
                 # ------------------------------------------------------------------
-                phase4_result = self._run_phase4(
-                    train_df, val_df, phase3_result, force=force)
-                results["phase4"] = phase4_result
+                phase1_result = self._run_phase1(train_df)
+                results["phase1"] = phase1_result
+                train_df = self._prune_train_df_after_phase1(
+                    train_df, phase1_result)
 
-            # ------------------------------------------------------------------
-            # Phase 5: Out-of-Sample Evaluation (always runs)
-            # ------------------------------------------------------------------
-            phase5_result = self._run_phase5()
-            results["phase5"] = phase5_result
+                # ------------------------------------------------------------------
+                # Phase 2: Rule Pool Generation
+                # ------------------------------------------------------------------
+                phase2_result = self._run_phase2(train_df, phase1_result)
+                results["phase2"] = phase2_result
 
-            # ------------------------------------------------------------------
-            # Summary
-            # ------------------------------------------------------------------
-            total_elapsed = time.monotonic() - pipeline_start
-            logger.info("=" * 60)
-            logger.info("Pipeline complete in %.2fs", total_elapsed)
-            logger.info("=" * 60)
+                # Check if Phase 2 produced any rules; if not, skip Phases 3 and 4
+                long_pool = phase2_result.get("long", [])
+                short_pool = phase2_result.get("short", [])
+                pool_empty = (not long_pool) and (not short_pool)
 
-            return results
+                if pool_empty:
+                    logger.warning(
+                        "Phase 2 produced no rules for either direction. "
+                        "Skipping Phases 3 and 4."
+                    )
+                    results["phase3"] = {}
+                    results["phase4"] = {}
+                else:
+                    # ------------------------------------------------------------------
+                    # Phase 3: Rule Set Selection
+                    # ------------------------------------------------------------------
+                    phase3_result = self._run_phase3(
+                        train_df, val_df, phase2_result)
+                    results["phase3"] = phase3_result
+
+                    # ------------------------------------------------------------------
+                    # Phase 4: RL Risk Optimization
+                    # ------------------------------------------------------------------
+                    phase4_result = self._run_phase4(
+                        train_df, val_df, phase3_result)
+                    results["phase4"] = phase4_result
+
+                # ------------------------------------------------------------------
+                # Phase 5: Out-of-Sample Evaluation (always runs)
+                # ------------------------------------------------------------------
+                phase5_result = self._run_phase5()
+                results["phase5"] = phase5_result
+
+                # ------------------------------------------------------------------
+                # Summary
+                # ------------------------------------------------------------------
+                total_elapsed = time.monotonic() - pipeline_start
+                logger.info("=" * 60)
+                logger.info("Pipeline complete in %.2fs", total_elapsed)
+                logger.info("=" * 60)
+
+                return results
+
+            finally:
+                _end_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                _run_log_handler.stream.write(f"{_sep}\n[{_end_ts}] Pipeline run END\n{_sep}\n")
+                _run_log_handler.stream.flush()
+                self._detach_run_log_handler(_run_log_handler)
 
     def run_phase(self, phase: int) -> dict:
         """
@@ -515,6 +533,27 @@ class Pipeline_Orchestrator:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _attach_run_log_handler(self) -> logging.FileHandler:
+        """Attach a FileHandler to the root logger writing to RUN_LOG_PATH.
+
+        Returns the handler so it can be detached later via
+        ``_detach_run_log_handler``.
+        """
+        os.makedirs(os.path.dirname(_cfg.RUN_LOG_PATH) or ".", exist_ok=True)
+        handler = logging.FileHandler(_cfg.RUN_LOG_PATH, mode="a", encoding="utf-8")
+        handler.setLevel(logging.DEBUG)
+        handler.setFormatter(logging.Formatter(
+            "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+            datefmt="%Y-%m-%dT%H:%M:%S",
+        ))
+        logging.getLogger().addHandler(handler)
+        return handler
+
+    def _detach_run_log_handler(self, handler: logging.FileHandler) -> None:
+        """Remove *handler* from the root logger and close it."""
+        logging.getLogger().removeHandler(handler)
+        handler.close()
 
     def _create_output_dirs(self) -> None:
         """Create outputs/ and outputs/reports/ directories if they don't exist."""

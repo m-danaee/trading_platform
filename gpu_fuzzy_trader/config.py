@@ -20,6 +20,7 @@ TEST_CSV_PATH = "data/test.csv"
 TRAIN_75_PATH = "data/train_75.parquet"
 VALIDATION_25_PATH = "data/validation_25.parquet"
 OUTPUTS_DIR = "outputs"
+RUN_LOG_PATH = os.path.join(OUTPUTS_DIR, "run.log")
 REPORTS_DIR = "outputs/reports"
 PHASE2_POOL_DIR = os.path.join(_PROJECT_ROOT, "pools")
 PHASE2_POOL_PATHS = {
@@ -134,9 +135,8 @@ LOG_GENERATION_INTERVAL = 0
 PHASE1_DISPERSION_THRESHOLD = 0.95
 PHASE1_TOP_K_FEATURES = 25
 PHASE1_MAX_FEATURE_OVERLAP = 0.50
-# Rows sampled per Phase 2 backtest engine (distributed across symbols).
-# Emergency RAM knob if OOM persists after df slimming: try 150_000.
-PHASE1_SAMPLING_TOTAL = 300_000
+# Primary memory control knob for Phase 2. Raising this value increases JAX device array size proportionally. On WSL with limited GPU memory, keep at or below 150_000.
+PHASE1_SAMPLING_TOTAL = 150_000
 
 # Emergency RAM knobs (last resort; prefer code slimming in df_slim.py):
 # PHASE2_POPULATION_SIZE = 100

@@ -906,6 +906,20 @@ class Rule_Pool_Generator:
             logger.warning(
                 "Reporter Phase 2 plots failed (non-fatal): %s", exc)
 
+        try:
+            saved = Rule_Pool_Generator.save_archive(
+                self.direction, self.feature_infos, pool
+            )
+            logger.info(
+                "Phase 2 [%s]: archive saved with %d rules to %s",
+                self.direction, len(saved), _ARCHIVE_PATHS[self.direction],
+            )
+        except Exception as exc:
+            logger.warning(
+                "Phase 2 [%s]: archive save failed (non-fatal): %s",
+                self.direction, exc,
+            )
+
         self._release_resources()
         return pool
 

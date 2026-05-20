@@ -552,13 +552,15 @@ def _run_nsga3(
         )
 
         n_alive = len(population)
-        metrics_cache = [{} for _ in range(n_alive)]
-        for i in range(n_alive):
-            key = tuple(population[i].tolist())
-            for j, m in enumerate(merge_metrics):
-                if m and tuple(merge_pop[j].tolist()) == key:
-                    metrics_cache[i] = m
-                    break
+        _merge_metrics_by_key: dict[tuple, dict] = {
+            tuple(merge_pop[j].tolist()): m
+            for j, m in enumerate(merge_metrics)
+            if m
+        }
+        metrics_cache = [
+            _merge_metrics_by_key.get(tuple(population[i].tolist()), {})
+            for i in range(n_alive)
+        ]
 
     metrics_by_chrom = _metrics_dict_from_population(population, metrics_cache)
     pareto_pool = _build_pool_from_archive(
