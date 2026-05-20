@@ -64,9 +64,9 @@ MIN_POSITION_NOTIONAL = 1.0
 # ---------------------------------------------------------------------------
 # Phase 2 Static Risk (isolates predictive alpha from risk tuning)
 # ---------------------------------------------------------------------------
-PHASE2_TP = 4.0
-PHASE2_SL = 2.0
-PHASE2_CAPITAL_PCT = 50.0
+PHASE2_TP = 2.0
+PHASE2_SL = 1.0
+PHASE2_CAPITAL_PCT = 48.0
 
 # ---------------------------------------------------------------------------
 # Phase 2 Rule Constraints
@@ -90,7 +90,7 @@ PHASE3_MIN_SYMBOL_COVERAGE = 7  # out of 10 symbols must have >= 1 trade
 PHASE3_USE_GPU = False  # set True after GPU rule-set batch parity tests pass
 PHASE3_REFINE_GENERATIONS = 40
 PHASE3_REFINE_POP_SIZE = 100
-PHASE3_GREEDY_WEIGHTS = (1.0, 0.7, 0.5)  # return, drawdown, win_rate
+PHASE3_GREEDY_WEIGHTS = (1.0, 0.7, 0.5)  # sortino, drawdown, win_rate
 
 # ---------------------------------------------------------------------------
 # Phase 2 MOME (deferred — future native 4×10 descriptor grid)
@@ -103,10 +103,10 @@ PHASE3_GREEDY_WEIGHTS = (1.0, 0.7, 0.5)  # return, drawdown, win_rate
 # Phase 4 RL Risk Optimization
 # ---------------------------------------------------------------------------
 PHASE4_RL_ALGORITHM = "DDPG"  # alternative: "PPO"
-PHASE4_TP_MIN = 1.0
-PHASE4_TP_MAX = 10.0
-PHASE4_SL_MIN = 0.5
-PHASE4_SL_MAX = 5.0
+PHASE4_TP_MIN = 2.0
+PHASE4_TP_MAX = 5.0
+PHASE4_SL_MIN = 1.0
+PHASE4_SL_MAX = 2.5
 PHASE4_CAPITAL_PCT_MIN = 10.0
 PHASE4_CAPITAL_PCT_MAX = 100.0
 PHASE4_TOTAL_TIMESTEPS = 500_000

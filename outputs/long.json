@@ -1,0 +1,28 @@
+{
+  "direction": "long",
+  "risk_optimized": true,
+  "rules_set": [
+    {
+      "conditions": [
+        "[range_compression_20_100] IS Very Low",
+        "[downside_semivol_20] IS Very High",
+        "[log_range_over_vol_100] IS Low",
+        "[bb_width_rel_20] IS Very High"
+      ],
+      "tp": 4.930294994129617,
+      "sl": 2.165181888772536,
+      "capital_pct": 92.90952881835628
+    },
+    {
+      "conditions": [
+        "[range_compression_20_100] IS Very Low",
+        "[roc_10] IS Extreme Bearish",
+        "[channel_pos_20] IS Low",
+        "[bb_width_rel_20] IS Very High"
+      ],
+      "tp": 4.936990860472345,
+      "sl": 1.050932843041066,
+      "capital_pct": 98.89636343089927
+    }
+  ]
+}

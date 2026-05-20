@@ -1,0 +1,37 @@
+{
+  "direction": "short",
+  "risk_optimized": true,
+  "rules_set": [
+    {
+      "conditions": [
+        "[range_compression_20_100] IS High",
+        "[mom_stoch_rsi_14_14_3] IS Very High",
+        "[cand_up_down_vol_ratio_20] IS Low"
+      ],
+      "tp": 4.996777733412772,
+      "sl": 1.0102176202634567,
+      "capital_pct": 94.93479519582428
+    },
+    {
+      "conditions": [
+        "[downside_semivol_20] IS Very High",
+        "[dmi_balance_14] IS Extreme Bullish",
+        "[cand_up_down_vol_ratio_20] IS Low"
+      ],
+      "tp": 4.116929753122612,
+      "sl": 2.0502972937922106,
+      "capital_pct": 99.79134616625365
+    },
+    {
+      "conditions": [
+        "[downside_semivol_20] IS Very High",
+        "[dmi_balance_14] IS Extreme Bullish",
+        "[volume_percentile_60] IS Medium",
+        "[close_location_value] IS Very Low"
+      ],
+      "tp": 4.926095517992337,
+      "sl": 1.3196650160827958,
+      "capital_pct": 29.176709661218137
+    }
+  ]
+}
