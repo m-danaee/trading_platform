@@ -333,6 +333,61 @@ class TestPipelineOrchestratorRun:
         assert result["data"]["train_rows"] == 200
         assert result["data"]["val_rows"] == 100
 
+    def test_run_force_true_propagates_to_phases(self, tmp_path):
+        train_df = _make_df()
+        val_df = _make_df()
+        orch = self._make_orch(tmp_path)
+        orch._create_output_dirs = MagicMock()
+        orch._load_and_split_data = MagicMock(return_value=(train_df, val_df))
+        orch._prune_train_df_after_phase1 = MagicMock(
+            side_effect=lambda df, _: df)
+        orch._run_phase1 = MagicMock(return_value={"long": [], "short": []})
+        orch._run_phase2 = MagicMock(
+            return_value={"long": _make_pool(2), "short": _make_pool(2)})
+        orch._run_phase3 = MagicMock(return_value={})
+        orch._run_phase4 = MagicMock(return_value={})
+        orch._run_phase5 = MagicMock(return_value={})
+
+        with patch.object(orch, "_attach_run_log_handler") as attach_mock:
+            attach_mock.return_value = MagicMock(stream=MagicMock())
+            orch.run(force=True)
+
+        orch._run_phase1.assert_called_once()
+        assert orch._run_phase1.call_args.kwargs.get("force") is True
+        orch._run_phase2.assert_called_once()
+        assert orch._run_phase2.call_args.kwargs.get("force") is True
+        orch._run_phase3.assert_called_once()
+        assert orch._run_phase3.call_args.kwargs.get("force") is True
+        orch._run_phase4.assert_called_once()
+        assert orch._run_phase4.call_args.kwargs.get("force") is True
+
+    def test_run_force_false_skips_phase2_when_pool_valid(self, tmp_path):
+        train_df = _make_df()
+        val_df = _make_df()
+        orch = self._make_orch(tmp_path)
+        orch._create_output_dirs = MagicMock()
+        orch._load_and_split_data = MagicMock(return_value=(train_df, val_df))
+        orch._prune_train_df_after_phase1 = MagicMock(
+            side_effect=lambda df, _: df)
+        orch._run_phase1 = MagicMock(return_value={"long": [], "short": []})
+        orch._run_phase3 = MagicMock(return_value={})
+        orch._run_phase4 = MagicMock(return_value={})
+        orch._run_phase5 = MagicMock(return_value={})
+
+        existing_pool = _make_pool(2)
+        with patch(
+            "gpu_fuzzy_trader.run_pipeline.Rule_Pool_Generator.skip_if_valid",
+            return_value=existing_pool,
+        ), patch(
+            "gpu_fuzzy_trader.run_pipeline.Rule_Pool_Generator.run",
+        ) as run_pool_mock, patch.object(
+            orch, "_attach_run_log_handler",
+        ) as attach_mock:
+            attach_mock.return_value = MagicMock(stream=MagicMock())
+            orch.run(force=False)
+
+        run_pool_mock.assert_not_called()
+
 
 class TestLoadAndSplitDataCache:
     def _make_orch(self, tmp_path) -> Pipeline_Orchestrator:
@@ -761,6 +816,14 @@ class TestMainEntryPoint:
             from gpu_fuzzy_trader.run_pipeline import main
             main()
         run_mock.assert_called_once_with(force=True)
+
+    def test_main_resume_passes_force_false(self, tmp_path):
+        run_mock = MagicMock(return_value={"phase5": {}})
+        with patch("gpu_fuzzy_trader.run_pipeline.Pipeline_Orchestrator.run",
+                   run_mock):
+            from gpu_fuzzy_trader.run_pipeline import main
+            main(["--resume"])
+        run_mock.assert_called_once_with(force=False)
 
     def test_main_runs_selected_phase(self, tmp_path):
         """main() should dispatch to run_phase() when --phase is provided."""

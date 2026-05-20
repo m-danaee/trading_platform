@@ -6,15 +6,14 @@ Top-level orchestrator for the GPU-Fuzzy Trading Pipeline.
 Execution order:
   1. Create output directories (outputs/, outputs/reports/)
   2. Load and prepare data (Data_Loader + Data_Splitter)
-  3. Phase 1: Feature_Selector (skip if valid outputs exist)
-  4. Phase 2: Rule_Pool_Generator for both directions (skip if valid outputs exist)
-  5. Phase 3: Rule_Set_Selector for both directions (skip if valid outputs exist)
-  6. Phase 4: RL_Agent for both directions (skip if valid outputs exist)
+  3. Phase 1: Feature_Selector
+  4. Phase 2: Rule_Pool_Generator for both directions
+  5. Phase 3: Rule_Set_Selector for both directions
+  6. Phase 4: RL_Agent for both directions
   7. Phase 5: OOS_Evaluator (always runs)
 
-Skip logic per phase:
-  - Validate output files before skipping.
-  - Re-run phase if validation fails.
+Default CLI (``python -m gpu_fuzzy_trader.run_pipeline``) always re-runs Phases 1–4.
+Pass ``--resume`` to skip phases whose on-disk outputs are already valid.
 
 Logging:
   - Log start time, end time, and elapsed duration for each phase.
@@ -399,7 +398,7 @@ class Pipeline_Orchestrator:
                 # ------------------------------------------------------------------
                 # Phase 1: Feature Selection
                 # ------------------------------------------------------------------
-                phase1_result = self._run_phase1(train_df)
+                phase1_result = self._run_phase1(train_df, force=force)
                 results["phase1"] = phase1_result
                 train_df = self._prune_train_df_after_phase1(
                     train_df, phase1_result)
@@ -407,7 +406,8 @@ class Pipeline_Orchestrator:
                 # ------------------------------------------------------------------
                 # Phase 2: Rule Pool Generation
                 # ------------------------------------------------------------------
-                phase2_result = self._run_phase2(train_df, phase1_result)
+                phase2_result = self._run_phase2(
+                    train_df, phase1_result, force=force)
                 results["phase2"] = phase2_result
 
                 # Check if Phase 2 produced any rules; if not, skip Phases 3 and 4
@@ -427,14 +427,14 @@ class Pipeline_Orchestrator:
                     # Phase 3: Rule Set Selection
                     # ------------------------------------------------------------------
                     phase3_result = self._run_phase3(
-                        train_df, val_df, phase2_result)
+                        train_df, val_df, phase2_result, force=force)
                     results["phase3"] = phase3_result
 
                     # ------------------------------------------------------------------
                     # Phase 4: RL Risk Optimization
                     # ------------------------------------------------------------------
                     phase4_result = self._run_phase4(
-                        train_df, val_df, phase3_result)
+                        train_df, val_df, phase3_result, force=force)
                     results["phase4"] = phase4_result
 
                 # ------------------------------------------------------------------
@@ -1189,12 +1189,17 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="Run only one phase instead of the full pipeline.",
     )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Skip phases 1–4 when valid outputs already exist (default: full rerun).",
+    )
 
     args = parser.parse_args([] if argv is None else argv)
     orchestrator = Pipeline_Orchestrator(output_dir=args.output)
     try:
         if args.phase is None:
-            results = orchestrator.run(force=True)
+            results = orchestrator.run(force=not args.resume)
         else:
             results = orchestrator.run_phase(args.phase)
 

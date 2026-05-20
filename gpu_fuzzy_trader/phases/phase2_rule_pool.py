@@ -630,6 +630,28 @@ def _merge_archive_entries(
     return [unique_entries[i] for i in selected[:max_size]]
 
 
+def _pool_seed_chromosomes(pool: list[dict]) -> np.ndarray | None:
+    """Extract deduplicated chromosomes from a Phase 2 pool for population seeding."""
+    if not pool:
+        return None
+
+    rows: list[np.ndarray] = []
+    seen: set[tuple[int, ...]] = set()
+    for entry in pool:
+        chrom = entry.get("chromosome")
+        if not isinstance(chrom, list) or not chrom:
+            continue
+        key = tuple(int(v) for v in chrom)
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append(np.asarray(chrom, dtype=np.int32))
+
+    if not rows:
+        return None
+    return np.vstack(rows)
+
+
 def _validate_archive_payload(
     payload: object,
     path: str,
@@ -854,21 +876,37 @@ class Rule_Pool_Generator:
             self.direction, _cfg.PHASE2_ALGORITHM,
         )
 
-        archive_state = self.load_archive(self.direction, self.feature_infos)
-        seed_chromosomes = None
-        if archive_state and archive_state["rules"]:
-            seed_chromosomes = np.asarray(
-                [entry["chromosome"] for entry in archive_state["rules"]],
-                dtype=np.int32,
+        previous_pool: list[dict] = []
+        try:
+            loaded_pool = Rule_Pool_Generator.load_pool(self.direction)
+            if loaded_pool:
+                previous_pool = loaded_pool
+        except ValueError:
+            logger.warning(
+                "Phase 2 [%s]: existing pool file invalid; starting without seeds",
+                self.direction,
+            )
+
+        seed_chromosomes = _pool_seed_chromosomes(previous_pool)
+        if seed_chromosomes is not None:
+            seed_slots = min(
+                self.pop_size,
+                max(1, int(round(
+                    self.pop_size * _cfg.PHASE2_ARCHIVE_SEED_FRACTION))),
+                len(seed_chromosomes),
             )
             logger.info(
-                "Phase 2 [%s]: seeding from archive with %d rules",
+                "Phase 2 [%s]: seeding %d/%d population slots (%.0f%%) from "
+                "pool with %d unique chromosomes",
                 self.direction,
-                len(archive_state["rules"]),
+                seed_slots,
+                self.pop_size,
+                _cfg.PHASE2_ARCHIVE_SEED_FRACTION * 100.0,
+                len(seed_chromosomes),
             )
 
         progress_tag = "Phase 2 [%s] NSGA-III" % self.direction
-        pool, history = run_phase2_evolution(
+        new_pool, history = run_phase2_evolution(
             feature_infos=self.feature_infos,
             engine=self._engine,
             pop_size=self.pop_size,
@@ -876,6 +914,15 @@ class Rule_Pool_Generator:
             rng=rng,
             log_tag=progress_tag,
             seed_chromosomes=seed_chromosomes,
+        )
+
+        pool = _merge_archive_entries(previous_pool + list(new_pool))
+        logger.info(
+            "Phase 2 [%s]: merged pool %d previous + %d new → %d retained",
+            self.direction,
+            len(previous_pool),
+            len(new_pool),
+            len(pool),
         )
 
         pool_path = _POOL_PATHS[self.direction]

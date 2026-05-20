@@ -100,23 +100,36 @@ On success, a short summary is printed to stdout. Structured timing is appended 
 
 ### Resume / skip behavior
 
-The default `python -m gpu_fuzzy_trader.run_pipeline` command always reruns Phases **1–5** into the default `outputs/` tree. Pass `--output DIR` if you want to write somewhere else. It does not skip a phase just because its output file already exists.
+The default `python -m gpu_fuzzy_trader.run_pipeline` command **always reruns Phases 1–4** (and Phase 5) into the default `outputs/` tree. Pass `--output DIR` if you want to write somewhere else.
+
+To skip phases whose outputs are already valid on disk, pass **`--resume`**:
+
+```bash
+python -m gpu_fuzzy_trader.run_pipeline --resume
+```
 
 To run a single phase, pass `--phase 1` through `--phase 5`. The selected phase will rerun, but it will not auto-run earlier phases, so its prerequisite artifacts must already exist on disk.
 
-Phase 2 still stores its pool/history files in the root-level `pools/` folder, and its archive remains in `phase2_rule_archive/`. Those files are persistent caches for the evolutionary search, not a reason for the default CLI to skip Phase 2.
+### Phase 2 pools (always runs on default CLI)
+
+Phase 2 **always** executes the full NSGA-III search on a default run. It does **not** skip because `pools/phase2_*_pool.json` already exists.
+
+- **Before evolution:** about `PHASE2_ARCHIVE_SEED_FRACTION` (default **35%**) of the population is seeded from chromosomes in the existing `pools/phase2_{long|short}_pool.json` file (if present).
+- **After evolution:** the saved pool merges the **best** rules from the previous pool and the new Pareto front (non-dominated ranking, capped by `PHASE2_ARCHIVE_MAX_SIZE`).
+
+`phase2_rule_archive/` is still updated after each Phase 2 run for long-term storage, but initial seeding uses **`pools/` only**, not the archive.
 
 To rebuild data or inspect a specific phase, delete the files for that phase manually or use the matching phase command:
 
 ```bash
-# Re-run everything from Phase 1
-rm -rf outputs/ data/train_75.parquet data/validation_25.parquet
+# Force fresh train/val split from CSV
+rm -f data/train_75.parquet data/validation_25.parquet
 
-# Re-run only Phase 2 (long)
-rm pools/phase2_long_pool.json pools/phase2_long_history.json
+# Re-run only Phase 2 (long) via single-phase mode
+python -m gpu_fuzzy_trader.run_pipeline --phase 2
 ```
 
-Phase 2 seeds about 35% of the initial population from the persistent archive when a compatible archive exists. Tune hyperparameters in `gpu_fuzzy_trader/config.py`.
+Tune Phase 2 hyperparameters in `gpu_fuzzy_trader/config.py` (`PHASE2_POPULATION_SIZE`, `PHASE2_GENERATIONS`, `PHASE2_ARCHIVE_SEED_FRACTION`, etc.).
 
 ---
 

@@ -35,9 +35,11 @@ from gpu_fuzzy_trader.phases.phase2_rule_pool import (
     _get_dont_cares,
     _hamming_distance,
     _init_population,
+    _merge_archive_entries,
     _mutate,
     _non_dominated_sort,
     _pareto_sortino_stats,
+    _pool_seed_chromosomes,
     _sample_df,
     _validate_pool_schema,
 )
@@ -363,6 +365,54 @@ class TestInitPopulation:
         )
         assert seed_matches == len(seeds)
         assert np.sum(np.all(pop == 5, axis=1)) == 7
+
+    def test_init_population_seeds_35_percent_of_pop_200(self):
+        fi = _make_feature_infos(["positive"] * 4)
+        seeds = np.array(
+            [
+                [
+                    i % 5,
+                    (i // 5) % 5,
+                    (i // 25) % 5,
+                    (i // 125) % 5,
+                ]
+                for i in range(80)
+            ],
+            dtype=np.int32,
+        )
+        rng = np.random.default_rng(7)
+        pop = _init_population(
+            200,
+            fi,
+            rng,
+            dont_care_prob=1.0,
+            seeded_chromosomes=seeds,
+            seed_fraction=_cfg.PHASE2_ARCHIVE_SEED_FRACTION,
+        )
+        expected_seed_slots = min(
+            200,
+            max(1, int(round(200 * _cfg.PHASE2_ARCHIVE_SEED_FRACTION))),
+            len(seeds),
+        )
+        assert expected_seed_slots == 70
+        dont_care = _get_dont_cares(fi)[0]
+        non_random_rows = int(np.sum(~np.all(pop == dont_care, axis=1)))
+        assert non_random_rows == expected_seed_slots
+
+
+class TestPoolSeedChromosomes:
+    def test_pool_seed_chromosomes_dedupes(self):
+        pool = [
+            {"chromosome": [0, 1, 2, 3]},
+            {"chromosome": [0, 1, 2, 3]},
+            {"chromosome": [1, 2, 3, 4]},
+        ]
+        arr = _pool_seed_chromosomes(pool)
+        assert arr is not None
+        assert arr.shape == (2, 4)
+
+    def test_pool_seed_chromosomes_empty_returns_none(self):
+        assert _pool_seed_chromosomes([]) is None
 
 
 # ---------------------------------------------------------------------------
@@ -760,11 +810,12 @@ class TestRulePoolGeneratorRun:
             m._POOL_PATHS.update(original_pool)
             m._HISTORY_PATHS.update(original_hist)
 
-    def test_run_uses_archive_seeds(self, tmp_path):
+    def test_run_uses_pool_seeds(self, tmp_path):
         import gpu_fuzzy_trader.phases.phase2_rule_pool as m
         original_pool = m._POOL_PATHS.copy()
         original_hist = m._HISTORY_PATHS.copy()
-        m._POOL_PATHS["long"] = str(tmp_path / "phase2_long_pool.json")
+        pool_path = str(tmp_path / "phase2_long_pool.json")
+        m._POOL_PATHS["long"] = pool_path
         m._HISTORY_PATHS["long"] = str(tmp_path / "phase2_long_history.json")
 
         class StubReporter:
@@ -788,7 +839,7 @@ class TestRulePoolGeneratorRun:
             captured["seed_chromosomes"] = seed_chromosomes
             return [
                 {
-                    "chromosome": [0, 1, 2, 3],
+                    "chromosome": [2, 3, 4, 0],
                     "conditions": ["[feat_0] IS Medium"],
                     "objectives": {
                         "sortino_ratio": 10.0,
@@ -798,21 +849,10 @@ class TestRulePoolGeneratorRun:
                     },
                     "executed_trades": 220,
                 },
-                {
-                    "chromosome": [1, 2, 3, 4],
-                    "conditions": ["[feat_0] IS Medium"],
-                    "objectives": {
-                        "sortino_ratio": 11.0,
-                        "total_return_pct": 11.0,
-                        "max_drawdown_pct": 3.0,
-                        "win_rate": 61.0,
-                    },
-                    "executed_trades": 230,
-                },
             ], [
                 {
                     "generation": 0,
-                    "pareto_size": 2,
+                    "pareto_size": 1,
                     "mean_f1": 0.0,
                     "mean_f2": 0.0,
                     "mean_f3": 0.0,
@@ -822,37 +862,34 @@ class TestRulePoolGeneratorRun:
                 }
             ]
 
+        previous_pool = [
+            {
+                "chromosome": [0, 1, 2, 3],
+                "conditions": ["[feat_0] IS Medium"],
+                "objectives": {
+                    "sortino_ratio": 12.0,
+                    "total_return_pct": 12.0,
+                    "max_drawdown_pct": 3.0,
+                    "win_rate": 61.0,
+                },
+                "executed_trades": 240,
+            },
+            {
+                "chromosome": [1, 2, 3, 4],
+                "conditions": ["[feat_0] IS Medium"],
+                "objectives": {
+                    "sortino_ratio": 11.0,
+                    "total_return_pct": 11.0,
+                    "max_drawdown_pct": 4.0,
+                    "win_rate": 60.0,
+                },
+                "executed_trades": 250,
+            },
+        ]
+
         try:
-            fi = _make_feature_infos(
-                ["positive", "positive", "positive", "positive"])
-            Rule_Pool_Generator.save_archive(
-                "long",
-                fi,
-                [
-                    {
-                        "chromosome": [0, 1, 2, 3],
-                        "conditions": ["[feat_0] IS Medium"],
-                        "objectives": {
-                            "sortino_ratio": 12.0,
-                            "total_return_pct": 12.0,
-                            "max_drawdown_pct": 3.0,
-                            "win_rate": 61.0,
-                        },
-                        "executed_trades": 240,
-                    },
-                    {
-                        "chromosome": [1, 2, 3, 4],
-                        "conditions": ["[feat_0] IS Medium"],
-                        "objectives": {
-                            "sortino_ratio": 11.0,
-                            "total_return_pct": 11.0,
-                            "max_drawdown_pct": 4.0,
-                            "win_rate": 60.0,
-                        },
-                        "executed_trades": 250,
-                    },
-                ],
-            )
+            with open(pool_path, "w", encoding="utf-8") as fh:
+                json.dump(previous_pool, fh)
 
             with patch(
                 "gpu_fuzzy_trader.evolution.evox_runner.run_phase2_evolution",
@@ -871,9 +908,46 @@ class TestRulePoolGeneratorRun:
                 [0, 1, 2, 3], dtype=np.int32))
             assert np.array_equal(captured["seed_chromosomes"][1], np.array(
                 [1, 2, 3, 4], dtype=np.int32))
+            chromosomes = {tuple(entry["chromosome"]) for entry in result}
+            assert (0, 1, 2, 3) in chromosomes
+            assert (2, 3, 4, 0) in chromosomes
         finally:
             m._POOL_PATHS.update(original_pool)
             m._HISTORY_PATHS.update(original_hist)
+
+    def test_run_merges_previous_and_new_pool(self, tmp_path):
+        import gpu_fuzzy_trader.phases.phase2_rule_pool as m
+
+        previous = [
+            {
+                "chromosome": [0, 1, 2, 3],
+                "conditions": [],
+                "objectives": {
+                    "sortino_ratio": 5.0,
+                    "max_drawdown_pct": 2.0,
+                    "win_rate": 55.0,
+                },
+                "executed_trades": 200,
+            },
+        ]
+        new_pool = [
+            {
+                "chromosome": [1, 2, 3, 4],
+                "conditions": [],
+                "objectives": {
+                    "sortino_ratio": 8.0,
+                    "max_drawdown_pct": 1.0,
+                    "win_rate": 60.0,
+                },
+                "executed_trades": 210,
+            },
+        ]
+        merged = _merge_archive_entries(previous + new_pool)
+        assert len(merged) == 2
+        assert {tuple(e["chromosome"]) for e in merged} == {
+            (0, 1, 2, 3),
+            (1, 2, 3, 4),
+        }
 
     def test_run_creates_pool_file(self, tmp_path):
         import gpu_fuzzy_trader.phases.phase2_rule_pool as m

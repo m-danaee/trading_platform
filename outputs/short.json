@@ -1,0 +1,38 @@
+{
+  "direction": "short",
+  "risk_optimized": true,
+  "rules_set": [
+    {
+      "conditions": [
+        "[downside_semivol_20] IS Very High",
+        "[realized_vol_20] IS Medium",
+        "[body_signed_to_tr] IS Bullish",
+        "[atr_pct_14] IS Very High"
+      ],
+      "tp": 3.304251634897271,
+      "sl": 1.5394846878664856,
+      "capital_pct": 42.144757214883874
+    },
+    {
+      "conditions": [
+        "[drawdown_from_peak_60] IS Very Low",
+        "[lower_wick_to_tr] IS High",
+        "[absret_ema_ratio_20_100] IS Very Low",
+        "[open_gap_atr_14] IS Weak Positive"
+      ],
+      "tp": 2.421435285759462,
+      "sl": 1.510816156646504,
+      "capital_pct": 47.61494326510497
+    },
+    {
+      "conditions": [
+        "[range_compression_20_100] IS Very High",
+        "[body_signed_to_tr] IS Weak Bullish",
+        "[macd_hist_atr] IS Weak Bullish"
+      ],
+      "tp": 4.400372704588397,
+      "sl": 1.1010055578731652,
+      "capital_pct": 46.191632876126306
+    }
+  ]
+}
