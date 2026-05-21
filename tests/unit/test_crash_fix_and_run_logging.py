@@ -343,16 +343,34 @@ class TestRunLogHandlerLifecycle:
     def _mock_all_phases(monkeypatch: pytest.MonkeyPatch) -> None:
         """Patch every phase method on Pipeline_Orchestrator to be a no-op."""
         from gpu_fuzzy_trader.run_pipeline import Pipeline_Orchestrator
+        from gpu_fuzzy_trader.data.purged_walk_forward import Purged_Walk_Forward
 
+        dummy_fold = (
+            pd.DataFrame({"symbol": ["S"], "datetime": [pd.Timestamp("2020-01-01")],
+                          "_symbol_bar_index": [0]}),
+            pd.DataFrame({"symbol": ["S"], "datetime": [pd.Timestamp("2020-01-02")],
+                          "_symbol_bar_index": [0]}),
+        )
+
+        # Patch PWF so run() gets valid folds
+        monkeypatch.setattr(
+            Purged_Walk_Forward, "split",
+            lambda self, df: [dummy_fold],
+        )
         monkeypatch.setattr(
             Pipeline_Orchestrator,
-            "_load_and_split_data",
-            lambda self: (pd.DataFrame(), pd.DataFrame()),
+            "_load_full_training_data",
+            lambda self: pd.DataFrame({"symbol": ["S"], "datetime": [pd.Timestamp("2020-01-01")]}),
         )
         monkeypatch.setattr(
             Pipeline_Orchestrator,
             "_run_phase1",
-            lambda self, train_df: {"long": [], "short": []},
+            lambda self, train_df, force: {"long": [], "short": []},
+        )
+        monkeypatch.setattr(
+            Pipeline_Orchestrator,
+            "_run_leakage_diagnostic",
+            lambda self, train_df, phase1_result: {"probe_detected": True, "message": "ok", "details": {}},
         )
         monkeypatch.setattr(
             Pipeline_Orchestrator,
@@ -362,7 +380,17 @@ class TestRunLogHandlerLifecycle:
         monkeypatch.setattr(
             Pipeline_Orchestrator,
             "_run_phase2",
-            lambda self, train_df, phase1_result: {"long": [], "short": []},
+            lambda self, train_df, phase1_result, force: {"long": [], "short": []},
+        )
+        monkeypatch.setattr(
+            Pipeline_Orchestrator,
+            "_run_phase3_folds",
+            lambda self, folds, phase2_result, force: {},
+        )
+        monkeypatch.setattr(
+            Pipeline_Orchestrator,
+            "_run_phase4",
+            lambda self, train_df, val_df, phase3_result, force: {},
         )
         monkeypatch.setattr(
             Pipeline_Orchestrator,
@@ -425,10 +453,10 @@ class TestRunLogHandlerLifecycle:
         monkeypatch.setattr(cfg, "OUTPUTS_DIR", str(tmp_path))
         monkeypatch.setattr(cfg, "REPORTS_DIR", str(tmp_path / "reports"))
 
-        # Make _load_and_split_data raise to simulate a mid-run crash
+        # Make _load_full_training_data raise to simulate a mid-run crash
         monkeypatch.setattr(
             Pipeline_Orchestrator,
-            "_load_and_split_data",
+            "_load_full_training_data",
             lambda self: (_ for _ in ()).throw(RuntimeError("simulated crash")),
         )
 

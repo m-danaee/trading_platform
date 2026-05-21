@@ -19,6 +19,7 @@ TRAIN_CSV_PATH = "data/train.csv"
 TEST_CSV_PATH = "data/test.csv"
 TRAIN_75_PATH = "data/train_75.parquet"
 VALIDATION_25_PATH = "data/validation_25.parquet"
+PWF_FOLDS_DIR = "outputs/folds"
 OUTPUTS_DIR = "outputs"
 RUN_LOG_PATH = os.path.join(OUTPUTS_DIR, "run.log")
 REPORTS_DIR = "outputs/reports"
@@ -140,6 +141,20 @@ PHASE1_TOP_K_FEATURES = 25
 PHASE1_MAX_FEATURE_OVERLAP = 0.50
 # Primary memory control knob for Phase 2. Raising this value increases JAX device array size proportionally. On WSL with limited GPU memory, keep at or below 150_000.
 PHASE1_SAMPLING_TOTAL = 150_000
+
+# ---------------------------------------------------------------------------
+# Purged Walk-Forward Validation
+# ---------------------------------------------------------------------------
+PWF_N_SPLITS = 5            # number of chronological folds per symbol
+PWF_PURGE_BARS = 288         # embargo window (bars) before each fold boundary
+PWF_MIN_TRAIN_FOLDS = 1      # minimum preceding folds required for a valid val split
+PWF_PERSIST_FOLDS = True     # persist fold parquet files to outputs/folds/
+
+# ---------------------------------------------------------------------------
+# Leakage Guardrail
+# ---------------------------------------------------------------------------
+LEAKAGE_GUARD_ENABLED = True
+LEAKAGE_GUARD_FEATURE_NAME = "_leakage_probe"
 
 # Emergency RAM knobs (last resort; prefer code slimming in df_slim.py):
 # PHASE2_POPULATION_SIZE = 100

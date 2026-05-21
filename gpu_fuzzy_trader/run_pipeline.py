@@ -45,6 +45,11 @@ from gpu_fuzzy_trader.phases.phase2_rule_pool import Rule_Pool_Generator
 from gpu_fuzzy_trader.features.selector import Feature_Selector
 from gpu_fuzzy_trader.data.splitter import Data_Splitter
 from gpu_fuzzy_trader.data.loader import Data_Loader
+from gpu_fuzzy_trader.data.purged_walk_forward import (
+    Purged_Walk_Forward,
+    validate_embargo,
+)
+from gpu_fuzzy_trader.validation.leakage_guard import Leakage_Guard, LeakageAlert
 from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.features import selector as _selector_module
 from gpu_fuzzy_trader.phases import phase2_rule_pool as _phase2_module
@@ -198,7 +203,8 @@ def _log_pipeline_config() -> None:
     logger.info(
         "Pipeline config: PHASE1 top_k=%d | PHASE2 algo=%s pop=%d gen=%d | "
         "PHASE3 refine pop=%d gen=%d gpu_batch=%s | "
-        "PHASE4 algo=%s timesteps=%d elbow_window=%d",
+        "PHASE4 algo=%s timesteps=%d elbow_window=%d | "
+        "PWF n_splits=%d purge_bars=%d | LEAKAGE guard=%s",
         _cfg.PHASE1_TOP_K_FEATURES,
         _cfg.PHASE2_ALGORITHM,
         _cfg.PHASE2_POPULATION_SIZE,
@@ -209,6 +215,9 @@ def _log_pipeline_config() -> None:
         _cfg.PHASE4_RL_ALGORITHM,
         _cfg.PHASE4_TOTAL_TIMESTEPS,
         _cfg.PHASE4_ELBOW_WINDOW,
+        _cfg.PWF_N_SPLITS,
+        _cfg.PWF_PURGE_BARS,
+        str(_cfg.LEAKAGE_GUARD_ENABLED),
     )
 
 
@@ -411,25 +420,73 @@ class Pipeline_Orchestrator:
                 # ------------------------------------------------------------------
                 # Step 1: Load and prepare data
                 # ------------------------------------------------------------------
-                train_df, val_df = self._load_and_split_data()
-                results["data"] = {
-                    "train_rows": len(train_df),
-                    "val_rows": len(val_df),
-                }
+                train_full_df = self._load_full_training_data()
+                results["data"] = {"train_full_rows": len(train_full_df)}
 
                 # ------------------------------------------------------------------
-                # Phase 1: Feature Selection
+                # Step 1b: Purged walk-forward folds
                 # ------------------------------------------------------------------
-                phase1_result = self._run_phase1(train_df, force=force)
+                pwf = Purged_Walk_Forward(
+                    n_splits=_cfg.PWF_N_SPLITS,
+                    purge_bars=_cfg.PWF_PURGE_BARS,
+                    min_train_folds=_cfg.PWF_MIN_TRAIN_FOLDS,
+                )
+                folds = pwf.split(train_full_df)
+                results["data"]["pwf_n_folds"] = len(folds)
+
+                if _cfg.PWF_PERSIST_FOLDS:
+                    pwf.persist_folds(
+                        folds, os.path.join(self._output_dir, "folds"))
+
+                # Validate embargo on all folds
+                embargo_report = validate_embargo(folds, _cfg.PWF_PURGE_BARS)
+                embargo_failures = sum(
+                    1 for v in embargo_report.values() if not v["pass"])
+                if embargo_failures > 0:
+                    logger.warning(
+                        "Embargo validation: %d fold(s) have potential "
+                        "violations (check diagnostics).", embargo_failures)
+                else:
+                    logger.info(
+                        "Embargo validation: all %d folds pass.", len(embargo_report))
+
+                results["data"]["embargo_diagnostics"] = embargo_report
+
+                if not folds:
+                    raise RuntimeError(
+                        "Purged walk-forward produced no valid folds. "
+                        "Check PWF_N_SPLITS and PWF_MIN_TRAIN_FOLDS config.")
+
+                # Fold report for diagnostics
+                fold_report = pwf.get_fold_report(folds)
+                logger.info("PWF fold report: %s", fold_report)
+
+                # ------------------------------------------------------------------
+                # Phase 1: Feature Selection on clean data (first fold train)
+                # Note: Phase 1 uses a single fold for feature ranking; the
+                # purged folds are primarily consumed by Phase 3 cross-fold
+                # selection and the Phase 1 leakage diagnostic.
+                # ------------------------------------------------------------------
+                first_train_df = folds[0][0]
+                phase1_result = self._run_phase1(first_train_df, force=force)
                 results["phase1"] = phase1_result
-                train_df = self._prune_train_df_after_phase1(
-                    train_df, phase1_result)
+
+                # ------------------------------------------------------------------
+                # Phase 1 diagnostic: leakage guardrail on a separate copy
+                # ------------------------------------------------------------------
+                leakage_report = self._run_leakage_diagnostic(
+                    first_train_df, phase1_result)
+                results["data"]["leakage_diagnostic"] = leakage_report
+                if not leakage_report.get("probe_detected", True):
+                    raise LeakageAlert(leakage_report.get("message", "unknown"))
+                first_train_df = self._prune_train_df_after_phase1(
+                    first_train_df, phase1_result)
 
                 # ------------------------------------------------------------------
                 # Phase 2: Rule Pool Generation
                 # ------------------------------------------------------------------
                 phase2_result = self._run_phase2(
-                    train_df, phase1_result, force=force)
+                    first_train_df, phase1_result, force=force)
                 results["phase2"] = phase2_result
 
                 # Check if Phase 2 produced any rules; if not, skip Phases 3 and 4
@@ -446,21 +503,21 @@ class Pipeline_Orchestrator:
                     results["phase4"] = {}
                 else:
                     # ------------------------------------------------------------------
-                    # Phase 3: Rule Set Selection
+                    # Phase 3: Rule Set Selection across purged folds
                     # ------------------------------------------------------------------
-                    phase3_result = self._run_phase3(
-                        train_df, val_df, phase2_result, force=force)
+                    phase3_result = self._run_phase3_folds(
+                        folds, phase2_result, force=force)
                     results["phase3"] = phase3_result
 
                     # ------------------------------------------------------------------
-                    # Phase 4: RL Risk Optimization
+                    # Phase 4: RL Risk Optimization (on first fold)
                     # ------------------------------------------------------------------
                     phase4_result = self._run_phase4(
-                        train_df, val_df, phase3_result, force=force)
+                        first_train_df, folds[0][1], phase3_result, force=force)
                     results["phase4"] = phase4_result
 
                 # ------------------------------------------------------------------
-                # Phase 5: Out-of-Sample Evaluation (always runs)
+                # Phase 5: Out-of-Sample Evaluation (always runs) — test.csv untouched
                 # ------------------------------------------------------------------
                 phase5_result = self._run_phase5()
                 results["phase5"] = phase5_result
@@ -673,6 +730,356 @@ class Pipeline_Orchestrator:
                 "Phase 5 requires Phase 4 optimized strategies for both directions. "
                 f"Missing or invalid: {', '.join(missing)}"
             )
+
+    def _load_full_training_data(self) -> pd.DataFrame:
+        """
+        Load train.csv without splitting.  The purged walk-forward splitter
+        handles partitioning later.
+
+        Returns
+        -------
+        pd.DataFrame
+            Full prepared training DataFrame.
+        """
+        cached = self._load_cached_full_if_fresh()
+        if cached is not None:
+            logger.info("Using cached full training data from %s", _cfg.TRAIN_75_PATH)
+            return cached
+
+        logger.info("Loading training data from %s …", _cfg.TRAIN_CSV_PATH)
+        loader = Data_Loader()
+        train_full = loader.load_dataset(_cfg.TRAIN_CSV_PATH)
+        logger.info(
+            "Loaded %d rows, %d symbols",
+            len(train_full),
+            train_full["symbol"].nunique() if "symbol" in train_full.columns else 0,
+        )
+
+        # Also persist the 75/25 split for backward compatibility
+        splitter = Data_Splitter()
+        splitter.split_and_persist(train_full)
+        return train_full
+
+    @staticmethod
+    def _load_cached_full_if_fresh() -> pd.DataFrame | None:
+        """Load cached full data when it is newer than the source CSV."""
+        csv_path = _cfg.TRAIN_CSV_PATH
+        train_path = _cfg.TRAIN_75_PATH
+
+        if not (os.path.exists(csv_path) and os.path.exists(train_path)):
+            return None
+
+        try:
+            csv_mtime = os.path.getmtime(csv_path)
+            cache_mtime = os.path.getmtime(train_path)
+        except OSError:
+            return None
+
+        if cache_mtime < csv_mtime:
+            return None
+
+        from gpu_fuzzy_trader.backtest.df_slim import downcast_numeric_df
+
+        # We need the FULL data, but the 75_25 split persists only train_75.
+        # For PWF we need the unsplit full data, so we can't use the cache
+        # unless we also persist a full copy.  Fall back to re-load.
+        return None
+
+    def _run_leakage_diagnostic(
+        self,
+        train_df: pd.DataFrame,
+        phase1_result: dict[str, list[dict]],
+    ) -> dict[str, Any]:
+        """
+        Run leakage guardrail diagnostic on a SEPARATE probe-injected copy.
+
+        Phase 1 runs on clean data first.  This diagnostic:
+          1. Injects ``_leakage_probe`` on a copy.
+          2. Runs ``select_features()`` per direction (does NOT persist).
+          3. Runs the diagnosis.
+          4. Re-writes the clean Phase 1 payloads to disk to guarantee
+             the persisted files are never contaminated by the probe.
+
+        Parameters
+        ----------
+        train_df : pd.DataFrame
+            Clean training data (first fold train).
+        phase1_result : dict[str, list[dict]]
+            Clean Phase 1 results to re-persist after the diagnostic.
+
+        Returns
+        -------
+        dict
+            The ``Leakage_Guard.diagnose()`` report dict.
+        """
+        guard = Leakage_Guard()
+        logger.info(
+            "Leakage diagnostic: injecting probe '%s' on separate copy ...",
+            guard.probe_name,
+        )
+
+        # ----- Run feature selection on probe-injected copy (no persistence) -----
+        try:
+            train_diag = guard.inject_probe(train_df)
+            selector = Feature_Selector()
+            diag_long = selector.select_features(train_diag, "long")
+            diag_short = selector.select_features(train_diag, "short")
+        except Exception as exc:
+            logger.error("Leakage diagnostic failed: %s", exc, exc_info=True)
+            # Still re-write clean payloads for safety
+            self._rewrite_phase1_outputs(phase1_result)
+            return {
+                "probe_detected": False,
+                "message": f"Leakage diagnostic crashed: {exc}",
+                "details": {},
+            }
+
+        report = guard.diagnose(diag_long, diag_short)
+
+        # ----- Re-write clean Phase 1 payloads (belts-and-suspenders) -----
+        self._rewrite_phase1_outputs(phase1_result)
+
+        return report
+
+    @staticmethod
+    def _rewrite_phase1_outputs(phase1_result: dict[str, list[dict]]) -> None:
+        """Re-write the persisted selected-features JSON with clean data."""
+        for direction in ("long", "short"):
+            out_path = _selector_module._DIRECTION_PATHS[direction]
+            payload = {
+                "direction": direction,
+                "features": phase1_result.get(direction, []),
+            }
+            os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+            with open(out_path, "w", encoding="utf-8") as fh:
+                json.dump(payload, fh, indent=2)
+        logger.debug("Phase 1 outputs re-written with clean features.")
+
+
+    def _run_phase3_folds(
+        self,
+        folds: list[tuple[pd.DataFrame, pd.DataFrame]],
+        phase2_result: dict[str, list[dict]],
+        force: bool = False,
+    ) -> dict[str, dict]:
+        """
+        Run Phase 3 across multiple purged walk-forward folds.
+
+        Generates candidate rule sets on fold 0, then selects the best
+        candidate by aggregating performance across ALL purged folds.
+
+        Parameters
+        ----------
+        folds : list[tuple[pd.DataFrame, pd.DataFrame]]
+            Purged walk-forward fold pairs.
+        phase2_result : dict[str, list[dict]]
+            Phase 2 pools.
+        force : bool
+
+        Returns
+        -------
+        dict[str, dict]
+            Best rule sets per direction.
+        """
+        from gpu_fuzzy_trader.phases.phase3_rule_set import (
+            select_best_cross_fold,
+            _build_output_dict,
+            _rule_set_to_engine_format,
+        )
+
+        phase_name = "Phase 3: Rule Set Selection (PWF folds)"
+        start_ts = _now_iso()
+        t0 = time.monotonic()
+
+        if not force:
+            existing = Rule_Set_Selector.skip_if_valid()
+            if existing is not None:
+                long_path = os.path.join(_cfg.OUTPUTS_DIR, "long.json")
+                short_path = os.path.join(_cfg.OUTPUTS_DIR, "short.json")
+                logger.info(
+                    "Skipping %s: valid rule sets at %s and %s (%s)",
+                    phase_name, long_path, short_path,
+                    ", ".join(
+                        "%s=%d rules" % (d, len(rs.get("rules_set", [])))
+                        for d, rs in existing.items()
+                    ),
+                )
+                elapsed = time.monotonic() - t0
+                _log_phase_entry(
+                    self._log_path, phase_name, start_ts, _now_iso(),
+                    elapsed, skipped=True,
+                    result_summary={
+                        d: len(rs.get("rules_set", []))
+                        for d, rs in existing.items()
+                    },
+                )
+                return existing
+
+        rule_sets: dict[str, dict] = {}
+
+        for direction in ("long", "short"):
+            dir_phase_name = f"{phase_name} [{direction}]"
+            dir_start_ts = _now_iso()
+            dir_t0 = time.monotonic()
+
+            pool = phase2_result.get(direction, [])
+            if not pool:
+                logger.warning(
+                    "Phase 3 [%s]: empty pool; skipping.", direction)
+                continue
+
+            # Enrich pool entries
+            enriched_pool = [
+                {
+                    "conditions": entry["conditions"],
+                    "tp": float(entry.get("tp", _cfg.PHASE2_TP)),
+                    "sl": float(entry.get("sl", _cfg.PHASE2_SL)),
+                    "capital_pct": float(
+                        entry.get("capital_pct", _cfg.PHASE2_CAPITAL_PCT)),
+                }
+                for entry in pool
+            ]
+
+            # Generate candidates on fold 0's train/val
+            primary_train, primary_val = folds[0]
+            logger.info(
+                "Running %s … (pool_size=%d, n_pwf_folds=%d)",
+                dir_phase_name, len(enriched_pool), len(folds),
+            )
+
+            try:
+                selector = Rule_Set_Selector(
+                    train_df=primary_train,
+                    val_df=primary_val,
+                    pool=enriched_pool,
+                    direction=direction,
+                )
+                candidates = selector.build_pareto_candidates()
+                logger.info(
+                    "Phase 3 [%s]: %d Pareto candidates from fold 0",
+                    direction, len(candidates),
+                )
+            except Exception as exc:
+                logger.error(
+                    "Phase 3 [%s] candidate generation failed: %s",
+                    direction, exc, exc_info=True,
+                )
+                rule_set = None
+                candidates = []
+
+            if not candidates:
+                dir_elapsed = time.monotonic() - dir_t0
+                _log_phase_entry(
+                    self._log_path, dir_phase_name, dir_start_ts, _now_iso(),
+                    dir_elapsed, skipped=False,
+                    result_summary={"error": "no candidates"},
+                )
+                continue
+
+            # Select best candidate using cross-fold aggregated Sortino
+            best_candidate = select_best_cross_fold(
+                candidates, folds, direction)
+
+            output_dict = _build_output_dict(best_candidate, direction)
+
+            # Persist
+            os.makedirs(_cfg.OUTPUTS_DIR, exist_ok=True)
+            output_path = os.path.join(_cfg.OUTPUTS_DIR, f"{direction}.json")
+            with open(output_path, "w", encoding="utf-8") as fh:
+                json.dump(output_dict, fh, indent=2)
+
+            logger.info(
+                "Phase 3 [%s]: selected %d rules via cross-fold aggregation "
+                "(%d candidates × %d folds), saved to %s",
+                direction, len(output_dict["rules_set"]),
+                len(candidates), len(folds), output_path,
+            )
+
+            # Cross-fold report for diagnostics
+            self._log_cross_fold_metrics(
+                folds, output_dict, direction, enriched_pool)
+
+            rule_sets[direction] = output_dict
+
+            dir_elapsed = time.monotonic() - dir_t0
+            _log_phase_entry(
+                self._log_path, dir_phase_name, dir_start_ts, _now_iso(),
+                dir_elapsed, skipped=False,
+                result_summary={
+                    "rules": len(output_dict.get("rules_set", [])),
+                    "n_folds": len(folds),
+                },
+            )
+
+        elapsed = time.monotonic() - t0
+        _log_phase_entry(
+            self._log_path, phase_name, start_ts, _now_iso(),
+            elapsed, skipped=False,
+            result_summary={
+                d: len(rs.get("rules_set", []))
+                for d, rs in rule_sets.items()
+            },
+        )
+        return rule_sets
+
+    def _log_cross_fold_metrics(
+        self,
+        folds: list[tuple[pd.DataFrame, pd.DataFrame]],
+        rule_set: dict,
+        direction: str,
+        pool: list[dict],
+    ) -> None:
+        """Evaluate the selected rule set on all purged folds and log metrics."""
+        from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
+
+        fold_metrics: list[dict] = []
+        for fi, (train_df, val_df) in enumerate(folds):
+            try:
+                engine = CPUBacktestEngine(val_df, {}, direction)
+                metrics = engine.simulate_rule_set(
+                    rule_set.get("rules_set", []))
+                fold_metrics.append({
+                    "fold": fi,
+                    "sortino": metrics.get("sortino_ratio", 0.0),
+                    "drawdown": metrics.get("max_drawdown_pct", 100.0),
+                    "win_rate": metrics.get("win_rate", 0.0),
+                    "trades": metrics.get("executed_trades", 0),
+                    "return_pct": metrics.get("total_return_pct", 0.0),
+                })
+            except Exception as exc:
+                logger.debug(
+                    "Cross-fold eval failed for fold %d: %s", fi, exc)
+                fold_metrics.append({
+                    "fold": fi,
+                    "sortino": 0.0,
+                    "drawdown": 100.0,
+                    "win_rate": 0.0,
+                    "trades": 0,
+                    "return_pct": 0.0,
+                })
+
+        if fold_metrics:
+            avg_sortino = sum(
+                m["sortino"] for m in fold_metrics) / len(fold_metrics)
+            avg_dd = sum(m["drawdown"] for m in fold_metrics) / len(fold_metrics)
+            avg_wr = sum(m["win_rate"] for m in fold_metrics) / len(fold_metrics)
+            logger.info(
+                "Phase 3 [%s] cross-fold (n=%d): avg sortino=%.3f, "
+                "avg dd=%.1f%%, avg wr=%.3f",
+                direction, len(fold_metrics), avg_sortino, avg_dd, avg_wr,
+            )
+
+        # Write cross-fold report to outputs/folds/cross_fold_{direction}.json
+        report_path = os.path.join(
+            self._output_dir, "folds", f"cross_fold_{direction}.json")
+        os.makedirs(os.path.dirname(report_path), exist_ok=True)
+        report = {
+            "direction": direction,
+            "n_folds": len(fold_metrics),
+            "fold_metrics": fold_metrics,
+        }
+        with open(report_path, "w", encoding="utf-8") as fh:
+            json.dump(report, fh, indent=2)
 
     def _load_and_split_data(self) -> tuple[pd.DataFrame, pd.DataFrame]:
         """

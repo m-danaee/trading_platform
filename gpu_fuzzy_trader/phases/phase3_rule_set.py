@@ -711,6 +711,86 @@ def _select_best_from_pareto(
 
 
 # ---------------------------------------------------------------------------
+# Cross-fold aggregated selection
+# ---------------------------------------------------------------------------
+
+def select_best_cross_fold(
+    candidates: list[list[dict]],
+    folds: list[tuple[pd.DataFrame, pd.DataFrame]],
+    direction: str,
+) -> list[dict]:
+    """
+    Select the best candidate by aggregating validation performance across
+    all purged walk-forward folds.
+
+    For each candidate rule set, evaluate on every fold's validation window,
+    compute the mean Sortino ratio across folds, and pick the candidate with
+    the highest cross-fold average Sortino.
+
+    Parameters
+    ----------
+    candidates : list[list[dict]]
+        Pareto-front candidates from ``Rule_Set_Selector.build_pareto_candidates()``.
+    folds : list[tuple[pd.DataFrame, pd.DataFrame]]
+        Purged walk-forward fold pairs (train_df, val_df).
+    direction : str
+        "long" or "short".
+
+    Returns
+    -------
+    list[dict]
+        The best candidate rule set (pool-format list of rule dicts).
+    """
+    from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
+
+    best_candidate = candidates[0] if candidates else []
+    best_avg_sortino = -np.inf
+
+    for cand_i, cand in enumerate(candidates):
+        engine_fmt = _rule_set_to_engine_format(cand)
+        fold_sortinos: list[float] = []
+        fold_trades: list[int] = []
+
+        for fi, (_train_df, val_df) in enumerate(folds):
+            try:
+                engine = CPUBacktestEngine(val_df, {}, direction)
+                metrics = engine.simulate_rule_set(engine_fmt)
+                s = float(metrics.get(
+                    "sortino_ratio",
+                    metrics.get("total_return_pct", 0.0),
+                ))
+                t = int(metrics.get("executed_trades", 0))
+                fold_sortinos.append(s)
+                fold_trades.append(t)
+            except Exception as exc:
+                logger.debug(
+                    "Cross-fold candidate %d fold %d failed: %s", cand_i, fi, exc)
+                fold_sortinos.append(0.0)
+                fold_trades.append(0)
+
+        if not fold_sortinos:
+            continue
+
+        avg_sortino = float(np.mean(fold_sortinos))
+        total_trades = sum(fold_trades)
+
+        # Penalise candidates with zero or very few trades
+        if total_trades == 0:
+            avg_sortino = -np.inf
+
+        if avg_sortino > best_avg_sortino:
+            best_avg_sortino = avg_sortino
+            best_candidate = cand
+
+    logger.info(
+        "Cross-fold selection: %d candidates evaluated on %d folds, "
+        "best avg Sortino=%.4f",
+        len(candidates), len(folds), best_avg_sortino,
+    )
+    return best_candidate
+
+
+# ---------------------------------------------------------------------------
 # Output serialisation
 # ---------------------------------------------------------------------------
 
@@ -807,17 +887,17 @@ class Rule_Set_Selector:
     # Public API
     # ------------------------------------------------------------------
 
-    def run(self) -> dict:
+    def build_pareto_candidates(self) -> list[list[dict]]:
         """
-        Run greedy construction and Pareto refinement.
-
-        Returns the best rule set dict (evaluator_v3.ipynb compatible format).
-        Also persists to outputs/{direction}.json.
+        Run greedy construction and Pareto refinement, returning the raw
+        Pareto front of rule-set candidates.  Does NOT call
+        ``_select_best_from_pareto`` — the caller is responsible for
+        selecting the best candidate (e.g. via cross-fold aggregation).
 
         Returns
         -------
-        dict
-            {"direction": ..., "rules_set": [...]}
+        list[list[dict]]
+            Pareto-front candidates, each a list of rule dicts.
         """
         logger.info(
             "Phase 3 [%s]: pool=%d, refine_pop=%d, refine_gen=%d, gpu_batch=%s",
@@ -838,9 +918,9 @@ class Rule_Set_Selector:
         )
         logger.info(
             "Phase 3 [%s]: greedy done (%d evals), refining...",
-            self.direction,
-            n_greedy_evals,
+            self.direction, n_greedy_evals,
         )
+
         initial_pop = _seed_population_from_greedy(
             greedy_set,
             self.pool,
@@ -851,7 +931,7 @@ class Rule_Set_Selector:
         )
 
         refine_tag = "Phase 3 [%s] refine" % self.direction
-        pareto_rule_sets, history = _run_nsga2_combinatorial(
+        pareto_rule_sets, _history = _run_nsga2_combinatorial(
             pool=self.pool,
             val_engine=self._val_engine,
             train_engine=self._train_engine,
@@ -865,21 +945,33 @@ class Rule_Set_Selector:
             log_tag=refine_tag,
         )
         logger.info(
-            "Phase 3 [%s]: refine complete, pareto_front=%d rule sets",
+            "Phase 3 [%s]: refine complete, pareto_front=%d candidates",
             self.direction, len(pareto_rule_sets),
         )
 
         if not pareto_rule_sets:
-            # Fallback: use first min_rules rules from pool
-            logger.warning(
-                "Phase 3 [%s]: Pareto front empty, using first %d pool rules.",
-                self.direction, _cfg.PHASE3_MIN_RULES,
-            )
-            best_rule_set = self.pool[: _cfg.PHASE3_MIN_RULES]
-        else:
-            best_rule_set = _select_best_from_pareto(
-                pareto_rule_sets, self._val_engine, self._train_engine
-            )
+            pareto_rule_sets = [self.pool[:_cfg.PHASE3_MIN_RULES]]
+
+        return pareto_rule_sets
+
+    def run(self) -> dict:
+        """
+        Run greedy construction, Pareto refinement, and select best.
+
+        Delegates to ``build_pareto_candidates()`` + single-fold selection.
+        For cross-fold aggregation use ``build_pareto_candidates()`` then
+        ``select_best_cross_fold()``.
+
+        Returns
+        -------
+        dict
+            {"direction": ..., "rules_set": [...]}
+        """
+        pareto_rule_sets = self.build_pareto_candidates()
+
+        best_rule_set = _select_best_from_pareto(
+            pareto_rule_sets, self._val_engine, self._train_engine
+        )
 
         output_dict = _build_output_dict(best_rule_set, self.direction)
 
