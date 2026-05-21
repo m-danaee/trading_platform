@@ -68,6 +68,10 @@ trading_platform/
 │   ├── pipeline.log                       # JSON-lines phase timing log
 │   ├── selected_features_long.json        # Phase 1: long features
 │   ├── selected_features_short.json       # Phase 1: short features
+│   ├── phase2_long_pool.json              # Phase 2: Pareto-front rule pool (long) — per-run
+│   ├── phase2_short_pool.json             # Phase 2: Pareto-front rule pool (short) — per-run
+│   ├── phase2_long_history.json           # Phase 2: per-generation metrics (long)
+│   ├── phase2_short_history.json          # Phase 2: per-generation metrics (short)
 │   ├── long.json                          # Phase 3/4: final long strategy
 │   ├── short.json                         # Phase 3/4: final short strategy
 │   └── reports/                           # Visual reports
@@ -80,12 +84,6 @@ trading_platform/
 │       ├── train_per_symbol_performance.csv  # Per-symbol metrics
 │       ├── validation_per_symbol_performance.csv
 │       └── test_per_symbol_performance.csv
-│
-├── pools/                                 # Persistent Phase 2 outputs (project root)
-│   ├── phase2_long_pool.json              # Pareto-front rule pool (long)
-│   ├── phase2_short_pool.json             # Pareto-front rule pool (short)
-│   ├── phase2_long_history.json           # Per-generation metrics (long)
-│   └── phase2_short_history.json          # Per-generation metrics (short)
 │
 ├── phase2_rule_archive/                   # Persistent Phase 2 archive (project root)
 │   ├── phase2_long_archive.json           # Best-rule archive (long)
@@ -139,7 +137,9 @@ trading_platform/
 ### Data Files
 - `{direction}.json` - Final strategy files (long.json, short.json)
 - `selected_features_{direction}.json` - Phase 1 feature selections
-- `phase2_{direction}_{type}.json` - Phase 2 outputs (pool, history, archive)
+- `phase2_{direction}_pool.json` - Phase 2 pool (per-run, in outputs/)
+- `phase2_{direction}_history.json` - Phase 2 history (per-run, in outputs/)
+- `phase2_{direction}_archive.json` - Phase 2 archive (persistent, in project root)
 - `train_75.parquet`, `validation_25.parquet` - Split data files
 
 ### Report Files
@@ -154,8 +154,8 @@ trading_platform/
 ## Path Management Rules
 
 1. **Project root as working directory** - All paths in config.py are relative to project root
-2. **Absolute paths for persistence** - Phase 2 pools/archives use `_PROJECT_ROOT` for absolute paths
-3. **Output directory separation** - `outputs/` is per-run, `pools/` and `phase2_rule_archive/` are persistent
+2. **Absolute paths for persistence** - Phase 2 archive uses `_PROJECT_ROOT` for absolute paths
+3. **Output directory separation** - `outputs/` is per-run (includes pool files), `phase2_rule_archive/` is persistent in project root
 4. **Data directory isolation** - Raw data in `data/`, processed splits also in `data/`
 
 ## Import Patterns

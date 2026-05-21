@@ -22,14 +22,16 @@ VALIDATION_25_PATH = "data/validation_25.parquet"
 OUTPUTS_DIR = "outputs"
 RUN_LOG_PATH = os.path.join(OUTPUTS_DIR, "run.log")
 REPORTS_DIR = "outputs/reports"
-PHASE2_POOL_DIR = os.path.join(_PROJECT_ROOT, "pools")
+# Phase 2 pool files now live in the run-specific output directory
+# (set dynamically by run_pipeline.py via _temporary_output_paths)
+PHASE2_POOL_DIR = OUTPUTS_DIR  # Will be overridden at runtime
 PHASE2_POOL_PATHS = {
-    "long": os.path.join(PHASE2_POOL_DIR, "phase2_long_pool.json"),
-    "short": os.path.join(PHASE2_POOL_DIR, "phase2_short_pool.json"),
+    "long": os.path.join(OUTPUTS_DIR, "phase2_long_pool.json"),
+    "short": os.path.join(OUTPUTS_DIR, "phase2_short_pool.json"),
 }
 PHASE2_HISTORY_PATHS = {
-    "long": os.path.join(PHASE2_POOL_DIR, "phase2_long_history.json"),
-    "short": os.path.join(PHASE2_POOL_DIR, "phase2_short_history.json"),
+    "long": os.path.join(OUTPUTS_DIR, "phase2_long_history.json"),
+    "short": os.path.join(OUTPUTS_DIR, "phase2_short_history.json"),
 }
 PHASE2_ARCHIVE_DIR = os.path.join(_PROJECT_ROOT, "phase2_rule_archive")
 PHASE2_ARCHIVE_PATHS = {

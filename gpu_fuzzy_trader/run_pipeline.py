@@ -94,10 +94,14 @@ def _temporary_output_paths(output_dir: str | None):
         "cfg_outputs": _cfg.OUTPUTS_DIR,
         "cfg_reports": _cfg.REPORTS_DIR,
         "cfg_run_log_path": _cfg.RUN_LOG_PATH,
+        "cfg_phase2_pool_paths": _cfg.PHASE2_POOL_PATHS.copy(),
+        "cfg_phase2_history_paths": _cfg.PHASE2_HISTORY_PATHS.copy(),
         "pipeline_log_path": _PIPELINE_LOG_PATH,
         "selector_long": _selector_module._LONG_PATH,
         "selector_short": _selector_module._SHORT_PATH,
         "selector_paths": _selector_module._DIRECTION_PATHS,
+        "phase2_pool_paths": _phase2_module._POOL_PATHS.copy(),
+        "phase2_history_paths": _phase2_module._HISTORY_PATHS.copy(),
         "phase3_output_paths": _phase3_module._OUTPUT_PATHS,
         "phase4_output_paths": _phase4_module._OUTPUT_PATHS,
         "phase5_strategy_paths": _phase5_module._STRATEGY_PATHS,
@@ -111,6 +115,16 @@ def _temporary_output_paths(output_dir: str | None):
         _cfg.RUN_LOG_PATH = os.path.join(output_root, "run.log")
         _PIPELINE_LOG_PATH = os.path.join(output_root, "pipeline.log")
 
+        # Phase 2 pool files now in run-specific output directory
+        _cfg.PHASE2_POOL_PATHS = {
+            "long": os.path.join(output_root, "phase2_long_pool.json"),
+            "short": os.path.join(output_root, "phase2_short_pool.json"),
+        }
+        _cfg.PHASE2_HISTORY_PATHS = {
+            "long": os.path.join(output_root, "phase2_long_history.json"),
+            "short": os.path.join(output_root, "phase2_short_history.json"),
+        }
+
         _selector_module._LONG_PATH = os.path.join(
             output_root, "selected_features_long.json"
         )
@@ -121,6 +135,10 @@ def _temporary_output_paths(output_dir: str | None):
             "long": _selector_module._LONG_PATH,
             "short": _selector_module._SHORT_PATH,
         }
+
+        # Update phase2 module's cached paths
+        _phase2_module._POOL_PATHS = _cfg.PHASE2_POOL_PATHS.copy()
+        _phase2_module._HISTORY_PATHS = _cfg.PHASE2_HISTORY_PATHS.copy()
 
         _phase3_module._OUTPUT_PATHS = {
             "long": os.path.join(output_root, "long.json"),
@@ -151,10 +169,14 @@ def _temporary_output_paths(output_dir: str | None):
         _cfg.OUTPUTS_DIR = previous_state["cfg_outputs"]
         _cfg.REPORTS_DIR = previous_state["cfg_reports"]
         _cfg.RUN_LOG_PATH = previous_state["cfg_run_log_path"]
+        _cfg.PHASE2_POOL_PATHS = previous_state["cfg_phase2_pool_paths"]
+        _cfg.PHASE2_HISTORY_PATHS = previous_state["cfg_phase2_history_paths"]
         _PIPELINE_LOG_PATH = previous_state["pipeline_log_path"]
         _selector_module._LONG_PATH = previous_state["selector_long"]
         _selector_module._SHORT_PATH = previous_state["selector_short"]
         _selector_module._DIRECTION_PATHS = previous_state["selector_paths"]
+        _phase2_module._POOL_PATHS = previous_state["phase2_pool_paths"]
+        _phase2_module._HISTORY_PATHS = previous_state["phase2_history_paths"]
         _phase3_module._OUTPUT_PATHS = previous_state["phase3_output_paths"]
         _phase4_module._OUTPUT_PATHS = previous_state["phase4_output_paths"]
         _phase5_module._STRATEGY_PATHS = previous_state["phase5_strategy_paths"]

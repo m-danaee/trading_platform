@@ -217,9 +217,9 @@ dont_care_i = num_classes_i  (inactive condition)
 
 **Outputs:**
 
-- `pools/phase2_long_pool.json` / `pools/phase2_short_pool.json`
-- `pools/phase2_long_history.json` / `pools/phase2_short_history.json`
-- `phase2_rule_archive/phase2_long_archive.json` / `phase2_rule_archive/phase2_short_archive.json`
+- `outputs/phase2_long_pool.json` / `outputs/phase2_short_pool.json` (per-run, overwritten)
+- `outputs/phase2_long_history.json` / `outputs/phase2_short_history.json`
+- `phase2_rule_archive/phase2_long_archive.json` / `phase2_rule_archive/phase2_short_archive.json` (persistent)
 - `outputs/reports/phase2_long_metrics.png` / `outputs/reports/phase2_short_metrics.png`
 
 **Skip logic:** The `skip_if_valid()` helper can validate the pool files for programmatic use, but the default CLI full run forces Phase 2 to rerun. The root-level archive is persistent across output directories; compatible archived rules still seed part of the next Phase 2 population before the rest is initialized randomly.
@@ -403,7 +403,6 @@ All hyperparameters live in `gpu_fuzzy_trader/config.py`. Edit this file to tune
 | `VALIDATION_25_PATH` | `"data/validation_25.parquet"` | Auto-generated 25% split   |
 | `OUTPUTS_DIR`        | `"outputs"`                    | Root output directory      |
 | `REPORTS_DIR`        | `"outputs/reports"`            | Reports subdirectory       |
-| `PHASE2_POOL_DIR`    | `"pools"`                      | Root-level Phase 2 pools   |
 | `PHASE2_ARCHIVE_DIR` | `"phase2_rule_archive"`        | Root-level Phase 2 archive |
 
 ### Schema
@@ -481,6 +480,10 @@ outputs/
 ├── pipeline.log                          # JSON-lines phase timing log
 ├── selected_features_long.json           # Phase 1: selected features for long direction
 ├── selected_features_short.json          # Phase 1: selected features for short direction
+├── phase2_long_pool.json                 # Phase 2: Pareto-front rule pool (long) — per-run
+├── phase2_short_pool.json                # Phase 2: Pareto-front rule pool (short) — per-run
+├── phase2_long_history.json              # Phase 2: per-generation metrics (long)
+├── phase2_short_history.json             # Phase 2: per-generation metrics (short)
 ├── long.json                             # Phase 3/4: final long strategy
 ├── short.json                            # Phase 3/4: final short strategy
 └── reports/
@@ -500,13 +503,7 @@ outputs/
     ├── test_long_equity.png              # Phase 5: equity curve on test set (long)
     └── test_short_equity.png             # Phase 5: equity curve on test set (short)
 
-pools/
-├── phase2_long_pool.json                 # Phase 2: Pareto-front rule pool (long)
-├── phase2_short_pool.json                # Phase 2: Pareto-front rule pool (short)
-├── phase2_long_history.json              # Phase 2: per-generation metrics (long)
-└── phase2_short_history.json             # Phase 2: per-generation metrics (short)
-
-phase2_rule_archive/
+phase2_rule_archive/                      # Persistent across runs (project root)
 ├── phase2_long_archive.json              # Phase 2: persistent best-rule archive (long)
 └── phase2_short_archive.json             # Phase 2: persistent best-rule archive (short)
 ```

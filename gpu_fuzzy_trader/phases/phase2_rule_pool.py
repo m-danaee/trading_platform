@@ -56,6 +56,8 @@ def trade_support_penalty(executed: int) -> float:
 # Output paths
 # ---------------------------------------------------------------------------
 
+# These are set dynamically by run_pipeline._temporary_output_paths()
+# to support run-specific output directories
 _POOL_PATHS = {
     "long": _cfg.PHASE2_POOL_PATHS["long"],
     "short": _cfg.PHASE2_POOL_PATHS["short"],
@@ -64,6 +66,7 @@ _HISTORY_PATHS = {
     "long": _cfg.PHASE2_HISTORY_PATHS["long"],
     "short": _cfg.PHASE2_HISTORY_PATHS["short"],
 }
+# Archive stays persistent in project root (not run-specific)
 _ARCHIVE_PATHS = dict(_cfg.PHASE2_ARCHIVE_PATHS)
 
 # ---------------------------------------------------------------------------
