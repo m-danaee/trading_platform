@@ -77,14 +77,28 @@ PHASE2_CAPITAL_PCT = 48.0
 MIN_CONDITIONS = 3
 MAX_CONDITIONS = 4
 # minimum number of trades across all symbols (after applying condition filters)
-MIN_TRADE_SUPPORT = 150
-SUPPORT_PENALTY_MAX = 10.0
-MIN_TRADE_POOL_FLOOR = 38  # archive hard filter (~ MIN // 2)
+# Raised from 150 → 300 (~3 trades per symbol per month over 8 months) to drop
+# noisy rules; pool analysis showed 14/18 long rules below 150.
+MIN_TRADE_SUPPORT = 300
+# Raised from 10 → 50 so the support penalty actually dominates noisy Sortino.
+SUPPORT_PENALTY_MAX = 50.0
+# Hard rejection floor for archive entries (~ MIN_TRADE_SUPPORT // 4).
+MIN_TRADE_POOL_FLOOR = 75
 
-# Maximum Sortino ratio (prevents sentinel-driven Pareto distortion)
-SORTINO_CAP = 10.0
+# Saturating Sortino transform (used in evaluation): tanh(sortino / SORTINO_SCALE) * SORTINO_CAP.
+# The previous flat cap pinned best_sortino at the sentinel from generation 0.
+SORTINO_CAP = 5.0
+SORTINO_SCALE = 3.0
+# Train+Val joint objective: Phase 2 evaluates each chromosome on both splits and
+# uses min(train, val) for f1 (worst-case Sortino) when ENABLED.
+PHASE2_JOINT_TRAIN_VAL = True
+# Hamming threshold below which the diversity penalty is applied (was: only ==0).
+PHASE2_DIVERSITY_HAMMING_THRESHOLD = 2
+PHASE2_DIVERSITY_PENALTY = 5.0
 PHASE2_POPULATION_SIZE = 200
-PHASE2_GENERATIONS = 100
+# Raised from 100 → 200; the history shows the Pareto front stops improving
+# around gen 50 with the previous setting.
+PHASE2_GENERATIONS = 200
 PHASE2_ARCHIVE_MAX_SIZE = 500
 # Fraction of Phase 2 population seeded from pools/phase2_{direction}_pool.json
 PHASE2_ARCHIVE_SEED_FRACTION = 0.35
@@ -97,10 +111,25 @@ PHASE3_MIN_RULES = 2
 PHASE3_MAX_RULES = 3
 PHASE3_MIN_SYMBOL_COVERAGE = 7  # out of 10 symbols must have >= 1 trade
 PHASE3_USE_GPU = False  # set True after GPU rule-set batch parity tests pass
-PHASE3_REFINE_GENERATIONS = 40
+PHASE3_REFINE_GENERATIONS = 80
 PHASE3_REFINE_POP_SIZE = 100
 PHASE3_GREEDY_WEIGHTS = (1.0, 0.7, 0.5)  # sortino, drawdown, win_rate
 PHASE3_SYMBOL_CONSISTENCY_WEIGHT = 10.0
+# --- Train-as-target / validation-as-gate (anti-leakage redesign) ---
+# When enabled, Phase 3 optimizes objectives on TRAIN and uses validation only
+# as a gate (rejecting candidates whose validation degrades disproportionately).
+PHASE3_USE_TRAIN_TARGET = True
+# Reject candidates whose val_sortino < ratio * train_sortino (when train > 0)
+PHASE3_VAL_SORTINO_RATIO_GATE = 0.5
+# Reject candidates whose validation drawdown > ratio * train drawdown
+PHASE3_VAL_DRAWDOWN_RATIO_GATE = 1.5
+# Per-rule per-symbol minimum trade count on validation; rejects rules that
+# fire on too few symbols and would not survive a regime change.
+PHASE3_PER_RULE_MIN_VAL_TRADES_PER_SYMBOL = 5
+# Penalty weight for low corr(train_per_symbol_pnl, val_per_symbol_pnl).
+PHASE3_TRAIN_VAL_CORR_WEIGHT = 5.0
+# Soft-gate penalty for failing the validation gates (in addition to dominating).
+PHASE3_VAL_GATE_PENALTY = 75.0
 
 # ---------------------------------------------------------------------------
 # Phase 2 MOME (deferred — future native 4×10 descriptor grid)
@@ -114,17 +143,21 @@ PHASE3_SYMBOL_CONSISTENCY_WEIGHT = 10.0
 # ---------------------------------------------------------------------------
 PHASE4_RL_ALGORITHM = "DDPG"  # alternative: "PPO"
 PHASE4_TP_MIN = 2.0
-PHASE4_TP_MAX = 5.0
+PHASE4_TP_MAX = 4.0
 PHASE4_SL_MIN = 1.0
-PHASE4_SL_MAX = 2.5
+PHASE4_SL_MAX = 2.0
 PHASE4_CAPITAL_PCT_MIN = 10.0
 PHASE4_CAPITAL_PCT_MAX = 50.0
 PHASE4_TOTAL_CAP_PENALTY = 2.0
 PHASE4_RL_EVAL_WINDOW = 288
-PHASE4_VAL_SORTINO_WEIGHT = 0.2
+# Raised from 0.2 → 1.0: validation Sortino is now a primary signal, not a tiebreaker.
+PHASE4_VAL_SORTINO_WEIGHT = 1.0
 PHASE4_VAL_SORTINO_BONUS_CAP = 5.0
 PHASE4_TOTAL_TIMESTEPS = 500_000
 PHASE4_ELBOW_WINDOW = 15
+# Hard normalize per-rule capital_pct so the sum never exceeds the limit.
+# Phase 4 outputs were summing to 75% (long) and 108% (short) — short violates 100%.
+PHASE4_HARD_CAP_NORMALIZE = True
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -136,8 +169,19 @@ LOG_GENERATION_INTERVAL = 0
 # Phase 1 Feature Selection
 # ---------------------------------------------------------------------------
 PHASE1_DISPERSION_THRESHOLD = 0.95
-PHASE1_TOP_K_FEATURES = 25
+# Lowered 25 → 15: scores below 0.01 are MI floor noise; padding the gene with
+# 25 features lets the GA exploit noise.
+PHASE1_TOP_K_FEATURES = 15
 PHASE1_MAX_FEATURE_OVERLAP = 0.50
+# Stationarity filter: split TRAIN into N chronological folds; drop any feature
+# whose per-fold MI score has a coefficient of variation above the threshold or
+# a top-K rank shift above the rank threshold.
+PHASE1_STATIONARITY_FOLDS = 3
+PHASE1_STATIONARITY_CV_MAX = 1.0
+PHASE1_STATIONARITY_RANK_DRIFT_MAX = 30
+# Asymmetric scoring target — instead of a binary success flag, use a signed
+# expected-PnL surrogate so long/short feature lists actually differ.
+PHASE1_ASYMMETRIC_TARGET = True
 # Primary memory control knob for Phase 2. Raising this value increases JAX device array size proportionally. On WSL with limited GPU memory, keep at or below 150_000.
 PHASE1_SAMPLING_TOTAL = 150_000
 

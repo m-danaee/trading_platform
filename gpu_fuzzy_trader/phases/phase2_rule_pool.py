@@ -45,11 +45,29 @@ logger = logging.getLogger(__name__)
 
 
 def trade_support_penalty(executed: int) -> float:
-    """Graduated penalty when executed trades fall below MIN_TRADE_SUPPORT."""
+    """Graduated penalty when executed trades fall below MIN_TRADE_SUPPORT.
+
+    Below MIN_TRADE_POOL_FLOOR the rule is hard-rejected (returns a value larger
+    than SUPPORT_PENALTY_MAX so dominated by any feasible rule).
+    """
     if executed >= _cfg.MIN_TRADE_SUPPORT:
         return 0.0
+    if executed < _cfg.MIN_TRADE_POOL_FLOOR:
+        # Hard reject: dominate any feasible rule by 2x SUPPORT_PENALTY_MAX
+        return 2.0 * _cfg.SUPPORT_PENALTY_MAX
     shortfall = (_cfg.MIN_TRADE_SUPPORT - executed) / _cfg.MIN_TRADE_SUPPORT
     return min(shortfall ** 2 * _cfg.SUPPORT_PENALTY_MAX, _cfg.SUPPORT_PENALTY_MAX)
+
+
+def _saturating_sortino(raw: float) -> float:
+    """tanh-saturated Sortino so the best-front member moves with progress.
+
+    The previous flat cap pinned best_sortino at the SORTINO_CAP sentinel from
+    generation 0 (visible in phase2_long_history.json: best=10.0 at gen 0..99).
+    """
+    scale = max(_cfg.SORTINO_SCALE, 1e-6)
+    cap = _cfg.SORTINO_CAP
+    return float(np.tanh(raw / scale) * cap)
 
 
 # ---------------------------------------------------------------------------
@@ -152,11 +170,16 @@ def _evaluate_chromosome(
     dont_cares: np.ndarray,
     engine,  # GPUBacktestEngine or CPUBacktestEngine
     pareto_front: list[np.ndarray],
+    val_engine=None,  # optional second engine for joint train+val objective
 ) -> tuple[np.ndarray, dict]:
     """
     Evaluate a single chromosome and return (objectives, metrics).
 
     objectives = [f1, f2, f3] (all minimised, with penalties applied).
+
+    When PHASE2_JOINT_TRAIN_VAL is enabled and *val_engine* is provided, f1 uses
+    min(saturated_train_sortino, saturated_val_sortino) so the search prefers
+    rules that hold up out-of-sample.
     """
     active = _count_active_conditions(chromosome, dont_cares)
 
@@ -167,7 +190,7 @@ def _evaluate_chromosome(
     elif active > _cfg.MAX_CONDITIONS:
         cond_penalty = (active - _cfg.MAX_CONDITIONS) * 10.0
 
-    # Evaluate via backtest engine
+    # Evaluate via backtest engine (TRAIN)
     try:
         metrics_list = engine.simulate_rule_batch(
             chromosomes=chromosome[None, :],
@@ -186,23 +209,53 @@ def _evaluate_chromosome(
             "executed_trades": 0,
         }
 
-    sortino_ratio = float(metrics.get(
+    raw_sortino = float(metrics.get(
         "sortino_ratio", metrics.get("total_return_pct", 0.0)))
+    sortino_train = _saturating_sortino(raw_sortino)
     max_dd = float(metrics.get("max_drawdown_pct", 100.0))
     win_rate = float(metrics.get("win_rate", 0.0))
     executed = int(metrics.get("executed_trades", 0))
 
     support_penalty = trade_support_penalty(executed)
 
+    # Optional joint train+val Sortino (worst-case)
+    sortino_for_obj = sortino_train
+    if _cfg.PHASE2_JOINT_TRAIN_VAL and val_engine is not None:
+        try:
+            val_list = val_engine.simulate_rule_batch(
+                chromosomes=chromosome[None, :],
+                tp=_cfg.PHASE2_TP,
+                sl=_cfg.PHASE2_SL,
+                capital_pct=_cfg.PHASE2_CAPITAL_PCT,
+            )
+            val_metrics = val_list[0]
+            raw_val_sortino = float(val_metrics.get(
+                "sortino_ratio", val_metrics.get("total_return_pct", 0.0)))
+            sortino_val = _saturating_sortino(raw_val_sortino)
+            val_executed = int(val_metrics.get("executed_trades", 0))
+            # If validation has too few trades, treat the whole rule as unsupported.
+            if val_executed < max(_cfg.MIN_TRADE_POOL_FLOOR // 4, 10):
+                support_penalty = max(
+                    support_penalty,
+                    _cfg.SUPPORT_PENALTY_MAX,
+                )
+                sortino_for_obj = min(sortino_train, 0.0)
+            else:
+                sortino_for_obj = min(sortino_train, sortino_val)
+            metrics["val_sortino_ratio"] = raw_val_sortino
+            metrics["val_executed_trades"] = val_executed
+        except Exception as exc:
+            logger.debug("val simulate_rule_batch failed: %s", exc)
+
     # Diversity penalty: Hamming distance to nearest Pareto-front member
     diversity_penalty = 0.0
     if pareto_front:
         min_hamming = min(_hamming_distance(chromosome, pf)
                           for pf in pareto_front)
-        if min_hamming == 0:
-            diversity_penalty = 5.0  # identical rule already in front
+        if min_hamming <= _cfg.PHASE2_DIVERSITY_HAMMING_THRESHOLD:
+            diversity_penalty = _cfg.PHASE2_DIVERSITY_PENALTY
 
-    f1 = -sortino_ratio + support_penalty + diversity_penalty + cond_penalty
+    f1 = -sortino_for_obj + support_penalty + diversity_penalty + cond_penalty
     f2 = max_dd + support_penalty + diversity_penalty + cond_penalty
     f3 = -win_rate + support_penalty + diversity_penalty + cond_penalty
 
@@ -791,6 +844,7 @@ class Rule_Pool_Generator:
         pop_size: int | None = None,
         n_generations: int | None = None,
         seed: int = 42,
+        val_df: pd.DataFrame | None = None,
     ) -> None:
         if direction not in ("long", "short"):
             raise ValueError(
@@ -817,6 +871,26 @@ class Rule_Pool_Generator:
 
         # Initialise backtest engine (GPU preferred, CPU fallback)
         self._engine = self._build_engine()
+
+        # Optional validation engine for joint train+val objective
+        self._val_engine = None
+        if val_df is not None and _cfg.PHASE2_JOINT_TRAIN_VAL:
+            try:
+                val_sampled = _sample_df(val_df, _cfg.PHASE1_SAMPLING_TOTAL)
+                slim_val = slim_backtest_df(val_sampled, feature_names)
+                self._val_engine = self._build_engine_for_df(slim_val)
+                logger.info(
+                    "Phase 2 [%s]: joint train+val objective enabled "
+                    "(val_rows=%d)", direction, len(slim_val),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Phase 2 [%s]: failed to build val engine, "
+                    "falling back to train-only objective: %s",
+                    direction, exc,
+                )
+                self._val_engine = None
+
         from gpu_fuzzy_trader._memory import log_memory_rss
 
         log_memory_rss(f"Phase2 [{direction}] engine init")
@@ -827,10 +901,14 @@ class Rule_Pool_Generator:
 
     def _build_engine(self):
         """Build GPUBacktestEngine if JAX available, else CPUBacktestEngine."""
+        return self._build_engine_for_df(self._train_df)
+
+    def _build_engine_for_df(self, df: pd.DataFrame):
+        """Build an engine on *df* using the same backend selection logic."""
         try:
             from gpu_fuzzy_trader.backtest.gpu_engine import GPUBacktestEngine
             engine = GPUBacktestEngine(
-                self._train_df,
+                df,
                 self._feature_modes,
                 self.direction,
             )
@@ -842,7 +920,7 @@ class Rule_Pool_Generator:
                 "JAX not available; falling back to CPUBacktestEngine for Phase 2.")
             from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
             return CPUBacktestEngine(
-                self._train_df,
+                df,
                 self._feature_modes,
                 self.direction,
             )
@@ -917,6 +995,7 @@ class Rule_Pool_Generator:
             rng=rng,
             log_tag=progress_tag,
             seed_chromosomes=seed_chromosomes,
+            val_engine=self._val_engine,
         )
 
         pool = _merge_archive_entries(previous_pool + list(new_pool))
@@ -976,6 +1055,7 @@ class Rule_Pool_Generator:
     def _release_resources(self) -> None:
         """Drop engine and sampled data to free RAM before the next direction."""
         self._engine = None
+        self._val_engine = None
         self._train_df = None
         from gpu_fuzzy_trader._memory import log_memory_rss, release_phase2_resources
 

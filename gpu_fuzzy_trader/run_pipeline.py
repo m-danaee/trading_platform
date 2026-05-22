@@ -429,7 +429,7 @@ class Pipeline_Orchestrator:
                 # Phase 2: Rule Pool Generation
                 # ------------------------------------------------------------------
                 phase2_result = self._run_phase2(
-                    train_df, phase1_result, force=force)
+                    train_df, phase1_result, force=force, val_df=val_df)
                 results["phase2"] = phase2_result
 
                 # Check if Phase 2 produced any rules; if not, skip Phases 3 and 4
@@ -520,7 +520,7 @@ class Pipeline_Orchestrator:
                 train_df = self._prune_train_df_after_phase1(
                     train_df, phase1_result)
                 results["phase2"] = self._run_phase2(
-                    train_df, phase1_result, force=True)
+                    train_df, phase1_result, force=True, val_df=val_df)
 
             elif phase == 3:
                 train_df, val_df = self._load_and_split_data()
@@ -840,6 +840,7 @@ class Pipeline_Orchestrator:
         train_df: pd.DataFrame,
         phase1_result: dict[str, list[dict]],
         force: bool = False,
+        val_df: pd.DataFrame | None = None,
     ) -> dict[str, list[dict]]:
         """
         Run Phase 2 (Rule Pool Generation) or skip if valid outputs exist.
@@ -897,6 +898,7 @@ class Pipeline_Orchestrator:
                     train_df=train_df,
                     feature_infos=feature_infos,
                     direction=direction,
+                    val_df=val_df,
                 )
                 pool = generator.run()
             except Exception as exc:

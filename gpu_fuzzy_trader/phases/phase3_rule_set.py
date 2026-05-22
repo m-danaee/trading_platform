@@ -159,6 +159,65 @@ def _symbol_consistency_penalty(train_metrics: dict, val_metrics: dict) -> float
     return (1.0 - overlap) * _cfg.PHASE3_SYMBOL_CONSISTENCY_WEIGHT
 
 
+def _per_symbol_pnl_vector(metrics: dict, symbols: list) -> np.ndarray:
+    """Extract per-symbol net_pnl as a vector aligned to *symbols* order."""
+    per = metrics.get("per_symbol_metrics", {}) or {}
+    out = np.zeros(len(symbols), dtype=np.float64)
+    for i, sym in enumerate(symbols):
+        # Symbol keys may be int or str depending on engine version
+        v = per.get(sym, per.get(str(sym), {}))
+        out[i] = float(v.get("net_pnl", 0.0)) if isinstance(v, dict) else 0.0
+    return out
+
+
+def _train_val_corr_penalty(train_metrics: dict, val_metrics: dict) -> float:
+    """
+    Penalty inversely proportional to the correlation between per-symbol PnL on
+    train and validation. Catches "works on different symbols" failure mode.
+    """
+    train_per = train_metrics.get("per_symbol_metrics", {}) or {}
+    val_per = val_metrics.get("per_symbol_metrics", {}) or {}
+    common = set(train_per.keys()) & set(val_per.keys())
+    if len(common) < 3:
+        return 0.0
+    symbols = sorted(common, key=lambda s: str(s))
+    a = _per_symbol_pnl_vector(train_metrics, symbols)
+    b = _per_symbol_pnl_vector(val_metrics, symbols)
+    if np.std(a) < 1e-9 or np.std(b) < 1e-9:
+        return 0.0
+    corr = float(np.corrcoef(a, b)[0, 1])
+    if not np.isfinite(corr):
+        return 0.0
+    # corr in [-1, 1]; penalty 0 at corr=1, max at corr=-1
+    return (1.0 - corr) * 0.5 * _cfg.PHASE3_TRAIN_VAL_CORR_WEIGHT
+
+
+def _per_rule_min_symbol_trades(
+    rule_set: list[dict],
+    val_engine,
+) -> int:
+    """
+    Return the worst (minimum) per-symbol per-rule trade count on validation.
+
+    Lower is worse. Used by the validation gate to reject rule sets where any
+    single rule fails to trade enough times on at least one symbol.
+    """
+    worst = float("inf")
+    for rule in rule_set:
+        try:
+            metrics = val_engine.simulate_rule_set([rule])
+        except Exception:
+            continue
+        per = metrics.get("per_symbol_metrics", {}) or {}
+        if not per:
+            return 0
+        for v in per.values():
+            tc = int(v.get("trade_count", 0)) if isinstance(v, dict) else 0
+            if tc < worst:
+                worst = tc
+    return 0 if worst == float("inf") else int(worst)
+
+
 def _build_phase3_engines(
     train_df: pd.DataFrame,
     val_df: pd.DataFrame,
@@ -193,16 +252,38 @@ def _evaluate_rule_set(
     train_engine,
 ) -> tuple[np.ndarray, dict]:
     """
-    Evaluate a candidate rule set and return (objectives, val_metrics).
+    Evaluate a candidate rule set and return (objectives, train_metrics).
+
+    Anti-leakage redesign (PHASE3_USE_TRAIN_TARGET=True):
+        * Optimization objectives are computed on the TRAIN split.
+        * Validation is used as a *gate*: candidates whose val Sortino/drawdown
+          degrade disproportionately, or whose per-rule per-symbol trade count
+          is too low, receive a hard PHASE3_VAL_GATE_PENALTY.
+        * Train/validation per-symbol PnL correlation is added as a penalty.
 
     objectives = [f1, f2, f3] (all minimised, with penalties applied).
+    Returned metrics are the TRAIN metrics (used for downstream selection).
     """
     # Duplicate rule penalty (fast check before backtest)
     dup_penalty = 0.0
     if _has_duplicate_rules(rule_set):
         dup_penalty = 50.0
 
-    # Evaluate on validation split
+    # Evaluate on TRAIN (primary signal)
+    try:
+        train_metrics = train_engine.simulate_rule_set(rule_set)
+    except Exception as exc:
+        logger.debug("train simulate_rule_set failed: %s", exc)
+        train_metrics = {
+            "sortino_ratio": 0.0,
+            "total_return_pct": 0.0,
+            "max_drawdown_pct": 100.0,
+            "win_rate": 0.0,
+            "executed_trades": 0,
+            "per_symbol_metrics": {},
+        }
+
+    # Evaluate on VALIDATION (gate signal)
     try:
         val_metrics = val_engine.simulate_rule_set(rule_set)
     except Exception as exc:
@@ -216,51 +297,77 @@ def _evaluate_rule_set(
             "per_symbol_metrics": {},
         }
 
+    train_sortino = float(train_metrics.get(
+        "sortino_ratio", train_metrics.get("total_return_pct", 0.0)))
+    train_dd = float(train_metrics.get("max_drawdown_pct", 100.0))
+    train_wr = float(train_metrics.get("win_rate", 0.0))
+    train_trades = int(train_metrics.get("executed_trades", 0))
+
     val_sortino = float(val_metrics.get(
         "sortino_ratio", val_metrics.get("total_return_pct", 0.0)))
     val_dd = float(val_metrics.get("max_drawdown_pct", 100.0))
-    val_wr = float(val_metrics.get("win_rate", 0.0))
     val_trades = int(val_metrics.get("executed_trades", 0))
 
-    # Zero-trade penalty
+    # Zero-trade penalty (either split with no trades is unusable)
     zero_penalty = 0.0
-    if val_trades == 0:
+    if train_trades == 0 or val_trades == 0:
         zero_penalty = 100.0
 
-    # Coverage penalty
+    # Coverage penalty (validation symbol coverage)
     coverage_penalty = 0.0
-    symbols_with_trades = _count_symbols_with_trades(val_metrics)
-    if symbols_with_trades < _cfg.PHASE3_MIN_SYMBOL_COVERAGE:
+    val_symbols_with_trades = _count_symbols_with_trades(val_metrics)
+    if val_symbols_with_trades < _cfg.PHASE3_MIN_SYMBOL_COVERAGE:
         coverage_penalty = (
-            (_cfg.PHASE3_MIN_SYMBOL_COVERAGE - symbols_with_trades) * 5.0
+            (_cfg.PHASE3_MIN_SYMBOL_COVERAGE - val_symbols_with_trades) * 5.0
         )
 
-    overfitting_penalty = 0.0
-    train_metrics: dict = {}
-    try:
-        train_metrics = train_engine.simulate_rule_set(rule_set)
-        train_sortino = float(train_metrics.get(
-            "sortino_ratio", train_metrics.get("total_return_pct", 0.0)))
-        overfitting_penalty = abs(
-            train_sortino - val_sortino) / max(abs(train_sortino), 1.0)
-    except Exception as exc:
-        logger.debug("train simulate_rule_set failed: %s", exc)
-        overfitting_penalty = 10.0
-
+    # Train/val symbol overlap penalty
     symbol_consistency_penalty = _symbol_consistency_penalty(
         train_metrics, val_metrics)
 
+    # Per-symbol PnL correlation penalty (train vs val)
+    corr_penalty = _train_val_corr_penalty(train_metrics, val_metrics)
+
+    # Validation gates: hard penalty for failing either ratio gate
+    gate_penalty = 0.0
+    if _cfg.PHASE3_USE_TRAIN_TARGET:
+        # Sortino ratio gate: val_sortino must be at least ratio * train_sortino
+        # Only fires when train Sortino is positive; negative train cases are
+        # already penalized via the f1 = -train_sortino objective.
+        if train_sortino > 0.0:
+            min_val = _cfg.PHASE3_VAL_SORTINO_RATIO_GATE * train_sortino
+            if val_sortino < min_val:
+                gate_penalty += _cfg.PHASE3_VAL_GATE_PENALTY
+
+        # Drawdown gate: val_dd must not exceed ratio * train_dd
+        # Use a small floor to avoid blowups when train_dd is near zero.
+        max_val_dd = _cfg.PHASE3_VAL_DRAWDOWN_RATIO_GATE * max(train_dd, 1.0)
+        if val_dd > max_val_dd:
+            gate_penalty += _cfg.PHASE3_VAL_GATE_PENALTY
+
+        # Per-rule per-symbol minimum trade count on validation
+        min_per_rule = _per_rule_min_symbol_trades(rule_set, val_engine)
+        if min_per_rule < _cfg.PHASE3_PER_RULE_MIN_VAL_TRADES_PER_SYMBOL:
+            gate_penalty += _cfg.PHASE3_VAL_GATE_PENALTY
+
     total_penalty = (
-        zero_penalty + coverage_penalty + overfitting_penalty
-        + dup_penalty + symbol_consistency_penalty
+        zero_penalty + coverage_penalty + dup_penalty
+        + symbol_consistency_penalty + corr_penalty + gate_penalty
     )
 
-    f1 = -val_sortino + total_penalty
-    f2 = val_dd + total_penalty
-    f3 = -val_wr + total_penalty
+    if _cfg.PHASE3_USE_TRAIN_TARGET:
+        f1 = -train_sortino + total_penalty
+        f2 = train_dd + total_penalty
+        f3 = -train_wr + total_penalty
+    else:
+        # Legacy validation-target path (kept for ablation studies).
+        val_wr = float(val_metrics.get("win_rate", 0.0))
+        f1 = -val_sortino + total_penalty
+        f2 = val_dd + total_penalty
+        f3 = -val_wr + total_penalty
 
     objectives = np.array([f1, f2, f3], dtype=np.float64)
-    return objectives, val_metrics
+    return objectives, train_metrics
 
 
 # ---------------------------------------------------------------------------
@@ -607,7 +714,8 @@ def _run_nsga2_combinatorial(
 
             for j, i in enumerate(pending):
                 obj = _objectives_from_metrics(
-                    val_list[j], train_list[j], population[i]
+                    val_list[j], train_list[j], population[i],
+                    val_engine=val_engine,
                 )
                 objectives[i] = obj
         else:

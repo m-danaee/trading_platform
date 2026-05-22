@@ -432,6 +432,7 @@ class TradingEnv:
                                   0.0) * self._equity / 100.0
             drawdown = metrics.get("max_drawdown_pct", 0.0)
         except Exception:
+            metrics = {}
             net_pnl = 0.0
             drawdown = 0.0
 
@@ -450,7 +451,20 @@ class TradingEnv:
         allocation_penalty = (
             max(0.0, total_cap - 100.0) / 100.0 * _cfg.PHASE4_TOTAL_CAP_PENALTY
         )
-        reward = float(net_pnl_norm - drawdown_penalty - allocation_penalty)
+        # Add window Sortino as a shaping term so the policy prefers risk-adjusted
+        # returns over raw PnL bursts. Caps applied to keep gradients well-scaled.
+        window_sortino = float(metrics.get("sortino_ratio", 0.0)) if isinstance(
+            metrics, dict) else 0.0
+        sortino_shaping = max(
+            min(window_sortino, _cfg.PHASE4_VAL_SORTINO_BONUS_CAP),
+            -_cfg.PHASE4_VAL_SORTINO_BONUS_CAP,
+        ) * _cfg.PHASE4_VAL_SORTINO_WEIGHT
+        reward = float(
+            net_pnl_norm
+            + sortino_shaping
+            - drawdown_penalty
+            - allocation_penalty
+        )
 
         self._current_idx += window_size
         terminated = self._current_idx >= len(self.df)
@@ -1066,6 +1080,23 @@ class RL_Agent:
         self._validation_returns = val_returns
         self._elbow_idx = elbow_idx
         self._optimized_rule_set = optimized_params
+
+        # Hard normalize per-rule capital_pct to never exceed
+        # MAX_TOTAL_EXPOSURE_PCT. Phase 4 outputs were summing to 75% (long)
+        # and 108% (short); the soft penalty was insufficient.
+        if _cfg.PHASE4_HARD_CAP_NORMALIZE and optimized_params:
+            total_cap = sum(
+                float(p.get("capital_pct", 0.0)) for p in optimized_params
+            )
+            limit = float(_cfg.MAX_TOTAL_EXPOSURE_PCT)
+            if total_cap > limit and total_cap > 0:
+                scale = limit / total_cap
+                logger.info(
+                    "Phase 4 [%s]: scaling capital_pct (sum=%.2f%% → %.2f%%)",
+                    self.direction, total_cap, limit,
+                )
+                for p in optimized_params:
+                    p["capital_pct"] = float(p.get("capital_pct", 0.0)) * scale
 
         # Build output dict
         output_dict = {

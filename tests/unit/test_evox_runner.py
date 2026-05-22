@@ -111,6 +111,7 @@ class TestRunPhase2EvolutionFallback:
             rng,
             seed_chromosomes=None,
             log_tag=None,
+            val_engine=None,
         ):
             captured["seed_chromosomes"] = seed_chromosomes
             return [], []

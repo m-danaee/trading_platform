@@ -35,6 +35,68 @@ logger = logging.getLogger(__name__)
 _REPORTS_DIR = _cfg.REPORTS_DIR
 
 
+def _bucket_series_by_mode(series: pd.Series, mode: str) -> pd.Series:
+    """
+    Map a numeric feature column into the discrete fuzzy buckets that the
+    backtest engine uses (mirrors ``_apply_dynamic_rule`` thresholds in
+    ``cpu_engine.py``). Used by the feature-stratified report so we can
+    measure per-bucket trade performance without relying on pre-discretized
+    string columns (raw features are stored as floats).
+
+    Returns a Series of dtype object containing string bucket names. Values
+    that don't match any bucket map to ``None``. If *series* already holds
+    string bucket labels (legacy callers and tests pre-discretize their
+    features), return a copy unchanged.
+    """
+    s = series
+
+    # Pass-through: column already holds string bucket labels.
+    if s.dtype == object or pd.api.types.is_string_dtype(s):
+        sample = s.dropna()
+        if not sample.empty and isinstance(sample.iloc[0], str):
+            return s.astype(object)
+
+    if mode in ("binary",):
+        out = pd.Series(np.full(len(s), None, dtype=object), index=s.index)
+        out[s == 0] = "Inactive (0)"
+        out[s == 1] = "Active (1)"
+        return out
+
+    if mode in ("ternary",):
+        out = pd.Series(np.full(len(s), None, dtype=object), index=s.index)
+        out[s == -1] = "Negative (-1)"
+        out[s == 0] = "Neutral (0)"
+        out[s == 1] = "Positive (1)"
+        return out
+
+    if mode in ("sparse_signed",):
+        bins = [-np.inf, -0.25, -1e-5, 1e-5, 0.25, np.inf]
+        labels = [
+            "Strong Negative", "Weak Negative", "Exactly Zero",
+            "Weak Positive", "Strong Positive",
+        ]
+        return pd.cut(s, bins=bins, labels=labels, include_lowest=True).astype(object)
+
+    if mode in ("positive", "sparse_positive"):
+        bins = [-np.inf, 0.2, 0.4, 0.6, 0.8, np.inf]
+        labels = ["Very Low", "Low", "Medium", "High", "Very High"]
+        return pd.cut(s, bins=bins, labels=labels, include_lowest=True).astype(object)
+
+    if mode == "signed":
+        bins = [-np.inf, -0.8, -0.6, -0.4, -0.2, 0.0, 0.2, 0.4, 0.6, 0.8, np.inf]
+        labels = [
+            "Extreme Bearish", "Strong Bearish", "Bearish", "Weak Bearish",
+            "Neutral Negative", "Neutral Positive",
+            "Weak Bullish", "Bullish", "Strong Bullish", "Extreme Bullish",
+        ]
+        return pd.cut(s, bins=bins, labels=labels, include_lowest=True).astype(object)
+
+    # Unknown mode — fall back to "positive" buckets so we still emit something useful.
+    bins = [-np.inf, 0.2, 0.4, 0.6, 0.8, np.inf]
+    labels = ["Very Low", "Low", "Medium", "High", "Very High"]
+    return pd.cut(s, bins=bins, labels=labels, include_lowest=True).astype(object)
+
+
 class Reporter:
     """
     Generates visual and tabular reports for each pipeline phase.
@@ -1059,6 +1121,10 @@ class Reporter:
         in that feature's column, computes performance metrics for the subset
         of trades whose entry candle has that fuzzy value.
 
+        Feature columns store raw floats; we bucket them into the same
+        mode-aware fuzzy bins the backtest engine uses (mirrors
+        evaluator_v3.ipynb thresholds).
+
         Parameters
         ----------
         trade_logs_by_split:
@@ -1068,7 +1134,7 @@ class Reporter:
             List of rule dicts (used for context; not directly used in computation).
         selected_features:
             List of dicts with at least a ``"name"`` key identifying the
-            feature column name.
+            feature column name and a ``"mode"`` key (positive/signed/...).
         datasets_by_split:
             Dict with keys ``"train"``, ``"validation"``, ``"test"`` mapping
             to ``pd.DataFrame | None``.
@@ -1155,6 +1221,7 @@ class Reporter:
             rows: list[dict] = []
             for feat in selected_features:
                 feat_name = feat["name"]
+                feat_mode = feat.get("mode", "positive")
 
                 # Skip feature if column absent from dataset
                 if feat_name not in dataset.columns:
@@ -1166,16 +1233,16 @@ class Reporter:
                     )
                     continue
 
-                # Get unique non-NaN string values in this feature column
-                raw_vals = dataset[feat_name].dropna()
-                fuzzy_values = [
-                    v for v in raw_vals.unique() if isinstance(v, str)]
+                # Bucket feature values by mode (matches engine semantics)
+                series = dataset[feat_name]
+                bucketed = _bucket_series_by_mode(series, feat_mode)
+                fuzzy_values = [v for v in bucketed.dropna().unique()]
 
                 if not fuzzy_values:
                     continue
 
                 # Attach feature value to each valid trade (vectorised lookup)
-                valid_log["_feat_val"] = dataset[feat_name].iloc[
+                valid_log["_feat_val"] = bucketed.iloc[
                     valid_log["Entry_Index"].values
                 ].values
 

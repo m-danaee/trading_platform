@@ -190,9 +190,13 @@ def _evaluate_population_indices(
     pareto_archive: list[np.ndarray],
     objectives: np.ndarray,
     metrics_cache: list[dict],
+    val_engine=None,
 ) -> None:
     """Evaluate unevaluated individuals, preferring batch simulate_rule_batch."""
-    from gpu_fuzzy_trader.phases.phase2_rule_pool import _evaluate_chromosome
+    from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+        _evaluate_chromosome,
+        _saturating_sortino,
+    )
 
     pending = [i for i in indices if np.any(np.isinf(objectives[i]))]
     if not pending:
@@ -213,6 +217,23 @@ def _evaluate_population_indices(
             capital_pct=_cfg.PHASE2_CAPITAL_PCT,
         )
 
+        # Optional joint train+val: batch-evaluate on the validation engine too.
+        val_metrics_list = None
+        if val_engine is not None and _cfg.PHASE2_JOINT_TRAIN_VAL:
+            try:
+                val_metrics_list = val_engine.simulate_rule_batch(
+                    chromosomes=chroms,
+                    tp=_cfg.PHASE2_TP,
+                    sl=_cfg.PHASE2_SL,
+                    capital_pct=_cfg.PHASE2_CAPITAL_PCT,
+                )
+            except Exception as exc:
+                logger.debug(
+                    "val simulate_rule_batch failed in Phase 2 batch path: %s",
+                    exc,
+                )
+                val_metrics_list = None
+
         for j, i in enumerate(pending):
             chromosome = population[i]
             metrics = metrics_list[j]
@@ -223,25 +244,46 @@ def _evaluate_population_indices(
             elif active > _cfg.MAX_CONDITIONS:
                 cond_penalty = (active - _cfg.MAX_CONDITIONS) * 10.0
 
-            sortino_ratio = float(metrics.get(
+            raw_sortino = float(metrics.get(
                 "sortino_ratio", metrics.get("total_return_pct", 0.0)))
+            sortino_train = _saturating_sortino(raw_sortino)
             max_dd = float(metrics.get("max_drawdown_pct", 100.0))
             win_rate = float(metrics.get("win_rate", 0.0))
             executed = int(metrics.get("executed_trades", 0))
 
             support_penalty = trade_support_penalty(executed)
 
+            sortino_for_obj = sortino_train
+            if val_metrics_list is not None:
+                val_metrics = val_metrics_list[j]
+                raw_val_sortino = float(val_metrics.get(
+                    "sortino_ratio",
+                    val_metrics.get("total_return_pct", 0.0),
+                ))
+                sortino_val = _saturating_sortino(raw_val_sortino)
+                val_executed = int(val_metrics.get("executed_trades", 0))
+                if val_executed < max(_cfg.MIN_TRADE_POOL_FLOOR // 4, 10):
+                    support_penalty = max(
+                        support_penalty,
+                        _cfg.SUPPORT_PENALTY_MAX,
+                    )
+                    sortino_for_obj = min(sortino_train, 0.0)
+                else:
+                    sortino_for_obj = min(sortino_train, sortino_val)
+                metrics["val_sortino_ratio"] = raw_val_sortino
+                metrics["val_executed_trades"] = val_executed
+
             diversity_penalty = 0.0
             if pareto_archive:
                 min_hamming = min(
                     _hamming_distance(chromosome, pf) for pf in pareto_archive
                 )
-                if min_hamming == 0:
-                    diversity_penalty = 5.0
+                if min_hamming <= _cfg.PHASE2_DIVERSITY_HAMMING_THRESHOLD:
+                    diversity_penalty = _cfg.PHASE2_DIVERSITY_PENALTY
 
             pen = support_penalty + diversity_penalty + cond_penalty
             objectives[i] = np.array(
-                [-sortino_ratio + pen, max_dd + pen, -win_rate + pen],
+                [-sortino_for_obj + pen, max_dd + pen, -win_rate + pen],
                 dtype=np.float64,
             )
             metrics_cache[i] = metrics
@@ -249,7 +291,8 @@ def _evaluate_population_indices(
         logger.debug("Batch eval failed, falling back to single: %s", exc)
         for i in pending:
             obj, met = _evaluate_chromosome(
-                population[i], dont_cares, engine, pareto_archive
+                population[i], dont_cares, engine, pareto_archive,
+                val_engine=val_engine,
             )
             objectives[i] = obj
             metrics_cache[i] = met
@@ -359,6 +402,7 @@ def _run_nsga2_fallback(
     rng: np.random.Generator,
     seed_chromosomes: np.ndarray | None = None,
     log_tag: str | None = None,
+    val_engine=None,
 ) -> tuple[list[dict], list[dict]]:
     """NumPy NSGA-II loop when EvoX is not installed."""
     from gpu_fuzzy_trader.phases.phase2_rule_pool import (
@@ -392,7 +436,8 @@ def _run_nsga2_fallback(
         for i in range(pop_size):
             if np.any(np.isinf(objectives[i])):
                 obj, met = _evaluate_chromosome(
-                    population[i], dont_cares, engine, pareto_archive
+                    population[i], dont_cares, engine, pareto_archive,
+                    val_engine=val_engine,
                 )
                 objectives[i] = obj
                 metrics_cache[i] = met
@@ -428,7 +473,8 @@ def _run_nsga2_fallback(
         off_metrics: list[dict] = [{} for _ in range(pop_size)]
         for i in range(pop_size):
             obj, met = _evaluate_chromosome(
-                offspring[i], dont_cares, engine, pareto_archive
+                offspring[i], dont_cares, engine, pareto_archive,
+                val_engine=val_engine,
             )
             off_obj[i] = obj
             off_metrics[i] = met
@@ -463,6 +509,7 @@ def _run_nsga3(
     rng: np.random.Generator,
     seed_chromosomes: np.ndarray | None = None,
     log_tag: str | None = None,
+    val_engine=None,
 ) -> tuple[list[dict], list[dict]]:
     """NSGA-III evolutionary loop for Phase 2 rule pool generation."""
     from gpu_fuzzy_trader.phases.phase2_rule_pool import (
@@ -502,6 +549,7 @@ def _run_nsga3(
             pareto_archive,
             objectives,
             metrics_cache,
+            val_engine=val_engine,
         )
 
         fronts = _non_dominated_sort(objectives)
@@ -541,6 +589,7 @@ def _run_nsga3(
             pareto_archive,
             off_obj,
             off_metrics,
+            val_engine=val_engine,
         )
 
         merge_pop = np.vstack([population, offspring])
@@ -581,6 +630,7 @@ def run_phase2_evolution(
     rng: np.random.Generator,
     seed_chromosomes: np.ndarray | None = None,
     log_tag: str | None = None,
+    val_engine=None,
 ) -> tuple[list[dict], list[dict]]:
     """Run Phase 2 NSGA-III evolution. Returns (pareto_pool, history)."""
     if not _EVOX_AVAILABLE:
@@ -591,9 +641,11 @@ def run_phase2_evolution(
             feature_infos, engine, pop_size, n_generations, rng,
             seed_chromosomes=seed_chromosomes,
             log_tag=log_tag or "NSGA-II (fallback)",
+            val_engine=val_engine,
         )
 
     return _run_nsga3(
         feature_infos, engine, pop_size, n_generations, rng,
         seed_chromosomes=seed_chromosomes, log_tag=log_tag,
+        val_engine=val_engine,
     )

@@ -250,6 +250,39 @@ class Feature_Selector:
             })
 
         # ----------------------------------------------------------------
+        # Step 7b: Stationarity filter (chronological folds across train)
+        # ----------------------------------------------------------------
+        if config.PHASE1_STATIONARITY_FOLDS >= 2:
+            fold_scores = _compute_stationarity_scores(
+                train_df,
+                feature_cols,
+                feature_modes,
+                target,
+                config.PHASE1_STATIONARITY_FOLDS,
+            )
+            survivors = _stationarity_filter(
+                fold_scores,
+                config.PHASE1_STATIONARITY_CV_MAX,
+                config.PHASE1_STATIONARITY_RANK_DRIFT_MAX,
+            )
+            n_before_stationarity = len(scored)
+            scored = [f for f in scored if f["name"] in survivors]
+            logger.info(
+                "Phase 1 [%s]: stationarity filter %d → %d features "
+                "(cv_max=%.2f, rank_drift_max=%d)",
+                direction, n_before_stationarity, len(scored),
+                config.PHASE1_STATIONARITY_CV_MAX,
+                config.PHASE1_STATIONARITY_RANK_DRIFT_MAX,
+            )
+            if not scored:
+                logger.warning(
+                    "Phase 1 [%s]: stationarity filter removed everything; "
+                    "consider relaxing PHASE1_STATIONARITY_CV_MAX or "
+                    "PHASE1_STATIONARITY_RANK_DRIFT_MAX",
+                    direction,
+                )
+
+        # ----------------------------------------------------------------
         # Step 8: Within-mode redundancy removal (pairwise corr > 0.95)
         # ----------------------------------------------------------------
         n_before_redundancy = len(scored)
@@ -460,17 +493,20 @@ def _remove_low_dispersion(
 
 def _build_target(df: pd.DataFrame, direction: str) -> pd.Series:
     """
-    Build a binary success target for the given direction.
+    Build a direction-specific target signal.
 
-    Long success:
-        label_max_288 >= label_open_next * (1 + PHASE2_TP/100)
-        AND that max came BEFORE the SL was hit
-        (max_before_min == 1 means max came first → TP first for long)
+    Default (PHASE1_ASYMMETRIC_TARGET=True):
+        Signed expected-PnL surrogate (3-class, then encoded to int target).
+        Long:
+            +1  TP hit and TP came first (clear win)
+            -1  SL hit and SL came first (clear loss)
+             0  neither side cleanly resolved
+        Short: mirror logic with min_288 instead of max_288.
+        This gives long and short genuinely different targets, addressing the
+        "long and short feature lists nearly identical" issue observed.
 
-    Short success:
-        label_min_288 <= label_open_next * (1 - PHASE2_TP/100)
-        AND that min came BEFORE the max hit SL
-        (max_before_min == 0 means min came first → TP first for short)
+    Legacy (PHASE1_ASYMMETRIC_TARGET=False):
+        Binary success target — kept for ablation comparisons.
 
     Parameters
     ----------
@@ -481,7 +517,7 @@ def _build_target(df: pd.DataFrame, direction: str) -> pd.Series:
     Returns
     -------
     pd.Series
-        Boolean series (0/1) indicating trade success.
+        Integer series with discrete classes (target encoding).
     """
     tp = config.PHASE2_TP
     sl = config.PHASE2_SL
@@ -497,27 +533,37 @@ def _build_target(df: pd.DataFrame, direction: str) -> pd.Series:
     sl_level_short = open_next * (1 + sl / 100)
 
     if direction == "long":
-        # TP hit
         hit_tp = max_288 >= tp_level_long
-        # SL hit
         hit_sl = min_288 <= sl_level_long
-        # Both hit: max_before_min == 1 means max came first → TP first (success)
         both_hit = hit_tp & hit_sl
         tp_first = both_hit & (max_before_min == 1)
-        # Success: TP hit and either SL not hit, or TP came first
-        success = hit_tp & (~hit_sl | tp_first)
+        sl_first = both_hit & (max_before_min == 0)
+        clear_win = hit_tp & ~hit_sl
+        clear_loss = hit_sl & ~hit_tp
+        win = clear_win | tp_first
+        loss = clear_loss | sl_first
     else:  # short
-        # TP hit (price dropped to TP level)
         hit_tp = min_288 <= tp_level_short
-        # SL hit (price rose to SL level)
         hit_sl = max_288 >= sl_level_short
-        # Both hit: max_before_min == 0 means min came first → TP first for short
         both_hit = hit_tp & hit_sl
+        # For shorts the min must come first to take TP first.
         tp_first = both_hit & (max_before_min == 0)
-        # Success: TP hit and either SL not hit, or TP came first
-        success = hit_tp & (~hit_sl | tp_first)
+        sl_first = both_hit & (max_before_min == 1)
+        clear_win = hit_tp & ~hit_sl
+        clear_loss = hit_sl & ~hit_tp
+        win = clear_win | tp_first
+        loss = clear_loss | sl_first
 
-    return success.astype(int)
+    if config.PHASE1_ASYMMETRIC_TARGET:
+        # Encode -1/0/+1 → 0/1/2 (mutual_info_classif requires non-negative ints).
+        target = pd.Series(np.zeros(len(df), dtype=np.int8), index=df.index)
+        target[win] = 2
+        target[loss] = 0
+        target[~win & ~loss] = 1
+        return target
+
+    # Legacy binary path: 1 if win, else 0.
+    return win.astype(int)
 
 
 def _compute_stability(sym_scores: list[float]) -> float:
@@ -553,6 +599,127 @@ def _compute_stability(sym_scores: list[float]) -> float:
         return float(np.clip(stability, 0.0, 1.0))
     except Exception:
         return 0.0
+
+
+def _compute_stationarity_scores(
+    df: pd.DataFrame,
+    feature_cols: list[str],
+    feature_modes: dict[str, str],
+    target: pd.Series,
+    n_folds: int,
+) -> dict[str, list[float]]:
+    """
+    Compute per-fold MI scores by splitting *df* chronologically into *n_folds*.
+
+    Returns a mapping ``feature -> [score_fold_0, score_fold_1, ...]``. Used to
+    detect features whose predictive relationship drifts over time (the failure
+    mode visible in the spearman_correlation report where train and test have
+    opposite signs for the top features).
+    """
+    if n_folds < 2:
+        return {col: [] for col in feature_cols}
+
+    # Order rows chronologically per symbol so that early/late folds approximate
+    # earlier/later time periods for each symbol.
+    if "datetime" in df.columns and "symbol" in df.columns:
+        order = df.sort_values(["symbol", "datetime"]).index
+        df_ordered = df.loc[order]
+        target_ordered = target.loc[order]
+    else:
+        df_ordered = df
+        target_ordered = target
+
+    discrete_mask = _mutual_info_discrete_mask(feature_cols, feature_modes)
+    fold_scores: dict[str, list[float]] = {col: [] for col in feature_cols}
+
+    n = len(df_ordered)
+    if n < n_folds * 100:
+        # Not enough rows for meaningful folding; abort gracefully.
+        return fold_scores
+
+    boundaries = np.linspace(0, n, n_folds + 1, dtype=int)
+    X_full = df_ordered[feature_cols].values
+    y_full = target_ordered.values.astype(np.int32, copy=False)
+
+    for f in range(n_folds):
+        lo, hi = int(boundaries[f]), int(boundaries[f + 1])
+        if hi - lo < 100:
+            continue
+        Xf = X_full[lo:hi]
+        yf = y_full[lo:hi]
+        if len(np.unique(yf)) < 2:
+            continue
+        try:
+            scores = mutual_info_classif(
+                Xf, yf, discrete_features=discrete_mask, random_state=42,
+            )
+        except Exception:
+            scores = np.zeros(len(feature_cols))
+        for i, col in enumerate(feature_cols):
+            fold_scores[col].append(float(scores[i]))
+
+    return fold_scores
+
+
+def _stationarity_filter(
+    fold_scores: dict[str, list[float]],
+    cv_max: float,
+    rank_drift_max: int,
+) -> set[str]:
+    """
+    Return the set of feature names that PASS both stationarity checks.
+
+    A feature passes when:
+      1. The coefficient of variation (std/mean) of its per-fold MI score is
+         at or below *cv_max*.
+      2. Its rank (descending by score) does not shift by more than
+         *rank_drift_max* positions across folds (max - min rank).
+    """
+    feature_names = list(fold_scores.keys())
+    if not feature_names:
+        return set()
+
+    n_folds = max(len(scores) for scores in fold_scores.values()) if fold_scores else 0
+    if n_folds < 2:
+        return set(feature_names)
+
+    # CV check
+    survivors_cv: set[str] = set()
+    for col, scores in fold_scores.items():
+        if not scores:
+            continue
+        arr = np.array(scores, dtype=float)
+        mean_val = float(np.mean(arr))
+        if mean_val <= 0.0:
+            continue
+        std_val = float(np.std(arr, ddof=0))
+        cv = std_val / mean_val
+        if cv <= cv_max:
+            survivors_cv.add(col)
+
+    # Rank drift check
+    ranks_per_fold: dict[int, dict[str, int]] = {}
+    for f in range(n_folds):
+        fold_pairs = []
+        for col, scores in fold_scores.items():
+            if f < len(scores):
+                fold_pairs.append((col, scores[f]))
+        fold_pairs.sort(key=lambda x: x[1], reverse=True)
+        ranks_per_fold[f] = {col: r for r, (col, _) in enumerate(fold_pairs)}
+
+    survivors_rank: set[str] = set()
+    for col in feature_names:
+        ranks = [
+            ranks_per_fold[f][col]
+            for f in range(n_folds)
+            if col in ranks_per_fold[f]
+        ]
+        if len(ranks) < 2:
+            continue
+        if (max(ranks) - min(ranks)) <= rank_drift_max:
+            survivors_rank.add(col)
+
+    return survivors_cv & survivors_rank
 
 
 def _remove_redundant_features(

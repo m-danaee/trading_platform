@@ -170,6 +170,16 @@ class TestBuildTarget:
             "label_close_288": open_next,  # not used in target
         })
 
+    @staticmethod
+    def _win_class() -> int:
+        """Encoding-aware win class: 2 in asymmetric mode, 1 in legacy mode."""
+        return 2 if config.PHASE1_ASYMMETRIC_TARGET else 1
+
+    @staticmethod
+    def _loss_class() -> int:
+        """Encoding-aware loss class: 0 in either mode."""
+        return 0
+
     def test_long_tp_hit_no_sl(self):
         """Long: max >= entry*(1+TP/100), min > entry*(1-SL/100) → success."""
         tp = config.PHASE2_TP
@@ -181,7 +191,7 @@ class TestBuildTarget:
             max_before_min=[1],
         )
         target = _build_target(df, "long")
-        assert target.iloc[0] == 1
+        assert target.iloc[0] == self._win_class()
 
     def test_long_sl_hit_before_tp(self):
         """Long: both hit but max_before_min==0 → SL first → failure."""
@@ -195,7 +205,7 @@ class TestBuildTarget:
             max_before_min=[0],  # min came first → SL first for long
         )
         target = _build_target(df, "long")
-        assert target.iloc[0] == 0
+        assert target.iloc[0] == self._loss_class()
 
     def test_long_tp_hit_before_sl(self):
         """Long: both hit but max_before_min==1 → TP first → success."""
@@ -209,19 +219,22 @@ class TestBuildTarget:
             max_before_min=[1],  # max came first → TP first for long
         )
         target = _build_target(df, "long")
-        assert target.iloc[0] == 1
+        assert target.iloc[0] == self._win_class()
 
     def test_long_neither_hit(self):
-        """Long: neither TP nor SL hit → failure."""
+        """Long: neither TP nor SL hit → failure (or neutral in asymmetric mode)."""
         entry = 100.0
         df = self._make_df(
             open_next=[entry],
             max_288=[entry * 1.01],  # below TP
-            min_288=[entry * 0.99],  # above SL
+            min_288=[entry * 0.999],  # above SL level (SL=1% so 0.99 is exactly at SL; 0.999 is safely above)
             max_before_min=[1],
         )
         target = _build_target(df, "long")
-        assert target.iloc[0] == 0
+        # Asymmetric: neither win nor loss → neutral class (1)
+        # Legacy: failure → 0
+        expected = 1 if config.PHASE1_ASYMMETRIC_TARGET else 0
+        assert target.iloc[0] == expected
 
     def test_short_tp_hit_no_sl(self):
         """Short: min <= entry*(1-TP/100), max < entry*(1+SL/100) → success."""
@@ -234,7 +247,7 @@ class TestBuildTarget:
             max_before_min=[0],
         )
         target = _build_target(df, "short")
-        assert target.iloc[0] == 1
+        assert target.iloc[0] == self._win_class()
 
     def test_short_sl_hit_before_tp(self):
         """Short: both hit but max_before_min==1 → max came first → SL first → failure."""
@@ -248,7 +261,7 @@ class TestBuildTarget:
             max_before_min=[1],  # max came first → SL first for short
         )
         target = _build_target(df, "short")
-        assert target.iloc[0] == 0
+        assert target.iloc[0] == self._loss_class()
 
     def test_short_tp_hit_before_sl(self):
         """Short: both hit but max_before_min==0 → min came first → TP first → success."""
@@ -262,13 +275,17 @@ class TestBuildTarget:
             max_before_min=[0],  # min came first → TP first for short
         )
         target = _build_target(df, "short")
-        assert target.iloc[0] == 1
+        assert target.iloc[0] == self._win_class()
 
     def test_returns_integer_series(self):
         df = _make_train_df(n_rows=20, n_features=2, symbols=["A"])
         target = _build_target(df, "long")
-        assert target.dtype in (np.int32, np.int64, int)
-        assert set(target.unique()).issubset({0, 1})
+        # Asymmetric path uses int8 (3 classes); legacy uses int (2 classes)
+        assert np.issubdtype(target.dtype, np.integer)
+        if config.PHASE1_ASYMMETRIC_TARGET:
+            assert set(target.unique()).issubset({0, 1, 2})
+        else:
+            assert set(target.unique()).issubset({0, 1})
 
 
 # ---------------------------------------------------------------------------

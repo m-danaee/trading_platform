@@ -513,9 +513,19 @@ class TestRLAgentFindElbowPoint:
 # ---------------------------------------------------------------------------
 
 class TestRLAgentSkipIfValid:
-    def _write_rule_set(self, path: str, direction: str, tp: float = 5.0,
-                        sl: float = 2.5, cap: float = 50.0,
+    def _write_rule_set(self, path: str, direction: str,
+                        tp: float | None = None,
+                        sl: float | None = None,
+                        cap: float | None = None,
                         risk_optimized: bool = True):
+        # Use configured maxima as defaults so tests stay within bounds even
+        # when PHASE4_TP_MAX / PHASE4_SL_MAX are tightened.
+        if tp is None:
+            tp = _cfg.PHASE4_TP_MAX
+        if sl is None:
+            sl = _cfg.PHASE4_SL_MAX
+        if cap is None:
+            cap = _cfg.PHASE4_CAPITAL_PCT_MAX
         data = {
             "direction": direction,
             "risk_optimized": risk_optimized,

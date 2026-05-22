@@ -823,6 +823,15 @@ class TestTradeSupportPenalty:
 
     def test_below_threshold_positive_penalty_capped(self):
         from gpu_fuzzy_trader.phases.phase2_rule_pool import trade_support_penalty
+        # 0 trades is below MIN_TRADE_POOL_FLOOR → hard-reject penalty
+        # (= 2x SUPPORT_PENALTY_MAX so dominated by any feasible rule).
         pen = trade_support_penalty(0)
+        assert pen == 2.0 * _cfg.SUPPORT_PENALTY_MAX
+
+    def test_below_threshold_above_floor_graduated_penalty(self):
+        """Between the hard-reject floor and the soft threshold the penalty is graduated."""
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import trade_support_penalty
+        executed = (_cfg.MIN_TRADE_POOL_FLOOR + _cfg.MIN_TRADE_SUPPORT) // 2
+        pen = trade_support_penalty(executed)
         assert 0.0 < pen <= _cfg.SUPPORT_PENALTY_MAX
 
