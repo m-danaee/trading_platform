@@ -37,12 +37,12 @@ class TestConfigureJaxEnvPreallocate:
 
     def test_sets_preallocate_to_false_when_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """When XLA_PYTHON_CLIENT_PREALLOCATE is not in the environment,
-        configure_jax_env() must set it to 'false'."""
+        configure_jax_env() must set it to 'true' for better GPU utilization."""
         monkeypatch.delenv("XLA_PYTHON_CLIENT_PREALLOCATE", raising=False)
 
         configure_jax_env()
 
-        assert os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] == "false"
+        assert os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] == "true"
 
 
 # ---------------------------------------------------------------------------
