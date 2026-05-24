@@ -339,6 +339,190 @@ def _jax_simulate_equity_batch(
     return batched_simulate(signals_batch)
 
 
+@partial(jit, static_argnums=(4, 5, 6, 7, 8, 9, 10))
+def _jax_simulate_equity_batch_regime(
+    signals_batch: jnp.ndarray,       # (B, N) bool
+    price_returns_all: jnp.ndarray,   # (N,) float64
+    regime_ids: jnp.ndarray,          # (N,) int32
+    initial_capital: float,
+    n_rows: int,
+    n_regimes: int,
+    fee_rate: float,
+    leverage: float,
+    capital_rate: float,
+    max_exposure_rate: float,
+    min_position_notional: float,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """Like _jax_simulate_equity_batch but also returns per-regime stats.
+
+    Returns
+    -------
+    base : (B, 10) — same layout as _jax_simulate_equity_batch
+    regime_stats : (B, n_regimes, 3) — trades, wins, net_pnl per regime
+    """
+    fee_rate_f = jnp.float64(fee_rate)
+    leverage_f = jnp.float64(leverage)
+    capital_rate_f = jnp.float64(capital_rate)
+    max_exposure_rate_f = jnp.float64(max_exposure_rate)
+    min_notional_f = jnp.float64(min_position_notional)
+    init_cap = jnp.float64(initial_capital)
+    sortino_cap = jnp.float64(_cfg.SORTINO_CAP)
+    n_reg = int(n_regimes)
+
+    def simulate_one(signal_mask):
+        is_signal = signal_mask.astype(jnp.float64)
+        scan_xs = jnp.stack(
+            [is_signal, price_returns_all, regime_ids.astype(jnp.float64)],
+            axis=-1,
+        )
+
+        init_trades = jnp.zeros(n_reg, dtype=jnp.int32)
+        init_wins = jnp.zeros(n_reg, dtype=jnp.int32)
+        init_pnl = jnp.zeros(n_reg, dtype=jnp.float64)
+
+        init_carry = (
+            init_cap,
+            init_cap,
+            jnp.float64(0.0),
+            jnp.float64(0.0),
+            jnp.int32(0),
+            jnp.int32(0),
+            jnp.float64(0.0),
+            jnp.float64(0.0),
+            jnp.int32(0),
+            jnp.int32(0),
+            jnp.bool_(False),
+            jnp.float64(0.0),
+            jnp.int32(0),
+            jnp.float64(0.0),
+            init_trades,
+            init_wins,
+            init_pnl,
+        )
+
+        def step(carry, x):
+            (equity, peak_equity, max_dd, open_exposure,
+             wins, losses, gross_profit, gross_loss,
+             executed, skipped, account_ruined,
+             trade_return_sum, n_neg, neg_sq_sum,
+             trades_by_regime, wins_by_regime, pnl_by_regime) = carry
+
+            is_sig = x[0]
+            price_return_pct = x[1]
+            regime_idx = jnp.clip(x[2].astype(jnp.int32), 0, n_reg - 1)
+
+            target = equity * capital_rate_f * leverage_f
+            max_exp = equity * max_exposure_rate_f * leverage_f
+            remaining = jnp.maximum(0.0, max_exp - open_exposure)
+            position_notional = jnp.minimum(target, remaining)
+
+            can_trade = ((is_sig > 0.5) & (~account_ruined)
+                         & (position_notional >= min_notional_f))
+
+            gross_pnl = position_notional * (price_return_pct / 100.0)
+            fee = position_notional * fee_rate_f
+            net_pnl = gross_pnl - fee
+
+            trade_ret = jnp.where(
+                can_trade & (equity > 0.0), net_pnl / equity, 0.0)
+
+            new_equity = jnp.where(can_trade, equity + net_pnl, equity)
+            new_peak = jnp.maximum(peak_equity, new_equity)
+            dd = jnp.where(
+                new_peak > 0.0,
+                (new_peak - new_equity) / new_peak * 100.0,
+                100.0,
+            )
+            new_max_dd = jnp.maximum(max_dd, dd)
+
+            new_wins = wins + jnp.where(
+                can_trade & (net_pnl > 0.0), 1, 0).astype(jnp.int32)
+            new_losses = losses + jnp.where(
+                can_trade & (net_pnl < 0.0), 1, 0).astype(jnp.int32)
+            new_gross_profit = gross_profit + jnp.where(
+                can_trade & (net_pnl > 0.0), net_pnl, 0.0)
+            new_gross_loss = gross_loss + jnp.where(
+                can_trade & (net_pnl < 0.0), jnp.abs(net_pnl), 0.0)
+            new_executed = executed + jnp.where(
+                can_trade, 1, 0).astype(jnp.int32)
+            new_skipped = skipped + jnp.where(
+                (is_sig > 0.5) & (~account_ruined)
+                & (position_notional < min_notional_f),
+                1, 0).astype(jnp.int32)
+            new_ruined = account_ruined | (new_equity <= 0.0)
+
+            new_trade_return_sum = trade_return_sum + jnp.where(
+                can_trade, trade_ret, 0.0)
+            is_neg = can_trade & (trade_ret < 0.0)
+            new_n_neg = n_neg + jnp.where(is_neg, 1, 0).astype(jnp.int32)
+            new_neg_sq_sum = neg_sq_sum + jnp.where(
+                is_neg, trade_ret ** 2, 0.0)
+
+            inc = jnp.where(can_trade, 1, 0).astype(jnp.int32)
+            win_inc = jnp.where(
+                can_trade & (net_pnl > 0.0), 1, 0).astype(jnp.int32)
+            pnl_inc = jnp.where(can_trade, net_pnl, 0.0)
+            new_trades_by_regime = trades_by_regime.at[regime_idx].add(inc)
+            new_wins_by_regime = wins_by_regime.at[regime_idx].add(win_inc)
+            new_pnl_by_regime = pnl_by_regime.at[regime_idx].add(pnl_inc)
+
+            new_carry = (
+                new_equity, new_peak, new_max_dd, open_exposure,
+                new_wins, new_losses, new_gross_profit, new_gross_loss,
+                new_executed, new_skipped, new_ruined,
+                new_trade_return_sum, new_n_neg, new_neg_sq_sum,
+                new_trades_by_regime, new_wins_by_regime, new_pnl_by_regime,
+            )
+            return new_carry, None
+
+        final_carry, _ = lax.scan(step, init_carry, scan_xs)
+
+        (equity, peak_equity, max_dd, _open_exp,
+         wins, losses, gross_profit, gross_loss,
+         executed, skipped, account_ruined,
+         trade_return_sum, n_neg, neg_sq_sum,
+         trades_by_regime, wins_by_regime, pnl_by_regime) = final_carry
+
+        total_return_pct = (equity / init_cap - 1.0) * 100.0
+        raw_signal_count = jnp.sum(signal_mask).astype(jnp.float64)
+
+        n_trades = (wins + losses).astype(jnp.float64)
+        mean_ret = jnp.where(n_trades > 0, trade_return_sum / n_trades, 0.0)
+        downside_var = jnp.where(n_trades > 0, neg_sq_sum / n_trades, 0.0)
+        downside_dev = jnp.sqrt(downside_var)
+        sortino = jnp.where(
+            downside_dev > 0.0,
+            jnp.minimum(mean_ret / downside_dev, sortino_cap),
+            jnp.where(mean_ret > 0.0, sortino_cap, 0.0),
+        )
+
+        win_rate = jnp.where(
+            n_trades > 0, wins.astype(jnp.float64) / n_trades * 100.0, 0.0)
+        profit_factor = jnp.where(
+            (gross_loss <= 0.0) & (gross_profit > 0.0), 99.0,
+            jnp.where(gross_loss <= 0.0, 0.0, gross_profit / gross_loss),
+        )
+
+        base = jnp.array([
+            total_return_pct, sortino, max_dd, win_rate,
+            profit_factor, n_trades, equity,
+            account_ruined.astype(jnp.float64),
+            raw_signal_count, skipped.astype(jnp.float64),
+        ])
+        regime_stats = jnp.stack(
+            [
+                trades_by_regime.astype(jnp.float64),
+                wins_by_regime.astype(jnp.float64),
+                pnl_by_regime,
+            ],
+            axis=-1,
+        )
+        return base, regime_stats
+
+    batched_simulate = vmap(simulate_one)
+    return batched_simulate(signals_batch)
+
+
 # ---------------------------------------------------------------------------
 # GPUBacktestEngine
 # ---------------------------------------------------------------------------
@@ -438,6 +622,18 @@ class GPUBacktestEngine:
             sym_arr, bar_arr, len(df), self.max_hold_candles)
         self._release_indices_jax = jnp.array(
             self._release_indices, dtype=jnp.int32)
+
+        # Optional per-row regime labels for Phase 2 support penalties
+        regime_ids = constants.get("regime_ids")
+        self._n_regimes = int(constants.get("n_regimes", 0))
+        if regime_ids is not None and self._n_regimes > 0:
+            ids = np.asarray(regime_ids, dtype=np.int32)
+            if len(ids) != len(df):
+                raise ValueError(
+                    f"regime_ids length {len(ids)} != dataframe rows {len(df)}")
+            self._regime_ids_jax = jnp.array(ids, dtype=jnp.int32)
+        else:
+            self._regime_ids_jax = None
 
         # Cache for pre-computed trade outcomes
         self._trade_outcomes_cache: dict[tuple, jnp.ndarray] = {}
@@ -553,25 +749,44 @@ class GPUBacktestEngine:
         price_returns_all = self._get_trade_outcomes(tp, sl)
 
         # --- Step 3: Batch equity simulation via vmap'd lax.scan ---
-        results_array = _jax_simulate_equity_batch(
-            signals_batch,
-            price_returns_all,
-            self._release_indices_jax,
-            self.initial_capital,
-            N,
-            self.fee_rate,
-            self.leverage,
-            capital_rate,
-            max_exposure_rate,
-            self.min_position_notional,
-        )
+        if self._regime_ids_jax is not None and self._n_regimes > 0:
+            results_array, regime_stats = _jax_simulate_equity_batch_regime(
+                signals_batch,
+                price_returns_all,
+                self._regime_ids_jax,
+                self.initial_capital,
+                N,
+                self._n_regimes,
+                self.fee_rate,
+                self.leverage,
+                capital_rate,
+                max_exposure_rate,
+                self.min_position_notional,
+            )
+        else:
+            results_array = _jax_simulate_equity_batch(
+                signals_batch,
+                price_returns_all,
+                self._release_indices_jax,
+                self.initial_capital,
+                N,
+                self.fee_rate,
+                self.leverage,
+                capital_rate,
+                max_exposure_rate,
+                self.min_position_notional,
+            )
+            regime_stats = None
 
         # --- Step 4: Convert JAX results to list of dicts ---
         results_np = np.asarray(results_array)
+        regime_np = None
+        if regime_stats is not None:
+            regime_np = np.asarray(regime_stats)
         results = []
         for b in range(B):
             row = results_np[b]
-            results.append({
+            entry: dict = {
                 "direction": self.trade_direction,
                 "total_return_pct": float(row[0]),
                 "sortino_ratio": float(row[1]),
@@ -583,7 +798,19 @@ class GPUBacktestEngine:
                 "account_ruined": bool(row[7] > 0.5),
                 "raw_signal_count": int(row[8]),
                 "skipped_min_notional_count": int(row[9]),
-            })
+            }
+            if regime_np is not None:
+                rs = regime_np[b]
+                entry["regime_trade_counts"] = [
+                    int(rs[r, 0]) for r in range(self._n_regimes)
+                ]
+                entry["regime_win_counts"] = [
+                    int(rs[r, 1]) for r in range(self._n_regimes)
+                ]
+                entry["regime_net_pnl"] = [
+                    float(rs[r, 2]) for r in range(self._n_regimes)
+                ]
+            results.append(entry)
         return results
 
     # ------------------------------------------------------------------

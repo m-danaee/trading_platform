@@ -39,24 +39,76 @@ import pandas as pd
 from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.features.encoder import decode_chromosome, get_dont_care
 from gpu_fuzzy_trader.log_progress import maybe_log_generation
+from gpu_fuzzy_trader.phases.phase2_support import (
+    compute_support_penalty_and_specialist,
+    passes_pool_trade_floor,
+    regime_row_fractions,
+    trade_support_penalty as _regime_trade_support_penalty,
+)
 from gpu_fuzzy_trader.reporting.reporter import Reporter
 
 logger = logging.getLogger(__name__)
 
 
-def trade_support_penalty(executed: int) -> float:
-    """Graduated penalty when executed trades fall below MIN_TRADE_SUPPORT.
+def trade_support_penalty(executed: int, **kwargs) -> float:
+    """Backward-compatible wrapper returning penalty only."""
+    penalty, _, _ = _regime_trade_support_penalty(executed, **kwargs)
+    return penalty
 
-    Below MIN_TRADE_POOL_FLOOR the rule is hard-rejected (returns a value larger
-    than SUPPORT_PENALTY_MAX so dominated by any feasible rule).
+
+def _prepare_regime_context(
+    sampled_df: pd.DataFrame,
+) -> tuple[np.ndarray | None, np.ndarray | None, int]:
     """
-    if executed >= _cfg.MIN_TRADE_SUPPORT:
-        return 0.0
-    if executed < _cfg.MIN_TRADE_POOL_FLOOR:
-        # Hard reject: dominate any feasible rule by 2x SUPPORT_PENALTY_MAX
-        return 2.0 * _cfg.SUPPORT_PENALTY_MAX
-    shortfall = (_cfg.MIN_TRADE_SUPPORT - executed) / _cfg.MIN_TRADE_SUPPORT
-    return min(shortfall ** 2 * _cfg.SUPPORT_PENALTY_MAX, _cfg.SUPPORT_PENALTY_MAX)
+    Assign regime labels to *sampled_df* rows using the Phase 1 artifact.
+
+    Returns (regime_ids, regime_row_fractions_arr, n_regimes).
+    """
+    if not _cfg.PHASE2_REGIME_SUPPORT_ENABLED:
+        return None, None, 0
+
+    from gpu_fuzzy_trader.features.regime_cluster import (
+        assign_regime_labels,
+        load_regime_model,
+    )
+
+    try:
+        bundle = load_regime_model(_cfg.PHASE2_REGIME_MODEL_PATH)
+    except FileNotFoundError:
+        logger.warning(
+            "Phase 2 regime support: model not found at %s; using static penalty",
+            _cfg.PHASE2_REGIME_MODEL_PATH,
+        )
+        return None, None, 0
+
+    missing = [c for c in bundle["regime_features"]
+               if c not in sampled_df.columns]
+    if missing:
+        logger.warning(
+            "Phase 2 regime support: missing columns %s; using static penalty",
+            missing,
+        )
+        return None, None, 0
+
+    try:
+        labels = assign_regime_labels(sampled_df, bundle)
+    except Exception as exc:
+        logger.warning(
+            "Phase 2 regime support: label assignment failed (%s); static penalty",
+            exc,
+        )
+        return None, None, 0
+
+    n_regimes = int(bundle.get("n_clusters", labels.nunique()))
+    regime_ids = labels.reindex(sampled_df.index).fillna(
+        0).astype(np.int32).values
+    fracs = regime_row_fractions(regime_ids, n_regimes)
+    logger.info(
+        "Phase 2 regime support: n_regimes=%d, row_counts=%s",
+        n_regimes,
+        np.bincount(regime_ids.astype(np.int64), minlength=n_regimes).tolist(),
+    )
+    return regime_ids, fracs, n_regimes
 
 
 def _saturating_sortino(raw: float) -> float:
@@ -171,6 +223,8 @@ def _evaluate_chromosome(
     engine,  # GPUBacktestEngine or CPUBacktestEngine
     pareto_front: list[np.ndarray],
     val_engine=None,  # optional second engine for joint train+val objective
+    regime_row_fractions_arr: np.ndarray | None = None,
+    val_regime_row_counts: np.ndarray | None = None,
 ) -> tuple[np.ndarray, dict]:
     """
     Evaluate a single chromosome and return (objectives, metrics).
@@ -216,10 +270,9 @@ def _evaluate_chromosome(
     win_rate = float(metrics.get("win_rate", 0.0))
     executed = int(metrics.get("executed_trades", 0))
 
-    support_penalty = trade_support_penalty(executed)
-
-    # Optional joint train+val Sortino (worst-case)
+    val_metrics: dict | None = None
     sortino_for_obj = sortino_train
+
     if _cfg.PHASE2_JOINT_TRAIN_VAL and val_engine is not None:
         try:
             val_list = val_engine.simulate_rule_batch(
@@ -233,19 +286,42 @@ def _evaluate_chromosome(
                 "sortino_ratio", val_metrics.get("total_return_pct", 0.0)))
             sortino_val = _saturating_sortino(raw_val_sortino)
             val_executed = int(val_metrics.get("executed_trades", 0))
-            # If validation has too few trades, treat the whole rule as unsupported.
+            metrics["val_sortino_ratio"] = raw_val_sortino
+            metrics["val_executed_trades"] = val_executed
             if val_executed < max(_cfg.MIN_TRADE_POOL_FLOOR // 4, 10):
-                support_penalty = max(
-                    support_penalty,
-                    _cfg.SUPPORT_PENALTY_MAX,
-                )
                 sortino_for_obj = min(sortino_train, 0.0)
             else:
                 sortino_for_obj = min(sortino_train, sortino_val)
-            metrics["val_sortino_ratio"] = raw_val_sortino
-            metrics["val_executed_trades"] = val_executed
         except Exception as exc:
             logger.debug("val simulate_rule_batch failed: %s", exc)
+            val_metrics = None
+
+    if regime_row_fractions_arr is None:
+        regime_row_fractions_arr = getattr(
+            engine, "_regime_row_fractions", None)
+    if val_regime_row_counts is None and val_engine is not None:
+        val_regime_row_counts = getattr(val_engine, "_regime_row_counts", None)
+
+    support_penalty, is_specialist, dominant_regime = (
+        compute_support_penalty_and_specialist(
+            metrics,
+            regime_row_fractions_arr,
+            val_metrics=val_metrics,
+            val_regime_row_counts=val_regime_row_counts,
+        )
+    )
+    if (
+        val_metrics is not None
+        and int(val_metrics.get("executed_trades", 0))
+        < max(_cfg.MIN_TRADE_POOL_FLOOR // 4, 10)
+    ):
+        support_penalty = max(support_penalty, _cfg.SUPPORT_PENALTY_MAX)
+        sortino_for_obj = min(sortino_train, 0.0)
+        is_specialist = False
+
+    if is_specialist:
+        metrics["regime_specialist"] = True
+        metrics["dominant_regime"] = dominant_regime
 
     # Diversity penalty: Hamming distance to nearest Pareto-front member
     diversity_penalty = 0.0
@@ -536,6 +612,7 @@ def _build_pool_from_archive(
     dont_cares: np.ndarray,
     engine,
     metrics_by_chrom: dict[tuple, dict] | None = None,
+    regime_row_fractions_arr: np.ndarray | None = None,
 ) -> list[dict]:
     """
     Convert a list of Pareto-front chromosomes into pool JSON entries.
@@ -577,7 +654,13 @@ def _build_pool_from_archive(
                 continue
 
         executed = int(metrics.get("executed_trades", 0))
-        if executed < _cfg.MIN_TRADE_POOL_FLOOR:
+        if regime_row_fractions_arr is None:
+            regime_row_fractions_arr = getattr(
+                engine, "_regime_row_fractions", None,
+            )
+        if not passes_pool_trade_floor(
+            executed, metrics, regime_row_fractions_arr=regime_row_fractions_arr,
+        ):
             continue
 
         try:
@@ -588,7 +671,7 @@ def _build_pool_from_archive(
         if not conditions:
             continue
 
-        pool.append({
+        pool_entry: dict = {
             "chromosome": chrom.tolist(),
             "conditions": conditions,
             "objectives": {
@@ -598,7 +681,15 @@ def _build_pool_from_archive(
                 "win_rate": float(metrics.get("win_rate", 0.0)),
             },
             "executed_trades": executed,
-        })
+        }
+        if metrics.get("regime_specialist"):
+            pool_entry["regime_specialist"] = True
+            pool_entry["dominant_regime"] = int(
+                metrics.get("dominant_regime", -1))
+        if metrics.get("regime_trade_counts") is not None:
+            pool_entry["regime_trade_counts"] = list(
+                metrics["regime_trade_counts"])
+        pool.append(pool_entry)
 
     return pool
 
@@ -668,7 +759,12 @@ def _merge_archive_entries(
     objectives = np.vstack([
         _archive_objective_vector(entry) for entry in unique_entries
     ])
-    fronts = _non_dominated_sort(objectives)
+    from gpu_fuzzy_trader.evolution.numba_ops import (
+        crowding_distance as _crowding_distance_fast,
+        non_dominated_sort as _non_dominated_sort_fast,
+    )
+
+    fronts = _non_dominated_sort_fast(objectives)
 
     selected: list[int] = []
     for front in fronts:
@@ -677,7 +773,7 @@ def _merge_archive_entries(
         if len(selected) + len(front) <= max_size:
             selected.extend(front)
         else:
-            crowding = _crowding_distance(objectives, front)
+            crowding = _crowding_distance_fast(objectives, front)
             order = np.argsort(-crowding)
             need = max_size - len(selected)
             selected.extend(int(front[j]) for j in order[:need])
@@ -858,27 +954,53 @@ class Rule_Pool_Generator:
         self.n_generations = n_generations if n_generations is not None else _cfg.PHASE2_GENERATIONS
         self.seed = seed
         self._feature_signature = _archive_feature_signature(feature_infos)
+        self._regime_row_fractions: np.ndarray | None = None
+        self._n_regimes = 0
+        self._val_regime_row_counts: np.ndarray | None = None
 
         # Sample training data to budget, then slim to backtest-only columns
         sampled = _sample_df(train_df, _cfg.PHASE1_SAMPLING_TOTAL)
         feature_names = [fi["name"] for fi in feature_infos]
         from gpu_fuzzy_trader.backtest.df_slim import slim_backtest_df
 
+        train_regime_ids, self._regime_row_fractions, self._n_regimes = (
+            _prepare_regime_context(sampled)
+        )
         self._train_df = slim_backtest_df(sampled, feature_names)
 
         # Build feature_modes dict for engine
         self._feature_modes = {fi["name"]: fi["mode"] for fi in feature_infos}
 
         # Initialise backtest engine (GPU preferred, CPU fallback)
-        self._engine = self._build_engine()
+        self._engine = self._build_engine(
+            regime_ids=train_regime_ids,
+            n_regimes=self._n_regimes,
+        )
 
         # Optional validation engine for joint train+val objective
         self._val_engine = None
+        self._val_regime_row_counts = None
         if val_df is not None and _cfg.PHASE2_JOINT_TRAIN_VAL:
             try:
                 val_sampled = _sample_df(val_df, _cfg.PHASE1_SAMPLING_TOTAL)
+                val_regime_ids, _val_fracs, val_n_regimes = (
+                    _prepare_regime_context(val_sampled)
+                )
+                if val_regime_ids is not None:
+                    self._val_regime_row_counts = np.bincount(
+                        val_regime_ids.astype(np.int64),
+                        minlength=val_n_regimes,
+                    ).astype(np.int64)
                 slim_val = slim_backtest_df(val_sampled, feature_names)
-                self._val_engine = self._build_engine_for_df(slim_val)
+                self._val_engine = self._build_engine_for_df(
+                    slim_val,
+                    regime_ids=val_regime_ids,
+                    n_regimes=val_n_regimes,
+                )
+                if self._val_regime_row_counts is not None:
+                    self._val_engine._regime_row_counts = (
+                        self._val_regime_row_counts
+                    )
                 logger.info(
                     "Phase 2 [%s]: joint train+val objective enabled "
                     "(val_rows=%d)", direction, len(slim_val),
@@ -899,19 +1021,40 @@ class Rule_Pool_Generator:
     # Engine construction
     # ------------------------------------------------------------------
 
-    def _build_engine(self):
+    def _build_engine(
+        self,
+        regime_ids: np.ndarray | None = None,
+        n_regimes: int = 0,
+    ):
         """Build GPUBacktestEngine if JAX available, else CPUBacktestEngine."""
-        return self._build_engine_for_df(self._train_df)
+        return self._build_engine_for_df(
+            self._train_df,
+            regime_ids=regime_ids,
+            n_regimes=n_regimes,
+        )
 
-    def _build_engine_for_df(self, df: pd.DataFrame):
+    def _build_engine_for_df(
+        self,
+        df: pd.DataFrame,
+        regime_ids: np.ndarray | None = None,
+        n_regimes: int = 0,
+    ):
         """Build an engine on *df* using the same backend selection logic."""
+        engine_kwargs: dict = {}
+        if regime_ids is not None and n_regimes > 0:
+            engine_kwargs["regime_ids"] = regime_ids
+            engine_kwargs["n_regimes"] = n_regimes
+
         try:
             from gpu_fuzzy_trader.backtest.gpu_engine import GPUBacktestEngine
             engine = GPUBacktestEngine(
                 df,
                 self._feature_modes,
                 self.direction,
+                **engine_kwargs,
             )
+            if self._regime_row_fractions is not None:
+                engine._regime_row_fractions = self._regime_row_fractions
             logger.info(
                 "Phase 2 using GPUBacktestEngine (backend: %s)", engine.backend)
             return engine
@@ -919,11 +1062,15 @@ class Rule_Pool_Generator:
             logger.warning(
                 "JAX not available; falling back to CPUBacktestEngine for Phase 2.")
             from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
-            return CPUBacktestEngine(
+            engine = CPUBacktestEngine(
                 df,
                 self._feature_modes,
                 self.direction,
+                **engine_kwargs,
             )
+            if self._regime_row_fractions is not None:
+                engine._regime_row_fractions = self._regime_row_fractions
+            return engine
 
     # ------------------------------------------------------------------
     # Public API
@@ -996,6 +1143,8 @@ class Rule_Pool_Generator:
             log_tag=progress_tag,
             seed_chromosomes=seed_chromosomes,
             val_engine=self._val_engine,
+            regime_row_fractions=self._regime_row_fractions,
+            val_regime_row_counts=self._val_regime_row_counts,
         )
 
         pool = _merge_archive_entries(previous_pool + list(new_pool))

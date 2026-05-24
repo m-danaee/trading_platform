@@ -87,7 +87,41 @@ shortfall = (MIN_TRADE_SUPPORT - executed) / MIN_TRADE_SUPPORT
 penalty = min(shortfall² × SUPPORT_PENALTY_MAX, SUPPORT_PENALTY_MAX)
 ```
 
-Below `MIN_TRADE_POOL_FLOOR`: penalty = `2 × SUPPORT_PENALTY_MAX` (effective hard reject).
+Below `MIN_TRADE_POOL_FLOOR`: penalty = `2 × SUPPORT_PENALTY_MAX` (effective hard reject), unless the rule qualifies as a **regime specialist** (see below).
+
+---
+
+## Regime-stratified support (Phase 1 artifact)
+
+Uses `outputs/phase1_regime_cluster.joblib` to label each backtest row, then counts trades per regime during `simulate_rule_batch`.
+
+| Parameter | Default | Effect |
+| --------- | ------- | ------ |
+| `PHASE2_REGIME_SUPPORT_ENABLED` | `True` | Off → static support penalty only |
+| `PHASE2_REGIME_MODEL_PATH` | same as Phase 1 | Path to fitted GMM bundle |
+| `PHASE2_REGIME_CONCENTRATION_MIN` | `0.90` | Share of trades in dominant regime |
+| `PHASE2_REGIME_MIN_WIN_RATE` | `0.40` | Win rate in dominant regime |
+| `PHASE2_REGIME_USE_PNL_GATE` | `True` | Also allow specialist if regime net PnL > 0 |
+| `PHASE2_REGIME_MIN_TRADE_FRACTION` | `1.0` | Scales per-regime trade threshold |
+| `PHASE2_REGIME_REQUIRE_VAL_CONFIRMATION` | `False` | When `True`, train specialists need val confirmation; missing val regime → inconclusive pass |
+
+**Specialist rule:** If total trades &lt; `MIN_TRADE_SUPPORT` but ≥ `MIN_TRADE_POOL_FLOOR` is not required — a concentrated rule with enough trades in its dominant regime and win rate ≥ 40% (or positive regime PnL) gets **zero** support penalty and may enter the pool below the global trade floor. Pool JSON may include `regime_specialist`, `dominant_regime`, `regime_trade_counts`.
+
+Per-regime trade threshold (dominant regime `d`):
+
+```
+threshold[d] = max(MIN_TRADE_POOL_FLOOR, round(MIN_TRADE_SUPPORT × row_fraction[d] × executed / MIN_TRADE_SUPPORT × PHASE2_REGIME_MIN_TRADE_FRACTION))
+```
+
+---
+
+## Numba acceleration (evolution overhead)
+
+| Parameter | Default | Effect |
+| --------- | ------- | ------ |
+| `PHASE2_NUMBA_ENABLED` | `True` | `@njit` NSGA sort/crowding; falls back to NumPy if Numba missing |
+
+Does not replace JAX GPU backtest. First call compiles Numba (`cache=True` for later runs). Benchmark with a warm-up generation before timing.
 
 ---
 
