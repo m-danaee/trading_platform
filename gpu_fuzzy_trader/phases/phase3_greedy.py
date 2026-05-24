@@ -17,6 +17,8 @@ from typing import Any, Protocol
 import numpy as np
 
 from gpu_fuzzy_trader import config as _cfg
+from gpu_fuzzy_trader.phases.phase3_cache import Phase3EvalCache
+from gpu_fuzzy_trader.phases.phase3_objectives import compute_phase3_objectives
 
 logger = logging.getLogger(__name__)
 
@@ -40,12 +42,7 @@ def _scalar_score(
     weights: tuple[float, float, float],
     train_metrics: dict | None = None,
 ) -> float:
-    """Higher is better.
-
-    Train-target redesign: when PHASE3_USE_TRAIN_TARGET is enabled, the scalar
-    score is computed from TRAIN metrics. Penalties (encoded in objectives[0])
-    are subtracted via the same penalty arithmetic as before.
-    """
+    """Higher is better."""
     w1, w2, w3 = weights
     use_train = _cfg.PHASE3_USE_TRAIN_TARGET and train_metrics is not None
     src = train_metrics if use_train else val_metrics
@@ -54,74 +51,8 @@ def _scalar_score(
         "sortino_ratio", src.get("total_return_pct", 0.0)))
     primary_dd = float(src.get("max_drawdown_pct", 0.0))
     primary_wr = float(src.get("win_rate", 0.0))
-    # excess penalty vs raw Sortino (recovers the penalty mass from objectives[0])
     penalty = float(objectives[0] + primary_sortino)
     return w1 * primary_sortino - w2 * primary_dd + w3 * primary_wr - penalty
-
-
-def _evaluate_candidates_batch(
-    candidates: list[list[dict]],
-    val_engine: Any,
-    train_engine: Any,
-    use_batch: bool,
-) -> list[tuple[np.ndarray, dict, dict]]:
-    """Evaluate rule-set candidates; use GPU batch path when available.
-
-    Returns
-    -------
-    list[tuple[np.ndarray, dict, dict]]
-        Tuples of ``(objectives, val_metrics, train_metrics)``.
-    """
-    p3 = _helpers()
-    engine_fmt = [p3._rule_set_to_engine_format(c) for c in candidates]
-    results: list[tuple[np.ndarray, dict, dict]] = []
-
-    if use_batch and hasattr(val_engine, "simulate_rule_set_batch"):
-        val_metrics_list = val_engine.simulate_rule_set_batch(engine_fmt)
-        if hasattr(train_engine, "simulate_rule_set_batch"):
-            train_metrics_list = train_engine.simulate_rule_set_batch(
-                engine_fmt)
-        else:
-            train_metrics_list = [
-                train_engine.simulate_rule_set(rs) for rs in engine_fmt
-            ]
-
-        for rs, val_m, train_m in zip(candidates, val_metrics_list, train_metrics_list):
-            obj = _objectives_from_metrics(val_m, train_m, rs, val_engine=val_engine)
-            results.append((obj, val_m, train_m))
-        return results
-
-    for rs in candidates:
-        fmt = p3._rule_set_to_engine_format(rs)
-        # _evaluate_rule_set returns (objectives, primary_metrics);
-        # primary_metrics depends on PHASE3_USE_TRAIN_TARGET. Ask for both
-        # explicitly to avoid coupling to that flag here.
-        try:
-            train_m = train_engine.simulate_rule_set(fmt)
-        except Exception:
-            train_m = {
-                "sortino_ratio": 0.0,
-                "total_return_pct": 0.0,
-                "max_drawdown_pct": 100.0,
-                "win_rate": 0.0,
-                "executed_trades": 0,
-                "per_symbol_metrics": {},
-            }
-        try:
-            val_m = val_engine.simulate_rule_set(fmt)
-        except Exception:
-            val_m = {
-                "sortino_ratio": 0.0,
-                "total_return_pct": 0.0,
-                "max_drawdown_pct": 100.0,
-                "win_rate": 0.0,
-                "executed_trades": 0,
-                "per_symbol_metrics": {},
-            }
-        obj = _objectives_from_metrics(val_m, train_m, fmt, val_engine=val_engine)
-        results.append((obj, val_m, train_m))
-
-    return results
 
 
 def _objectives_from_metrics(
@@ -129,72 +60,51 @@ def _objectives_from_metrics(
     train_metrics: dict,
     rule_set_template: list[dict],
     val_engine: Any | None = None,
+    cache: Phase3EvalCache | None = None,
 ) -> np.ndarray:
-    """Replicate _evaluate_rule_set penalty + train-target logic from metrics."""
+    """Compute objectives from precomputed metrics (backward-compatible wrapper)."""
+    _ = val_engine  # legacy callers may pass engine; cache replaces gate sims
+    per_rule = cache.per_rule_min_val_trades if cache is not None else None
+    return compute_phase3_objectives(
+        train_metrics,
+        val_metrics,
+        rule_set_template,
+        per_rule_min_val_trades=per_rule,
+    )
+
+
+def _evaluate_candidates_batch(
+    candidates: list[list[dict]],
+    val_engine: Any,
+    train_engine: Any,
+    use_batch: bool,
+    use_jax: bool = False,
+    cache: Phase3EvalCache | None = None,
+) -> list[tuple[np.ndarray, dict, dict]]:
+    """Evaluate rule-set candidates; parallel or JAX batch when available."""
     p3 = _helpers()
-    dup_penalty = 50.0 if p3._has_duplicate_rules(rule_set_template) else 0.0
+    engine_fmt = [p3._rule_set_to_engine_format(c) for c in candidates]
+    results: list[tuple[np.ndarray, dict, dict]] = []
+    per_rule = cache.per_rule_min_val_trades if cache is not None else None
 
-    train_sortino = float(train_metrics.get(
-        "sortino_ratio", train_metrics.get("total_return_pct", 0.0)))
-    train_dd = float(train_metrics.get("max_drawdown_pct", 100.0))
-    train_wr = float(train_metrics.get("win_rate", 0.0))
-    train_trades = int(train_metrics.get("executed_trades", 0))
+    if use_batch:
+        train_list, val_list = p3._simulate_teams_batch(
+            engine_fmt, train_engine, val_engine, cache, use_jax)
+        for rs, val_m, train_m in zip(candidates, val_list, train_list):
+            obj = compute_phase3_objectives(
+                train_m, val_m, rs, per_rule_min_val_trades=per_rule)
+            results.append((obj, val_m, train_m))
+        return results
 
-    val_sortino = float(val_metrics.get(
-        "sortino_ratio", val_metrics.get("total_return_pct", 0.0)))
-    val_dd = float(val_metrics.get("max_drawdown_pct", 100.0))
-    val_wr = float(val_metrics.get("win_rate", 0.0))
-    val_trades = int(val_metrics.get("executed_trades", 0))
+    for rs in candidates:
+        fmt = p3._rule_set_to_engine_format(rs)
+        train_m, val_m = p3._simulate_team(
+            fmt, train_engine, val_engine, cache)
+        obj = compute_phase3_objectives(
+            train_m, val_m, rs, per_rule_min_val_trades=per_rule)
+        results.append((obj, val_m, train_m))
 
-    zero_penalty = 100.0 if (
-        train_trades == 0 or val_trades == 0) else 0.0
-    val_symbols_with_trades = p3._count_symbols_with_trades(val_metrics)
-    coverage_penalty = 0.0
-    if val_symbols_with_trades < _cfg.PHASE3_MIN_SYMBOL_COVERAGE:
-        coverage_penalty = (
-            (_cfg.PHASE3_MIN_SYMBOL_COVERAGE - val_symbols_with_trades) * 5.0
-        )
-
-    symbol_consistency_penalty = p3._symbol_consistency_penalty(
-        train_metrics, val_metrics)
-
-    corr_penalty = p3._train_val_corr_penalty(train_metrics, val_metrics)
-
-    gate_penalty = 0.0
-    if _cfg.PHASE3_USE_TRAIN_TARGET:
-        if train_sortino > 0.0:
-            min_val = _cfg.PHASE3_VAL_SORTINO_RATIO_GATE * train_sortino
-            if val_sortino < min_val:
-                gate_penalty += _cfg.PHASE3_VAL_GATE_PENALTY
-
-        max_val_dd = _cfg.PHASE3_VAL_DRAWDOWN_RATIO_GATE * max(train_dd, 1.0)
-        if val_dd > max_val_dd:
-            gate_penalty += _cfg.PHASE3_VAL_GATE_PENALTY
-
-        if val_engine is not None:
-            min_per_rule = p3._per_rule_min_symbol_trades(
-                rule_set_template, val_engine)
-            if min_per_rule < _cfg.PHASE3_PER_RULE_MIN_VAL_TRADES_PER_SYMBOL:
-                gate_penalty += _cfg.PHASE3_VAL_GATE_PENALTY
-
-    total_penalty = (
-        zero_penalty + coverage_penalty + dup_penalty
-        + symbol_consistency_penalty + corr_penalty + gate_penalty
-    )
-
-    if _cfg.PHASE3_USE_TRAIN_TARGET:
-        return np.array(
-            [-train_sortino + total_penalty,
-             train_dd + total_penalty,
-             -train_wr + total_penalty],
-            dtype=np.float64,
-        )
-    return np.array(
-        [-val_sortino + total_penalty,
-         val_dd + total_penalty,
-         -val_wr + total_penalty],
-        dtype=np.float64,
-    )
+    return results
 
 
 def greedy_rule_set_search(
@@ -205,6 +115,8 @@ def greedy_rule_set_search(
     max_rules: int,
     weights: tuple[float, float, float] | None = None,
     use_batch: bool = False,
+    use_jax: bool = False,
+    cache: Phase3EvalCache | None = None,
 ) -> tuple[list[dict], int]:
     """
     Greedy construction of an ordered rule set.
@@ -223,10 +135,9 @@ def greedy_rule_set_search(
         raise ValueError(
             f"pool needs at least {min_rules} rules, got {len(pool)}")
 
-    # Round 1: single rules
     candidates = [[pool[i]] for i in range(len(pool))]
     batch_results = _evaluate_candidates_batch(
-        candidates, val_engine, train_engine, use_batch
+        candidates, val_engine, train_engine, use_batch, use_jax, cache,
     )
     n_evals += len(candidates)
 
@@ -261,7 +172,7 @@ def greedy_rule_set_search(
             continue
 
         batch_results = _evaluate_candidates_batch(
-            extensions, val_engine, train_engine, use_batch
+            extensions, val_engine, train_engine, use_batch, use_jax, cache,
         )
         n_evals += len(extensions)
 

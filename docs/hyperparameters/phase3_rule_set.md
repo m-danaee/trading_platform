@@ -65,7 +65,10 @@ Each failed gate adds `PHASE3_VAL_GATE_PENALTY` (default 75):
 | `PHASE3_MIN_RULES`                          | `2`               | Forces larger teams                            | Allows single-rule sets (if pool small)    |
 | `PHASE3_MAX_RULES`                          | `3`               | More diversification; dilution risk            | Simpler teams; less combinatorial search   |
 | `PHASE3_MIN_SYMBOL_COVERAGE`                | `7` (of 10)       | Rejects symbol-concentrated sets               | Allows niche symbol strategies             |
-| `PHASE3_USE_GPU`                            | `False`           | GPU batch eval if JAX parity verified          | CPU only; same metrics, slower             |
+| `PHASE3_USE_PARALLEL_BATCH`                 | `True`            | ProcessPool/thread batch team eval on CPU      | Sequential eval only                       |
+| `PHASE3_BATCH_WORKERS`                      | `min(32, CPUs)`   | Parallelism for batch eval                     | Fewer workers                              |
+| `PHASE3_NUMBA_ENABLED`                      | `True`            | Numba NSGA-II sort/crowding in refinement      | Pure Python NSGA helpers                   |
+| `PHASE3_USE_GPU`                            | `False`           | JAX path + cached masks (parity-tested)        | CPU cache + parallel batch only            |
 | `PHASE3_REFINE_POP_SIZE`                    | `100`             | More refinement exploration                    | Faster Phase 3                             |
 | `PHASE3_REFINE_GENERATIONS`                 | `80`              | Better Pareto refinement                       | Faster; may stop at greedy solution        |
 | `PHASE3_GREEDY_WEIGHTS`                     | `(1.0, 0.7, 0.5)` | See below                                      | See below                                  |
@@ -124,7 +127,18 @@ Output schema supports up to 5 rules; search is capped at `MAX_RULES`.
 
 ### Refinement budget
 
-`PHASE3_REFINE_POP_SIZE × PHASE3_REFINE_GENERATIONS` ≈ 8,000 team evaluations after greedy. Full **full** train+val backtest per candidate (CPU unless `PHASE3_USE_GPU=True`).
+`PHASE3_REFINE_POP_SIZE × PHASE3_REFINE_GENERATIONS` ≈ 8,000 team evaluations after greedy. Each evaluation runs train + validation backtests; per-rule gate stats are **precomputed once** at selector init (no extra val sims per team).
+
+**Performance knobs (see `phase3_cache.py`, `phase3_objectives.py`):**
+
+| Bottleneck (old)                         | Mitigation                                      |
+| ---------------------------------------- | ----------------------------------------------- |
+| Repeated condition parsing               | `Phase3EvalCache` signal masks (train/val)      |
+| Up to 3 extra val sims / team (gate)     | `per_rule_min_val_trades` cache                 |
+| Sequential NSGA evals                    | `PHASE3_USE_PARALLEL_BATCH` + `simulate_rule_set_batch` |
+| NSGA sort O(n²)                          | `PHASE3_NUMBA_ENABLED` (shared with Phase 2)  |
+
+After profiling on your hardware, you can raise pop×gen (e.g. toward `500×200` ≈ 100k evals). Defaults stay `100×80` until a full pipeline benchmark confirms wall-clock budget.
 
 ---
 
@@ -139,7 +153,8 @@ Rule sets written to `outputs/long.json` and `outputs/short.json` still carry **
 1. Keep `PHASE3_USE_TRAIN_TARGET=True` unless ablating.
 2. Set `MIN_SYMBOL_COVERAGE` and `MIN_TRADE_SUPPORT` (Phase 2) coherently — coverage is about teams, support about individual rules.
 3. Adjust gate ratios before refinement budget.
-4. Enable `PHASE3_USE_GPU` only after parity tests pass (speed only).
+4. Keep `PHASE3_USE_PARALLEL_BATCH=True` on multi-core hosts.
+5. Enable `PHASE3_USE_GPU` only after parity tests pass (cached-mask path; speed only).
 
 ---
 

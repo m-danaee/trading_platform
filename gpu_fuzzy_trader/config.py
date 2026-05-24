@@ -174,7 +174,11 @@ PHASE2_NUMBA_ENABLED = True
 PHASE3_MIN_RULES = 2
 PHASE3_MAX_RULES = 3
 PHASE3_MIN_SYMBOL_COVERAGE = 7  # of 10 symbols must have ≥ 1 trade on validation
-PHASE3_USE_GPU = False  # enable after GPU rule-set batch parity tests pass
+PHASE3_USE_GPU = False  # JAX mask path + batched eval; enable after parity tests pass
+# ProcessPool batch on CPU (independent of GPU)
+PHASE3_USE_PARALLEL_BATCH = True
+PHASE3_BATCH_WORKERS = min(32, os.cpu_count() or 4)
+PHASE3_NUMBA_ENABLED = True  # NSGA-II sort/crowding via evolution.numba_ops
 PHASE3_REFINE_GENERATIONS = 80
 PHASE3_REFINE_POP_SIZE = 100
 PHASE3_GREEDY_WEIGHTS = (1.0, 0.7, 0.5)  # sortino, drawdown, win_rate

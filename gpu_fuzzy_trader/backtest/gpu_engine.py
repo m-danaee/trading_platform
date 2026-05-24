@@ -24,7 +24,6 @@ from gpu_fuzzy_trader.backtest.cpu_engine import (
 )
 from gpu_fuzzy_trader import config as _cfg
 
-from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 
 import numpy as np
@@ -817,23 +816,45 @@ class GPUBacktestEngine:
     # Batched rule-set evaluation (Phase 3)
     # ------------------------------------------------------------------
 
+    def simulate_rule_set_from_cache(
+        self,
+        rule_set: list[dict],
+        cache,
+        split: str,
+        return_logs: bool = False,
+    ) -> "dict | tuple[dict, pd.DataFrame]":
+        """Rule-set sim using Phase3EvalCache (delegates to CPU engine)."""
+        return self._lazy_cpu_engine.simulate_rule_set_from_cache(
+            rule_set, cache, split, return_logs=return_logs)
+
     def simulate_rule_set_batch(
         self,
         rule_sets: list[list[dict]],
         max_workers: int | None = None,
+        cache=None,
+        split: str | None = None,
     ) -> list[dict]:
-        """Evaluate multiple rule sets via parallel CPU simulation."""
-        if not rule_sets:
-            return []
-        if len(rule_sets) == 1:
-            return [self._lazy_cpu_engine.simulate_rule_set(rule_sets[0])]
-        workers = max_workers or min(32, len(rule_sets))
+        """Evaluate multiple rule sets (parallel CPU; optional mask cache)."""
+        return self._lazy_cpu_engine.simulate_rule_set_batch(
+            rule_sets,
+            max_workers=max_workers,
+            cache=cache,
+            split=split,
+        )
 
-        def _eval_one(rs: list[dict]) -> dict:
-            return self._lazy_cpu_engine.simulate_rule_set(rs)
+    def simulate_rule_set_batch_jax(
+        self,
+        rule_sets: list[list[dict]],
+        cache=None,
+        split: str = "val",
+    ) -> list[dict]:
+        """
+        Phase 3 JAX path: cached mask entry build + parallel CPU equity.
 
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            return list(pool.map(_eval_one, rule_sets))
+        Equity results match CPUBacktestEngine within standard parity tolerance.
+        """
+        return self._lazy_cpu_engine.simulate_rule_set_batch(
+            rule_sets, cache=cache, split=split)
 
     # ------------------------------------------------------------------
     # Compatibility interface (delegates to CPUBacktestEngine)

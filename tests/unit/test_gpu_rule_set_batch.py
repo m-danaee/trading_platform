@@ -115,3 +115,31 @@ class TestSimulateRuleSetBatchParity:
         one = gpu.simulate_rule_set_batch(rs)
         direct = gpu.simulate_rule_set(rs[0])
         assert one[0]["executed_trades"] == direct["executed_trades"]
+
+    def test_jax_batch_with_cache_matches_cpu(self):
+        from gpu_fuzzy_trader.phases.phase3_cache import build_phase3_eval_cache
+
+        df = _make_df()
+        cpu = CPUBacktestEngine(df, {}, "long")
+        gpu = GPUBacktestEngine(df, {}, "long")
+        rule_sets = _rule_sets()
+        pool = [
+            {"conditions": r["conditions"], "tp": r["tp"],
+             "sl": r["sl"], "capital_pct": r["capital_pct"]}
+            for rs in rule_sets for r in rs
+        ]
+        seen = []
+        unique_pool = []
+        for p in pool:
+            key = frozenset(p["conditions"])
+            if key not in seen:
+                seen.append(key)
+                unique_pool.append(p)
+        cache = build_phase3_eval_cache(unique_pool, df, df, cpu)
+        jax_batch = gpu.simulate_rule_set_batch_jax(
+            rule_sets, cache=cache, split="val")
+        for rs, metrics in zip(rule_sets, jax_batch):
+            ref = cpu.simulate_rule_set_from_cache(rs, cache, "val")
+            assert metrics["executed_trades"] == ref["executed_trades"]
+            assert metrics["sortino_ratio"] == pytest.approx(
+                ref["sortino_ratio"], rel=1e-4, abs=1e-4)

@@ -137,8 +137,9 @@ def selector_args(draw: st.DrawFn):
     symbols = [f"SYM_{i}" for i in range(n_symbols)]
     n_rows = rows_per_sym * n_symbols
 
-    train_df = _make_df(n_rows, symbols, seed=seed)
-    val_df = _make_df(n_rows, symbols, seed=seed + 1)
+    n_feat = max(3, pool_size)
+    train_df = _make_df(n_rows, symbols, n_features=n_feat, seed=seed)
+    val_df = _make_df(n_rows, symbols, n_features=n_feat, seed=seed + 1)
     pool = _make_pool(pool_size)
 
     return train_df, val_df, pool, direction

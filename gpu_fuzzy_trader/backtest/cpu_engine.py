@@ -10,10 +10,23 @@ exactly as the evaluator does for exported strategies.
 
 from __future__ import annotations
 
+import logging
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+
 import numpy as np
 import pandas as pd
 
 from gpu_fuzzy_trader import config as _cfg
+
+logger = logging.getLogger(__name__)
+
+
+def _batch_eval_rule_set_pickled(
+    payload: tuple["CPUBacktestEngine", list[dict]],
+) -> dict:
+    """Top-level worker for ProcessPoolExecutor (must be picklable)."""
+    engine, rule_set = payload
+    return engine.simulate_rule_set(rule_set)
 
 
 # ---------------------------------------------------------------------------
@@ -571,6 +584,56 @@ class CPUBacktestEngine:
         return self._simulate_rule_set_entries(
             entries, return_logs=return_logs, initial_capital=self.initial_capital
         )
+
+    def simulate_rule_set_from_cache(
+        self,
+        rule_set: list[dict],
+        cache,
+        split: str,
+        return_logs: bool = False,
+    ) -> "dict | tuple[dict, pd.DataFrame]":
+        """Simulate using precomputed signal masks from Phase3EvalCache."""
+        entries = cache.build_entries(rule_set, split)
+        return self._simulate_rule_set_entries(
+            entries, return_logs=return_logs, initial_capital=self.initial_capital
+        )
+
+    def simulate_rule_set_batch(
+        self,
+        rule_sets: list[list[dict]],
+        max_workers: int | None = None,
+        cache=None,
+        split: str | None = None,
+    ) -> list[dict]:
+        """Evaluate multiple rule sets in parallel (ProcessPool, thread fallback)."""
+        if not rule_sets:
+            return []
+        if len(rule_sets) == 1:
+            if cache is not None and split is not None:
+                return [self.simulate_rule_set_from_cache(
+                    rule_sets[0], cache, split)]
+            return [self.simulate_rule_set(rule_sets[0])]
+
+        workers = max_workers
+        if workers is None:
+            workers = int(_cfg.PHASE3_BATCH_WORKERS)
+
+        if cache is not None and split is not None:
+            def _eval_one(rs: list[dict]) -> dict:
+                return self.simulate_rule_set_from_cache(rs, cache, split)
+
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                return list(pool.map(_eval_one, rule_sets))
+
+        payloads = [(self, rs) for rs in rule_sets]
+        try:
+            with ProcessPoolExecutor(max_workers=workers) as pool:
+                return list(pool.map(_batch_eval_rule_set_pickled, payloads))
+        except Exception as exc:
+            logger.debug(
+                "ProcessPool rule-set batch failed (%s); using threads", exc)
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                return list(pool.map(_batch_eval_rule_set_pickled, payloads))
 
     def _simulate_rule_set_entries(
         self,

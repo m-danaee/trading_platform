@@ -151,9 +151,10 @@ Edit `gpu_fuzzy_trader/config.py` before running. Common settings:
 | `PHASE2_ARCHIVE_DIR`           | `phase2_rule_archive/` | Persistent Phase 2 archive in the project root                                 |
 | `PHASE2_ARCHIVE_MAX_SIZE`      | `500`                  | Max archive size per direction                                                 |
 | `PHASE2_ARCHIVE_SEED_FRACTION` | `0.35`                 | Fraction of Phase 2 population seeded from archive                             |
-| `PHASE3_REFINE_GENERATIONS`    | `15`                   | Refinement generations after greedy                                            |
-| `PHASE3_REFINE_POP_SIZE`       | `40`                   | Refinement population size                                                     |
-| `PHASE3_USE_GPU`               | `False`                | Batched rule-set eval via `GPUBacktestEngine` (enable after parity tests pass) |
+| `PHASE3_REFINE_GENERATIONS`    | `80`                   | Refinement generations after greedy                                            |
+| `PHASE3_REFINE_POP_SIZE`       | `100`                  | Refinement population size                                                     |
+| `PHASE3_USE_PARALLEL_BATCH`    | `True`                 | Parallel CPU batch eval for greedy + NSGA-II                                   |
+| `PHASE3_USE_GPU`               | `False`                | JAX cached-mask batch path (enable after parity tests)                          |
 | `PHASE4_TOTAL_TIMESTEPS`       | `500000`               | Phase 4 RL steps                                                               |
 
 ---
@@ -236,6 +237,6 @@ Run individual phases — see [README.md § Running Individual Phases](README.md
 | Phase 2 very slow on CPU                                    | Install `jax` + `jaxlib` and `evox` + `torch`; optional GPU/CUDA build for faster backtests                                    |
 | Phase 2 uses NSGA-II instead of NSGA-III                    | Install `evox` and `torch`; check `phase2_*_history.json` — `"NSGA-II (fallback)"` means EvoX was unavailable                  |
 | Stale Phase 2 pools after code changes                      | `rm pools/phase2_{long,short}_{pool,history}.json` and re-run                                                                  |
-| Phase 3 still slow                                          | Lower `PHASE3_REFINE_GENERATIONS` / `PHASE3_REFINE_POP_SIZE`, or set `PHASE3_USE_GPU=True` after parity tests for batched eval |
+| Phase 3 still slow                                          | Ensure `PHASE3_USE_PARALLEL_BATCH=True`; raise `PHASE3_BATCH_WORKERS`; then increase `PHASE3_REFINE_*` after profiling; optional `PHASE3_USE_GPU=True` |
 | Phase 4 uses random search                                  | Install `stable-baselines3`, `gymnasium`, and `torch` for DDPG/PPO                                                             |
 | Want fresh OOS only                                         | Keep `outputs/long.json` / `short.json`; re-run pipeline (Phase 5 always runs)                                                 |

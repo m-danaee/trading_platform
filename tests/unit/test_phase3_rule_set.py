@@ -91,7 +91,7 @@ def _make_df(
             "_symbol_bar_index": np.arange(n),
         }
         # Add feature columns that match pool conditions
-        for i in range(8):
+        for i in range(12):
             data[f"feat_{i}"] = rng.uniform(0, 1, size=n)
 
         dfs.append(pd.DataFrame(data))
@@ -607,11 +607,14 @@ class TestRuleSetSelectorRun:
 
         pool = _make_pool(10)
         df = _make_df(n_rows=200)
-        val_eng, train_eng, _ = __import__(
-            "gpu_fuzzy_trader.phases.phase3_rule_set", fromlist=["_build_phase3_engines"]
-        )._build_phase3_engines(df, df, "long")
+        p3 = __import__(
+            "gpu_fuzzy_trader.phases.phase3_rule_set",
+            fromlist=["_build_phase3_engines"],
+        )
+        val_eng, train_eng, _, _, cache = p3._build_phase3_engines(
+            df, df, "long", pool)
         _, n_evals = greedy_rule_set_search(
-            pool, val_eng, train_eng, 2, 5, use_batch=False
+            pool, val_eng, train_eng, 2, 5, use_batch=False, cache=cache,
         )
         # 10 singles + 9 pairs + 8 triples + 7 quads + 6 fives = 40
         assert n_evals == 40
