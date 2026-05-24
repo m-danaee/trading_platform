@@ -34,6 +34,7 @@ from gpu_fuzzy_trader.features.selector import (
     _reduce_overlap,
     _remove_low_dispersion,
     _remove_redundant_features,
+    _stationarity_filter,
     _validate_schema,
 )
 from gpu_fuzzy_trader import config
@@ -763,6 +764,32 @@ class TestFeatureSelectorRun:
         assert set(result.keys()) == {"long", "short"}
         assert isinstance(result["long"], list)
         assert isinstance(result["short"], list)
+
+
+class TestStationarityFilter:
+    def test_regime_rank_drift_rejects_large_swing(self) -> None:
+        fold_scores = {
+            "f0": [10.0, 1.0, 10.0],
+            "f1": [9.0, 2.0, 9.0],
+            "f2": [8.0, 3.0, 8.0],
+            "f3": [1.0, 10.0, 1.0],
+        }
+        survivors_tight = _stationarity_filter(
+            fold_scores, cv_max=10.0, rank_drift_max=2)
+        survivors_loose = _stationarity_filter(
+            fold_scores, cv_max=10.0, rank_drift_max=30)
+        assert "f3" not in survivors_tight
+        assert "f3" in survivors_loose
+
+    def test_stable_ranks_pass_tight_drift(self) -> None:
+        fold_scores = {
+            "a": [1.0, 1.0, 1.0],
+            "b": [0.9, 0.9, 0.9],
+            "c": [0.8, 0.8, 0.8],
+        }
+        survivors = _stationarity_filter(
+            fold_scores, cv_max=1.0, rank_drift_max=2)
+        assert survivors == {"a", "b", "c"}
 
 
 class TestReduceOverlap:

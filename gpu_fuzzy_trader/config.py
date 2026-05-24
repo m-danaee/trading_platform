@@ -173,12 +173,31 @@ PHASE1_DISPERSION_THRESHOLD = 0.95
 # 25 features lets the GA exploit noise.
 PHASE1_TOP_K_FEATURES = 15
 PHASE1_MAX_FEATURE_OVERLAP = 0.50
-# Stationarity filter: split TRAIN into N chronological folds; drop any feature
-# whose per-fold MI score has a coefficient of variation above the threshold or
-# a top-K rank shift above the rank threshold.
+# Stationarity filter: per-fold MI (chronological or regime-stratified); drop
+# features with high CV or unstable rank across folds.
 PHASE1_STATIONARITY_FOLDS = 3
 PHASE1_STATIONARITY_CV_MAX = 1.0
 PHASE1_STATIONARITY_RANK_DRIFT_MAX = 30
+# "regime" = cluster train rows by vol/trend/liquidity indicators; "chronological" = time folds
+PHASE1_STATIONARITY_STRATIFY = "regime"
+PHASE1_REGIME_FEATURES = [
+    "realized_vol_20",
+    "parkinson_vol_20",
+    "atr_pct_14",
+    "vol_regime_pct_120",
+    "efficiency_ratio_20",
+    "ret_autocorr_1_30",
+    "amihud_illiquidity_20",
+    "vol_ratio_20_100",
+]
+# when STRATIFY=regime, defaults to STATIONARITY_FOLDS if unset at runtime
+PHASE1_REGIME_N_CLUSTERS = 3
+PHASE1_REGIME_MIN_SAMPLES = 100
+PHASE1_REGIME_CLUSTERER = "gmm"  # "gmm" | "kmeans"
+PHASE1_REGIME_GMM_REG_COVAR = 1e-6
+PHASE1_REGIME_ZERO_VAR_EPS = 1e-12
+PHASE1_REGIME_MODEL_PATH = os.path.join(
+    OUTPUTS_DIR, "phase1_regime_cluster.joblib")
 # Asymmetric scoring target — instead of a binary success flag, use a signed
 # expected-PnL surrogate so long/short feature lists actually differ.
 PHASE1_ASYMMETRIC_TARGET = True

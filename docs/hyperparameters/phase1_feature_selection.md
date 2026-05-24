@@ -16,7 +16,7 @@ This is not a predictive model in the usual sense — it is **filter-based featu
 
 1. Score each feature with **mutual information (MI)** against a direction-specific target.
 2. Penalize features whose MI **varies across symbols** (instability).
-3. Drop **non-stationary** features (MI drift across chronological folds).
+3. Drop **non-stationary** features (MI drift across regime or chronological folds).
 4. Remove **redundant** features within the same fuzzy mode (correlation > 0.95).
 5. Cap **long/short overlap** so the two directions can discover different alpha.
 
@@ -37,7 +37,7 @@ For each direction (`long`, `short`):
 6. relevance = mean(per_symbol_MI)
 7. stability = 1 - std(per_symbol_MI) / mean(per_symbol_MI)   [when mean > 0]
 8. score = relevance × stability
-9. Stationarity filter across PHASE1_STATIONARITY_FOLDS chronological folds
+9. Stationarity filter across N folds (default: regime-stratified MI; optional chronological)
 10. Redundancy removal within mode (pairwise |corr| > 0.95, keep higher score)
 11. Rank and take top 2×K candidates, then overlap reduction → K features per direction
 ```
@@ -53,9 +53,14 @@ Outputs: `outputs/selected_features_long.json`, `outputs/selected_features_short
 | `PHASE1_DISPERSION_THRESHOLD`        | `0.95`    | 0.90–0.99             | Keeps more near-constant features; more noise genes in Phase 2  | Drops more features early; risk losing weak signals                       |
 | `PHASE1_TOP_K_FEATURES`              | `15`      | 10–25                 | Wider Phase 2 search space; more overfit risk; slower evolution | Narrower search; may miss complementary features                          |
 | `PHASE1_MAX_FEATURE_OVERLAP`         | `0.50`    | 0.0–1.0               | More shared long/short features; similar strategies             | Forces directional specialization; may drop strong features from one side |
-| `PHASE1_STATIONARITY_FOLDS`          | `3`       | 2–5                   | Finer temporal resolution for drift detection                   | Coarser folds; fewer features rejected for drift                          |
+| `PHASE1_STATIONARITY_FOLDS`          | `3`       | 2–5                   | More regimes / time slices for drift detection                  | Coarser splits; fewer features rejected for drift                         |
+| `PHASE1_STATIONARITY_STRATIFY`       | `"regime"` | `regime`, `chronological` | Regime-robust MI stability (default)                        | Time-based folds (ablation)                                               |
 | `PHASE1_STATIONARITY_CV_MAX`         | `1.0`     | 0.5–2.0               | Stricter; drops features with volatile MI across folds          | Permits regime-sensitive features; overfit risk                           |
-| `PHASE1_STATIONARITY_RANK_DRIFT_MAX` | `30`      | 10–50                 | Stricter rank stability requirement                             | Allows large rank swings between folds                                    |
+| `PHASE1_STATIONARITY_RANK_DRIFT_MAX` | `30`      | 10–50                 | Stricter rank stability (chronological); caps regime mode       | Allows large rank swings between folds                                    |
+| `PHASE1_REGIME_FEATURES`             | 8 cols    | —                     | Vol/trend/liquidity indicators for clustering                   | —                                                                         |
+| `PHASE1_REGIME_MIN_SAMPLES`          | `100`     | 50–500                | Stricter per-regime MI estimates                                | Noisier regime MI; more regimes skipped                                   |
+| `PHASE1_REGIME_CLUSTERER`            | `"gmm"`   | `gmm`, `kmeans`       | Elliptical clusters; `k-means++` init + `reg_covar`             | Faster, simpler KMeans                                                    |
+| `PHASE1_REGIME_GMM_REG_COVAR`        | `1e-6`    | 1e-8–1e-4             | More stable covariance estimates                                | Less regularization                                                       |
 | `PHASE1_ASYMMETRIC_TARGET`           | `True`    | bool                  | 3-class signed PnL surrogate; long ≠ short targets              | Legacy binary win flag; lists often nearly identical                      |
 | `PHASE1_SAMPLING_TOTAL`              | `150_000` | 50k–300k              | **Phase 2 only:** less fitness noise; more GPU VRAM/RAM         | Faster Phase 2; noisier Sortino estimates                                 |
 
@@ -86,15 +91,30 @@ After independent long/short ranking, shared features are trimmed until at most 
 - **Performance:** Critical for long/short diversification. Overlap=1.0 would make both directions search the same subspace.
 - **Suggested range:** 0.3–0.5 for meaningfully different portfolios.
 
-### Stationarity trio (`PHASE1_STATIONARITY_*`)
+### Stationarity (`PHASE1_STATIONARITY_*` + `PHASE1_REGIME_*`)
 
-Train is split into N **chronological** folds. Per feature, MI is recomputed per fold. A feature survives if:
+**Default (`PHASE1_STATIONARITY_STRATIFY="regime"`):**
 
-- Coefficient of variation of fold MI scores ≤ `PHASE1_STATIONARITY_CV_MAX`
-- Maximum rank change across folds ≤ `PHASE1_STATIONARITY_RANK_DRIFT_MAX`
+1. Z-score `PHASE1_REGIME_FEATURES` **within each symbol** (zero-variance columns → 0.0, no NaNs).
+2. Fit a pooled **GMM** (`init_params="k-means++"`, `reg_covar=PHASE1_REGIME_GMM_REG_COVAR`) on train only → `N = PHASE1_STATIONARITY_FOLDS` regime labels.
+3. Per feature, recompute MI **within each regime** (skip regimes with &lt; `PHASE1_REGIME_MIN_SAMPLES` rows).
+4. Drop features failing CV and rank-drift checks (same as before).
+
+**Regime rank drift:** effective limit = `min(PHASE1_STATIONARITY_RANK_DRIFT_MAX, n_valid_regimes - 1)`. With 3 regimes, max rank swing is **2** — a feature ranked #1 in high-vol but last in sideways is removed.
+
+**Chronological ablation:** set `PHASE1_STATIONARITY_STRATIFY="chronological"` — time-ordered folds, `RANK_DRIFT_MAX=30` unchanged.
+
+**Fallback:** missing regime columns, GMM failure, or &lt;2 valid regime folds → chronological stationarity.
+
+**Artifacts:** `outputs/phase1_regime_cluster.joblib` (fitted scalers + clusterer for later phases).
+
+A feature survives when:
+
+- Coefficient of variation of per-fold MI scores ≤ `PHASE1_STATIONARITY_CV_MAX`
+- Maximum rank change across folds ≤ effective rank drift limit
 
 - **Generalization:** Stricter filters improve val/test stability at the cost of fewer features.
-- **Failure mode:** If Phase 1 logs "stationarity filter removed everything", relax `CV_MAX` or `RANK_DRIFT_MAX`.
+- **Failure mode:** If Phase 1 logs "stationarity filter removed everything", relax `CV_MAX` or `RANK_DRIFT_MAX` (chronological) or switch stratify mode.
 
 ### `PHASE1_ASYMMETRIC_TARGET`
 

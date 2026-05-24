@@ -38,7 +38,7 @@ The pipeline uses a **per-symbol chronological 75/25 split** of `data/train.csv`
 
 **Label isolation:** feature columns never include `LABEL_COLUMNS`. Labels are used only for Phase 1 scoring targets and backtest outcome simulation.
 
-**Temporal integrity:** splits are chronological per symbol (no shuffling). Stationarity filters in Phase 1 use chronological folds within train.
+**Temporal integrity:** splits are chronological per symbol (no shuffling). Phase 1 stationarity defaults to **regime-stratified** MI folds on train (`PHASE1_STATIONARITY_STRATIFY="regime"`); set `"chronological"` for time-based ablation.
 
 ---
 
