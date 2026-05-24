@@ -4,7 +4,7 @@
 **Config prefix:** `PHASE3_*`  
 **Data split:** Train objectives + validation gates (anti-leakage design)
 
-[← Phase 2](phase2_rule_pool.md) | [Index](README.md) | [Phase 4 →](phase4_rl_risk.md)
+[← Phase 2](phase2_rule_pool.md) | [Index](README.md) | [Phase 4 →](phase4_wf_risk.md)
 
 ---
 

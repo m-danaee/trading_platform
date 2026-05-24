@@ -195,22 +195,25 @@ PHASE3_TRAIN_VAL_CORR_WEIGHT = 5.0
 PHASE3_VAL_GATE_PENALTY = 75.0
 
 # =============================================================================
-# Phase 4 — RL risk optimization (phases/phase4_rl_optimizer.py)
+# Phase 4 — Walk-forward risk optimization (phases/phase4_wf_optimizer.py)
 # =============================================================================
 
-PHASE4_RL_ALGORITHM = "DDPG"  # alternative: "PPO"
 PHASE4_TP_MIN = 2.0
 PHASE4_TP_MAX = 4.0
 PHASE4_SL_MIN = 1.0
 PHASE4_SL_MAX = 2.0
 PHASE4_CAPITAL_PCT_MIN = 10.0
 PHASE4_CAPITAL_PCT_MAX = 50.0
+PHASE4_TP_STEP = 0.2
+PHASE4_SL_STEP = 0.2
+PHASE4_CAPITAL_STEP = 5.0
 PHASE4_TOTAL_CAP_PENALTY = 2.0
-PHASE4_RL_EVAL_WINDOW = 288
-PHASE4_VAL_SORTINO_WEIGHT = 1.0
-PHASE4_VAL_SORTINO_BONUS_CAP = 5.0
-PHASE4_TOTAL_TIMESTEPS = 500_000
-PHASE4_ELBOW_WINDOW = 15
+PHASE4_N_TRIALS = 1000
+PHASE4_WF_SPLITS = 2
+PHASE4_MAX_WORST_DRAWDOWN_PCT = 15.0
+PHASE4_SAMPLER = "nsga2"  # alternative: "tpe"
+PHASE4_SEED = 42
+PHASE4_N_JOBS = 1
 # Scale per-rule capital_pct so sum ≤ MAX_TOTAL_EXPOSURE_PCT after optimization.
 PHASE4_HARD_CAP_NORMALIZE = True
 

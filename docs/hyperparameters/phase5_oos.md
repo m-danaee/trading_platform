@@ -3,7 +3,7 @@
 **Module:** [`gpu_fuzzy_trader/phases/phase5_oos.py`](../../gpu_fuzzy_trader/phases/phase5_oos.py)  
 **Config:** No phase-specific tunables — inherits [Phase 0 shared constants](phase0_shared.md)
 
-[← Phase 4](phase4_rl_risk.md) | [Index](README.md)
+[← Phase 4](phase4_wf_risk.md) | [Index](README.md)
 
 ---
 
@@ -131,4 +131,4 @@ Final out-of-sample evaluation on the held-out test.csv.
 
 - [Index — failure mode quick reference](README.md#failure-mode--knob-quick-reference)
 - [Phase 3 — validation gates](phase3_rule_set.md#validation-gates-when-phase3_use_train_targettrue)
-- [Phase 4 — final risk parameters](phase4_rl_risk.md)
+- [Phase 4 — final risk parameters](phase4_wf_risk.md)

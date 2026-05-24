@@ -155,7 +155,9 @@ Edit `gpu_fuzzy_trader/config.py` before running. Common settings:
 | `PHASE3_REFINE_POP_SIZE`       | `100`                  | Refinement population size                                                     |
 | `PHASE3_USE_PARALLEL_BATCH`    | `True`                 | Parallel CPU batch eval for greedy + NSGA-II                                   |
 | `PHASE3_USE_GPU`               | `False`                | JAX cached-mask batch path (enable after parity tests)                          |
-| `PHASE4_TOTAL_TIMESTEPS`       | `500000`               | Phase 4 RL steps                                                               |
+| `PHASE4_N_TRIALS`              | `1000`                 | Phase 4 Optuna trials                                                          |
+| `PHASE4_WF_SPLITS`             | `2`                    | Phase 4 walk-forward validation windows                                        |
+| `PHASE4_N_JOBS`                | `1`                    | Phase 4 parallel Optuna workers (see phase4_wf_risk.md)                          |
 
 ---
 

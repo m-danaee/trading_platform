@@ -6,7 +6,8 @@ Generates:
     - Phase 2 PnL plots (mean/best Pareto Sortino vs. generation)
   - Equity curve plots (train, validation, test)
   - Per-symbol performance CSVs
-  - Phase 4 RL training curve plots with elbow point marked
+  - Phase 4 walk-forward Pareto frontier plots
+  - Phase 4 RL training curve plots with elbow point marked (legacy)
 
 All plots are saved as PNG files (not displayed).
 """
@@ -785,6 +786,103 @@ class Reporter:
         plt.close(fig)
 
         logger.info("Saved RL curve: %s", out_path)
+        return out_path
+
+    def plot_phase4_pareto(
+        self,
+        trials: List,
+        selected_trial,
+        direction: str,
+        output_dir: str | None = None,
+    ) -> str:
+        """
+        Plot Phase 4 Pareto frontier (worst-case Sortino vs worst-case drawdown).
+
+        Parameters
+        ----------
+        trials:
+            Optuna trial list (typically ``study.trials``).
+        selected_trial:
+            The chosen trial (highlighted on the plot).
+        direction:
+            ``"long"`` or ``"short"``.
+        output_dir:
+            Override output directory (used in tests).
+
+        Returns
+        -------
+        str
+            Absolute path to the saved PNG file.
+        """
+        reports_dir = output_dir if output_dir is not None else _REPORTS_DIR
+        out_path = os.path.join(
+            reports_dir, f"phase4_{direction}_pareto.png"
+        )
+        self._ensure_dir(out_path)
+
+        fig, ax = plt.subplots(figsize=(10, 6))
+
+        completed = [
+            t for t in trials
+            if getattr(t, "state", None) is not None
+            and t.state.name == "COMPLETE"
+            and t.values is not None
+        ]
+
+        if not completed:
+            ax.set_title(f"Phase 4 Pareto — {direction} (no data)")
+            ax.set_xlabel("Worst-case max drawdown (%)")
+            ax.set_ylabel("Worst-case Sortino")
+            fig.tight_layout()
+            fig.savefig(out_path, dpi=100)
+            plt.close(fig)
+            return out_path
+
+        sortinos = [t.values[0] for t in completed]
+        drawdowns = [t.values[1] for t in completed]
+
+        ax.scatter(
+            drawdowns,
+            sortinos,
+            c="tab:blue",
+            alpha=0.5,
+            s=24,
+            label="Trials",
+        )
+
+        if (
+            selected_trial is not None
+            and getattr(selected_trial, "values", None) is not None
+        ):
+            ax.scatter(
+                [selected_trial.values[1]],
+                [selected_trial.values[0]],
+                c="tab:red",
+                s=120,
+                marker="*",
+                zorder=5,
+                label=f"Selected (trial {selected_trial.number})",
+            )
+
+        ax.axvline(
+            x=float(_cfg.PHASE4_MAX_WORST_DRAWDOWN_PCT),
+            color="tab:orange",
+            linestyle="--",
+            linewidth=1.0,
+            label="Max worst DD filter",
+        )
+
+        ax.set_title(f"Phase 4 Walk-Forward Pareto — {direction}")
+        ax.set_xlabel("Worst-case max drawdown (%)")
+        ax.set_ylabel("Worst-case Sortino")
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+
+        fig.tight_layout()
+        fig.savefig(out_path, dpi=100)
+        plt.close(fig)
+
+        logger.info("Saved Phase 4 Pareto plot: %s", out_path)
         return out_path
 
     @staticmethod

@@ -27,7 +27,7 @@ from gpu_fuzzy_trader import run_pipeline as run_pipeline_module
 from gpu_fuzzy_trader.features import selector as selector_module
 from gpu_fuzzy_trader.phases import phase2_rule_pool as phase2_module
 from gpu_fuzzy_trader.phases import phase3_rule_set as phase3_module
-from gpu_fuzzy_trader.phases import phase4_rl_optimizer as phase4_module
+from gpu_fuzzy_trader.phases import phase4_wf_optimizer as phase4_module
 from gpu_fuzzy_trader.phases import phase5_oos as phase5_module
 from gpu_fuzzy_trader.reporting import reporter as reporter_module
 from gpu_fuzzy_trader.run_pipeline import Pipeline_Orchestrator, _log_phase_entry
@@ -260,9 +260,9 @@ class TestPipelineOrchestratorRun:
                   return_value=None),
             patch("gpu_fuzzy_trader.run_pipeline.Rule_Set_Selector.run",
                   return_value=phase3_result.get("long", {})),
-            patch("gpu_fuzzy_trader.run_pipeline.RL_Agent.skip_if_valid",
+            patch("gpu_fuzzy_trader.run_pipeline.WalkForwardRiskOptimizer.skip_if_valid",
                   return_value=None),
-            patch("gpu_fuzzy_trader.run_pipeline.RL_Agent.train",
+            patch("gpu_fuzzy_trader.run_pipeline.WalkForwardRiskOptimizer.train",
                   return_value=phase4_result.get("long", {})),
             patch("gpu_fuzzy_trader.run_pipeline.OOS_Evaluator.run",
                   return_value=phase5_result),
@@ -664,14 +664,14 @@ class TestPhase3SkipLogic:
 
 class TestPhase4SkipLogic:
     def test_phase4_skipped_when_valid_outputs_exist(self, tmp_path):
-        """_run_phase4 should skip when RL_Agent.skip_if_valid returns data."""
+        """_run_phase4 should skip when WalkForwardRiskOptimizer.skip_if_valid returns data."""
         orch = Pipeline_Orchestrator()
         orch._log_path = str(tmp_path / "pipeline.log")
         existing = _make_rule_set("long")
         train_df = _make_df()
         val_df = _make_df()
         phase3_result = {"long": _make_rule_set("long")}
-        with patch("gpu_fuzzy_trader.run_pipeline.RL_Agent.skip_if_valid",
+        with patch("gpu_fuzzy_trader.run_pipeline.WalkForwardRiskOptimizer.skip_if_valid",
                    return_value=existing):
             result = orch._run_phase4(train_df, val_df, phase3_result)
         assert result["long"] == existing
@@ -683,7 +683,7 @@ class TestPhase4SkipLogic:
         train_df = _make_df()
         val_df = _make_df()
         phase3_result = {"long": _make_rule_set("long")}
-        with patch("gpu_fuzzy_trader.run_pipeline.RL_Agent.skip_if_valid",
+        with patch("gpu_fuzzy_trader.run_pipeline.WalkForwardRiskOptimizer.skip_if_valid",
                    return_value=existing):
             orch._run_phase4(train_df, val_df, phase3_result)
         with open(orch._log_path) as fh:
@@ -697,7 +697,7 @@ class TestPhase4SkipLogic:
         train_df = _make_df()
         val_df = _make_df()
         phase3_result = {}  # No rule sets from Phase 3
-        with patch("gpu_fuzzy_trader.run_pipeline.RL_Agent.skip_if_valid",
+        with patch("gpu_fuzzy_trader.run_pipeline.WalkForwardRiskOptimizer.skip_if_valid",
                    return_value=None):
             result = orch._run_phase4(train_df, val_df, phase3_result)
         assert result == {}

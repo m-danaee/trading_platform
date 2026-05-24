@@ -9,7 +9,7 @@ Execution order:
   3. Phase 1: Feature_Selector
   4. Phase 2: Rule_Pool_Generator for both directions
   5. Phase 3: Rule_Set_Selector for both directions
-  6. Phase 4: RL_Agent for both directions
+  6. Phase 4: WalkForwardRiskOptimizer for both directions
   7. Phase 5: OOS_Evaluator (always runs)
 
 Default CLI (``python -m gpu_fuzzy_trader.run_pipeline``) always re-runs Phases 1–4.
@@ -39,7 +39,7 @@ import logging
 import json
 
 from gpu_fuzzy_trader.phases.phase5_oos import OOS_Evaluator
-from gpu_fuzzy_trader.phases.phase4_rl_optimizer import RL_Agent
+from gpu_fuzzy_trader.phases.phase4_wf_optimizer import WalkForwardRiskOptimizer
 from gpu_fuzzy_trader.phases.phase3_rule_set import Rule_Set_Selector
 from gpu_fuzzy_trader.phases.phase2_rule_pool import Rule_Pool_Generator
 from gpu_fuzzy_trader.features.selector import Feature_Selector
@@ -49,7 +49,7 @@ from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.features import selector as _selector_module
 from gpu_fuzzy_trader.phases import phase2_rule_pool as _phase2_module
 from gpu_fuzzy_trader.phases import phase3_rule_set as _phase3_module
-from gpu_fuzzy_trader.phases import phase4_rl_optimizer as _phase4_module
+from gpu_fuzzy_trader.phases import phase4_wf_optimizer as _phase4_module
 from gpu_fuzzy_trader.phases import phase5_oos as _phase5_module
 from gpu_fuzzy_trader.reporting import reporter as _reporter_module
 
@@ -198,7 +198,7 @@ def _log_pipeline_config() -> None:
     logger.info(
         "Pipeline config: PHASE1 top_k=%d | PHASE2 algo=%s pop=%d gen=%d | "
         "PHASE3 refine pop=%d gen=%d parallel_batch=%s gpu=%s | "
-        "PHASE4 algo=%s timesteps=%d elbow_window=%d",
+        "PHASE4 trials=%d wf_splits=%d sampler=%s n_jobs=%d",
         _cfg.PHASE1_TOP_K_FEATURES,
         _cfg.PHASE2_ALGORITHM,
         _cfg.PHASE2_POPULATION_SIZE,
@@ -207,9 +207,10 @@ def _log_pipeline_config() -> None:
         _cfg.PHASE3_REFINE_GENERATIONS,
         _cfg.PHASE3_USE_PARALLEL_BATCH,
         _cfg.PHASE3_USE_GPU,
-        _cfg.PHASE4_RL_ALGORITHM,
-        _cfg.PHASE4_TOTAL_TIMESTEPS,
-        _cfg.PHASE4_ELBOW_WINDOW,
+        _cfg.PHASE4_N_TRIALS,
+        _cfg.PHASE4_WF_SPLITS,
+        _cfg.PHASE4_SAMPLER,
+        _cfg.PHASE4_N_JOBS,
     )
 
 
@@ -1060,14 +1061,14 @@ class Pipeline_Orchestrator:
         force: bool = False,
     ) -> dict[str, dict]:
         """
-        Run Phase 4 (RL Risk Optimization) or skip if valid outputs exist.
+        Run Phase 4 (Walk-Forward Risk Optimization) or skip if valid outputs exist.
 
         Returns
         -------
         dict[str, dict]
             {"long": optimized_rule_set, "short": optimized_rule_set}
         """
-        phase_name = "Phase 4: RL Risk Optimization"
+        phase_name = "Phase 4: Walk-Forward Risk Optimization"
         start_ts = _now_iso()
         t0 = time.monotonic()
 
@@ -1079,7 +1080,7 @@ class Pipeline_Orchestrator:
             dir_t0 = time.monotonic()
 
             if not force:
-                existing = RL_Agent.skip_if_valid(direction)
+                existing = WalkForwardRiskOptimizer.skip_if_valid(direction)
                 if existing is not None:
                     out_path = os.path.join(
                         _cfg.OUTPUTS_DIR, "%s.json" % direction)
@@ -1113,13 +1114,12 @@ class Pipeline_Orchestrator:
                 dir_phase_name, n_rules,
             )
             try:
-                agent = RL_Agent(
-                    train_df=train_df,
+                optimizer = WalkForwardRiskOptimizer(
                     val_df=val_df,
                     rule_set=rule_set,
                     direction=direction,
                 )
-                result = agent.train()
+                result = optimizer.train()
             except Exception as exc:
                 logger.error(
                     "Phase 4 [%s] failed: %s", direction, exc, exc_info=True

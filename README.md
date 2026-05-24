@@ -65,7 +65,7 @@ gpu_fuzzy_trader/
 ├── phases/
 │   ├── phase2_rule_pool.py      # Rule_Pool_Generator: orchestrates Phase 2 evolution
 │   ├── phase3_rule_set.py       # Rule_Set_Selector: greedy + refinement on validation
-│   ├── phase4_rl_optimizer.py   # RL_Agent: DDPG/PPO with Elbow Method stopping
+│   ├── phase4_wf_optimizer.py   # WalkForwardRiskOptimizer: Optuna walk-forward risk tuning
 │   └── phase5_oos.py            # OOS_Evaluator: final test.csv evaluation
 │
 ├── output/
@@ -96,7 +96,7 @@ data/train.csv ──► Data_Loader ──► Data_Splitter ──► train_75.
                                          │                                     │
                                     long.json                           short.json
                                          │                                     │
-                                  RL_Agent (Phase 4, Elbow Method)             │
+                                  WalkForwardRiskOptimizer (Phase 4)           │
                                          │                                     │
                                     long.json (updated TP/SL/cap)    short.json (updated)
                                          │                                     │
@@ -257,38 +257,26 @@ Selects the best ordered combination of rules from the Phase 2 pool using greedy
 
 ---
 
-### Phase 4 — RL-Based Risk Optimization
+### Phase 4 — Walk-Forward Risk Optimization
 
-**Module:** `gpu_fuzzy_trader/phases/phase4_rl_optimizer.py` → `RL_Agent`
+**Module:** `gpu_fuzzy_trader/phases/phase4_wf_optimizer.py` → `WalkForwardRiskOptimizer`
 
-Fine-tunes TP, SL, and `capital_pct` for each rule using a DDPG or PPO agent (stable-baselines3 when available; random search with Elbow Method stopping as fallback).
+Fine-tunes TP, SL, and `capital_pct` for each rule using **Optuna multi-objective search** (NSGA-II by default) on **K walk-forward validation windows**. Rule conditions stay frozen from Phase 3.
 
-**State vector:**
+**Search space (quantized, from `config.py`):**
 
-```
-[K market features, R rule activation strengths, equity_normalized, open_exposure_normalized]
-```
+- TP: [2.0%, 4.0%] step 0.2
+- SL: [1.0%, 2.0%] step 0.2
+- capital_pct: [10.0%, 50.0%] step 5.0
 
-**Action vector (continuous, per rule):**
+**Objective:** maximize worst-case Sortino and minimize worst-case max drawdown across windows (with overallocation penalty).
 
-```
-[tp_i, sl_i, capital_pct_i]  for i in 0..R-1
-```
-
-**Action bounds (from `config.py`):**
-
-- TP: [1.0%, 10.0%]
-- SL: [0.5%, 5.0%]
-- capital_pct: [10.0%, 100.0%]
-
-**Reward:** `net_pnl_normalized − drawdown_penalty`
-
-**Elbow Method stopping:** Finds the optimal training checkpoint by computing perpendicular distances from the line connecting the first and last point of the validation returns curve. Returns the index of maximum curvature — preventing overfitting to the training split.
+**Selection:** Pareto front → filter by max drawdown → pick highest worst-case Sortino → hard-cap normalize capital.
 
 **Outputs:**
 
-- `outputs/long.json` / `outputs/short.json` (updated with RL-optimized TP/SL/capital_pct)
-- `outputs/reports/phase4_long_rl_curve.png` / `outputs/reports/phase4_short_rl_curve.png`
+- `outputs/long.json` / `outputs/short.json` (updated with optimized TP/SL/capital_pct, `risk_optimized: true`)
+- `outputs/reports/phase4_long_pareto.png` / `outputs/reports/phase4_short_pareto.png`
 
 **Skip logic:** The `skip_if_valid()` helper can validate these files for programmatic use, but the default CLI full run forces Phase 4 to rerun. The `--phase 4` command expects the Phase 3 strategy files to already exist.
 
@@ -403,7 +391,7 @@ Quick index:
 | [Phase 1](docs/hyperparameters/phase1_feature_selection.md) | `PHASE1_*` feature selection |
 | [Phase 2](docs/hyperparameters/phase2_rule_pool.md) | Rule pool evolution, support penalties, archive |
 | [Phase 3](docs/hyperparameters/phase3_rule_set.md) | Rule set selection, validation gates |
-| [Phase 4](docs/hyperparameters/phase4_rl_risk.md) | RL risk optimization |
+| [Phase 4](docs/hyperparameters/phase4_wf_risk.md) | Walk-forward risk optimization |
 | [Phase 5](docs/hyperparameters/phase5_oos.md) | OOS evaluation and metric interpretation |
 
 ---
@@ -430,8 +418,8 @@ outputs/
     ├── validation_short_equity.png       # Phase 3: equity curve on validation split (short)
     ├── train_per_symbol_performance.csv  # Phase 3: per-symbol metrics on training split
     ├── validation_per_symbol_performance.csv  # Phase 3: per-symbol metrics on validation
-    ├── phase4_long_rl_curve.png          # Phase 4: RL training curve with elbow point (long)
-    ├── phase4_short_rl_curve.png         # Phase 4: RL training curve with elbow point (short)
+    ├── phase4_long_pareto.png            # Phase 4: Pareto frontier (long)
+    ├── phase4_short_pareto.png           # Phase 4: Pareto frontier (short)
     ├── test_long_report.json             # Phase 5: OOS metrics (long)
     ├── test_short_report.json            # Phase 5: OOS metrics (short)
     ├── test_per_symbol_performance.csv   # Phase 5: per-symbol OOS metrics
@@ -651,7 +639,7 @@ from gpu_fuzzy_trader.data.splitter import Data_Splitter
 from gpu_fuzzy_trader.features.selector import Feature_Selector
 from gpu_fuzzy_trader.phases.phase2_rule_pool import Rule_Pool_Generator
 from gpu_fuzzy_trader.phases.phase3_rule_set import Rule_Set_Selector
-from gpu_fuzzy_trader.phases.phase4_rl_optimizer import RL_Agent
+from gpu_fuzzy_trader.phases.phase4_wf_optimizer import WalkForwardRiskOptimizer
 from gpu_fuzzy_trader.phases.phase5_oos import OOS_Evaluator
 
 # Load and split data
@@ -683,14 +671,13 @@ rule_selector = Rule_Set_Selector(
 )
 rule_set = rule_selector.run()
 
-# Phase 4: RL risk optimization
-agent = RL_Agent(
-    train_df=train_df,
+# Phase 4: Walk-forward risk optimization
+optimizer = WalkForwardRiskOptimizer(
     val_df=val_df,
     rule_set=rule_set,
     direction="long",
 )
-optimized = agent.train()
+optimized = optimizer.train()
 
 # Phase 5: Out-of-sample evaluation
 evaluator = OOS_Evaluator()
@@ -713,8 +700,8 @@ pool = Rule_Pool_Generator.skip_if_valid("long")
 # Check if Phase 3 rule sets exist
 rule_sets = Rule_Set_Selector.skip_if_valid()
 
-# Check if Phase 4 outputs are within valid RL bounds
-optimized = RL_Agent.skip_if_valid("long")
+# Check if Phase 4 outputs are within valid risk bounds
+optimized = WalkForwardRiskOptimizer.skip_if_valid("long")
 ```
 
 ### Pipeline Log
@@ -747,7 +734,7 @@ tests/
 │   ├── test_phase2_rule_pool.py
 │   ├── test_phase3_rule_set.py
 │   ├── test_output_writer.py
-│   ├── test_phase4_rl_optimizer.py
+│   ├── test_phase4_wf_optimizer.py
 │   ├── test_phase5_oos.py
 │   ├── test_reporter.py
 │   └── test_run_pipeline.py
@@ -763,7 +750,7 @@ tests/
     ├── test_phase2_rule_pool_properties.py # Properties 19–20
     ├── test_phase3_rule_set_properties.py  # Properties 21–22, 29
     ├── test_output_writer_properties.py    # Property 23
-    ├── test_phase4_rl_optimizer_properties.py # Properties 24–26
+    ├── test_phase4_wf_optimizer_properties.py   # Quantized search grid
     └── test_phase5_oos_properties.py       # Property 27
 ```
 

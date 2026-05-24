@@ -13,7 +13,7 @@ flowchart LR
   data[DataLoader_Splitter] --> p1[Phase1_FeatureSelection]
   p1 --> p2[Phase2_RulePool_NSGA3]
   p2 --> p3[Phase3_RuleSetSelection]
-  p3 --> p4[Phase4_RL_Risk]
+  p3 --> p4[Phase4_WF_Risk]
   p4 --> p5[Phase5_OOS_Test]
 ```
 
@@ -23,7 +23,7 @@ flowchart LR
 | [1 — Feature selection](phase1_feature_selection.md) | `features/selector.py`             | Train only                            | Feature relevance × stability (MI)      |
 | [2 — Rule pool](phase2_rule_pool.md)                 | `phases/phase2_rule_pool.py`       | Train (+ val when joint objective on) | Single-rule Sortino, drawdown, win rate |
 | [3 — Rule set](phase3_rule_set.md)                   | `phases/phase3_rule_set.py`        | Train objectives, validation gates    | Ordered team of 2–3 rules               |
-| [4 — RL risk](phase4_rl_risk.md)                     | `phases/phase4_rl_optimizer.py`    | Train env, validation scoring         | Per-rule TP, SL, capital_pct            |
+| [4 — Walk-forward risk](phase4_wf_risk.md)           | `phases/phase4_wf_optimizer.py`    | Validation walk-forward windows       | Per-rule TP, SL, capital_pct            |
 | [5 — OOS](phase5_oos.md)                             | `phases/phase5_oos.py`             | Test (held-out)                       | Final reporting only                    |
 
 ---
@@ -33,7 +33,7 @@ flowchart LR
 The pipeline uses a **per-symbol chronological 75/25 split** of `data/train.csv`:
 
 - **Train (75%)** — Phases 1–4 optimization signal (Phase 3 objectives when `PHASE3_USE_TRAIN_TARGET=True`).
-- **Validation (25%)** — Phase 2 joint objective (`PHASE2_JOINT_TRAIN_VAL`), Phase 3 validation gates, Phase 4 checkpoint selection.
+- **Validation (25%)** — Phase 2 joint objective (`PHASE2_JOINT_TRAIN_VAL`), Phase 3 validation gates, Phase 4 walk-forward optimization.
 - **Test (`data/test.csv`)** — Phase 5 only. Never touched during Phases 1–4.
 
 **Label isolation:** feature columns never include `LABEL_COLUMNS`. Labels are used only for Phase 1 scoring targets and backtest outcome simulation.
@@ -52,7 +52,7 @@ All phases report metrics from the same backtest engine ([`cpu_engine.py`](../..
 | **Max drawdown %**  | Peak-to-trough equity decline               | Minimized in multi-objective search; gate in Phase 3      |
 | **Win rate**        | Fraction of profitable trades               | Third objective; can conflict with high Sortino           |
 | **Executed trades** | Count after filters                         | Low counts → noisy Sortino; support penalties apply       |
-| **Total return %**  | Net PnL / initial capital                   | Used in Phase 4 validation scoring                        |
+| **Total return %**  | Net PnL / initial capital                   | Reported in backtests; Phase 4 optimizes Sortino / drawdown |
 
 Sortino is **scale-invariant** to `INITIAL_CAPITAL` but **not** to `FEE_PCT` or trade frequency.
 
@@ -68,7 +68,7 @@ Work backward from Phase 5 test results:
    - Train ≫ val → overfitting; tighten support/coverage or reduce search budget exploitation.
 3. **Check trade count and symbol coverage** in validation/test per-symbol CSVs.
 4. **Inspect Phase 2 history** (`outputs/phase2_*_history.json`) — flat Pareto front → increase generations/population or adjust support thresholds.
-5. **Inspect Phase 4 RL curves** (`outputs/reports/phase4_*_rl_curve.png`) — elbow too early/late → adjust `PHASE4_ELBOW_WINDOW` or timesteps.
+5. **Inspect Phase 4 Pareto plots** (`outputs/reports/phase4_*_pareto.png`) — adjust `PHASE4_N_TRIALS`, `PHASE4_MAX_WORST_DRAWDOWN_PCT`, or search bounds.
 
 Tune **one phase at a time** when possible; downstream phases depend on upstream outputs.
 
@@ -95,7 +95,7 @@ Tune **one phase at a time** when possible; downstream phases depend on upstream
 - **[Phase 1 — Feature selection](phase1_feature_selection.md)**
 - **[Phase 2 — Rule pool generation](phase2_rule_pool.md)**
 - **[Phase 3 — Rule set selection](phase3_rule_set.md)**
-- **[Phase 4 — RL risk optimization](phase4_rl_risk.md)**
+- **[Phase 4 — Walk-forward risk optimization](phase4_wf_risk.md)**
 - **[Phase 5 — Out-of-sample evaluation](phase5_oos.md)**
 
 ---
@@ -107,7 +107,7 @@ Tune **one phase at a time** when possible; downstream phases depend on upstream
 | 1     | `outputs/selected_features_long.json`, `outputs/selected_features_short.json`                                    |
 | 2     | `outputs/phase2_{long,short}_pool.json`, `outputs/phase2_*_history.json`, `outputs/reports/phase2_*_metrics.png` |
 | 3     | `outputs/long.json`, `outputs/short.json`, `outputs/reports/*_equity.png`                                        |
-| 4     | Updated `outputs/long.json`, `outputs/short.json`, `outputs/reports/phase4_*_rl_curve.png`                       |
+| 4     | Updated `outputs/long.json`, `outputs/short.json`, `outputs/reports/phase4_*_pareto.png`                           |
 | 5     | `outputs/reports/test_*_report.json`, `outputs/reports/test_per_symbol_performance.csv`                          |
 
 Persistent cross-run archive: `phase2_rule_archive/phase2_{long,short}_archive.json`.
