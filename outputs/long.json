@@ -4,36 +4,23 @@
   "rules_set": [
     {
       "conditions": [
-        "[drawdown_from_peak_60] IS Very High",
+        "[downside_semivol_20] IS Very Low",
+        "[atr_pct_14] IS Very High",
+        "[lower_wick_to_tr] IS Very Low"
+      ],
+      "tp": 2.486401858173955,
+      "sl": 1.006292168094359,
+      "capital_pct": 49.7576546409036
+    },
+    {
+      "conditions": [
+        "[drawdown_from_peak_60] IS Medium",
         "[open_gap_atr_14] IS Weak Negative",
-        "[ret_vol_corr_30] IS Strong Bullish",
-        "[upper_wick_to_tr] IS Very Low"
+        "[ret_vol_corr_30] IS Extreme Bullish"
       ],
-      "tp": 2.8337119388934795,
-      "sl": 1.2569723557258026,
-      "capital_pct": 46.00898932540038
-    },
-    {
-      "conditions": [
-        "[range_compression_20_100] IS High",
-        "[open_gap_atr_14] IS Exactly Zero",
-        "[ret_autocorr_1_30] IS Extreme Bearish",
-        "[rsi_hidden_div_flag] IS Negative (-1)"
-      ],
-      "tp": 3.748096965241676,
-      "sl": 1.5049703952016862,
-      "capital_pct": 17.845779304841663
-    },
-    {
-      "conditions": [
-        "[amihud_illiquidity_20] IS Medium",
-        "[downside_semivol_20] IS Medium",
-        "[vol_regime_pct_120] IS Very Low",
-        "[rsi_hidden_div_flag] IS Negative (-1)"
-      ],
-      "tp": 4.538323003600562,
-      "sl": 1.2833923888353485,
-      "capital_pct": 11.38275973275185
+      "tp": 2.966234243643817,
+      "sl": 1.56103813071919,
+      "capital_pct": 43.24647345204282
     }
   ]
 }

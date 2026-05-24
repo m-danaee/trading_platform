@@ -391,85 +391,20 @@ Top-level orchestrator. Runs all five phases in order, or a single requested pha
 
 ## 6. Configuration
 
-All hyperparameters live in `gpu_fuzzy_trader/config.py`. Edit this file to tune the pipeline — no runtime flags are used.
+All hyperparameters live in [`gpu_fuzzy_trader/config.py`](gpu_fuzzy_trader/config.py). Edit that file to tune the pipeline — no runtime flags are used.
 
-### Paths
+**Detailed reference:** For per-phase explanations, default values, and how each knob affects out-of-sample performance, generalization, and compute cost, see **[docs/hyperparameters/](docs/hyperparameters/README.md)** (one guide per pipeline phase, written for data scientists).
 
-| Constant             | Default                        | Description                |
-| -------------------- | ------------------------------ | -------------------------- |
-| `TRAIN_CSV_PATH`     | `"data/train.csv"`             | Raw training data          |
-| `TEST_CSV_PATH`      | `"data/test.csv"`              | Held-out test data         |
-| `TRAIN_75_PATH`      | `"data/train_75.parquet"`      | Auto-generated 75% split   |
-| `VALIDATION_25_PATH` | `"data/validation_25.parquet"` | Auto-generated 25% split   |
-| `OUTPUTS_DIR`        | `"outputs"`                    | Root output directory      |
-| `REPORTS_DIR`        | `"outputs/reports"`            | Reports subdirectory       |
-| `PHASE2_ARCHIVE_DIR` | `"phase2_rule_archive"`        | Root-level Phase 2 archive |
+Quick index:
 
-### Schema
-
-| Constant         | Value                    | Description                         |
-| ---------------- | ------------------------ | ----------------------------------- |
-| `LABEL_COLUMNS`  | 5 columns                | Look-ahead label columns            |
-| `META_COLUMNS`   | `["datetime", "symbol"]` | Non-feature columns                 |
-| `TAIL_DROP_ROWS` | `288`                    | Rows dropped per symbol (no labels) |
-
-### Backtest Constants (must match `evaluator_v3.ipynb`)
-
-| Constant                 | Default  | Description                                |
-| ------------------------ | -------- | ------------------------------------------ |
-| `INITIAL_CAPITAL`        | `1000.0` | Starting equity                            |
-| `LEVERAGE`               | `1.0`    | Position leverage multiplier               |
-| `FEE_PCT`                | `0.20`   | Round-trip fee percentage                  |
-| `MAX_HOLD_CANDLES`       | `288`    | Maximum candles a trade is held            |
-| `MAX_TOTAL_EXPOSURE_PCT` | `100.0`  | Max total notional exposure as % of equity |
-| `MIN_POSITION_NOTIONAL`  | `1.0`    | Minimum trade size (dust filter)           |
-
-### Phase 2 — Rule Pool Generation
-
-| Constant                       | Default   | Description                                                           |
-| ------------------------------ | --------- | --------------------------------------------------------------------- |
-| `PHASE2_TP`                    | `4.0`     | Static TP during Phase 2 (%)                                          |
-| `PHASE2_SL`                    | `2.0`     | Static SL during Phase 2 (%)                                          |
-| `PHASE2_CAPITAL_PCT`           | `50.0`    | Static capital allocation during Phase 2 (%)                          |
-| `MIN_CONDITIONS`               | `3`       | Minimum active conditions per rule                                    |
-| `MAX_CONDITIONS`               | `4`       | Maximum active conditions per rule                                    |
-| `MIN_TRADE_SUPPORT`            | `200`     | Minimum trades for a rule to be kept                                  |
-| `PHASE2_POPULATION_SIZE`       | `200`     | Evolution population size                                             |
-| `PHASE2_GENERATIONS`           | `100`     | Number of generations                                                 |
-| `PHASE2_ARCHIVE_MAX_SIZE`      | `500`     | Maximum archived rules per direction                                  |
-| `PHASE2_ARCHIVE_SEED_FRACTION` | `0.35`    | Initial population fraction seeded from the archive                   |
-| `PHASE2_ALGORITHM`             | `"NSGA3"` | Fixed identifier; Phase 2 always uses NSGA-III when EvoX is installed |
-
-### Phase 3 — Rule Set Selection
-
-| Constant                     | Default           | Description                                           |
-| ---------------------------- | ----------------- | ----------------------------------------------------- |
-| `PHASE3_REFINE_POP_SIZE`     | `100`             | Refinement population after greedy                    |
-| `PHASE3_REFINE_GENERATIONS`  | `40`              | Refinement generations after greedy                   |
-| `PHASE3_USE_GPU`             | `False`           | Enable GPU batched rule-set eval (after parity tests) |
-| `PHASE3_MIN_RULES`           | `2`               | Minimum rules during Phase 3 search                   |
-| `PHASE3_MAX_RULES`           | `3`               | Maximum rules during Phase 3 search                   |
-| `PHASE3_MIN_SYMBOL_COVERAGE` | `7`               | Minimum symbols with ≥1 trade                         |
-| `PHASE3_GREEDY_WEIGHTS`      | `(1.0, 0.7, 0.5)` | Greedy scoring weights for return, drawdown, win rate |
-
-### Phase 4 — RL Risk Optimization
-
-| Constant                                            | Default          | Description                                |
-| --------------------------------------------------- | ---------------- | ------------------------------------------ |
-| `PHASE4_RL_ALGORITHM`                               | `"DDPG"`         | RL algorithm: `"DDPG"` or `"PPO"`          |
-| `PHASE4_TP_MIN` / `PHASE4_TP_MAX`                   | `1.0` / `10.0`   | TP action bounds (%)                       |
-| `PHASE4_SL_MIN` / `PHASE4_SL_MAX`                   | `0.5` / `5.0`    | SL action bounds (%)                       |
-| `PHASE4_CAPITAL_PCT_MIN` / `PHASE4_CAPITAL_PCT_MAX` | `10.0` / `100.0` | Capital allocation bounds (%)              |
-| `PHASE4_TOTAL_TIMESTEPS`                            | `500,000`        | Total RL training steps                    |
-| `PHASE4_ELBOW_WINDOW`                               | `15`             | Validation evaluation frequency (episodes) |
-
-### Phase 1 — Feature Selection
-
-| Constant                      | Default   | Description                                    |
-| ----------------------------- | --------- | ---------------------------------------------- |
-| `PHASE1_DISPERSION_THRESHOLD` | `0.95`    | Drop features with >95% identical values       |
-| `PHASE1_TOP_K_FEATURES`       | `25`      | Features selected per direction                |
-| `PHASE1_SAMPLING_TOTAL`       | `300,000` | Total rows for Phase 2 evaluation (30k/symbol) |
+| Doc | Covers |
+|-----|--------|
+| [Phase 0 — Shared](docs/hyperparameters/phase0_shared.md) | Paths, schema, backtest constants |
+| [Phase 1](docs/hyperparameters/phase1_feature_selection.md) | `PHASE1_*` feature selection |
+| [Phase 2](docs/hyperparameters/phase2_rule_pool.md) | Rule pool evolution, support penalties, archive |
+| [Phase 3](docs/hyperparameters/phase3_rule_set.md) | Rule set selection, validation gates |
+| [Phase 4](docs/hyperparameters/phase4_rl_risk.md) | RL risk optimization |
+| [Phase 5](docs/hyperparameters/phase5_oos.md) | OOS evaluation and metric interpretation |
 
 ---
 

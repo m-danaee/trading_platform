@@ -57,6 +57,8 @@ python -c "from gpu_fuzzy_trader.run_pipeline import Pipeline_Orchestrator; prin
 
 ## Run the full pipeline
 
+For hyperparameter tuning guidance (defaults, performance effects, failure modes), see **[docs/hyperparameters/](docs/hyperparameters/README.md)**.
+
 From the project root:
 
 ```bash
