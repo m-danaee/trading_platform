@@ -13,6 +13,11 @@ import os
 _PROJECT_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), os.pardir))
 
+
+def _env_str(name: str, default: str) -> str:
+    value = os.environ.get(name, "").strip()
+    return value or default
+
 # =============================================================================
 # Phase 0 — Shared (paths, schema, backtest simulation, logging)
 # =============================================================================
@@ -21,8 +26,16 @@ _PROJECT_ROOT = os.path.abspath(
 # Relative paths resolve from the process cwd (typically repo root).
 # run_pipeline.py may override OUTPUTS_DIR and Phase 2 pool paths per run.
 
-TRAIN_CSV_PATH = "data/train.csv"
-TEST_CSV_PATH = "data/test.csv"  # Phase 5 OOS only — never use in Phases 1–4
+
+DATA_ROOT = os.environ.get("DATA_ROOT", "").strip()
+TRAIN_CSV_PATH = _env_str(
+    "TRAIN_CSV_PATH",
+    os.path.join(DATA_ROOT, "train.csv") if DATA_ROOT else "data/train.csv",
+)
+TEST_CSV_PATH = _env_str(
+    "TEST_CSV_PATH",
+    os.path.join(DATA_ROOT, "test.csv") if DATA_ROOT else "data/test.csv",
+)
 TRAIN_75_PATH = "data/train_75.parquet"
 VALIDATION_25_PATH = "data/validation_25.parquet"
 OUTPUTS_DIR = "outputs"
@@ -115,7 +128,7 @@ PHASE1_REGIME_MODEL_PATH = os.path.join(
 
 # Phase 2 backtest row budget (equal per symbol). Primary GPU memory knob.
 # Raising this grows JAX arrays roughly linearly; on memory-limited GPUs keep ≤ 150_000.
-PHASE1_SAMPLING_TOTAL = 250_000
+PHASE1_SAMPLING_TOTAL = 600_000
 
 # =============================================================================
 # Phase 2 — Rule pool / NSGA-III (phases/phase2_rule_pool.py)
