@@ -115,7 +115,7 @@ PHASE1_REGIME_MODEL_PATH = os.path.join(
 
 # Phase 2 backtest row budget (equal per symbol). Primary GPU memory knob.
 # Raising this grows JAX arrays roughly linearly; on memory-limited GPUs keep ≤ 150_000.
-PHASE1_SAMPLING_TOTAL = 600_000
+PHASE1_SAMPLING_TOTAL = 250_000
 
 # =============================================================================
 # Phase 2 — Rule pool / NSGA-III (phases/phase2_rule_pool.py)

@@ -8,15 +8,17 @@ import os
 
 def configure_jax_env() -> None:
     """
-    Configure JAX/XLA runtime for optimal GPU utilization.
+    Configure JAX/XLA runtime for predictable desktop-friendly GPU usage.
 
-    - ``XLA_PYTHON_CLIENT_MEM_FRACTION``: Use 80% of GPU memory for better
-      throughput during batched operations.
+    - ``XLA_PYTHON_CLIENT_PREALLOCATE``: keep memory on demand by default so
+      JAX does not reserve most of the VRAM at startup.
+    - ``XLA_PYTHON_CLIENT_MEM_FRACTION``: cap allocator growth when JAX does
+      need to expand its GPU pool.
     - ``JAX_PLATFORMS``: skip TPU backend probing when no TPU is present.
     - ``ABSL_MIN_LOGLEVEL`` / ``TF_CPP_MIN_LOG_LEVEL``: hide benign CUDA driver
       version parse errors from XLA on WSL.
     """
-    os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "true")
+    os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
     os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.80")
     os.environ.setdefault("JAX_PLATFORMS", "cuda,cpu")
     os.environ.setdefault("JAX_ENABLE_X64", "True")

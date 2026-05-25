@@ -1,0 +1,115 @@
+{
+  "direction": "short",
+  "features": [
+    {
+      "name": "amihud_illiquidity_20",
+      "mode": "positive",
+      "score": 0.26248474879259
+    },
+    {
+      "name": "range_compression_20_100",
+      "mode": "positive",
+      "score": 0.13532629676173175
+    },
+    {
+      "name": "upside_semivol_20",
+      "mode": "positive",
+      "score": 0.09563623273429266
+    },
+    {
+      "name": "dmi_balance_14",
+      "mode": "signed",
+      "score": 0.03709873853155423
+    },
+    {
+      "name": "drawdown_from_peak_60",
+      "mode": "positive",
+      "score": 0.03211492183527483
+    },
+    {
+      "name": "atr_pct_14",
+      "mode": "positive",
+      "score": 0.024346485236878487
+    },
+    {
+      "name": "log_range_over_vol_100",
+      "mode": "positive",
+      "score": 0.010223454522156922
+    },
+    {
+      "name": "return_skew_30",
+      "mode": "signed",
+      "score": 0.004330909530327038
+    },
+    {
+      "name": "channel_pos_20",
+      "mode": "positive",
+      "score": 0.00342165408399754
+    },
+    {
+      "name": "upper_wick_to_tr",
+      "mode": "positive",
+      "score": 0.0029345088756077588
+    },
+    {
+      "name": "lower_wick_to_tr",
+      "mode": "positive",
+      "score": 0.0026323619714415784
+    },
+    {
+      "name": "mom_stoch_rsi_14_14_3",
+      "mode": "positive",
+      "score": 0.001974907179464896
+    },
+    {
+      "name": "body_to_tr",
+      "mode": "positive",
+      "score": 0.0015765036867743617
+    },
+    {
+      "name": "close_location_value",
+      "mode": "positive",
+      "score": 0.0009018825466330907
+    },
+    {
+      "name": "ret_vol_corr_30",
+      "mode": "signed",
+      "score": 0.000744839003852438
+    },
+    {
+      "name": "vol_ratio_20_100",
+      "mode": "positive",
+      "score": 0.0005948370949413367
+    },
+    {
+      "name": "dollar_vol_rel_20",
+      "mode": "positive",
+      "score": 0.00021743892148105785
+    },
+    {
+      "name": "tr_to_atr_14",
+      "mode": "positive",
+      "score": 0.0
+    },
+    {
+      "name": "volume_percentile_60",
+      "mode": "positive",
+      "score": 0.0
+    },
+    {
+      "name": "body_signed_to_tr",
+      "mode": "signed",
+      "score": 0.0
+    },
+    {
+      "name": "macd_hist_atr",
+      "mode": "signed",
+      "score": 0.0
+    },
+    {
+      "name": "vol_regime_pct_120",
+      "mode": "positive",
+      "score": 5.7988409810075646e-05
+    }
+  ]
+}

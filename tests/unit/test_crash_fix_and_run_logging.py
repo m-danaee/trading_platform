@@ -6,6 +6,11 @@ Covers:
 """
 
 from __future__ import annotations
+from unittest.mock import patch
+import pandas as pd
+import numpy as np
+import logging
+import contextlib
 
 import os
 
@@ -37,24 +42,17 @@ class TestConfigureJaxEnvPreallocate:
 
     def test_sets_preallocate_to_false_when_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """When XLA_PYTHON_CLIENT_PREALLOCATE is not in the environment,
-        configure_jax_env() must set it to 'true' for better GPU utilization."""
+        configure_jax_env() must set it to 'false' to avoid VRAM hoarding."""
         monkeypatch.delenv("XLA_PYTHON_CLIENT_PREALLOCATE", raising=False)
 
         configure_jax_env()
 
-        assert os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] == "true"
+        assert os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] == "false"
 
 
 # ---------------------------------------------------------------------------
 # Helpers shared by Task 4.x tests
 # ---------------------------------------------------------------------------
-
-import contextlib
-import logging
-
-import numpy as np
-import pandas as pd
-from unittest.mock import patch
 
 
 def _make_feature_infos_crash(modes: list[str]) -> list[dict]:
@@ -120,9 +118,12 @@ class TestArchiveSaveCallOrdering:
         original_pool = m._POOL_PATHS.copy()
         original_hist = m._HISTORY_PATHS.copy()
         original_archive = m._ARCHIVE_PATHS.copy()
-        m._POOL_PATHS[direction] = str(tmp_path / f"phase2_{direction}_pool.json")
-        m._HISTORY_PATHS[direction] = str(tmp_path / f"phase2_{direction}_history.json")
-        m._ARCHIVE_PATHS[direction] = str(tmp_path / f"phase2_{direction}_archive.json")
+        m._POOL_PATHS[direction] = str(
+            tmp_path / f"phase2_{direction}_pool.json")
+        m._HISTORY_PATHS[direction] = str(
+            tmp_path / f"phase2_{direction}_history.json")
+        m._ARCHIVE_PATHS[direction] = str(
+            tmp_path / f"phase2_{direction}_archive.json")
         return original_pool, original_hist, original_archive
 
     def _restore_paths(self, original_pool, original_hist, original_archive):
@@ -139,10 +140,12 @@ class TestArchiveSaveCallOrdering:
         """
         from gpu_fuzzy_trader.phases.phase2_rule_pool import Rule_Pool_Generator
 
-        fi = _make_feature_infos_crash(["positive", "positive", "positive", "positive"])
+        fi = _make_feature_infos_crash(
+            ["positive", "positive", "positive", "positive"])
         df = _make_train_df_crash(n_rows=200, n_features=4)
 
-        original_pool, original_hist, original_archive = self._setup_paths(tmp_path, "long")
+        original_pool, original_hist, original_archive = self._setup_paths(
+            tmp_path, "long")
 
         call_order: list[str] = []
 
@@ -154,7 +157,8 @@ class TestArchiveSaveCallOrdering:
             call_order.append("_release_resources")
 
         try:
-            gen = Rule_Pool_Generator(df, fi, "long", pop_size=2, n_generations=1, seed=0)
+            gen = Rule_Pool_Generator(
+                df, fi, "long", pop_size=2, n_generations=1, seed=0)
 
             with patch.object(
                 Rule_Pool_Generator, "save_archive", side_effect=fake_save_archive
@@ -175,10 +179,12 @@ class TestArchiveSaveCallOrdering:
         """save_archive is called with self.direction as the first argument."""
         from gpu_fuzzy_trader.phases.phase2_rule_pool import Rule_Pool_Generator
 
-        fi = _make_feature_infos_crash(["positive", "positive", "positive", "positive"])
+        fi = _make_feature_infos_crash(
+            ["positive", "positive", "positive", "positive"])
         df = _make_train_df_crash(n_rows=200, n_features=4)
 
-        original_pool, original_hist, original_archive = self._setup_paths(tmp_path, "short")
+        original_pool, original_hist, original_archive = self._setup_paths(
+            tmp_path, "short")
 
         captured_direction: list[str] = []
 
@@ -187,7 +193,8 @@ class TestArchiveSaveCallOrdering:
             return pool
 
         try:
-            gen = Rule_Pool_Generator(df, fi, "short", pop_size=2, n_generations=1, seed=0)
+            gen = Rule_Pool_Generator(
+                df, fi, "short", pop_size=2, n_generations=1, seed=0)
 
             with patch.object(Rule_Pool_Generator, "save_archive", side_effect=fake_save_archive):
                 gen.run()
@@ -214,9 +221,12 @@ class TestArchiveSaveExceptionHandling:
         original_pool = m._POOL_PATHS.copy()
         original_hist = m._HISTORY_PATHS.copy()
         original_archive = m._ARCHIVE_PATHS.copy()
-        m._POOL_PATHS[direction] = str(tmp_path / f"phase2_{direction}_pool.json")
-        m._HISTORY_PATHS[direction] = str(tmp_path / f"phase2_{direction}_history.json")
-        m._ARCHIVE_PATHS[direction] = str(tmp_path / f"phase2_{direction}_archive.json")
+        m._POOL_PATHS[direction] = str(
+            tmp_path / f"phase2_{direction}_pool.json")
+        m._HISTORY_PATHS[direction] = str(
+            tmp_path / f"phase2_{direction}_history.json")
+        m._ARCHIVE_PATHS[direction] = str(
+            tmp_path / f"phase2_{direction}_archive.json")
         return original_pool, original_hist, original_archive
 
     def _restore_paths(self, original_pool, original_hist, original_archive):
@@ -232,13 +242,16 @@ class TestArchiveSaveExceptionHandling:
         """
         from gpu_fuzzy_trader.phases.phase2_rule_pool import Rule_Pool_Generator
 
-        fi = _make_feature_infos_crash(["positive", "positive", "positive", "positive"])
+        fi = _make_feature_infos_crash(
+            ["positive", "positive", "positive", "positive"])
         df = _make_train_df_crash(n_rows=200, n_features=4)
 
-        original_pool, original_hist, original_archive = self._setup_paths(tmp_path, "long")
+        original_pool, original_hist, original_archive = self._setup_paths(
+            tmp_path, "long")
 
         try:
-            gen = Rule_Pool_Generator(df, fi, "long", pop_size=2, n_generations=1, seed=0)
+            gen = Rule_Pool_Generator(
+                df, fi, "long", pop_size=2, n_generations=1, seed=0)
 
             with patch.object(
                 Rule_Pool_Generator,
@@ -247,7 +260,8 @@ class TestArchiveSaveExceptionHandling:
             ):
                 result = gen.run()  # must not raise
 
-            assert isinstance(result, list), "run() should still return the pool list"
+            assert isinstance(
+                result, list), "run() should still return the pool list"
         finally:
             self._restore_paths(original_pool, original_hist, original_archive)
 
@@ -258,13 +272,16 @@ class TestArchiveSaveExceptionHandling:
         """
         from gpu_fuzzy_trader.phases.phase2_rule_pool import Rule_Pool_Generator
 
-        fi = _make_feature_infos_crash(["positive", "positive", "positive", "positive"])
+        fi = _make_feature_infos_crash(
+            ["positive", "positive", "positive", "positive"])
         df = _make_train_df_crash(n_rows=200, n_features=4)
 
-        original_pool, original_hist, original_archive = self._setup_paths(tmp_path, "long")
+        original_pool, original_hist, original_archive = self._setup_paths(
+            tmp_path, "long")
 
         try:
-            gen = Rule_Pool_Generator(df, fi, "long", pop_size=2, n_generations=1, seed=0)
+            gen = Rule_Pool_Generator(
+                df, fi, "long", pop_size=2, n_generations=1, seed=0)
 
             with patch.object(
                 Rule_Pool_Generator,
@@ -291,10 +308,12 @@ class TestArchiveSaveExceptionHandling:
         """
         from gpu_fuzzy_trader.phases.phase2_rule_pool import Rule_Pool_Generator
 
-        fi = _make_feature_infos_crash(["positive", "positive", "positive", "positive"])
+        fi = _make_feature_infos_crash(
+            ["positive", "positive", "positive", "positive"])
         df = _make_train_df_crash(n_rows=200, n_features=4)
 
-        original_pool, original_hist, original_archive = self._setup_paths(tmp_path, "long")
+        original_pool, original_hist, original_archive = self._setup_paths(
+            tmp_path, "long")
 
         release_called: list[bool] = []
 
@@ -302,7 +321,8 @@ class TestArchiveSaveExceptionHandling:
             release_called.append(True)
 
         try:
-            gen = Rule_Pool_Generator(df, fi, "long", pop_size=2, n_generations=1, seed=0)
+            gen = Rule_Pool_Generator(
+                df, fi, "long", pop_size=2, n_generations=1, seed=0)
 
             with patch.object(
                 Rule_Pool_Generator,
@@ -362,7 +382,8 @@ class TestRunLogHandlerLifecycle:
         monkeypatch.setattr(
             Pipeline_Orchestrator,
             "_run_phase2",
-            lambda self, train_df, phase1_result, **_kw: {"long": [], "short": []},
+            lambda self, train_df, phase1_result, **_kw: {
+                "long": [], "short": []},
         )
         monkeypatch.setattr(
             Pipeline_Orchestrator,
@@ -439,7 +460,8 @@ class TestRunLogHandlerLifecycle:
         monkeypatch.setattr(
             Pipeline_Orchestrator,
             "_load_and_split_data",
-            lambda self: (_ for _ in ()).throw(RuntimeError("simulated crash")),
+            lambda self: (_ for _ in ()).throw(
+                RuntimeError("simulated crash")),
         )
 
         orch = Pipeline_Orchestrator(output_dir=str(tmp_path))
