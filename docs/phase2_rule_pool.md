@@ -1,6 +1,7 @@
 # Phase 2 — GPU-Accelerated Rule Pool Generation
 
 **Modules:**
+
 - `gpu_fuzzy_trader/phases/phase2_rule_pool.py` → `Rule_Pool_Generator` (orchestration, persistence, archive)
 - `gpu_fuzzy_trader/evolution/evox_runner.py` → `run_phase2_evolution` (NSGA-III/II loop)
 - `gpu_fuzzy_trader/phases/phase2_support.py` → regime-aware support penalties
@@ -21,6 +22,7 @@ chromosome = [gene_0, gene_1, ..., gene_{K-1}]
 where K = number of selected features from Phase 1 (e.g., 20 for long, 20 for short).
 
 Each gene `gene_i` can take values in `{0, 1, ..., num_classes_i − 1, dont_care_i}`:
+
 - Values `0` to `num_classes_i − 1` are **active** conditions: the rule requires that feature to be in that fuzzy state.
 - Value `dont_care_i = num_classes_i` means the condition is **inactive**: the feature is ignored by this rule.
 
@@ -31,6 +33,7 @@ For example, a chromosome for a `signed` feature (10 classes) can have gene valu
 The number of active conditions in a chromosome is `sum(gene_i != dont_care_i)`. This is constrained by `MIN_CONDITIONS` and `MAX_CONDITIONS` (default: 3–4). Rules with fewer or more active conditions receive a condition count penalty.
 
 **Effect of `MIN_CONDITIONS` / `MAX_CONDITIONS`:**
+
 - Increasing `MIN_CONDITIONS`: forces more specific rules (more conditions must match simultaneously), reducing trade frequency but potentially improving precision.
 - Decreasing `MAX_CONDITIONS`: forces simpler rules, increasing trade frequency but potentially reducing precision.
 - The range 3–4 is a balance between specificity and trade support.
@@ -80,6 +83,7 @@ If the validation engine is unavailable or val trades are below `MIN_TRADE_POOL_
 ## 3. Static Risk Parameters During Phase 2
 
 During Phase 2, all rules are evaluated with fixed risk parameters:
+
 - `PHASE2_TP = 3.0` (%)
 - `PHASE2_SL = 1.5` (%)
 - `PHASE2_CAPITAL_PCT = 48.0` (%)
@@ -150,10 +154,13 @@ This steers the search toward rules with 3–4 active conditions.
 ### Population initialization — `_init_population`
 
 Each gene is independently set to either:
+
 - A random valid class index (probability `1 − dont_care_prob = 0.5`)
 - The dont_care sentinel (probability `dont_care_prob = 0.5`)
 
 `PHASE2_ARCHIVE_SEED_FRACTION = 0.35` (default) of the population is seeded from the existing pool (from the previous run). The remaining 65% is randomly initialized. Seeded chromosomes are repaired to ensure all gene values are within valid ranges.
+
+If `Rule_Pool_Generator` is created without an explicit `seed`, Phase 2 uses a fresh random seed for each run, so the search trajectory changes across runs. Pass a seed if you want a reproducible trajectory.
 
 **Effect of `PHASE2_ARCHIVE_SEED_FRACTION`:** Increasing this seeds more of the population from previous runs, accelerating convergence but reducing exploration. Decreasing it increases exploration but slows convergence. At 0.0, every run starts from scratch.
 
@@ -181,10 +188,10 @@ Das-Dennis style reference vectors are generated using EvoX's `uniform_sampling`
 
 ## 6. Population and Generation Budget
 
-| Parameter | Default | Effect |
-|---|---|---|
-| `PHASE2_POPULATION_SIZE` | `200` | Number of chromosomes per generation. Increasing improves Pareto front coverage but linearly increases compute time per generation. |
-| `PHASE2_GENERATIONS` | `200` | Number of generations. Increasing allows more evolution but with diminishing returns after convergence. Total evaluations ≈ `POPULATION_SIZE × GENERATIONS`. |
+| Parameter                | Default | Effect                                                                                                                                                       |
+| ------------------------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `PHASE2_POPULATION_SIZE` | `200`   | Number of chromosomes per generation. Increasing improves Pareto front coverage but linearly increases compute time per generation.                          |
+| `PHASE2_GENERATIONS`     | `200`   | Number of generations. Increasing allows more evolution but with diminishing returns after convergence. Total evaluations ≈ `POPULATION_SIZE × GENERATIONS`. |
 
 At default settings, Phase 2 performs approximately 200 × 200 = 40,000 chromosome evaluations per direction. Each evaluation is a full backtest simulation.
 
@@ -194,13 +201,15 @@ At default settings, Phase 2 performs approximately 200 × 200 = 40,000 chromoso
 
 ## 7. Data Sampling — `_sample_df`
 
-Phase 2 does not use the full training dataset. Instead, it samples `PHASE1_SAMPLING_TOTAL = 600_000` rows, distributed equally across symbols:
+Phase 2 does not use the full training dataset. Instead, it draws a random sample of up to `PHASE1_SAMPLING_TOTAL = 600_000` rows, distributed equally across symbols:
 
 ```python
 rows_per_sym = max(1, total_rows // n_sym)
 ```
 
 **Why sampling?** The full training dataset may have millions of rows. Loading all of them into GPU memory for JAX evaluation would exceed VRAM on most hardware. Sampling reduces memory usage while preserving the per-symbol distribution.
+
+The subset is re-drawn on each run, so repeated runs can explore different slices of the data while keeping the per-symbol balance.
 
 **Effect of `PHASE1_SAMPLING_TOTAL`:** This is the primary GPU memory knob. Increasing it improves the statistical reliability of fitness evaluations but increases VRAM usage roughly linearly. On a 16GB GPU, 600,000 rows with ~100 features uses approximately 4–6GB. Decrease to 150,000–300,000 if you encounter OOM errors.
 
@@ -211,6 +220,7 @@ rows_per_sym = max(1, total_rows // n_sym)
 ### Per-run pool (overwritten each run)
 
 After evolution, the Pareto-front chromosomes are converted to pool entries and saved to `outputs/phase2_long_pool.json` / `outputs/phase2_short_pool.json`. Each entry contains:
+
 - `chromosome`: integer array
 - `conditions`: decoded condition strings
 - `objectives`: `{sortino_ratio, max_drawdown_pct, win_rate}`
@@ -221,6 +231,7 @@ After evolution, the Pareto-front chromosomes are converted to pool entries and 
 The best rules from all runs are accumulated in `phase2_rule_archive/phase2_long_archive.json` / `phase2_rule_archive/phase2_short_archive.json`. This archive is never cleared by `--output` flags.
 
 Archive merging uses `_merge_archive_entries`:
+
 1. Deduplicate by chromosome (keep the entry with better objectives for duplicate chromosomes).
 2. Non-dominated sort all unique entries.
 3. Keep the best `PHASE2_ARCHIVE_MAX_SIZE` (default: 500) entries using Pareto rank + crowding distance truncation.
@@ -235,31 +246,31 @@ A chromosome is only included in the pool if `executed_trades ≥ MIN_TRADE_POOL
 
 ## 9. Configuration Reference
 
-| Parameter | Default | Technical effect |
-|---|---|---|
-| `PHASE2_TP` | `3.0` | TP % used for all Phase 2 evaluations. Increasing requires larger price moves to win, reducing trade frequency. |
-| `PHASE2_SL` | `1.5` | SL % used for all Phase 2 evaluations. Increasing allows more drawdown before stopping out. |
-| `PHASE2_CAPITAL_PCT` | `48.0` | Capital % per rule during Phase 2. Affects position sizing and thus absolute PnL, but not Sortino (which is return-normalized). |
-| `MIN_CONDITIONS` | `3` | Minimum active conditions per rule. Increase for more specific rules. |
-| `MAX_CONDITIONS` | `4` | Maximum active conditions per rule. Decrease for simpler rules. |
-| `MIN_TRADE_SUPPORT` | `300` | Minimum trades for zero support penalty. Increase to require more statistical evidence. |
-| `SUPPORT_PENALTY_MAX` | `50.0` | Maximum support penalty magnitude. Increase to more aggressively penalize low-frequency rules. |
-| `MIN_TRADE_POOL_FLOOR` | `75` | Hard minimum trades for pool inclusion. Rules below this are excluded regardless of Sortino. |
-| `SORTINO_CAP` | `5.0` | Maximum saturated Sortino value. Increase to allow more differentiation at the top end. |
-| `SORTINO_SCALE` | `3.0` | tanh saturation scale. Increase for less aggressive compression. |
-| `PHASE2_JOINT_TRAIN_VAL` | `True` | Use min(train, val) Sortino as objective. Disable to optimize on training only (higher overfitting risk). |
-| `PHASE2_DIVERSITY_HAMMING_THRESHOLD` | `2` | Hamming distance threshold for diversity penalty. Increase to enforce more diversity. |
-| `PHASE2_DIVERSITY_PENALTY` | `5.0` | Penalty magnitude for near-duplicate chromosomes. Increase to more aggressively enforce diversity. |
-| `PHASE2_POPULATION_SIZE` | `200` | Population size. Increase for better Pareto coverage (linear compute cost). |
-| `PHASE2_GENERATIONS` | `200` | Number of generations. Increase for more evolution (linear compute cost). |
-| `PHASE2_ALGORITHM` | `"NSGA3"` | Fixed. NSGA-III when EvoX is installed, NSGA-II fallback otherwise. |
-| `PHASE2_ARCHIVE_MAX_SIZE` | `500` | Maximum archive size per direction. |
-| `PHASE2_ARCHIVE_SEED_FRACTION` | `0.35` | Fraction of population seeded from previous pool. Increase for faster convergence, decrease for more exploration. |
-| `PHASE2_REGIME_SUPPORT_ENABLED` | `True` | Enable regime-aware specialist bypass. Disable to use only global support penalty. |
-| `PHASE2_REGIME_CONCENTRATION_MIN` | `0.90` | Minimum trade concentration in one regime for specialist status. |
-| `PHASE2_REGIME_MIN_WIN_RATE` | `0.40` | Minimum win rate in dominant regime for specialist quality gate. |
-| `PHASE2_REGIME_USE_PNL_GATE` | `True` | Allow positive PnL (instead of win rate) to satisfy the specialist quality gate. |
-| `PHASE2_NUMBA_ENABLED` | `True` | Use Numba-JIT NSGA helpers. Disable only for debugging. |
+| Parameter                            | Default   | Technical effect                                                                                                                |
+| ------------------------------------ | --------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `PHASE2_TP`                          | `3.0`     | TP % used for all Phase 2 evaluations. Increasing requires larger price moves to win, reducing trade frequency.                 |
+| `PHASE2_SL`                          | `1.5`     | SL % used for all Phase 2 evaluations. Increasing allows more drawdown before stopping out.                                     |
+| `PHASE2_CAPITAL_PCT`                 | `48.0`    | Capital % per rule during Phase 2. Affects position sizing and thus absolute PnL, but not Sortino (which is return-normalized). |
+| `MIN_CONDITIONS`                     | `3`       | Minimum active conditions per rule. Increase for more specific rules.                                                           |
+| `MAX_CONDITIONS`                     | `4`       | Maximum active conditions per rule. Decrease for simpler rules.                                                                 |
+| `MIN_TRADE_SUPPORT`                  | `300`     | Minimum trades for zero support penalty. Increase to require more statistical evidence.                                         |
+| `SUPPORT_PENALTY_MAX`                | `50.0`    | Maximum support penalty magnitude. Increase to more aggressively penalize low-frequency rules.                                  |
+| `MIN_TRADE_POOL_FLOOR`               | `75`      | Hard minimum trades for pool inclusion. Rules below this are excluded regardless of Sortino.                                    |
+| `SORTINO_CAP`                        | `5.0`     | Maximum saturated Sortino value. Increase to allow more differentiation at the top end.                                         |
+| `SORTINO_SCALE`                      | `3.0`     | tanh saturation scale. Increase for less aggressive compression.                                                                |
+| `PHASE2_JOINT_TRAIN_VAL`             | `True`    | Use min(train, val) Sortino as objective. Disable to optimize on training only (higher overfitting risk).                       |
+| `PHASE2_DIVERSITY_HAMMING_THRESHOLD` | `2`       | Hamming distance threshold for diversity penalty. Increase to enforce more diversity.                                           |
+| `PHASE2_DIVERSITY_PENALTY`           | `5.0`     | Penalty magnitude for near-duplicate chromosomes. Increase to more aggressively enforce diversity.                              |
+| `PHASE2_POPULATION_SIZE`             | `200`     | Population size. Increase for better Pareto coverage (linear compute cost).                                                     |
+| `PHASE2_GENERATIONS`                 | `200`     | Number of generations. Increase for more evolution (linear compute cost).                                                       |
+| `PHASE2_ALGORITHM`                   | `"NSGA3"` | Fixed. NSGA-III when EvoX is installed, NSGA-II fallback otherwise.                                                             |
+| `PHASE2_ARCHIVE_MAX_SIZE`            | `500`     | Maximum archive size per direction.                                                                                             |
+| `PHASE2_ARCHIVE_SEED_FRACTION`       | `0.35`    | Fraction of population seeded from previous pool. Increase for faster convergence, decrease for more exploration.               |
+| `PHASE2_REGIME_SUPPORT_ENABLED`      | `True`    | Enable regime-aware specialist bypass. Disable to use only global support penalty.                                              |
+| `PHASE2_REGIME_CONCENTRATION_MIN`    | `0.90`    | Minimum trade concentration in one regime for specialist status.                                                                |
+| `PHASE2_REGIME_MIN_WIN_RATE`         | `0.40`    | Minimum win rate in dominant regime for specialist quality gate.                                                                |
+| `PHASE2_REGIME_USE_PNL_GATE`         | `True`    | Allow positive PnL (instead of win rate) to satisfy the specialist quality gate.                                                |
+| `PHASE2_NUMBA_ENABLED`               | `True`    | Use Numba-JIT NSGA helpers. Disable only for debugging.                                                                         |
 
 ---
 

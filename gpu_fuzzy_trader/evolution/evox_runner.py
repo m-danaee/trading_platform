@@ -159,7 +159,11 @@ def _make_offspring_population(
     return np.stack(offspring_list[:pop_size], axis=0)
 
 
-def _get_reference_vectors(pop_size: int, n_objs: int = 3) -> np.ndarray:
+def _get_reference_vectors(
+    pop_size: int,
+    n_objs: int = 3,
+    rng: np.random.Generator | None = None,
+) -> np.ndarray:
     """Das-Dennis style reference vectors; uses EvoX uniform_sampling when available."""
     if _EVOX_AVAILABLE and uniform_sampling is not None:
         refs = uniform_sampling(pop_size, n_objs)[0].cpu().numpy()
@@ -177,8 +181,9 @@ def _get_reference_vectors(pop_size: int, n_objs: int = 3) -> np.ndarray:
         ],
         dtype=np.float64,
     )
+    fallback_rng = rng if rng is not None else np.random.default_rng()
     while len(refs) < pop_size:
-        t = np.random.default_rng(42).random()
+        t = fallback_rng.random()
         refs = np.vstack([refs, np.array([t, (1 - t) / 2, (1 - t) / 2])])
     return refs[:pop_size]
 
@@ -569,7 +574,7 @@ def _run_nsga3(
     pareto_archive: list[np.ndarray] = []
     history: list[dict] = []
 
-    ref_vec = _get_reference_vectors(pop_size, 3)
+    ref_vec = _get_reference_vectors(pop_size, 3, rng)
     tag = log_tag or "NSGA-III"
     logger.info("%s: %d features, pop=%d, gen=%d",
                 tag, K, pop_size, n_generations)

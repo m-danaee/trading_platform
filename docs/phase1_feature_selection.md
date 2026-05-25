@@ -145,7 +145,7 @@ The training data is split into `PHASE1_STATIONARITY_FOLDS` equal time windows. 
 2. Its rank (by MI score) does not shift by more than `PHASE1_STATIONARITY_RANK_DRIFT_MAX` positions across folds
 
 **Regime folds (`PHASE1_STATIONARITY_STRATIFY = "regime"`):**
-Uses the GMM/KMeans regime labels from `regime_cluster.py` to define folds. Each regime is one fold. This tests whether a feature is informative across different market regimes (trending, ranging, volatile), not just different time periods.
+Uses the GMM/KMeans regime labels from `regime_cluster.py` to define folds. Each regime is one fold. This tests whether a feature is informative across different market regimes (trending, ranging, volatile), not just different time periods. Rank drift uses `PHASE1_STATIONARITY_RANK_DRIFT_MAX` as-is (same as chronological); if fewer than two regime folds have enough rows, the filter falls back to chronological folds.
 
 **Effect of stationarity parameters:**
 - `PHASE1_STATIONARITY_CV_MAX = 1.0`: A CV of 1.0 means std = mean, which is quite permissive. Decreasing this (e.g., to 0.5) enforces stricter temporal consistency but may remove too many features.

@@ -294,12 +294,6 @@ class Feature_Selector:
                         target,
                         config.PHASE1_STATIONARITY_FOLDS,
                     )
-                    rank_drift_max = config.PHASE1_STATIONARITY_RANK_DRIFT_MAX
-                else:
-                    rank_drift_max = min(
-                        config.PHASE1_STATIONARITY_RANK_DRIFT_MAX,
-                        max(n_valid - 1, 1),
-                    )
             else:
                 fold_scores = _compute_chronological_stationarity_scores(
                     train_df,

@@ -191,14 +191,20 @@ def _pareto_sortino_stats(
 _pareto_return_stats = _pareto_sortino_stats
 
 
-def _sample_df(df: pd.DataFrame, total_rows: int) -> pd.DataFrame:
+def _sample_df(
+    df: pd.DataFrame,
+    total_rows: int,
+    random_state: int | np.random.Generator | None = None,
+) -> pd.DataFrame:
     """
     Sample up to *total_rows* rows from *df*, distributed equally across symbols.
 
     If a symbol has fewer rows than its share, all its rows are used.
+    Sampling is random by default; pass a fixed random_state to reproduce a
+    particular subset.
     """
     if "symbol" not in df.columns:
-        return df.sample(n=min(total_rows, len(df)), random_state=42)
+        return df.sample(n=min(total_rows, len(df)), random_state=random_state)
 
     symbols = df["symbol"].unique()
     n_sym = len(symbols)
@@ -208,7 +214,7 @@ def _sample_df(df: pd.DataFrame, total_rows: int) -> pd.DataFrame:
     for sym in symbols:
         sym_df = df[df["symbol"] == sym]
         n = min(rows_per_sym, len(sym_df))
-        parts.append(sym_df.sample(n=n, random_state=42))
+        parts.append(sym_df.sample(n=n, random_state=random_state))
 
     return pd.concat(parts, ignore_index=True)
 
@@ -872,12 +878,14 @@ if _EVOX_AVAILABLE:
             engine,
             pop_size: int = _cfg.PHASE2_POPULATION_SIZE,
             n_generations: int = _cfg.PHASE2_GENERATIONS,
+            seed: int | None = None,
         ):
             self.feature_infos = feature_infos
             self.engine = engine
             self.pop_size = pop_size
             self.n_generations = n_generations
-            self._rng = np.random.default_rng(42)
+            self.seed = seed
+            self._rng = np.random.default_rng(seed)
             self._population: Optional[np.ndarray] = None
             self._objectives: Optional[np.ndarray] = None
 
@@ -904,10 +912,10 @@ if _EVOX_AVAILABLE:
                     self._objectives[i] = obj
             return self
 
-
 # ---------------------------------------------------------------------------
 # Rule_Pool_Generator
 # ---------------------------------------------------------------------------
+
 
 class Rule_Pool_Generator:
     """
@@ -928,8 +936,9 @@ class Rule_Pool_Generator:
         Override PHASE2_POPULATION_SIZE (useful for testing).
     n_generations : int, optional
         Override PHASE2_GENERATIONS (useful for testing).
-    seed : int, optional
-        Random seed for reproducibility.
+    seed : int | None, optional
+        Random seed for reproducibility. If None, a fresh random seed is used
+        for each run.
     """
 
     def __init__(
@@ -939,7 +948,7 @@ class Rule_Pool_Generator:
         direction: str,
         pop_size: int | None = None,
         n_generations: int | None = None,
-        seed: int = 42,
+        seed: int | None = None,
         val_df: pd.DataFrame | None = None,
     ) -> None:
         if direction not in ("long", "short"):

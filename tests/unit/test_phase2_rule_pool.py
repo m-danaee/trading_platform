@@ -776,6 +776,12 @@ class TestRulePoolGeneratorInit:
         gen = Rule_Pool_Generator(df, fi, "long")
         assert gen.n_generations == _cfg.PHASE2_GENERATIONS
 
+    def test_default_seed_is_none(self):
+        fi = _make_feature_infos(["positive"])
+        df = _make_train_df()
+        gen = Rule_Pool_Generator(df, fi, "long")
+        assert gen.seed is None
+
 
 # ---------------------------------------------------------------------------
 # Tests: Rule_Pool_Generator.run() — integration (tiny pop/gen)
