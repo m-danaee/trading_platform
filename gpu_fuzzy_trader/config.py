@@ -83,7 +83,7 @@ LOG_GENERATION_INTERVAL = 0
 
 # MI ranking: drop near-constant columns, cap list size, limit long/short overlap.
 PHASE1_DISPERSION_THRESHOLD = 0.95
-PHASE1_TOP_K_FEATURES = 25
+PHASE1_TOP_K_FEATURES = 20
 PHASE1_MAX_FEATURE_OVERLAP = 0.50
 # Signed 3-class PnL surrogate so long/short shortlists diverge (vs binary success).
 PHASE1_ASYMMETRIC_TARGET = True
@@ -91,8 +91,8 @@ PHASE1_ASYMMETRIC_TARGET = True
 # Stationarity: per-fold MI stability across folds (regime or chronological).
 PHASE1_STATIONARITY_FOLDS = 3
 PHASE1_STATIONARITY_CV_MAX = 1.0
-PHASE1_STATIONARITY_RANK_DRIFT_MAX = 30
-PHASE1_STATIONARITY_STRATIFY = "regime"  # "regime" | "chronological"
+PHASE1_STATIONARITY_RANK_DRIFT_MAX = 10
+PHASE1_STATIONARITY_STRATIFY = "chronological"  # "regime" | "chronological"
 
 # Regime clustering inputs (train rows only when STRATIFY == "regime").
 PHASE1_REGIME_FEATURES = [
@@ -115,15 +115,15 @@ PHASE1_REGIME_MODEL_PATH = os.path.join(
 
 # Phase 2 backtest row budget (equal per symbol). Primary GPU memory knob.
 # Raising this grows JAX arrays roughly linearly; on memory-limited GPUs keep ≤ 150_000.
-PHASE1_SAMPLING_TOTAL = 150_000
+PHASE1_SAMPLING_TOTAL = 600_000
 
 # =============================================================================
 # Phase 2 — Rule pool / NSGA-III (phases/phase2_rule_pool.py)
 # =============================================================================
 
 # Fixed TP/SL/capital during rule search — isolates rule logic from risk tuning (Phase 4).
-PHASE2_TP = 2.0
-PHASE2_SL = 1.0
+PHASE2_TP = 3.0
+PHASE2_SL = 1.5
 PHASE2_CAPITAL_PCT = 48.0
 
 # Rule genome: number of active fuzzy conditions per chromosome.
