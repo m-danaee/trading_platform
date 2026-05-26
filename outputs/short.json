@@ -1,0 +1,28 @@
+{
+  "direction": "short",
+  "risk_optimized": true,
+  "rules_set": [
+    {
+      "conditions": [
+        "[amihud_illiquidity_20] IS Very Low",
+        "[drawdown_from_peak_60] IS Low",
+        "[log_range_over_vol_100] IS Low",
+        "[body_signed_to_tr] IS Extreme Bearish"
+      ],
+      "tp": 4.0,
+      "sl": 1.4,
+      "capital_pct": 50.0
+    },
+    {
+      "conditions": [
+        "[amihud_illiquidity_20] IS Very Low",
+        "[range_compression_20_100] IS Very High",
+        "[drawdown_from_peak_60] IS Very Low",
+        "[macd_hist_atr] IS Extreme Bearish"
+      ],
+      "tp": 3.6,
+      "sl": 2.0,
+      "capital_pct": 10.0
+    }
+  ]
+}

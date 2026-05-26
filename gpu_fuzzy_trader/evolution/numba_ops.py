@@ -6,17 +6,22 @@ All entry points accept host NumPy arrays only (never JAX DeviceArray).
 
 from __future__ import annotations
 
+import logging
 import numpy as np
 
 from gpu_fuzzy_trader import config as _cfg
 
 _NUMBA_AVAILABLE = False
+_NUMBA_SORT_AVAILABLE = False
 try:
     from numba import njit
 
     _NUMBA_AVAILABLE = True
+    _NUMBA_SORT_AVAILABLE = True
 except ImportError:
     njit = None  # type: ignore[assignment,misc]
+
+logger = logging.getLogger(__name__)
 
 
 def numba_enabled() -> bool:
@@ -26,6 +31,13 @@ def numba_enabled() -> bool:
 
 def _dominates_py(a: np.ndarray, b: np.ndarray) -> bool:
     return bool(np.all(a <= b) and np.any(a < b))
+
+
+def _disable_numba_sort(reason: str) -> None:
+    global _NUMBA_SORT_AVAILABLE
+    if _NUMBA_SORT_AVAILABLE:
+        logger.warning("Disabling Numba non-dominated sort: %s", reason)
+    _NUMBA_SORT_AVAILABLE = False
 
 
 def _non_dominated_sort_py(objectives: np.ndarray) -> list[list[int]]:
@@ -106,9 +118,6 @@ if _NUMBA_AVAILABLE:
     @njit(cache=True)
     def _non_dominated_sort_numba(objectives):
         n = objectives.shape[0]
-        if n == 0:
-            return [[-1]]
-
         domination_count = np.zeros(n, dtype=np.int64)
         dominated_counts = np.zeros((n, n), dtype=np.int64)
         first_front = []
@@ -144,8 +153,6 @@ if _NUMBA_AVAILABLE:
         for f in fronts:
             if len(f) > 0:
                 out.append(f)
-        if len(out) == 0:
-            out.append([])
         return out
 
     @njit(cache=True)
@@ -196,8 +203,13 @@ if _NUMBA_AVAILABLE:
 def non_dominated_sort(objectives: np.ndarray) -> list[list[int]]:
     """Non-dominated sorting with optional Numba acceleration."""
     obj = np.asarray(objectives, dtype=np.float64)
-    if numba_enabled():
-        return _non_dominated_sort_numba(obj)  # type: ignore[misc]
+    if obj.shape[0] == 0:
+        return [[]]
+    if _NUMBA_SORT_AVAILABLE and numba_enabled():
+        try:
+            return _non_dominated_sort_numba(obj)  # type: ignore[misc]
+        except Exception as exc:
+            _disable_numba_sort(f"{exc.__class__.__name__}: {exc}")
     return _non_dominated_sort_py(obj)
 
 

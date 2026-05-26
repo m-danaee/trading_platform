@@ -1,0 +1,27 @@
+{
+  "direction": "long",
+  "risk_optimized": true,
+  "rules_set": [
+    {
+      "conditions": [
+        "[amihud_illiquidity_20] IS Very High",
+        "[upside_semivol_20] IS Very Low",
+        "[drawdown_from_peak_60] IS Low",
+        "[lower_wick_to_tr] IS High"
+      ],
+      "tp": 2.0,
+      "sl": 1.2,
+      "capital_pct": 20.0
+    },
+    {
+      "conditions": [
+        "[amihud_illiquidity_20] IS Very High",
+        "[realized_vol_20] IS High",
+        "[return_skew_30] IS Extreme Bullish"
+      ],
+      "tp": 2.8,
+      "sl": 2.0,
+      "capital_pct": 10.0
+    }
+  ]
+}
