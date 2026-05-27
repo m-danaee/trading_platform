@@ -227,13 +227,13 @@ def _build_phase3_engines(
                 val_df,
                 feature_modes,
                 direction,
-                fee_pct=_cfg.PHASE23_OPTIMIZATION_FEE_PCT,
+                fee_pct=_cfg.FEE_PCT,
             )
             train_engine = GPUBacktestEngine(
                 train_df,
                 feature_modes,
                 direction,
-                fee_pct=_cfg.PHASE23_OPTIMIZATION_FEE_PCT,
+                fee_pct=_cfg.FEE_PCT,
             )
             logger.info(
                 "Phase 3 using GPUBacktestEngine (JAX mask + batch eval)")
@@ -245,26 +245,26 @@ def _build_phase3_engines(
                 val_df,
                 feature_modes,
                 direction,
-                fee_pct=_cfg.PHASE23_OPTIMIZATION_FEE_PCT,
+                fee_pct=_cfg.FEE_PCT,
             )
             train_engine = CPUBacktestEngine(
                 train_df,
                 feature_modes,
                 direction,
-                fee_pct=_cfg.PHASE23_OPTIMIZATION_FEE_PCT,
+                fee_pct=_cfg.FEE_PCT,
             )
     else:
         val_engine = CPUBacktestEngine(
             val_df,
             feature_modes,
             direction,
-            fee_pct=_cfg.PHASE23_OPTIMIZATION_FEE_PCT,
+            fee_pct=_cfg.FEE_PCT,
         )
         train_engine = CPUBacktestEngine(
             train_df,
             feature_modes,
             direction,
-            fee_pct=_cfg.PHASE23_OPTIMIZATION_FEE_PCT,
+            fee_pct=_cfg.FEE_PCT,
         )
 
     cache = build_phase3_eval_cache(pool, train_df, val_df, val_engine)

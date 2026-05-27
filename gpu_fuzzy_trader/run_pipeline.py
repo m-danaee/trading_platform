@@ -105,6 +105,7 @@ def _temporary_output_paths(output_dir: str | None):
         "phase3_output_paths": _phase3_module._OUTPUT_PATHS,
         "phase4_output_paths": _phase4_module._OUTPUT_PATHS,
         "phase5_strategy_paths": _phase5_module._STRATEGY_PATHS,
+        "phase5_feature_paths": _phase5_module._FEATURE_PATHS,
         "phase5_report_paths": _phase5_module._REPORT_PATHS,
         "reporter_reports_dir": _reporter_module._REPORTS_DIR,
     }
@@ -154,6 +155,10 @@ def _temporary_output_paths(output_dir: str | None):
             "long": os.path.join(output_root, "long.json"),
             "short": os.path.join(output_root, "short.json"),
         }
+        _phase5_module._FEATURE_PATHS = {
+            "long": os.path.join(output_root, "selected_features_long.json"),
+            "short": os.path.join(output_root, "selected_features_short.json"),
+        }
         _phase5_module._REPORT_PATHS = {
             "long": os.path.join(reports_root, "test_long_report.json"),
             "short": os.path.join(reports_root, "test_short_report.json"),
@@ -180,6 +185,7 @@ def _temporary_output_paths(output_dir: str | None):
         _phase3_module._OUTPUT_PATHS = previous_state["phase3_output_paths"]
         _phase4_module._OUTPUT_PATHS = previous_state["phase4_output_paths"]
         _phase5_module._STRATEGY_PATHS = previous_state["phase5_strategy_paths"]
+        _phase5_module._FEATURE_PATHS = previous_state["phase5_feature_paths"]
         _phase5_module._REPORT_PATHS = previous_state["phase5_report_paths"]
         _reporter_module._REPORTS_DIR = previous_state["reporter_reports_dir"]
 
@@ -405,8 +411,10 @@ class Pipeline_Orchestrator:
             # ------------------------------------------------------------------
             _run_log_handler = self._attach_run_log_handler()
             _sep = "=" * 80
-            _start_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-            _run_log_handler.stream.write(f"{_sep}\n[{_start_ts}] Pipeline run START\n{_sep}\n")
+            _start_ts = datetime.now(
+                timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            _run_log_handler.stream.write(
+                f"{_sep}\n[{_start_ts}] Pipeline run START\n{_sep}\n")
             _run_log_handler.stream.flush()
 
             try:
@@ -478,8 +486,10 @@ class Pipeline_Orchestrator:
                 return results
 
             finally:
-                _end_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-                _run_log_handler.stream.write(f"{_sep}\n[{_end_ts}] Pipeline run END\n{_sep}\n")
+                _end_ts = datetime.now(timezone.utc).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ")
+                _run_log_handler.stream.write(
+                    f"{_sep}\n[{_end_ts}] Pipeline run END\n{_sep}\n")
                 _run_log_handler.stream.flush()
                 self._detach_run_log_handler(_run_log_handler)
 
@@ -565,7 +575,8 @@ class Pipeline_Orchestrator:
         ``_detach_run_log_handler``.
         """
         os.makedirs(os.path.dirname(_cfg.RUN_LOG_PATH) or ".", exist_ok=True)
-        handler = logging.FileHandler(_cfg.RUN_LOG_PATH, mode="a", encoding="utf-8")
+        handler = logging.FileHandler(
+            _cfg.RUN_LOG_PATH, mode="a", encoding="utf-8")
         handler.setLevel(logging.DEBUG)
         handler.setFormatter(logging.Formatter(
             "%(asctime)s [%(levelname)s] %(name)s: %(message)s",

@@ -915,6 +915,7 @@ class TestTemporaryOutputPaths:
         original_phase3_output = phase3_module._OUTPUT_PATHS
         original_phase4_output = phase4_module._OUTPUT_PATHS
         original_phase5_strategy = phase5_module._STRATEGY_PATHS
+        original_phase5_features = phase5_module._FEATURE_PATHS
         original_phase5_report = phase5_module._REPORT_PATHS
         original_reporter_dir = reporter_module._REPORTS_DIR
 
@@ -941,6 +942,12 @@ class TestTemporaryOutputPaths:
             assert phase5_module._STRATEGY_PATHS["short"] == os.path.join(
                 custom_output, "short.json"
             )
+            assert phase5_module._FEATURE_PATHS["long"] == os.path.join(
+                custom_output, "selected_features_long.json"
+            )
+            assert phase5_module._FEATURE_PATHS["short"] == os.path.join(
+                custom_output, "selected_features_short.json"
+            )
             assert phase5_module._REPORT_PATHS["per_symbol"] == os.path.join(
                 expected_reports, "test_per_symbol_performance.csv"
             )
@@ -954,5 +961,6 @@ class TestTemporaryOutputPaths:
         assert phase3_module._OUTPUT_PATHS == original_phase3_output
         assert phase4_module._OUTPUT_PATHS == original_phase4_output
         assert phase5_module._STRATEGY_PATHS == original_phase5_strategy
+        assert phase5_module._FEATURE_PATHS == original_phase5_features
         assert phase5_module._REPORT_PATHS == original_phase5_report
         assert reporter_module._REPORTS_DIR == original_reporter_dir

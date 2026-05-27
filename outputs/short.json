@@ -1,0 +1,28 @@
+{
+  "direction": "short",
+  "risk_optimized": true,
+  "rules_set": [
+    {
+      "conditions": [
+        "[downside_semivol_20] IS Very High",
+        "[lower_wick_to_tr] IS Very Low",
+        "[close_location_value] IS High",
+        "[ret_autocorr_1_30] IS Strong Bullish"
+      ],
+      "tp": 2.8,
+      "sl": 1.2,
+      "capital_pct": 40.0
+    },
+    {
+      "conditions": [
+        "[range_compression_20_100] IS Low",
+        "[lower_wick_to_tr] IS High",
+        "[mom_stoch_rsi_14_14_3] IS Very High",
+        "[rsi_hidden_div_flag] IS Negative (-1)"
+      ],
+      "tp": 4.0,
+      "sl": 2.0,
+      "capital_pct": 10.0
+    }
+  ]
+}

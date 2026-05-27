@@ -153,15 +153,10 @@ If `active_conditions > MAX_CONDITIONS`: penalty = `(active − MAX_CONDITIONS) 
 
 This steers the search toward rules with 3–4 active conditions.
 
-### Search-time fee inflation — `PHASE23_OPTIMIZATION_FEE_PCT`
+### Fee model
 
-During Phase 2 (and Phase 3), the optimization backtests may use a
-search-time fee rate `PHASE23_OPTIMIZATION_FEE_PCT` instead of the true
-evaluation fee `FEE_PCT`.
-
-This is applied only during optimization simulations: it discourages
-strategies that look good under optimistic/low-fee assumptions but fail
-once the true trading friction is used in Phase 5.
+Phase 2 and Phase 3 use the shared fee setting `FEE_PCT` for optimization
+backtests.
 
 ---
 
@@ -278,7 +273,6 @@ A chromosome is only included in the pool if `executed_trades ≥ MIN_TRADE_POOL
 | `PHASE2_SUPPORT_PENALTY_WEIGHT_F1`  | `1.0`     | Multiplicative weight applied to support penalty in Phase 2 objective `f1`.                                            |
 | `PHASE2_SUPPORT_PENALTY_WEIGHT_F2`  | `0.35`    | Multiplicative weight applied to support penalty in Phase 2 objective `f2`.                                           |
 | `PHASE2_SUPPORT_PENALTY_WEIGHT_F3`  | `0.35`    | Multiplicative weight applied to support penalty in Phase 2 objective `f3`.                                           |
-| `PHASE23_OPTIMIZATION_FEE_PCT`      | `0.40`    | Search-time fee rate used in Phase 2/3 optimization simulations (Phase 5 uses `FEE_PCT`).                              |
 | `SORTINO_CAP`                        | `5.0`     | Maximum saturated Sortino value. Increase to allow more differentiation at the top end.                                         |
 | `SORTINO_SCALE`                      | `3.0`     | tanh saturation scale. Increase for less aggressive compression.                                                                |
 | `PHASE2_JOINT_TRAIN_VAL`             | `True`    | Use min(train, val) Sortino as objective. Disable to optimize on training only (higher overfitting risk).                       |

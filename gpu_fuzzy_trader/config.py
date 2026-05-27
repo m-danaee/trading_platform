@@ -81,10 +81,6 @@ TAIL_DROP_ROWS = 288
 INITIAL_CAPITAL = 1000.0
 LEVERAGE = 1.0
 FEE_PCT = 0.20  # round-trip fee %; penalizes high-turnover rules
-# Search-time fee inflation for Phase 2/3 only.
-# This discourages fragile high-frequency rules during optimization while
-# keeping Phase 5 evaluation on the true fee rate (FEE_PCT).
-PHASE23_OPTIMIZATION_FEE_PCT = 0.40
 MAX_HOLD_CANDLES = 288  # aligned with label horizon
 MAX_TOTAL_EXPOSURE_PCT = 100.0
 MIN_POSITION_NOTIONAL = 1.0
@@ -139,8 +135,8 @@ PHASE1_SAMPLING_TOTAL = 701_000
 # =============================================================================
 
 # Fixed TP/SL/capital during rule search — isolates rule logic from risk tuning (Phase 4).
-PHASE2_TP = 3.0
-PHASE2_SL = 1.5
+PHASE2_TP = 4.0
+PHASE2_SL = 2.0
 PHASE2_CAPITAL_PCT = 32.0
 
 # Rule genome: number of active fuzzy conditions per chromosome.
@@ -239,14 +235,14 @@ PHASE3_JACCARD_SIMILARITY_GATE = 0.85
 # Phase 4 — Walk-forward risk optimization (phases/phase4_wf_optimizer.py)
 # =============================================================================
 
-PHASE4_TP_MIN = 2.0
-PHASE4_TP_MAX = 4.0
-PHASE4_SL_MIN = 1.0
-PHASE4_SL_MAX = 2.0
+PHASE4_TP_MIN = 4.0
+PHASE4_TP_MAX = 6.0
+PHASE4_SL_MIN = 2.0
+PHASE4_SL_MAX = 3.0
 PHASE4_CAPITAL_PCT_MIN = 10.0
 PHASE4_CAPITAL_PCT_MAX = 50.0
-PHASE4_TP_STEP = 0.2
-PHASE4_SL_STEP = 0.2
+PHASE4_TP_STEP = 0.5
+PHASE4_SL_STEP = 0.25
 PHASE4_CAPITAL_STEP = 5.0
 PHASE4_TOTAL_CAP_PENALTY = 2.0
 PHASE4_N_TRIALS = 1000

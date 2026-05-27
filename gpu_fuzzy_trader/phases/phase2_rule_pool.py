@@ -1180,7 +1180,7 @@ class Rule_Pool_Generator:
         if regime_ids is not None and n_regimes > 0:
             engine_kwargs["regime_ids"] = regime_ids
             engine_kwargs["n_regimes"] = n_regimes
-        engine_kwargs["fee_pct"] = _cfg.PHASE23_OPTIMIZATION_FEE_PCT
+        engine_kwargs["fee_pct"] = _cfg.FEE_PCT
 
         try:
             from gpu_fuzzy_trader.backtest.gpu_engine import GPUBacktestEngine
