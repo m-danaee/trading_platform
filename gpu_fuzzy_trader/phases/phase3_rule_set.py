@@ -223,21 +223,49 @@ def _build_phase3_engines(
         try:
             from gpu_fuzzy_trader.backtest.gpu_engine import GPUBacktestEngine
 
-            val_engine = GPUBacktestEngine(val_df, feature_modes, direction)
+            val_engine = GPUBacktestEngine(
+                val_df,
+                feature_modes,
+                direction,
+                fee_pct=_cfg.PHASE23_OPTIMIZATION_FEE_PCT,
+            )
             train_engine = GPUBacktestEngine(
-                train_df, feature_modes, direction)
+                train_df,
+                feature_modes,
+                direction,
+                fee_pct=_cfg.PHASE23_OPTIMIZATION_FEE_PCT,
+            )
             logger.info(
                 "Phase 3 using GPUBacktestEngine (JAX mask + batch eval)")
         except ImportError:
             logger.warning(
                 "PHASE3_USE_GPU=True but JAX unavailable; using CPU.")
             use_jax = False
-            val_engine = CPUBacktestEngine(val_df, feature_modes, direction)
+            val_engine = CPUBacktestEngine(
+                val_df,
+                feature_modes,
+                direction,
+                fee_pct=_cfg.PHASE23_OPTIMIZATION_FEE_PCT,
+            )
             train_engine = CPUBacktestEngine(
-                train_df, feature_modes, direction)
+                train_df,
+                feature_modes,
+                direction,
+                fee_pct=_cfg.PHASE23_OPTIMIZATION_FEE_PCT,
+            )
     else:
-        val_engine = CPUBacktestEngine(val_df, feature_modes, direction)
-        train_engine = CPUBacktestEngine(train_df, feature_modes, direction)
+        val_engine = CPUBacktestEngine(
+            val_df,
+            feature_modes,
+            direction,
+            fee_pct=_cfg.PHASE23_OPTIMIZATION_FEE_PCT,
+        )
+        train_engine = CPUBacktestEngine(
+            train_df,
+            feature_modes,
+            direction,
+            fee_pct=_cfg.PHASE23_OPTIMIZATION_FEE_PCT,
+        )
 
     cache = build_phase3_eval_cache(pool, train_df, val_df, val_engine)
     return val_engine, train_engine, use_parallel, use_jax, cache
@@ -255,11 +283,15 @@ def _evaluate_rule_set(
     train_metrics, val_metrics = _simulate_team(
         rule_set, train_engine, val_engine, cache)
     per_rule = cache.per_rule_min_val_trades if cache is not None else None
+    val_masks = cache.val_masks if cache is not None else None
+    n_rows_val = cache.n_rows_val if cache is not None else 0
     objectives = compute_phase3_objectives(
         train_metrics,
         val_metrics,
         rule_set,
         per_rule_min_val_trades=per_rule,
+        val_masks_by_key=val_masks,
+        n_rows_val=n_rows_val,
     )
     return objectives, train_metrics
 
@@ -581,10 +613,14 @@ def _run_nsga2_combinatorial(
             train_list, val_list = _simulate_teams_batch(
                 fmts, train_engine, val_engine, cache, use_jax)
             per_rule = cache.per_rule_min_val_trades if cache else None
+            val_masks = cache.val_masks if cache else None
+            n_rows_val = cache.n_rows_val if cache else 0
             for j, i in enumerate(pending):
                 objectives[i] = compute_phase3_objectives(
                     train_list[j], val_list[j], population[i],
                     per_rule_min_val_trades=per_rule,
+                    val_masks_by_key=val_masks,
+                    n_rows_val=n_rows_val,
                 )
         else:
             for i in pending:

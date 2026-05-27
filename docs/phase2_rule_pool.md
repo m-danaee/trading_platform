@@ -86,7 +86,7 @@ During Phase 2, all rules are evaluated with fixed risk parameters:
 
 - `PHASE2_TP = 3.0` (%)
 - `PHASE2_SL = 1.5` (%)
-- `PHASE2_CAPITAL_PCT = 48.0` (%)
+- `PHASE2_CAPITAL_PCT = 32.0` (%)
 
 **Why fixed?** Phase 2 is searching for rules with predictive alpha — the ability to identify market conditions that precede favorable price moves. By fixing TP/SL/capital, the search isolates rule quality from risk parameter tuning. Phase 4 handles risk optimization separately.
 
@@ -96,11 +96,13 @@ During Phase 2, all rules are evaluated with fixed risk parameters:
 
 ## 4. Penalties
 
-All penalties are added to all three objectives simultaneously, so a penalized rule is pushed away from the Pareto front in all dimensions.
+All penalties are added to all three Phase 2 objectives simultaneously, but
+some penalties are scaled per-objective (notably the support penalty via
+`PHASE2_SUPPORT_PENALTY_WEIGHT_F1/F2/F3`).
 
 ### Support penalty — `trade_support_penalty`
 
-If `executed_trades < MIN_TRADE_SUPPORT` (default: 300), a graduated penalty is applied:
+If `executed_trades < MIN_TRADE_SUPPORT` (default: 200), a graduated penalty is applied:
 
 ```python
 if executed < MIN_TRADE_POOL_FLOOR:
@@ -110,7 +112,11 @@ else:
     penalty = min(shortfall² × SUPPORT_PENALTY_MAX, SUPPORT_PENALTY_MAX)
 ```
 
-`SUPPORT_PENALTY_MAX = 50.0`, `MIN_TRADE_POOL_FLOOR = 75` (config).
+`SUPPORT_PENALTY_MAX = 12.0`, `MIN_TRADE_POOL_FLOOR = 50` (config).
+
+In Phase 2 fitness evaluation, this support penalty is additionally
+multiplied by per-objective weights `PHASE2_SUPPORT_PENALTY_WEIGHT_F1`,
+`PHASE2_SUPPORT_PENALTY_WEIGHT_F2`, and `PHASE2_SUPPORT_PENALTY_WEIGHT_F3`.
 
 **Why?** A rule with 10 trades has a noisy Sortino estimate. The support penalty discourages the search from converging on low-frequency rules whose apparent performance is statistical noise.
 
@@ -146,6 +152,16 @@ If `active_conditions < MIN_CONDITIONS`: penalty = `(MIN_CONDITIONS − active) 
 If `active_conditions > MAX_CONDITIONS`: penalty = `(active − MAX_CONDITIONS) × 10.0`
 
 This steers the search toward rules with 3–4 active conditions.
+
+### Search-time fee inflation — `PHASE23_OPTIMIZATION_FEE_PCT`
+
+During Phase 2 (and Phase 3), the optimization backtests may use a
+search-time fee rate `PHASE23_OPTIMIZATION_FEE_PCT` instead of the true
+evaluation fee `FEE_PCT`.
+
+This is applied only during optimization simulations: it discourages
+strategies that look good under optimistic/low-fee assumptions but fail
+once the true trading friction is used in Phase 5.
 
 ---
 
@@ -243,7 +259,7 @@ Archive merging uses `_merge_archive_entries`:
 
 ### Pool trade floor gate — `passes_pool_trade_floor`
 
-A chromosome is only included in the pool if `executed_trades ≥ MIN_TRADE_POOL_FLOOR` (default: 75), unless it qualifies as a regime specialist. This is a hard gate that prevents very low-frequency rules from entering the pool regardless of their apparent Sortino.
+A chromosome is only included in the pool if `executed_trades ≥ MIN_TRADE_POOL_FLOOR` (default: 50), unless it qualifies as a regime specialist. This is a hard gate that prevents very low-frequency rules from entering the pool regardless of their apparent Sortino.
 
 ---
 
@@ -253,12 +269,16 @@ A chromosome is only included in the pool if `executed_trades ≥ MIN_TRADE_POOL
 | ------------------------------------ | --------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | `PHASE2_TP`                          | `3.0`     | TP % used for all Phase 2 evaluations. Increasing requires larger price moves to win, reducing trade frequency.                 |
 | `PHASE2_SL`                          | `1.5`     | SL % used for all Phase 2 evaluations. Increasing allows more drawdown before stopping out.                                     |
-| `PHASE2_CAPITAL_PCT`                 | `48.0`    | Capital % per rule during Phase 2. Affects position sizing and thus absolute PnL, but not Sortino (which is return-normalized). |
+| `PHASE2_CAPITAL_PCT`                 | `32.0`    | Capital % per rule during Phase 2. Affects position sizing and thus absolute PnL, but not Sortino (which is return-normalized). |
 | `MIN_CONDITIONS`                     | `3`       | Minimum active conditions per rule. Increase for more specific rules.                                                           |
 | `MAX_CONDITIONS`                     | `4`       | Maximum active conditions per rule. Decrease for simpler rules.                                                                 |
-| `MIN_TRADE_SUPPORT`                  | `300`     | Minimum trades for zero support penalty. Increase to require more statistical evidence.                                         |
-| `SUPPORT_PENALTY_MAX`                | `50.0`    | Maximum support penalty magnitude. Increase to more aggressively penalize low-frequency rules.                                  |
-| `MIN_TRADE_POOL_FLOOR`               | `75`      | Hard minimum trades for pool inclusion. Rules below this are excluded regardless of Sortino.                                    |
+| `MIN_TRADE_SUPPORT`                  | `200`     | Minimum trades for zero support penalty. Increase to require more statistical evidence.                                         |
+| `SUPPORT_PENALTY_MAX`                | `12.0`    | Maximum support penalty magnitude. Increase to more aggressively penalize low-frequency rules.                                  |
+| `MIN_TRADE_POOL_FLOOR`               | `50`      | Hard minimum trades for pool inclusion. Rules below this are excluded regardless of Sortino.                                    |
+| `PHASE2_SUPPORT_PENALTY_WEIGHT_F1`  | `1.0`     | Multiplicative weight applied to support penalty in Phase 2 objective `f1`.                                            |
+| `PHASE2_SUPPORT_PENALTY_WEIGHT_F2`  | `0.35`    | Multiplicative weight applied to support penalty in Phase 2 objective `f2`.                                           |
+| `PHASE2_SUPPORT_PENALTY_WEIGHT_F3`  | `0.35`    | Multiplicative weight applied to support penalty in Phase 2 objective `f3`.                                           |
+| `PHASE23_OPTIMIZATION_FEE_PCT`      | `0.40`    | Search-time fee rate used in Phase 2/3 optimization simulations (Phase 5 uses `FEE_PCT`).                              |
 | `SORTINO_CAP`                        | `5.0`     | Maximum saturated Sortino value. Increase to allow more differentiation at the top end.                                         |
 | `SORTINO_SCALE`                      | `3.0`     | tanh saturation scale. Increase for less aggressive compression.                                                                |
 | `PHASE2_JOINT_TRAIN_VAL`             | `True`    | Use min(train, val) Sortino as objective. Disable to optimize on training only (higher overfitting risk).                       |

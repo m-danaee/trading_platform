@@ -137,6 +137,11 @@ net_pnl = gross_pnl − fee
 
 `FEE_PCT = 0.20` is a round-trip fee percentage. At 0.20%, a $1000 position costs $2 in fees. This penalizes high-turnover rules.
 
+During optimization (Phase 2 and Phase 3), the backtest engines may use a
+search-time fee rate `PHASE23_OPTIMIZATION_FEE_PCT` (default `0.40`) to
+discourage fragile high-frequency strategies. Phase 5 OOS evaluation still
+uses the true fee rate `FEE_PCT`.
+
 ### Sortino Ratio computation — `_sortino_ratio_from_returns`
 
 ```

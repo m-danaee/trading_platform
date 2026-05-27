@@ -337,9 +337,24 @@ def _evaluate_chromosome(
         if min_hamming <= _cfg.PHASE2_DIVERSITY_HAMMING_THRESHOLD:
             diversity_penalty = _cfg.PHASE2_DIVERSITY_PENALTY
 
-    f1 = -sortino_for_obj + support_penalty + diversity_penalty + cond_penalty
-    f2 = max_dd + support_penalty + diversity_penalty + cond_penalty
-    f3 = -win_rate + support_penalty + diversity_penalty + cond_penalty
+    f1 = (
+        -sortino_for_obj
+        + (_cfg.PHASE2_SUPPORT_PENALTY_WEIGHT_F1 * support_penalty)
+        + diversity_penalty
+        + cond_penalty
+    )
+    f2 = (
+        max_dd
+        + (_cfg.PHASE2_SUPPORT_PENALTY_WEIGHT_F2 * support_penalty)
+        + diversity_penalty
+        + cond_penalty
+    )
+    f3 = (
+        -win_rate
+        + (_cfg.PHASE2_SUPPORT_PENALTY_WEIGHT_F3 * support_penalty)
+        + diversity_penalty
+        + cond_penalty
+    )
 
     objectives = np.array([f1, f2, f3], dtype=np.float64)
     return objectives, metrics
@@ -1119,6 +1134,7 @@ class Rule_Pool_Generator:
         if regime_ids is not None and n_regimes > 0:
             engine_kwargs["regime_ids"] = regime_ids
             engine_kwargs["n_regimes"] = n_regimes
+        engine_kwargs["fee_pct"] = _cfg.PHASE23_OPTIMIZATION_FEE_PCT
 
         try:
             from gpu_fuzzy_trader.backtest.gpu_engine import GPUBacktestEngine

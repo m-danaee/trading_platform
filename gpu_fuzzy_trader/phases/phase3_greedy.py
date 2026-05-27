@@ -65,11 +65,15 @@ def _objectives_from_metrics(
     """Compute objectives from precomputed metrics (backward-compatible wrapper)."""
     _ = val_engine  # legacy callers may pass engine; cache replaces gate sims
     per_rule = cache.per_rule_min_val_trades if cache is not None else None
+    val_masks = cache.val_masks if cache is not None else None
+    n_rows_val = cache.n_rows_val if cache is not None else 0
     return compute_phase3_objectives(
         train_metrics,
         val_metrics,
         rule_set_template,
         per_rule_min_val_trades=per_rule,
+        val_masks_by_key=val_masks,
+        n_rows_val=n_rows_val,
     )
 
 
@@ -86,13 +90,21 @@ def _evaluate_candidates_batch(
     engine_fmt = [p3._rule_set_to_engine_format(c) for c in candidates]
     results: list[tuple[np.ndarray, dict, dict]] = []
     per_rule = cache.per_rule_min_val_trades if cache is not None else None
+    val_masks = cache.val_masks if cache is not None else None
+    n_rows_val = cache.n_rows_val if cache is not None else 0
 
     if use_batch:
         train_list, val_list = p3._simulate_teams_batch(
             engine_fmt, train_engine, val_engine, cache, use_jax)
         for rs, val_m, train_m in zip(candidates, val_list, train_list):
             obj = compute_phase3_objectives(
-                train_m, val_m, rs, per_rule_min_val_trades=per_rule)
+                train_m,
+                val_m,
+                rs,
+                per_rule_min_val_trades=per_rule,
+                val_masks_by_key=val_masks,
+                n_rows_val=n_rows_val,
+            )
             results.append((obj, val_m, train_m))
         return results
 
@@ -101,7 +113,13 @@ def _evaluate_candidates_batch(
         train_m, val_m = p3._simulate_team(
             fmt, train_engine, val_engine, cache)
         obj = compute_phase3_objectives(
-            train_m, val_m, rs, per_rule_min_val_trades=per_rule)
+            train_m,
+            val_m,
+            rs,
+            per_rule_min_val_trades=per_rule,
+            val_masks_by_key=val_masks,
+            n_rows_val=n_rows_val,
+        )
         results.append((obj, val_m, train_m))
 
     return results

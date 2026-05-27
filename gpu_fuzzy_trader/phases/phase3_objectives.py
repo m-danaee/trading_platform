@@ -102,12 +102,72 @@ def per_rule_min_symbol_trades_cached(
     return 0 if worst == float("inf") else int(worst)
 
 
+def _incremental_trade_penalty(
+    rule_set: list[dict],
+    val_masks_by_key: dict[frozenset, np.ndarray] | None,
+    n_rows_val: int,
+    min_incremental_trades: int,
+) -> float:
+    if not val_masks_by_key or len(rule_set) <= 1 or n_rows_val <= 0:
+        return 0.0
+
+    assigned = np.zeros(n_rows_val, dtype=bool)
+    penalty = 0.0
+    for idx, rule in enumerate(rule_set):
+        key = conditions_key(rule.get("conditions", []))
+        mask = val_masks_by_key.get(key)
+        if mask is None:
+            continue
+        incremental = int(np.count_nonzero(mask & (~assigned)))
+        assigned |= mask
+        if idx > 0 and incremental < min_incremental_trades:
+            shortfall = min_incremental_trades - incremental
+            ratio = shortfall / max(min_incremental_trades, 1)
+            penalty += _cfg.PHASE3_INCREMENTAL_GATE_PENALTY * ratio
+    return penalty
+
+
+def _jaccard_similarity_penalty(
+    rule_set: list[dict],
+    val_masks_by_key: dict[frozenset, np.ndarray] | None,
+) -> float:
+    if not val_masks_by_key or len(rule_set) <= 1:
+        return 0.0
+
+    masks: list[np.ndarray] = []
+    for rule in rule_set:
+        key = conditions_key(rule.get("conditions", []))
+        mask = val_masks_by_key.get(key)
+        if mask is None:
+            continue
+        masks.append(mask)
+    if len(masks) <= 1:
+        return 0.0
+
+    penalty = 0.0
+    for i in range(len(masks)):
+        for j in range(i + 1, len(masks)):
+            union = int(np.count_nonzero(masks[i] | masks[j]))
+            if union <= 0:
+                continue
+            inter = int(np.count_nonzero(masks[i] & masks[j]))
+            jaccard = inter / union
+            if jaccard > _cfg.PHASE3_JACCARD_SIMILARITY_GATE:
+                penalty += (
+                    (jaccard - _cfg.PHASE3_JACCARD_SIMILARITY_GATE)
+                    * _cfg.PHASE3_JACCARD_PENALTY_WEIGHT
+                )
+    return penalty
+
+
 def compute_phase3_objectives(
     train_metrics: dict,
     val_metrics: dict,
     rule_set: list[dict],
     *,
     per_rule_min_val_trades: dict[frozenset, int] | None = None,
+    val_masks_by_key: dict[frozenset, np.ndarray] | None = None,
+    n_rows_val: int = 0,
 ) -> np.ndarray:
     """
     Compute minimised objectives [f1, f2, f3] with all penalties applied.
@@ -141,6 +201,13 @@ def compute_phase3_objectives(
     symbol_consistency_penalty_val = symbol_consistency_penalty(
         train_metrics, val_metrics)
     corr_penalty = train_val_corr_penalty(train_metrics, val_metrics)
+    incremental_penalty = _incremental_trade_penalty(
+        rule_set,
+        val_masks_by_key,
+        n_rows_val,
+        _cfg.PHASE3_MIN_INCREMENTAL_TRADES,
+    )
+    jaccard_penalty = _jaccard_similarity_penalty(rule_set, val_masks_by_key)
 
     gate_penalty = 0.0
     if _cfg.PHASE3_USE_TRAIN_TARGET:
@@ -162,6 +229,7 @@ def compute_phase3_objectives(
     total_penalty = (
         zero_penalty + coverage_penalty + dup_penalty
         + symbol_consistency_penalty_val + corr_penalty + gate_penalty
+        + incremental_penalty + jaccard_penalty
     )
 
     if _cfg.PHASE3_USE_TRAIN_TARGET:

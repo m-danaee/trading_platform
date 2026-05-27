@@ -73,40 +73,69 @@ def _reduce_overlap(
     """
     long_feats = list(ranked.get("long", []))
     short_feats = list(ranked.get("short", []))
-    long_names = {f["name"] for f in long_feats}
-    short_names = {f["name"] for f in short_feats}
-    shared = long_names & short_names
     max_shared = int(top_k * max_overlap_pct)
 
-    if len(shared) > max_shared:
-        long_scores = {f["name"]: f["score"] for f in long_feats}
-        short_scores = {f["name"]: f["score"] for f in short_feats}
+    def _trim_shared(
+        left_feats: list[dict],
+        right_feats: list[dict],
+    ) -> tuple[list[dict], list[dict]]:
+        left_names = {f["name"] for f in left_feats}
+        right_names = {f["name"] for f in right_feats}
+        shared_names = left_names & right_names
+        if len(shared_names) <= max_shared:
+            return left_feats, right_feats
+
+        left_scores = {f["name"]: f["score"] for f in left_feats}
+        right_scores = {f["name"]: f["score"] for f in right_feats}
         shared_ranked = sorted(
-            shared,
+            shared_names,
             key=lambda name: abs(
-                long_scores.get(name, 0.0) - short_scores.get(name, 0.0)
+                left_scores.get(name, 0.0) - right_scores.get(name, 0.0)
             ),
         )
-        to_remove = len(shared) - max_shared
+        to_remove = len(shared_ranked) - max_shared
         for name in shared_ranked[:to_remove]:
-            if long_scores.get(name, 0.0) <= short_scores.get(name, 0.0):
-                long_feats = [f for f in long_feats if f["name"] != name]
+            if left_scores.get(name, 0.0) <= right_scores.get(name, 0.0):
+                left_feats = [f for f in left_feats if f["name"] != name]
             else:
-                short_feats = [f for f in short_feats if f["name"] != name]
+                right_feats = [f for f in right_feats if f["name"] != name]
+        return left_feats, right_feats
+    long_feats, short_feats = _trim_shared(long_feats, short_feats)
 
-    def _backfill(selected: list[dict], pool: list[dict]) -> list[dict]:
+    def _backfill(
+        selected: list[dict],
+        pool: list[dict],
+        other_selected: list[dict],
+    ) -> list[dict]:
         chosen = {f["name"] for f in selected}
+        other_names = {f["name"] for f in other_selected}
         for feat in pool:
             if len(selected) >= top_k:
                 break
-            if feat["name"] not in chosen:
-                selected.append(feat)
-                chosen.add(feat["name"])
+            name = feat["name"]
+            if name in chosen:
+                continue
+            shared_now = len(chosen & other_names)
+            if name in other_names and shared_now >= max_shared:
+                continue
+            selected.append(feat)
+            chosen.add(name)
         return selected[:top_k]
 
+    long_feats = _backfill(long_feats, ranked.get("long", []), short_feats)
+    short_feats = _backfill(short_feats, ranked.get("short", []), long_feats)
+    # Safety pass: backfill must not reintroduce overlap violations.
+    long_feats, short_feats = _trim_shared(long_feats, short_feats)
+
+    if len(long_feats) < top_k:
+        long_feats = _backfill(long_feats, ranked.get("long", []), short_feats)
+    if len(short_feats) < top_k:
+        short_feats = _backfill(
+            short_feats, ranked.get("short", []), long_feats)
+
     return {
-        "long": _backfill(long_feats, ranked.get("long", [])),
-        "short": _backfill(short_feats, ranked.get("short", [])),
+        "long": long_feats[:top_k],
+        "short": short_feats[:top_k],
     }
 
 
@@ -411,6 +440,14 @@ class Feature_Selector:
             len(shared),
             int(config.PHASE1_TOP_K_FEATURES * config.PHASE1_MAX_FEATURE_OVERLAP),
         )
+        if len(shared) > int(config.PHASE1_TOP_K_FEATURES * config.PHASE1_MAX_FEATURE_OVERLAP):
+            logger.warning(
+                "Phase 1: overlap cap violation detected after reduction "
+                "(shared=%d, cap=%d)",
+                len(shared),
+                int(config.PHASE1_TOP_K_FEATURES *
+                    config.PHASE1_MAX_FEATURE_OVERLAP),
+            )
 
         for direction in ("long", "short"):
             features = results[direction]

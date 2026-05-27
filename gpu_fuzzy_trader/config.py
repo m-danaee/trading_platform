@@ -81,6 +81,10 @@ TAIL_DROP_ROWS = 288
 INITIAL_CAPITAL = 1000.0
 LEVERAGE = 1.0
 FEE_PCT = 0.20  # round-trip fee %; penalizes high-turnover rules
+# Search-time fee inflation for Phase 2/3 only.
+# This discourages fragile high-frequency rules during optimization while
+# keeping Phase 5 evaluation on the true fee rate (FEE_PCT).
+PHASE23_OPTIMIZATION_FEE_PCT = 0.40
 MAX_HOLD_CANDLES = 288  # aligned with label horizon
 MAX_TOTAL_EXPOSURE_PCT = 100.0
 MIN_POSITION_NOTIONAL = 1.0
@@ -128,7 +132,7 @@ PHASE1_REGIME_MODEL_PATH = os.path.join(
 
 # Phase 2 backtest row budget (equal per symbol). Primary GPU memory knob.
 # Raising this grows JAX arrays roughly linearly; on memory-limited GPUs keep ≤ 150_000.
-PHASE1_SAMPLING_TOTAL = 600_000
+PHASE1_SAMPLING_TOTAL = 701_000
 
 # =============================================================================
 # Phase 2 — Rule pool / NSGA-III (phases/phase2_rule_pool.py)
@@ -144,10 +148,16 @@ MIN_CONDITIONS = 3
 MAX_CONDITIONS = 4
 
 # Trade-count gates and support penalty (noisy Sortino when executed << support).
-MIN_TRADE_SUPPORT = 300
-SUPPORT_PENALTY_MAX = 50.0
+MIN_TRADE_SUPPORT = 200
+SUPPORT_PENALTY_MAX = 12.0
 # hard reject below this in archive (~ MIN_TRADE_SUPPORT // 4)
-MIN_TRADE_POOL_FLOOR = 75
+MIN_TRADE_POOL_FLOOR = 50
+# How strongly the support penalty affects each Phase 2 objective.
+# (f1: Sortino, f2: drawdown, f3: win_rate). Keeping weights < 1 reduces
+# population collapse while preserving the low-support discouragement.
+PHASE2_SUPPORT_PENALTY_WEIGHT_F1 = 1.0
+PHASE2_SUPPORT_PENALTY_WEIGHT_F2 = 0.35
+PHASE2_SUPPORT_PENALTY_WEIGHT_F3 = 0.35
 
 # Fitness transform: tanh(sortino / SCALE) * CAP (avoids sentinel pinning at gen 0).
 SORTINO_CAP = 5.0
@@ -214,6 +224,16 @@ PHASE3_PER_RULE_MIN_VAL_TRADES_PER_SYMBOL = 5
 # penalty on low corr(per-symbol PnL train, val)
 PHASE3_TRAIN_VAL_CORR_WEIGHT = 5.0
 PHASE3_VAL_GATE_PENALTY = 75.0
+# Incremental orthogonality controls (applied as soft penalties in Phase 3):
+# - Incremental gate: a later rule must add enough non-overlapping
+#   validation coverage vs earlier rules.
+PHASE3_MIN_INCREMENTAL_TRADES = 40
+# How hard to penalize low incremental coverage after the first rule.
+PHASE3_INCREMENTAL_GATE_PENALTY = 60.0
+# Jaccard similarity gate: penalize teams whose rules overlap too much on
+# the validation entry-mask union.
+PHASE3_JACCARD_PENALTY_WEIGHT = 25.0
+PHASE3_JACCARD_SIMILARITY_GATE = 0.85
 
 # =============================================================================
 # Phase 4 — Walk-forward risk optimization (phases/phase4_wf_optimizer.py)

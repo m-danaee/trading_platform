@@ -146,6 +146,27 @@ penalty = (1.0 − corr) × 0.5 × PHASE3_TRAIN_VAL_CORR_WEIGHT
 
 **Effect of `PHASE3_TRAIN_VAL_CORR_WEIGHT`:** Increasing this more aggressively penalizes strategies where the per-symbol PnL pattern changes between train and val.
 
+### Incremental orthogonality penalties (new in Phase 3)
+
+To reduce over-trading and suppress “clone rules” that enter on the same
+validation candles, Phase 3 adds two soft penalties via `compute_phase3_objectives`
+(included in `total_penalty` and applied to all three objectives):
+
+1. **Incremental trade gate — `PHASE3_MIN_INCREMENTAL_TRADES` / `PHASE3_INCREMENTAL_GATE_PENALTY`**
+   - For an ordered rule set `[R1, R2, ...]`, define the incremental coverage of
+     rule `Ri` as the number of validation rows where `Ri` signals **and**
+     no earlier rule already signaled:
+     `incremental = count(M(Ri) AND NOT(M(R1) OR ... OR M(R{i-1})))`.
+   - If `i > 1` and `incremental < PHASE3_MIN_INCREMENTAL_TRADES`,
+     a penalty is added proportional to the shortfall.
+
+2. **Trade Jaccard similarity penalty — `PHASE3_JACCARD_SIMILARITY_GATE` / `PHASE3_JACCARD_PENALTY_WEIGHT`**
+   - For every pair of rules `(Ri, Rj)` compute
+     `jaccard = |M(Ri) ∩ M(Rj)| / |M(Ri) ∪ M(Rj)|` over validation entry-mask signals.
+   - If `jaccard` exceeds `PHASE3_JACCARD_SIMILARITY_GATE`, a penalty is added.
+
+These penalties are computed from cached validation masks in `Phase3EvalCache`.
+
 ### Validation gate penalties — `PHASE3_USE_TRAIN_TARGET = True`
 
 When using training as the primary objective, three additional gate penalties are applied based on validation performance:
@@ -230,6 +251,10 @@ After refinement, the Pareto front contains multiple non-dominated rule sets. Th
 | `PHASE3_PER_RULE_MIN_VAL_TRADES_PER_SYMBOL` | `5` | Minimum val trades per symbol per rule. Increase to require more validation evidence per rule. |
 | `PHASE3_TRAIN_VAL_CORR_WEIGHT` | `5.0` | Weight for per-symbol PnL correlation penalty. Increase to more aggressively penalize uncorrelated train/val PnL patterns. |
 | `PHASE3_VAL_GATE_PENALTY` | `75.0` | Penalty magnitude for gate violations. This dominates the objective space — a single violation effectively disqualifies a strategy. |
+| `PHASE3_MIN_INCREMENTAL_TRADES` | `40` | Minimum incremental (non-overlapping) validation entry count after the first rule. |
+| `PHASE3_INCREMENTAL_GATE_PENALTY` | `60.0` | Penalty magnitude when incremental coverage falls below `PHASE3_MIN_INCREMENTAL_TRADES`. |
+| `PHASE3_JACCARD_PENALTY_WEIGHT` | `25.0` | Weight applied to the Jaccard similarity penalty when overlap exceeds the gate. |
+| `PHASE3_JACCARD_SIMILARITY_GATE` | `0.85` | Maximum allowed rule-entry-mask Jaccard similarity before the penalty triggers. |
 
 ---
 

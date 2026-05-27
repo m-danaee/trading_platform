@@ -23,8 +23,11 @@ If you want to change a specific behavior, find the relevant parameter here:
 | More evolutionary search budget | `PHASE2_POPULATION_SIZE`, `PHASE2_GENERATIONS` | Phase 2 |
 | Warm-start from previous runs | `PHASE2_ARCHIVE_SEED_FRACTION` | Phase 2 |
 | Require broader symbol coverage | `PHASE3_MIN_SYMBOL_COVERAGE` | Phase 3 |
+| Penalize overlapping rule teams | `PHASE3_JACCARD_SIMILARITY_GATE` | Phase 3 |
+| Require incremental rule coverage | `PHASE3_MIN_INCREMENTAL_TRADES` | Phase 3 |
 | Stricter anti-overfitting gate | `PHASE3_VAL_SORTINO_RATIO_GATE`, `PHASE3_VAL_GATE_PENALTY` | Phase 3 |
 | More refinement budget | `PHASE3_REFINE_POP_SIZE`, `PHASE3_REFINE_GENERATIONS` | Phase 3 |
+| Increase optimization friction | `PHASE23_OPTIMIZATION_FEE_PCT` | Phase 2 |
 | Tighter drawdown constraint | `PHASE4_MAX_WORST_DRAWDOWN_PCT` | Phase 4 |
 | More risk optimization budget | `PHASE4_N_TRIALS` | Phase 4 |
 | More walk-forward windows | `PHASE4_WF_SPLITS` | Phase 4 |
