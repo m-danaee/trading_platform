@@ -891,6 +891,52 @@ def _pool_seed_chromosomes(pool: list[dict]) -> np.ndarray | None:
     return np.vstack(rows)
 
 
+def _condition_feature_names(conditions: list[str]) -> set[str]:
+    """
+    Extract feature names from textual conditions like: "[feat] IS Value".
+    Returns an empty set when parsing fails for a condition.
+    """
+    names: set[str] = set()
+    for cond in conditions:
+        if not isinstance(cond, str):
+            continue
+        left = cond.split(" IS ", 1)[0].strip()
+        if left.startswith("[") and left.endswith("]") and len(left) >= 3:
+            names.add(left[1:-1].strip())
+    return names
+
+
+def _filter_compatible_previous_pool(
+    pool: list[dict],
+    feature_infos: list[dict],
+) -> list[dict]:
+    """
+    Keep only previous pool entries compatible with current feature selection.
+
+    Compatibility rules:
+      - chromosome length matches current feature count
+      - condition feature names are a subset of current feature names
+    """
+    if not pool:
+        return []
+    feature_names = {fi["name"] for fi in feature_infos}
+    expected_k = len(feature_infos)
+    filtered: list[dict] = []
+
+    for entry in pool:
+        chrom = entry.get("chromosome")
+        conditions = entry.get("conditions")
+        if not isinstance(chrom, list) or len(chrom) != expected_k:
+            continue
+        if not isinstance(conditions, list):
+            continue
+        cond_features = _condition_feature_names(conditions)
+        if not cond_features.issubset(feature_names):
+            continue
+        filtered.append(entry)
+    return filtered
+
+
 def _validate_archive_payload(
     payload: object,
     path: str,
@@ -1205,6 +1251,21 @@ class Rule_Pool_Generator:
                 "Phase 2 [%s]: existing pool file invalid; starting without seeds",
                 self.direction,
             )
+
+        if previous_pool:
+            compatible_pool = _filter_compatible_previous_pool(
+                previous_pool,
+                self.feature_infos,
+            )
+            dropped = len(previous_pool) - len(compatible_pool)
+            if dropped > 0:
+                logger.info(
+                    "Phase 2 [%s]: dropped %d incompatible previous pool rules "
+                    "(feature count/signature mismatch)",
+                    self.direction,
+                    dropped,
+                )
+            previous_pool = compatible_pool
 
         seed_chromosomes = _pool_seed_chromosomes(previous_pool)
         if seed_chromosomes is not None:
