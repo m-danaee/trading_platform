@@ -151,24 +151,27 @@ This steers the search toward rules with 3–4 active conditions.
 
 ## 5. NSGA-III Evolutionary Loop — `evox_runner.py`
 
-### Population initialization — `_init_population`
+### Population initialization — `_init_population` / `phase2_init.py`
 
-Each gene is independently set to either:
+Default strategy (`PHASE2_INIT_STRATEGY = "stratified_sparse"`):
 
-- A random valid class index (probability `1 − dont_care_prob = 0.5`)
-- The dont_care sentinel (probability `dont_care_prob = 0.5`)
+1. `PHASE2_ARCHIVE_SEED_FRACTION = 0.35` of slots are filled from the cross-run archive (unchanged).
+2. Each remaining individual picks `k` uniformly in `[MIN_CONDITIONS, MAX_CONDITIONS]`, starts with all genes at `dont_care`, then activates exactly `k` genes via one of three strata (fractions from `PHASE2_INIT_STRATUM_FRACTIONS`, default 50% / 30% / 20%):
+   - **Elite:** feature indices sampled without replacement using softmax Phase 1 scores (`PHASE2_INIT_SOFTMAX_TEMP`, with `PHASE2_INIT_UNIFORM_MIX` floor).
+   - **Explorer:** uniform feature sampling.
+   - **Regime specialist:** one gene from `PHASE1_REGIME_FEATURES` ∩ selected features (extreme class on `positive` modes), remaining `k−1` from the elite distribution. If no regime gene exists in the selected set, the regime share is merged into elites.
 
-`PHASE2_ARCHIVE_SEED_FRACTION = 0.35` (default) of the population is seeded from the existing pool (from the previous run). The remaining 65% is randomly initialized. Seeded chromosomes are repaired to ensure all gene values are within valid ranges.
+Legacy mode (`init_strategy="legacy"`) keeps independent per-gene `dont_care_prob` sampling for tests.
 
-If `Rule_Pool_Generator` is created without an explicit `seed`, Phase 2 uses a fresh random seed for each run, so the search trajectory changes across runs. Pass a seed if you want a reproducible trajectory.
+Train/val splits retain `PHASE1_REGIME_FEATURES` after Phase 1 column prune so GMM regime labeling works on both splits.
 
-**Effect of `PHASE2_ARCHIVE_SEED_FRACTION`:** Increasing this seeds more of the population from previous runs, accelerating convergence but reducing exploration. Decreasing it increases exploration but slows convergence. At 0.0, every run starts from scratch.
+**Follow-up (not yet implemented):** union of Pareto fronts across generations is required to reach 40–60 rules in the exported pool; initialization alone only fixes early-generation fitness artifacts.
 
 ### Offspring generation — `_make_offspring_population`
 
 1. **Binary tournament selection:** Two random individuals are compared by Pareto rank (lower is better), then by crowding distance (higher is better). The winner becomes a parent.
 2. **Uniform crossover:** Each gene is independently chosen from either parent with probability 0.5.
-3. **Mutation:** Each gene is mutated with probability `mutation_rate = 0.1`. If the gene is currently dont_care, it is activated (random class). If active, it is either deactivated (30% chance) or changed to a different class (70% chance).
+3. **Mutation:** Each gene is mutated with probability `mutation_rate = 0.1`. Activating a `dont_care` gene uses `PHASE2_MUTATION_WEIGHTED_ACTIVATE_PROB` (default 0.7) to pick an inactive feature from the Phase 1 softmax distribution, else uniform. Active count is repaired to `[MIN_CONDITIONS, MAX_CONDITIONS]` after mutation.
 
 ### NSGA-III environmental selection — `_nsga3_environmental_selection`
 
@@ -266,6 +269,11 @@ A chromosome is only included in the pool if `executed_trades ≥ MIN_TRADE_POOL
 | `PHASE2_ALGORITHM`                   | `"NSGA3"` | Fixed. NSGA-III when EvoX is installed, NSGA-II fallback otherwise.                                                             |
 | `PHASE2_ARCHIVE_MAX_SIZE`            | `500`     | Maximum archive size per direction.                                                                                             |
 | `PHASE2_ARCHIVE_SEED_FRACTION`       | `0.35`    | Fraction of population seeded from previous pool. Increase for faster convergence, decrease for more exploration.               |
+| `PHASE2_INIT_STRATEGY`               | `"stratified_sparse"` | `stratified_sparse` enforces 3–4 active genes; `legacy` uses per-gene dont_care probability.                          |
+| `PHASE2_INIT_STRATUM_FRACTIONS`      | `(0.5, 0.3, 0.2)` | Elite / explorer / regime shares of non-seeded population.                                                              |
+| `PHASE2_INIT_SOFTMAX_TEMP`           | `0.5`     | Temperature for Phase 1 score softmax in elite stratum.                                                                         |
+| `PHASE2_INIT_UNIFORM_MIX`            | `0.05`    | Uniform floor mixed into feature sampling probabilities.                                                                        |
+| `PHASE2_MUTATION_WEIGHTED_ACTIVATE_PROB` | `0.70` | Probability of softmax-weighted vs uniform choice when mutation activates a gene.                                       |
 | `PHASE2_REGIME_SUPPORT_ENABLED`      | `True`    | Enable regime-aware specialist bypass. Disable to use only global support penalty.                                              |
 | `PHASE2_REGIME_CONCENTRATION_MIN`    | `0.90`    | Minimum trade concentration in one regime for specialist status.                                                                |
 | `PHASE2_REGIME_MIN_WIN_RATE`         | `0.40`    | Minimum win rate in dominant regime for specialist quality gate.                                                                |

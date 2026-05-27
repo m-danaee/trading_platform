@@ -310,7 +310,7 @@ class TestInitPopulation:
     def test_shape(self):
         fi = _make_feature_infos(["positive", "binary", "signed"])
         rng = np.random.default_rng(0)
-        pop = _init_population(10, fi, rng)
+        pop = _init_population(10, fi, rng, init_strategy="legacy")
         assert pop.shape == (10, 3)
 
     def test_gene_values_in_valid_range(self):
@@ -318,7 +318,7 @@ class TestInitPopulation:
         fi = _make_feature_infos(["positive", "binary", "ternary", "signed"])
         dc = _get_dont_cares(fi)
         rng = np.random.default_rng(0)
-        pop = _init_population(50, fi, rng)
+        pop = _init_population(50, fi, rng, init_strategy="legacy")
         for k in range(len(fi)):
             assert np.all(pop[:, k] >= 0)
             assert np.all(pop[:, k] <= dc[k])
@@ -328,7 +328,9 @@ class TestInitPopulation:
         fi = _make_feature_infos(["positive"] * 10)
         dc = _get_dont_cares(fi)
         rng = np.random.default_rng(0)
-        pop = _init_population(100, fi, rng, dont_care_prob=0.5)
+        pop = _init_population(
+            100, fi, rng, dont_care_prob=0.5, init_strategy="legacy",
+        )
         # At least some dont_care values should appear
         assert np.any(pop == dc[0])
 
@@ -337,7 +339,8 @@ class TestInitPopulation:
         fi = _make_feature_infos(["positive"] * 5)
         dc = _get_dont_cares(fi)
         rng = np.random.default_rng(0)
-        pop = _init_population(20, fi, rng, dont_care_prob=0.0)
+        pop = _init_population(
+            20, fi, rng, dont_care_prob=0.0, init_strategy="legacy")
         assert not np.any(pop == dc[0])
 
     def test_seeded_chromosomes_fill_requested_fraction(self):
@@ -357,6 +360,7 @@ class TestInitPopulation:
             rng,
             dont_care_prob=1.0,
             seeded_chromosomes=seeds,
+            init_strategy="legacy",
         )
 
         seed_matches = sum(
@@ -388,6 +392,7 @@ class TestInitPopulation:
             dont_care_prob=1.0,
             seeded_chromosomes=seeds,
             seed_fraction=_cfg.PHASE2_ARCHIVE_SEED_FRACTION,
+            init_strategy="legacy",
         )
         expected_seed_slots = min(
             200,
@@ -398,6 +403,22 @@ class TestInitPopulation:
         dont_care = _get_dont_cares(fi)[0]
         non_random_rows = int(np.sum(~np.all(pop == dont_care, axis=1)))
         assert non_random_rows == expected_seed_slots
+
+
+class TestStratifiedInitPopulation:
+    def test_stratified_init_respects_bounds(self):
+        fi = [
+            {"name": "amihud_illiquidity_20", "mode": "positive", "score": 0.9},
+            {"name": "feat_b", "mode": "positive", "score": 0.1},
+            {"name": "feat_c", "mode": "positive", "score": 0.05},
+            {"name": "feat_d", "mode": "positive", "score": 0.02},
+        ]
+        dc = _get_dont_cares(fi)
+        rng = np.random.default_rng(99)
+        pop = _init_population(100, fi, rng, init_strategy="stratified_sparse")
+        for row in pop:
+            n = _count_active_conditions(row, dc)
+            assert _cfg.MIN_CONDITIONS <= n <= _cfg.MAX_CONDITIONS
 
 
 class TestPoolSeedChromosomes:

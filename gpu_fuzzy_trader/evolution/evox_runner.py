@@ -140,6 +140,7 @@ def _make_offspring_population(
     feature_infos: list[dict],
     dont_cares: np.ndarray,
     rng: np.random.Generator,
+    feature_probs: np.ndarray | None = None,
 ) -> np.ndarray:
     """Generate pop_size offspring via binary tournament, crossover, mutation."""
     fronts = non_dominated_sort(objectives)
@@ -151,10 +152,16 @@ def _make_offspring_population(
         pb = _binary_tournament_pick(all_indices, rank, crowding, rng)
         child_a, child_b = _crossover(population[pa], population[pb], rng)
         offspring_list.append(
-            _mutate(child_a, feature_infos, dont_cares, rng)
+            _mutate(
+                child_a, feature_infos, dont_cares, rng,
+                feature_probs=feature_probs,
+            )
         )
         offspring_list.append(
-            _mutate(child_b, feature_infos, dont_cares, rng)
+            _mutate(
+                child_b, feature_infos, dont_cares, rng,
+                feature_probs=feature_probs,
+            )
         )
     return np.stack(offspring_list[:pop_size], axis=0)
 
@@ -437,6 +444,10 @@ def _run_nsga2_fallback(
     val_engine=None,
     regime_row_fractions: np.ndarray | None = None,
     val_regime_row_counts: np.ndarray | None = None,
+    feature_probs: np.ndarray | None = None,
+    regime_gene_indices: list[int] | None = None,
+    init_strategy: str | None = None,
+    stratum_fractions: tuple[float, float, float] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """NumPy NSGA-II loop when EvoX is not installed."""
     from gpu_fuzzy_trader.phases.phase2_rule_pool import (
@@ -455,6 +466,10 @@ def _run_nsga2_fallback(
         feature_infos,
         rng,
         seeded_chromosomes=seed_chromosomes,
+        init_strategy=init_strategy,
+        stratum_fractions=stratum_fractions,
+        feature_probs=feature_probs,
+        regime_gene_indices=regime_gene_indices,
     )
     objectives = np.full((pop_size, 3), np.inf)
     metrics_cache: list[dict] = [{} for _ in range(pop_size)]
@@ -504,6 +519,7 @@ def _run_nsga2_fallback(
 
         offspring = _make_offspring_population(
             population, objectives, pop_size, feature_infos, dont_cares, rng,
+            feature_probs=feature_probs,
         )
         off_obj = np.full((pop_size, 3), np.inf)
         off_metrics: list[dict] = [{} for _ in range(pop_size)]
@@ -551,6 +567,10 @@ def _run_nsga3(
     val_engine=None,
     regime_row_fractions: np.ndarray | None = None,
     val_regime_row_counts: np.ndarray | None = None,
+    feature_probs: np.ndarray | None = None,
+    regime_gene_indices: list[int] | None = None,
+    init_strategy: str | None = None,
+    stratum_fractions: tuple[float, float, float] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """NSGA-III evolutionary loop for Phase 2 rule pool generation."""
     from gpu_fuzzy_trader.phases.phase2_rule_pool import (
@@ -568,6 +588,10 @@ def _run_nsga3(
         feature_infos,
         rng,
         seeded_chromosomes=seed_chromosomes,
+        init_strategy=init_strategy,
+        stratum_fractions=stratum_fractions,
+        feature_probs=feature_probs,
+        regime_gene_indices=regime_gene_indices,
     )
     objectives = np.full((pop_size, 3), np.inf)
     metrics_cache: list[dict] = [{} for _ in range(pop_size)]
@@ -620,6 +644,7 @@ def _run_nsga3(
 
         offspring = _make_offspring_population(
             population, objectives, pop_size, feature_infos, dont_cares, rng,
+            feature_probs=feature_probs,
         )
         off_obj = np.full((pop_size, 3), np.inf)
         off_metrics: list[dict] = [{} for _ in range(pop_size)]
@@ -678,8 +703,18 @@ def run_phase2_evolution(
     val_engine=None,
     regime_row_fractions: np.ndarray | None = None,
     val_regime_row_counts: np.ndarray | None = None,
+    feature_probs: np.ndarray | None = None,
+    regime_gene_indices: list[int] | None = None,
+    init_strategy: str | None = None,
+    stratum_fractions: tuple[float, float, float] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Run Phase 2 NSGA-III evolution. Returns (pareto_pool, history)."""
+    evo_kwargs = dict(
+        feature_probs=feature_probs,
+        regime_gene_indices=regime_gene_indices,
+        init_strategy=init_strategy,
+        stratum_fractions=stratum_fractions,
+    )
     if not _EVOX_AVAILABLE:
         logger.warning(
             "EvoX not available; falling back to NumPy NSGA-II for Phase 2.",
@@ -691,6 +726,7 @@ def run_phase2_evolution(
             val_engine=val_engine,
             regime_row_fractions=regime_row_fractions,
             val_regime_row_counts=val_regime_row_counts,
+            **evo_kwargs,
         )
 
     return _run_nsga3(
@@ -699,4 +735,5 @@ def run_phase2_evolution(
         val_engine=val_engine,
         regime_row_fractions=regime_row_fractions,
         val_regime_row_counts=val_regime_row_counts,
+        **evo_kwargs,
     )

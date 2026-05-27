@@ -180,6 +180,14 @@ PHASE2_REGIME_REQUIRE_VAL_CONFIRMATION = False
 # Numba-accelerated NSGA helpers (warm-up compile on first call; cache=True).
 PHASE2_NUMBA_ENABLED = True
 
+# Population initialization: "stratified_sparse" | "legacy"
+PHASE2_INIT_STRATEGY = "stratified_sparse"
+PHASE2_INIT_STRATUM_FRACTIONS = (0.50, 0.30, 0.20)
+PHASE2_INIT_SOFTMAX_TEMP = 0.5
+PHASE2_INIT_SCORE_EPS = 1e-6
+PHASE2_INIT_UNIFORM_MIX = 0.05
+PHASE2_MUTATION_WEIGHTED_ACTIVATE_PROB = 0.70
+
 # =============================================================================
 # Phase 3 — Rule set selection (phases/phase3_rule_set.py, phase3_greedy.py)
 # =============================================================================

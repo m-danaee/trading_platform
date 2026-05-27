@@ -424,8 +424,8 @@ class Pipeline_Orchestrator:
                 # ------------------------------------------------------------------
                 phase1_result = self._run_phase1(train_df, force=force)
                 results["phase1"] = phase1_result
-                train_df = self._prune_train_df_after_phase1(
-                    train_df, phase1_result)
+                train_df, val_df = self._prune_splits_after_phase1(
+                    train_df, val_df, phase1_result)
 
                 # ------------------------------------------------------------------
                 # Phase 2: Rule Pool Generation
@@ -519,8 +519,8 @@ class Pipeline_Orchestrator:
                     "val_rows": len(val_df),
                 }
                 phase1_result = self._load_phase1_outputs()
-                train_df = self._prune_train_df_after_phase1(
-                    train_df, phase1_result)
+                train_df, val_df = self._prune_splits_after_phase1(
+                    train_df, val_df, phase1_result)
                 results["phase2"] = self._run_phase2(
                     train_df, phase1_result, force=True, val_df=val_df)
 
@@ -741,31 +741,63 @@ class Pipeline_Orchestrator:
         return train_df, val_df
 
     @staticmethod
-    def _prune_train_df_after_phase1(
-        train_df: pd.DataFrame,
+    def _phase1_keep_feature_names(
         phase1_result: dict[str, list[dict]],
-    ) -> pd.DataFrame:
-        """Drop unused feature columns from train split to reduce RAM."""
-        from gpu_fuzzy_trader.backtest.df_slim import prune_train_columns
-
+    ) -> list[str]:
+        """Selected fuzzy features plus regime clustering inputs for Phase 2."""
         names: list[str] = []
         for direction in ("long", "short"):
             for fi in phase1_result.get(direction, []):
                 n = fi.get("name")
                 if n and n not in names:
                     names.append(n)
+        for col in _cfg.PHASE1_REGIME_FEATURES:
+            if col not in names:
+                names.append(col)
+        return names
+
+    @staticmethod
+    def _prune_splits_after_phase1(
+        train_df: pd.DataFrame,
+        val_df: pd.DataFrame | None,
+        phase1_result: dict[str, list[dict]],
+    ) -> tuple[pd.DataFrame, pd.DataFrame | None]:
+        """Drop unused feature columns from train/val splits to reduce RAM."""
+        from gpu_fuzzy_trader.backtest.df_slim import prune_train_columns
+
+        names = Pipeline_Orchestrator._phase1_keep_feature_names(phase1_result)
         if not names:
-            return train_df
-        pruned = prune_train_columns(train_df, names)
+            return train_df, val_df
+
+        pruned_train = prune_train_columns(train_df, names)
         logger.info(
             "Pruned train_df columns after Phase 1: %d -> %d columns",
             len(train_df.columns),
-            len(pruned.columns),
+            len(pruned_train.columns),
         )
+        pruned_val = val_df
+        if val_df is not None:
+            pruned_val = prune_train_columns(val_df, names)
+            logger.info(
+                "Pruned val_df columns after Phase 1: %d -> %d columns",
+                len(val_df.columns),
+                len(pruned_val.columns),
+            )
         from gpu_fuzzy_trader._memory import log_memory_rss
 
         log_memory_rss("after Phase 1 column prune")
-        return pruned
+        return pruned_train, pruned_val
+
+    @staticmethod
+    def _prune_train_df_after_phase1(
+        train_df: pd.DataFrame,
+        phase1_result: dict[str, list[dict]],
+    ) -> pd.DataFrame:
+        """Drop unused feature columns from train split (legacy single-split API)."""
+        pruned_train, _ = Pipeline_Orchestrator._prune_splits_after_phase1(
+            train_df, None, phase1_result,
+        )
+        return pruned_train
 
     # ------------------------------------------------------------------
     # Phase 1

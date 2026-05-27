@@ -457,36 +457,37 @@ def _init_population(
     dont_care_prob: float = 0.5,
     seeded_chromosomes: np.ndarray | list[np.ndarray] | None = None,
     seed_fraction: float | None = None,
+    *,
+    init_strategy: str | None = None,
+    stratum_fractions: tuple[float, float, float] | None = None,
+    feature_probs: np.ndarray | None = None,
+    regime_gene_indices: list[int] | None = None,
 ) -> np.ndarray:
     """
     Initialise a population of chromosomes.
 
-    Each gene is either a random valid class index or the dont_care sentinel,
-    chosen with probability *dont_care_prob*.
-
-    Parameters
-    ----------
-    pop_size : int
-    feature_infos : list[dict]
-        Each dict must have "mode" key.
-    rng : np.random.Generator
-    dont_care_prob : float
-        Probability that a gene is set to dont_care (inactive).
-    seeded_chromosomes : np.ndarray | list[np.ndarray] | None
-        Optional archive chromosomes to seed into the initial population.
-    seed_fraction : float | None
-        Fraction of the population to seed from *seeded_chromosomes*.
-
-    Returns
-    -------
-    np.ndarray
-        Shape (pop_size, K) int32.
+    *init_strategy* ``"stratified_sparse"`` (default from config) enforces
+    ``MIN_CONDITIONS``–``MAX_CONDITIONS`` active genes via Phase 1–guided strata.
+    ``"legacy"`` uses independent per-gene *dont_care_prob* sampling.
     """
+    from gpu_fuzzy_trader.phases.phase2_init import (
+        assign_strata_to_indices,
+        build_feature_sampling_probs,
+        pick_active_count,
+        regime_gene_indices as _regime_gene_indices,
+        repair_active_count,
+        sample_sparse_chromosome,
+    )
+
     K = len(feature_infos)
     dont_cares = _get_dont_cares(feature_infos)
     population = np.zeros((pop_size, K), dtype=np.int32)
     if seed_fraction is None:
         seed_fraction = _cfg.PHASE2_ARCHIVE_SEED_FRACTION
+    if init_strategy is None:
+        init_strategy = _cfg.PHASE2_INIT_STRATEGY
+    if stratum_fractions is None:
+        stratum_fractions = _cfg.PHASE2_INIT_STRATUM_FRACTIONS
 
     seed_rows: list[np.ndarray] = []
     if seeded_chromosomes is not None:
@@ -531,14 +532,47 @@ def _init_population(
             population[position] = chrom
         seeded_mask[seed_positions] = True
 
-    for k, fi in enumerate(feature_infos):
-        dc = dont_cares[k]
-        num_classes = dc  # dont_care = num_classes
-        for i in np.where(~seeded_mask)[0]:
-            if rng.random() < dont_care_prob:
-                population[i, k] = dc
-            else:
-                population[i, k] = int(rng.integers(0, num_classes))
+    if init_strategy == "legacy":
+        for k, fi in enumerate(feature_infos):
+            dc = dont_cares[k]
+            num_classes = dc
+            for i in np.where(~seeded_mask)[0]:
+                if rng.random() < dont_care_prob:
+                    population[i, k] = dc
+                else:
+                    population[i, k] = int(rng.integers(0, num_classes))
+        return population
+
+    if feature_probs is None:
+        feature_probs = build_feature_sampling_probs(feature_infos)
+    if regime_gene_indices is None:
+        regime_gene_indices = _regime_gene_indices(feature_infos)
+
+    fresh_indices = np.where(~seeded_mask)[0]
+    strata = assign_strata_to_indices(
+        fresh_indices,
+        stratum_fractions,
+        regime_gene_indices,
+        rng,
+    )
+    for row_idx, stratum in zip(fresh_indices, strata):
+        k_active = pick_active_count(rng)
+        population[row_idx] = sample_sparse_chromosome(
+            rng,
+            feature_infos,
+            dont_cares,
+            k_active,
+            stratum,
+            feature_probs,
+            regime_gene_indices,
+        )
+        population[row_idx] = repair_active_count(
+            population[row_idx],
+            feature_infos,
+            dont_cares,
+            rng,
+            feature_probs,
+        )
 
     return population
 
@@ -566,30 +600,62 @@ def _mutate(
     dont_cares: np.ndarray,
     rng: np.random.Generator,
     mutation_rate: float = 0.1,
+    feature_probs: np.ndarray | None = None,
+    *,
+    weighted_activate_prob: float | None = None,
 ) -> np.ndarray:
     """
-    Mutate a chromosome in-place (returns a copy).
+    Mutate a chromosome (returns a copy).
 
-    Each gene is mutated with probability *mutation_rate*:
-      - If currently dont_care → random valid class index
-      - If currently active → dont_care or a different valid class index
+    When activating a dont_care gene, feature index is chosen with probability
+    *weighted_activate_prob* from *feature_probs* and otherwise uniformly.
+    Active count is repaired to [MIN_CONDITIONS, MAX_CONDITIONS] afterward.
     """
+    from gpu_fuzzy_trader.phases.phase2_init import (
+        _pick_inactive_index,
+        _random_active_class,
+        repair_active_count,
+    )
+
+    if weighted_activate_prob is None:
+        weighted_activate_prob = _cfg.PHASE2_MUTATION_WEIGHTED_ACTIVATE_PROB
+
     child = chromosome.copy()
     K = len(child)
     for k in range(K):
         if rng.random() < mutation_rate:
-            dc = dont_cares[k]
+            dc = int(dont_cares[k])
             num_classes = dc
             if child[k] == dc:
-                # Activate: pick a random class
-                child[k] = int(rng.integers(0, num_classes))
+                if feature_probs is not None and rng.random() < weighted_activate_prob:
+                    idx = _pick_inactive_index(
+                        rng, child, dont_cares, feature_probs, 1.0,
+                    )
+                    if idx is not None:
+                        mode = feature_infos[idx]["mode"]
+                        child[idx] = _random_active_class(
+                            rng, mode, int(dont_cares[idx]),
+                        )
+                else:
+                    child[k] = _random_active_class(
+                        rng, feature_infos[k]["mode"], num_classes,
+                    )
             else:
-                # Deactivate or change class
                 if rng.random() < 0.3:
                     child[k] = dc
                 else:
-                    child[k] = int(rng.integers(0, num_classes))
-    return child
+                    child[k] = _random_active_class(
+                        rng, feature_infos[k]["mode"], num_classes,
+                    )
+
+    return repair_active_count(
+        child,
+        feature_infos,
+        dont_cares,
+        rng,
+        feature_probs,
+        weighted_activate_prob=weighted_activate_prob,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1142,6 +1208,14 @@ class Rule_Pool_Generator:
                 len(seed_chromosomes),
             )
 
+        from gpu_fuzzy_trader.phases.phase2_init import (
+            build_feature_sampling_probs,
+            regime_gene_indices,
+        )
+
+        feature_probs = build_feature_sampling_probs(self.feature_infos)
+        regime_indices = regime_gene_indices(self.feature_infos)
+
         progress_tag = "Phase 2 [%s] NSGA-III" % self.direction
         new_pool, history = run_phase2_evolution(
             feature_infos=self.feature_infos,
@@ -1154,6 +1228,10 @@ class Rule_Pool_Generator:
             val_engine=self._val_engine,
             regime_row_fractions=self._regime_row_fractions,
             val_regime_row_counts=self._val_regime_row_counts,
+            feature_probs=feature_probs,
+            regime_gene_indices=regime_indices,
+            init_strategy=_cfg.PHASE2_INIT_STRATEGY,
+            stratum_fractions=_cfg.PHASE2_INIT_STRATUM_FRACTIONS,
         )
 
         pool = _merge_archive_entries(previous_pool + list(new_pool))

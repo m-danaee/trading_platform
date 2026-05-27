@@ -1,32 +1,62 @@
 {
   "direction": "short",
-  "total_return_pct": -4.6933999429702,
-  "max_drawdown_pct": 16.501920285867275,
-  "win_rate": 38.48797250859107,
-  "profit_factor": 0.945777309257352,
-  "executed_trades": 291,
+  "total_return_pct": -12.140347968682242,
+  "max_drawdown_pct": 13.352191784123965,
+  "win_rate": 29.652996845425868,
+  "profit_factor": 0.6873697152939178,
+  "executed_trades": 317,
   "account_status": "survived",
-  "final_equity": 953.066000570298,
+  "final_equity": 878.5965203131776,
   "per_symbol_metrics": {
     "1": {
-      "trade_count": 78,
-      "win_rate": 32.05128205128205,
-      "net_pnl": -40.603573592765095
+      "trade_count": 23,
+      "win_rate": 4.3478260869565215,
+      "net_pnl": -29.524739666901667
+    },
+    "10": {
+      "trade_count": 18,
+      "win_rate": 50.0,
+      "net_pnl": 13.448286899471267
     },
     "2": {
-      "trade_count": 52,
-      "win_rate": 38.46153846153847,
-      "net_pnl": 18.787617948766286
+      "trade_count": 10,
+      "win_rate": 30.0,
+      "net_pnl": -5.393281934986437
     },
     "3": {
-      "trade_count": 74,
-      "win_rate": 43.24324324324324,
-      "net_pnl": -30.533417017206066
+      "trade_count": 25,
+      "win_rate": 48.0,
+      "net_pnl": -1.3511300959569543
     },
     "4": {
-      "trade_count": 87,
-      "win_rate": 40.229885057471265,
-      "net_pnl": 5.415373231502818
+      "trade_count": 51,
+      "win_rate": 43.13725490196079,
+      "net_pnl": 17.057469725395904
+    },
+    "5": {
+      "trade_count": 49,
+      "win_rate": 22.448979591836736,
+      "net_pnl": -28.43418869734178
+    },
+    "6": {
+      "trade_count": 13,
+      "win_rate": 38.46153846153847,
+      "net_pnl": -0.35741866301101055
+    },
+    "7": {
+      "trade_count": 30,
+      "win_rate": 20.0,
+      "net_pnl": -28.960478504689263
+    },
+    "8": {
+      "trade_count": 80,
+      "win_rate": 25.0,
+      "net_pnl": -40.776137955139234
+    },
+    "9": {
+      "trade_count": 18,
+      "win_rate": 27.77777777777778,
+      "net_pnl": -17.111860793663702
     }
   }
 }
