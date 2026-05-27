@@ -58,7 +58,7 @@ Raw Sortino values are passed through a tanh transform before being used as obje
 saturated = tanh(raw_sortino / SORTINO_SCALE) × SORTINO_CAP
 ```
 
-`SORTINO_SCALE = 3.0`, `SORTINO_CAP = 5.0` (config).
+`SORTINO_SCALE = 5.0`, `SORTINO_CAP = 15.0` (config).
 
 **Why saturation?** Without it, a rule with Sortino = 100 would dominate the Pareto front and crowd out rules with Sortino = 5 that might have better drawdown or win rate. The tanh transform compresses extreme values, allowing the Pareto front to maintain diversity across the objective space.
 
@@ -84,8 +84,8 @@ If the validation engine is unavailable or val trades are below `MIN_TRADE_POOL_
 
 During Phase 2, all rules are evaluated with fixed risk parameters:
 
-- `PHASE2_TP = 3.0` (%)
-- `PHASE2_SL = 1.5` (%)
+- `PHASE2_TP = 4.0` (%)
+- `PHASE2_SL = 2.0` (%)
 - `PHASE2_CAPITAL_PCT = 32.0` (%)
 
 **Why fixed?** Phase 2 is searching for rules with predictive alpha — the ability to identify market conditions that precede favorable price moves. By fixing TP/SL/capital, the search isolates rule quality from risk parameter tuning. Phase 4 handles risk optimization separately.
@@ -126,7 +126,7 @@ multiplied by per-objective weights `PHASE2_SUPPORT_PENALTY_WEIGHT_F1`,
 
 ### Regime-aware support penalty — `phase2_support.py`
 
-When `PHASE2_REGIME_SUPPORT_ENABLED = True`, a rule that concentrates its trades in one market regime can bypass the global support penalty if it meets the specialist criteria:
+When `PHASE2_REGIME_SUPPORT_ENABLED = False`, regime-specialist waivers are disabled and all rules follow the global support penalty. If you re-enable the flag for an experiment, a rule that concentrates its trades in one market regime can bypass the global support penalty if it meets the specialist criteria:
 
 1. **Concentration:** `trades_in_dominant_regime / total_trades ≥ PHASE2_REGIME_CONCENTRATION_MIN` (default: 0.90)
 2. **Threshold:** `trades_in_dominant_regime ≥ per_regime_trade_thresholds[dominant_regime]`
@@ -260,39 +260,39 @@ A chromosome is only included in the pool if `executed_trades ≥ MIN_TRADE_POOL
 
 ## 9. Configuration Reference
 
-| Parameter                            | Default   | Technical effect                                                                                                                |
-| ------------------------------------ | --------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `PHASE2_TP`                          | `3.0`     | TP % used for all Phase 2 evaluations. Increasing requires larger price moves to win, reducing trade frequency.                 |
-| `PHASE2_SL`                          | `1.5`     | SL % used for all Phase 2 evaluations. Increasing allows more drawdown before stopping out.                                     |
-| `PHASE2_CAPITAL_PCT`                 | `32.0`    | Capital % per rule during Phase 2. Affects position sizing and thus absolute PnL, but not Sortino (which is return-normalized). |
-| `MIN_CONDITIONS`                     | `3`       | Minimum active conditions per rule. Increase for more specific rules.                                                           |
-| `MAX_CONDITIONS`                     | `4`       | Maximum active conditions per rule. Decrease for simpler rules.                                                                 |
-| `MIN_TRADE_SUPPORT`                  | `200`     | Minimum trades for zero support penalty. Increase to require more statistical evidence.                                         |
-| `SUPPORT_PENALTY_MAX`                | `12.0`    | Maximum support penalty magnitude. Increase to more aggressively penalize low-frequency rules.                                  |
-| `MIN_TRADE_POOL_FLOOR`               | `50`      | Hard minimum trades for pool inclusion. Rules below this are excluded regardless of Sortino.                                    |
-| `PHASE2_SUPPORT_PENALTY_WEIGHT_F1`  | `1.0`     | Multiplicative weight applied to support penalty in Phase 2 objective `f1`.                                            |
-| `PHASE2_SUPPORT_PENALTY_WEIGHT_F2`  | `0.35`    | Multiplicative weight applied to support penalty in Phase 2 objective `f2`.                                           |
-| `PHASE2_SUPPORT_PENALTY_WEIGHT_F3`  | `0.35`    | Multiplicative weight applied to support penalty in Phase 2 objective `f3`.                                           |
-| `SORTINO_CAP`                        | `5.0`     | Maximum saturated Sortino value. Increase to allow more differentiation at the top end.                                         |
-| `SORTINO_SCALE`                      | `3.0`     | tanh saturation scale. Increase for less aggressive compression.                                                                |
-| `PHASE2_JOINT_TRAIN_VAL`             | `True`    | Use min(train, val) Sortino as objective. Disable to optimize on training only (higher overfitting risk).                       |
-| `PHASE2_DIVERSITY_HAMMING_THRESHOLD` | `2`       | Hamming distance threshold for diversity penalty. Increase to enforce more diversity.                                           |
-| `PHASE2_DIVERSITY_PENALTY`           | `5.0`     | Penalty magnitude for near-duplicate chromosomes. Increase to more aggressively enforce diversity.                              |
-| `PHASE2_POPULATION_SIZE`             | `200`     | Population size. Increase for better Pareto coverage (linear compute cost).                                                     |
-| `PHASE2_GENERATIONS`                 | `200`     | Number of generations. Increase for more evolution (linear compute cost).                                                       |
-| `PHASE2_ALGORITHM`                   | `"NSGA3"` | Fixed. NSGA-III when EvoX is installed, NSGA-II fallback otherwise.                                                             |
-| `PHASE2_ARCHIVE_MAX_SIZE`            | `500`     | Maximum archive size per direction.                                                                                             |
-| `PHASE2_ARCHIVE_SEED_FRACTION`       | `0.35`    | Fraction of population seeded from previous pool. Increase for faster convergence, decrease for more exploration.               |
-| `PHASE2_INIT_STRATEGY`               | `"stratified_sparse"` | `stratified_sparse` enforces 3–4 active genes; `legacy` uses per-gene dont_care probability.                          |
-| `PHASE2_INIT_STRATUM_FRACTIONS`      | `(0.5, 0.3, 0.2)` | Elite / explorer / regime shares of non-seeded population.                                                              |
-| `PHASE2_INIT_SOFTMAX_TEMP`           | `0.5`     | Temperature for Phase 1 score softmax in elite stratum.                                                                         |
-| `PHASE2_INIT_UNIFORM_MIX`            | `0.05`    | Uniform floor mixed into feature sampling probabilities.                                                                        |
-| `PHASE2_MUTATION_WEIGHTED_ACTIVATE_PROB` | `0.70` | Probability of softmax-weighted vs uniform choice when mutation activates a gene.                                       |
-| `PHASE2_REGIME_SUPPORT_ENABLED`      | `True`    | Enable regime-aware specialist bypass. Disable to use only global support penalty.                                              |
-| `PHASE2_REGIME_CONCENTRATION_MIN`    | `0.90`    | Minimum trade concentration in one regime for specialist status.                                                                |
-| `PHASE2_REGIME_MIN_WIN_RATE`         | `0.40`    | Minimum win rate in dominant regime for specialist quality gate.                                                                |
-| `PHASE2_REGIME_USE_PNL_GATE`         | `True`    | Allow positive PnL (instead of win rate) to satisfy the specialist quality gate.                                                |
-| `PHASE2_NUMBA_ENABLED`               | `True`    | Use Numba-JIT NSGA helpers. Disable only for debugging.                                                                         |
+| Parameter                                | Default               | Technical effect                                                                                                                |
+| ---------------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `PHASE2_TP`                              | `3.0`                 | TP % used for all Phase 2 evaluations. Increasing requires larger price moves to win, reducing trade frequency.                 |
+| `PHASE2_SL`                              | `1.5`                 | SL % used for all Phase 2 evaluations. Increasing allows more drawdown before stopping out.                                     |
+| `PHASE2_CAPITAL_PCT`                     | `32.0`                | Capital % per rule during Phase 2. Affects position sizing and thus absolute PnL, but not Sortino (which is return-normalized). |
+| `MIN_CONDITIONS`                         | `3`                   | Minimum active conditions per rule. Increase for more specific rules.                                                           |
+| `MAX_CONDITIONS`                         | `4`                   | Maximum active conditions per rule. Decrease for simpler rules.                                                                 |
+| `MIN_TRADE_SUPPORT`                      | `200`                 | Minimum trades for zero support penalty. Increase to require more statistical evidence.                                         |
+| `SUPPORT_PENALTY_MAX`                    | `12.0`                | Maximum support penalty magnitude. Increase to more aggressively penalize low-frequency rules.                                  |
+| `MIN_TRADE_POOL_FLOOR`                   | `50`                  | Hard minimum trades for pool inclusion. Rules below this are excluded regardless of Sortino.                                    |
+| `PHASE2_SUPPORT_PENALTY_WEIGHT_F1`       | `1.0`                 | Multiplicative weight applied to support penalty in Phase 2 objective `f1`.                                                     |
+| `PHASE2_SUPPORT_PENALTY_WEIGHT_F2`       | `0.35`                | Multiplicative weight applied to support penalty in Phase 2 objective `f2`.                                                     |
+| `PHASE2_SUPPORT_PENALTY_WEIGHT_F3`       | `0.35`                | Multiplicative weight applied to support penalty in Phase 2 objective `f3`.                                                     |
+| `SORTINO_CAP`                            | `5.0`                 | Maximum saturated Sortino value. Increase to allow more differentiation at the top end.                                         |
+| `SORTINO_SCALE`                          | `3.0`                 | tanh saturation scale. Increase for less aggressive compression.                                                                |
+| `PHASE2_JOINT_TRAIN_VAL`                 | `True`                | Use min(train, val) Sortino as objective. Disable to optimize on training only (higher overfitting risk).                       |
+| `PHASE2_DIVERSITY_HAMMING_THRESHOLD`     | `2`                   | Hamming distance threshold for diversity penalty. Increase to enforce more diversity.                                           |
+| `PHASE2_DIVERSITY_PENALTY`               | `5.0`                 | Penalty magnitude for near-duplicate chromosomes. Increase to more aggressively enforce diversity.                              |
+| `PHASE2_POPULATION_SIZE`                 | `200`                 | Population size. Increase for better Pareto coverage (linear compute cost).                                                     |
+| `PHASE2_GENERATIONS`                     | `200`                 | Number of generations. Increase for more evolution (linear compute cost).                                                       |
+| `PHASE2_ALGORITHM`                       | `"NSGA3"`             | Fixed. NSGA-III when EvoX is installed, NSGA-II fallback otherwise.                                                             |
+| `PHASE2_ARCHIVE_MAX_SIZE`                | `500`                 | Maximum archive size per direction.                                                                                             |
+| `PHASE2_ARCHIVE_SEED_FRACTION`           | `0.35`                | Fraction of population seeded from previous pool. Increase for faster convergence, decrease for more exploration.               |
+| `PHASE2_INIT_STRATEGY`                   | `"stratified_sparse"` | `stratified_sparse` enforces 3–4 active genes; `legacy` uses per-gene dont_care probability.                                    |
+| `PHASE2_INIT_STRATUM_FRACTIONS`          | `(0.5, 0.3, 0.2)`     | Elite / explorer / regime shares of non-seeded population.                                                                      |
+| `PHASE2_INIT_SOFTMAX_TEMP`               | `0.5`                 | Temperature for Phase 1 score softmax in elite stratum.                                                                         |
+| `PHASE2_INIT_UNIFORM_MIX`                | `0.05`                | Uniform floor mixed into feature sampling probabilities.                                                                        |
+| `PHASE2_MUTATION_WEIGHTED_ACTIVATE_PROB` | `0.70`                | Probability of softmax-weighted vs uniform choice when mutation activates a gene.                                               |
+| `PHASE2_REGIME_SUPPORT_ENABLED`          | `True`                | Enable regime-aware specialist bypass. Disable to use only global support penalty.                                              |
+| `PHASE2_REGIME_CONCENTRATION_MIN`        | `0.90`                | Minimum trade concentration in one regime for specialist status.                                                                |
+| `PHASE2_REGIME_MIN_WIN_RATE`             | `0.40`                | Minimum win rate in dominant regime for specialist quality gate.                                                                |
+| `PHASE2_REGIME_USE_PNL_GATE`             | `True`                | Allow positive PnL (instead of win rate) to satisfy the specialist quality gate.                                                |
+| `PHASE2_NUMBA_ENABLED`                   | `True`                | Use Numba-JIT NSGA helpers. Disable only for debugging.                                                                         |
 
 ---
 

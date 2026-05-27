@@ -4,39 +4,46 @@
 
 Phase 4 fine-tunes the risk parameters (TP, SL, and capital allocation) for each rule in the strategy selected by Phase 3. The rule conditions are frozen — Phase 4 only adjusts the numbers, not the logic.
 
+Current config defaults intentionally use a tighter search budget than earlier revisions: `PHASE4_N_TRIALS = 200`, `PHASE4_WF_SPLITS = 4`, `PHASE4_TP_STEP = 0.5`, and `PHASE4_SL_STEP = 0.5`.
+
 ---
 
 ## 1. What Phase 4 Optimizes
 
 For each rule in the strategy, Phase 4 searches for the best values of:
+
 - `tp`: Take-profit percentage (how far price must move in your favor to close the trade as a win)
 - `sl`: Stop-loss percentage (how far price must move against you before the trade is closed as a loss)
 - `capital_pct`: Percentage of current equity to allocate to this rule's trades
 
-These three parameters per rule define the risk profile of the strategy. Phase 2 used fixed values (`PHASE2_TP = 3.0`, `PHASE2_SL = 1.5`, `PHASE2_CAPITAL_PCT = 48.0`) to isolate rule quality from risk tuning. Phase 4 now optimizes these values jointly.
+These three parameters per rule define the risk profile of the strategy. Phase 2 used fixed values (`PHASE2_TP = 4.0`, `PHASE2_SL = 2.0`, `PHASE2_CAPITAL_PCT = 32.0`) to isolate rule quality from risk tuning. Phase 4 now optimizes these values jointly.
 
 ---
 
 ## 2. Walk-Forward Validation — `split_validation_walk_forward`
 
-The validation split is divided into K chronological windows (`PHASE4_WF_SPLITS = 2` by default).
+The validation split is divided into K chronological windows (`PHASE4_WF_SPLITS = 4` by default).
 
 ### How the split works
 
 For each symbol independently:
+
 1. Rows are sorted by datetime.
 2. `np.array_split(np.arange(N), K)` divides the rows into K equal-sized chunks.
 3. Window i = concatenation of all symbols' chunk i.
 
-For example, with K=2 and a symbol with 1000 validation rows:
-- Window 1: rows 0–499 (first half of validation period)
-- Window 2: rows 500–999 (second half of validation period)
+For example, with K=4 and a symbol with 1000 validation rows:
+
+- Window 1: rows 0–249 (first quarter of validation period)
+- Window 2: rows 250–499
+- Window 3: rows 500–749
+- Window 4: rows 750–999 (last quarter)
 
 ### Why walk-forward?
 
 A single validation evaluation can be lucky or unlucky depending on the specific time period. Walk-forward validation evaluates the strategy on multiple non-overlapping time windows and uses the **worst-case** performance across windows as the objective. This is a conservative estimate of out-of-sample performance.
 
-**Effect of `PHASE4_WF_SPLITS`:** Increasing K (e.g., to 4) provides more robust worst-case estimates but requires more validation data per window. With K=2, each window has 50% of the validation data. With K=4, each window has 25%. If any symbol has fewer than K validation rows, Phase 4 will raise a `ValueError`.
+**Effect of `PHASE4_WF_SPLITS`:** Increasing K provides more robust worst-case estimates but requires more validation data per window. With K=4, each window has 25% of the validation data. If any symbol has fewer than K validation rows, Phase 4 will raise a `ValueError`.
 
 ---
 
@@ -68,25 +75,26 @@ penalty = max(0, total_cap − 100.0) / 100.0 × PHASE4_TOTAL_CAP_PENALTY
 
 Each rule's parameters are sampled from quantized ranges:
 
-| Parameter | Range | Step | Config keys |
-|---|---|---|---|
-| `tp` | [2.0%, 4.0%] | 0.2% | `PHASE4_TP_MIN/MAX/STEP` |
-| `sl` | [1.0%, 2.0%] | 0.2% | `PHASE4_SL_MIN/MAX/STEP` |
+| Parameter     | Range          | Step | Config keys                       |
+| ------------- | -------------- | ---- | --------------------------------- |
+| `tp`          | [4.0%, 6.0%]   | 0.5% | `PHASE4_TP_MIN/MAX/STEP`          |
+| `sl`          | [2.0%, 3.0%]   | 0.5% | `PHASE4_SL_MIN/MAX/STEP`          |
 | `capital_pct` | [10.0%, 50.0%] | 5.0% | `PHASE4_CAPITAL_PCT_MIN/MAX/STEP` |
 
-The quantization (step sizes) reduces the search space and prevents the optimizer from finding spurious precision. For example, TP has `(4.0 − 2.0) / 0.2 + 1 = 11` possible values.
+The quantization (step sizes) reduces the search space and prevents the optimizer from finding spurious precision. For example, TP has `(6.0 − 4.0) / 0.5 + 1 = 5` possible values.
 
 **Effect of search space bounds:**
+
 - `PHASE4_TP_MIN/MAX`: Narrowing the TP range focuses the search. If you know from Phase 2 that rules work best with TP around 3%, you could narrow to [2.5%, 3.5%].
 - `PHASE4_SL_MIN/MAX`: A tighter SL range (e.g., [1.0%, 1.5%]) forces more conservative stops.
 - `PHASE4_CAPITAL_PCT_MIN/MAX`: Lowering the maximum (e.g., to 30%) limits position sizing, reducing both upside and downside.
 
 ### Sampler — `PHASE4_SAMPLER`
 
-| Value | Algorithm | Behavior |
-|---|---|---|
-| `"nsga2"` (default) | NSGA-II | Multi-objective evolutionary search. Maintains a Pareto front of trials. Good for exploring the trade-off between Sortino and drawdown. |
-| `"tpe"` | Tree-structured Parzen Estimator | Bayesian optimization. Faster convergence but less diversity on the Pareto front. |
+| Value               | Algorithm                        | Behavior                                                                                                                                |
+| ------------------- | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `"nsga2"` (default) | NSGA-II                          | Multi-objective evolutionary search. Maintains a Pareto front of trials. Good for exploring the trade-off between Sortino and drawdown. |
+| `"tpe"`             | Tree-structured Parzen Estimator | Bayesian optimization. Faster convergence but less diversity on the Pareto front.                                                       |
 
 **Effect of `PHASE4_N_TRIALS`:** The total number of Optuna trials. At 1000 trials with 2 rules, each trial evaluates 2 walk-forward windows = 2000 backtest simulations. Increasing this improves the quality of the Pareto front but increases compute time linearly.
 
@@ -137,25 +145,25 @@ Phase 4 is skipped if `outputs/{direction}.json` already exists, has `risk_optim
 
 ## 8. Configuration Reference
 
-| Parameter | Default | Technical effect |
-|---|---|---|
-| `PHASE4_TP_MIN` | `2.0` | Minimum TP % in search space. |
-| `PHASE4_TP_MAX` | `4.0` | Maximum TP % in search space. |
-| `PHASE4_SL_MIN` | `1.0` | Minimum SL % in search space. |
-| `PHASE4_SL_MAX` | `2.0` | Maximum SL % in search space. |
-| `PHASE4_CAPITAL_PCT_MIN` | `10.0` | Minimum capital % per rule. |
-| `PHASE4_CAPITAL_PCT_MAX` | `50.0` | Maximum capital % per rule. |
-| `PHASE4_TP_STEP` | `0.2` | TP quantization step. Decrease for finer search (larger search space). |
-| `PHASE4_SL_STEP` | `0.2` | SL quantization step. |
-| `PHASE4_CAPITAL_STEP` | `5.0` | Capital % quantization step. |
-| `PHASE4_TOTAL_CAP_PENALTY` | `2.0` | Penalty per unit of over-allocation. Increase to more aggressively penalize over-allocation. |
-| `PHASE4_N_TRIALS` | `1000` | Total Optuna trials. Increase for better optimization (linear compute cost). |
-| `PHASE4_WF_SPLITS` | `2` | Number of walk-forward windows. Increase for more robust worst-case estimates. |
-| `PHASE4_MAX_WORST_DRAWDOWN_PCT` | `15.0` | Maximum acceptable worst-case drawdown. Decrease for more conservative strategies. |
-| `PHASE4_SAMPLER` | `"nsga2"` | Optuna sampler. `"tpe"` for faster convergence, `"nsga2"` for better Pareto diversity. |
-| `PHASE4_SEED` | `42` | Random seed for reproducibility. |
-| `PHASE4_N_JOBS` | `1` | Parallel Optuna workers. Increase to use more CPU cores. |
-| `PHASE4_HARD_CAP_NORMALIZE` | `True` | Scale capital_pct so sum ≤ MAX_TOTAL_EXPOSURE_PCT. Disable only if using leverage. |
+| Parameter                       | Default   | Technical effect                                                                             |
+| ------------------------------- | --------- | -------------------------------------------------------------------------------------------- |
+| `PHASE4_TP_MIN`                 | `2.0`     | Minimum TP % in search space.                                                                |
+| `PHASE4_TP_MAX`                 | `4.0`     | Maximum TP % in search space.                                                                |
+| `PHASE4_SL_MIN`                 | `1.0`     | Minimum SL % in search space.                                                                |
+| `PHASE4_SL_MAX`                 | `2.0`     | Maximum SL % in search space.                                                                |
+| `PHASE4_CAPITAL_PCT_MIN`        | `10.0`    | Minimum capital % per rule.                                                                  |
+| `PHASE4_CAPITAL_PCT_MAX`        | `50.0`    | Maximum capital % per rule.                                                                  |
+| `PHASE4_TP_STEP`                | `0.2`     | TP quantization step. Decrease for finer search (larger search space).                       |
+| `PHASE4_SL_STEP`                | `0.2`     | SL quantization step.                                                                        |
+| `PHASE4_CAPITAL_STEP`           | `5.0`     | Capital % quantization step.                                                                 |
+| `PHASE4_TOTAL_CAP_PENALTY`      | `2.0`     | Penalty per unit of over-allocation. Increase to more aggressively penalize over-allocation. |
+| `PHASE4_N_TRIALS`               | `200`     | Total Optuna trials. Increase for better optimization (linear compute cost).                 |
+| `PHASE4_WF_SPLITS`              | `4`       | Number of walk-forward windows. Increase for more robust worst-case estimates.               |
+| `PHASE4_MAX_WORST_DRAWDOWN_PCT` | `15.0`    | Maximum acceptable worst-case drawdown. Decrease for more conservative strategies.           |
+| `PHASE4_SAMPLER`                | `"nsga2"` | Optuna sampler. `"tpe"` for faster convergence, `"nsga2"` for better Pareto diversity.       |
+| `PHASE4_SEED`                   | `42`      | Random seed for reproducibility.                                                             |
+| `PHASE4_N_JOBS`                 | `1`       | Parallel Optuna workers. Increase to use more CPU cores.                                     |
+| `PHASE4_HARD_CAP_NORMALIZE`     | `True`    | Scale capital_pct so sum ≤ MAX_TOTAL_EXPOSURE_PCT. Disable only if using leverage.           |
 
 ---
 

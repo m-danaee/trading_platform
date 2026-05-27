@@ -139,25 +139,25 @@ Tune Phase 2 hyperparameters in `gpu_fuzzy_trader/config.py` (`PHASE2_POPULATION
 
 Edit `gpu_fuzzy_trader/config.py` before running. Common settings:
 
-| Setting                        | Default                | Purpose                                                                        |
-| ------------------------------ | ---------------------- | ------------------------------------------------------------------------------ |
-| `TRAIN_CSV_PATH`               | `data/train.csv`       | Training CSV                                                                   |
-| `TEST_CSV_PATH`                | `data/test.csv`        | Test CSV                                                                       |
-| `PHASE1_TOP_K_FEATURES`        | `30`                   | Features per direction                                                         |
-| `PHASE2_ALGORITHM`             | `"NSGA3"`              | Fixed; NSGA-III when EvoX is installed                                         |
-| `PHASE2_POPULATION_SIZE`       | `200`                  | Phase 2 population                                                             |
-| `PHASE2_GENERATIONS`           | `100`                  | Phase 2 generations                                                            |
-| `PHASE2_POOL_DIR`              | `pools/`               | Persistent Phase 2 pool/history files in the project root                      |
-| `PHASE2_ARCHIVE_DIR`           | `phase2_rule_archive/` | Persistent Phase 2 archive in the project root                                 |
-| `PHASE2_ARCHIVE_MAX_SIZE`      | `500`                  | Max archive size per direction                                                 |
-| `PHASE2_ARCHIVE_SEED_FRACTION` | `0.35`                 | Fraction of Phase 2 population seeded from archive                             |
-| `PHASE3_REFINE_GENERATIONS`    | `80`                   | Refinement generations after greedy                                            |
-| `PHASE3_REFINE_POP_SIZE`       | `100`                  | Refinement population size                                                     |
-| `PHASE3_USE_PARALLEL_BATCH`    | `True`                 | Parallel CPU batch eval for greedy + NSGA-II                                   |
-| `PHASE3_USE_GPU`               | `False`                | JAX cached-mask batch path (enable after parity tests)                          |
-| `PHASE4_N_TRIALS`              | `1000`                 | Phase 4 Optuna trials                                                          |
-| `PHASE4_WF_SPLITS`             | `2`                    | Phase 4 walk-forward validation windows                                        |
-| `PHASE4_N_JOBS`                | `1`                    | Phase 4 parallel Optuna workers (see phase4_wf_risk.md)                          |
+| Setting                        | Default                | Purpose                                                   |
+| ------------------------------ | ---------------------- | --------------------------------------------------------- |
+| `TRAIN_CSV_PATH`               | `data/train.csv`       | Training CSV                                              |
+| `TEST_CSV_PATH`                | `data/test.csv`        | Test CSV                                                  |
+| `PHASE1_TOP_K_FEATURES`        | `30`                   | Features per direction                                    |
+| `PHASE2_ALGORITHM`             | `"NSGA3"`              | Fixed; NSGA-III when EvoX is installed                    |
+| `PHASE2_POPULATION_SIZE`       | `200`                  | Phase 2 population                                        |
+| `PHASE2_GENERATIONS`           | `200`                  | Phase 2 generations                                       |
+| `PHASE2_POOL_DIR`              | `pools/`               | Persistent Phase 2 pool/history files in the project root |
+| `PHASE2_ARCHIVE_DIR`           | `phase2_rule_archive/` | Persistent Phase 2 archive in the project root            |
+| `PHASE2_ARCHIVE_MAX_SIZE`      | `500`                  | Max archive size per direction                            |
+| `PHASE2_ARCHIVE_SEED_FRACTION` | `0.35`                 | Fraction of Phase 2 population seeded from archive        |
+| `PHASE3_REFINE_GENERATIONS`    | `80`                   | Refinement generations after greedy                       |
+| `PHASE3_REFINE_POP_SIZE`       | `100`                  | Refinement population size                                |
+| `PHASE3_USE_PARALLEL_BATCH`    | `True`                 | Parallel CPU batch eval for greedy + NSGA-II              |
+| `PHASE3_USE_GPU`               | `False`                | JAX cached-mask batch path (enable after parity tests)    |
+| `PHASE4_N_TRIALS`              | `200`                  | Phase 4 Optuna trials                                     |
+| `PHASE4_WF_SPLITS`             | `4`                    | Phase 4 walk-forward validation windows                   |
+| `PHASE4_N_JOBS`                | `1`                    | Phase 4 parallel Optuna workers (see phase4_wf_risk.md)   |
 
 ---
 
@@ -232,13 +232,13 @@ Run individual phases — see [README.md § Running Individual Phases](README.md
 
 ## Troubleshooting
 
-| Issue                                                       | What to do                                                                                                                     |
-| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `ModuleNotFoundError: No module named 'pandas'` (or others) | Activate venv and install dependencies (see Setup)                                                                             |
-| `FileNotFoundError` for `data/train.csv`                    | Run from project root; ensure data files exist                                                                                 |
-| Phase 2 very slow on CPU                                    | Install `jax` + `jaxlib` and `evox` + `torch`; optional GPU/CUDA build for faster backtests                                    |
-| Phase 2 uses NSGA-II instead of NSGA-III                    | Install `evox` and `torch`; check `phase2_*_history.json` — `"NSGA-II (fallback)"` means EvoX was unavailable                  |
-| Stale Phase 2 pools after code changes                      | `rm pools/phase2_{long,short}_{pool,history}.json` and re-run                                                                  |
+| Issue                                                       | What to do                                                                                                                                             |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ModuleNotFoundError: No module named 'pandas'` (or others) | Activate venv and install dependencies (see Setup)                                                                                                     |
+| `FileNotFoundError` for `data/train.csv`                    | Run from project root; ensure data files exist                                                                                                         |
+| Phase 2 very slow on CPU                                    | Install `jax` + `jaxlib` and `evox` + `torch`; optional GPU/CUDA build for faster backtests                                                            |
+| Phase 2 uses NSGA-II instead of NSGA-III                    | Install `evox` and `torch`; check `phase2_*_history.json` — `"NSGA-II (fallback)"` means EvoX was unavailable                                          |
+| Stale Phase 2 pools after code changes                      | `rm pools/phase2_{long,short}_{pool,history}.json` and re-run                                                                                          |
 | Phase 3 still slow                                          | Ensure `PHASE3_USE_PARALLEL_BATCH=True`; raise `PHASE3_BATCH_WORKERS`; then increase `PHASE3_REFINE_*` after profiling; optional `PHASE3_USE_GPU=True` |
-| Phase 4 uses random search                                  | Install `stable-baselines3`, `gymnasium`, and `torch` for DDPG/PPO                                                             |
-| Want fresh OOS only                                         | Keep `outputs/long.json` / `short.json`; re-run pipeline (Phase 5 always runs)                                                 |
+| Phase 4 uses random search                                  | Install `stable-baselines3`, `gymnasium`, and `torch` for DDPG/PPO                                                                                     |
+| Want fresh OOS only                                         | Keep `outputs/long.json` / `short.json`; re-run pipeline (Phase 5 always runs)                                                                         |

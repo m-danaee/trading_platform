@@ -163,8 +163,8 @@ class TestNormalizeCapitalPct:
 class TestParamsWithinBounds:
     def test_valid(self):
         rs = _make_rule_set()
-        rs["rules_set"][0]["tp"] = 2.0
-        rs["rules_set"][0]["sl"] = 1.0
+        rs["rules_set"][0]["tp"] = 4.0
+        rs["rules_set"][0]["sl"] = 2.0
         rs["rules_set"][0]["capital_pct"] = 20.0
         assert _params_within_bounds(rs) is True
 
@@ -211,8 +211,8 @@ class TestWalkForwardRiskOptimizer:
         data = _make_rule_set()
         data["risk_optimized"] = True
         for r in data["rules_set"]:
-            r["tp"] = 2.0
-            r["sl"] = 1.0
+            r["tp"] = 4.0
+            r["sl"] = 2.0
             r["capital_pct"] = 20.0
         path.write_text(json.dumps(data), encoding="utf-8")
         monkeypatch.setitem(m._OUTPUT_PATHS, "long", str(path))
