@@ -9,8 +9,26 @@ import pytest
 
 from gpu_fuzzy_trader.evolution.evox_runner import (
     _EVOX_AVAILABLE,
+    _update_hall_of_fame,
     run_phase2_evolution,
 )
+
+
+class TestHallOfFame:
+    def test_update_hall_of_fame_accumulates_unique_pareto(self):
+        hall: dict[tuple[int, ...], np.ndarray] = {}
+        pop_gen0 = np.array([[0, 1], [2, 3], [4, 5]], dtype=np.int32)
+        _update_hall_of_fame(hall, pop_gen0, [0, 2])
+
+        pop_gen1 = np.array([[0, 1], [6, 7], [8, 9]], dtype=np.int32)
+        _update_hall_of_fame(hall, pop_gen1, [0, 1, 2])
+
+        assert set(hall.keys()) == {
+            (0, 1),
+            (4, 5),
+            (6, 7),
+            (8, 9),
+        }
 
 
 @pytest.mark.skipif(not _EVOX_AVAILABLE, reason="EvoX not installed")

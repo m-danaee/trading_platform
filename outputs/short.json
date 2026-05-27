@@ -5,24 +5,35 @@
     {
       "conditions": [
         "[amihud_illiquidity_20] IS Very Low",
-        "[downside_semivol_20] IS Very Low",
-        "[ret_autocorr_1_30] IS Weak Bearish",
-        "[body_signed_to_tr] IS Strong Bearish"
+        "[dmi_balance_14] IS Extreme Bearish",
+        "[drawdown_from_peak_60] IS Very Low",
+        "[upper_wick_to_tr] IS Very High"
       ],
-      "tp": 2.4,
-      "sl": 1.0,
-      "capital_pct": 25.0
+      "tp": 4.0,
+      "sl": 1.4,
+      "capital_pct": 10.0
     },
     {
       "conditions": [
         "[amihud_illiquidity_20] IS Very Low",
         "[downside_semivol_20] IS Very Low",
+        "[dmi_balance_14] IS Bullish",
+        "[body_signed_to_tr] IS Strong Bearish"
+      ],
+      "tp": 3.8,
+      "sl": 1.0,
+      "capital_pct": 50.0
+    },
+    {
+      "conditions": [
+        "[downside_semivol_20] IS Low",
+        "[drawdown_from_peak_60] IS Very High",
         "[rsi_centered_14] IS Bearish",
         "[body_to_tr] IS Low"
       ],
-      "tp": 3.4000000000000004,
-      "sl": 1.0,
-      "capital_pct": 10.0
+      "tp": 4.0,
+      "sl": 1.8,
+      "capital_pct": 20.0
     }
   ]
 }

@@ -133,6 +133,17 @@ def _repair_population(
     )
 
 
+def _update_hall_of_fame(
+    hall_of_fame: dict[tuple[int, ...], np.ndarray],
+    population: np.ndarray,
+    pareto_indices: list[int],
+) -> None:
+    """Accumulate unique Pareto chromosomes discovered across generations."""
+    for i in pareto_indices:
+        chrom = population[int(i)].copy()
+        hall_of_fame[tuple(chrom.tolist())] = chrom
+
+
 def _make_offspring_population(
     population: np.ndarray,
     objectives: np.ndarray,
@@ -474,6 +485,7 @@ def _run_nsga2_fallback(
     objectives = np.full((pop_size, 3), np.inf)
     metrics_cache: list[dict] = [{} for _ in range(pop_size)]
     pareto_archive: list[np.ndarray] = []
+    hall_of_fame: dict[tuple[int, ...], np.ndarray] = {}
     history: list[dict] = []
 
     tag = log_tag or "NSGA-II (fallback)"
@@ -496,6 +508,7 @@ def _run_nsga2_fallback(
         fronts = non_dominated_sort(objectives)
         pareto_indices = fronts[0]
         pareto_archive = [population[i].copy() for i in pareto_indices]
+        _update_hall_of_fame(hall_of_fame, population, pareto_indices)
 
         pareto_obj = objectives[pareto_indices]
         history.append({
@@ -545,8 +558,10 @@ def _run_nsga2_fallback(
     metrics_by_chrom = _metrics_dict_from_population(
         population, metrics_cache
     )
+    harvest_archive = list(hall_of_fame.values()
+                           ) if hall_of_fame else pareto_archive
     pareto_pool = _build_pool_from_archive(
-        pareto_archive,
+        harvest_archive,
         feature_infos,
         dont_cares,
         engine,
@@ -596,6 +611,7 @@ def _run_nsga3(
     objectives = np.full((pop_size, 3), np.inf)
     metrics_cache: list[dict] = [{} for _ in range(pop_size)]
     pareto_archive: list[np.ndarray] = []
+    hall_of_fame: dict[tuple[int, ...], np.ndarray] = {}
     history: list[dict] = []
 
     ref_vec = _get_reference_vectors(pop_size, 3, rng)
@@ -621,6 +637,7 @@ def _run_nsga3(
         fronts = non_dominated_sort(objectives)
         pareto_indices = fronts[0]
         pareto_archive = [population[i].copy() for i in pareto_indices]
+        _update_hall_of_fame(hall_of_fame, population, pareto_indices)
 
         pareto_obj = objectives[pareto_indices]
         history.append({
@@ -681,8 +698,10 @@ def _run_nsga3(
         ]
 
     metrics_by_chrom = _metrics_dict_from_population(population, metrics_cache)
+    harvest_archive = list(hall_of_fame.values()
+                           ) if hall_of_fame else pareto_archive
     pareto_pool = _build_pool_from_archive(
-        pareto_archive,
+        harvest_archive,
         feature_infos,
         dont_cares,
         engine,

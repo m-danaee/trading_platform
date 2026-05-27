@@ -4,17 +4,6 @@
   "rules_set": [
     {
       "conditions": [
-        "[amihud_illiquidity_20] IS Very High",
-        "[dmi_balance_14] IS Extreme Bullish",
-        "[rsi_centered_14] IS Bullish",
-        "[vol_of_vol_ratio_20] IS Very High"
-      ],
-      "tp": 2.6,
-      "sl": 2.0,
-      "capital_pct": 35.0
-    },
-    {
-      "conditions": [
         "[amihud_illiquidity_20] IS High",
         "[drawdown_from_peak_60] IS Very Low",
         "[sign_flip_rate_20] IS Medium",
@@ -27,13 +16,24 @@
     {
       "conditions": [
         "[amihud_illiquidity_20] IS Very High",
-        "[range_compression_20_100] IS Very High",
-        "[rsi_centered_14] IS Strong Bullish",
+        "[dmi_balance_14] IS Extreme Bullish",
+        "[rsi_centered_14] IS Bullish",
         "[vol_of_vol_ratio_20] IS Very High"
       ],
       "tp": 2.2,
+      "sl": 1.8,
+      "capital_pct": 35.0
+    },
+    {
+      "conditions": [
+        "[amihud_illiquidity_20] IS Very High",
+        "[range_compression_20_100] IS High",
+        "[drawdown_from_peak_60] IS Low",
+        "[channel_pos_20] IS Low"
+      ],
+      "tp": 2.0,
       "sl": 2.0,
-      "capital_pct": 10.0
+      "capital_pct": 15.0
     }
   ]
 }
