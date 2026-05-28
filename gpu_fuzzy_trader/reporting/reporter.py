@@ -21,7 +21,7 @@ import matplotlib.pyplot as plt
 
 import logging
 import os
-from typing import List
+from typing import Any, List
 
 import matplotlib
 # Non-interactive backend — must be set before importing pyplot
@@ -1418,3 +1418,120 @@ class Reporter:
             result_paths.append(abs_path)
 
         return result_paths
+
+    def write_generalization_diagnostics(
+        self,
+        metrics_by_split: dict,
+        selected_features: list,
+        datasets_by_split: dict,
+        direction: str,
+        output_dir: str | None = None,
+    ) -> str:
+        """Write compact train/validation/test generalization diagnostics to JSON.
+
+        The report is designed for rapid failure-mode triage and includes:
+          - split-level return/profit-factor/trade summaries
+          - return decay and sign-flip checks across splits
+          - per-split symbol concentration (HHI + top symbol share)
+          - feature-bucket concentration for selected features
+        """
+        reports_dir = output_dir if output_dir is not None else _REPORTS_DIR
+        out_path = os.path.join(
+            reports_dir, f"generalization_diagnostics_{direction}.json"
+        )
+        if direction not in ("long", "short"):
+            raise ValueError(
+                f"direction must be 'long' or 'short', got {direction!r}"
+            )
+        if output_dir is None:
+            self._ensure_dir(out_path)
+
+        split_rows: dict[str, dict[str, Any]] = {}
+        for split in ("train", "validation", "test"):
+            m = (metrics_by_split or {}).get(split) or {}
+            split_rows[split] = {
+                "total_return_pct": float(m.get("total_return_pct", 0.0)),
+                "profit_factor": float(m.get("profit_factor", 0.0)),
+                "win_rate": float(m.get("win_rate", 0.0)),
+                "max_drawdown_pct": float(m.get("max_drawdown_pct", 0.0)),
+                "executed_trades": int(m.get("executed_trades", 0)),
+            }
+
+        train_ret = split_rows["train"]["total_return_pct"]
+        val_ret = split_rows["validation"]["total_return_pct"]
+        test_ret = split_rows["test"]["total_return_pct"]
+        split_shift = {
+            "train_to_validation_delta_pct": float(val_ret - train_ret),
+            "validation_to_test_delta_pct": float(test_ret - val_ret),
+            "train_to_test_delta_pct": float(test_ret - train_ret),
+            "train_to_test_sign_flip": bool((train_ret >= 0) != (test_ret >= 0)),
+        }
+
+        symbol_concentration: dict[str, dict[str, float | str]] = {}
+        for split in ("train", "validation", "test"):
+            m = (metrics_by_split or {}).get(split) or {}
+            per_sym = m.get("per_symbol_metrics", {}) or {}
+            pnls = []
+            top_symbol = ""
+            top_abs = 0.0
+            for sym, v in per_sym.items():
+                if not isinstance(v, dict):
+                    continue
+                val = float(v.get("net_pnl", 0.0))
+                abs_val = abs(val)
+                pnls.append(abs_val)
+                if abs_val > top_abs:
+                    top_abs = abs_val
+                    top_symbol = str(sym)
+            total_abs = float(np.sum(pnls)) if pnls else 0.0
+            if total_abs <= 0.0:
+                hhi = 0.0
+                top_share = 0.0
+            else:
+                shares = np.asarray(pnls, dtype=np.float64) / total_abs
+                hhi = float(np.sum(shares * shares))
+                top_share = float(np.max(shares))
+            symbol_concentration[split] = {
+                "hhi_abs_pnl": hhi,
+                "top_symbol_share_abs_pnl": top_share,
+                "top_symbol": top_symbol,
+            }
+
+        feature_concentration: dict[str, dict[str, dict[str, float | str | int]]] = {}
+        for split in ("train", "validation", "test"):
+            ds = (datasets_by_split or {}).get(split)
+            if ds is None or ds.empty:
+                feature_concentration[split] = {}
+                continue
+            split_fc: dict[str, dict[str, float | str | int]] = {}
+            for feat in selected_features:
+                feat_name = feat.get("name")
+                feat_mode = feat.get("mode", "positive")
+                if not feat_name or feat_name not in ds.columns:
+                    continue
+                bucketed = _bucket_series_by_mode(ds[feat_name], feat_mode)
+                counts = bucketed.value_counts(dropna=True)
+                if counts.empty:
+                    continue
+                total = int(counts.sum())
+                top_bucket = str(counts.index[0])
+                top_count = int(counts.iloc[0])
+                split_fc[str(feat_name)] = {
+                    "top_bucket": top_bucket,
+                    "top_bucket_share": float(top_count / max(total, 1)),
+                    "unique_buckets": int(len(counts)),
+                }
+            feature_concentration[split] = split_fc
+
+        payload: dict[str, Any] = {
+            "direction": direction,
+            "split_metrics": split_rows,
+            "split_shift": split_shift,
+            "symbol_concentration": symbol_concentration,
+            "feature_bucket_concentration": feature_concentration,
+        }
+        with open(out_path, "w", encoding="utf-8") as fh:
+            import json
+            json.dump(payload, fh, indent=2)
+        logger.info("Saved generalization diagnostics: %s", out_path)
+        return os.path.abspath(out_path)

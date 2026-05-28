@@ -191,6 +191,31 @@ def _pareto_sortino_stats(
 _pareto_return_stats = _pareto_sortino_stats
 
 
+def _symbol_robustness_penalty(metrics: dict) -> float:
+    """Penalty for weak cross-symbol robustness on one split."""
+    per_sym = metrics.get("per_symbol_metrics", {}) or {}
+    if not per_sym:
+        return 0.0
+    pnl_vec: list[float] = []
+    profitable = 0
+    for row in per_sym.values():
+        if not isinstance(row, dict):
+            continue
+        pnl = float(row.get("net_pnl", 0.0))
+        pnl_vec.append(pnl)
+        if pnl > 0.0:
+            profitable += 1
+    if not pnl_vec:
+        return 0.0
+    penalty = 0.0
+    med = float(np.median(np.asarray(pnl_vec, dtype=np.float64)))
+    if med < _cfg.PHASE2_SYMBOL_MEDIAN_RETURN_FLOOR_PCT:
+        penalty += abs(_cfg.PHASE2_SYMBOL_MEDIAN_RETURN_FLOOR_PCT - med)
+    shortfall = max(0, _cfg.PHASE2_MIN_PROFITABLE_SYMBOLS - profitable)
+    penalty += float(shortfall) * 2.0
+    return penalty
+
+
 def _sample_df(
     df: pd.DataFrame,
     total_rows: int,
@@ -271,6 +296,8 @@ def _evaluate_chromosome(
 
     raw_sortino = float(metrics.get(
         "sortino_ratio", metrics.get("total_return_pct", 0.0)))
+    total_return = float(metrics.get("total_return_pct", 0.0))
+    profit_factor = float(metrics.get("profit_factor", 0.0))
     sortino_train = _saturating_sortino(raw_sortino)
     max_dd = float(metrics.get("max_drawdown_pct", 100.0))
     win_rate = float(metrics.get("win_rate", 0.0))
@@ -278,6 +305,7 @@ def _evaluate_chromosome(
 
     val_metrics: dict | None = None
     sortino_for_obj = sortino_train
+    val_floor_penalty = 0.0
 
     if _cfg.PHASE2_JOINT_TRAIN_VAL and val_engine is not None:
         try:
@@ -290,6 +318,8 @@ def _evaluate_chromosome(
             val_metrics = val_list[0]
             raw_val_sortino = float(val_metrics.get(
                 "sortino_ratio", val_metrics.get("total_return_pct", 0.0)))
+            val_total_return = float(val_metrics.get("total_return_pct", 0.0))
+            val_profit_factor = float(val_metrics.get("profit_factor", 0.0))
             sortino_val = _saturating_sortino(raw_val_sortino)
             val_executed = int(val_metrics.get("executed_trades", 0))
             metrics["val_sortino_ratio"] = raw_val_sortino
@@ -298,6 +328,12 @@ def _evaluate_chromosome(
                 sortino_for_obj = min(sortino_train, 0.0)
             else:
                 sortino_for_obj = min(sortino_train, sortino_val)
+            if val_total_return < _cfg.PHASE2_VAL_RETURN_FLOOR_PCT:
+                val_floor_penalty += _cfg.SUPPORT_PENALTY_MAX
+            if val_profit_factor < _cfg.PHASE2_PROFIT_FACTOR_FLOOR:
+                val_floor_penalty += (
+                    _cfg.PHASE2_PROFIT_FACTOR_FLOOR - val_profit_factor
+                ) * 5.0
         except Exception as exc:
             logger.debug("val simulate_rule_batch failed: %s", exc)
             val_metrics = None
@@ -328,6 +364,16 @@ def _evaluate_chromosome(
     if is_specialist:
         metrics["regime_specialist"] = True
         metrics["dominant_regime"] = dominant_regime
+
+    if total_return < _cfg.PHASE2_RETURN_FLOOR_PCT:
+        support_penalty = max(support_penalty, _cfg.SUPPORT_PENALTY_MAX)
+    if profit_factor < _cfg.PHASE2_PROFIT_FACTOR_FLOOR:
+        support_penalty += (_cfg.PHASE2_PROFIT_FACTOR_FLOOR - profit_factor) * 5.0
+
+    support_penalty += _symbol_robustness_penalty(metrics)
+    if val_metrics is not None:
+        support_penalty += _symbol_robustness_penalty(val_metrics)
+    support_penalty += val_floor_penalty
 
     # Diversity penalty: Hamming distance to nearest Pareto-front member
     diversity_penalty = 0.0

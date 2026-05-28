@@ -71,6 +71,31 @@ def train_val_corr_penalty(train_metrics: dict, val_metrics: dict) -> float:
     return (1.0 - corr) * 0.5 * _cfg.PHASE3_TRAIN_VAL_CORR_WEIGHT
 
 
+def _symbol_robustness_penalty(metrics: dict) -> float:
+    """Penalty for poor cross-symbol PnL dispersion."""
+    per_sym = metrics.get("per_symbol_metrics", {}) or {}
+    if not per_sym:
+        return 0.0
+    pnl_vec = []
+    profitable = 0
+    for v in per_sym.values():
+        if not isinstance(v, dict):
+            continue
+        pnl = float(v.get("net_pnl", 0.0))
+        pnl_vec.append(pnl)
+        if pnl > 0.0:
+            profitable += 1
+    if not pnl_vec:
+        return 0.0
+    penalty = 0.0
+    med = float(np.median(np.asarray(pnl_vec, dtype=np.float64)))
+    if med < _cfg.PHASE3_SYMBOL_MEDIAN_RETURN_FLOOR_PCT:
+        penalty += abs(_cfg.PHASE3_SYMBOL_MEDIAN_RETURN_FLOOR_PCT - med)
+    shortfall = max(0, _cfg.PHASE3_MIN_PROFITABLE_SYMBOLS - profitable)
+    penalty += float(shortfall) * 3.0
+    return penalty
+
+
 def min_per_symbol_trades_from_metrics(metrics: dict) -> int:
     """Minimum per-symbol trade_count for a single-rule simulation."""
     per = metrics.get("per_symbol_metrics", {}) or {}
@@ -188,6 +213,8 @@ def compute_phase3_objectives(
     val_dd = float(val_metrics.get("max_drawdown_pct", 100.0))
     val_wr = float(val_metrics.get("win_rate", 0.0))
     val_trades = int(val_metrics.get("executed_trades", 0))
+    val_ret = float(val_metrics.get("total_return_pct", 0.0))
+    val_pf = float(val_metrics.get("profit_factor", 0.0))
 
     zero_penalty = 100.0 if (train_trades == 0 or val_trades == 0) else 0.0
 
@@ -225,11 +252,17 @@ def compute_phase3_objectives(
                 rule_set, per_rule_min_val_trades)
             if min_per_rule < _cfg.PHASE3_PER_RULE_MIN_VAL_TRADES_PER_SYMBOL:
                 gate_penalty += _cfg.PHASE3_VAL_GATE_PENALTY
+        if val_ret < _cfg.PHASE3_VAL_RETURN_FLOOR_PCT:
+            gate_penalty += _cfg.PHASE3_VAL_GATE_PENALTY
+        if val_pf < _cfg.PHASE3_VAL_PROFIT_FACTOR_FLOOR:
+            gate_penalty += _cfg.PHASE3_VAL_GATE_PENALTY
 
     total_penalty = (
         zero_penalty + coverage_penalty + dup_penalty
         + symbol_consistency_penalty_val + corr_penalty + gate_penalty
         + incremental_penalty + jaccard_penalty
+        + _symbol_robustness_penalty(train_metrics)
+        + _symbol_robustness_penalty(val_metrics)
     )
 
     if _cfg.PHASE3_USE_TRAIN_TARGET:

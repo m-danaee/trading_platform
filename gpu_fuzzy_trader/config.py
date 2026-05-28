@@ -154,6 +154,11 @@ MIN_TRADE_POOL_FLOOR = 50
 PHASE2_SUPPORT_PENALTY_WEIGHT_F1 = 0.8
 PHASE2_SUPPORT_PENALTY_WEIGHT_F2 = 0.6
 PHASE2_SUPPORT_PENALTY_WEIGHT_F3 = 0.5
+PHASE2_RETURN_FLOOR_PCT = -2.0
+PHASE2_VAL_RETURN_FLOOR_PCT = -2.0
+PHASE2_PROFIT_FACTOR_FLOOR = 0.95
+PHASE2_SYMBOL_MEDIAN_RETURN_FLOOR_PCT = -1.0
+PHASE2_MIN_PROFITABLE_SYMBOLS = 4
 
 # Fitness transform: tanh(sortino / SCALE) * CAP (avoids sentinel pinning at gen 0).
 SORTINO_CAP = 15.0
@@ -220,6 +225,10 @@ PHASE3_PER_RULE_MIN_VAL_TRADES_PER_SYMBOL = 15
 # penalty on low corr(per-symbol PnL train, val)
 PHASE3_TRAIN_VAL_CORR_WEIGHT = 5.0
 PHASE3_VAL_GATE_PENALTY = 75.0
+PHASE3_VAL_RETURN_FLOOR_PCT = -1.0
+PHASE3_VAL_PROFIT_FACTOR_FLOOR = 0.95
+PHASE3_MIN_PROFITABLE_SYMBOLS = 4
+PHASE3_SYMBOL_MEDIAN_RETURN_FLOOR_PCT = -1.0
 # Incremental orthogonality controls (applied as soft penalties in Phase 3):
 # - Incremental gate: a later rule must add enough non-overlapping
 #   validation coverage vs earlier rules.
@@ -236,7 +245,7 @@ PHASE3_JACCARD_SIMILARITY_GATE = 0.90
 # =============================================================================
 
 PHASE4_TP_MIN = 1.0
-PHASE4_TP_MAX = 3.0
+PHASE4_TP_MAX = 6.0
 PHASE4_SL_MIN = 1.0
 PHASE4_SL_MAX = 3.0
 PHASE4_CAPITAL_PCT_MIN = 10.0
@@ -248,6 +257,10 @@ PHASE4_TOTAL_CAP_PENALTY = 2.0
 PHASE4_N_TRIALS = 200
 PHASE4_WF_SPLITS = 4
 PHASE4_MAX_WORST_DRAWDOWN_PCT = 15.0
+PHASE4_MIN_WORST_TRADES = 20
+PHASE4_WORST_RETURN_WEIGHT = 1.0
+PHASE4_WORST_DRAWDOWN_WEIGHT = 1.0
+PHASE4_WORST_TURNOVER_WEIGHT = 1.0
 PHASE4_SAMPLER = "nsga2"  # alternative: "tpe"
 PHASE4_SEED = 42
 PHASE4_N_JOBS = 1
@@ -258,3 +271,5 @@ PHASE4_HARD_CAP_NORMALIZE = True
 # Phase 5 — Out-of-sample evaluation (phases/phase5_oos.py)
 # =============================================================================
 # No phase-specific constants: uses TEST_CSV_PATH, REPORTS_DIR, and backtest block above.
+PHASE5_VALIDATION_RETURN_GATE_PCT = 0.0
+PHASE5_VALIDATION_PROFIT_FACTOR_GATE = 1.0

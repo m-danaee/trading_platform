@@ -121,31 +121,35 @@ def _evaluate_params_worst_case(
     direction: str,
     candidate_rule_set: list[dict],
     params_list: list[dict],
-) -> tuple[float, float]:
+) -> tuple[float, float, float]:
     """
     Run backtest on each walk-forward window; return worst Sortino and worst DD.
 
     Each split uses a new CPUBacktestEngine instance (parallel-safe).
     """
-    split_sortinos: list[float] = []
+    split_returns: list[float] = []
     split_drawdowns: list[float] = []
+    split_turnover: list[float] = []
 
     for split_df in val_splits:
         engine = CPUBacktestEngine(split_df, {}, direction)
         try:
             metrics = engine.simulate_rule_set(candidate_rule_set)
         except Exception:
-            split_sortinos.append(0.0)
+            split_returns.append(-100.0)
             split_drawdowns.append(100.0)
+            split_turnover.append(0.0)
             continue
 
-        split_sortinos.append(float(metrics.get("sortino_ratio", 0.0)))
+        split_returns.append(float(metrics.get("total_return_pct", 0.0)))
         split_drawdowns.append(float(metrics.get("max_drawdown_pct", 0.0)))
+        split_turnover.append(float(metrics.get("executed_trades", 0.0)))
 
     penalty = _overalloc_penalty(params_list)
-    worst_sortino = min(split_sortinos) - penalty
+    worst_return = min(split_returns) - penalty
     worst_drawdown = max(split_drawdowns) + penalty
-    return worst_sortino, worst_drawdown
+    worst_turnover = min(split_turnover)
+    return worst_return, worst_drawdown, worst_turnover
 
 
 def _normalize_capital_pct(rules_set: list[dict]) -> list[dict]:
@@ -177,7 +181,7 @@ def _create_sampler(seed: int):
 
 def _select_pareto_trial(study: Any, max_worst_dd_pct: float) -> Any:
     """
-    Pick trial from Pareto front: filter by worst drawdown, then max worst Sortino.
+    Pick trial from Pareto front: filter by DD and min trades, then max worst return.
 
     Fallback if filter is empty: minimum drawdown objective, then max Sortino.
     """
@@ -189,7 +193,17 @@ def _select_pareto_trial(study: Any, max_worst_dd_pct: float) -> Any:
         raise RuntimeError("Phase 4: no completed Optuna trials")
 
     pareto = list(study.best_trials) if study.best_trials else completed
-    candidates = [t for t in pareto if t.values[1] <= max_worst_dd_pct]
+    candidates = []
+    for t in pareto:
+        values = t.values or ()
+        if len(values) < 2:
+            continue
+        dd_ok = values[1] <= max_worst_dd_pct
+        trades_ok = True
+        if len(values) >= 3:
+            trades_ok = values[2] >= _cfg.PHASE4_MIN_WORST_TRADES
+        if dd_ok and trades_ok:
+            candidates.append(t)
     pool = candidates if candidates else completed
 
     if candidates:
@@ -332,7 +346,7 @@ class WalkForwardRiskOptimizer:
                 n_jobs,
             )
 
-        def objective(trial: "optuna.Trial") -> tuple[float, float]:
+        def objective(trial: "optuna.Trial") -> tuple[float, float, float]:
             params_list: list[dict] = []
             for i in range(n_rules):
                 tp = trial.suggest_float(
@@ -356,7 +370,7 @@ class WalkForwardRiskOptimizer:
                 params_list.append({"tp": tp, "sl": sl, "capital_pct": cap})
 
             candidate_rule_set = _build_candidate_rule_set(rules, params_list)
-            worst_sortino, worst_drawdown = _evaluate_params_worst_case(
+            worst_return, worst_drawdown, worst_turnover = _evaluate_params_worst_case(
                 val_splits,
                 self.direction,
                 candidate_rule_set,
@@ -364,11 +378,14 @@ class WalkForwardRiskOptimizer:
             )
             trial.set_user_attr("rule_set", candidate_rule_set)
             trial.set_user_attr("params_list", params_list)
-            return worst_sortino, worst_drawdown
+            score_return = worst_return * float(_cfg.PHASE4_WORST_RETURN_WEIGHT)
+            score_dd = worst_drawdown * float(_cfg.PHASE4_WORST_DRAWDOWN_WEIGHT)
+            score_turnover = worst_turnover * float(_cfg.PHASE4_WORST_TURNOVER_WEIGHT)
+            return score_return, score_dd, score_turnover
 
         sampler = _create_sampler(self.seed)
         study = optuna.create_study(
-            directions=["maximize", "minimize"],
+            directions=["maximize", "minimize", "maximize"],
             sampler=sampler,
         )
         study.optimize(
@@ -392,9 +409,35 @@ class WalkForwardRiskOptimizer:
 
         optimized_params = _normalize_capital_pct(optimized_params)
 
+        val_engine = CPUBacktestEngine(self.val_df, {}, self.direction)
+        val_metrics = val_engine.simulate_rule_set(optimized_params)
+        val_ret = float(val_metrics.get("total_return_pct", 0.0))
+        val_pf = float(val_metrics.get("profit_factor", 0.0))
+        ret_gate = float(_cfg.PHASE5_VALIDATION_RETURN_GATE_PCT)
+        pf_gate = float(_cfg.PHASE5_VALIDATION_PROFIT_FACTOR_GATE)
+        deployable = (
+            val_ret >= (ret_gate - 1e-9)
+            and val_pf >= (pf_gate - 1e-9)
+        )
+        if not deployable:
+            logger.warning(
+                "Phase 4 [%s]: validation gate failed (return=%.2f%%, profit_factor=%.3f). "
+                "Marking strategy as non-deployable.",
+                self.direction,
+                val_ret,
+                val_pf,
+            )
+
         output_dict = {
             "direction": self.direction,
-            "risk_optimized": True,
+            "risk_optimized": bool(deployable),
+            "deployment_accepted": bool(deployable),
+            "validation_gate": {
+                "return_pct": val_ret,
+                "profit_factor": val_pf,
+                "required_return_pct": ret_gate,
+                "required_profit_factor": pf_gate,
+            },
             "rules_set": optimized_params,
         }
 
@@ -404,12 +447,13 @@ class WalkForwardRiskOptimizer:
             json.dump(output_dict, fh, indent=2)
 
         logger.info(
-            "Phase 4 [%s]: selected trial #%d (worst_sortino=%.4f, "
-            "worst_drawdown=%.2f%%). Saved to %s",
+            "Phase 4 [%s]: selected trial #%d (worst_return=%.4f%%, "
+            "worst_drawdown=%.2f%%, worst_turnover=%.1f). Saved to %s",
             self.direction,
             selected.number,
             selected.values[0],
             selected.values[1],
+            selected.values[2],
             output_path,
         )
 

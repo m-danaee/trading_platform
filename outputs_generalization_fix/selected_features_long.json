@@ -1,0 +1,65 @@
+{
+  "direction": "long",
+  "features": [
+    {
+      "name": "amihud_illiquidity_20",
+      "mode": "positive",
+      "score": 0.23217692636829365
+    },
+    {
+      "name": "range_compression_20_100",
+      "mode": "positive",
+      "score": 0.1199664842908245
+    },
+    {
+      "name": "upside_semivol_20",
+      "mode": "positive",
+      "score": 0.08405033997327534
+    },
+    {
+      "name": "drawdown_from_peak_60",
+      "mode": "positive",
+      "score": 0.025674909458066362
+    },
+    {
+      "name": "realized_vol_20",
+      "mode": "positive",
+      "score": 0.018298941337807323
+    },
+    {
+      "name": "vol_regime_pct_120",
+      "mode": "positive",
+      "score": 0.0017679588482930088
+    },
+    {
+      "name": "absret_ema_ratio_20_100",
+      "mode": "positive",
+      "score": 0.0008717260449850761
+    },
+    {
+      "name": "rsi_hidden_div_flag",
+      "mode": "ternary",
+      "score": 0.00031723479328715044
+    },
+    {
+      "name": "ret_autocorr_1_30",
+      "mode": "signed",
+      "score": 0.00021074276933811224
+    },
+    {
+      "name": "atr_ratio_14_63",
+      "mode": "positive",
+      "score": 0.0
+    },
+    {
+      "name": "close_location_value",
+      "mode": "positive",
+      "score": 0.0
+    },
+    {
+      "name": "vol_over_ema20",
+      "mode": "positive",
+      "score": 0.0
+    }
+  ]
+}

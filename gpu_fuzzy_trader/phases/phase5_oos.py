@@ -233,6 +233,18 @@ class OOS_Evaluator:
                     "Reporter.write_feature_stratified_performance (%s) failed (non-fatal): %s",
                     direction, exc,
                 )
+            try:
+                reporter.write_generalization_diagnostics(
+                    metrics_by_split=metrics_by_split,
+                    selected_features=selected_features,
+                    datasets_by_split=datasets_by_split,
+                    direction=direction,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Reporter.write_generalization_diagnostics (%s) failed (non-fatal): %s",
+                    direction, exc,
+                )
 
         # 5. Save per-symbol CSV
         self._save_per_symbol_csv(all_per_symbol)
