@@ -928,7 +928,8 @@ class Rule_Set_Selector:
                 engine_fmt, return_logs=True
             )
             Reporter().plot_equity_curve(train_log, "train", self.direction)
-            Reporter().write_per_symbol_csv(train_metrics, "train")
+            Reporter().write_per_symbol_csv(
+                train_metrics, "train", direction=self.direction)
         except Exception as exc:
             logger.warning(
                 "Reporter train equity/csv failed (non-fatal): %s", exc
@@ -940,7 +941,8 @@ class Rule_Set_Selector:
                 engine_fmt, return_logs=True
             )
             Reporter().plot_equity_curve(val_log, "validation", self.direction)
-            Reporter().write_per_symbol_csv(val_metrics, "validation")
+            Reporter().write_per_symbol_csv(
+                val_metrics, "validation", direction=self.direction)
         except Exception as exc:
             logger.warning(
                 "Reporter validation equity/csv failed (non-fatal): %s", exc

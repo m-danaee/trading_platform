@@ -372,6 +372,19 @@ class TestWritePerSymbolCsv:
         assert df.iloc[0]["win_rate"] == 0.0
         assert df.iloc[0]["net_pnl"] == 0.0
 
+    def test_direction_in_filename_prevents_overwrite(self, tmp_path):
+        reporter = Reporter()
+        reporter.write_per_symbol_csv(
+            _make_per_symbol_metrics(), "train", direction="long", output_dir=str(tmp_path)
+        )
+        reporter.write_per_symbol_csv(
+            _make_per_symbol_metrics(), "train", direction="short", output_dir=str(tmp_path)
+        )
+        assert os.path.exists(
+            tmp_path / "train_long_per_symbol_performance.csv")
+        assert os.path.exists(
+            tmp_path / "train_short_per_symbol_performance.csv")
+
 
 # ---------------------------------------------------------------------------
 # Tests: plot_rl_curve

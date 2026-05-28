@@ -96,7 +96,7 @@ LOG_GENERATION_INTERVAL = 0
 
 # MI ranking: drop near-constant columns, cap list size, limit long/short overlap.
 PHASE1_DISPERSION_THRESHOLD = 0.95
-PHASE1_TOP_K_FEATURES = 22
+PHASE1_TOP_K_FEATURES = 12
 PHASE1_MAX_FEATURE_OVERLAP = 0.50
 # Signed 3-class PnL surrogate so long/short shortlists diverge (vs binary success).
 PHASE1_ASYMMETRIC_TARGET = True
@@ -135,13 +135,13 @@ PHASE1_SAMPLING_TOTAL = 701_000
 # =============================================================================
 
 # Fixed TP/SL/capital during rule search — isolates rule logic from risk tuning (Phase 4).
-PHASE2_TP = 4.0
-PHASE2_SL = 2.0
+PHASE2_TP = 2.0
+PHASE2_SL = 1.5
 PHASE2_CAPITAL_PCT = 32.0
 
 # Rule genome: number of active fuzzy conditions per chromosome.
-MIN_CONDITIONS = 3
-MAX_CONDITIONS = 4
+MIN_CONDITIONS = 2
+MAX_CONDITIONS = 3
 
 # Trade-count gates and support penalty (noisy Sortino when executed << support).
 MIN_TRADE_SUPPORT = 200
@@ -151,9 +151,9 @@ MIN_TRADE_POOL_FLOOR = 50
 # How strongly the support penalty affects each Phase 2 objective.
 # (f1: Sortino, f2: drawdown, f3: win_rate). Keeping weights < 1 reduces
 # population collapse while preserving the low-support discouragement.
-PHASE2_SUPPORT_PENALTY_WEIGHT_F1 = 1.0
-PHASE2_SUPPORT_PENALTY_WEIGHT_F2 = 0.35
-PHASE2_SUPPORT_PENALTY_WEIGHT_F3 = 0.35
+PHASE2_SUPPORT_PENALTY_WEIGHT_F1 = 0.8
+PHASE2_SUPPORT_PENALTY_WEIGHT_F2 = 0.6
+PHASE2_SUPPORT_PENALTY_WEIGHT_F3 = 0.5
 
 # Fitness transform: tanh(sortino / SCALE) * CAP (avoids sentinel pinning at gen 0).
 SORTINO_CAP = 15.0
@@ -167,7 +167,7 @@ PHASE2_DIVERSITY_HAMMING_THRESHOLD = 2
 PHASE2_DIVERSITY_PENALTY = 5.0
 
 # NSGA-III search budget and persistence.
-PHASE2_POPULATION_SIZE = 200
+PHASE2_POPULATION_SIZE = 450
 PHASE2_GENERATIONS = 200
 PHASE2_ALGORITHM = "NSGA3"
 PHASE2_ARCHIVE_MAX_SIZE = 500
@@ -214,7 +214,7 @@ PHASE3_SYMBOL_CONSISTENCY_WEIGHT = 10.0
 # Train-as-target / validation-as-gate (reduce validation leakage in objectives).
 PHASE3_USE_TRAIN_TARGET = True
 # reject if val_sortino < ratio * train_sortino
-PHASE3_VAL_SORTINO_RATIO_GATE = 0.5
+PHASE3_VAL_SORTINO_RATIO_GATE = 0.3
 PHASE3_VAL_DRAWDOWN_RATIO_GATE = 1.5  # reject if val_dd > ratio * train_dd
 PHASE3_PER_RULE_MIN_VAL_TRADES_PER_SYMBOL = 15
 # penalty on low corr(per-symbol PnL train, val)
@@ -229,15 +229,15 @@ PHASE3_INCREMENTAL_GATE_PENALTY = 60.0
 # Jaccard similarity gate: penalize teams whose rules overlap too much on
 # the validation entry-mask union.
 PHASE3_JACCARD_PENALTY_WEIGHT = 25.0
-PHASE3_JACCARD_SIMILARITY_GATE = 0.85
+PHASE3_JACCARD_SIMILARITY_GATE = 0.90
 
 # =============================================================================
 # Phase 4 — Walk-forward risk optimization (phases/phase4_wf_optimizer.py)
 # =============================================================================
 
-PHASE4_TP_MIN = 4.0
-PHASE4_TP_MAX = 6.0
-PHASE4_SL_MIN = 2.0
+PHASE4_TP_MIN = 1.0
+PHASE4_TP_MAX = 3.0
+PHASE4_SL_MIN = 1.0
 PHASE4_SL_MAX = 3.0
 PHASE4_CAPITAL_PCT_MIN = 10.0
 PHASE4_CAPITAL_PCT_MAX = 50.0

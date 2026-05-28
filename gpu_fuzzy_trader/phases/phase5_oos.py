@@ -169,7 +169,8 @@ class OOS_Evaluator:
                     direction, exc,
                 )
             try:
-                reporter.write_per_symbol_csv(test_metrics, "test")
+                reporter.write_per_symbol_csv(
+                    test_metrics, "test", direction=direction)
             except Exception as exc:
                 logger.warning(
                     "Reporter.write_per_symbol_csv (test/%s) failed (non-fatal): %s",

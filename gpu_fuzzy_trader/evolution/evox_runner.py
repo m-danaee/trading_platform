@@ -21,6 +21,7 @@ import time
 
 import numpy as np
 
+from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.log_progress import maybe_log_generation
 
 logger = logging.getLogger(__name__)
@@ -142,6 +143,53 @@ def _update_hall_of_fame(
     for i in pareto_indices:
         chrom = population[int(i)].copy()
         hall_of_fame[tuple(chrom.tolist())] = chrom
+
+
+def _pareto_diagnostics(
+    pareto_indices: list[int],
+    metrics_cache: list[dict],
+    pareto_obj: np.ndarray,
+) -> dict[str, float]:
+    """
+    Compute compact diagnostics for Phase 2 Pareto-front health.
+
+    - sortino_cap_hit_fraction: fraction of Pareto members whose saturated
+      Sortino sits near the configured cap (signal of objective saturation).
+    - objective_std_*: objective dispersion across Pareto members.
+    """
+    if not pareto_indices:
+        return {
+            "sortino_cap_hit_fraction": 0.0,
+            "objective_std_f1": 0.0,
+            "objective_std_f2": 0.0,
+            "objective_std_f3": 0.0,
+        }
+
+    cap = max(float(_cfg.SORTINO_CAP), 1e-9)
+    scale = max(float(_cfg.SORTINO_SCALE), 1e-9)
+    cap_hits = 0
+    for i in pareto_indices:
+        raw = float(
+            metrics_cache[i].get(
+                "sortino_ratio",
+                metrics_cache[i].get("total_return_pct", 0.0),
+            )
+        )
+        sat = float(np.tanh(raw / scale) * cap)
+        if abs(sat) >= 0.98 * cap:
+            cap_hits += 1
+
+    if len(pareto_obj):
+        std_f1, std_f2, std_f3 = np.std(pareto_obj, axis=0)
+    else:
+        std_f1 = std_f2 = std_f3 = 0.0
+
+    return {
+        "sortino_cap_hit_fraction": float(cap_hits / len(pareto_indices)),
+        "objective_std_f1": float(std_f1),
+        "objective_std_f2": float(std_f2),
+        "objective_std_f3": float(std_f3),
+    }
 
 
 def _make_offspring_population(
@@ -519,6 +567,7 @@ def _run_nsga2_fallback(
             "mean_f3": float(np.mean(pareto_obj[:, 2])),
             "algorithm": "NSGA-II (fallback)",
             **_pareto_sortino_stats(pareto_indices, metrics_cache),
+            **_pareto_diagnostics(pareto_indices, metrics_cache, pareto_obj),
         })
 
         mean_f1 = float(np.mean(pareto_obj[:, 0])) if len(pareto_obj) else 0.0
@@ -648,6 +697,7 @@ def _run_nsga3(
             "mean_f3": float(np.mean(pareto_obj[:, 2])) if len(pareto_obj) else 0.0,
             "algorithm": "NSGA-III",
             **_pareto_sortino_stats(pareto_indices, metrics_cache),
+            **_pareto_diagnostics(pareto_indices, metrics_cache, pareto_obj),
         })
 
         mean_f1 = float(np.mean(pareto_obj[:, 0])) if len(pareto_obj) else 0.0

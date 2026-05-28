@@ -4,23 +4,34 @@
   "rules_set": [
     {
       "conditions": [
-        "[downside_semivol_20] IS Very High",
-        "[lower_wick_to_tr] IS Very Low",
-        "[close_location_value] IS High",
-        "[ret_autocorr_1_30] IS Strong Bullish"
+        "[range_compression_20_100] IS High",
+        "[downside_semivol_20] IS Medium",
+        "[efficiency_ratio_20] IS Very High",
+        "[return_skew_30] IS Bearish"
       ],
-      "tp": 2.8,
-      "sl": 1.2,
-      "capital_pct": 40.0
+      "tp": 4.0,
+      "sl": 2.5,
+      "capital_pct": 35.0
     },
     {
       "conditions": [
-        "[range_compression_20_100] IS Low",
-        "[lower_wick_to_tr] IS High",
-        "[mom_stoch_rsi_14_14_3] IS Very High",
+        "[downside_semivol_20] IS Low",
+        "[upside_semivol_20] IS High",
+        "[upper_wick_to_tr] IS High",
+        "[vol_regime_pct_120] IS Very Low"
+      ],
+      "tp": 6.0,
+      "sl": 3.0,
+      "capital_pct": 45.0
+    },
+    {
+      "conditions": [
+        "[downside_semivol_20] IS High",
+        "[upside_semivol_20] IS Very High",
+        "[vol_regime_pct_120] IS High",
         "[rsi_hidden_div_flag] IS Negative (-1)"
       ],
-      "tp": 4.0,
+      "tp": 6.0,
       "sl": 2.0,
       "capital_pct": 10.0
     }

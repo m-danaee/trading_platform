@@ -1,62 +1,32 @@
 {
   "direction": "short",
-  "total_return_pct": -24.386512162112663,
-  "max_drawdown_pct": 34.59068265066813,
-  "win_rate": 30.785123966942145,
-  "profit_factor": 0.7892796196962117,
-  "executed_trades": 484,
+  "total_return_pct": -21.159922835178246,
+  "max_drawdown_pct": 24.212708023875777,
+  "win_rate": 36.144578313253014,
+  "profit_factor": 0.6660578280490658,
+  "executed_trades": 166,
   "account_status": "survived",
-  "final_equity": 756.1348783788734,
+  "final_equity": 788.4007716482175,
   "per_symbol_metrics": {
     "1": {
       "trade_count": 46,
-      "win_rate": 39.130434782608695,
-      "net_pnl": 24.95436497741271
-    },
-    "10": {
-      "trade_count": 68,
-      "win_rate": 29.411764705882355,
-      "net_pnl": -36.57400400525558
+      "win_rate": 36.95652173913043,
+      "net_pnl": -91.610671038697
     },
     "2": {
-      "trade_count": 54,
-      "win_rate": 46.2962962962963,
-      "net_pnl": 67.39154923446529
+      "trade_count": 43,
+      "win_rate": 30.23255813953488,
+      "net_pnl": -29.737349315923666
     },
     "3": {
-      "trade_count": 39,
-      "win_rate": 15.384615384615385,
-      "net_pnl": -96.06818785899951
+      "trade_count": 34,
+      "win_rate": 47.05882352941176,
+      "net_pnl": 4.1094888944006005
     },
     "4": {
-      "trade_count": 23,
-      "win_rate": 34.78260869565217,
-      "net_pnl": 10.206264043621367
-    },
-    "5": {
-      "trade_count": 52,
-      "win_rate": 36.53846153846153,
-      "net_pnl": 16.213788306467293
-    },
-    "6": {
-      "trade_count": 51,
-      "win_rate": 35.294117647058826,
-      "net_pnl": -25.209642635484265
-    },
-    "7": {
-      "trade_count": 51,
-      "win_rate": 15.686274509803921,
-      "net_pnl": -110.31483125541305
-    },
-    "8": {
-      "trade_count": 36,
-      "win_rate": 13.88888888888889,
-      "net_pnl": -86.77749955175996
-    },
-    "9": {
-      "trade_count": 64,
-      "win_rate": 34.375,
-      "net_pnl": -7.686922876182315
+      "trade_count": 43,
+      "win_rate": 32.55813953488372,
+      "net_pnl": -94.36069689156179
     }
   }
 }

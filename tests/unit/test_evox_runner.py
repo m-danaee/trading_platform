@@ -97,6 +97,10 @@ class TestRunPhase2EvolutionFallback:
             )
         assert len(history) == 1
         assert history[0].get("algorithm") == "NSGA-II (fallback)"
+        assert "sortino_cap_hit_fraction" in history[0]
+        assert "objective_std_f1" in history[0]
+        assert "objective_std_f2" in history[0]
+        assert "objective_std_f3" in history[0]
 
     def test_seed_chromosomes_forwarded_to_fallback(self):
         feature_infos = [

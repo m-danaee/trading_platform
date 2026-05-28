@@ -536,6 +536,7 @@ class Reporter:
         self,
         metrics: dict,
         split: str,
+        direction: str | None = None,
         output_dir: str | None = None,
     ) -> str:
         """
@@ -549,6 +550,10 @@ class Reporter:
             ``win_rate``, ``net_pnl``).
         split:
             One of ``"train"``, ``"validation"``, or ``"test"``.
+        direction:
+            Optional strategy direction (``"long"`` or ``"short"``). When
+            provided, the filename includes direction to avoid long/short
+            overwrites for the same split.
         output_dir:
             Override the output directory (used in tests).
 
@@ -558,8 +563,12 @@ class Reporter:
             Absolute path to the saved CSV file.
         """
         reports_dir = output_dir if output_dir is not None else _REPORTS_DIR
-        out_path = os.path.join(
-            reports_dir, f"{split}_per_symbol_performance.csv")
+        filename = (
+            f"{split}_{direction}_per_symbol_performance.csv"
+            if direction in ("long", "short")
+            else f"{split}_per_symbol_performance.csv"
+        )
+        out_path = os.path.join(reports_dir, filename)
         self._ensure_dir(out_path)
 
         per_symbol = metrics.get("per_symbol_metrics", {})
