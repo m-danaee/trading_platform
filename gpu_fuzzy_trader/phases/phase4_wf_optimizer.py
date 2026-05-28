@@ -28,6 +28,11 @@ from gpu_fuzzy_trader.reporting.reporter import Reporter
 
 logger = logging.getLogger(__name__)
 
+
+class Phase4NoFeasibleTrialError(RuntimeError):
+    """Raised when no Optuna trial passes walk-forward feasibility gates."""
+
+
 _OUTPUT_PATHS = {
     "long": os.path.join(_cfg.OUTPUTS_DIR, "long.json"),
     "short": os.path.join(_cfg.OUTPUTS_DIR, "short.json"),
@@ -227,7 +232,7 @@ def _select_pareto_trial(study: Any, max_worst_dd_pct: float) -> Any:
     """
     Pick trial from Pareto front: filter by DD, min trades, min fold return/PF.
 
-    Fallback if filter is empty: minimum drawdown objective, then max worst return.
+    Raises Phase4NoFeasibleTrialError if no trial satisfies the gates (no fallback).
     """
     completed = [
         t for t in study.trials
@@ -253,14 +258,15 @@ def _select_pareto_trial(study: Any, max_worst_dd_pct: float) -> Any:
         pf_ok = float(t.user_attrs.get("worst_pf", min_pf)) >= min_pf - 1e-9
         if ret_ok and dd_ok and trades_ok and pf_ok:
             candidates.append(t)
-    pool = candidates if candidates else completed
 
-    if candidates:
-        return max(pool, key=lambda t: t.values[0])
+    if not candidates:
+        raise Phase4NoFeasibleTrialError(
+            "Phase 4: no trial passed worst-fold gates "
+            f"(min_return={min_ret}%, min_pf={min_pf}, "
+            f"max_dd={max_worst_dd_pct}%, min_trades={_cfg.PHASE4_MIN_WORST_TRADES})"
+        )
 
-    min_dd = min(t.values[1] for t in pool)
-    tied = [t for t in pool if t.values[1] == min_dd]
-    return max(tied, key=lambda t: t.values[0])
+    return max(candidates, key=lambda t: t.values[0])
 
 
 def _load_rule_set(path: str) -> Optional[dict]:
@@ -353,6 +359,51 @@ class WalkForwardRiskOptimizer:
         self.seed = seed if seed is not None else _cfg.PHASE4_SEED
         self._selected_trial: Any = None
         self._study: Any = None
+
+    def _write_non_optimized_output(self, study: Any) -> dict:
+        """Persist Phase 3 rules unchanged when no feasible WF trial exists."""
+        rules = self.rule_set.get("rules_set", [])
+        val_engine = CPUBacktestEngine(self.val_df, {}, self.direction)
+        val_metrics = val_engine.simulate_rule_set(rules)
+        val_ret = float(val_metrics.get("total_return_pct", 0.0))
+        val_pf = float(val_metrics.get("profit_factor", 0.0))
+        ret_gate = float(_cfg.PHASE5_VALIDATION_RETURN_GATE_PCT)
+        pf_gate = float(_cfg.PHASE5_VALIDATION_PROFIT_FACTOR_GATE)
+
+        output_dict = {
+            "direction": self.direction,
+            "risk_optimized": False,
+            "deployment_accepted": False,
+            "validation_gate": {
+                "return_pct": val_ret,
+                "profit_factor": val_pf,
+                "required_return_pct": ret_gate,
+                "required_profit_factor": pf_gate,
+            },
+            "rules_set": [
+                {
+                    "conditions": list(r["conditions"]),
+                    "tp": float(r.get("tp", _cfg.PHASE2_TP)),
+                    "sl": float(r.get("sl", _cfg.PHASE2_SL)),
+                    "capital_pct": float(r.get("capital_pct", _cfg.PHASE2_CAPITAL_PCT)),
+                }
+                for r in rules
+            ],
+        }
+
+        os.makedirs(_cfg.OUTPUTS_DIR, exist_ok=True)
+        output_path = _OUTPUT_PATHS[self.direction]
+        with open(output_path, "w", encoding="utf-8") as fh:
+            json.dump(output_dict, fh, indent=2)
+
+        try:
+            Reporter().plot_phase4_pareto(study.trials, None, self.direction)
+        except Exception as exc:
+            logger.warning(
+                "Reporter.plot_phase4_pareto failed (non-fatal): %s", exc
+            )
+
+        return output_dict
 
     def train(self) -> dict:
         """
@@ -457,9 +508,19 @@ class WalkForwardRiskOptimizer:
         )
 
         self._study = study
-        selected = _select_pareto_trial(
-            study, float(_cfg.PHASE4_MAX_WORST_DRAWDOWN_PCT)
-        )
+        try:
+            selected = _select_pareto_trial(
+                study, float(_cfg.PHASE4_MAX_WORST_DRAWDOWN_PCT)
+            )
+        except Phase4NoFeasibleTrialError as exc:
+            logger.warning(
+                "Phase 4 [%s]: %s — keeping Phase 3 risk params; "
+                "marking strategy non-deployable.",
+                self.direction,
+                exc,
+            )
+            return self._write_non_optimized_output(study)
+
         self._selected_trial = selected
 
         optimized_params = list(selected.user_attrs.get("rule_set", []))

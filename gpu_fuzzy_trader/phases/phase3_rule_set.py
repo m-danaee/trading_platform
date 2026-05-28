@@ -61,7 +61,9 @@ from gpu_fuzzy_trader.phases.phase3_objectives import (
     has_duplicate_rules as _has_duplicate_rules,
     per_rule_min_symbol_trades_cached as _per_rule_min_symbol_trades_cached,
     symbol_consistency_penalty as _symbol_consistency_penalty,
+    symbols_with_trades as _symbols_with_trades,
     train_val_corr_penalty as _train_val_corr_penalty,
+    train_val_gap_penalty as _train_val_gap_penalty,
 )
 from gpu_fuzzy_trader.reporting.reporter import Reporter
 
@@ -694,6 +696,55 @@ def _run_nsga2_combinatorial(
     return pareto_rule_sets, history
 
 
+def _max_team_jaccard(
+    rule_set: list[dict],
+    val_masks_by_key: dict[frozenset, np.ndarray] | None,
+) -> float:
+    """Maximum pairwise Jaccard similarity on validation entry masks."""
+    if not val_masks_by_key or len(rule_set) <= 1:
+        return 0.0
+    masks: list[np.ndarray] = []
+    for rule in rule_set:
+        key = _conditions_key(rule.get("conditions", []))
+        mask = val_masks_by_key.get(key)
+        if mask is not None:
+            masks.append(mask)
+    if len(masks) <= 1:
+        return 0.0
+    max_j = 0.0
+    for i in range(len(masks)):
+        for j in range(i + 1, len(masks)):
+            union = int(np.count_nonzero(masks[i] | masks[j]))
+            if union <= 0:
+                continue
+            inter = int(np.count_nonzero(masks[i] & masks[j]))
+            max_j = max(max_j, inter / union)
+    return float(max_j)
+
+
+def _pareto_selection_tiebreak(
+    train_metrics: dict,
+    val_metrics: dict,
+    rule_set: list[dict],
+    cache: Phase3EvalCache | None,
+) -> tuple[float, float, float, float]:
+    """
+  Lower is better (lexicographic): gap penalty, symbol inconsistency,
+  max Jaccard overlap, negative symbol overlap ratio.
+    """
+    gap = _train_val_gap_penalty(train_metrics, val_metrics)
+    sym_pen = _symbol_consistency_penalty(train_metrics, val_metrics)
+    val_masks = cache.val_masks if cache is not None else None
+    max_j = _max_team_jaccard(rule_set, val_masks)
+    train_syms = _symbols_with_trades(train_metrics)
+    val_syms = _symbols_with_trades(val_metrics)
+    if train_syms or val_syms:
+        overlap = len(train_syms & val_syms) / len(train_syms | val_syms)
+    else:
+        overlap = 0.0
+    return (gap, sym_pen, max_j, -float(overlap))
+
+
 def _select_best_from_pareto(
     pareto_rule_sets: list[list[dict]],
     val_engine: CPUBacktestEngine,
@@ -704,7 +755,7 @@ def _select_best_from_pareto(
     Select the best rule set from the Pareto front.
 
     Default: maximin(train_return, val_return) with profitability floors.
-    Fallback: minimum f1 objective when maximin scores tie.
+    Tie-break: lower train/val gap, symbol consistency, Jaccard overlap.
     """
     if not pareto_rule_sets:
         raise ValueError(
@@ -712,6 +763,7 @@ def _select_best_from_pareto(
 
     best_idx = 0
     best_score = -np.inf
+    best_tiebreak: tuple[float, ...] | None = None
     best_f1 = np.inf
 
     for i, rs in enumerate(pareto_rule_sets):
@@ -720,8 +772,16 @@ def _select_best_from_pareto(
             engine_fmt, val_engine, train_engine, cache=cache)
         score = _maximin_selection_score(train_metrics, val_metrics)
         f1 = float(obj[0])
-        if score > best_score or (score == best_score and f1 < best_f1):
+        tiebreak = _pareto_selection_tiebreak(
+            train_metrics, val_metrics, rs, cache)
+        better = score > best_score
+        if score == best_score and best_tiebreak is not None:
+            better = tiebreak < best_tiebreak
+        if score == best_score and tiebreak == best_tiebreak and f1 < best_f1:
+            better = True
+        if better:
             best_score = score
+            best_tiebreak = tiebreak
             best_f1 = f1
             best_idx = i
 

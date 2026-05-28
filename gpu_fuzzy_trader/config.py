@@ -144,7 +144,7 @@ MIN_CONDITIONS = 2
 MAX_CONDITIONS = 3
 
 # Trade-count gates and support penalty (noisy Sortino when executed << support).
-MIN_TRADE_SUPPORT = 200
+MIN_TRADE_SUPPORT = 250
 SUPPORT_PENALTY_MAX = 12.0
 # hard reject below this in archive (~ MIN_TRADE_SUPPORT // 4)
 MIN_TRADE_POOL_FLOOR = 50
@@ -156,28 +156,28 @@ PHASE2_SUPPORT_PENALTY_WEIGHT_F2 = 0.6
 PHASE2_SUPPORT_PENALTY_WEIGHT_F3 = 0.5
 PHASE2_RETURN_FLOOR_PCT = 0.0
 PHASE2_VAL_RETURN_FLOOR_PCT = 0.0
-PHASE2_PROFIT_FACTOR_FLOOR = 1.0
+PHASE2_PROFIT_FACTOR_FLOOR = 1.05
 PHASE2_SYMBOL_MEDIAN_RETURN_FLOOR_PCT = -0.5
 PHASE2_MIN_PROFITABLE_SYMBOLS = 5
 # Hard pool admission: both train and val must be profitable before archive merge.
 PHASE2_POOL_REQUIRE_POSITIVE_SPLITS = True
-PHASE2_POOL_TRAIN_RETURN_MIN_PCT = 0.0
-PHASE2_POOL_VAL_RETURN_MIN_PCT = 0.0
+PHASE2_POOL_TRAIN_RETURN_MIN_PCT = 0.5
+PHASE2_POOL_VAL_RETURN_MIN_PCT = 0.5
 # Stop evolution when Pareto mean return stays deeply negative (saves GPU time).
 PHASE2_EARLY_STOP_ENABLED = True
 PHASE2_EARLY_STOP_MIN_GENERATION = 50
 PHASE2_EARLY_STOP_MEAN_RETURN_PCT = -5.0
 
 # Fitness transform: tanh(sortino / SCALE) * CAP (avoids sentinel pinning at gen 0).
-SORTINO_CAP = 15.0
-SORTINO_SCALE = 5.0
+SORTINO_CAP = 8.0
+SORTINO_SCALE = 3.0
 
 # Worst-case train/val Sortino when both splits are evaluated.
 PHASE2_JOINT_TRAIN_VAL = True
 
 # Population diversity: penalize chromosomes within Hamming distance ≤ threshold.
-PHASE2_DIVERSITY_HAMMING_THRESHOLD = 2
-PHASE2_DIVERSITY_PENALTY = 5.0
+PHASE2_DIVERSITY_HAMMING_THRESHOLD = 3
+PHASE2_DIVERSITY_PENALTY = 8.0
 
 # NSGA-III search budget and persistence.
 PHASE2_POPULATION_SIZE = 450
@@ -206,6 +206,8 @@ PHASE2_INIT_SOFTMAX_TEMP = 0.5
 PHASE2_INIT_SCORE_EPS = 1e-6
 PHASE2_INIT_UNIFORM_MIX = 0.05
 PHASE2_MUTATION_WEIGHTED_ACTIVATE_PROB = 0.70
+# Default RNG seed for Phase 2 evolution and row subsampling (None = nondeterministic).
+PHASE2_SEED = 42
 
 # =============================================================================
 # Phase 3 — Rule set selection (phases/phase3_rule_set.py, phase3_greedy.py)
@@ -228,8 +230,8 @@ PHASE3_SYMBOL_CONSISTENCY_WEIGHT = 10.0
 PHASE3_USE_TRAIN_TARGET = False
 PHASE3_USE_MAXIMIN_SCORE = True
 # reject if val_sortino < ratio * train_sortino (when train target disabled, still gates)
-PHASE3_VAL_SORTINO_RATIO_GATE = 0.5
-PHASE3_VAL_DRAWDOWN_RATIO_GATE = 1.25  # reject if val_dd > ratio * train_dd
+PHASE3_VAL_SORTINO_RATIO_GATE = 0.7
+PHASE3_VAL_DRAWDOWN_RATIO_GATE = 1.15  # reject if val_dd > ratio * train_dd
 PHASE3_PER_RULE_MIN_VAL_TRADES_PER_SYMBOL = 15
 # penalty on low corr(per-symbol PnL train, val)
 PHASE3_TRAIN_VAL_CORR_WEIGHT = 8.0
@@ -241,20 +243,20 @@ PHASE3_TRAIN_PROFIT_FACTOR_FLOOR = 1.0
 PHASE3_MIN_PROFITABLE_SYMBOLS = 5
 PHASE3_SYMBOL_MEDIAN_RETURN_FLOOR_PCT = -0.5
 # Penalise unstable train/val gaps (short train inflation, long val inflation).
-PHASE3_TRAIN_VAL_GAP_MAX_PCT = 15.0
-PHASE3_VAL_TRAIN_GAP_MAX_PCT = 15.0
+PHASE3_TRAIN_VAL_GAP_MAX_PCT = 10.0
+PHASE3_VAL_TRAIN_GAP_MAX_PCT = 10.0
 PHASE3_GAP_PENALTY_WEIGHT = 4.0
 PHASE3_MAX_CAPITAL_PCT_PER_RULE = 25.0
 # Incremental orthogonality controls (applied as soft penalties in Phase 3):
 # - Incremental gate: a later rule must add enough non-overlapping
 #   validation coverage vs earlier rules.
-PHASE3_MIN_INCREMENTAL_TRADES = 40
+PHASE3_MIN_INCREMENTAL_TRADES = 60
 # How hard to penalize low incremental coverage after the first rule.
 PHASE3_INCREMENTAL_GATE_PENALTY = 60.0
 # Jaccard similarity gate: penalize teams whose rules overlap too much on
 # the validation entry-mask union.
-PHASE3_JACCARD_PENALTY_WEIGHT = 25.0
-PHASE3_JACCARD_SIMILARITY_GATE = 0.90
+PHASE3_JACCARD_PENALTY_WEIGHT = 35.0
+PHASE3_JACCARD_SIMILARITY_GATE = 0.75
 
 # =============================================================================
 # Phase 4 — Walk-forward risk optimization (phases/phase4_wf_optimizer.py)
@@ -271,17 +273,17 @@ PHASE4_SL_STEP = 0.5
 PHASE4_CAPITAL_STEP = 5.0
 PHASE4_TOTAL_CAP_PENALTY = 2.0
 PHASE4_N_TRIALS = 200
-PHASE4_WF_SPLITS = 4
+PHASE4_WF_SPLITS = 2
 PHASE4_MAX_WORST_DRAWDOWN_PCT = 15.0
-PHASE4_MIN_WORST_TRADES = 20
-PHASE4_MIN_WORST_FOLD_RETURN_PCT = 0.0
-PHASE4_MIN_WORST_FOLD_PF = 1.0
+PHASE4_MIN_WORST_TRADES = 30
+PHASE4_MIN_WORST_FOLD_RETURN_PCT = 0.5
+PHASE4_MIN_WORST_FOLD_PF = 1.05
 PHASE4_INCLUDE_TAIL_HOLDOUT = True
 PHASE4_TAIL_HOLDOUT_FRACTION = 0.25
 PHASE4_WORST_RETURN_WEIGHT = 1.0
 PHASE4_WORST_DRAWDOWN_WEIGHT = 1.0
 PHASE4_WORST_TURNOVER_WEIGHT = 1.0
-PHASE4_SAMPLER = "nsga2"  # alternative: "tpe"
+PHASE4_SAMPLER = "tpe"  # alternative: "nsga2"
 PHASE4_SEED = 42
 PHASE4_N_JOBS = 1
 # Scale per-rule capital_pct so sum ≤ MAX_TOTAL_EXPOSURE_PCT after optimization.

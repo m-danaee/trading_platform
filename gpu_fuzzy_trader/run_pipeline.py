@@ -944,6 +944,7 @@ class Pipeline_Orchestrator:
                     feature_infos=feature_infos,
                     direction=direction,
                     val_df=val_df,
+                    seed=_cfg.PHASE2_SEED,
                 )
                 pool = generator.run()
             except Exception as exc:

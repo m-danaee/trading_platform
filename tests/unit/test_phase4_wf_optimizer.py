@@ -15,6 +15,7 @@ import pytest
 
 from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.phases.phase4_wf_optimizer import (
+    Phase4NoFeasibleTrialError,
     WalkForwardRiskOptimizer,
     _build_candidate_rule_set,
     _load_rule_set,
@@ -127,12 +128,12 @@ class TestOverallocPenalty:
 
 
 class TestSelectParetoTrial:
-    def _trial(self, number: int, sortino: float, dd: float):
+    def _trial(self, number: int, sortino: float, dd: float, trades: float = 50.0):
         return SimpleNamespace(
             number=number,
             state=SimpleNamespace(name="COMPLETE"),
-            values=(sortino, dd),
-            user_attrs={"rule_set": [{"tp": 2.0}]},
+            values=(sortino, dd, trades),
+            user_attrs={"rule_set": [{"tp": 2.0}], "worst_pf": 1.1},
         )
 
     def test_filters_by_drawdown_then_max_sortino(self):
@@ -147,7 +148,7 @@ class TestSelectParetoTrial:
         selected = _select_pareto_trial(study, max_worst_dd_pct=15.0)
         assert selected.number == 1  # trial 2 excluded (dd=16 > 15)
 
-    def test_fallback_when_filter_empty(self):
+    def test_raises_when_filter_empty(self):
         study = MagicMock()
         study.trials = [
             self._trial(0, 5.0, 20.0),
@@ -155,8 +156,30 @@ class TestSelectParetoTrial:
         ]
         study.best_trials = study.trials
 
-        selected = _select_pareto_trial(study, max_worst_dd_pct=15.0)
-        assert selected.number == 1
+        with pytest.raises(Phase4NoFeasibleTrialError):
+            _select_pareto_trial(study, max_worst_dd_pct=15.0)
+
+    def test_no_feasible_trial_writes_non_optimized(self, tmp_path, monkeypatch):
+        import gpu_fuzzy_trader.phases.phase4_wf_optimizer as m
+
+        out_path = tmp_path / "long.json"
+        monkeypatch.setitem(m._OUTPUT_PATHS, "long", str(out_path))
+        monkeypatch.setattr(_cfg, "PHASE4_N_TRIALS", 3)
+        monkeypatch.setattr(_cfg, "PHASE4_WF_SPLITS", 2)
+        monkeypatch.setattr(_cfg, "PHASE4_MIN_WORST_FOLD_RETURN_PCT", 99.0)
+
+        val_df = _make_val_df(rows_per_sym=30)
+        opt = WalkForwardRiskOptimizer(
+            val_df=val_df,
+            rule_set=_make_rule_set(n_rules=1),
+            direction="long",
+            n_trials=3,
+            n_splits=2,
+        )
+        result = opt.train()
+        assert result["risk_optimized"] is False
+        assert result["deployment_accepted"] is False
+        assert out_path.exists()
 
 
 class TestNormalizeCapitalPct:
@@ -246,6 +269,9 @@ class TestWalkForwardRiskOptimizer:
         monkeypatch.setattr(_cfg, "PHASE4_N_TRIALS", 5)
         monkeypatch.setattr(_cfg, "PHASE4_WF_SPLITS", 2)
         monkeypatch.setattr(_cfg, "PHASE4_N_JOBS", 1)
+        monkeypatch.setattr(_cfg, "PHASE4_MIN_WORST_FOLD_RETURN_PCT", -100.0)
+        monkeypatch.setattr(_cfg, "PHASE4_MIN_WORST_FOLD_PF", 0.0)
+        monkeypatch.setattr(_cfg, "PHASE4_MIN_WORST_TRADES", 1)
 
         val_df = _make_val_df(rows_per_sym=30)
         opt = WalkForwardRiskOptimizer(
@@ -269,6 +295,9 @@ class TestWalkForwardRiskOptimizer:
         out_path = tmp_path / "short.json"
         monkeypatch.setitem(m._OUTPUT_PATHS, "short", str(out_path))
         monkeypatch.setattr(_cfg, "PHASE4_N_JOBS", 2)
+        monkeypatch.setattr(_cfg, "PHASE4_MIN_WORST_FOLD_RETURN_PCT", -100.0)
+        monkeypatch.setattr(_cfg, "PHASE4_MIN_WORST_FOLD_PF", 0.0)
+        monkeypatch.setattr(_cfg, "PHASE4_MIN_WORST_TRADES", 1)
 
         val_df = _make_val_df(rows_per_sym=30)
         opt = WalkForwardRiskOptimizer(

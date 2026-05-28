@@ -1,0 +1,65 @@
+{
+  "direction": "short",
+  "features": [
+    {
+      "name": "amihud_illiquidity_20",
+      "mode": "positive",
+      "score": 0.24738682851425559
+    },
+    {
+      "name": "range_compression_20_100",
+      "mode": "positive",
+      "score": 0.11695878160710016
+    },
+    {
+      "name": "downside_semivol_20",
+      "mode": "positive",
+      "score": 0.09235315872042937
+    },
+    {
+      "name": "dmi_balance_14",
+      "mode": "signed",
+      "score": 0.03777142311300263
+    },
+    {
+      "name": "drawdown_from_peak_60",
+      "mode": "positive",
+      "score": 0.03181815181619638
+    },
+    {
+      "name": "bb_width_rel_20",
+      "mode": "positive",
+      "score": 0.015683650277681444
+    },
+    {
+      "name": "log_range_over_vol_100",
+      "mode": "positive",
+      "score": 0.009092226439953723
+    },
+    {
+      "name": "close_location_value",
+      "mode": "positive",
+      "score": 0.002851913584952905
+    },
+    {
+      "name": "upper_wick_to_tr",
+      "mode": "positive",
+      "score": 0.0027747013745443583
+    },
+    {
+      "name": "lower_wick_to_tr",
+      "mode": "positive",
+      "score": 0.002711430271749752
+    },
+    {
+      "name": "body_to_tr",
+      "mode": "positive",
+      "score": 0.0022710974109634717
+    },
+    {
+      "name": "return_skew_30",
+      "mode": "signed",
+      "score": 0.002229441519776057
+    }
+  ]
+}

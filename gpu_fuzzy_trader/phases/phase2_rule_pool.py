@@ -1198,14 +1198,17 @@ class Rule_Pool_Generator:
         self.feature_infos = feature_infos
         self.pop_size = pop_size if pop_size is not None else _cfg.PHASE2_POPULATION_SIZE
         self.n_generations = n_generations if n_generations is not None else _cfg.PHASE2_GENERATIONS
-        self.seed = seed
+        self.seed = seed if seed is not None else _cfg.PHASE2_SEED
         self._feature_signature = _archive_feature_signature(feature_infos)
         self._regime_row_fractions: np.ndarray | None = None
         self._n_regimes = 0
         self._val_regime_row_counts: np.ndarray | None = None
 
         # Sample training data to budget, then slim to backtest-only columns
-        sampled = _sample_df(train_df, _cfg.PHASE1_SAMPLING_TOTAL)
+        sample_seed = self.seed
+        sampled = _sample_df(
+            train_df, _cfg.PHASE1_SAMPLING_TOTAL, random_state=sample_seed,
+        )
         feature_names = [fi["name"] for fi in feature_infos]
         from gpu_fuzzy_trader.backtest.df_slim import slim_backtest_df
 
@@ -1228,7 +1231,11 @@ class Rule_Pool_Generator:
         self._val_regime_row_counts = None
         if val_df is not None and _cfg.PHASE2_JOINT_TRAIN_VAL:
             try:
-                val_sampled = _sample_df(val_df, _cfg.PHASE1_SAMPLING_TOTAL)
+                val_sampled = _sample_df(
+                    val_df,
+                    _cfg.PHASE1_SAMPLING_TOTAL,
+                    random_state=sample_seed,
+                )
                 val_regime_ids, _val_fracs, val_n_regimes = (
                     _prepare_regime_context(val_sampled)
                 )

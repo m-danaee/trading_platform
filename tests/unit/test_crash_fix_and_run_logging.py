@@ -20,11 +20,11 @@ import gpu_fuzzy_trader.config as _cfg
 from gpu_fuzzy_trader._jax_env import configure_jax_env
 
 
-class TestConfigSamplingTotal:
-    """Task 1.1 — Requirement 4.1: PHASE1_SAMPLING_TOTAL reduced to 150_000."""
+class TestConfigPhase2Seed:
+    """Phase 2 reproducibility default seed."""
 
-    def test_phase1_sampling_total_value(self) -> None:
-        assert _cfg.PHASE1_SAMPLING_TOTAL == 150_000
+    def test_phase2_seed_default(self) -> None:
+        assert _cfg.PHASE2_SEED == 42
 
 
 class TestConfigRunLogPath:

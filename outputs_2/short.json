@@ -1,0 +1,43 @@
+{
+  "direction": "short",
+  "risk_optimized": true,
+  "deployment_accepted": true,
+  "validation_gate": {
+    "return_pct": 26.139670432955175,
+    "profit_factor": 1.7720159004013438,
+    "required_return_pct": 0.0,
+    "required_profit_factor": 1.0
+  },
+  "rules_set": [
+    {
+      "conditions": [
+        "[close_location_value] IS Low",
+        "[body_to_tr] IS Very High",
+        "[return_skew_30] IS Weak Bearish"
+      ],
+      "tp": 3.0,
+      "sl": 1.5,
+      "capital_pct": 15.0
+    },
+    {
+      "conditions": [
+        "[amihud_illiquidity_20] IS High",
+        "[dmi_balance_14] IS Weak Bullish",
+        "[return_skew_30] IS Weak Bullish"
+      ],
+      "tp": 2.5,
+      "sl": 2.5,
+      "capital_pct": 25.0
+    },
+    {
+      "conditions": [
+        "[dmi_balance_14] IS Strong Bullish",
+        "[drawdown_from_peak_60] IS High",
+        "[bb_width_rel_20] IS High"
+      ],
+      "tp": 2.5,
+      "sl": 1.5,
+      "capital_pct": 25.0
+    }
+  ]
+}

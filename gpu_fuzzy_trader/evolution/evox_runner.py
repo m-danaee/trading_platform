@@ -167,21 +167,51 @@ def _should_early_stop_phase2(gen: int, mean_return_pct: float) -> bool:
     return mean_return_pct < float(_cfg.PHASE2_EARLY_STOP_MEAN_RETURN_PCT)
 
 
+def _median_pairwise_hamming(chromosomes: list[np.ndarray]) -> float:
+    """Median Hamming distance across unique Pareto chromosomes (sample cap 40)."""
+    if len(chromosomes) < 2:
+        return 0.0
+    uniq: list[np.ndarray] = []
+    seen: set[tuple[int, ...]] = set()
+    for chrom in chromosomes:
+        key = tuple(int(v) for v in chrom.tolist())
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq.append(chrom)
+    if len(uniq) < 2:
+        return 0.0
+    if len(uniq) > 40:
+        rng = np.random.default_rng(0)
+        pick = rng.choice(len(uniq), size=40, replace=False)
+        uniq = [uniq[int(i)] for i in pick]
+    dists: list[float] = []
+    for i in range(len(uniq)):
+        for j in range(i + 1, len(uniq)):
+            dists.append(float(np.sum(uniq[i] != uniq[j])))
+    return float(np.median(dists)) if dists else 0.0
+
+
 def _pareto_diagnostics(
     pareto_indices: list[int],
     metrics_cache: list[dict],
     pareto_obj: np.ndarray,
+    population: np.ndarray | None = None,
 ) -> dict[str, float]:
     """
     Compute compact diagnostics for Phase 2 Pareto-front health.
 
     - sortino_cap_hit_fraction: fraction of Pareto members whose saturated
       Sortino sits near the configured cap (signal of objective saturation).
+    - unique_chromosome_ratio: unique Pareto genotypes / Pareto size.
+    - median_pairwise_hamming: median Hamming distance among Pareto chromosomes.
     - objective_std_*: objective dispersion across Pareto members.
     """
     if not pareto_indices:
         return {
             "sortino_cap_hit_fraction": 0.0,
+            "unique_chromosome_ratio": 0.0,
+            "median_pairwise_hamming": 0.0,
             "objective_std_f1": 0.0,
             "objective_std_f2": 0.0,
             "objective_std_f3": 0.0,
@@ -206,8 +236,21 @@ def _pareto_diagnostics(
     else:
         std_f1 = std_f2 = std_f3 = 0.0
 
+    chromosomes: list[np.ndarray] = []
+    if population is not None:
+        for i in pareto_indices:
+            chromosomes.append(population[int(i)].copy())
+    unique_ratio = 0.0
+    median_hamming = 0.0
+    if chromosomes:
+        keys = {tuple(int(v) for v in c.tolist()) for c in chromosomes}
+        unique_ratio = float(len(keys) / len(chromosomes))
+        median_hamming = _median_pairwise_hamming(chromosomes)
+
     return {
         "sortino_cap_hit_fraction": float(cap_hits / len(pareto_indices)),
+        "unique_chromosome_ratio": unique_ratio,
+        "median_pairwise_hamming": median_hamming,
         "objective_std_f1": float(std_f1),
         "objective_std_f2": float(std_f2),
         "objective_std_f3": float(std_f3),
@@ -589,7 +632,9 @@ def _run_nsga2_fallback(
             "mean_f3": float(np.mean(pareto_obj[:, 2])),
             "algorithm": "NSGA-II (fallback)",
             **_pareto_sortino_stats(pareto_indices, metrics_cache),
-            **_pareto_diagnostics(pareto_indices, metrics_cache, pareto_obj),
+            **_pareto_diagnostics(
+                pareto_indices, metrics_cache, pareto_obj, population,
+            ),
         })
 
         mean_f1 = float(np.mean(pareto_obj[:, 0])) if len(pareto_obj) else 0.0
@@ -731,7 +776,9 @@ def _run_nsga3(
             "mean_f3": float(np.mean(pareto_obj[:, 2])) if len(pareto_obj) else 0.0,
             "algorithm": "NSGA-III",
             **_pareto_sortino_stats(pareto_indices, metrics_cache),
-            **_pareto_diagnostics(pareto_indices, metrics_cache, pareto_obj),
+            **_pareto_diagnostics(
+                pareto_indices, metrics_cache, pareto_obj, population,
+            ),
         })
 
         mean_f1 = float(np.mean(pareto_obj[:, 0])) if len(pareto_obj) else 0.0
