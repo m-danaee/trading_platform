@@ -93,6 +93,46 @@ def split_validation_walk_forward(
     return windows
 
 
+def build_tail_holdout_split(
+    val_df: pd.DataFrame,
+    fraction: float,
+) -> pd.DataFrame:
+    """
+    Last *fraction* of each symbol's validation rows (chronological tail).
+
+    Used as an extra strict walk-forward window to reduce val-period overfitting.
+    """
+    if fraction <= 0.0 or fraction >= 1.0:
+        raise ValueError(f"fraction must be in (0, 1), got {fraction}")
+    if len(val_df) == 0:
+        raise ValueError("val_df is empty")
+
+    sort_col = "datetime" if "datetime" in val_df.columns else None
+    parts: list[pd.DataFrame] = []
+    for _, group in val_df.groupby("symbol", sort=True):
+        g = group.sort_values(sort_col) if sort_col else group
+        n = len(g)
+        start = max(0, int(np.floor(n * (1.0 - fraction))))
+        if start < n:
+            parts.append(g.iloc[start:].copy())
+    if not parts:
+        raise ValueError("tail holdout produced no rows")
+    return pd.concat(parts, ignore_index=True)
+
+
+def build_phase4_walk_forward_splits(
+    val_df: pd.DataFrame,
+    k: int,
+) -> list[pd.DataFrame]:
+    """Standard K WF windows plus optional chronological tail holdout."""
+    splits = split_validation_walk_forward(val_df, k)
+    if _cfg.PHASE4_INCLUDE_TAIL_HOLDOUT:
+        tail = build_tail_holdout_split(
+            val_df, float(_cfg.PHASE4_TAIL_HOLDOUT_FRACTION))
+        splits.append(tail)
+    return splits
+
+
 def _build_candidate_rule_set(
     rules: list[dict],
     params_list: list[dict],
@@ -121,15 +161,16 @@ def _evaluate_params_worst_case(
     direction: str,
     candidate_rule_set: list[dict],
     params_list: list[dict],
-) -> tuple[float, float, float]:
+) -> tuple[float, float, float, float]:
     """
-    Run backtest on each walk-forward window; return worst Sortino and worst DD.
+    Run backtest on each walk-forward window.
 
-    Each split uses a new CPUBacktestEngine instance (parallel-safe).
+    Returns worst return %, worst drawdown %, worst (min) trade count, worst PF.
     """
     split_returns: list[float] = []
     split_drawdowns: list[float] = []
     split_turnover: list[float] = []
+    split_pf: list[float] = []
 
     for split_df in val_splits:
         engine = CPUBacktestEngine(split_df, {}, direction)
@@ -139,17 +180,20 @@ def _evaluate_params_worst_case(
             split_returns.append(-100.0)
             split_drawdowns.append(100.0)
             split_turnover.append(0.0)
+            split_pf.append(0.0)
             continue
 
         split_returns.append(float(metrics.get("total_return_pct", 0.0)))
         split_drawdowns.append(float(metrics.get("max_drawdown_pct", 0.0)))
         split_turnover.append(float(metrics.get("executed_trades", 0.0)))
+        split_pf.append(float(metrics.get("profit_factor", 0.0)))
 
     penalty = _overalloc_penalty(params_list)
     worst_return = min(split_returns) - penalty
     worst_drawdown = max(split_drawdowns) + penalty
     worst_turnover = min(split_turnover)
-    return worst_return, worst_drawdown, worst_turnover
+    worst_pf = min(split_pf) if split_pf else 0.0
+    return worst_return, worst_drawdown, worst_turnover, worst_pf
 
 
 def _normalize_capital_pct(rules_set: list[dict]) -> list[dict]:
@@ -181,9 +225,9 @@ def _create_sampler(seed: int):
 
 def _select_pareto_trial(study: Any, max_worst_dd_pct: float) -> Any:
     """
-    Pick trial from Pareto front: filter by DD and min trades, then max worst return.
+    Pick trial from Pareto front: filter by DD, min trades, min fold return/PF.
 
-    Fallback if filter is empty: minimum drawdown objective, then max Sortino.
+    Fallback if filter is empty: minimum drawdown objective, then max worst return.
     """
     completed = [
         t for t in study.trials
@@ -192,17 +236,22 @@ def _select_pareto_trial(study: Any, max_worst_dd_pct: float) -> Any:
     if not completed:
         raise RuntimeError("Phase 4: no completed Optuna trials")
 
+    min_ret = float(_cfg.PHASE4_MIN_WORST_FOLD_RETURN_PCT)
+    min_pf = float(_cfg.PHASE4_MIN_WORST_FOLD_PF)
+
     pareto = list(study.best_trials) if study.best_trials else completed
     candidates = []
     for t in pareto:
         values = t.values or ()
         if len(values) < 2:
             continue
+        ret_ok = values[0] >= min_ret - 1e-9
         dd_ok = values[1] <= max_worst_dd_pct
         trades_ok = True
         if len(values) >= 3:
             trades_ok = values[2] >= _cfg.PHASE4_MIN_WORST_TRADES
-        if dd_ok and trades_ok:
+        pf_ok = float(t.user_attrs.get("worst_pf", min_pf)) >= min_pf - 1e-9
+        if ret_ok and dd_ok and trades_ok and pf_ok:
             candidates.append(t)
     pool = candidates if candidates else completed
 
@@ -325,7 +374,8 @@ class WalkForwardRiskOptimizer:
 
         rules = self.rule_set.get("rules_set", [])
         n_rules = len(rules)
-        val_splits = split_validation_walk_forward(self.val_df, self.n_splits)
+        val_splits = build_phase4_walk_forward_splits(
+            self.val_df, self.n_splits)
         n_jobs = int(_cfg.PHASE4_N_JOBS)
 
         logger.info(
@@ -370,15 +420,26 @@ class WalkForwardRiskOptimizer:
                 params_list.append({"tp": tp, "sl": sl, "capital_pct": cap})
 
             candidate_rule_set = _build_candidate_rule_set(rules, params_list)
-            worst_return, worst_drawdown, worst_turnover = _evaluate_params_worst_case(
-                val_splits,
-                self.direction,
-                candidate_rule_set,
-                params_list,
+            worst_return, worst_drawdown, worst_turnover, worst_pf = (
+                _evaluate_params_worst_case(
+                    val_splits,
+                    self.direction,
+                    candidate_rule_set,
+                    params_list,
+                )
             )
+            fold_penalty = 0.0
+            if worst_return < float(_cfg.PHASE4_MIN_WORST_FOLD_RETURN_PCT):
+                fold_penalty += 50.0
+            if worst_pf < float(_cfg.PHASE4_MIN_WORST_FOLD_PF):
+                fold_penalty += 50.0
             trial.set_user_attr("rule_set", candidate_rule_set)
             trial.set_user_attr("params_list", params_list)
-            score_return = worst_return * float(_cfg.PHASE4_WORST_RETURN_WEIGHT)
+            trial.set_user_attr("worst_pf", worst_pf)
+            score_return = (
+                (worst_return - fold_penalty)
+                * float(_cfg.PHASE4_WORST_RETURN_WEIGHT)
+            )
             score_dd = worst_drawdown * float(_cfg.PHASE4_WORST_DRAWDOWN_WEIGHT)
             score_turnover = worst_turnover * float(_cfg.PHASE4_WORST_TURNOVER_WEIGHT)
             return score_return, score_dd, score_turnover
@@ -407,6 +468,10 @@ class WalkForwardRiskOptimizer:
                 f"Phase 4 [{self.direction}]: selected trial has no rule_set"
             )
 
+        optimized_params = _normalize_capital_pct(optimized_params)
+        cap = float(_cfg.PHASE3_MAX_CAPITAL_PCT_PER_RULE)
+        for rule in optimized_params:
+            rule["capital_pct"] = min(float(rule.get("capital_pct", 0.0)), cap)
         optimized_params = _normalize_capital_pct(optimized_params)
 
         val_engine = CPUBacktestEngine(self.val_df, {}, self.direction)

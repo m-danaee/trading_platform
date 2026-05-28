@@ -873,9 +873,18 @@ class TestRulePoolGeneratorRun:
                     "objectives": {
                         "sortino_ratio": 10.0,
                         "total_return_pct": 10.0,
+                        "profit_factor": 1.2,
                         "max_drawdown_pct": 4.0,
                         "win_rate": 60.0,
                     },
+                    "val_objectives": {
+                        "sortino_ratio": 6.0,
+                        "total_return_pct": 6.0,
+                        "profit_factor": 1.1,
+                        "max_drawdown_pct": 3.0,
+                        "win_rate": 58.0,
+                    },
+                    "val_executed_trades": 120,
                     "executed_trades": 220,
                 },
             ], [
@@ -898,9 +907,18 @@ class TestRulePoolGeneratorRun:
                 "objectives": {
                     "sortino_ratio": 12.0,
                     "total_return_pct": 12.0,
+                    "profit_factor": 1.3,
                     "max_drawdown_pct": 3.0,
                     "win_rate": 61.0,
                 },
+                "val_objectives": {
+                    "total_return_pct": 8.0,
+                    "profit_factor": 1.15,
+                    "max_drawdown_pct": 2.0,
+                    "win_rate": 59.0,
+                    "sortino_ratio": 8.0,
+                },
+                "val_executed_trades": 130,
                 "executed_trades": 240,
             },
             {
@@ -909,9 +927,18 @@ class TestRulePoolGeneratorRun:
                 "objectives": {
                     "sortino_ratio": 11.0,
                     "total_return_pct": 11.0,
+                    "profit_factor": 1.25,
                     "max_drawdown_pct": 4.0,
                     "win_rate": 60.0,
                 },
+                "val_objectives": {
+                    "total_return_pct": 7.0,
+                    "profit_factor": 1.1,
+                    "max_drawdown_pct": 2.5,
+                    "win_rate": 58.0,
+                    "sortino_ratio": 7.0,
+                },
+                "val_executed_trades": 125,
                 "executed_trades": 250,
             },
         ]

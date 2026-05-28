@@ -159,6 +159,56 @@ def trade_support_penalty(
     return pen, False, -1
 
 
+def passes_pool_admission_gate(
+    train_metrics: dict,
+    val_metrics: dict | None = None,
+) -> bool:
+    """
+    Hard gate for Phase 2 pool/archive: rule must be profitable on train and val.
+
+    When ``PHASE2_POOL_REQUIRE_POSITIVE_SPLITS`` is False, always returns True.
+    """
+    if not _cfg.PHASE2_POOL_REQUIRE_POSITIVE_SPLITS:
+        return True
+
+    train_trades = int(train_metrics.get("executed_trades", 0))
+    if train_trades < _cfg.MIN_TRADE_POOL_FLOOR:
+        return False
+
+    train_ret = float(train_metrics.get("total_return_pct", 0.0))
+    train_pf = float(train_metrics.get("profit_factor", 0.0))
+    if train_ret <= float(_cfg.PHASE2_POOL_TRAIN_RETURN_MIN_PCT):
+        return False
+    if train_pf < float(_cfg.PHASE2_PROFIT_FACTOR_FLOOR):
+        return False
+
+    if not _cfg.PHASE2_JOINT_TRAIN_VAL:
+        return True
+    if val_metrics is None:
+        return False
+
+    val_trades = int(val_metrics.get("executed_trades", 0))
+    min_val_trades = max(_cfg.MIN_TRADE_POOL_FLOOR // 4, 10)
+    if val_trades < min_val_trades:
+        return False
+
+    val_ret = float(val_metrics.get("total_return_pct", 0.0))
+    val_pf = float(val_metrics.get("profit_factor", 0.0))
+    if val_ret <= float(_cfg.PHASE2_POOL_VAL_RETURN_MIN_PCT):
+        return False
+    if val_pf < float(_cfg.PHASE2_PROFIT_FACTOR_FLOOR):
+        return False
+
+    if _cfg.PHASE2_REGIME_REQUIRE_VAL_CONFIRMATION and train_metrics.get(
+        "regime_specialist"
+    ):
+        dom = int(train_metrics.get("dominant_regime", -1))
+        if not val_regime_confirmation(dom, val_metrics):
+            return False
+
+    return True
+
+
 def passes_pool_trade_floor(
     executed: int,
     metrics: dict,

@@ -47,9 +47,28 @@ def _scalar_score(
     use_train = _cfg.PHASE3_USE_TRAIN_TARGET and train_metrics is not None
     src = train_metrics if use_train else val_metrics
 
-    primary_sortino = float(src.get(
-        "sortino_ratio", src.get("total_return_pct", 0.0)))
-    primary_dd = float(src.get("max_drawdown_pct", 0.0))
+    train_ret = float(train_metrics.get(
+        "total_return_pct", 0.0)) if train_metrics else 0.0
+    val_ret = float(val_metrics.get("total_return_pct", 0.0))
+    if _cfg.PHASE3_USE_MAXIMIN_SCORE and train_metrics is not None:
+        primary_sortino = min(
+            float(train_metrics.get(
+                "sortino_ratio", train_metrics.get("total_return_pct", 0.0))),
+            float(val_metrics.get(
+                "sortino_ratio", val_metrics.get("total_return_pct", 0.0))),
+        )
+        primary_ret = min(train_ret, val_ret)
+        primary_sortino = min(primary_sortino, primary_ret)
+    else:
+        primary_sortino = float(src.get(
+            "sortino_ratio", src.get("total_return_pct", 0.0)))
+
+    primary_dd = max(
+        float(train_metrics.get("max_drawdown_pct", 0.0)
+              ) if train_metrics else 0.0,
+        float(val_metrics.get("max_drawdown_pct", 0.0)),
+    ) if (_cfg.PHASE3_USE_MAXIMIN_SCORE and train_metrics is not None) else float(
+        src.get("max_drawdown_pct", 0.0))
     primary_wr = float(src.get("win_rate", 0.0))
     penalty = float(objectives[0] + primary_sortino)
     return w1 * primary_sortino - w2 * primary_dd + w3 * primary_wr - penalty

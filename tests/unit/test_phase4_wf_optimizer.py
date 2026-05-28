@@ -22,6 +22,8 @@ from gpu_fuzzy_trader.phases.phase4_wf_optimizer import (
     _overalloc_penalty,
     _params_within_bounds,
     _select_pareto_trial,
+    build_phase4_walk_forward_splits,
+    build_tail_holdout_split,
     split_validation_walk_forward,
     _OUTPUT_PATHS,
 )
@@ -69,6 +71,21 @@ def _make_val_df(
         dfs.append(pd.DataFrame(data))
 
     return pd.concat(dfs, ignore_index=True)
+
+
+class TestTailHoldoutSplit:
+    def test_tail_is_last_fraction_per_symbol(self):
+        val_df = _make_val_df(rows_per_sym=20, symbols=["A"])
+        tail = build_tail_holdout_split(val_df, fraction=0.25)
+        assert len(tail) == 5
+        full = val_df.sort_values("datetime")
+        assert tail["datetime"].min() >= full["datetime"].iloc[15]
+
+    def test_phase4_splits_include_tail_when_enabled(self, monkeypatch):
+        monkeypatch.setattr(_cfg, "PHASE4_INCLUDE_TAIL_HOLDOUT", True)
+        val_df = _make_val_df(rows_per_sym=20, symbols=["A", "B"])
+        splits = build_phase4_walk_forward_splits(val_df, k=2)
+        assert len(splits) == 3
 
 
 class TestSplitValidationWalkForward:
@@ -163,7 +180,7 @@ class TestNormalizeCapitalPct:
 class TestParamsWithinBounds:
     def test_valid(self):
         rs = _make_rule_set()
-        rs["rules_set"][0]["tp"] = 4.0
+        rs["rules_set"][0]["tp"] = 2.5
         rs["rules_set"][0]["sl"] = 2.0
         rs["rules_set"][0]["capital_pct"] = 20.0
         assert _params_within_bounds(rs) is True
@@ -211,7 +228,7 @@ class TestWalkForwardRiskOptimizer:
         data = _make_rule_set()
         data["risk_optimized"] = True
         for r in data["rules_set"]:
-            r["tp"] = 4.0
+            r["tp"] = 2.5
             r["sl"] = 2.0
             r["capital_pct"] = 20.0
         path.write_text(json.dumps(data), encoding="utf-8")

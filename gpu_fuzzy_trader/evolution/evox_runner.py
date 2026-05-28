@@ -145,6 +145,28 @@ def _update_hall_of_fame(
         hall_of_fame[tuple(chrom.tolist())] = chrom
 
 
+def _pareto_mean_return_pct(
+    pareto_indices: list[int],
+    metrics_cache: list[dict],
+) -> float:
+    """Mean total_return_pct across the current Pareto front."""
+    if not pareto_indices:
+        return -100.0
+    returns = [
+        float(metrics_cache[i].get("total_return_pct", 0.0))
+        for i in pareto_indices
+    ]
+    return float(np.mean(returns))
+
+
+def _should_early_stop_phase2(gen: int, mean_return_pct: float) -> bool:
+    if not _cfg.PHASE2_EARLY_STOP_ENABLED:
+        return False
+    if gen + 1 < int(_cfg.PHASE2_EARLY_STOP_MIN_GENERATION):
+        return False
+    return mean_return_pct < float(_cfg.PHASE2_EARLY_STOP_MEAN_RETURN_PCT)
+
+
 def _pareto_diagnostics(
     pareto_indices: list[int],
     metrics_cache: list[dict],
@@ -576,6 +598,17 @@ def _run_nsga2_fallback(
             loop_start=gen_loop_start,
         )
 
+        mean_ret = _pareto_mean_return_pct(pareto_indices, metrics_cache)
+        if _should_early_stop_phase2(gen, mean_ret):
+            logger.info(
+                "%s: early stop at gen %d (mean_return=%.2f%% < %.2f%%)",
+                tag,
+                gen + 1,
+                mean_ret,
+                float(_cfg.PHASE2_EARLY_STOP_MEAN_RETURN_PCT),
+            )
+            break
+
         if gen == n_generations - 1:
             break
 
@@ -616,6 +649,7 @@ def _run_nsga2_fallback(
         engine,
         metrics_by_chrom=metrics_by_chrom,
         regime_row_fractions_arr=regime_row_fractions,
+        val_engine=val_engine,
     )
     return pareto_pool, history
 
@@ -706,6 +740,17 @@ def _run_nsga3(
             loop_start=gen_loop_start,
         )
 
+        mean_ret = _pareto_mean_return_pct(pareto_indices, metrics_cache)
+        if _should_early_stop_phase2(gen, mean_ret):
+            logger.info(
+                "%s: early stop at gen %d (mean_return=%.2f%% < %.2f%%)",
+                tag,
+                gen + 1,
+                mean_ret,
+                float(_cfg.PHASE2_EARLY_STOP_MEAN_RETURN_PCT),
+            )
+            break
+
         if gen == n_generations - 1:
             break
 
@@ -757,6 +802,7 @@ def _run_nsga3(
         engine,
         metrics_by_chrom=metrics_by_chrom,
         regime_row_fractions_arr=regime_row_fractions,
+        val_engine=val_engine,
     )
     return pareto_pool, history
 

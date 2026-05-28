@@ -8,10 +8,33 @@ import pytest
 from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.phases.phase2_support import (
     compute_support_penalty_and_specialist,
+    passes_pool_admission_gate,
     passes_pool_trade_floor,
     trade_support_penalty,
     val_regime_confirmation,
 )
+
+
+class TestPoolAdmissionGate:
+    def test_rejects_negative_train_return(self) -> None:
+        train = {
+            "total_return_pct": -1.0,
+            "profit_factor": 1.2,
+            "executed_trades": _cfg.MIN_TRADE_POOL_FLOOR,
+        }
+        val = {"total_return_pct": 2.0,
+               "profit_factor": 1.1, "executed_trades": 50}
+        assert passes_pool_admission_gate(train, val) is False
+
+    def test_accepts_positive_train_and_val(self) -> None:
+        train = {
+            "total_return_pct": 3.0,
+            "profit_factor": 1.2,
+            "executed_trades": _cfg.MIN_TRADE_POOL_FLOOR,
+        }
+        val = {"total_return_pct": 2.0,
+               "profit_factor": 1.1, "executed_trades": 50}
+        assert passes_pool_admission_gate(train, val) is True
 
 
 class TestTradeSupportPenaltyStatic:

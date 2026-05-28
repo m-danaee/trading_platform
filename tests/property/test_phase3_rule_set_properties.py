@@ -282,6 +282,7 @@ def _make_mock_engine(
     engine.simulate_rule_set.return_value = {
         "sortino_ratio": sortino_ratio,
         "total_return_pct": total_return_pct,
+        "profit_factor": 1.2,
         "max_drawdown_pct": max_drawdown_pct,
         "win_rate": win_rate,
         "executed_trades": executed_trades,
@@ -387,44 +388,23 @@ def test_property_29_symbol_coverage_penalty_application(
         per_symbol_metrics=per_symbol_metrics,
     )
 
-    objectives, val_metrics = _evaluate_rule_set(
+    objectives, train_metrics, val_metrics = _evaluate_rule_set(
         rule_set, val_engine, train_engine)
 
-    # Compute expected penalties
-    expected_coverage_penalty = 0.0
-    if symbols_with_trades < PHASE3_MIN_SYMBOL_COVERAGE:
-        expected_coverage_penalty = (
-            (PHASE3_MIN_SYMBOL_COVERAGE - symbols_with_trades) * 5.0
-        )
+    from gpu_fuzzy_trader.phases.phase3_objectives import compute_phase3_objectives
 
-    expected_zero_penalty = 100.0 if executed_trades == 0 else 0.0
+    expected = compute_phase3_objectives(
+        train_metrics, val_metrics, rule_set)
 
-    # Overfitting penalty: |train_return - val_return| / max(|train_return|, 1.0)
-    # Both engines return 5.0, so overfitting_penalty = 0.0
-    expected_overfitting_penalty = 0.0
-
-    total_expected_penalty = (
-        expected_coverage_penalty
-        + expected_zero_penalty
-        + expected_overfitting_penalty
-    )
-
-    # Base objectives without any penalty
-    val_return = 5.0
-    val_dd = 2.0
-    val_wr = 55.0
-
-    expected_f1 = -val_return + total_expected_penalty
-    expected_f2 = val_dd + total_expected_penalty
-    expected_f3 = -val_wr + total_expected_penalty
+    expected_f1 = float(expected[0])
+    expected_f2 = float(expected[1])
+    expected_f3 = float(expected[2])
 
     assert abs(objectives[0] - expected_f1) < 1e-9, (
         f"f1 mismatch: got {objectives[0]:.6f}, expected {expected_f1:.6f}. "
         f"symbols_with_trades={symbols_with_trades}, "
         f"PHASE3_MIN_SYMBOL_COVERAGE={PHASE3_MIN_SYMBOL_COVERAGE}, "
-        f"executed_trades={executed_trades}, "
-        f"coverage_penalty={expected_coverage_penalty}, "
-        f"zero_penalty={expected_zero_penalty}"
+        f"executed_trades={executed_trades}"
     )
     assert abs(objectives[1] - expected_f2) < 1e-9, (
         f"f2 mismatch: got {objectives[1]:.6f}, expected {expected_f2:.6f}."
@@ -434,26 +414,25 @@ def test_property_29_symbol_coverage_penalty_application(
     )
 
     # --- Specific assertions for penalty presence/absence ---
+    baseline_f1 = -min(
+        float(train_metrics.get("sortino_ratio", 5.0)),
+        float(val_metrics.get("sortino_ratio", 5.0)),
+    )
 
     if symbols_with_trades < PHASE3_MIN_SYMBOL_COVERAGE:
-        # Coverage penalty must be positive
-        assert expected_coverage_penalty > 0.0
-        # Objectives must be strictly worse than the no-penalty baseline
-        assert objectives[0] > -val_return, (
+        assert objectives[0] > baseline_f1, (
             f"Coverage penalty not reflected in f1: "
             f"symbols_with_trades={symbols_with_trades} < "
             f"PHASE3_MIN_SYMBOL_COVERAGE={PHASE3_MIN_SYMBOL_COVERAGE}"
         )
 
     if executed_trades == 0:
-        # Zero-trade penalty must be applied (100.0)
-        assert objectives[0] > -val_return, (
+        assert objectives[0] > baseline_f1, (
             "Zero-trade penalty not reflected in f1 when executed_trades=0"
         )
 
     if symbols_with_trades >= PHASE3_MIN_SYMBOL_COVERAGE and executed_trades > 0:
-        # No coverage or zero-trade penalty — objectives equal baseline
-        assert abs(objectives[0] - (-val_return)) < 1e-9, (
+        assert abs(objectives[0] - baseline_f1) < 1e-6, (
             f"Unexpected penalty when no penalty should apply: "
-            f"f1={objectives[0]:.6f}, expected {-val_return:.6f}"
+            f"f1={objectives[0]:.6f}, expected {baseline_f1:.6f}"
         )

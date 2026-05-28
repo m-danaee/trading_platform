@@ -54,6 +54,24 @@ def per_symbol_pnl_vector(metrics: dict, symbols: list) -> np.ndarray:
     return out
 
 
+def train_val_gap_penalty(train_metrics: dict, val_metrics: dict) -> float:
+    """Penalise large train/val return gaps (overfitting in either direction)."""
+    train_ret = float(train_metrics.get("total_return_pct", 0.0))
+    val_ret = float(val_metrics.get("total_return_pct", 0.0))
+    penalty = 0.0
+    train_over = train_ret - val_ret
+    if train_over > _cfg.PHASE3_TRAIN_VAL_GAP_MAX_PCT:
+        penalty += (train_over - _cfg.PHASE3_TRAIN_VAL_GAP_MAX_PCT) * (
+            _cfg.PHASE3_GAP_PENALTY_WEIGHT
+        )
+    val_over = val_ret - train_ret
+    if val_over > _cfg.PHASE3_VAL_TRAIN_GAP_MAX_PCT:
+        penalty += (val_over - _cfg.PHASE3_VAL_TRAIN_GAP_MAX_PCT) * (
+            _cfg.PHASE3_GAP_PENALTY_WEIGHT
+        )
+    return penalty
+
+
 def train_val_corr_penalty(train_metrics: dict, val_metrics: dict) -> float:
     train_per = train_metrics.get("per_symbol_metrics", {}) or {}
     val_per = val_metrics.get("per_symbol_metrics", {}) or {}
@@ -215,6 +233,8 @@ def compute_phase3_objectives(
     val_trades = int(val_metrics.get("executed_trades", 0))
     val_ret = float(val_metrics.get("total_return_pct", 0.0))
     val_pf = float(val_metrics.get("profit_factor", 0.0))
+    train_ret = float(train_metrics.get("total_return_pct", 0.0))
+    train_pf = float(train_metrics.get("profit_factor", 0.0))
 
     zero_penalty = 100.0 if (train_trades == 0 or val_trades == 0) else 0.0
 
@@ -237,30 +257,34 @@ def compute_phase3_objectives(
     jaccard_penalty = _jaccard_similarity_penalty(rule_set, val_masks_by_key)
 
     gate_penalty = 0.0
-    if _cfg.PHASE3_USE_TRAIN_TARGET:
-        if train_sortino > 0.0:
-            min_val = _cfg.PHASE3_VAL_SORTINO_RATIO_GATE * train_sortino
-            if val_sortino < min_val:
-                gate_penalty += _cfg.PHASE3_VAL_GATE_PENALTY
-
-        max_val_dd = _cfg.PHASE3_VAL_DRAWDOWN_RATIO_GATE * max(train_dd, 1.0)
-        if val_dd > max_val_dd:
+    if train_sortino > 0.0:
+        min_val = _cfg.PHASE3_VAL_SORTINO_RATIO_GATE * train_sortino
+        if val_sortino < min_val:
             gate_penalty += _cfg.PHASE3_VAL_GATE_PENALTY
 
-        if per_rule_min_val_trades is not None:
-            min_per_rule = per_rule_min_symbol_trades_cached(
-                rule_set, per_rule_min_val_trades)
-            if min_per_rule < _cfg.PHASE3_PER_RULE_MIN_VAL_TRADES_PER_SYMBOL:
-                gate_penalty += _cfg.PHASE3_VAL_GATE_PENALTY
-        if val_ret < _cfg.PHASE3_VAL_RETURN_FLOOR_PCT:
+    max_val_dd = _cfg.PHASE3_VAL_DRAWDOWN_RATIO_GATE * max(train_dd, 1.0)
+    if val_dd > max_val_dd:
+        gate_penalty += _cfg.PHASE3_VAL_GATE_PENALTY
+
+    if per_rule_min_val_trades is not None:
+        min_per_rule = per_rule_min_symbol_trades_cached(
+            rule_set, per_rule_min_val_trades)
+        if min_per_rule < _cfg.PHASE3_PER_RULE_MIN_VAL_TRADES_PER_SYMBOL:
             gate_penalty += _cfg.PHASE3_VAL_GATE_PENALTY
-        if val_pf < _cfg.PHASE3_VAL_PROFIT_FACTOR_FLOOR:
-            gate_penalty += _cfg.PHASE3_VAL_GATE_PENALTY
+    if val_ret < _cfg.PHASE3_VAL_RETURN_FLOOR_PCT:
+        gate_penalty += _cfg.PHASE3_VAL_GATE_PENALTY
+    if val_pf < _cfg.PHASE3_VAL_PROFIT_FACTOR_FLOOR:
+        gate_penalty += _cfg.PHASE3_VAL_GATE_PENALTY
+    if train_ret < _cfg.PHASE3_TRAIN_RETURN_FLOOR_PCT:
+        gate_penalty += _cfg.PHASE3_VAL_GATE_PENALTY
+    if train_pf < _cfg.PHASE3_TRAIN_PROFIT_FACTOR_FLOOR:
+        gate_penalty += _cfg.PHASE3_VAL_GATE_PENALTY
 
     total_penalty = (
         zero_penalty + coverage_penalty + dup_penalty
         + symbol_consistency_penalty_val + corr_penalty + gate_penalty
         + incremental_penalty + jaccard_penalty
+        + train_val_gap_penalty(train_metrics, val_metrics)
         + _symbol_robustness_penalty(train_metrics)
         + _symbol_robustness_penalty(val_metrics)
     )
@@ -272,9 +296,13 @@ def compute_phase3_objectives(
              -train_wr + total_penalty],
             dtype=np.float64,
         )
+
+    eff_sortino = min(train_sortino, val_sortino)
+    eff_dd = max(train_dd, val_dd)
+    eff_wr = min(train_wr, val_wr)
     return np.array(
-        [-val_sortino + total_penalty,
-         val_dd + total_penalty,
-         -val_wr + total_penalty],
+        [-eff_sortino + total_penalty,
+         eff_dd + total_penalty,
+         -eff_wr + total_penalty],
         dtype=np.float64,
     )

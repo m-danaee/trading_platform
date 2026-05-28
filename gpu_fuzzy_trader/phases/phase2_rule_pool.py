@@ -41,6 +41,7 @@ from gpu_fuzzy_trader.features.encoder import decode_chromosome, get_dont_care
 from gpu_fuzzy_trader.log_progress import maybe_log_generation
 from gpu_fuzzy_trader.phases.phase2_support import (
     compute_support_penalty_and_specialist,
+    passes_pool_admission_gate,
     passes_pool_trade_floor,
     regime_row_fractions,
     trade_support_penalty as _regime_trade_support_penalty,
@@ -739,6 +740,25 @@ def _metrics_dict_from_population(
 # Pool construction
 # ---------------------------------------------------------------------------
 
+def _simulate_val_metrics_for_chrom(
+    chrom: np.ndarray,
+    val_engine,
+) -> dict | None:
+    """Full validation backtest for one chromosome (pool admission)."""
+    if val_engine is None:
+        return None
+    try:
+        val_list = val_engine.simulate_rule_batch(
+            chromosomes=chrom[None, :],
+            tp=_cfg.PHASE2_TP,
+            sl=_cfg.PHASE2_SL,
+            capital_pct=_cfg.PHASE2_CAPITAL_PCT,
+        )
+        return val_list[0]
+    except Exception:
+        return None
+
+
 def _build_pool_from_archive(
     archive: list[np.ndarray],
     feature_infos: list[dict],
@@ -746,6 +766,7 @@ def _build_pool_from_archive(
     engine,
     metrics_by_chrom: dict[tuple, dict] | None = None,
     regime_row_fractions_arr: np.ndarray | None = None,
+    val_engine=None,
 ) -> list[dict]:
     """
     Convert a list of Pareto-front chromosomes into pool JSON entries.
@@ -796,6 +817,10 @@ def _build_pool_from_archive(
         ):
             continue
 
+        val_metrics = _simulate_val_metrics_for_chrom(chrom, val_engine)
+        if not passes_pool_admission_gate(metrics, val_metrics):
+            continue
+
         try:
             conditions = decode_chromosome(chrom, feature_infos)
         except Exception:
@@ -810,11 +835,23 @@ def _build_pool_from_archive(
             "objectives": {
                 "sortino_ratio": float(metrics.get("sortino_ratio", metrics.get("total_return_pct", 0.0))),
                 "total_return_pct": float(metrics.get("total_return_pct", 0.0)),
+                "profit_factor": float(metrics.get("profit_factor", 0.0)),
                 "max_drawdown_pct": float(metrics.get("max_drawdown_pct", 0.0)),
                 "win_rate": float(metrics.get("win_rate", 0.0)),
             },
             "executed_trades": executed,
         }
+        if val_metrics is not None:
+            pool_entry["val_objectives"] = {
+                "sortino_ratio": float(val_metrics.get(
+                    "sortino_ratio", val_metrics.get("total_return_pct", 0.0))),
+                "total_return_pct": float(val_metrics.get("total_return_pct", 0.0)),
+                "profit_factor": float(val_metrics.get("profit_factor", 0.0)),
+                "max_drawdown_pct": float(val_metrics.get("max_drawdown_pct", 0.0)),
+                "win_rate": float(val_metrics.get("win_rate", 0.0)),
+            }
+            pool_entry["val_executed_trades"] = int(
+                val_metrics.get("executed_trades", 0))
         if metrics.get("regime_specialist"):
             pool_entry["regime_specialist"] = True
             pool_entry["dominant_regime"] = int(
@@ -868,6 +905,33 @@ def _is_better_archive_entry(candidate: dict, incumbent: dict) -> bool:
     if _dominates(incumbent_vec, candidate_vec):
         return False
     return tuple(candidate_vec.tolist()) < tuple(incumbent_vec.tolist())
+
+
+def _pool_entry_passes_admission(entry: dict) -> bool:
+    """Check stored train/val metrics on a pool JSON entry."""
+    objectives = entry.get("objectives", {}) or {}
+    train_metrics = {
+        "total_return_pct": float(objectives.get("total_return_pct", 0.0)),
+        "profit_factor": float(objectives.get("profit_factor", 1.0)),
+        "executed_trades": int(entry.get("executed_trades", 0)),
+        "regime_specialist": entry.get("regime_specialist", False),
+        "dominant_regime": entry.get("dominant_regime", -1),
+    }
+    val_obj = entry.get("val_objectives")
+    if val_obj is None:
+        return passes_pool_admission_gate(train_metrics, None)
+    val_metrics = {
+        "total_return_pct": float(val_obj.get("total_return_pct", 0.0)),
+        "profit_factor": float(val_obj.get("profit_factor", 1.0)),
+        "executed_trades": int(entry.get("val_executed_trades", 0)),
+    }
+    return passes_pool_admission_gate(train_metrics, val_metrics)
+
+
+def _filter_pool_by_admission(pool: list[dict]) -> list[dict]:
+    if not _cfg.PHASE2_POOL_REQUIRE_POSITIVE_SPLITS:
+        return pool
+    return [e for e in pool if _pool_entry_passes_admission(e)]
 
 
 def _merge_archive_entries(
@@ -1358,6 +1422,17 @@ class Rule_Pool_Generator:
         )
 
         pool = _merge_archive_entries(previous_pool + list(new_pool))
+        pool_before_admission = len(pool)
+        pool = _filter_pool_by_admission(pool)
+        if pool_before_admission != len(pool):
+            logger.info(
+                "Phase 2 [%s]: pool admission filter %d → %d rules "
+                "(train+val return>0, PF>=%.2f)",
+                self.direction,
+                pool_before_admission,
+                len(pool),
+                _cfg.PHASE2_PROFIT_FACTOR_FLOOR,
+            )
         logger.info(
             "Phase 2 [%s]: merged pool %d previous + %d new → %d retained",
             self.direction,

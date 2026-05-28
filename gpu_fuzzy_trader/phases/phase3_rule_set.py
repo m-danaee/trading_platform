@@ -276,9 +276,9 @@ def _evaluate_rule_set(
     val_engine,
     train_engine,
     cache: Phase3EvalCache | None = None,
-) -> tuple[np.ndarray, dict]:
+) -> tuple[np.ndarray, dict, dict]:
     """
-    Evaluate a candidate rule set and return (objectives, train_metrics).
+    Evaluate a candidate rule set and return (objectives, train_metrics, val_metrics).
     """
     train_metrics, val_metrics = _simulate_team(
         rule_set, train_engine, val_engine, cache)
@@ -293,7 +293,7 @@ def _evaluate_rule_set(
         val_masks_by_key=val_masks,
         n_rows_val=n_rows_val,
     )
-    return objectives, train_metrics
+    return objectives, train_metrics, val_metrics
 
 
 # ---------------------------------------------------------------------------
@@ -625,7 +625,7 @@ def _run_nsga2_combinatorial(
         else:
             for i in pending:
                 engine_fmt = _rule_set_to_engine_format(population[i])
-                obj, _ = _evaluate_rule_set(
+                obj, _, _ = _evaluate_rule_set(
                     engine_fmt, val_engine, train_engine, cache=cache)
                 objectives[i] = obj
 
@@ -703,30 +703,62 @@ def _select_best_from_pareto(
     """
     Select the best rule set from the Pareto front.
 
-    Strategy: pick the rule set with the highest validation return (minimum f1).
-    If the Pareto front is empty, fall back to the first rule set.
+    Default: maximin(train_return, val_return) with profitability floors.
+    Fallback: minimum f1 objective when maximin scores tie.
     """
     if not pareto_rule_sets:
         raise ValueError(
             "Pareto front is empty — cannot select best rule set.")
 
     best_idx = 0
+    best_score = -np.inf
     best_f1 = np.inf
 
     for i, rs in enumerate(pareto_rule_sets):
         engine_fmt = _rule_set_to_engine_format(rs)
-        obj, _ = _evaluate_rule_set(
+        obj, train_metrics, val_metrics = _evaluate_rule_set(
             engine_fmt, val_engine, train_engine, cache=cache)
-        if obj[0] < best_f1:
-            best_f1 = obj[0]
+        score = _maximin_selection_score(train_metrics, val_metrics)
+        f1 = float(obj[0])
+        if score > best_score or (score == best_score and f1 < best_f1):
+            best_score = score
+            best_f1 = f1
             best_idx = i
 
-    return pareto_rule_sets[best_idx]
+    return _cap_capital_per_rule(pareto_rule_sets[best_idx])
 
 
 # ---------------------------------------------------------------------------
 # Output serialisation
 # ---------------------------------------------------------------------------
+
+def _cap_capital_per_rule(rule_set: list[dict]) -> list[dict]:
+    """Limit per-rule capital_pct to reduce concentration risk."""
+    cap = float(_cfg.PHASE3_MAX_CAPITAL_PCT_PER_RULE)
+    out: list[dict] = []
+    for rule in rule_set:
+        r = dict(rule)
+        r["capital_pct"] = min(
+            float(r.get("capital_pct", _cfg.PHASE2_CAPITAL_PCT)), cap)
+        out.append(r)
+    return out
+
+
+def _maximin_selection_score(train_metrics: dict, val_metrics: dict) -> float:
+    """Higher is better; hard-reject unprofitable splits."""
+    train_ret = float(train_metrics.get("total_return_pct", 0.0))
+    val_ret = float(val_metrics.get("total_return_pct", 0.0))
+    train_pf = float(train_metrics.get("profit_factor", 0.0))
+    val_pf = float(val_metrics.get("profit_factor", 0.0))
+    if (
+        train_ret < _cfg.PHASE3_TRAIN_RETURN_FLOOR_PCT
+        or val_ret < _cfg.PHASE3_VAL_RETURN_FLOOR_PCT
+        or train_pf < _cfg.PHASE3_TRAIN_PROFIT_FACTOR_FLOOR
+        or val_pf < _cfg.PHASE3_VAL_PROFIT_FACTOR_FLOOR
+    ):
+        return -1e9
+    return min(train_ret, val_ret)
+
 
 def _build_output_dict(rule_set: list[dict], direction: str) -> dict:
     """
@@ -734,6 +766,7 @@ def _build_output_dict(rule_set: list[dict], direction: str) -> dict:
 
     Uses Phase 2 static TP/SL/capital_pct values (Phase 4 will update them).
     """
+    rule_set = _cap_capital_per_rule(rule_set)
     rules_list = []
     for rule in rule_set:
         rules_list.append({

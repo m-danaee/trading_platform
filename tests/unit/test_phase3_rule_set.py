@@ -332,7 +332,8 @@ class TestBuildOutputDict:
         rule = result["rules_set"][0]
         assert rule["tp"] == _cfg.PHASE2_TP
         assert rule["sl"] == _cfg.PHASE2_SL
-        assert rule["capital_pct"] == _cfg.PHASE2_CAPITAL_PCT
+        assert rule["capital_pct"] == min(
+            _cfg.PHASE2_CAPITAL_PCT, _cfg.PHASE3_MAX_CAPITAL_PCT_PER_RULE)
 
     def test_conditions_preserved(self):
         pool = [{"conditions": ["[feat_0] IS Very High", "[feat_1] IS Low"],
@@ -695,7 +696,8 @@ class TestRuleSetSelectorRun:
             for rule in result["rules_set"]:
                 assert rule["tp"] == _cfg.PHASE2_TP
                 assert rule["sl"] == _cfg.PHASE2_SL
-                assert rule["capital_pct"] == _cfg.PHASE2_CAPITAL_PCT
+                assert rule["capital_pct"] == min(
+                    _cfg.PHASE2_CAPITAL_PCT, _cfg.PHASE3_MAX_CAPITAL_PCT_PER_RULE)
         finally:
             m._OUTPUT_PATHS.update(original)
 
