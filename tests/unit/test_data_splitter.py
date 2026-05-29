@@ -96,10 +96,13 @@ def _split(symbol_sizes: dict, tmp_dir: str) -> tuple[pd.DataFrame, pd.DataFrame
     splitter_mod.TRAIN_75_PATH = train_path
     splitter_mod.VALIDATION_25_PATH = val_path
 
+    prev_mode = config_mod.SPLIT_MODE
+    config_mod.SPLIT_MODE = "holdout_75_25"
     try:
         df = _make_df(symbol_sizes)
-        train_df, val_df = Data_Splitter().split_and_persist(df)
+        train_df, val_df, _folds = Data_Splitter().split_and_persist(df)
     finally:
+        config_mod.SPLIT_MODE = prev_mode
         splitter_mod.TRAIN_75_PATH = original_train
         splitter_mod.VALIDATION_25_PATH = original_val
 
@@ -296,7 +299,8 @@ class TestEdgeCases:
             empty_df = pd.DataFrame(
                 columns=["datetime", "symbol", "feature_a", "_symbol_bar_index"]
             )
-            train_df, val_df = Data_Splitter().split_and_persist(empty_df)
+            config_mod.SPLIT_MODE = "holdout_75_25"
+            train_df, val_df, _folds = Data_Splitter().split_and_persist(empty_df)
             assert len(train_df) == 0
             assert len(val_df) == 0
         finally:
@@ -349,9 +353,10 @@ class TestModuleLevelFunction:
 
         try:
             df = _make_df({1: 100})
+            config_mod.SPLIT_MODE = "holdout_75_25"
             result = split_and_persist(df)
             assert isinstance(result, tuple)
-            assert len(result) == 2
+            assert len(result) == 3
         finally:
             splitter_mod.TRAIN_75_PATH = original_train
             splitter_mod.VALIDATION_25_PATH = original_val
@@ -368,8 +373,9 @@ class TestModuleLevelFunction:
 
         try:
             df = _make_df({1: 100})
-            train_func, val_func = split_and_persist(df)
-            train_class, val_class = Data_Splitter().split_and_persist(df)
+            config_mod.SPLIT_MODE = "holdout_75_25"
+            train_func, val_func, _ = split_and_persist(df)
+            train_class, val_class, _ = Data_Splitter().split_and_persist(df)
             pd.testing.assert_frame_equal(
                 train_func.reset_index(drop=True),
                 train_class.reset_index(drop=True),

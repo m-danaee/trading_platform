@@ -1187,6 +1187,7 @@ class Rule_Pool_Generator:
         n_generations: int | None = None,
         seed: int | None = None,
         val_df: pd.DataFrame | None = None,
+        cv_folds: list | None = None,
     ) -> None:
         if direction not in ("long", "short"):
             raise ValueError(
@@ -1220,51 +1221,72 @@ class Rule_Pool_Generator:
         # Build feature_modes dict for engine
         self._feature_modes = {fi["name"]: fi["mode"] for fi in feature_infos}
 
-        # Initialise backtest engine (GPU preferred, CPU fallback)
-        self._engine = self._build_engine(
-            regime_ids=train_regime_ids,
-            n_regimes=self._n_regimes,
-        )
-
-        # Optional validation engine for joint train+val objective
         self._val_engine = None
         self._val_regime_row_counts = None
-        if val_df is not None and _cfg.PHASE2_JOINT_TRAIN_VAL:
-            try:
-                val_sampled = _sample_df(
-                    val_df,
-                    _cfg.PHASE1_SAMPLING_TOTAL,
-                    random_state=sample_seed,
-                )
-                val_regime_ids, _val_fracs, val_n_regimes = (
-                    _prepare_regime_context(val_sampled)
-                )
-                if val_regime_ids is not None:
-                    self._val_regime_row_counts = np.bincount(
-                        val_regime_ids.astype(np.int64),
-                        minlength=val_n_regimes,
-                    ).astype(np.int64)
-                slim_val = slim_backtest_df(val_sampled, feature_names)
-                self._val_engine = self._build_engine_for_df(
-                    slim_val,
-                    regime_ids=val_regime_ids,
-                    n_regimes=val_n_regimes,
-                )
-                if self._val_regime_row_counts is not None:
-                    self._val_engine._regime_row_counts = (
-                        self._val_regime_row_counts
+        use_cv = (
+            cv_folds
+            and len(cv_folds) > 0
+            and str(_cfg.SPLIT_MODE).strip().lower() == "purged_rolling_cv"
+        )
+
+        if use_cv:
+            from gpu_fuzzy_trader.phases.phase2_cv import build_cv_fold_engines
+
+            cv_train, cv_val = build_cv_fold_engines(
+                cv_folds,
+                feature_infos,
+                direction,
+                seed=self.seed,
+                builder=self,
+            )
+            self._engine = cv_train
+            self._val_engine = cv_val
+            if cv_val is not None:
+                self._val_regime_row_counts = getattr(
+                    cv_val, "_regime_row_counts", None)
+        else:
+            # Initialise backtest engine (GPU preferred, CPU fallback)
+            self._engine = self._build_engine(
+                regime_ids=train_regime_ids,
+                n_regimes=self._n_regimes,
+            )
+
+            if val_df is not None and _cfg.PHASE2_JOINT_TRAIN_VAL:
+                try:
+                    val_sampled = _sample_df(
+                        val_df,
+                        _cfg.PHASE1_SAMPLING_TOTAL,
+                        random_state=sample_seed,
                     )
-                logger.info(
-                    "Phase 2 [%s]: joint train+val objective enabled "
-                    "(val_rows=%d)", direction, len(slim_val),
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Phase 2 [%s]: failed to build val engine, "
-                    "falling back to train-only objective: %s",
-                    direction, exc,
-                )
-                self._val_engine = None
+                    val_regime_ids, _val_fracs, val_n_regimes = (
+                        _prepare_regime_context(val_sampled)
+                    )
+                    if val_regime_ids is not None:
+                        self._val_regime_row_counts = np.bincount(
+                            val_regime_ids.astype(np.int64),
+                            minlength=val_n_regimes,
+                        ).astype(np.int64)
+                    slim_val = slim_backtest_df(val_sampled, feature_names)
+                    self._val_engine = self._build_engine_for_df(
+                        slim_val,
+                        regime_ids=val_regime_ids,
+                        n_regimes=val_n_regimes,
+                    )
+                    if self._val_regime_row_counts is not None:
+                        self._val_engine._regime_row_counts = (
+                            self._val_regime_row_counts
+                        )
+                    logger.info(
+                        "Phase 2 [%s]: joint train+val objective enabled "
+                        "(val_rows=%d)", direction, len(slim_val),
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Phase 2 [%s]: failed to build val engine, "
+                        "falling back to train-only objective: %s",
+                        direction, exc,
+                    )
+                    self._val_engine = None
 
         from gpu_fuzzy_trader._memory import log_memory_rss
 

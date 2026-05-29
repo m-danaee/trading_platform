@@ -273,15 +273,81 @@ def _build_phase3_engines(
     return val_engine, train_engine, use_parallel, use_jax, cache
 
 
+def _merge_phase3_metrics_worst(
+    current: dict | None,
+    new: dict,
+) -> dict:
+    """Conservative merge for CV fold aggregation (min return/PF/WR, max DD)."""
+    if current is None:
+        return dict(new)
+    out = dict(current)
+    out["total_return_pct"] = min(
+        float(out.get("total_return_pct", 0.0)),
+        float(new.get("total_return_pct", 0.0)),
+    )
+    out["sortino_ratio"] = min(
+        float(out.get("sortino_ratio", out.get("total_return_pct", 0.0))),
+        float(new.get("sortino_ratio", new.get("total_return_pct", 0.0))),
+    )
+    out["max_drawdown_pct"] = max(
+        float(out.get("max_drawdown_pct", 0.0)),
+        float(new.get("max_drawdown_pct", 0.0)),
+    )
+    out["win_rate"] = min(
+        float(out.get("win_rate", 0.0)),
+        float(new.get("win_rate", 0.0)),
+    )
+    out["profit_factor"] = min(
+        float(out.get("profit_factor", 0.0)),
+        float(new.get("profit_factor", 0.0)),
+    )
+    out["executed_trades"] = min(
+        int(out.get("executed_trades", 0)),
+        int(new.get("executed_trades", 0)),
+    )
+    return out
+
+
 def _evaluate_rule_set(
     rule_set: list[dict],
     val_engine,
     train_engine,
     cache: Phase3EvalCache | None = None,
+    *,
+    cv_fold_contexts: list[tuple] | None = None,
 ) -> tuple[np.ndarray, dict, dict]:
     """
     Evaluate a candidate rule set and return (objectives, train_metrics, val_metrics).
+
+    When *cv_fold_contexts* is set, objectives use the **worst** fold (maximised
+    f1/f2/f3 among folds) and returned metrics are conservative merges.
     """
+    if cv_fold_contexts:
+        worst_obj: np.ndarray | None = None
+        agg_train: dict | None = None
+        agg_val: dict | None = None
+        for val_eng, train_eng, _, _, fold_cache in cv_fold_contexts:
+            train_m, val_m = _simulate_team(
+                rule_set, train_eng, val_eng, fold_cache)
+            per_rule = (
+                fold_cache.per_rule_min_val_trades if fold_cache else None)
+            val_masks = fold_cache.val_masks if fold_cache else None
+            n_rows = fold_cache.n_rows_val if fold_cache else 0
+            obj = compute_phase3_objectives(
+                train_m,
+                val_m,
+                rule_set,
+                per_rule_min_val_trades=per_rule,
+                val_masks_by_key=val_masks,
+                n_rows_val=n_rows,
+            )
+            if worst_obj is None or float(np.sum(obj)) > float(np.sum(worst_obj)):
+                worst_obj = obj
+            agg_train = _merge_phase3_metrics_worst(agg_train, train_m)
+            agg_val = _merge_phase3_metrics_worst(agg_val, val_m)
+        assert worst_obj is not None and agg_train is not None and agg_val is not None
+        return worst_obj, agg_train, agg_val
+
     train_metrics, val_metrics = _simulate_team(
         rule_set, train_engine, val_engine, cache)
     per_rule = cache.per_rule_min_val_trades if cache is not None else None
@@ -546,6 +612,7 @@ def _run_nsga2_combinatorial(
     use_jax: bool = False,
     cache: Phase3EvalCache | None = None,
     log_tag: str | None = None,
+    cv_fold_contexts: list[tuple] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """
     Run NSGA-II combinatorial search over rule set combinations.
@@ -600,6 +667,7 @@ def _run_nsga2_combinatorial(
     history: list[dict] = []
 
     tag = log_tag or "Phase 3 NSGA-II"
+    use_batch_eff = bool(use_batch) and not cv_fold_contexts
     logger.info(
         "%s: pool=%d, pop=%d, gen=%d",
         tag, len(pool), effective_pop, n_generations,
@@ -610,7 +678,7 @@ def _run_nsga2_combinatorial(
         # Evaluate unevaluated individuals
         pending = [i for i in range(effective_pop)
                    if np.any(np.isinf(objectives[i]))]
-        if pending and use_batch:
+        if pending and use_batch_eff:
             fmts = [_rule_set_to_engine_format(population[i]) for i in pending]
             train_list, val_list = _simulate_teams_batch(
                 fmts, train_engine, val_engine, cache, use_jax)
@@ -628,7 +696,12 @@ def _run_nsga2_combinatorial(
             for i in pending:
                 engine_fmt = _rule_set_to_engine_format(population[i])
                 obj, _, _ = _evaluate_rule_set(
-                    engine_fmt, val_engine, train_engine, cache=cache)
+                    engine_fmt,
+                    val_engine,
+                    train_engine,
+                    cache=cache,
+                    cv_fold_contexts=cv_fold_contexts,
+                )
                 objectives[i] = obj
 
         # Non-dominated sort
@@ -750,6 +823,7 @@ def _select_best_from_pareto(
     val_engine: CPUBacktestEngine,
     train_engine: CPUBacktestEngine,
     cache: Phase3EvalCache | None = None,
+    cv_fold_contexts: list[tuple] | None = None,
 ) -> list[dict]:
     """
     Select the best rule set from the Pareto front.
@@ -769,7 +843,12 @@ def _select_best_from_pareto(
     for i, rs in enumerate(pareto_rule_sets):
         engine_fmt = _rule_set_to_engine_format(rs)
         obj, train_metrics, val_metrics = _evaluate_rule_set(
-            engine_fmt, val_engine, train_engine, cache=cache)
+            engine_fmt,
+            val_engine,
+            train_engine,
+            cache=cache,
+            cv_fold_contexts=cv_fold_contexts,
+        )
         score = _maximin_selection_score(train_metrics, val_metrics)
         f1 = float(obj[0])
         tiebreak = _pareto_selection_tiebreak(
@@ -882,6 +961,7 @@ class Rule_Set_Selector:
         refine_pop_size: int | None = None,
         refine_generations: int | None = None,
         seed: int = 42,
+        cv_folds: list | None = None,
     ) -> None:
         if direction not in ("long", "short"):
             raise ValueError(
@@ -906,13 +986,37 @@ class Rule_Set_Selector:
         )
         self.seed = seed
 
-        (
-            self._val_engine,
-            self._train_engine,
-            self._use_parallel_batch,
-            self._use_jax_gpu,
-            self._eval_cache,
-        ) = _build_phase3_engines(train_df, val_df, direction, pool)
+        self._cv_fold_contexts: list[tuple] | None = None
+        use_cv = (
+            cv_folds
+            and len(cv_folds) > 0
+            and str(_cfg.SPLIT_MODE).strip().lower() == "purged_rolling_cv"
+        )
+        if use_cv:
+            self._cv_fold_contexts = [
+                _build_phase3_engines(f.train_df, f.val_df, direction, pool)
+                for f in cv_folds
+            ]
+            (
+                self._val_engine,
+                self._train_engine,
+                self._use_parallel_batch,
+                self._use_jax_gpu,
+                self._eval_cache,
+            ) = self._cv_fold_contexts[-1]
+            logger.info(
+                "Phase 3 [%s]: purged CV evaluation (%d folds)",
+                direction,
+                len(self._cv_fold_contexts),
+            )
+        else:
+            (
+                self._val_engine,
+                self._train_engine,
+                self._use_parallel_batch,
+                self._use_jax_gpu,
+                self._eval_cache,
+            ) = _build_phase3_engines(train_df, val_df, direction, pool)
 
     # ------------------------------------------------------------------
     # Public API
@@ -950,6 +1054,7 @@ class Rule_Set_Selector:
             use_batch=self._use_parallel_batch or self._use_jax_gpu,
             use_jax=self._use_jax_gpu,
             cache=self._eval_cache,
+            cv_fold_contexts=self._cv_fold_contexts,
         )
         logger.info(
             "Phase 3 [%s]: greedy done (%d evals), refining...",
@@ -980,6 +1085,7 @@ class Rule_Set_Selector:
             use_jax=self._use_jax_gpu,
             cache=self._eval_cache,
             log_tag=refine_tag,
+            cv_fold_contexts=self._cv_fold_contexts,
         )
         logger.info(
             "Phase 3 [%s]: refine complete, pareto_front=%d rule sets",
@@ -999,6 +1105,7 @@ class Rule_Set_Selector:
                 self._val_engine,
                 self._train_engine,
                 cache=self._eval_cache,
+                cv_fold_contexts=self._cv_fold_contexts,
             )
 
         output_dict = _build_output_dict(best_rule_set, self.direction)

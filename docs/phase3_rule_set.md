@@ -14,7 +14,7 @@ Phase 3 takes the pool of individual rules from Phase 2 and selects the best **c
 
 **Input:** A pool of N rules (typically 50–500 from Phase 2).
 **Output:** An ordered list of 2–3 rules (the strategy).
-**Evaluation:** The combined strategy is backtested on the **validation split** using `CPUBacktestEngine`.
+**Evaluation:** The combined strategy is backtested with `CPUBacktestEngine` on train and validation data. When `SPLIT_MODE == "purged_rolling_cv"`, each candidate is scored on **all CV folds** and the **worst fold** drives the objectives (see Section 5).
 
 The search space is all ordered combinations of `PHASE3_MIN_RULES` to `PHASE3_MAX_RULES` rules from the pool, with no duplicate rules. For a pool of 100 rules and 2–3 rule sets, this is approximately:
 
@@ -50,9 +50,11 @@ score = w1 × primary_sortino − w2 × primary_dd + w3 × primary_wr − penalt
 
 `PHASE3_GREEDY_WEIGHTS = (1.0, 0.7, 0.5)` (config): weights for Sortino, drawdown, and win rate.
 
-**When `PHASE3_USE_TRAIN_TARGET = True` (default):** `primary_*` metrics come from the **training split**. The validation split is used only for gate penalties (see Section 4). This reduces validation leakage: the greedy search optimizes on training, and validation is used only to reject overfitting.
+**When `PHASE3_USE_TRAIN_TARGET = True` (default):** `primary_*` metrics come from the **training split**. Validation is used for gate penalties (Section 4). Recommended with purged CV so objectives are not tuned directly on a single lucky val quarter.
 
-**When `PHASE3_USE_TRAIN_TARGET = False`:** `primary_*` metrics come from the validation split. This is the traditional approach but risks overfitting to the validation set.
+**When `PHASE3_USE_TRAIN_TARGET = False`:** `primary_*` metrics come from validation. Risks overfitting to the persisted `validation_25` block — avoid for short unless experimenting.
+
+**`PHASE3_USE_MAXIMIN_SCORE`:** Greedy tie-breaking uses `min(train_return, val_return)` and similar minimax Sortino logic when both splits are available.
 
 **Effect of `PHASE3_GREEDY_WEIGHTS`:** The first weight (Sortino) dominates by default. Increasing the second weight (drawdown) will favor lower-drawdown strategies. Increasing the third weight (win rate) will favor higher win-rate strategies.
 
@@ -177,7 +179,7 @@ if val_sortino < PHASE3_VAL_SORTINO_RATIO_GATE × train_sortino:
     gate_penalty += PHASE3_VAL_GATE_PENALTY
 ```
 
-`PHASE3_VAL_SORTINO_RATIO_GATE = 0.5`, `PHASE3_VAL_GATE_PENALTY = 75.0` (config). If the validation Sortino is less than 50% of the training Sortino, the strategy is penalized. This rejects strategies that overfit to training.
+`PHASE3_VAL_SORTINO_RATIO_GATE = 0.7`, `PHASE3_VAL_GATE_PENALTY = 100.0` (config). If validation Sortino is below 70% of training Sortino, a large penalty is applied.
 
 **Drawdown gate:**
 ```python
@@ -185,7 +187,7 @@ if val_dd > PHASE3_VAL_DRAWDOWN_RATIO_GATE × train_dd:
     gate_penalty += PHASE3_VAL_GATE_PENALTY
 ```
 
-`PHASE3_VAL_DRAWDOWN_RATIO_GATE = 1.5` (config). If the validation drawdown is more than 1.5× the training drawdown, the strategy is penalized.
+`PHASE3_VAL_DRAWDOWN_RATIO_GATE = 1.15` (config). If validation drawdown exceeds 115% of training drawdown, penalized.
 
 **Per-rule minimum validation trades gate:**
 ```python
@@ -193,15 +195,32 @@ if min_per_rule_val_trades < PHASE3_PER_RULE_MIN_VAL_TRADES_PER_SYMBOL:
     gate_penalty += PHASE3_VAL_GATE_PENALTY
 ```
 
-`PHASE3_PER_RULE_MIN_VAL_TRADES_PER_SYMBOL = 5` (config). Each rule in the set must generate at least 5 trades per symbol in the validation split. This prevents rules that barely fire in validation from being selected.
+`PHASE3_PER_RULE_MIN_VAL_TRADES_PER_SYMBOL = 15` (config). Each rule must have sufficient per-symbol trades on validation.
 
-**Effect of `PHASE3_VAL_GATE_PENALTY`:** This is the most impactful parameter. At 75.0, a single gate violation completely dominates the objective values (which are typically in the range −5 to +5). Increasing it makes the gates harder. Decreasing it makes them softer (more overfitting risk).
+**Train/val gap penalties:** `PHASE3_TRAIN_VAL_GAP_MAX_PCT` and `PHASE3_VAL_TRAIN_GAP_MAX_PCT` (default 10%) penalize strategies where one split is much better than the other — catches short val-lucky / train-lucky failure modes.
 
-**Effect of `PHASE3_VAL_SORTINO_RATIO_GATE`:** Increasing this (e.g., to 0.8) requires validation Sortino to be at least 80% of training Sortino — a stricter anti-overfitting gate. Decreasing it (e.g., to 0.2) is more permissive.
+**Effect of `PHASE3_VAL_GATE_PENALTY`:** At 100.0, a single gate violation dominates the objective vector. Increase for stricter gates; decrease only if the search finds no feasible teams.
 
 ---
 
-## 5. Phase3EvalCache — Signal Mask Precomputation
+## 5. Purged CV evaluation (`SPLIT_MODE == "purged_rolling_cv"`)
+
+`Rule_Set_Selector` receives `cv_folds` from the pipeline and builds one `Phase3EvalCache` + engine pair per fold.
+
+For each candidate rule set, `_evaluate_rule_set(..., cv_fold_contexts=...)`:
+
+1. Simulates the team on every fold's train and val engines.
+2. Computes `compute_phase3_objectives` per fold.
+3. Keeps the fold with the **worst** total objective (highest `f1 + f2 + f3` among folds, since objectives are minimized).
+4. Returns **conservative merged** train/val metrics (min return/PF/WR, max DD) for reporting and maximin selection.
+
+Greedy and NSGA-II paths disable JAX/parallel batch when CV is active (per-fold evaluation loop).
+
+Mask-based penalties (Jaccard, incremental trades) use the **last fold's** cache — the same block persisted as `validation_25`.
+
+---
+
+## 6. Phase3EvalCache — Signal Mask Precomputation
 
 `build_phase3_eval_cache` precomputes boolean signal masks for every rule in the pool on both the training and validation DataFrames. This avoids recomputing `_apply_dynamic_rule` for every rule in every candidate evaluation.
 
@@ -211,9 +230,9 @@ The cache also stores `per_rule_min_val_trades`: the minimum per-symbol trade co
 
 ---
 
-## 6. Parallel Batch Evaluation
+## 7. Parallel Batch Evaluation
 
-When `PHASE3_USE_PARALLEL_BATCH = True` (default), multiple rule set candidates are evaluated in parallel using `CPUBacktestEngine.simulate_rule_set_batch`:
+When `PHASE3_USE_PARALLEL_BATCH = True` (default) and **not** using purged CV, multiple rule set candidates are evaluated in parallel using `CPUBacktestEngine.simulate_rule_set_batch`:
 
 - If the cache is available: uses `ThreadPoolExecutor` (thread-safe, no pickling overhead).
 - Without cache: uses `ProcessPoolExecutor` (separate processes to bypass the GIL).
@@ -224,41 +243,28 @@ When `PHASE3_USE_PARALLEL_BATCH = True` (default), multiple rule set candidates 
 
 ---
 
-## 7. Best Selection from Pareto Front — `_select_best_from_pareto`
+## 8. Best Selection from Pareto Front — `_select_best_from_pareto`
 
-After refinement, the Pareto front contains multiple non-dominated rule sets. The best is selected by picking the one with the minimum f1 (highest primary Sortino after penalties). This is a greedy selection that prioritizes Sortino over drawdown and win rate.
-
----
-
-## 8. Configuration Reference
-
-| Parameter | Default | Technical effect |
-|---|---|---|
-| `PHASE3_MIN_RULES` | `2` | Minimum rules in a strategy. Decrease to allow single-rule strategies (not recommended). |
-| `PHASE3_MAX_RULES` | `3` | Maximum rules in a strategy. Increase to allow larger teams (more coverage but more complexity). |
-| `PHASE3_MIN_SYMBOL_COVERAGE` | `7` | Minimum symbols with ≥1 trade in validation. Increase for broader coverage requirement. |
-| `PHASE3_USE_GPU` | `False` | Use JAX mask path for Phase 3 evaluation. Enable after parity tests pass. |
-| `PHASE3_USE_PARALLEL_BATCH` | `True` | Parallel CPU batch evaluation. Disable only for debugging. |
-| `PHASE3_BATCH_WORKERS` | `min(32, cpu_count)` | Number of parallel workers. Increase to use more CPU cores. |
-| `PHASE3_NUMBA_ENABLED` | `True` | Numba-JIT NSGA helpers. Disable only for debugging. |
-| `PHASE3_REFINE_GENERATIONS` | `80` | Refinement generations. Increase for more evolution (linear compute cost). |
-| `PHASE3_REFINE_POP_SIZE` | `100` | Refinement population size. Increase for better Pareto coverage. |
-| `PHASE3_GREEDY_WEIGHTS` | `(1.0, 0.7, 0.5)` | Sortino/drawdown/win_rate weights for greedy scalar score. |
-| `PHASE3_SYMBOL_CONSISTENCY_WEIGHT` | `10.0` | Weight for train-val symbol overlap penalty. Increase to more aggressively penalize symbol inconsistency. |
-| `PHASE3_USE_TRAIN_TARGET` | `True` | Optimize on training metrics; use validation as gate. Set to `False` to optimize directly on validation (higher overfitting risk). |
-| `PHASE3_VAL_SORTINO_RATIO_GATE` | `0.5` | Minimum val/train Sortino ratio. Increase for stricter anti-overfitting. |
-| `PHASE3_VAL_DRAWDOWN_RATIO_GATE` | `1.5` | Maximum val/train drawdown ratio. Decrease for stricter drawdown gate. |
-| `PHASE3_PER_RULE_MIN_VAL_TRADES_PER_SYMBOL` | `5` | Minimum val trades per symbol per rule. Increase to require more validation evidence per rule. |
-| `PHASE3_TRAIN_VAL_CORR_WEIGHT` | `5.0` | Weight for per-symbol PnL correlation penalty. Increase to more aggressively penalize uncorrelated train/val PnL patterns. |
-| `PHASE3_VAL_GATE_PENALTY` | `75.0` | Penalty magnitude for gate violations. This dominates the objective space — a single violation effectively disqualifies a strategy. |
-| `PHASE3_MIN_INCREMENTAL_TRADES` | `40` | Minimum incremental (non-overlapping) validation entry count after the first rule. |
-| `PHASE3_INCREMENTAL_GATE_PENALTY` | `60.0` | Penalty magnitude when incremental coverage falls below `PHASE3_MIN_INCREMENTAL_TRADES`. |
-| `PHASE3_JACCARD_PENALTY_WEIGHT` | `25.0` | Weight applied to the Jaccard similarity penalty when overlap exceeds the gate. |
-| `PHASE3_JACCARD_SIMILARITY_GATE` | `0.85` | Maximum allowed rule-entry-mask Jaccard similarity before the penalty triggers. |
+After refinement, the Pareto front contains multiple non-dominated rule sets. Selection uses `_maximin_selection_score` (min of train/val returns with profitability floors), with tie-breakers on train/val gap, symbol consistency, and Jaccard overlap. Under purged CV, each candidate is re-evaluated across all folds before scoring.
 
 ---
 
-## 9. Outputs
+## 9. Configuration Reference
+
+See **`gpu_fuzzy_trader/config.py`** (Phase 3 section) for current defaults and tuning notes. Key knobs:
+
+| Parameter | Role |
+|---|---|
+| `PHASE3_USE_TRAIN_TARGET` | Train metrics for objectives; val for gates |
+| `PHASE3_USE_MAXIMIN_SCORE` | Greedy minimax train/val returns |
+| `PHASE3_VAL_*_GATE_*` | Anti-overfit penalties |
+| `PHASE3_*_GAP_*` | Penalise val >> train or train >> val |
+| `PHASE3_MIN_INCREMENTAL_TRADES` / `PHASE3_JACCARD_*` | Rule-team orthogonality |
+| `SPLIT_MODE` | Enables multi-fold evaluation when `purged_rolling_cv` |
+
+---
+
+## 10. Outputs
 
 - `outputs/long.json` / `outputs/short.json` — Strategy files in `evaluator_v3.ipynb` format. At this stage, TP/SL/capital_pct are still the Phase 2 static values. Phase 4 will update them.
 - `outputs/reports/train_long_equity.png` / `outputs/reports/validation_long_equity.png` — Equity curves on training and validation splits.

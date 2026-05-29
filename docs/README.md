@@ -1,37 +1,54 @@
 # Documentation Index
 
-Technical documentation for the GPU-Fuzzy Trading Pipeline. Each document covers one phase in depth: algorithm details, function-by-function explanations, and the effect of every hyperparameter in `config.py`.
+Technical documentation for the GPU-Fuzzy Trading Pipeline. Each document covers one phase in depth: algorithm details, function-by-function explanations, and the effect of hyperparameters in `gpu_fuzzy_trader/config.py`.
 
 | Document | Phase | Key topics |
 |---|---|---|
-| [phase0_shared.md](phase0_shared.md) | Phase 0 — Shared | Data loading, 75/25 split, CPU backtest engine, all shared config constants |
-| [phase1_feature_selection.md](phase1_feature_selection.md) | Phase 1 | Feature mode detection, mutual information scoring, stationarity filter, regime clustering, overlap reduction |
-| [phase2_rule_pool.md](phase2_rule_pool.md) | Phase 2 | Chromosome encoding, NSGA-III/II evolution, support penalties, regime specialists, archive system |
-| [phase3_rule_set.md](phase3_rule_set.md) | Phase 3 | Greedy construction, NSGA-II refinement, validation gates, symbol coverage, train-val correlation penalty |
-| [phase4_wf_risk.md](phase4_wf_risk.md) | Phase 4 | Walk-forward splits, Optuna multi-objective search, TP/SL/capital search space, trial selection |
-| [phase5_oos.md](phase5_oos.md) | Phase 5 | OOS evaluation, cross-split reporting, metric interpretation, failure mode diagnosis |
+| [phase0_shared.md](phase0_shared.md) | Phase 0 — Shared | Data loading, train/val split modes (purged CV vs 75/25), backtest engine, shared config |
+| [phase1_feature_selection.md](phase1_feature_selection.md) | Phase 1 | Feature mode detection, MI scoring, stationarity filter, regime clustering |
+| [phase2_rule_pool.md](phase2_rule_pool.md) | Phase 2 | NSGA-III evolution, joint train/val fitness, **purged CV worst-fold scoring** |
+| [phase3_rule_set.md](phase3_rule_set.md) | Phase 3 | Greedy + NSGA-II, train-target objectives, CV fold gates, orthogonality penalties |
+| [phase4_wf_risk.md](phase4_wf_risk.md) | Phase 4 | Walk-forward on `validation_25`, Optuna TP/SL/capital search |
+| [phase5_oos.md](phase5_oos.md) | Phase 5 | True OOS on `test.csv`, cross-split reports, generalization diagnostics |
+
+## Data flow (three time horizons)
+
+```
+data/train.csv
+    │
+    ├─► Phases 1–4 (in-sample)
+    │       SPLIT_MODE controls Phases 2–3:
+    │         purged_rolling_cv → K folds, worst-fold fitness
+    │         holdout_75_25     → single 75/25 per symbol
+    │       Persisted for Phase 4–5 reports:
+    │         train_75.parquet + validation_25.parquet
+    │         (last CV fold when using purged_rolling_cv)
+    │
+    └─► data/test.csv  →  Phase 5 only (never tune on this file)
+```
 
 ## Quick hyperparameter index
 
-If you want to change a specific behavior, find the relevant parameter here:
-
 | Goal | Parameter | Phase doc |
 |---|---|---|
-| Reduce GPU memory usage | `PHASE1_SAMPLING_TOTAL` | Phase 2 |
-| Require more trades per rule | `MIN_TRADE_SUPPORT` | Phase 2 |
-| Allow more/fewer conditions per rule | `MIN_CONDITIONS`, `MAX_CONDITIONS` | Phase 2 |
-| More evolutionary search budget | `PHASE2_POPULATION_SIZE`, `PHASE2_GENERATIONS` | Phase 2 |
-| Warm-start from previous runs | `PHASE2_ARCHIVE_SEED_FRACTION` | Phase 2 |
-| Require broader symbol coverage | `PHASE3_MIN_SYMBOL_COVERAGE` | Phase 3 |
-| Penalize overlapping rule teams | `PHASE3_JACCARD_SIMILARITY_GATE` | Phase 3 |
-| Require incremental rule coverage | `PHASE3_MIN_INCREMENTAL_TRADES` | Phase 3 |
-| Stricter anti-overfitting gate | `PHASE3_VAL_SORTINO_RATIO_GATE`, `PHASE3_VAL_GATE_PENALTY` | Phase 3 |
-| More refinement budget | `PHASE3_REFINE_POP_SIZE`, `PHASE3_REFINE_GENERATIONS` | Phase 3 |
-| Tighter drawdown constraint | `PHASE4_MAX_WORST_DRAWDOWN_PCT` | Phase 4 |
-| More risk optimization budget | `PHASE4_N_TRIALS` | Phase 4 |
-| More walk-forward windows | `PHASE4_WF_SPLITS` | Phase 4 |
-| Change TP/SL search range | `PHASE4_TP_MIN/MAX`, `PHASE4_SL_MIN/MAX` | Phase 4 |
-| More/fewer features per direction | `PHASE1_TOP_K_FEATURES` | Phase 1 |
-| Force long/short feature divergence | `PHASE1_MAX_FEATURE_OVERLAP` | Phase 1 |
-| Change fee rate | `FEE_PCT` | Phase 0 |
-| Change label horizon | `TAIL_DROP_ROWS`, `MAX_HOLD_CANDLES` | Phase 0 |
+| **Stronger generalization (short OOS)** | `SPLIT_MODE`, `CV_N_FOLDS`, `CV_MIN_TRAIN_MONTHS` | Phase 0, 2, 3 |
+| Faster iteration / legacy behaviour | `SPLIT_MODE = "holdout_75_25"` | Phase 0 |
+| Reduce GPU memory | `PHASE1_SAMPLING_TOTAL` | Phase 1, 2 |
+| More trades per rule | `MIN_TRADE_SUPPORT` | Phase 2 |
+| Rule complexity | `MIN_CONDITIONS`, `MAX_CONDITIONS` | Phase 2 |
+| Evolution budget | `PHASE2_POPULATION_SIZE`, `PHASE2_GENERATIONS` | Phase 2 |
+| Warm-start from prior runs | `PHASE2_ARCHIVE_SEED_FRACTION` | Phase 2 |
+| Symbol coverage in teams | `PHASE3_MIN_SYMBOL_COVERAGE` | Phase 3 |
+| Anti-overlap rule teams | `PHASE3_JACCARD_SIMILARITY_GATE` | Phase 3 |
+| Train/val stability gates | `PHASE3_VAL_SORTINO_RATIO_GATE`, `PHASE3_*_GAP_*` | Phase 3 |
+| Refinement budget | `PHASE3_REFINE_POP_SIZE`, `PHASE3_REFINE_GENERATIONS` | Phase 3 |
+| Risk search budget | `PHASE4_N_TRIALS` | Phase 4 |
+| WF windows on validation | `PHASE4_WF_SPLITS`, `PHASE4_INCLUDE_TAIL_HOLDOUT` | Phase 4 |
+| TP/SL search range | `PHASE4_TP_MIN/MAX`, `PHASE4_SL_MIN/MAX` | Phase 4 |
+| Feature count per direction | `PHASE1_TOP_K_FEATURES` | Phase 1 |
+| Long/short feature divergence | `PHASE1_MAX_FEATURE_OVERLAP` | Phase 1 |
+| Fees / label horizon | `FEE_PCT`, `TAIL_DROP_ROWS`, `MAX_HOLD_CANDLES`, `CV_EMBARGO_BARS` | Phase 0 |
+
+## Config file
+
+All defaults and tuning notes live in **`gpu_fuzzy_trader/config.py`** (module docstring includes a quick tuning map).

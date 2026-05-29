@@ -4,7 +4,9 @@
 
 Phase 4 fine-tunes the risk parameters (TP, SL, and capital allocation) for each rule in the strategy selected by Phase 3. The rule conditions are frozen — Phase 4 only adjusts the numbers, not the logic.
 
-Current config defaults intentionally use a tighter search budget than earlier revisions: `PHASE4_N_TRIALS = 200`, `PHASE4_WF_SPLITS = 4`, `PHASE4_TP_STEP = 0.5`, and `PHASE4_SL_STEP = 0.5`.
+Defaults (see `config.py`): `PHASE4_N_TRIALS = 200`, `PHASE4_WF_SPLITS = 2`, `PHASE4_SAMPLER = "tpe"`, quantized TP/SL steps of `0.5`.
+
+**Important:** Phase 4 walk-forward runs on **`validation_25.parquet` only** — not on all purged CV folds from Phases 2–3. When `SPLIT_MODE == "purged_rolling_cv"`, that file is the **last CV fold's** validation block (most recent in-sample period before `test.csv`).
 
 ---
 
@@ -16,13 +18,13 @@ For each rule in the strategy, Phase 4 searches for the best values of:
 - `sl`: Stop-loss percentage (how far price must move against you before the trade is closed as a loss)
 - `capital_pct`: Percentage of current equity to allocate to this rule's trades
 
-These three parameters per rule define the risk profile of the strategy. Phase 2 used fixed values (`PHASE2_TP = 4.0`, `PHASE2_SL = 2.0`, `PHASE2_CAPITAL_PCT = 32.0`) to isolate rule quality from risk tuning. Phase 4 now optimizes these values jointly.
+These three parameters per rule define the risk profile of the strategy. Phase 2 used fixed values (`PHASE2_TP`, `PHASE2_SL`, `PHASE2_CAPITAL_PCT`) to isolate rule quality from risk tuning. Phase 4 optimizes them jointly on the persisted validation split.
 
 ---
 
 ## 2. Walk-Forward Validation — `split_validation_walk_forward`
 
-The validation split is divided into K chronological windows (`PHASE4_WF_SPLITS = 4` by default).
+The **`validation_25`** DataFrame (not full `train.csv`) is divided into K chronological windows (`PHASE4_WF_SPLITS = 2` by default), plus an optional tail holdout window.
 
 ### How the split works
 
@@ -32,18 +34,27 @@ For each symbol independently:
 2. `np.array_split(np.arange(N), K)` divides the rows into K equal-sized chunks.
 3. Window i = concatenation of all symbols' chunk i.
 
-For example, with K=4 and a symbol with 1000 validation rows:
+For example, with K=2 and a symbol with 1000 validation rows:
 
-- Window 1: rows 0–249 (first quarter of validation period)
-- Window 2: rows 250–499
-- Window 3: rows 500–749
-- Window 4: rows 750–999 (last quarter)
+- Window 1: rows 0–499
+- Window 2: rows 500–999
+
+With `PHASE4_INCLUDE_TAIL_HOLDOUT = True`, an extra window uses the last `PHASE4_TAIL_HOLDOUT_FRACTION` (25%) of each symbol's validation rows.
+
+### Relationship to Phase 2/3 purged CV
+
+| Layer | What is split | Purpose |
+|---|---|---|
+| Phases 2–3 (`purged_rolling_cv`) | Full `train.csv` into K folds | Rule discovery must work in every season |
+| Phase 4 (`PHASE4_WF_SPLITS`) | `validation_25` only | Risk tuning on recent in-sample OOS |
+
+**Recommendation:** If short still fails on `test.csv` after purged CV in P2/P3, increase `PHASE4_WF_SPLITS` (e.g. 4–6) so risk params are stressed on more validation sub-windows.
 
 ### Why walk-forward?
 
-A single validation evaluation can be lucky or unlucky depending on the specific time period. Walk-forward validation evaluates the strategy on multiple non-overlapping time windows and uses the **worst-case** performance across windows as the objective. This is a conservative estimate of out-of-sample performance.
+A single validation evaluation can be lucky or unlucky. Phase 4 uses the **worst-case** return / drawdown across windows (plus feasibility floors `PHASE4_MIN_WORST_FOLD_*`).
 
-**Effect of `PHASE4_WF_SPLITS`:** Increasing K provides more robust worst-case estimates but requires more validation data per window. With K=4, each window has 25% of the validation data. If any symbol has fewer than K validation rows, Phase 4 will raise a `ValueError`.
+**Effect of `PHASE4_WF_SPLITS`:** More windows → stricter estimate, but fewer rows per window. If any symbol has fewer than K validation rows, Phase 4 raises `ValueError`.
 
 ---
 

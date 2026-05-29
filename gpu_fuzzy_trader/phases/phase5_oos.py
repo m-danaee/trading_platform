@@ -338,7 +338,7 @@ class OOS_Evaluator:
         loader = Data_Loader()
         splitter = Data_Splitter()
         train_full = loader.load_dataset(_cfg.TRAIN_CSV_PATH)
-        train_df, val_df = splitter.split_and_persist(train_full)
+        train_df, val_df, _cv_folds = splitter.split_and_persist(train_full)
         test_df = self.prepare_test_data(self.test_csv_path)
 
         datasets["train"] = train_df

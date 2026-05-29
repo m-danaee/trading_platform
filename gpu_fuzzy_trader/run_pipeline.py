@@ -202,9 +202,12 @@ def _now_iso() -> str:
 def _log_pipeline_config() -> None:
     """Log key hyperparameters at pipeline start."""
     logger.info(
-        "Pipeline config: PHASE1 top_k=%d | PHASE2 algo=%s pop=%d gen=%d | "
+        "Pipeline config: SPLIT_MODE=%s CV_FOLDS=%d | PHASE1 top_k=%d | "
+        "PHASE2 algo=%s pop=%d gen=%d | "
         "PHASE3 refine pop=%d gen=%d parallel_batch=%s gpu=%s | "
         "PHASE4 trials=%d wf_splits=%d sampler=%s n_jobs=%d",
+        _cfg.SPLIT_MODE,
+        _cfg.CV_N_FOLDS,
         _cfg.PHASE1_TOP_K_FEATURES,
         _cfg.PHASE2_ALGORITHM,
         _cfg.PHASE2_POPULATION_SIZE,
@@ -374,6 +377,7 @@ class Pipeline_Orchestrator:
     """
 
     def __init__(self, output_dir: str | None = None) -> None:
+        self._cv_folds: list = []
         self._output_dir = _resolve_output_root(output_dir)
         self._log_path = os.path.join(self._output_dir, "pipeline.log")
 
@@ -691,19 +695,26 @@ class Pipeline_Orchestrator:
         """
         Load train.csv and split into train/validation DataFrames.
 
+        Sets ``self._cv_folds`` when ``SPLIT_MODE`` is ``purged_rolling_cv``.
+
         Returns
         -------
         tuple[pd.DataFrame, pd.DataFrame]
             (train_df, val_df)
         """
-        cached_split = self._load_cached_split_if_fresh()
-        if cached_split is not None:
-            logger.info(
-                "Using cached train/validation split from %s and %s",
-                _cfg.TRAIN_75_PATH,
-                _cfg.VALIDATION_25_PATH,
-            )
-            return cached_split
+        mode = str(_cfg.SPLIT_MODE).strip().lower()
+        use_cv = mode == "purged_rolling_cv"
+
+        if not use_cv:
+            cached_split = self._load_cached_split_if_fresh()
+            if cached_split is not None:
+                logger.info(
+                    "Using cached train/validation split from %s and %s",
+                    _cfg.TRAIN_75_PATH,
+                    _cfg.VALIDATION_25_PATH,
+                )
+                self._cv_folds = []
+                return cached_split
 
         logger.info("Loading training data from %s …", _cfg.TRAIN_CSV_PATH)
         loader = Data_Loader()
@@ -715,13 +726,25 @@ class Pipeline_Orchestrator:
             ) if "symbol" in train_full.columns else 0,
         )
 
-        logger.info("Splitting into train (75%%) / validation (25%%) …")
         splitter = Data_Splitter()
-        train_df, val_df = splitter.split_and_persist(train_full)
+        if use_cv:
+            logger.info(
+                "Splitting with purged rolling CV (K=%d, embargo=%d bars, "
+                "min_train=%.1f months) …",
+                _cfg.CV_N_FOLDS,
+                _cfg.CV_EMBARGO_BARS,
+                _cfg.CV_MIN_TRAIN_MONTHS,
+            )
+        else:
+            logger.info("Splitting into train (75%%) / validation (25%%) …")
+
+        train_df, val_df, cv_folds = splitter.split_and_persist(train_full)
+        self._cv_folds = cv_folds
         logger.info(
-            "Split complete: train=%d rows, val=%d rows",
+            "Split complete: train=%d rows, val=%d rows, cv_folds=%d",
             len(train_df),
             len(val_df),
+            len(cv_folds),
         )
         return train_df, val_df
 
@@ -945,6 +968,7 @@ class Pipeline_Orchestrator:
                     direction=direction,
                     val_df=val_df,
                     seed=_cfg.PHASE2_SEED,
+                    cv_folds=getattr(self, "_cv_folds", None) or None,
                 )
                 pool = generator.run()
             except Exception as exc:
@@ -1058,6 +1082,7 @@ class Pipeline_Orchestrator:
                     val_df=val_df,
                     pool=enriched_pool,
                     direction=direction,
+                    cv_folds=getattr(self, "_cv_folds", None) or None,
                 )
                 rule_set = selector.run()
             except Exception as exc:

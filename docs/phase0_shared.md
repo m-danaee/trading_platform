@@ -43,32 +43,69 @@ All numeric columns are downcast to the smallest safe dtype (e.g., `float64 → 
 
 ---
 
-## 2. Train/Validation Split — `Data_Splitter` (`gpu_fuzzy_trader/data/splitter.py`)
+## 2. Train/Validation Split — `Data_Splitter` & `cv_folds`
 
-`Data_Splitter.split_and_persist(df)` performs a **per-symbol chronological 75/25 split**.
+**Modules:**
+- `gpu_fuzzy_trader/data/splitter.py` → `Data_Splitter.split_and_persist`
+- `gpu_fuzzy_trader/data/cv_folds.py` → purged rolling fold construction
 
-### Algorithm
+`Data_Splitter.split_and_persist(df)` returns `(train_df, validation_df, cv_folds)` and always writes:
 
-For each symbol independently:
-1. The rows are already sorted chronologically (guaranteed by `Data_Loader`).
-2. `split_point = floor(N × 0.75)` where N is the number of rows for that symbol.
-3. Rows `[0, split_point)` → training subset.
-4. Rows `[split_point, N)` → validation subset.
+- `data/train_75.parquet`
+- `data/validation_25.parquet`
+- `data/cv_folds_manifest.json` (summary only, when using purged CV)
 
-All symbols' training subsets are concatenated → `train_75.parquet`.
-All symbols' validation subsets are concatenated → `validation_25.parquet`.
+Behaviour is controlled by **`SPLIT_MODE`** in `config.py`.
+
+### Mode comparison
+
+| `SPLIT_MODE` | Phases 2–3 fitness | Persisted train/val | Speed |
+|---|---|---|---|
+| `"purged_rolling_cv"` (default) | K expanding-window folds; **worst fold** across metrics | **Last fold** train + val | Slower (~K× eval) |
+| `"holdout_75_25"` | Single train + single val per symbol | Classic 75/25 split | Faster |
+
+**Recommendation:** Use `purged_rolling_cv` when validation performance must generalize across seasons (especially short). Use `holdout_75_25` for debugging or reproducing older runs.
+
+### A. Purged rolling CV (`purged_rolling_cv`)
+
+Implemented in `build_purged_rolling_folds()` (`cv_folds.py`).
+
+For each symbol independently (rows already chronological):
+
+1. Require at least **`CV_MIN_TRAIN_MONTHS`** of history before any validation window (default 2 months ≈ 17,280 bars at 5-minute resolution).
+2. Split the remaining timeline into **`CV_N_FOLDS`** contiguous validation segments (default 3).
+3. For fold *i* with validation `[v_start, v_end)`:
+   - **Train:** rows `[0, v_start − CV_EMBARGO_BARS)` (expanding window, purged).
+   - **Val:** rows `[v_start, v_end)`.
+4. Concatenate the same fold index across all symbols → one `PurgedFold` per index.
+
+**Embargo:** `CV_EMBARGO_BARS = TAIL_DROP_ROWS` (288) prevents label-horizon leakage between train and val.
+
+**Phases 2–3:** Each fold gets its own backtest engine (subsampled). Fitness aggregates with a **conservative merge** (minimum return/Sortino/PF, maximum drawdown) across folds — rules must survive every season, not just the last 25%.
+
+**Phases 4–5:** Still use the **last fold** persisted as `train_75` / `validation_25` (most recent in-sample OOS block before `test.csv`). Phase 4 walk-forward runs on `validation_25` only, not on all CV folds.
+
+If fold construction fails (dataset too short), the splitter logs a warning and **falls back** to `holdout_75_25`.
+
+### B. Legacy holdout (`holdout_75_25`)
+
+`holdout_75_25_split()` — per symbol:
+
+1. `split_point = floor(N × 0.75)`.
+2. Rows `[0, split_point)` → train; `[split_point, N)` → validation.
+
+`cv_folds` is empty; Phases 2–3 use one train engine and one val engine.
 
 ### Why per-symbol?
 
-If the split were done globally (across all symbols at once), a symbol with a shorter history might end up entirely in the training set or entirely in the validation set. The per-symbol approach guarantees that every symbol contributes to both splits, which is critical for the symbol-coverage penalty in Phase 3.
+A global time cut would leave some symbols entirely in train or val. Per-symbol splits guarantee every symbol appears in both partitions — required for `PHASE3_MIN_SYMBOL_COVERAGE`.
 
-### Why `floor(N × 0.75)` and not `round`?
+### Parquet cache
 
-`floor` is conservative: it always assigns the boundary row to validation rather than training. This prevents any look-ahead from the validation period leaking into training.
+- **`holdout_75_25`:** If `train_75.parquet` and `validation_25.parquet` are newer than `train.csv`, the pipeline loads the cache and skips splitting.
+- **`purged_rolling_cv`:** Cache is **not** used for the full pipeline load (folds must be rebuilt from `train.csv`). Parquet files are still written for Phase 4–5.
 
-### Parquet persistence and cache invalidation
-
-The split is persisted to `data/train_75.parquet` and `data/validation_25.parquet`. On subsequent runs, the pipeline checks whether these files are newer than `data/train.csv`. If they are, the cached split is loaded directly (skipping the CSV read and split computation). If `train.csv` has been modified, the split is recomputed.
+After changing `SPLIT_MODE` or CV parameters, delete `data/train_75.parquet`, `data/validation_25.parquet`, and `data/cv_folds_manifest.json`, then rerun.
 
 ---
 
@@ -163,12 +200,23 @@ Simulation stops and marks `account_ruined = True` when `equity ≤ 0`. All subs
 
 | Parameter | Default | Effect |
 |---|---|---|
-| `TRAIN_CSV_PATH` | `data/train.csv` | Source for all training phases |
-| `TEST_CSV_PATH` | `data/test.csv` | Used **only** in Phase 5 |
-| `TRAIN_75_PATH` | `data/train_75.parquet` | Cached training split |
-| `VALIDATION_25_PATH` | `data/validation_25.parquet` | Cached validation split |
-| `OUTPUTS_DIR` | `outputs` | All per-run outputs |
-| `PHASE2_ARCHIVE_DIR` | `phase2_rule_archive/` | Persistent cross-run archive |
+| `TRAIN_CSV_PATH` | `data/train.csv` | Source for Phases 1–4 |
+| `TEST_CSV_PATH` | `data/test.csv` | **Phase 5 only** — never tune on this |
+| `TRAIN_75_PATH` | `data/train_75.parquet` | Persisted train block (last CV fold or 75%) |
+| `VALIDATION_25_PATH` | `data/validation_25.parquet` | Persisted val block (last CV fold or 25%) |
+| `CV_FOLDS_MANIFEST_PATH` | `data/cv_folds_manifest.json` | Fold row counts / date ranges (purged CV) |
+| `OUTPUTS_DIR` | `outputs` | Per-run outputs |
+| `PHASE2_ARCHIVE_DIR` | `phase2_rule_archive/` | Cross-run warm-start archive |
+
+### Split mode (Phases 2–3)
+
+| Parameter | Default | Effect |
+|---|---|---|
+| `SPLIT_MODE` | `"purged_rolling_cv"` | `"holdout_75_25"` for legacy single split |
+| `CV_N_FOLDS` | `3` | Number of rolling validation windows |
+| `CV_EMBARGO_BARS` | `288` | Purge gap before each val block (= label horizon) |
+| `CV_BARS_PER_DAY` | `288` | Bars per day for month → bar conversion |
+| `CV_MIN_TRAIN_MONTHS` | `2.0` | Minimum train rows per symbol per fold |
 
 ### Schema constants
 

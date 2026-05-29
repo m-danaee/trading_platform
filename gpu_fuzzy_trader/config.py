@@ -2,14 +2,27 @@
 Single source of truth for pipeline hyperparameters.
 
 All modules import from here; do not duplicate defaults elsewhere.
-Tuning guide: docs/hyperparameters/README.md (Phase 0–5 per-phase docs).
+
+Docs (per-phase behaviour and formulas):
+  docs/phase0_shared.md … docs/phase5_oos.md
+
+Quick tuning map
+----------------
+  Generalization (short OOS failures)  → SPLIT_MODE, CV_*, PHASE3_* gates, PHASE2_JOINT_TRAIN_VAL
+  GPU RAM                              → PHASE1_SAMPLING_TOTAL, PHASE2_POPULATION_SIZE
+  Search budget                        → PHASE2_GENERATIONS, PHASE3_REFINE_*, PHASE4_N_TRIALS
+  Trade frequency / support            → MIN_TRADE_SUPPORT, MIN_CONDITIONS, MAX_CONDITIONS
+  Risk after rules are fixed           → PHASE4_TP_*, PHASE4_SL_*, PHASE4_CAPITAL_*
+  Fees / horizon (must match notebook) → FEE_PCT, TAIL_DROP_ROWS, MAX_HOLD_CANDLES
+
+Environment overrides: DATA_ROOT, TRAIN_CSV_PATH, TEST_CSV_PATH
 """
 
 from __future__ import annotations
 
 import os
 
-# Repo root (parent of gpu_fuzzy_trader/) — used for paths outside the run output dir.
+# Repo root (parent of gpu_fuzzy_trader/) — paths outside per-run OUTPUTS_DIR.
 _PROJECT_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), os.pardir))
 
@@ -18,14 +31,12 @@ def _env_str(name: str, default: str) -> str:
     value = os.environ.get(name, "").strip()
     return value or default
 
-# =============================================================================
-# Phase 0 — Shared (paths, schema, backtest simulation, logging)
-# =============================================================================
 
-# --- Paths -------------------------------------------------------------------
-# Relative paths resolve from the process cwd (typically repo root).
-# run_pipeline.py may override OUTPUTS_DIR and Phase 2 pool paths per run.
-
+# =============================================================================
+# Phase 0 — Paths & outputs
+# =============================================================================
+# Relative paths resolve from process cwd (usually repo root).
+# run_pipeline.py may rewrite OUTPUTS_DIR and Phase 2 pool paths per --output.
 
 DATA_ROOT = os.environ.get("DATA_ROOT", "").strip()
 TRAIN_CSV_PATH = _env_str(
@@ -36,13 +47,17 @@ TEST_CSV_PATH = _env_str(
     "TEST_CSV_PATH",
     os.path.join(DATA_ROOT, "test.csv") if DATA_ROOT else "data/test.csv",
 )
+
+# Cached splits from train.csv (Phases 2–5). Rebuilt when train.csv is newer.
 TRAIN_75_PATH = "data/train_75.parquet"
 VALIDATION_25_PATH = "data/validation_25.parquet"
+CV_FOLDS_MANIFEST_PATH = "data/cv_folds_manifest.json"
+
 OUTPUTS_DIR = "outputs"
 RUN_LOG_PATH = os.path.join(OUTPUTS_DIR, "run.log")
 REPORTS_DIR = "outputs/reports"
 
-# Per-run pools/history; run_pipeline.py rewrites these under --output.
+# Per-run Phase 2 artifacts (rewritten under --output).
 PHASE2_POOL_DIR = OUTPUTS_DIR
 PHASE2_POOL_PATHS = {
     "long": os.path.join(OUTPUTS_DIR, "phase2_long_pool.json"),
@@ -53,15 +68,18 @@ PHASE2_HISTORY_PATHS = {
     "short": os.path.join(OUTPUTS_DIR, "phase2_short_history.json"),
 }
 
-# Cross-run warm-start archive (not cleared by --output).
+# Cross-run warm-start (not cleared by --output).
 PHASE2_ARCHIVE_DIR = os.path.join(_PROJECT_ROOT, "phase2_rule_archive")
 PHASE2_ARCHIVE_PATHS = {
     "long": os.path.join(PHASE2_ARCHIVE_DIR, "phase2_long_archive.json"),
     "short": os.path.join(PHASE2_ARCHIVE_DIR, "phase2_short_archive.json"),
 }
 
-# --- Schema ------------------------------------------------------------------
-# LABEL_* and META_* must never enter feature matrices. INTERNAL_* are loader-only.
+
+# =============================================================================
+# Phase 0 — Schema & labels
+# =============================================================================
+# LABEL_* / META_* never enter feature matrices. INTERNAL_* is loader-only.
 
 LABEL_COLUMNS = [
     "label_open_next",
@@ -72,42 +90,70 @@ LABEL_COLUMNS = [
 ]
 META_COLUMNS = ["datetime", "symbol"]
 INTERNAL_COLUMNS = ("_symbol_bar_index",)
-# Drop trailing bars per symbol where 288-bar labels are undefined.
+
+# Bars dropped per symbol at dataset tail (288-bar label horizon).
+# RECOMMENDATION: keep equal to MAX_HOLD_CANDLES and CV_EMBARGO_BARS.
 TAIL_DROP_ROWS = 288
 
-# --- Backtest (must match evaluator_v3.ipynb) --------------------------------
-# Used by cpu_engine / gpu_engine for all phase fitness evaluations.
+
+# =============================================================================
+# Phase 0 — Train / validation split (Phases 2–3)
+# =============================================================================
+# Phases 4–5 always use persisted train_75 + validation_25 (see splitter.py).
+#
+# SPLIT_MODE options:
+#   "purged_rolling_cv" — K expanding-window folds, 288-bar embargo, ≥2 months
+#                         train per fold; Phase 2/3 score worst fold. Default.
+#   "holdout_75_25"     — legacy single 75/25 per symbol; faster, easier to
+#                         overfit one validation season (risky for short).
+#
+# RECOMMENDATION: keep purged_rolling_cv for short; use holdout_75_25 only for
+# fast debugging or apples-to-apples with older runs.
+
+SPLIT_MODE = "purged_rolling_cv"
+
+CV_N_FOLDS = 3
+CV_EMBARGO_BARS = TAIL_DROP_ROWS
+CV_BARS_PER_DAY = 288  # 5-minute bars
+CV_MIN_TRAIN_MONTHS = 2.0  # per symbol, per fold; raise if folds feel too noisy
+
+# =============================================================================
+# Phase 0 — Backtest simulation (must match evaluator_v3.ipynb)
+# =============================================================================
+# Used by cpu_engine / gpu_engine in all phases.
 
 INITIAL_CAPITAL = 1000.0
 LEVERAGE = 1.0
-FEE_PCT = 0.20  # round-trip fee %; penalizes high-turnover rules
-MAX_HOLD_CANDLES = 288  # aligned with label horizon
+FEE_PCT = 0.20  # round-trip % of notional; ↑ penalizes high turnover
+MAX_HOLD_CANDLES = 288
 MAX_TOTAL_EXPOSURE_PCT = 100.0
 MIN_POSITION_NOTIONAL = 1.0
 
-# --- Logging -----------------------------------------------------------------
-# 0 = auto-throttle generation logs; N > 0 = log every N generations.
-
-LOG_GENERATION_INTERVAL = 0
 
 # =============================================================================
-# Phase 1 — Feature selection (train only; features/selector.py)
+# Phase 0 — Logging
 # =============================================================================
 
-# MI ranking: drop near-constant columns, cap list size, limit long/short overlap.
-PHASE1_DISPERSION_THRESHOLD = 0.95
-PHASE1_TOP_K_FEATURES = 12
-PHASE1_MAX_FEATURE_OVERLAP = 0.50
-# Signed 3-class PnL surrogate so long/short shortlists diverge (vs binary success).
-PHASE1_ASYMMETRIC_TARGET = True
+LOG_GENERATION_INTERVAL = 0  # 0 = auto ~10% of generations; N = every N gens
 
-# Stationarity: per-fold MI stability across folds (regime or chronological).
+
+# =============================================================================
+# Phase 1 — Feature selection (train.csv only)
+# =============================================================================
+
+# --- Ranking & shortlist ---
+PHASE1_DISPERSION_THRESHOLD = 0.95  # drop near-constant columns
+PHASE1_TOP_K_FEATURES = 15
+PHASE1_MAX_FEATURE_OVERLAP = 0.50  # max Jaccard overlap long vs short lists
+PHASE1_ASYMMETRIC_TARGET = True  # separate MI targets for long / short
+
+# --- Stationarity (reduce regime-specific features) ---
 PHASE1_STATIONARITY_FOLDS = 3
 PHASE1_STATIONARITY_CV_MAX = 1.0
-PHASE1_STATIONARITY_RANK_DRIFT_MAX = 10
+PHASE1_STATIONARITY_RANK_DRIFT_MAX = 5
 PHASE1_STATIONARITY_STRATIFY = "regime"  # "regime" | "chronological"
 
-# Regime clustering inputs (train rows only when STRATIFY == "regime").
+# --- Regime clustering (when STRATIFY == "regime") ---
 PHASE1_REGIME_FEATURES = [
     "realized_vol_20",
     "parkinson_vol_20",
@@ -118,7 +164,7 @@ PHASE1_REGIME_FEATURES = [
     "amihud_illiquidity_20",
     "vol_ratio_20_100",
 ]
-PHASE1_REGIME_N_CLUSTERS = 3  # defaults to STATIONARITY_FOLDS when unset at runtime
+PHASE1_REGIME_N_CLUSTERS = 3
 PHASE1_REGIME_MIN_SAMPLES = 100
 PHASE1_REGIME_CLUSTERER = "gmm"  # "gmm" | "kmeans"
 PHASE1_REGIME_GMM_REG_COVAR = 1e-6
@@ -126,68 +172,65 @@ PHASE1_REGIME_ZERO_VAR_EPS = 1e-12
 PHASE1_REGIME_MODEL_PATH = os.path.join(
     OUTPUTS_DIR, "phase1_regime_cluster.joblib")
 
-# Phase 2 backtest row budget (equal per symbol). Primary GPU memory knob.
-# Raising this grows JAX arrays roughly linearly; on memory-limited GPUs keep ≤ 150_000.
-PHASE1_SAMPLING_TOTAL = 701_000
+# Row budget for Phase 2 GPU backtests (equal sample per symbol).
+# RECOMMENDATION: primary GPU RAM knob; try ≤150_000 on small GPUs.
+PHASE1_SAMPLING_TOTAL = 701_500
+
 
 # =============================================================================
-# Phase 2 — Rule pool / NSGA-III (phases/phase2_rule_pool.py)
+# Phase 2 — Rule pool / NSGA-III
 # =============================================================================
 
-# Fixed TP/SL/capital during rule search — isolates rule logic from risk tuning (Phase 4).
+# --- Fixed risk during rule search (Phase 4 tunes TP/SL/capital) ---
 PHASE2_TP = 2.0
 PHASE2_SL = 1.5
 PHASE2_CAPITAL_PCT = 32.0
 
-# Rule genome: number of active fuzzy conditions per chromosome.
+# --- Rule genome (shared with Phase 3 team size) ---
 MIN_CONDITIONS = 2
 MAX_CONDITIONS = 3
 
-# Trade-count gates and support penalty (noisy Sortino when executed << support).
-MIN_TRADE_SUPPORT = 250
+# --- Trade support & pool admission ---
+MIN_TRADE_SUPPORT = 200  # target executed trades for support penalty
 SUPPORT_PENALTY_MAX = 12.0
-# hard reject below this in archive (~ MIN_TRADE_SUPPORT // 4)
-MIN_TRADE_POOL_FLOOR = 50
-# How strongly the support penalty affects each Phase 2 objective.
-# (f1: Sortino, f2: drawdown, f3: win_rate). Keeping weights < 1 reduces
-# population collapse while preserving the low-support discouragement.
-PHASE2_SUPPORT_PENALTY_WEIGHT_F1 = 0.8
-PHASE2_SUPPORT_PENALTY_WEIGHT_F2 = 0.6
-PHASE2_SUPPORT_PENALTY_WEIGHT_F3 = 0.5
+MIN_TRADE_POOL_FLOOR = 50  # hard reject below this in archive
+PHASE2_SUPPORT_PENALTY_WEIGHT_F1 = 0.8  # Sortino objective
+PHASE2_SUPPORT_PENALTY_WEIGHT_F2 = 0.6  # drawdown objective
+PHASE2_SUPPORT_PENALTY_WEIGHT_F3 = 0.5  # win-rate objective
+
 PHASE2_RETURN_FLOOR_PCT = 0.0
 PHASE2_VAL_RETURN_FLOOR_PCT = 0.0
 PHASE2_PROFIT_FACTOR_FLOOR = 1.05
 PHASE2_SYMBOL_MEDIAN_RETURN_FLOOR_PCT = -0.5
 PHASE2_MIN_PROFITABLE_SYMBOLS = 5
-# Hard pool admission: both train and val must be profitable before archive merge.
+
 PHASE2_POOL_REQUIRE_POSITIVE_SPLITS = True
 PHASE2_POOL_TRAIN_RETURN_MIN_PCT = 0.5
 PHASE2_POOL_VAL_RETURN_MIN_PCT = 0.5
-# Stop evolution when Pareto mean return stays deeply negative (saves GPU time).
+# RECOMMENDATION: with purged CV, val metrics are worst-fold; keep both > 0.
+
+# --- Fitness & joint evaluation ---
+SORTINO_CAP = 8.0
+SORTINO_SCALE = 3.0
+PHASE2_JOINT_TRAIN_VAL = True  # f1 uses min(train_sortino, val_sortino)
+# With purged_rolling_cv, val side is worst across CV folds.
+
+# --- Diversity & early stop ---
+PHASE2_DIVERSITY_HAMMING_THRESHOLD = 3
+PHASE2_DIVERSITY_PENALTY = 8.0
 PHASE2_EARLY_STOP_ENABLED = True
 PHASE2_EARLY_STOP_MIN_GENERATION = 50
 PHASE2_EARLY_STOP_MEAN_RETURN_PCT = -5.0
 
-# Fitness transform: tanh(sortino / SCALE) * CAP (avoids sentinel pinning at gen 0).
-SORTINO_CAP = 8.0
-SORTINO_SCALE = 3.0
-
-# Worst-case train/val Sortino when both splits are evaluated.
-PHASE2_JOINT_TRAIN_VAL = True
-
-# Population diversity: penalize chromosomes within Hamming distance ≤ threshold.
-PHASE2_DIVERSITY_HAMMING_THRESHOLD = 3
-PHASE2_DIVERSITY_PENALTY = 8.0
-
-# NSGA-III search budget and persistence.
-PHASE2_POPULATION_SIZE = 450
-PHASE2_GENERATIONS = 200
+# --- NSGA-III budget ---
+PHASE2_POPULATION_SIZE = 800
+PHASE2_GENERATIONS = 150
 PHASE2_ALGORITHM = "NSGA3"
 PHASE2_ARCHIVE_MAX_SIZE = 500
-# fraction seeded from pool + cross-run archive
 PHASE2_ARCHIVE_SEED_FRACTION = 0.35
+PHASE2_SEED = 42
 
-# Regime-stratified trade support (Phase 1 GMM artifact).
+# --- Regime-stratified support (uses PHASE1_REGIME_MODEL_PATH) ---
 PHASE2_REGIME_SUPPORT_ENABLED = True
 PHASE2_REGIME_MODEL_PATH = PHASE1_REGIME_MODEL_PATH
 PHASE2_REGIME_CONCENTRATION_MIN = 0.90
@@ -196,102 +239,113 @@ PHASE2_REGIME_USE_PNL_GATE = True
 PHASE2_REGIME_MIN_TRADE_FRACTION = 1.0
 PHASE2_REGIME_REQUIRE_VAL_CONFIRMATION = True
 
-# Numba-accelerated NSGA helpers (warm-up compile on first call; cache=True).
+# --- Engine & initialization ---
 PHASE2_NUMBA_ENABLED = True
-
-# Population initialization: "stratified_sparse" | "legacy"
-PHASE2_INIT_STRATEGY = "stratified_sparse"
+PHASE2_INIT_STRATEGY = "stratified_sparse"  # "stratified_sparse" | "legacy"
 PHASE2_INIT_STRATUM_FRACTIONS = (0.50, 0.30, 0.20)
 PHASE2_INIT_SOFTMAX_TEMP = 0.5
 PHASE2_INIT_SCORE_EPS = 1e-6
 PHASE2_INIT_UNIFORM_MIX = 0.05
 PHASE2_MUTATION_WEIGHTED_ACTIVATE_PROB = 0.70
-# Default RNG seed for Phase 2 evolution and row subsampling (None = nondeterministic).
-PHASE2_SEED = 42
+
 
 # =============================================================================
-# Phase 3 — Rule set selection (phases/phase3_rule_set.py, phase3_greedy.py)
+# Phase 3 — Rule set selection (greedy + NSGA-II)
 # =============================================================================
 
+# --- Team shape ---
 PHASE3_MIN_RULES = 2
 PHASE3_MAX_RULES = 3
-PHASE3_MIN_SYMBOL_COVERAGE = 7  # of 10 symbols must have ≥ 1 trade on validation
-PHASE3_USE_GPU = False  # JAX mask path + batched eval; enable after parity tests pass
-# ProcessPool batch on CPU (independent of GPU)
+PHASE3_MIN_SYMBOL_COVERAGE = 7  # of 10 symbols with ≥1 val trade
+PHASE3_MAX_CAPITAL_PCT_PER_RULE = 25.0
+
+# --- Engines ---
+PHASE3_USE_GPU = False  # JAX path; enable after parity checks
 PHASE3_USE_PARALLEL_BATCH = True
 PHASE3_BATCH_WORKERS = min(32, os.cpu_count() or 4)
-PHASE3_NUMBA_ENABLED = True  # NSGA-II sort/crowding via evolution.numba_ops
+PHASE3_NUMBA_ENABLED = True
+
+# --- Refinement budget ---
 PHASE3_REFINE_GENERATIONS = 80
 PHASE3_REFINE_POP_SIZE = 100
 PHASE3_GREEDY_WEIGHTS = (1.0, 0.7, 0.5)  # sortino, drawdown, win_rate
-PHASE3_SYMBOL_CONSISTENCY_WEIGHT = 10.0
 
-# Validation-first selection; train used for gates and maximin stability only.
-PHASE3_USE_TRAIN_TARGET = False
+# --- Objectives & anti-overfit gates ---
+# RECOMMENDATION: keep USE_TRAIN_TARGET True; rely on CV + gates, not val-only fit.
+PHASE3_USE_TRAIN_TARGET = True
 PHASE3_USE_MAXIMIN_SCORE = True
-# reject if val_sortino < ratio * train_sortino (when train target disabled, still gates)
-PHASE3_VAL_SORTINO_RATIO_GATE = 0.7
-PHASE3_VAL_DRAWDOWN_RATIO_GATE = 1.15  # reject if val_dd > ratio * train_dd
-PHASE3_PER_RULE_MIN_VAL_TRADES_PER_SYMBOL = 15
-# penalty on low corr(per-symbol PnL train, val)
+PHASE3_SYMBOL_CONSISTENCY_WEIGHT = 10.0
 PHASE3_TRAIN_VAL_CORR_WEIGHT = 8.0
 PHASE3_VAL_GATE_PENALTY = 100.0
+
+PHASE3_VAL_SORTINO_RATIO_GATE = 0.7  # val_sortino ≥ ratio × train_sortino
+PHASE3_VAL_DRAWDOWN_RATIO_GATE = 1.15  # val_dd ≤ ratio × train_dd
+PHASE3_PER_RULE_MIN_VAL_TRADES_PER_SYMBOL = 15
+
 PHASE3_VAL_RETURN_FLOOR_PCT = 0.0
 PHASE3_VAL_PROFIT_FACTOR_FLOOR = 1.0
 PHASE3_TRAIN_RETURN_FLOOR_PCT = 0.0
 PHASE3_TRAIN_PROFIT_FACTOR_FLOOR = 1.0
 PHASE3_MIN_PROFITABLE_SYMBOLS = 5
 PHASE3_SYMBOL_MEDIAN_RETURN_FLOOR_PCT = -0.5
-# Penalise unstable train/val gaps (short train inflation, long val inflation).
+
+# Penalise val >> train or train >> val (classic short/long overfit signatures).
 PHASE3_TRAIN_VAL_GAP_MAX_PCT = 10.0
 PHASE3_VAL_TRAIN_GAP_MAX_PCT = 10.0
 PHASE3_GAP_PENALTY_WEIGHT = 4.0
-PHASE3_MAX_CAPITAL_PCT_PER_RULE = 25.0
-# Incremental orthogonality controls (applied as soft penalties in Phase 3):
-# - Incremental gate: a later rule must add enough non-overlapping
-#   validation coverage vs earlier rules.
+
+# --- Rule-team orthogonality (validation masks) ---
 PHASE3_MIN_INCREMENTAL_TRADES = 60
-# How hard to penalize low incremental coverage after the first rule.
 PHASE3_INCREMENTAL_GATE_PENALTY = 60.0
-# Jaccard similarity gate: penalize teams whose rules overlap too much on
-# the validation entry-mask union.
 PHASE3_JACCARD_PENALTY_WEIGHT = 35.0
 PHASE3_JACCARD_SIMILARITY_GATE = 0.75
 
-# =============================================================================
-# Phase 4 — Walk-forward risk optimization (phases/phase4_wf_optimizer.py)
-# =============================================================================
 
+# =============================================================================
+# Phase 4 — Walk-forward risk (TP / SL / capital on validation_25)
+# =============================================================================
+# Rule conditions are frozen; only risk params are optimized.
+# PHASE4_WF_SPLITS slices validation_25 only (not full CV folds).
+
+# --- Search space ---
 PHASE4_TP_MIN = 1.5
 PHASE4_TP_MAX = 3.0
 PHASE4_SL_MIN = 1.5
 PHASE4_SL_MAX = 2.5
-PHASE4_CAPITAL_PCT_MIN = 10.0
+PHASE4_CAPITAL_PCT_MIN = 30.0
 PHASE4_CAPITAL_PCT_MAX = 50.0
 PHASE4_TP_STEP = 0.5
 PHASE4_SL_STEP = 0.5
 PHASE4_CAPITAL_STEP = 5.0
-PHASE4_TOTAL_CAP_PENALTY = 2.0
+
+# --- Optuna ---
 PHASE4_N_TRIALS = 200
+PHASE4_SAMPLER = "tpe"  # "tpe" | "nsga2"
+PHASE4_SEED = 42
+PHASE4_N_JOBS = 1
+PHASE4_TOTAL_CAP_PENALTY = 2.0
+PHASE4_HARD_CAP_NORMALIZE = True  # sum capital_pct ≤ MAX_TOTAL_EXPOSURE_PCT
+
+# --- Walk-forward on validation split ---
 PHASE4_WF_SPLITS = 2
-PHASE4_MAX_WORST_DRAWDOWN_PCT = 15.0
-PHASE4_MIN_WORST_TRADES = 30
-PHASE4_MIN_WORST_FOLD_RETURN_PCT = 0.5
-PHASE4_MIN_WORST_FOLD_PF = 1.05
 PHASE4_INCLUDE_TAIL_HOLDOUT = True
 PHASE4_TAIL_HOLDOUT_FRACTION = 0.25
 PHASE4_WORST_RETURN_WEIGHT = 1.0
 PHASE4_WORST_DRAWDOWN_WEIGHT = 1.0
 PHASE4_WORST_TURNOVER_WEIGHT = 1.0
-PHASE4_SAMPLER = "tpe"  # alternative: "nsga2"
-PHASE4_SEED = 42
-PHASE4_N_JOBS = 1
-# Scale per-rule capital_pct so sum ≤ MAX_TOTAL_EXPOSURE_PCT after optimization.
-PHASE4_HARD_CAP_NORMALIZE = True
+
+# --- Feasibility filters (trial must pass all) ---
+PHASE4_MAX_WORST_DRAWDOWN_PCT = 15.0
+PHASE4_MIN_WORST_TRADES = 30
+PHASE4_MIN_WORST_FOLD_RETURN_PCT = 0.5
+PHASE4_MIN_WORST_FOLD_PF = 1.05
+# RECOMMENDATION: raise WF_SPLITS to 4–6 if short still fails OOS after CV in P2/P3.
+
 
 # =============================================================================
-# Phase 5 — Out-of-sample evaluation (phases/phase5_oos.py)
+# Phase 5 — Out-of-sample (test.csv only; never used in Phases 1–4)
 # =============================================================================
-# No phase-specific constants: uses TEST_CSV_PATH, REPORTS_DIR, and backtest block above.
-PHASE5_VALIDATION_RETURN_GATE_PCT = 0.0
+
+PHASE5_VALIDATION_RETURN_GATE_PCT = 0.0  # deployment flag on val metrics only
 PHASE5_VALIDATION_PROFIT_FACTOR_GATE = 1.0
+# RECOMMENDATION: treat test metrics in reports as truth; do not tune on TEST_CSV_PATH.

@@ -11,9 +11,9 @@ Phase 5 is the final, honest evaluation of the strategy. It loads the optimized 
 Every other phase uses `data/train.csv` (split into training and validation). The test set is held out completely. This means:
 
 - Phase 1 feature selection was done on training data only.
-- Phase 2 rule evolution was done on training data (with validation as a secondary gate).
-- Phase 3 rule set selection was done with training as the primary objective and validation as a gate.
-- Phase 4 risk optimization was done on the validation split.
+- Phase 2 rule evolution used training data with validation/CV gates (`SPLIT_MODE` controls single split vs purged rolling CV).
+- Phase 3 rule set selection used training-target objectives with validation/CV gates.
+- Phase 4 risk optimization was done on the persisted `validation_25` split (last CV fold when using `purged_rolling_cv`).
 
 The test set has never influenced any decision. Phase 5 is therefore a genuine out-of-sample evaluation.
 
@@ -34,7 +34,13 @@ Phase 5 prepares the test data using the **identical pipeline** as training:
 
 This is critical for consistency: if the test data were prepared differently (e.g., without the tail drop), the backtest results would not be comparable to the training/validation results.
 
-Phase 5 also loads the cached `train_75.parquet` and `validation_25.parquet` to evaluate the strategy on all three splits (train, validation, test) for comparison. This cross-split reporting helps diagnose overfitting.
+Phase 5 also loads `train_75.parquet` and `validation_25.parquet` to evaluate on train, validation, and test for comparison. Reports include:
+
+- `outputs/reports/strategy_evaluation_{long,short}.csv` — side-by-side metrics
+- `outputs/reports/generalization_diagnostics_{long,short}.json` — sign flips, train→val→test deltas, feature bucket concentration
+- Equity curves per split (`train_*`, `validation_*`, `test_*`)
+
+**Reading results with purged CV:** Strong train + val but weak test usually means **regime shift** into `test.csv` (e.g. calendar period after `train.csv`), not just a bad 75/25 split. Check `generalization_diagnostics_*.json` for `train_to_test_sign_flip`.
 
 ---
 

@@ -3,6 +3,7 @@
 **Modules:**
 
 - `gpu_fuzzy_trader/phases/phase2_rule_pool.py` → `Rule_Pool_Generator` (orchestration, persistence, archive)
+- `gpu_fuzzy_trader/phases/phase2_cv.py` → purged CV engine facades (`PurgedCVTrainEngine`, `PurgedCVValEngine`)
 - `gpu_fuzzy_trader/evolution/evox_runner.py` → `run_phase2_evolution` (NSGA-III/II loop)
 - `gpu_fuzzy_trader/phases/phase2_support.py` → regime-aware support penalties
 - `gpu_fuzzy_trader/evolution/numba_ops.py` → Numba-accelerated NSGA helpers
@@ -74,9 +75,21 @@ When `PHASE2_JOINT_TRAIN_VAL = True` (default), f1 uses:
 sortino_for_obj = min(saturated_train_sortino, saturated_val_sortino)
 ```
 
-This means a rule must perform well on **both** the training and validation splits to achieve a good f1 score. Rules that overfit to training (high train Sortino, low val Sortino) are penalized.
+This means a rule must perform well on **both** the training and validation sides to achieve a good f1 score. Rules that overfit to training (high train Sortino, low val Sortino) are penalized.
 
 If the validation engine is unavailable or val trades are below `MIN_TRADE_POOL_FLOOR // 4`, the val Sortino is treated as 0 and `sortino_for_obj = min(train_sortino, 0.0)`.
+
+### Purged rolling CV (`SPLIT_MODE == "purged_rolling_cv"`)
+
+When the pipeline passes `cv_folds` into `Rule_Pool_Generator`:
+
+1. `build_cv_fold_engines()` builds one train + one val engine per fold (each subsampled to `PHASE1_SAMPLING_TOTAL`).
+2. `PurgedCVTrainEngine` / `PurgedCVValEngine` wrap the fold engines and expose `simulate_rule_batch()` that merges metrics with a **worst-case** rule across folds (min return/Sortino/PF, max drawdown).
+3. Joint fitness uses `min(train_sortino_fold, val_sortino_fold)` **per fold**, then the facade's worst-case merge across folds.
+
+**Effect:** A rule that shines in only one season but fails in another gets a poor f1. Pool admission (`PHASE2_POOL_*_RETURN_MIN_PCT`) applies to these merged train/val metrics.
+
+When `SPLIT_MODE == "holdout_75_25"`, behaviour is unchanged: one train engine (sampled full `train_75`) and one optional val engine (`validation_25`).
 
 ---
 
@@ -84,8 +97,8 @@ If the validation engine is unavailable or val trades are below `MIN_TRADE_POOL_
 
 During Phase 2, all rules are evaluated with fixed risk parameters:
 
-- `PHASE2_TP = 4.0` (%)
-- `PHASE2_SL = 2.0` (%)
+- `PHASE2_TP = 2.0` (%)
+- `PHASE2_SL = 1.5` (%)
 - `PHASE2_CAPITAL_PCT = 32.0` (%)
 
 **Why fixed?** Phase 2 is searching for rules with predictive alpha — the ability to identify market conditions that precede favorable price moves. By fixing TP/SL/capital, the search isolates rule quality from risk parameter tuning. Phase 4 handles risk optimization separately.

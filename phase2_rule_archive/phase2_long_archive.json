@@ -256,11 +256,25 @@
       ],
       "objectives": {
         "sortino_ratio": 0.17185140247816,
-        "total_return_pct": 18.1976899983616,
-        "max_drawdown_pct": 7.633808526193972,
+        "total_return_pct": 18.197689998361867,
+        "profit_factor": 1.262954767448944,
+        "max_drawdown_pct": 6.651837476827989,
         "win_rate": 56.59722222222222
       },
-      "executed_trades": 288
+      "executed_trades": 288,
+      "val_objectives": {
+        "sortino_ratio": 0.13678059108420051,
+        "total_return_pct": 3.2776417728565654,
+        "profit_factor": 1.2066128762219694,
+        "max_drawdown_pct": 5.1004895643136186,
+        "win_rate": 50.70422535211267
+      },
+      "val_executed_trades": 71,
+      "regime_trade_counts": [
+        159,
+        34,
+        95
+      ]
     },
     {
       "chromosome": [

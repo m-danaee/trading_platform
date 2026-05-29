@@ -247,7 +247,7 @@ class TestPipelineOrchestratorRun:
             patch("gpu_fuzzy_trader.run_pipeline.Data_Loader.load_dataset",
                   return_value=train_df),
             patch("gpu_fuzzy_trader.run_pipeline.Data_Splitter.split_and_persist",
-                  return_value=(train_df, val_df)),
+                  return_value=(train_df, val_df, [])),
             patch("gpu_fuzzy_trader.run_pipeline.Feature_Selector.skip_if_valid",
                   return_value=None),
             patch("gpu_fuzzy_trader.run_pipeline.Feature_Selector.run",
@@ -457,7 +457,7 @@ class TestLoadAndSplitDataCache:
         monkeypatch.setattr(_cfg, "VALIDATION_25_PATH", str(val_path))
 
         with patch("gpu_fuzzy_trader.run_pipeline.Data_Loader.load_dataset", return_value=train_df) as load_mock, \
-                patch("gpu_fuzzy_trader.run_pipeline.Data_Splitter.split_and_persist", return_value=(train_df, val_df)) as split_mock:
+                patch("gpu_fuzzy_trader.run_pipeline.Data_Splitter.split_and_persist", return_value=(train_df, val_df, [])) as split_mock:
             orch = Pipeline_Orchestrator()
             train_out, val_out = orch._load_and_split_data()
 

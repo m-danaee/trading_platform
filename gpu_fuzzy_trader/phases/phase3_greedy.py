@@ -103,6 +103,7 @@ def _evaluate_candidates_batch(
     use_batch: bool,
     use_jax: bool = False,
     cache: Phase3EvalCache | None = None,
+    cv_fold_contexts: list[tuple] | None = None,
 ) -> list[tuple[np.ndarray, dict, dict]]:
     """Evaluate rule-set candidates; parallel or JAX batch when available."""
     p3 = _helpers()
@@ -111,6 +112,19 @@ def _evaluate_candidates_batch(
     per_rule = cache.per_rule_min_val_trades if cache is not None else None
     val_masks = cache.val_masks if cache is not None else None
     n_rows_val = cache.n_rows_val if cache is not None else 0
+
+    if cv_fold_contexts:
+        for rs in candidates:
+            fmt = p3._rule_set_to_engine_format(rs)
+            obj, val_m, train_m = p3._evaluate_rule_set(
+                fmt,
+                val_engine,
+                train_engine,
+                cache=cache,
+                cv_fold_contexts=cv_fold_contexts,
+            )
+            results.append((obj, val_m, train_m))
+        return results
 
     if use_batch:
         train_list, val_list = p3._simulate_teams_batch(
@@ -154,6 +168,7 @@ def greedy_rule_set_search(
     use_batch: bool = False,
     use_jax: bool = False,
     cache: Phase3EvalCache | None = None,
+    cv_fold_contexts: list[tuple] | None = None,
 ) -> tuple[list[dict], int]:
     """
     Greedy construction of an ordered rule set.
@@ -172,9 +187,17 @@ def greedy_rule_set_search(
         raise ValueError(
             f"pool needs at least {min_rules} rules, got {len(pool)}")
 
+    use_batch_eff = bool(use_batch) and not cv_fold_contexts
+
     candidates = [[pool[i]] for i in range(len(pool))]
     batch_results = _evaluate_candidates_batch(
-        candidates, val_engine, train_engine, use_batch, use_jax, cache,
+        candidates,
+        val_engine,
+        train_engine,
+        use_batch_eff,
+        use_jax,
+        cache,
+        cv_fold_contexts=cv_fold_contexts,
     )
     n_evals += len(candidates)
 
@@ -209,7 +232,13 @@ def greedy_rule_set_search(
             continue
 
         batch_results = _evaluate_candidates_batch(
-            extensions, val_engine, train_engine, use_batch, use_jax, cache,
+            extensions,
+            val_engine,
+            train_engine,
+            use_batch_eff,
+            use_jax,
+            cache,
+            cv_fold_contexts=cv_fold_contexts,
         )
         n_evals += len(extensions)
 

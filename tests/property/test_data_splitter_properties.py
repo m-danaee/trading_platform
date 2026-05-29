@@ -114,9 +114,12 @@ def _run_split(
     splitter_mod.TRAIN_75_PATH = train_path
     splitter_mod.VALIDATION_25_PATH = val_path
 
+    prev_mode = config_mod.SPLIT_MODE
+    config_mod.SPLIT_MODE = "holdout_75_25"
     try:
-        train_df, val_df = Data_Splitter().split_and_persist(df)
+        train_df, val_df, _folds = Data_Splitter().split_and_persist(df)
     finally:
+        config_mod.SPLIT_MODE = prev_mode
         splitter_mod.TRAIN_75_PATH = original_train
         splitter_mod.VALIDATION_25_PATH = original_val
 
