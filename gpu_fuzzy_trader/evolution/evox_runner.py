@@ -159,12 +159,40 @@ def _pareto_mean_return_pct(
     return float(np.mean(returns))
 
 
-def _should_early_stop_phase2(gen: int, mean_return_pct: float) -> bool:
+def _pareto_median_return_pct(
+    pareto_indices: list[int],
+    metrics_cache: list[dict],
+) -> float:
+    """Median total_return_pct across the current Pareto front."""
+    if not pareto_indices:
+        return -100.0
+    returns = [
+        float(metrics_cache[i].get("total_return_pct", 0.0))
+        for i in pareto_indices
+    ]
+    return float(np.median(returns))
+
+
+def _pareto_return_pct_for_early_stop(
+    pareto_indices: list[int],
+    metrics_cache: list[dict],
+) -> float:
+    if bool(_cfg.PHASE2_EARLY_STOP_USE_MEDIAN_RETURN):
+        return _pareto_median_return_pct(pareto_indices, metrics_cache)
+    return _pareto_mean_return_pct(pareto_indices, metrics_cache)
+
+
+def _should_early_stop_phase2(gen: int, pareto_return_pct: float) -> bool:
     if not _cfg.PHASE2_EARLY_STOP_ENABLED:
+        return False
+    if (
+        str(_cfg.SPLIT_MODE).strip().lower() == "purged_rolling_cv"
+        and bool(_cfg.PHASE2_EARLY_STOP_DISABLED_IN_CV)
+    ):
         return False
     if gen + 1 < int(_cfg.PHASE2_EARLY_STOP_MIN_GENERATION):
         return False
-    return mean_return_pct < float(_cfg.PHASE2_EARLY_STOP_MEAN_RETURN_PCT)
+    return pareto_return_pct < float(_cfg.PHASE2_EARLY_STOP_MEAN_RETURN_PCT)
 
 
 def _median_pairwise_hamming(chromosomes: list[np.ndarray]) -> float:
@@ -643,13 +671,20 @@ def _run_nsga2_fallback(
             loop_start=gen_loop_start,
         )
 
-        mean_ret = _pareto_mean_return_pct(pareto_indices, metrics_cache)
-        if _should_early_stop_phase2(gen, mean_ret):
+        pareto_ret = _pareto_return_pct_for_early_stop(
+            pareto_indices, metrics_cache,
+        )
+        if _should_early_stop_phase2(gen, pareto_ret):
+            stat_label = (
+                "median_return" if _cfg.PHASE2_EARLY_STOP_USE_MEDIAN_RETURN
+                else "mean_return"
+            )
             logger.info(
-                "%s: early stop at gen %d (mean_return=%.2f%% < %.2f%%)",
+                "%s: early stop at gen %d (%s=%.2f%% < %.2f%%)",
                 tag,
                 gen + 1,
-                mean_ret,
+                stat_label,
+                pareto_ret,
                 float(_cfg.PHASE2_EARLY_STOP_MEAN_RETURN_PCT),
             )
             break
@@ -787,13 +822,20 @@ def _run_nsga3(
             loop_start=gen_loop_start,
         )
 
-        mean_ret = _pareto_mean_return_pct(pareto_indices, metrics_cache)
-        if _should_early_stop_phase2(gen, mean_ret):
+        pareto_ret = _pareto_return_pct_for_early_stop(
+            pareto_indices, metrics_cache,
+        )
+        if _should_early_stop_phase2(gen, pareto_ret):
+            stat_label = (
+                "median_return" if _cfg.PHASE2_EARLY_STOP_USE_MEDIAN_RETURN
+                else "mean_return"
+            )
             logger.info(
-                "%s: early stop at gen %d (mean_return=%.2f%% < %.2f%%)",
+                "%s: early stop at gen %d (%s=%.2f%% < %.2f%%)",
                 tag,
                 gen + 1,
-                mean_ret,
+                stat_label,
+                pareto_ret,
                 float(_cfg.PHASE2_EARLY_STOP_MEAN_RETURN_PCT),
             )
             break

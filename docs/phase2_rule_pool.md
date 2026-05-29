@@ -87,7 +87,9 @@ When the pipeline passes `cv_folds` into `Rule_Pool_Generator`:
 2. `PurgedCVTrainEngine` / `PurgedCVValEngine` wrap the fold engines and expose `simulate_rule_batch()` that merges metrics with a **worst-case** rule across folds (min return/Sortino/PF, max drawdown).
 3. Joint fitness uses `min(train_sortino_fold, val_sortino_fold)` **per fold**, then the facade's worst-case merge across folds.
 
-**Effect:** A rule that shines in only one season but fails in another gets a poor f1. Pool admission (`PHASE2_POOL_*_RETURN_MIN_PCT`) applies to these merged train/val metrics.
+**Effect:** A rule that shines in only one season but fails in another gets a poor f1.
+
+**Pool admission (CV):** `evaluate_purged_cv_pool_admission()` checks each fold with `passes_pool_admission_cv_fold` (lower trade/return floors). A rule enters the pool when at least `PHASE2_CV_POOL_MIN_FOLDS_PASS` folds pass (default 2 of 3). Stored objectives still use worst-case merged metrics from the CV facades. Early stop is disabled in CV (`PHASE2_EARLY_STOP_DISABLED_IN_CV`).
 
 When `SPLIT_MODE == "holdout_75_25"`, behaviour is unchanged: one train engine (sampled full `train_75`) and one optional val engine (`validation_25`).
 

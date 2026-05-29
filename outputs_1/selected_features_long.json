@@ -1,0 +1,55 @@
+{
+  "direction": "long",
+  "features": [
+    {
+      "name": "amihud_illiquidity_20",
+      "mode": "positive",
+      "score": 0.23810441820549547
+    },
+    {
+      "name": "range_compression_20_100",
+      "mode": "positive",
+      "score": 0.11198649059916595
+    },
+    {
+      "name": "mom_stoch_rsi_14_14_3",
+      "mode": "positive",
+      "score": 0.00193939737217375
+    },
+    {
+      "name": "upper_wick_to_tr",
+      "mode": "positive",
+      "score": 0.0018206948238401717
+    },
+    {
+      "name": "body_to_tr",
+      "mode": "positive",
+      "score": 0.0016930825439760656
+    },
+    {
+      "name": "return_skew_30",
+      "mode": "signed",
+      "score": 0.0016751890377411866
+    },
+    {
+      "name": "close_location_value",
+      "mode": "positive",
+      "score": 0.001631052307638869
+    },
+    {
+      "name": "vol_over_median20",
+      "mode": "positive",
+      "score": 0.001240279255894567
+    },
+    {
+      "name": "body_signed_to_tr",
+      "mode": "signed",
+      "score": 0.0008899973739990072
+    },
+    {
+      "name": "ret_vol_corr_30",
+      "mode": "signed",
+      "score": 0.0007181284528263496
+    }
+  ]
+}

@@ -159,27 +159,54 @@ def trade_support_penalty(
     return pen, False, -1
 
 
-def passes_pool_admission_gate(
-    train_metrics: dict,
-    val_metrics: dict | None = None,
-) -> bool:
-    """
-    Hard gate for Phase 2 pool/archive: rule must be profitable on train and val.
+def _split_mode_is_purged_cv() -> bool:
+    return str(_cfg.SPLIT_MODE).strip().lower() == "purged_rolling_cv"
 
-    When ``PHASE2_POOL_REQUIRE_POSITIVE_SPLITS`` is False, always returns True.
-    """
+
+def _pool_admission_floors(
+    *,
+    cv_fold: bool,
+) -> tuple[int, float, float, float, int]:
+    """Return (train_trade_floor, train_ret_min, val_ret_min, pf_floor, min_val_trades)."""
+    if cv_fold and _split_mode_is_purged_cv():
+        return (
+            int(_cfg.PHASE2_CV_MIN_TRADE_POOL_FLOOR),
+            float(_cfg.PHASE2_CV_POOL_TRAIN_RETURN_MIN_PCT),
+            float(_cfg.PHASE2_CV_POOL_VAL_RETURN_MIN_PCT),
+            float(_cfg.PHASE2_CV_PROFIT_FACTOR_FLOOR),
+            int(_cfg.PHASE2_CV_MIN_VAL_TRADES),
+        )
+    return (
+        int(_cfg.MIN_TRADE_POOL_FLOOR),
+        float(_cfg.PHASE2_POOL_TRAIN_RETURN_MIN_PCT),
+        float(_cfg.PHASE2_POOL_VAL_RETURN_MIN_PCT),
+        float(_cfg.PHASE2_PROFIT_FACTOR_FLOOR),
+        max(int(_cfg.MIN_TRADE_POOL_FLOOR) // 4, 10),
+    )
+
+
+def _passes_pool_admission_impl(
+    train_metrics: dict,
+    val_metrics: dict | None,
+    *,
+    cv_fold: bool,
+) -> bool:
     if not _cfg.PHASE2_POOL_REQUIRE_POSITIVE_SPLITS:
         return True
 
+    train_floor, train_ret_min, val_ret_min, pf_floor, min_val_trades = (
+        _pool_admission_floors(cv_fold=cv_fold)
+    )
+
     train_trades = int(train_metrics.get("executed_trades", 0))
-    if train_trades < _cfg.MIN_TRADE_POOL_FLOOR:
+    if train_trades < train_floor:
         return False
 
     train_ret = float(train_metrics.get("total_return_pct", 0.0))
     train_pf = float(train_metrics.get("profit_factor", 0.0))
-    if train_ret <= float(_cfg.PHASE2_POOL_TRAIN_RETURN_MIN_PCT):
+    if train_ret <= train_ret_min:
         return False
-    if train_pf < float(_cfg.PHASE2_PROFIT_FACTOR_FLOOR):
+    if train_pf < pf_floor:
         return False
 
     if not _cfg.PHASE2_JOINT_TRAIN_VAL:
@@ -188,15 +215,14 @@ def passes_pool_admission_gate(
         return False
 
     val_trades = int(val_metrics.get("executed_trades", 0))
-    min_val_trades = max(_cfg.MIN_TRADE_POOL_FLOOR // 4, 10)
     if val_trades < min_val_trades:
         return False
 
     val_ret = float(val_metrics.get("total_return_pct", 0.0))
     val_pf = float(val_metrics.get("profit_factor", 0.0))
-    if val_ret <= float(_cfg.PHASE2_POOL_VAL_RETURN_MIN_PCT):
+    if val_ret <= val_ret_min:
         return False
-    if val_pf < float(_cfg.PHASE2_PROFIT_FACTOR_FLOOR):
+    if val_pf < pf_floor:
         return False
 
     if _cfg.PHASE2_REGIME_REQUIRE_VAL_CONFIRMATION and train_metrics.get(
@@ -209,6 +235,26 @@ def passes_pool_admission_gate(
     return True
 
 
+def passes_pool_admission_gate(
+    train_metrics: dict,
+    val_metrics: dict | None = None,
+) -> bool:
+    """
+    Hard gate for Phase 2 pool/archive on merged holdout metrics.
+
+    When ``PHASE2_POOL_REQUIRE_POSITIVE_SPLITS`` is False, always returns True.
+    """
+    return _passes_pool_admission_impl(train_metrics, val_metrics, cv_fold=False)
+
+
+def passes_pool_admission_cv_fold(
+    train_metrics: dict,
+    val_metrics: dict | None,
+) -> bool:
+    """Per-fold admission gate when ``SPLIT_MODE`` is ``purged_rolling_cv``."""
+    return _passes_pool_admission_impl(train_metrics, val_metrics, cv_fold=True)
+
+
 def passes_pool_trade_floor(
     executed: int,
     metrics: dict,
@@ -216,7 +262,10 @@ def passes_pool_trade_floor(
     regime_row_fractions_arr: np.ndarray | None = None,
 ) -> bool:
     """Pool/archive inclusion gate (may waive floor for regime specialists)."""
-    if executed >= _cfg.MIN_TRADE_POOL_FLOOR:
+    trade_floor = int(_cfg.MIN_TRADE_POOL_FLOOR)
+    if _split_mode_is_purged_cv():
+        trade_floor = int(_cfg.PHASE2_CV_MIN_TRADE_POOL_FLOOR)
+    if executed >= trade_floor:
         return True
 
     if not _cfg.PHASE2_REGIME_SUPPORT_ENABLED:

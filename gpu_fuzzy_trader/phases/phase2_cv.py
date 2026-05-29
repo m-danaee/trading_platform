@@ -12,6 +12,7 @@ import pandas as pd
 
 from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.data.cv_folds import PurgedFold
+from gpu_fuzzy_trader.phases.phase2_support import passes_pool_admission_cv_fold
 from gpu_fuzzy_trader.phases.phase2_rule_pool import (
     Rule_Pool_Generator,
     _sample_df,
@@ -187,3 +188,58 @@ def build_cv_fold_engines(
         _cfg.CV_EMBARGO_BARS,
     )
     return PurgedCVTrainEngine(train_engines), PurgedCVValEngine(val_engines)
+
+
+def _simulate_one_chrom(
+    engine: Any,
+    chrom: np.ndarray,
+) -> dict:
+    batch = engine.simulate_rule_batch(
+        chromosomes=chrom[None, :],
+        tp=_cfg.PHASE2_TP,
+        sl=_cfg.PHASE2_SL,
+        capital_pct=_cfg.PHASE2_CAPITAL_PCT,
+    )
+    return batch[0] if batch else {}
+
+
+def evaluate_purged_cv_pool_admission(
+    train_cv: PurgedCVTrainEngine,
+    val_cv: PurgedCVValEngine,
+    chrom: np.ndarray,
+) -> tuple[bool, dict, dict | None]:
+    """
+    Per-fold pool admission for purged CV.
+
+    A rule passes when at least ``PHASE2_CV_POOL_MIN_FOLDS_PASS`` folds satisfy
+    ``passes_pool_admission_cv_fold``. Returned train/val metrics are the
+    worst-case merge (same as evolution facades) for pool JSON storage.
+    """
+    train_folds = train_cv._fold_engines
+    val_folds = val_cv._fold_engines
+    if not train_folds or len(train_folds) != len(val_folds):
+        return False, {}, None
+
+    folds_passing = 0
+    for train_eng, val_eng in zip(train_folds, val_folds):
+        try:
+            train_m = _simulate_one_chrom(train_eng, chrom)
+            val_m = _simulate_one_chrom(val_eng, chrom)
+        except Exception:
+            continue
+        if passes_pool_admission_cv_fold(train_m, val_m):
+            folds_passing += 1
+
+    min_pass = min(
+        int(_cfg.PHASE2_CV_POOL_MIN_FOLDS_PASS),
+        len(train_folds),
+    )
+    admitted = folds_passing >= min_pass
+
+    try:
+        merged_train = _simulate_one_chrom(train_cv, chrom)
+        merged_val = _simulate_one_chrom(val_cv, chrom)
+    except Exception:
+        merged_train, merged_val = {}, None
+
+    return admitted, merged_train, merged_val

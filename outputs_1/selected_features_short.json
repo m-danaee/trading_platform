@@ -1,0 +1,55 @@
+{
+  "direction": "short",
+  "features": [
+    {
+      "name": "amihud_illiquidity_20",
+      "mode": "positive",
+      "score": 0.247464713896985
+    },
+    {
+      "name": "range_compression_20_100",
+      "mode": "positive",
+      "score": 0.1174031869641226
+    },
+    {
+      "name": "drawdown_from_peak_60",
+      "mode": "positive",
+      "score": 0.03187364568119775
+    },
+    {
+      "name": "close_location_value",
+      "mode": "positive",
+      "score": 0.00278559610059534
+    },
+    {
+      "name": "return_skew_30",
+      "mode": "signed",
+      "score": 0.0022002631994481503
+    },
+    {
+      "name": "body_to_tr",
+      "mode": "positive",
+      "score": 0.0020916151318908283
+    },
+    {
+      "name": "body_signed_to_tr",
+      "mode": "signed",
+      "score": 0.0015246446417703846
+    },
+    {
+      "name": "volume_percentile_60",
+      "mode": "positive",
+      "score": 0.0004783593913569536
+    },
+    {
+      "name": "ema_gap_atr_20",
+      "mode": "signed",
+      "score": 0.00034757738215999685
+    },
+    {
+      "name": "cand_up_down_vol_ratio_20",
+      "mode": "positive",
+      "score": 0.00015089109553097267
+    }
+  ]
+}

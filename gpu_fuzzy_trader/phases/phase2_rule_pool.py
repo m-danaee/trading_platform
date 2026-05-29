@@ -768,6 +768,16 @@ def _build_pool_from_archive(
     regime_row_fractions_arr: np.ndarray | None = None,
     val_engine=None,
 ) -> list[dict]:
+    from gpu_fuzzy_trader.phases.phase2_cv import (
+        PurgedCVTrainEngine,
+        PurgedCVValEngine,
+        evaluate_purged_cv_pool_admission,
+    )
+
+    use_cv_admission = (
+        isinstance(engine, PurgedCVTrainEngine)
+        and isinstance(val_engine, PurgedCVValEngine)
+    )
     """
     Convert a list of Pareto-front chromosomes into pool JSON entries.
 
@@ -793,18 +803,33 @@ def _build_pool_from_archive(
             continue
 
         metrics = None
-        if metrics_by_chrom is not None:
-            metrics = metrics_by_chrom.get(key)
-        if metrics is None:
+        val_metrics: dict | None = None
+        if use_cv_admission:
             try:
-                metrics_list = engine.simulate_rule_batch(
-                    chromosomes=chrom[None, :],
-                    tp=_cfg.PHASE2_TP,
-                    sl=_cfg.PHASE2_SL,
-                    capital_pct=_cfg.PHASE2_CAPITAL_PCT,
+                admitted, metrics, val_metrics = evaluate_purged_cv_pool_admission(
+                    engine, val_engine, chrom,
                 )
-                metrics = metrics_list[0]
             except Exception:
+                continue
+            if not admitted or not metrics:
+                continue
+        else:
+            if metrics_by_chrom is not None:
+                metrics = metrics_by_chrom.get(key)
+            if metrics is None:
+                try:
+                    metrics_list = engine.simulate_rule_batch(
+                        chromosomes=chrom[None, :],
+                        tp=_cfg.PHASE2_TP,
+                        sl=_cfg.PHASE2_SL,
+                        capital_pct=_cfg.PHASE2_CAPITAL_PCT,
+                    )
+                    metrics = metrics_list[0]
+                except Exception:
+                    continue
+
+            val_metrics = _simulate_val_metrics_for_chrom(chrom, val_engine)
+            if not passes_pool_admission_gate(metrics, val_metrics):
                 continue
 
         executed = int(metrics.get("executed_trades", 0))
@@ -815,10 +840,6 @@ def _build_pool_from_archive(
         if not passes_pool_trade_floor(
             executed, metrics, regime_row_fractions_arr=regime_row_fractions_arr,
         ):
-            continue
-
-        val_metrics = _simulate_val_metrics_for_chrom(chrom, val_engine)
-        if not passes_pool_admission_gate(metrics, val_metrics):
             continue
 
         try:
