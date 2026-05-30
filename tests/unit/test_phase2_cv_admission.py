@@ -11,7 +11,10 @@ from gpu_fuzzy_trader.phases.phase2_cv import (
     PurgedCVValEngine,
     evaluate_purged_cv_pool_admission,
 )
-from gpu_fuzzy_trader.phases.phase2_support import passes_pool_admission_cv_fold
+from gpu_fuzzy_trader.phases.phase2_support import (
+    passes_pool_admission_cv_fold,
+    passes_pool_entry_admission,
+)
 
 
 def _metrics(
@@ -72,10 +75,11 @@ class TestEvaluatePurgedCvPoolAdmission:
             _MockFoldEngine(val_good),
         ])
         chrom = np.array([0, 1, 2], dtype=np.int64)
-        ok, train_m, val_m = evaluate_purged_cv_pool_admission(
+        ok, train_m, val_m, folds_passing = evaluate_purged_cv_pool_admission(
             train_cv, val_cv, chrom,
         )
         assert ok is True
+        assert folds_passing == 2
         assert float(train_m["total_return_pct"]) == pytest.approx(-5.0)
         assert val_m is not None
 
@@ -99,5 +103,49 @@ class TestEvaluatePurgedCvPoolAdmission:
             _MockFoldEngine(val_good),
         ])
         chrom = np.array([0, 1], dtype=np.int64)
-        ok, _, _ = evaluate_purged_cv_pool_admission(train_cv, val_cv, chrom)
+        ok, _, _, folds_passing = evaluate_purged_cv_pool_admission(
+            train_cv, val_cv, chrom,
+        )
         assert ok is False
+        assert folds_passing == 1
+
+
+class TestPoolEntryAdmission:
+    def test_cv_metadata_passes_despite_negative_merged_return(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(_cfg, "SPLIT_MODE", "purged_rolling_cv")
+        monkeypatch.setattr(_cfg, "PHASE2_CV_POOL_MIN_FOLDS_PASS", 2)
+        entry = {
+            "cv_folds_passing": 2,
+            "cv_folds_total": 3,
+            "objectives": {
+                "total_return_pct": -5.0,
+                "profit_factor": 0.8,
+            },
+            "val_objectives": {
+                "total_return_pct": 1.0,
+                "profit_factor": 1.1,
+            },
+            "executed_trades": 30,
+            "val_executed_trades": 15,
+        }
+        assert passes_pool_entry_admission(entry) is True
+
+    def test_legacy_entry_uses_merged_objectives(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(_cfg, "SPLIT_MODE", "purged_rolling_cv")
+        entry = {
+            "objectives": {
+                "total_return_pct": -5.0,
+                "profit_factor": 0.8,
+            },
+            "val_objectives": {
+                "total_return_pct": 1.0,
+                "profit_factor": 1.1,
+            },
+            "executed_trades": 30,
+            "val_executed_trades": 15,
+        }
+        assert passes_pool_entry_admission(entry) is False

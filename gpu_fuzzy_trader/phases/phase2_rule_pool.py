@@ -804,15 +804,20 @@ def _build_pool_from_archive(
 
         metrics = None
         val_metrics: dict | None = None
+        folds_passing = 0
+        cv_folds_total = 0
         if use_cv_admission:
             try:
-                admitted, metrics, val_metrics = evaluate_purged_cv_pool_admission(
-                    engine, val_engine, chrom,
+                admitted, metrics, val_metrics, folds_passing = (
+                    evaluate_purged_cv_pool_admission(
+                        engine, val_engine, chrom,
+                    )
                 )
             except Exception:
                 continue
             if not admitted or not metrics:
                 continue
+            cv_folds_total = len(engine._fold_engines)
         else:
             if metrics_by_chrom is not None:
                 metrics = metrics_by_chrom.get(key)
@@ -862,6 +867,9 @@ def _build_pool_from_archive(
             },
             "executed_trades": executed,
         }
+        if use_cv_admission:
+            pool_entry["cv_folds_passing"] = int(folds_passing)
+            pool_entry["cv_folds_total"] = int(cv_folds_total)
         if val_metrics is not None:
             pool_entry["val_objectives"] = {
                 "sortino_ratio": float(val_metrics.get(
@@ -930,23 +938,9 @@ def _is_better_archive_entry(candidate: dict, incumbent: dict) -> bool:
 
 def _pool_entry_passes_admission(entry: dict) -> bool:
     """Check stored train/val metrics on a pool JSON entry."""
-    objectives = entry.get("objectives", {}) or {}
-    train_metrics = {
-        "total_return_pct": float(objectives.get("total_return_pct", 0.0)),
-        "profit_factor": float(objectives.get("profit_factor", 1.0)),
-        "executed_trades": int(entry.get("executed_trades", 0)),
-        "regime_specialist": entry.get("regime_specialist", False),
-        "dominant_regime": entry.get("dominant_regime", -1),
-    }
-    val_obj = entry.get("val_objectives")
-    if val_obj is None:
-        return passes_pool_admission_gate(train_metrics, None)
-    val_metrics = {
-        "total_return_pct": float(val_obj.get("total_return_pct", 0.0)),
-        "profit_factor": float(val_obj.get("profit_factor", 1.0)),
-        "executed_trades": int(entry.get("val_executed_trades", 0)),
-    }
-    return passes_pool_admission_gate(train_metrics, val_metrics)
+    from gpu_fuzzy_trader.phases.phase2_support import passes_pool_entry_admission
+
+    return passes_pool_entry_admission(entry)
 
 
 def _filter_pool_by_admission(pool: list[dict]) -> list[dict]:

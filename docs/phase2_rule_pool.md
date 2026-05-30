@@ -89,7 +89,7 @@ When the pipeline passes `cv_folds` into `Rule_Pool_Generator`:
 
 **Effect:** A rule that shines in only one season but fails in another gets a poor f1.
 
-**Pool admission (CV):** `evaluate_purged_cv_pool_admission()` checks each fold with `passes_pool_admission_cv_fold` (lower trade/return floors). A rule enters the pool when at least `PHASE2_CV_POOL_MIN_FOLDS_PASS` folds pass (default 2 of 3). Stored objectives still use worst-case merged metrics from the CV facades. Early stop is disabled in CV (`PHASE2_EARLY_STOP_DISABLED_IN_CV`).
+**Pool admission (CV):** `evaluate_purged_cv_pool_admission()` checks each fold with `passes_pool_admission_cv_fold` (lower trade/return floors). A rule enters the pool when at least `PHASE2_CV_POOL_MIN_FOLDS_PASS` folds pass (default 2 of 3). Stored objectives still use worst-case merged metrics from the CV facades; pool JSON also stores `cv_folds_passing` / `cv_folds_total` so the post-merge filter uses the same CV criterion (merged metrics alone can be negative while 2/3 folds pass). Early stop is disabled in CV (`PHASE2_EARLY_STOP_DISABLED_IN_CV`).
 
 When `SPLIT_MODE == "holdout_75_25"`, behaviour is unchanged: one train engine (sampled full `train_75`) and one optional val engine (`validation_25`).
 

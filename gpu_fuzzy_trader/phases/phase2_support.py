@@ -247,6 +247,45 @@ def passes_pool_admission_gate(
     return _passes_pool_admission_impl(train_metrics, val_metrics, cv_fold=False)
 
 
+def passes_pool_entry_admission(entry: dict) -> bool:
+    """
+    Post-merge filter for persisted Phase 2 pool JSON entries.
+
+    In purged CV mode, entries built via ``evaluate_purged_cv_pool_admission``
+    store ``cv_folds_passing`` / ``cv_folds_total``; use those instead of
+    merged worst-case objectives (which can be negative while 2/3 folds pass).
+    Legacy entries without CV metadata fall back to holdout gates on objectives.
+    """
+    if not _cfg.PHASE2_POOL_REQUIRE_POSITIVE_SPLITS:
+        return True
+
+    if _split_mode_is_purged_cv():
+        cv_pass = entry.get("cv_folds_passing")
+        if cv_pass is not None:
+            total = int(entry.get("cv_folds_total", _cfg.CV_N_FOLDS))
+            min_pass = min(
+                int(_cfg.PHASE2_CV_POOL_MIN_FOLDS_PASS), max(total, 1))
+            return int(cv_pass) >= min_pass
+
+    objectives = entry.get("objectives", {}) or {}
+    train_metrics = {
+        "total_return_pct": float(objectives.get("total_return_pct", 0.0)),
+        "profit_factor": float(objectives.get("profit_factor", 1.0)),
+        "executed_trades": int(entry.get("executed_trades", 0)),
+        "regime_specialist": entry.get("regime_specialist", False),
+        "dominant_regime": entry.get("dominant_regime", -1),
+    }
+    val_obj = entry.get("val_objectives")
+    if val_obj is None:
+        return passes_pool_admission_gate(train_metrics, None)
+    val_metrics = {
+        "total_return_pct": float(val_obj.get("total_return_pct", 0.0)),
+        "profit_factor": float(val_obj.get("profit_factor", 1.0)),
+        "executed_trades": int(entry.get("val_executed_trades", 0)),
+    }
+    return passes_pool_admission_gate(train_metrics, val_metrics)
+
+
 def passes_pool_admission_cv_fold(
     train_metrics: dict,
     val_metrics: dict | None,

@@ -207,18 +207,22 @@ def evaluate_purged_cv_pool_admission(
     train_cv: PurgedCVTrainEngine,
     val_cv: PurgedCVValEngine,
     chrom: np.ndarray,
-) -> tuple[bool, dict, dict | None]:
+) -> tuple[bool, dict, dict | None, int]:
     """
     Per-fold pool admission for purged CV.
 
     A rule passes when at least ``PHASE2_CV_POOL_MIN_FOLDS_PASS`` folds satisfy
     ``passes_pool_admission_cv_fold``. Returned train/val metrics are the
     worst-case merge (same as evolution facades) for pool JSON storage.
+
+    The fourth return value is the number of folds that passed; persist it on
+    pool entries so post-merge filters do not reject rules on negative merged
+    metrics alone.
     """
     train_folds = train_cv._fold_engines
     val_folds = val_cv._fold_engines
     if not train_folds or len(train_folds) != len(val_folds):
-        return False, {}, None
+        return False, {}, None, 0
 
     folds_passing = 0
     for train_eng, val_eng in zip(train_folds, val_folds):
@@ -242,4 +246,4 @@ def evaluate_purged_cv_pool_admission(
     except Exception:
         merged_train, merged_val = {}, None
 
-    return admitted, merged_train, merged_val
+    return admitted, merged_train, merged_val, folds_passing
