@@ -5,11 +5,9 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
-from sklearn.mixture import GaussianMixture
 
-from gpu_fuzzy_trader import config
 from gpu_fuzzy_trader.features.regime_cluster import (
-    _safe_standardize_per_symbol,
+    _enforce_min_duration,
     assign_regime_labels,
     fit_regime_labels,
     persist_regime_model,
@@ -17,75 +15,51 @@ from gpu_fuzzy_trader.features.regime_cluster import (
 )
 
 
-def _regime_df(n: int = 300, seed: int = 0) -> pd.DataFrame:
-    rng = np.random.default_rng(seed)
-    n_a, n_b = n // 2, n - n // 2
-    base = {col: rng.normal(size=n) for col in config.PHASE1_REGIME_FEATURES}
-    df_a = pd.DataFrame(base)
-    df_a = df_a.iloc[:n_a].copy()
-    df_a["symbol"] = "A"
-    df_b = pd.DataFrame({col: rng.normal(size=n_b) +
-                        2.0 for col in config.PHASE1_REGIME_FEATURES})
-    df_b["symbol"] = "B"
+def _regime_df(n: int = 100) -> pd.DataFrame:
+    """Generates a synthetic DataFrame with a price column and date info."""
+    dates = pd.date_range(start="2024-01-01", periods=n, freq="D")
+    df_a = pd.DataFrame({
+        "datetime": dates,
+        "symbol": "A",
+        "label_open_next": np.sin(np.linspace(0, 4 * np.pi, n)) + 1.0,
+    })
+    df_b = pd.DataFrame({
+        "datetime": dates,
+        "symbol": "B",
+        "label_open_next": np.cos(np.linspace(0, 4 * np.pi, n)) + 1.0,
+    })
     return pd.concat([df_a, df_b], ignore_index=True)
 
 
-class TestSafeStandardize:
-    def test_constant_feature_no_nan(self) -> None:
-        df = _regime_df(100)
-        df["realized_vol_20"] = 1.0
-        X, stats = _safe_standardize_per_symbol(
-            df, config.PHASE1_REGIME_FEATURES, config.PHASE1_REGIME_ZERO_VAR_EPS,
-        )
-        assert not np.isnan(X).any()
-        assert not np.isinf(X).any()
-        assert "A" in stats or "__all__" in stats
+class TestEnforceMinDuration:
+    def test_basic_merging(self) -> None:
+        # A sequence with short blocks: 5 days of 0, 3 days of 1, 20 days of 2
+        arr = np.array([0]*5 + [1]*3 + [2]*20)
+        enforced = _enforce_min_duration(arr, min_days=10)
+        # The block of 1s (3 days) is shorter than 10, so it gets merged.
+        # The block of 0s (5 days) is shorter than 10, so it gets merged.
+        # They should merge into the longest block (2s).
+        assert np.all(enforced == 2)
 
-    def test_per_symbol_zscore_differs_by_symbol(self) -> None:
-        df = _regime_df(200)
-        X, _ = _safe_standardize_per_symbol(
-            df, ["realized_vol_20"], config.PHASE1_REGIME_ZERO_VAR_EPS,
-        )
-        a_mask = df["symbol"] == "A"
-        b_mask = df["symbol"] == "B"
-        assert abs(X[a_mask, 0].mean()) < 0.5
-        assert abs(X[b_mask, 0].mean()) < 0.5
+    def test_already_valid(self) -> None:
+        arr = np.array([0]*15 + [1]*20)
+        enforced = _enforce_min_duration(arr, min_days=10)
+        assert np.array_equal(enforced, arr)
 
 
 class TestFitRegimeLabels:
     def test_returns_labels_and_bundle(self) -> None:
-        df = _regime_df(400)
-        result = fit_regime_labels(df, n_clusters=3)
+        df = _regime_df(100)
+        result = fit_regime_labels(df)
         assert result is not None
         labels, bundle = result
         assert len(labels) == len(df)
-        assert labels.nunique() >= 2
-        assert bundle["clusterer"] == config.PHASE1_REGIME_CLUSTERER
-
-    def test_gmm_uses_kmeans_init_and_reg_covar(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        captured: dict = {}
-
-        class RecordingGMM(GaussianMixture):
-            def __init__(self, *args, **kwargs):
-                captured.update(kwargs)
-                super().__init__(*args, **kwargs)
-
-        monkeypatch.setattr(
-            "gpu_fuzzy_trader.features.regime_cluster.GaussianMixture",
-            RecordingGMM,
-        )
-        df = _regime_df(300)
-        fit_regime_labels(df, n_clusters=3, clusterer="gmm")
-        assert captured.get("init_params") == "k-means++"
-        assert captured.get("reg_covar") == config.PHASE1_REGIME_GMM_REG_COVAR
-
-    def test_missing_column_returns_none(self) -> None:
-        df = _regime_df(100).drop(columns=["realized_vol_20"])
-        assert fit_regime_labels(df, n_clusters=3) is None
+        assert bundle["clusterer"] == "rolling_regression"
+        assert bundle["min_days"] == 14
 
     def test_assign_matches_fit(self) -> None:
-        df = _regime_df(300)
-        result = fit_regime_labels(df, n_clusters=3)
+        df = _regime_df(100)
+        result = fit_regime_labels(df)
         assert result is not None
         labels, bundle = result
         reassigned = assign_regime_labels(df, bundle)
@@ -94,11 +68,12 @@ class TestFitRegimeLabels:
 
 class TestPersist:
     def test_round_trip(self, tmp_path) -> None:
-        df = _regime_df(200)
-        result = fit_regime_labels(df, n_clusters=3)
+        df = _regime_df(50)
+        result = fit_regime_labels(df)
         assert result is not None
         _, bundle = result
         path = str(tmp_path / "regime.joblib")
         persist_regime_model(path, bundle)
         loaded = load_regime_model(path)
-        assert loaded["regime_features"] == bundle["regime_features"]
+        assert loaded["clusterer"] == bundle["clusterer"]
+        assert loaded["fast_window"] == bundle["fast_window"]

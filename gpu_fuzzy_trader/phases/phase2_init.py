@@ -53,12 +53,8 @@ def build_feature_sampling_probs(
 
 
 def regime_gene_indices(feature_infos: list[dict]) -> list[int]:
-    """Indices of selected features that are also PHASE1_REGIME_FEATURES."""
-    regime_set = set(_cfg.PHASE1_REGIME_FEATURES)
-    return [
-        i for i, fi in enumerate(feature_infos)
-        if fi.get("name") in regime_set
-    ]
+    """Indices of selected features that are also regime indicators (none in regression mode)."""
+    return []
 
 
 def _sample_indices_without_replacement(

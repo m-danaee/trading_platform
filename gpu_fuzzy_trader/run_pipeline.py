@@ -778,16 +778,13 @@ class Pipeline_Orchestrator:
     def _phase1_keep_feature_names(
         phase1_result: dict[str, list[dict]],
     ) -> list[str]:
-        """Selected fuzzy features plus regime clustering inputs for Phase 2."""
+        """Selected fuzzy features for Phase 2."""
         names: list[str] = []
         for direction in ("long", "short"):
             for fi in phase1_result.get(direction, []):
                 n = fi.get("name")
                 if n and n not in names:
                     names.append(n)
-        for col in _cfg.PHASE1_REGIME_FEATURES:
-            if col not in names:
-                names.append(col)
         return names
 
     @staticmethod

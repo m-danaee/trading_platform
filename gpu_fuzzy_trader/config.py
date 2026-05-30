@@ -153,22 +153,15 @@ PHASE1_STATIONARITY_CV_MAX = 1.0
 PHASE1_STATIONARITY_RANK_DRIFT_MAX = 5
 PHASE1_STATIONARITY_STRATIFY = "regime"  # "regime" | "chronological"
 
-# --- Regime clustering (when STRATIFY == "regime") ---
-PHASE1_REGIME_FEATURES = [
-    "realized_vol_20",
-    "parkinson_vol_20",
-    "atr_pct_14",
-    "vol_regime_pct_120",
-    "efficiency_ratio_20",
-    "ret_autocorr_1_30",
-    "amihud_illiquidity_20",
-    "vol_ratio_20_100",
-]
-PHASE1_REGIME_N_CLUSTERS = 3
-PHASE1_REGIME_MIN_SAMPLES = 100
-PHASE1_REGIME_CLUSTERER = "gmm"  # "gmm" | "kmeans"
-PHASE1_REGIME_GMM_REG_COVAR = 1e-6
-PHASE1_REGIME_ZERO_VAR_EPS = 1e-12
+# --- Regime detection (rolling regression when STRATIFY == "regime") ---
+PHASE1_REGIME_FAST_WINDOW = 10
+PHASE1_REGIME_SLOW_WINDOW = 24
+PHASE1_REGIME_FAST_R2_THRESHOLD = 0.20
+PHASE1_REGIME_SLOW_R2_THRESHOLD = 0.25
+PHASE1_REGIME_FAST_SLOPE_THRESHOLD = 0.0016
+PHASE1_REGIME_SLOW_SLOPE_THRESHOLD = 0.0010
+PHASE1_REGIME_MED_WINDOW = 9
+PHASE1_REGIME_MIN_DAYS = 14
 PHASE1_REGIME_MODEL_PATH = os.path.join(
     OUTPUTS_DIR, "phase1_regime_cluster.joblib")
 

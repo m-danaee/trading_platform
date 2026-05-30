@@ -172,39 +172,33 @@ For shared features that exceed the cap, the one with the smaller score differen
 
 ---
 
-## 5. Regime Clustering — `regime_cluster.py`
+## 5. Regime Detection — `regime_cluster.py`
 
-Used when `PHASE1_STATIONARITY_STRATIFY = "regime"`. Fits a GMM or KMeans model on per-symbol z-scored regime indicator features.
+Used when `PHASE1_STATIONARITY_STRATIFY = "regime"`. Computes macro market regimes using a Dual-Window Rolling Linear Regression on daily prices, then applies median pre-filtering and a minimum duration constraint to merge short-term noise.
 
-### Regime features (from config)
+### Algorithm Details
+For each symbol:
+1. Daily close price (`label_open_next`) is resampled and smoothed using a 3-day rolling mean.
+2. Fast (10-day) and Slow (24-day) linear regressions are run daily.
+3. Market regimes are assigned based on slope and R2:
+   - **Bullish (Regime 2)**: Fast trend is strong and positive, and slow trend is not strongly bearish.
+   - **Bearish (Regime 1)**: Fast trend is strong and negative, and slow trend is not strongly bullish.
+   - **Sideways (Regime 0)**: Otherwise.
+4. Short-term noise is removed using a 9-day median filter.
+5. Blocks shorter than 14 days are merged iteratively with their longer neighbor.
 
-```python
-PHASE1_REGIME_FEATURES = [
-    "realized_vol_20",
-    "parkinson_vol_20",
-    "atr_pct_14",
-    "vol_regime_pct_120",
-    "efficiency_ratio_20",
-    "ret_autocorr_1_30",
-    "amihud_illiquidity_20",
-    "vol_ratio_20_100",
-]
-```
-
-These are volatility, trend efficiency, autocorrelation, and liquidity features — the standard set for regime identification. The model is fit on the training split only and persisted to `outputs/phase1_regime_cluster.joblib` for reuse in Phase 2.
-
-### Z-scoring
-
-Features are z-scored **per symbol** before clustering. This prevents symbols with different absolute volatility levels from dominating the cluster assignments. Constant columns (zero variance) are set to 0.0 rather than causing a division-by-zero error.
-
-### Clusterer choice
+### Configuration Reference
 
 | Parameter | Default | Effect |
 |---|---|---|
-| `PHASE1_REGIME_CLUSTERER` | `"gmm"` | GMM allows soft, elliptical cluster boundaries. `"kmeans"` uses hard, spherical boundaries. GMM is generally better for financial regime detection. |
-| `PHASE1_REGIME_N_CLUSTERS` | `3` | Number of regimes. 3 is a common choice (trending up, trending down, ranging). More clusters = finer regime granularity but requires more data per cluster. |
-| `PHASE1_REGIME_GMM_REG_COVAR` | `1e-6` | Regularization added to the GMM covariance matrix to prevent singular matrices. Increase if clustering fails with "singular matrix" errors. |
-| `PHASE1_REGIME_MIN_SAMPLES` | `100` | Minimum rows per regime fold for MI computation. Regimes with fewer rows are skipped. |
+| `PHASE1_REGIME_FAST_WINDOW` | `10` | Fast regression window size (days). |
+| `PHASE1_REGIME_SLOW_WINDOW` | `24` | Slow regression window size (days). |
+| `PHASE1_REGIME_FAST_R2_THRESHOLD` | `0.20` | R2 threshold for the fast regression to trigger a trend. |
+| `PHASE1_REGIME_SLOW_R2_THRESHOLD` | `0.25` | R2 threshold for the slow trend filter. |
+| `PHASE1_REGIME_FAST_SLOPE_THRESHOLD` | `0.0016` | Price slope threshold for fast regression trend detection. |
+| `PHASE1_REGIME_SLOW_SLOPE_THRESHOLD` | `0.0010` | Price slope threshold for slow regression trend detection. |
+| `PHASE1_REGIME_MED_WINDOW` | `9` | Median filter window size (days) to clean high-frequency noise. |
+| `PHASE1_REGIME_MIN_DAYS` | `14` | Minimum duration (days) for any detected regime block. |
 
 ---
 
@@ -219,7 +213,7 @@ Features are z-scored **per symbol** before clustering. This prevents symbols wi
 | `PHASE1_STATIONARITY_FOLDS` | `3` | Number of folds for stationarity check. Set to `< 2` to disable the stationarity filter entirely. |
 | `PHASE1_STATIONARITY_CV_MAX` | `1.0` | Maximum coefficient of variation across folds. Decrease to enforce stricter temporal consistency. |
 | `PHASE1_STATIONARITY_RANK_DRIFT_MAX` | `10` | Maximum rank shift across folds. Decrease to enforce stricter rank stability. |
-| `PHASE1_STATIONARITY_STRATIFY` | `"chronological"` | `"regime"` uses GMM clusters as folds; `"chronological"` uses time windows. |
+| `PHASE1_STATIONARITY_STRATIFY` | `"chronological"` | `"regime"` uses rolling regression regimes as folds; `"chronological"` uses time windows. |
 | `PHASE1_SAMPLING_TOTAL` | `600_000` | Total rows sampled for Phase 2 GPU evaluation (equal per symbol). This is the primary GPU memory knob. Decrease if you get OOM errors in Phase 2. |
 
 ---
@@ -228,6 +222,6 @@ Features are z-scored **per symbol** before clustering. This prevents symbols wi
 
 - `outputs/selected_features_long.json` — JSON array of `{"name": str, "mode": str, "score": float}` dicts, sorted by score descending.
 - `outputs/selected_features_short.json` — Same for short direction.
-- `outputs/phase1_regime_cluster.joblib` — Fitted regime model (only when `STRATIFY = "regime"`).
+- `outputs/phase1_regime_cluster.joblib` — Saved regime configuration bundle (only when `STRATIFY = "regime"`).
 
 The `score` field in the output is the `relevance × stability` product. It is used only for ranking; the absolute value has no direct interpretation.

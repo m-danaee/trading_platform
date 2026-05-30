@@ -185,11 +185,11 @@ Default strategy (`PHASE2_INIT_STRATEGY = "stratified_sparse"`):
 2. Each remaining individual picks `k` uniformly in `[MIN_CONDITIONS, MAX_CONDITIONS]`, starts with all genes at `dont_care`, then activates exactly `k` genes via one of three strata (fractions from `PHASE2_INIT_STRATUM_FRACTIONS`, default 50% / 30% / 20%):
    - **Elite:** feature indices sampled without replacement using softmax Phase 1 scores (`PHASE2_INIT_SOFTMAX_TEMP`, with `PHASE2_INIT_UNIFORM_MIX` floor).
    - **Explorer:** uniform feature sampling.
-   - **Regime specialist:** one gene from `PHASE1_REGIME_FEATURES` ∩ selected features (extreme class on `positive` modes), remaining `k−1` from the elite distribution. If no regime gene exists in the selected set, the regime share is merged into elites.
+   - **Regime specialist (disabled in regression mode):** this stratum is deactivated because regime features are not directly selected. The regime share automatically falls back to elites.
 
 Legacy mode (`init_strategy="legacy"`) keeps independent per-gene `dont_care_prob` sampling for tests.
 
-Train/val splits retain `PHASE1_REGIME_FEATURES` after Phase 1 column prune so GMM regime labeling works on both splits.
+Train/val splits do not need to preserve GMM features since daily regimes are computed directly from label/metadata columns.
 
 **Follow-up (not yet implemented):** union of Pareto fronts across generations is required to reach 40–60 rules in the exported pool; initialization alone only fixes early-generation fitness artifacts.
 
