@@ -3,7 +3,7 @@ Unit tests for gpu_fuzzy_trader.data.loader.Data_Loader
 
 Tests cover:
   - CSV loading and datetime parsing
-  - Sort by (symbol, datetime)
+  - Sort by (datetime, symbol)
   - Tail drop of last TAIL_DROP_ROWS rows per symbol
   - NaN label row removal
   - Feature NaN fill with 0
@@ -95,19 +95,22 @@ class TestDatetimeParsing:
 
 
 # ---------------------------------------------------------------------------
-# Tests: sort by (symbol, datetime)
+# Tests: sort by (datetime, symbol)
 # ---------------------------------------------------------------------------
 
 class TestSort:
-    def test_rows_sorted_by_symbol_then_datetime(self):
-        # Provide rows out of order: symbol 2 first, then symbol 1
-        rows = _make_rows(2, TAIL_DROP_ROWS + 1) + _make_rows(1, TAIL_DROP_ROWS + 1)
+    def test_rows_sorted_by_datetime_then_symbol(self):
+        # Same timestamp, symbols out of order
+        ts = "2020-01-01 00:00:00"
+        rows = [
+            _base_row(2, ts),
+            _base_row(1, ts),
+            *_make_rows(1, TAIL_DROP_ROWS, start="2020-01-01 00:05:00"),
+        ]
         df = _loader_from_rows(rows)
-        # Symbol 1 should come before symbol 2
-        symbols = df["symbol"].tolist()
-        first_sym2 = next(i for i, s in enumerate(symbols) if s == 2)
-        last_sym1 = max(i for i, s in enumerate(symbols) if s == 1)
-        assert last_sym1 < first_sym2
+        same_ts = df[df["datetime"] == pd.Timestamp(ts)]
+        assert same_ts["symbol"].tolist() == sorted(same_ts["symbol"].tolist())
+        assert df["datetime"].is_monotonic_increasing
 
     def test_datetime_monotonic_per_symbol(self):
         # Provide rows in reverse datetime order for symbol 1

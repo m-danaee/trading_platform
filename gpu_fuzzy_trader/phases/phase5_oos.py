@@ -7,7 +7,7 @@ Workflow:
   1. Load outputs/long.json and outputs/short.json via Output_Writer.load_and_validate()
       (handles the case where only one strategy file exists)
   2. Prepare train, validation, and test data with the same pipeline as training:
-         - Sort by (symbol, datetime)
+         - Sort by (datetime, symbol)
          - Drop last 288 rows per symbol
          - Drop NaN label rows
          - Fill feature NaN with 0

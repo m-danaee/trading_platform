@@ -4,7 +4,7 @@ data/loader.py — Data_Loader
 Stateless CSV loading with full preparation pipeline:
   1. Read CSV (comma-separated)
   2. Parse datetime column
-  3. Sort by (symbol, datetime)
+  3. Sort by (datetime, symbol) — matches evaluator_v3.ipynb row order
   4. Drop last TAIL_DROP_ROWS rows per symbol
   5. Drop rows where any LABEL_COLUMNS value is NaN
   6. Fill NaN in feature columns with 0
@@ -38,7 +38,7 @@ class Data_Loader:
 
         1. Read CSV with comma separator
         2. Parse datetime column
-        3. Sort by (symbol, datetime)
+        3. Sort by (datetime, symbol)
         4. Drop last TAIL_DROP_ROWS rows per symbol
         5. Drop rows where any LABEL_COLUMNS value is NaN
         6. Fill NaN in feature columns with 0
@@ -71,7 +71,7 @@ class Data_Loader:
         # ------------------------------------------------------------------
         # 3. Sort by (symbol, datetime)
         # ------------------------------------------------------------------
-        df = df.sort_values(["symbol", "datetime"]).reset_index(drop=True)
+        df = df.sort_values(["datetime", "symbol"]).reset_index(drop=True)
 
         # ------------------------------------------------------------------
         # 4. Drop last TAIL_DROP_ROWS rows per symbol
