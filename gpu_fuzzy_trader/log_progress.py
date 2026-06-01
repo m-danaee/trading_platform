@@ -58,6 +58,9 @@ def log_generation(
     pareto_size: int,
     mean_return_pct: float,
     *,
+    max_return_pct: float | None = None,
+    max_sortino: float | None = None,
+    valid_count: int | None = None,
     elapsed_s: float | None = None,
 ) -> None:
     """Emit a consistent INFO line for one evolutionary generation."""
@@ -65,6 +68,12 @@ def log_generation(
         "%s gen %d/%d: pareto=%d mean_return=%.2f%%"
         % (tag, gen + 1, n_generations, pareto_size, mean_return_pct)
     )
+    if max_return_pct is not None:
+        msg += " max_return=%.2f%%" % max_return_pct
+    if max_sortino is not None:
+        msg += " max_sortino=%.2f" % max_sortino
+    if valid_count is not None:
+        msg += " valid_rules=%d" % valid_count
     if elapsed_s is not None:
         msg += " elapsed=%.1fs" % elapsed_s
     logger.info(msg)
@@ -78,6 +87,9 @@ def maybe_log_generation(
     pareto_size: int,
     mean_f1: float,
     *,
+    max_return_pct: float | None = None,
+    max_sortino: float | None = None,
+    valid_count: int | None = None,
     loop_start: float | None = None,
     interval: int | None = None,
 ) -> None:
@@ -102,5 +114,8 @@ def maybe_log_generation(
         n_generations,
         pareto_size,
         -float(mean_f1),
+        max_return_pct=max_return_pct,
+        max_sortino=max_sortino,
+        valid_count=valid_count,
         elapsed_s=elapsed,
     )

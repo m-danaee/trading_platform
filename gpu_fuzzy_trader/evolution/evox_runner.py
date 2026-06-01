@@ -665,9 +665,31 @@ def _run_nsga2_fallback(
             ),
         })
 
+        from gpu_fuzzy_trader.phases.phase2_support import passes_pool_trade_floor
         mean_f1 = float(np.mean(pareto_obj[:, 0])) if len(pareto_obj) else 0.0
+        returns = [
+            float(metrics_cache[i].get("total_return_pct", 0.0))
+            for i in pareto_indices
+        ]
+        max_ret = max(returns) if returns else 0.0
+        sortinos = [
+            float(metrics_cache[i].get("sortino_ratio", 0.0))
+            for i in pareto_indices
+        ]
+        max_sort = max(sortinos) if sortinos else 0.0
+        val_count = sum(
+            1 for i in pareto_indices
+            if passes_pool_trade_floor(
+                int(metrics_cache[i].get("executed_trades", 0)),
+                metrics_cache[i],
+                regime_row_fractions_arr=regime_row_fractions,
+            )
+        )
         maybe_log_generation(
             logger, tag, gen, n_generations, len(pareto_indices), mean_f1,
+            max_return_pct=max_ret,
+            max_sortino=max_sort,
+            valid_count=val_count,
             loop_start=gen_loop_start,
         )
 
@@ -816,9 +838,31 @@ def _run_nsga3(
             ),
         })
 
+        from gpu_fuzzy_trader.phases.phase2_support import passes_pool_trade_floor
         mean_f1 = float(np.mean(pareto_obj[:, 0])) if len(pareto_obj) else 0.0
+        returns = [
+            float(metrics_cache[i].get("total_return_pct", 0.0))
+            for i in pareto_indices
+        ]
+        max_ret = max(returns) if returns else 0.0
+        sortinos = [
+            float(metrics_cache[i].get("sortino_ratio", 0.0))
+            for i in pareto_indices
+        ]
+        max_sort = max(sortinos) if sortinos else 0.0
+        val_count = sum(
+            1 for i in pareto_indices
+            if passes_pool_trade_floor(
+                int(metrics_cache[i].get("executed_trades", 0)),
+                metrics_cache[i],
+                regime_row_fractions_arr=regime_row_fractions,
+            )
+        )
         maybe_log_generation(
             logger, tag, gen, n_generations, len(pareto_indices), mean_f1,
+            max_return_pct=max_ret,
+            max_sortino=max_sort,
+            valid_count=val_count,
             loop_start=gen_loop_start,
         )
 

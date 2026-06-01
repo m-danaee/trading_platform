@@ -71,6 +71,26 @@ class TestLogGeneration:
         assert "2.14%" in msg
         assert "45.2s" in msg
 
+    def test_emits_info_with_extra_metrics(self):
+        log = MagicMock(spec=logging.Logger)
+        log_generation(
+            log, "Phase 2 [long] NSGA-III",
+            24, 500, 38, 2.14,
+            max_return_pct=15.5,
+            max_sortino=2.5,
+            valid_count=12,
+            elapsed_s=45.2
+        )
+        log.info.assert_called_once()
+        msg = log.info.call_args[0][0]
+        assert "gen 25/500" in msg
+        assert "pareto=38" in msg
+        assert "mean_return=2.14%" in msg
+        assert "max_return=15.50%" in msg
+        assert "max_sortino=2.50" in msg
+        assert "valid_rules=12" in msg
+        assert "elapsed=45.2s" in msg
+
 
 class TestMaybeLogGeneration:
     def test_skips_when_not_on_interval(self):
@@ -83,6 +103,21 @@ class TestMaybeLogGeneration:
     def test_logs_on_interval(self):
         log = MagicMock(spec=logging.Logger)
         maybe_log_generation(
-            log, "tag", 24, 500, 10, -2.5, interval=25,
+            log, "tag", 25, 500, 10, -2.5, interval=25,
         )
         log.info.assert_called_once()
+
+    def test_maybe_logs_extra_metrics(self):
+        log = MagicMock(spec=logging.Logger)
+        maybe_log_generation(
+            log, "tag", 25, 500, 10, -2.5,
+            max_return_pct=12.3,
+            max_sortino=1.8,
+            valid_count=5,
+            interval=25,
+        )
+        log.info.assert_called_once()
+        msg = log.info.call_args[0][0]
+        assert "max_return=12.30%" in msg
+        assert "max_sortino=1.80" in msg
+        assert "valid_rules=5" in msg
