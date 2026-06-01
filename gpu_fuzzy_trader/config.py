@@ -162,6 +162,8 @@ PHASE1_REGIME_FAST_SLOPE_THRESHOLD = 0.0016
 PHASE1_REGIME_SLOW_SLOPE_THRESHOLD = 0.0010
 PHASE1_REGIME_MED_WINDOW = 9
 PHASE1_REGIME_MIN_DAYS = 14
+# Minimum rows per stationarity fold (chronological or per-regime MI).
+PHASE1_REGIME_MIN_SAMPLES = 100
 PHASE1_REGIME_MODEL_PATH = os.path.join(
     OUTPUTS_DIR, "phase1_regime_cluster.joblib")
 
