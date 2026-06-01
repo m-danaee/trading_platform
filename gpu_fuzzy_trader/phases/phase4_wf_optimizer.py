@@ -154,18 +154,10 @@ def _build_candidate_rule_set(
     ]
 
 
-def _overalloc_penalty(params_list: list[dict]) -> float:
-    total_cap = sum(float(p.get("capital_pct", 0.0)) for p in params_list)
-    return (
-        max(0.0, total_cap - 100.0) / 100.0 * _cfg.PHASE4_TOTAL_CAP_PENALTY
-    )
-
-
 def _evaluate_params_worst_case(
     val_splits: list[pd.DataFrame],
     direction: str,
     candidate_rule_set: list[dict],
-    params_list: list[dict],
 ) -> tuple[float, float, float, float]:
     """
     Run backtest on each walk-forward window.
@@ -193,9 +185,8 @@ def _evaluate_params_worst_case(
         split_turnover.append(float(metrics.get("executed_trades", 0.0)))
         split_pf.append(float(metrics.get("profit_factor", 0.0)))
 
-    penalty = _overalloc_penalty(params_list)
-    worst_return = min(split_returns) - penalty
-    worst_drawdown = max(split_drawdowns) + penalty
+    worst_return = min(split_returns)
+    worst_drawdown = max(split_drawdowns)
     worst_turnover = min(split_turnover)
     worst_pf = min(split_pf) if split_pf else 0.0
     return worst_return, worst_drawdown, worst_turnover, worst_pf
@@ -489,7 +480,6 @@ class WalkForwardRiskOptimizer:
                     val_splits,
                     self.direction,
                     candidate_rule_set,
-                    params_list,
                 )
             )
             fold_penalty = 0.0

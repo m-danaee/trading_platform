@@ -20,7 +20,6 @@ from gpu_fuzzy_trader.phases.phase4_wf_optimizer import (
     _build_candidate_rule_set,
     _load_rule_set,
     _normalize_capital_pct,
-    _overalloc_penalty,
     _params_within_bounds,
     _select_pareto_trial,
     _tp_sl_ratio_valid,
@@ -115,17 +114,6 @@ class TestSplitValidationWalkForward:
     def test_raises_on_empty_df(self):
         with pytest.raises(ValueError, match="empty"):
             split_validation_walk_forward(pd.DataFrame(), k=2)
-
-
-class TestOverallocPenalty:
-    def test_no_penalty_under_100(self):
-        params = [{"capital_pct": 40.0}, {"capital_pct": 50.0}]
-        assert _overalloc_penalty(params) == 0.0
-
-    def test_penalty_when_over_100(self):
-        params = [{"capital_pct": 50.0}, {"capital_pct": 60.0}]
-        expected = 10.0 / 100.0 * _cfg.PHASE4_TOTAL_CAP_PENALTY
-        assert _overalloc_penalty(params) == pytest.approx(expected)
 
 
 class TestSelectParetoTrial:

@@ -143,7 +143,7 @@ LOG_GENERATION_INTERVAL = 0  # 0 = auto ~10% of generations; N = every N gens
 
 # --- Ranking & shortlist ---
 PHASE1_DISPERSION_THRESHOLD = 0.95  # drop near-constant columns
-PHASE1_TOP_K_FEATURES = 15
+PHASE1_TOP_K_FEATURES = 25
 PHASE1_MAX_FEATURE_OVERLAP = 0.50  # max Jaccard overlap long vs short lists
 PHASE1_ASYMMETRIC_TARGET = True  # separate MI targets for long / short
 
@@ -182,11 +182,11 @@ PHASE2_SL = 1.5
 PHASE2_CAPITAL_PCT = 32.0
 
 # --- Rule genome (shared with Phase 3 team size) ---
-MIN_CONDITIONS = 2
-MAX_CONDITIONS = 3
+MIN_CONDITIONS = 3
+MAX_CONDITIONS = 4
 
 # --- Trade support & pool admission ---
-MIN_TRADE_SUPPORT = 100  # target executed trades for support penalty
+MIN_TRADE_SUPPORT = 120  # target executed trades for support penalty
 SUPPORT_PENALTY_MAX = 12.0
 MIN_TRADE_POOL_FLOOR = 50  # hard reject below this in archive
 PHASE2_SUPPORT_PENALTY_WEIGHT_F1 = 0.8  # Sortino objective
@@ -228,7 +228,7 @@ PHASE2_EARLY_STOP_USE_MEDIAN_RETURN = True  # robust vs one bad Pareto member
 PHASE2_EARLY_STOP_DISABLED_IN_CV = True  # worst-fold train returns skew mean
 
 # --- NSGA-III budget ---
-PHASE2_POPULATION_SIZE = 300
+PHASE2_POPULATION_SIZE = 450
 PHASE2_GENERATIONS = 80
 PHASE2_ALGORITHM = "NSGA3"
 PHASE2_ARCHIVE_MAX_SIZE = 500
@@ -260,9 +260,9 @@ PHASE2_MUTATION_WEIGHTED_ACTIVATE_PROB = 0.70
 
 # --- Team shape ---
 PHASE3_MIN_RULES = 2
-PHASE3_MAX_RULES = 3
+PHASE3_MAX_RULES = 5
 PHASE3_MIN_SYMBOL_COVERAGE = 7  # of 10 symbols with ≥1 val trade
-PHASE3_MAX_CAPITAL_PCT_PER_RULE = 25.0
+PHASE3_MAX_CAPITAL_PCT_PER_RULE = 50.0
 
 # --- Engines ---
 PHASE3_USE_GPU = False  # JAX path; enable after parity checks
@@ -329,7 +329,6 @@ PHASE4_N_TRIALS = 200
 PHASE4_SAMPLER = "tpe"  # "tpe" | "nsga2"
 PHASE4_SEED = 42
 PHASE4_N_JOBS = 1
-PHASE4_TOTAL_CAP_PENALTY = 2.0
 PHASE4_HARD_CAP_NORMALIZE = True  # sum capital_pct ≤ MAX_TOTAL_EXPOSURE_PCT
 
 # --- Walk-forward on validation split ---

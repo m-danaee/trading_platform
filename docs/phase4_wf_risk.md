@@ -71,17 +71,6 @@ minimize: worst_drawdown = max(drawdown across K windows) + overalloc_penalty
 
 The worst-case Sortino and worst-case drawdown across all K windows are the two objectives. This is a bi-objective problem, and Optuna's multi-objective sampler finds the Pareto front.
 
-### Overallocation penalty — `_overalloc_penalty`
-
-```python
-total_cap = sum(capital_pct for each rule)
-penalty = max(0, total_cap − 100.0) / 100.0 × PHASE4_TOTAL_CAP_PENALTY
-```
-
-`PHASE4_TOTAL_CAP_PENALTY = 2.0` (config). If the total capital allocation across all rules exceeds 100%, a penalty is applied to both objectives. This discourages over-leveraged strategies.
-
-**Effect of `PHASE4_TOTAL_CAP_PENALTY`:** Increasing this more aggressively penalizes over-allocation. At 2.0, allocating 150% total capital adds a penalty of `(150-100)/100 × 2.0 = 1.0` to the worst Sortino (subtracted) and worst drawdown (added).
-
 ### Search space (quantized)
 
 Each rule's parameters are sampled from quantized ranges:
@@ -167,7 +156,6 @@ Phase 4 is skipped if `outputs/{direction}.json` already exists, has `risk_optim
 | `PHASE4_TP_STEP`                | `0.2`     | TP quantization step. Decrease for finer search (larger search space).                       |
 | `PHASE4_SL_STEP`                | `0.2`     | SL quantization step.                                                                        |
 | `PHASE4_CAPITAL_STEP`           | `5.0`     | Capital % quantization step.                                                                 |
-| `PHASE4_TOTAL_CAP_PENALTY`      | `2.0`     | Penalty per unit of over-allocation. Increase to more aggressively penalize over-allocation. |
 | `PHASE4_N_TRIALS`               | `200`     | Total Optuna trials. Increase for better optimization (linear compute cost).                 |
 | `PHASE4_WF_SPLITS`              | `4`       | Number of walk-forward windows. Increase for more robust worst-case estimates.               |
 | `PHASE4_MAX_WORST_DRAWDOWN_PCT` | `15.0`    | Maximum acceptable worst-case drawdown. Decrease for more conservative strategies.           |
