@@ -505,6 +505,22 @@ class TestLoadAndSplitDataCache:
         assert result["phase3"] == {}
         assert result["phase4"] == {}
 
+    def test_phase5_ignores_stale_strategies_when_pool_empty(self, tmp_path):
+        """Phase 5 must not load on-disk strategies when Phase 3 did not run."""
+        train_df = _make_df()
+        val_df = _make_df()
+        orch = self._make_orch(tmp_path)
+        orch._create_output_dirs = MagicMock()
+        orch._load_and_split_data = MagicMock(return_value=(train_df, val_df))
+        orch._run_phase1 = MagicMock(return_value={"long": [], "short": []})
+        orch._run_phase2 = MagicMock(return_value={"long": [], "short": []})
+        with patch(
+            "gpu_fuzzy_trader.run_pipeline.OOS_Evaluator.run",
+            return_value={},
+        ) as run_mock:
+            orch.run()
+        run_mock.assert_called_once_with(allowed_directions=frozenset())
+
     def test_phases_3_and_4_run_when_pool_nonempty(self, tmp_path):
         """When Phase 2 pool has rules, Phases 3 and 4 should run."""
         train_df = _make_df()

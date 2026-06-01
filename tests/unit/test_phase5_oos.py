@@ -216,6 +216,39 @@ class TestLoadStrategies:
         finally:
             m._STRATEGY_PATHS.update(original)
 
+    def test_allowed_directions_skips_stale_file(self, tmp_path):
+        import gpu_fuzzy_trader.phases.phase5_oos as m
+
+        long_path = str(tmp_path / "long.json")
+        short_path = str(tmp_path / "short.json")
+        _write_rule_set(long_path, "long")
+        _write_rule_set(short_path, "short")
+        original = m._STRATEGY_PATHS.copy()
+        m._STRATEGY_PATHS["long"] = long_path
+        m._STRATEGY_PATHS["short"] = short_path
+        try:
+            result = OOS_Evaluator.load_strategies(
+                allowed_directions=frozenset({"short"}))
+            assert "short" in result
+            assert "long" not in result
+        finally:
+            m._STRATEGY_PATHS.update(original)
+
+    def test_empty_allowed_directions_skips_all(self, tmp_path):
+        import gpu_fuzzy_trader.phases.phase5_oos as m
+
+        long_path = str(tmp_path / "long.json")
+        _write_rule_set(long_path, "long")
+        original = m._STRATEGY_PATHS.copy()
+        m._STRATEGY_PATHS["long"] = long_path
+        m._STRATEGY_PATHS["short"] = str(tmp_path / "short.json")
+        try:
+            result = OOS_Evaluator.load_strategies(
+                allowed_directions=frozenset())
+            assert result == {}
+        finally:
+            m._STRATEGY_PATHS.update(original)
+
     def test_loaded_direction_matches_key(self, tmp_path):
         import gpu_fuzzy_trader.phases.phase5_oos as m
         long_path = str(tmp_path / "long.json")

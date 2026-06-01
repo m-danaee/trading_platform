@@ -23,6 +23,7 @@ from gpu_fuzzy_trader.phases.phase4_wf_optimizer import (
     _overalloc_penalty,
     _params_within_bounds,
     _select_pareto_trial,
+    _tp_sl_ratio_valid,
     build_phase4_walk_forward_splits,
     build_tail_holdout_split,
     split_validation_walk_forward,
@@ -203,15 +204,37 @@ class TestNormalizeCapitalPct:
 class TestParamsWithinBounds:
     def test_valid(self):
         rs = _make_rule_set()
-        rs["rules_set"][0]["tp"] = 2.5
-        rs["rules_set"][0]["sl"] = 2.0
-        rs["rules_set"][0]["capital_pct"] = 20.0
+        for rule in rs["rules_set"]:
+            rule["tp"] = 3.0
+            rule["sl"] = 2.0
+            rule["capital_pct"] = 35.0
         assert _params_within_bounds(rs) is True
 
     def test_invalid_capital(self):
         rs = _make_rule_set()
         rs["rules_set"][0]["capital_pct"] = 5.0
         assert _params_within_bounds(rs) is False
+
+    def test_invalid_tp_below_sl(self):
+        rs = _make_rule_set()
+        rs["rules_set"][0]["tp"] = 1.5
+        rs["rules_set"][0]["sl"] = 2.0
+        assert _params_within_bounds(rs) is False
+
+    def test_invalid_tp_sl_ratio_below_minimum(self):
+        rs = _make_rule_set()
+        rs["rules_set"][0]["tp"] = 2.0
+        rs["rules_set"][0]["sl"] = 2.0
+        assert _params_within_bounds(rs) is False
+
+
+class TestTpSlRatioValid:
+    def test_accepts_ratio_at_minimum(self):
+        assert _tp_sl_ratio_valid(2.4, 2.0) is True
+
+    def test_rejects_tp_not_greater_than_sl(self):
+        assert _tp_sl_ratio_valid(2.0, 2.0) is False
+        assert _tp_sl_ratio_valid(1.5, 2.0) is False
 
 
 class TestBuildCandidateRuleSet:
@@ -251,9 +274,9 @@ class TestWalkForwardRiskOptimizer:
         data = _make_rule_set()
         data["risk_optimized"] = True
         for r in data["rules_set"]:
-            r["tp"] = 2.5
+            r["tp"] = 3.0
             r["sl"] = 2.0
-            r["capital_pct"] = 20.0
+            r["capital_pct"] = 35.0
         path.write_text(json.dumps(data), encoding="utf-8")
         monkeypatch.setitem(m._OUTPUT_PATHS, "long", str(path))
 

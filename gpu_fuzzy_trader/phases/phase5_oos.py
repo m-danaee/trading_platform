@@ -90,9 +90,20 @@ class OOS_Evaluator:
     # Public API
     # ------------------------------------------------------------------
 
-    def run(self) -> dict:
+    def run(
+        self,
+        allowed_directions: frozenset[str] | None = None,
+    ) -> dict:
         """
         Run out-of-sample evaluation.
+
+        Parameters
+        ----------
+        allowed_directions : frozenset[str] | None
+            When set (full pipeline run), only these directions are loaded from
+            disk. Use an empty frozenset to skip all directions (e.g. Phase 3
+            produced no rule sets this run). ``None`` loads every valid strategy
+            file (standalone Phase 5).
 
         Returns
         -------
@@ -106,14 +117,21 @@ class OOS_Evaluator:
           - outputs/reports/test_short_report.json
           - outputs/reports/test_per_symbol_performance.csv
         """
-        # 1. Load strategies (whichever are available)
-        strategies = self.load_strategies()
+        # 1. Load strategies (whichever are available for this run)
+        strategies = self.load_strategies(
+            allowed_directions=allowed_directions)
         if not strategies:
-            logger.warning(
-                "No strategy files found in %s. "
-                "Run Phase 3 (and optionally Phase 4) first.",
-                _cfg.OUTPUTS_DIR,
-            )
+            if allowed_directions is not None and not allowed_directions:
+                logger.warning(
+                    "Phase 5: no directions produced in the current pipeline run; "
+                    "skipping OOS evaluation (stale strategy files are ignored)."
+                )
+            else:
+                logger.warning(
+                    "No strategy files found in %s. "
+                    "Run Phase 3 (and optionally Phase 4) first.",
+                    _cfg.OUTPUTS_DIR,
+                )
             return {}
 
         # 2. Prepare train / validation / test data
@@ -252,9 +270,16 @@ class OOS_Evaluator:
         return results
 
     @staticmethod
-    def load_strategies() -> dict[str, dict]:
+    def load_strategies(
+        allowed_directions: frozenset[str] | None = None,
+    ) -> dict[str, dict]:
         """
         Load long.json and short.json via Output_Writer.load_and_validate().
+
+        Parameters
+        ----------
+        allowed_directions : frozenset[str] | None
+            Restrict to these directions. ``None`` loads any valid on-disk file.
 
         Returns a dict with keys "long" and/or "short" for whichever files
         exist and pass validation.  Missing or invalid files are silently
@@ -264,6 +289,17 @@ class OOS_Evaluator:
         strategies: dict[str, dict] = {}
 
         for direction, path in _STRATEGY_PATHS.items():
+            if (
+                allowed_directions is not None
+                and direction not in allowed_directions
+            ):
+                logger.info(
+                    "Skipping %s strategy file %s: not produced in current "
+                    "pipeline run",
+                    direction,
+                    path,
+                )
+                continue
             if not os.path.exists(path):
                 logger.warning(
                     "Strategy file not found, skipping %s direction: %s",

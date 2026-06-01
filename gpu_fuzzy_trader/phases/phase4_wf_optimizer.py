@@ -281,6 +281,13 @@ def _load_rule_set(path: str) -> Optional[dict]:
     return data
 
 
+def _tp_sl_ratio_valid(tp: float, sl: float) -> bool:
+    """Return True when TP exceeds SL by at least PHASE4_MIN_TP_SL_RATIO."""
+    if sl <= 0.0:
+        return False
+    return tp > sl and (tp / sl) >= float(_cfg.PHASE4_MIN_TP_SL_RATIO)
+
+
 def _params_within_bounds(rule_set: dict) -> bool:
     """Return True if all TP/SL/capital_pct values are within Phase 4 bounds."""
     if not isinstance(rule_set, dict):
@@ -302,6 +309,8 @@ def _params_within_bounds(rule_set: dict) -> bool:
         if not (_cfg.PHASE4_TP_MIN <= tp <= _cfg.PHASE4_TP_MAX):
             return False
         if not (_cfg.PHASE4_SL_MIN <= sl <= _cfg.PHASE4_SL_MAX):
+            return False
+        if not _tp_sl_ratio_valid(tp, sl):
             return False
         if not (_cfg.PHASE4_CAPITAL_PCT_MIN <= cap <= _cfg.PHASE4_CAPITAL_PCT_MAX):
             return False
@@ -468,6 +477,10 @@ class WalkForwardRiskOptimizer:
                     _cfg.PHASE4_CAPITAL_PCT_MAX,
                     step=_cfg.PHASE4_CAPITAL_STEP,
                 )
+                if not _tp_sl_ratio_valid(tp, sl):
+                    raise optuna.TrialPruned(
+                        f"tp/sl ratio must be >= {_cfg.PHASE4_MIN_TP_SL_RATIO}"
+                    )
                 params_list.append({"tp": tp, "sl": sl, "capital_pct": cap})
 
             candidate_rule_set = _build_candidate_rule_set(rules, params_list)

@@ -458,6 +458,7 @@ class Pipeline_Orchestrator:
                     )
                     results["phase3"] = {}
                     results["phase4"] = {}
+                    phase5_directions: frozenset[str] = frozenset()
                 else:
                     # ------------------------------------------------------------------
                     # Phase 3: Rule Set Selection
@@ -472,11 +473,13 @@ class Pipeline_Orchestrator:
                     phase4_result = self._run_phase4(
                         train_df, val_df, phase3_result, force=force)
                     results["phase4"] = phase4_result
+                    phase5_directions = frozenset(phase3_result.keys())
 
                 # ------------------------------------------------------------------
                 # Phase 5: Out-of-Sample Evaluation (always runs)
                 # ------------------------------------------------------------------
-                phase5_result = self._run_phase5()
+                phase5_result = self._run_phase5(
+                    allowed_directions=phase5_directions)
                 results["phase5"] = phase5_result
 
                 # ------------------------------------------------------------------
@@ -1222,9 +1225,19 @@ class Pipeline_Orchestrator:
     # Phase 5
     # ------------------------------------------------------------------
 
-    def _run_phase5(self) -> dict[str, dict]:
+    def _run_phase5(
+        self,
+        allowed_directions: frozenset[str] | None = None,
+    ) -> dict[str, dict]:
         """
         Run Phase 5 (Out-of-Sample Evaluation). Always runs.
+
+        Parameters
+        ----------
+        allowed_directions : frozenset[str] | None
+            Directions produced in the current run's Phase 3. An empty frozenset
+            skips all OOS evaluation so stale on-disk strategies are not scored.
+            ``None`` evaluates every valid strategy file (standalone Phase 5).
 
         Returns
         -------
@@ -1235,10 +1248,17 @@ class Pipeline_Orchestrator:
         start_ts = _now_iso()
         t0 = time.monotonic()
 
-        logger.info("Running %s …", phase_name)
+        if allowed_directions is not None:
+            logger.info(
+                "Running %s … (directions from current run: %s)",
+                phase_name,
+                ", ".join(sorted(allowed_directions)) or "none",
+            )
+        else:
+            logger.info("Running %s …", phase_name)
         try:
             evaluator = OOS_Evaluator()
-            result = evaluator.run()
+            result = evaluator.run(allowed_directions=allowed_directions)
         except Exception as exc:
             logger.error("Phase 5 failed: %s", exc, exc_info=True)
             result = {}
