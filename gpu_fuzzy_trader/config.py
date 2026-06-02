@@ -225,7 +225,7 @@ PHASE2_EARLY_STOP_ENABLED = True
 PHASE2_EARLY_STOP_MIN_GENERATION = 50
 PHASE2_EARLY_STOP_MEAN_RETURN_PCT = -5.0
 PHASE2_EARLY_STOP_USE_MEDIAN_RETURN = True  # robust vs one bad Pareto member
-PHASE2_EARLY_STOP_DISABLED_IN_CV = True  # worst-fold train returns skew mean
+PHASE2_EARLY_STOP_DISABLED_IN_CV = False  # enable early stop in purged CV mode
 
 # --- NSGA-III budget ---
 PHASE2_POPULATION_SIZE = 450
