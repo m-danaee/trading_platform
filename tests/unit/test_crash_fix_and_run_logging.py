@@ -23,8 +23,15 @@ from gpu_fuzzy_trader._jax_env import configure_jax_env
 class TestConfigPhase2Seed:
     """Phase 2 reproducibility default seed."""
 
-    def test_phase2_seed_default(self) -> None:
-        assert _cfg.PHASE2_SEED == 42
+    def test_phase2_seed_matches_get_seed(self) -> None:
+        """PHASE2_SEED is drawn once at import via get_seed(); set GLOBAL_SEED=42 to fix it."""
+        assert _cfg.PHASE2_SEED == _cfg.get_seed()
+
+    def test_global_seed_overrides_get_seed(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(_cfg, "GLOBAL_SEED", 42)
+        assert _cfg.get_seed() == 42
 
 
 class TestConfigRunLogPath:
@@ -398,7 +405,7 @@ class TestRunLogHandlerLifecycle:
         monkeypatch.setattr(
             Pipeline_Orchestrator,
             "_run_phase5",
-            lambda self: {},
+            lambda self, **_kw: {},
         )
 
     def test_run_log_file_created_and_contains_start_end(

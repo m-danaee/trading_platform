@@ -59,7 +59,7 @@ def test_run_log_formatter_preserves_message(message: str) -> None:
 # ---------------------------------------------------------------------------
 
 # Feature: crash-fix-and-run-logging, Property 2: configure_jax_env does not overwrite pre-existing env vars
-@given(st.text(min_size=1))
+@given(st.text(min_size=1).filter(lambda s: "\x00" not in s))
 @settings(max_examples=100)
 def test_configure_jax_env_does_not_overwrite_preallocate(pre_existing_value: str) -> None:
     """**Validates: Requirements 2.2**

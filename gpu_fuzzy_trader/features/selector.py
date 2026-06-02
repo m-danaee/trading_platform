@@ -263,7 +263,7 @@ class Feature_Selector:
                     X,
                     y,
                     discrete_features=discrete_mask,
-                    random_state=42,
+                    random_state=config.get_seed(),
                 )
             except Exception:
                 scores = np.zeros(len(feature_cols))
@@ -731,7 +731,7 @@ def _mi_scores_for_mask(
     discrete_mask = _mutual_info_discrete_mask(feature_cols, feature_modes)
     try:
         scores = mutual_info_classif(
-            Xf, yf, discrete_features=discrete_mask, random_state=42,
+            Xf, yf, discrete_features=discrete_mask, random_state=config.get_seed(),
         )
     except Exception:
         scores = np.zeros(len(feature_cols))

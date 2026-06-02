@@ -338,3 +338,101 @@ def evaluate_purged_cv_pool_admission(
         merged_train, merged_val = {}, None
 
     return admitted, merged_train, merged_val, folds_passing
+
+
+def evaluate_purged_cv_pool_admission_batch(
+    train_cv: PurgedCVTrainEngine,
+    val_cv: PurgedCVValEngine,
+    chroms: np.ndarray,
+    direction: str = "",
+) -> list[tuple[bool, dict, dict | None, int]]:
+    """
+    Batched CV pool admission: evaluate *all* chroms in one
+    ``simulate_rule_batch`` call per fold instead of one call per chromosome.
+
+    This eliminates the silent hang after gen 80/80 where N×(2×n_folds+2)
+    individual backtest calls were made without any progress logging.
+
+    Returns a list of ``(admitted, merged_train, merged_val, folds_passing)``
+    tuples in the same order as *chroms* — same contract per entry as
+    ``evaluate_purged_cv_pool_admission``.
+    """
+    import time as _time
+
+    train_folds = train_cv._fold_engines
+    val_folds = val_cv._fold_engines
+    n = len(chroms)
+    if not train_folds or len(train_folds) != len(val_folds) or n == 0:
+        return [(False, {}, None, 0)] * n
+
+    min_pass = min(int(_cfg.PHASE2_CV_POOL_MIN_FOLDS_PASS), len(train_folds))
+    folds_passing_arr = np.zeros(n, dtype=np.int32)
+
+    tag = f"Phase 2 [{direction}] CV admission" if direction else "Phase 2 CV admission"
+    t0 = _time.monotonic()
+    logger.info(
+        "%s: batched evaluation of %d archive chromosomes (%d folds)",
+        tag, n, len(train_folds),
+    )
+
+    # One batch call per fold pair — avoids N×6 individual backtest calls.
+    for fold_idx, (train_eng, val_eng) in enumerate(zip(train_folds, val_folds)):
+        try:
+            train_batch = train_eng.simulate_rule_batch(
+                chromosomes=chroms,
+                tp=_cfg.PHASE2_TP,
+                sl=_cfg.PHASE2_SL,
+                capital_pct=_cfg.PHASE2_CAPITAL_PCT,
+            )
+            val_batch = val_eng.simulate_rule_batch(
+                chromosomes=chroms,
+                tp=_cfg.PHASE2_TP,
+                sl=_cfg.PHASE2_SL,
+                capital_pct=_cfg.PHASE2_CAPITAL_PCT,
+            )
+        except Exception as exc:
+            logger.debug("%s: fold %d batch eval failed: %s", tag, fold_idx, exc)
+            continue
+        for i in range(n):
+            t_m = train_batch[i] if i < len(train_batch) else {}
+            v_m = val_batch[i] if i < len(val_batch) else {}
+            if passes_pool_admission_cv_fold(t_m, v_m):
+                folds_passing_arr[i] += 1
+        logger.info(
+            "%s: fold %d/%d done — elapsed=%.1fs",
+            tag, fold_idx + 1, len(train_folds), _time.monotonic() - t0,
+        )
+
+    # Merged worst-case across all folds — one batch call each.
+    try:
+        merged_train_batch = train_cv.simulate_rule_batch(
+            chromosomes=chroms,
+            tp=_cfg.PHASE2_TP,
+            sl=_cfg.PHASE2_SL,
+            capital_pct=_cfg.PHASE2_CAPITAL_PCT,
+        )
+    except Exception:
+        merged_train_batch = [{} for _ in range(n)]
+    try:
+        merged_val_batch = val_cv.simulate_rule_batch(
+            chromosomes=chroms,
+            tp=_cfg.PHASE2_TP,
+            sl=_cfg.PHASE2_SL,
+            capital_pct=_cfg.PHASE2_CAPITAL_PCT,
+        )
+    except Exception:
+        merged_val_batch = [None for _ in range(n)]
+
+    n_admitted = int(np.sum(folds_passing_arr >= min_pass))
+    logger.info(
+        "%s: batch complete — %d/%d admitted in %.1fs",
+        tag, n_admitted, n, _time.monotonic() - t0,
+    )
+
+    results: list[tuple[bool, dict, dict | None, int]] = []
+    for i in range(n):
+        fp = int(folds_passing_arr[i])
+        m_train = merged_train_batch[i] if i < len(merged_train_batch) else {}
+        m_val = merged_val_batch[i] if i < len(merged_val_batch) else None
+        results.append((fp >= min_pass, m_train, m_val, fp))
+    return results

@@ -299,22 +299,7 @@ def test_property_16_gpu_cpu_total_return_parity(scenario: dict) -> None:
         f"direction={direction}"
     )
 
-    cpu_ret = cpu_result["total_return_pct"]
-    gpu_ret = gpu_result["total_return_pct"]
-
-    if abs(cpu_ret) > 1e-6:
-        rel_diff = abs(gpu_ret - cpu_ret) / abs(cpu_ret)
-        # GPU uses simplified equity model; check directional agreement
-        # and that both are in the same ballpark (within 20x or same sign)
-        assert (gpu_ret > 0) == (cpu_ret > 0) or abs(gpu_ret) < 1.0, (
-            f"total_return_pct: GPU={gpu_ret:.8f} vs CPU={cpu_ret:.8f} "
-            f"disagree on sign. {context}"
-        )
-    else:
-        assert abs(gpu_ret - cpu_ret) <= 20.0, (
-            f"total_return_pct: GPU={gpu_ret:.8f} vs CPU={cpu_ret:.8f} "
-            f"absolute diff={abs(gpu_ret - cpu_ret):.2e} (both near zero). {context}"
-        )
+    _assert_parity(gpu_result, cpu_result, context=context)
 
 
 @given(scenario=parity_scenario_strategy())

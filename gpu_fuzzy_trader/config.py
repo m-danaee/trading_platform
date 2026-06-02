@@ -26,6 +26,30 @@ import os
 _PROJECT_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), os.pardir))
 
+# ---------------------------------------------------------------------------
+# Global seed — None means a fresh random seed is drawn once per process.
+# Set GLOBAL_SEED to an integer (e.g. 42) to reproduce a specific run.
+# ---------------------------------------------------------------------------
+GLOBAL_SEED: int | None = None
+
+# One seed per process, lazily initialised on first call to get_seed().
+_PROCESS_SEED: int | None = None
+
+
+def get_seed() -> int:
+    """Return a per-process random seed (stable within a run, different across runs).
+
+    If ``GLOBAL_SEED`` is set to an integer, that value is always returned.
+    Otherwise a cryptographically random seed is drawn once and reused for the
+    lifetime of the process so that all modules share the same seed.
+    """
+    global _PROCESS_SEED
+    if GLOBAL_SEED is not None:
+        return int(GLOBAL_SEED)
+    if _PROCESS_SEED is None:
+        _PROCESS_SEED = int.from_bytes(os.urandom(4), "big")
+    return _PROCESS_SEED
+
 
 def _env_str(name: str, default: str) -> str:
     value = os.environ.get(name, "").strip()
@@ -238,7 +262,7 @@ PHASE2_GENERATIONS = 80
 PHASE2_ALGORITHM = "NSGA3"
 PHASE2_ARCHIVE_MAX_SIZE = 500
 PHASE2_ARCHIVE_SEED_FRACTION = 0.35
-PHASE2_SEED = 42
+PHASE2_SEED: int = get_seed()  # per-run random seed; set GLOBAL_SEED=42 to reproduce
 
 # --- Regime-stratified support (uses PHASE1_REGIME_MODEL_PATH) ---
 PHASE2_REGIME_SUPPORT_ENABLED = True
@@ -332,7 +356,7 @@ PHASE4_CAPITAL_STEP = 5.0
 # --- Optuna ---
 PHASE4_N_TRIALS = 200
 PHASE4_SAMPLER = "tpe"  # "tpe" | "nsga2"
-PHASE4_SEED = 42
+PHASE4_SEED: int = get_seed()  # per-run random seed; set GLOBAL_SEED=42 to reproduce
 PHASE4_N_JOBS = 1
 PHASE4_HARD_CAP_NORMALIZE = True  # sum capital_pct ≤ MAX_TOTAL_EXPOSURE_PCT
 

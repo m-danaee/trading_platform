@@ -748,8 +748,8 @@ def _run_nsga2_fallback(
     metrics_by_chrom = _metrics_dict_from_population(
         population, metrics_cache
     )
-    harvest_archive = list(hall_of_fame.values()
-                           ) if hall_of_fame else pareto_archive
+    harvest_archive = list(hall_of_fame.values(
+    )) if hall_of_fame else pareto_archive
     pareto_pool = _build_pool_from_archive(
         harvest_archive,
         feature_infos,
@@ -758,6 +758,7 @@ def _run_nsga2_fallback(
         metrics_by_chrom=metrics_by_chrom,
         regime_row_fractions_arr=regime_row_fractions,
         val_engine=val_engine,
+        direction=log_tag or "",
     )
     return pareto_pool, history
 
@@ -949,6 +950,7 @@ def _run_nsga3(
         metrics_by_chrom=metrics_by_chrom,
         regime_row_fractions_arr=regime_row_fractions,
         val_engine=val_engine,
+        direction=log_tag or "",
     )
     return pareto_pool, history
 

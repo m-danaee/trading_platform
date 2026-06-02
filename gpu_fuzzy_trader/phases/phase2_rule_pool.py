@@ -767,21 +767,18 @@ def _build_pool_from_archive(
     metrics_by_chrom: dict[tuple, dict] | None = None,
     regime_row_fractions_arr: np.ndarray | None = None,
     val_engine=None,
+    direction: str = "",
 ) -> list[dict]:
-    from gpu_fuzzy_trader.phases.phase2_cv import (
-        PurgedCVTrainEngine,
-        PurgedCVValEngine,
-        evaluate_purged_cv_pool_admission,
-    )
-
-    use_cv_admission = (
-        isinstance(engine, PurgedCVTrainEngine)
-        and isinstance(val_engine, PurgedCVValEngine)
-    )
     """
     Convert a list of Pareto-front chromosomes into pool JSON entries.
 
-    Each entry:
+    When running with purged CV engines the entire archive is evaluated in one
+    ``simulate_rule_batch`` call per fold (via
+    ``evaluate_purged_cv_pool_admission_batch``) instead of calling the engine
+    once per chromosome — eliminating the silent hang that previously occurred
+    after gen 80/80.
+
+    Each pool entry schema:
     {
         "chromosome": [...],
         "conditions": [...],
@@ -789,36 +786,110 @@ def _build_pool_from_archive(
         "executed_trades": ...
     }
     """
-    pool: list[dict] = []
-    seen: set[tuple] = set()
+    from gpu_fuzzy_trader.phases.phase2_cv import (
+        PurgedCVTrainEngine,
+        PurgedCVValEngine,
+        evaluate_purged_cv_pool_admission_batch,
+    )
 
+    use_cv_admission = (
+        isinstance(engine, PurgedCVTrainEngine)
+        and isinstance(val_engine, PurgedCVValEngine)
+    )
+
+    # Deduplicate and filter by condition count before any expensive backtest.
+    unique_chroms: list[np.ndarray] = []
+    seen: set[tuple] = set()
     for chrom in archive:
         key = tuple(chrom.tolist())
         if key in seen:
             continue
         seen.add(key)
-
         active = _count_active_conditions(chrom, dont_cares)
         if active < _cfg.MIN_CONDITIONS or active > _cfg.MAX_CONDITIONS:
             continue
+        unique_chroms.append(chrom)
 
-        metrics = None
-        val_metrics: dict | None = None
-        folds_passing = 0
-        cv_folds_total = 0
-        if use_cv_admission:
-            try:
-                admitted, metrics, val_metrics, folds_passing = (
-                    evaluate_purged_cv_pool_admission(
-                        engine, val_engine, chrom,
-                    )
-                )
-            except Exception:
-                continue
+    if not unique_chroms:
+        return []
+
+    logger.info(
+        "Phase 2 [%s] pool builder: %d unique eligible chromosomes from %d archive entries",
+        direction, len(unique_chroms), len(archive),
+    )
+
+    pool: list[dict] = []
+
+    if use_cv_admission:
+        # --- Batched CV path: one simulate_rule_batch call per fold ---
+        cv_folds_total = len(engine._fold_engines)
+        chroms_arr = np.stack(unique_chroms, axis=0)
+        batch_results = evaluate_purged_cv_pool_admission_batch(
+            engine, val_engine, chroms_arr, direction=direction,
+        )
+
+        if regime_row_fractions_arr is None:
+            regime_row_fractions_arr = getattr(engine, "_regime_row_fractions", None)
+
+        for chrom, (admitted, metrics, val_metrics, folds_passing) in zip(
+            unique_chroms, batch_results
+        ):
             if not admitted or not metrics:
                 continue
-            cv_folds_total = len(engine._fold_engines)
-        else:
+
+            executed = int(metrics.get("executed_trades", 0))
+            if not passes_pool_trade_floor(
+                executed, metrics, regime_row_fractions_arr=regime_row_fractions_arr,
+            ):
+                continue
+
+            try:
+                conditions = decode_chromosome(chrom, feature_infos)
+            except Exception:
+                continue
+            if not conditions:
+                continue
+
+            pool_entry: dict = {
+                "chromosome": chrom.tolist(),
+                "conditions": conditions,
+                "objectives": {
+                    "sortino_ratio": float(metrics.get("sortino_ratio", metrics.get("total_return_pct", 0.0))),
+                    "total_return_pct": float(metrics.get("total_return_pct", 0.0)),
+                    "profit_factor": float(metrics.get("profit_factor", 0.0)),
+                    "max_drawdown_pct": float(metrics.get("max_drawdown_pct", 0.0)),
+                    "win_rate": float(metrics.get("win_rate", 0.0)),
+                },
+                "executed_trades": executed,
+                "cv_folds_passing": int(folds_passing),
+                "cv_folds_total": int(cv_folds_total),
+            }
+            if val_metrics is not None:
+                pool_entry["val_objectives"] = {
+                    "sortino_ratio": float(val_metrics.get(
+                        "sortino_ratio", val_metrics.get("total_return_pct", 0.0))),
+                    "total_return_pct": float(val_metrics.get("total_return_pct", 0.0)),
+                    "profit_factor": float(val_metrics.get("profit_factor", 0.0)),
+                    "max_drawdown_pct": float(val_metrics.get("max_drawdown_pct", 0.0)),
+                    "win_rate": float(val_metrics.get("win_rate", 0.0)),
+                }
+                pool_entry["val_executed_trades"] = int(
+                    val_metrics.get("executed_trades", 0))
+            if metrics.get("regime_specialist"):
+                pool_entry["regime_specialist"] = True
+                pool_entry["dominant_regime"] = int(metrics.get("dominant_regime", -1))
+            if metrics.get("regime_trade_counts") is not None:
+                pool_entry["regime_trade_counts"] = list(metrics["regime_trade_counts"])
+            pool.append(pool_entry)
+
+    else:
+        # --- Non-CV path: one chromosome at a time (unchanged) ---
+        if regime_row_fractions_arr is None:
+            regime_row_fractions_arr = getattr(engine, "_regime_row_fractions", None)
+
+        chrom_keys = [tuple(c.tolist()) for c in unique_chroms]
+        for chrom, key in zip(unique_chroms, chrom_keys):
+            metrics = None
             if metrics_by_chrom is not None:
                 metrics = metrics_by_chrom.get(key)
             if metrics is None:
@@ -837,58 +908,48 @@ def _build_pool_from_archive(
             if not passes_pool_admission_gate(metrics, val_metrics):
                 continue
 
-        executed = int(metrics.get("executed_trades", 0))
-        if regime_row_fractions_arr is None:
-            regime_row_fractions_arr = getattr(
-                engine, "_regime_row_fractions", None,
-            )
-        if not passes_pool_trade_floor(
-            executed, metrics, regime_row_fractions_arr=regime_row_fractions_arr,
-        ):
-            continue
+            executed = int(metrics.get("executed_trades", 0))
+            if not passes_pool_trade_floor(
+                executed, metrics, regime_row_fractions_arr=regime_row_fractions_arr,
+            ):
+                continue
 
-        try:
-            conditions = decode_chromosome(chrom, feature_infos)
-        except Exception:
-            continue
+            try:
+                conditions = decode_chromosome(chrom, feature_infos)
+            except Exception:
+                continue
+            if not conditions:
+                continue
 
-        if not conditions:
-            continue
-
-        pool_entry: dict = {
-            "chromosome": chrom.tolist(),
-            "conditions": conditions,
-            "objectives": {
-                "sortino_ratio": float(metrics.get("sortino_ratio", metrics.get("total_return_pct", 0.0))),
-                "total_return_pct": float(metrics.get("total_return_pct", 0.0)),
-                "profit_factor": float(metrics.get("profit_factor", 0.0)),
-                "max_drawdown_pct": float(metrics.get("max_drawdown_pct", 0.0)),
-                "win_rate": float(metrics.get("win_rate", 0.0)),
-            },
-            "executed_trades": executed,
-        }
-        if use_cv_admission:
-            pool_entry["cv_folds_passing"] = int(folds_passing)
-            pool_entry["cv_folds_total"] = int(cv_folds_total)
-        if val_metrics is not None:
-            pool_entry["val_objectives"] = {
-                "sortino_ratio": float(val_metrics.get(
-                    "sortino_ratio", val_metrics.get("total_return_pct", 0.0))),
-                "total_return_pct": float(val_metrics.get("total_return_pct", 0.0)),
-                "profit_factor": float(val_metrics.get("profit_factor", 0.0)),
-                "max_drawdown_pct": float(val_metrics.get("max_drawdown_pct", 0.0)),
-                "win_rate": float(val_metrics.get("win_rate", 0.0)),
+            pool_entry = {
+                "chromosome": chrom.tolist(),
+                "conditions": conditions,
+                "objectives": {
+                    "sortino_ratio": float(metrics.get("sortino_ratio", metrics.get("total_return_pct", 0.0))),
+                    "total_return_pct": float(metrics.get("total_return_pct", 0.0)),
+                    "profit_factor": float(metrics.get("profit_factor", 0.0)),
+                    "max_drawdown_pct": float(metrics.get("max_drawdown_pct", 0.0)),
+                    "win_rate": float(metrics.get("win_rate", 0.0)),
+                },
+                "executed_trades": executed,
             }
-            pool_entry["val_executed_trades"] = int(
-                val_metrics.get("executed_trades", 0))
-        if metrics.get("regime_specialist"):
-            pool_entry["regime_specialist"] = True
-            pool_entry["dominant_regime"] = int(
-                metrics.get("dominant_regime", -1))
-        if metrics.get("regime_trade_counts") is not None:
-            pool_entry["regime_trade_counts"] = list(
-                metrics["regime_trade_counts"])
-        pool.append(pool_entry)
+            if val_metrics is not None:
+                pool_entry["val_objectives"] = {
+                    "sortino_ratio": float(val_metrics.get(
+                        "sortino_ratio", val_metrics.get("total_return_pct", 0.0))),
+                    "total_return_pct": float(val_metrics.get("total_return_pct", 0.0)),
+                    "profit_factor": float(val_metrics.get("profit_factor", 0.0)),
+                    "max_drawdown_pct": float(val_metrics.get("max_drawdown_pct", 0.0)),
+                    "win_rate": float(val_metrics.get("win_rate", 0.0)),
+                }
+                pool_entry["val_executed_trades"] = int(
+                    val_metrics.get("executed_trades", 0))
+            if metrics.get("regime_specialist"):
+                pool_entry["regime_specialist"] = True
+                pool_entry["dominant_regime"] = int(metrics.get("dominant_regime", -1))
+            if metrics.get("regime_trade_counts") is not None:
+                pool_entry["regime_trade_counts"] = list(metrics["regime_trade_counts"])
+            pool.append(pool_entry)
 
     return pool
 
@@ -1214,14 +1275,14 @@ class Rule_Pool_Generator:
         self.feature_infos = feature_infos
         self.pop_size = pop_size if pop_size is not None else _cfg.PHASE2_POPULATION_SIZE
         self.n_generations = n_generations if n_generations is not None else _cfg.PHASE2_GENERATIONS
-        self.seed = seed if seed is not None else _cfg.PHASE2_SEED
+        self.seed = seed  # preserved as-is (None when not provided, per docstring)
         self._feature_signature = _archive_feature_signature(feature_infos)
         self._regime_row_fractions: np.ndarray | None = None
         self._n_regimes = 0
         self._val_regime_row_counts: np.ndarray | None = None
 
         # Sample training data to budget, then slim to backtest-only columns
-        sample_seed = self.seed
+        sample_seed = seed if seed is not None else _cfg.PHASE2_SEED
         sampled = _sample_df(
             train_df, _cfg.PHASE1_SAMPLING_TOTAL, random_state=sample_seed,
         )

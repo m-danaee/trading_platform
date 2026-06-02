@@ -36,12 +36,12 @@ class TestPhase2InitHelpers:
         assert abs(p.sum() - 1.0) < 1e-9
         assert p[0] > p[1] > p[2]
 
-    def test_regime_gene_indices_overlap(self):
+    def test_regime_gene_indices_empty_in_regression_mode(self):
         fi = _feature_infos_with_scores([
             ("amihud_illiquidity_20", 0.2),
             ("rsi_centered_14", 0.1),
         ])
-        assert regime_gene_indices(fi) == [0]
+        assert regime_gene_indices(fi) == []
 
     def test_pick_active_count_in_bounds(self):
         rng = np.random.default_rng(0)
@@ -82,7 +82,8 @@ class TestStratifiedInitPopulation:
         ]
         dont_cares = _get_dont_cares(fi)
         probs = build_feature_sampling_probs(fi)
-        regime_idx = regime_gene_indices(fi)
+        # explicit regime slot (regression mode has none by default)
+        regime_idx = [0]
         rng = np.random.default_rng(0)
         found_extreme = False
         for _ in range(100):
@@ -120,18 +121,16 @@ class TestStratifiedInitPopulation:
         assert labels.count("elite") + labels.count("explorer") == 10
 
 
-class TestPruneSplitsRegimeColumns:
-    def test_phase1_keep_feature_names_includes_regime_features(self):
+class TestPruneSplitsAfterPhase1:
+    def test_phase1_keep_feature_names_only_selected_features(self):
         phase1 = {
             "long": [{"name": "feat_a", "mode": "positive", "score": 1.0}],
-            "short": [],
+            "short": [{"name": "feat_b", "mode": "positive", "score": 0.5}],
         }
         names = Pipeline_Orchestrator._phase1_keep_feature_names(phase1)
-        assert "feat_a" in names
-        for col in _cfg.PHASE1_REGIME_FEATURES:
-            assert col in names
+        assert names == ["feat_a", "feat_b"]
 
-    def test_prune_splits_retains_regime_column(self):
+    def test_prune_splits_drops_unselected_feature_columns(self):
         rng = np.random.default_rng(0)
         n = 20
         cols = {
@@ -156,5 +155,5 @@ class TestPruneSplitsRegimeColumns:
             train_df, val_df, phase1,
         )
         assert "feat_a" in pruned_train.columns
-        assert "realized_vol_20" in pruned_train.columns
-        assert "realized_vol_20" in pruned_val.columns
+        assert "realized_vol_20" not in pruned_train.columns
+        assert "realized_vol_20" not in pruned_val.columns

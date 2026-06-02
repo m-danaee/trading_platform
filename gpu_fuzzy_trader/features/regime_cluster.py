@@ -195,10 +195,12 @@ def fit_regime_labels(
     regime_features: Optional[list[str]] = None,
     n_clusters: Optional[int] = None,
     clusterer: Optional[str] = None,
-    random_state: int = 42,
+    random_state: Optional[int] = None,
     zero_var_eps: Optional[float] = None,
 ) -> Optional[tuple[pd.Series, RegimeBundle]]:
     """Fits dual-window regression regime labels on train rows; returns labels aligned to df.index."""
+    if random_state is None:
+        random_state = config.get_seed()
     if len(df) == 0:
         return None
 
