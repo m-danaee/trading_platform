@@ -117,19 +117,46 @@ if _NUMBA_AVAILABLE:
 
     @njit(cache=True)
     def _non_dominated_sort_numba(objectives):
+        """
+        NSGA non-dominated sort using O(N + E) memory instead of O(N²).
+
+        dominated_by[i] is a flat list of solutions that i dominates.
+        domination_count[i] counts how many solutions dominate i.
+        Only the (typically sparse) domination edges are stored.
+        """
         n = objectives.shape[0]
         domination_count = np.zeros(n, dtype=np.int64)
-        dominated_counts = np.zeros((n, n), dtype=np.int64)
-        first_front = []
 
+        # Flat ragged storage: dominated_by_start[i] points into dominated_by_flat.
+        # We first count, then fill to avoid dynamic appends in nopython mode.
+        edge_counts = np.zeros(n, dtype=np.int64)
         for i in range(n):
             for j in range(n):
                 if i == j:
                     continue
                 if _dominates_numba(objectives[i], objectives[j]):
-                    dominated_counts[i, j] = 1
+                    edge_counts[i] += 1
                 elif _dominates_numba(objectives[j], objectives[i]):
                     domination_count[i] += 1
+
+        total_edges = np.sum(edge_counts)
+        dominated_by_flat = np.empty(total_edges, dtype=np.int64)
+        dominated_by_start = np.zeros(n + 1, dtype=np.int64)
+        for i in range(n):
+            dominated_by_start[i + 1] = dominated_by_start[i] + edge_counts[i]
+
+        write_pos = dominated_by_start.copy()
+        for i in range(n):
+            for j in range(n):
+                if i == j:
+                    continue
+                if _dominates_numba(objectives[i], objectives[j]):
+                    dominated_by_flat[write_pos[i]] = j
+                    write_pos[i] += 1
+
+        # BFS-style front extraction
+        first_front = []
+        for i in range(n):
             if domination_count[i] == 0:
                 first_front.append(i)
 
@@ -139,11 +166,13 @@ if _NUMBA_AVAILABLE:
         while len(fronts[current]) > 0:
             next_front = []
             for i in fronts[current]:
-                for j in range(n):
-                    if dominated_counts[i, j] == 1:
-                        domination_count[j] -= 1
-                        if domination_count[j] == 0:
-                            next_front.append(j)
+                start = dominated_by_start[i]
+                end = dominated_by_start[i + 1]
+                for k in range(start, end):
+                    j = dominated_by_flat[k]
+                    domination_count[j] -= 1
+                    if domination_count[j] == 0:
+                        next_front.append(j)
             current += 1
             if len(next_front) == 0:
                 break
@@ -246,3 +275,23 @@ def _static_penalty_py(executed: int) -> float:
         return 2.0 * _cfg.SUPPORT_PENALTY_MAX
     shortfall = (_cfg.MIN_TRADE_SUPPORT - executed) / _cfg.MIN_TRADE_SUPPORT
     return min(shortfall ** 2 * _cfg.SUPPORT_PENALTY_MAX, _cfg.SUPPORT_PENALTY_MAX)
+
+
+def batch_hamming_min(
+    chromosome: np.ndarray,
+    archive: list[np.ndarray],
+) -> int:
+    """
+    Minimum Hamming distance from *chromosome* to any member of *archive*.
+
+    Vectorized over the archive in one NumPy broadcast instead of a Python loop,
+    reducing the per-generation cost from O(|archive| × K) Python calls to a
+    single (|archive|, K) boolean matrix comparison.
+
+    Returns ``len(chromosome) + 1`` when *archive* is empty (no penalty triggers).
+    """
+    if not archive:
+        return len(chromosome) + 1
+    arr = np.stack(archive, axis=0)   # (A, K)
+    dists = np.sum(arr != chromosome[None, :], axis=1)  # (A,) int
+    return int(dists.min())

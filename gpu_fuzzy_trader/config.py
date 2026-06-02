@@ -227,6 +227,11 @@ PHASE2_EARLY_STOP_MEAN_RETURN_PCT = -5.0
 PHASE2_EARLY_STOP_USE_MEDIAN_RETURN = True  # robust vs one bad Pareto member
 PHASE2_EARLY_STOP_DISABLED_IN_CV = False  # enable early stop in purged CV mode
 
+# --- Parallel fold evaluation ---
+# Number of threads used to evaluate CV folds simultaneously in Phase 2.
+# Set to 0 to match CV_N_FOLDS automatically; set to 1 to disable parallelism.
+PHASE2_CV_FOLD_WORKERS = 0  # 0 = auto (= number of folds)
+
 # --- NSGA-III budget ---
 PHASE2_POPULATION_SIZE = 450
 PHASE2_GENERATIONS = 80

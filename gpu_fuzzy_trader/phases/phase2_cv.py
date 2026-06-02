@@ -5,6 +5,7 @@ Phase 2 — purged CV fold engine construction and conservative metric aggregati
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 import numpy as np
@@ -70,9 +71,20 @@ class _FoldBacktestEngine:
         return self._inner.simulate_rule_batch(**kwargs)
 
 
+def _n_fold_workers(n_folds: int) -> int:
+    """Resolve the number of parallel fold-evaluation threads."""
+    cfg_val = int(_cfg.PHASE2_CV_FOLD_WORKERS)
+    return n_folds if cfg_val <= 0 else min(cfg_val, n_folds)
+
+
 class PurgedCVTrainEngine:
     """
     Train-side facade: batch metrics are worst-case across CV train folds.
+
+    Folds are evaluated in parallel via ThreadPoolExecutor (see
+    ``PHASE2_CV_FOLD_WORKERS`` in config). JAX releases the GIL during GPU
+    dispatch so multiple folds can overlap on the XLA stream; NumPy/CPU folds
+    also benefit from overlapping Python overhead.
 
     Used as ``engine`` in Phase 2 evolution when CV is enabled.
     """
@@ -87,10 +99,48 @@ class PurgedCVTrainEngine:
         if not self._fold_engines:
             raise RuntimeError("PurgedCVTrainEngine has no fold engines")
 
-        merged: list[dict | None] | None = None
+        n_folds = len(self._fold_engines)
+        n_workers = _n_fold_workers(n_folds)
+
+        if n_workers <= 1 or n_folds == 1:
+            # Sequential path — safe for any backend.
+            merged: list[dict | None] = [None] * 0
+            for eng in self._fold_engines:
+                batch = eng.simulate_rule_batch(**kwargs)
+                if not merged:
+                    merged = [None] * len(batch)
+                for j, met in enumerate(batch):
+                    merged[j] = _merge_metrics_worst_case(merged[j], met)
+            return [m if m is not None else {} for m in merged]
+
+        # Parallel path — each fold dispatched to its own thread.
+        try:
+            with ThreadPoolExecutor(max_workers=n_workers) as pool:
+                futures = {
+                    pool.submit(eng.simulate_rule_batch, **kwargs): idx
+                    for idx, eng in enumerate(self._fold_engines)
+                }
+                batches: list[list[dict]] = [None] * n_folds  # type: ignore[list-item]
+                for fut in as_completed(futures):
+                    batches[futures[fut]] = fut.result()
+        except Exception:
+            logger.debug(
+                "PurgedCVTrainEngine parallel eval failed; retrying sequentially",
+                exc_info=True,
+            )
+            return self._simulate_rule_batch_sequential(**kwargs)
+
+        merged2: list[dict | None] = [None] * len(batches[0])
+        for batch in batches:
+            for j, met in enumerate(batch):
+                merged2[j] = _merge_metrics_worst_case(merged2[j], met)
+        return [m if m is not None else {} for m in merged2]
+
+    def _simulate_rule_batch_sequential(self, **kwargs: Any) -> list[dict]:
+        merged: list[dict | None] = [None] * 0
         for eng in self._fold_engines:
             batch = eng.simulate_rule_batch(**kwargs)
-            if merged is None:
+            if not merged:
                 merged = [None] * len(batch)
             for j, met in enumerate(batch):
                 merged[j] = _merge_metrics_worst_case(merged[j], met)
@@ -98,7 +148,12 @@ class PurgedCVTrainEngine:
 
 
 class PurgedCVValEngine:
-    """Val-side facade: worst-case metrics across CV validation folds."""
+    """
+    Val-side facade: worst-case metrics across CV validation folds.
+
+    Folds are evaluated in parallel via ThreadPoolExecutor (see
+    ``PHASE2_CV_FOLD_WORKERS`` in config).
+    """
 
     def __init__(self, fold_engines: list[Any]) -> None:
         self._fold_engines = fold_engines
@@ -110,10 +165,46 @@ class PurgedCVValEngine:
         if not self._fold_engines:
             raise RuntimeError("PurgedCVValEngine has no fold engines")
 
-        merged: list[dict | None] | None = None
+        n_folds = len(self._fold_engines)
+        n_workers = _n_fold_workers(n_folds)
+
+        if n_workers <= 1 or n_folds == 1:
+            merged: list[dict | None] = [None] * 0
+            for eng in self._fold_engines:
+                batch = eng.simulate_rule_batch(**kwargs)
+                if not merged:
+                    merged = [None] * len(batch)
+                for j, met in enumerate(batch):
+                    merged[j] = _merge_metrics_worst_case(merged[j], met)
+            return [m if m is not None else {} for m in merged]
+
+        try:
+            with ThreadPoolExecutor(max_workers=n_workers) as pool:
+                futures = {
+                    pool.submit(eng.simulate_rule_batch, **kwargs): idx
+                    for idx, eng in enumerate(self._fold_engines)
+                }
+                batches: list[list[dict]] = [None] * n_folds  # type: ignore[list-item]
+                for fut in as_completed(futures):
+                    batches[futures[fut]] = fut.result()
+        except Exception:
+            logger.debug(
+                "PurgedCVValEngine parallel eval failed; retrying sequentially",
+                exc_info=True,
+            )
+            return self._simulate_rule_batch_sequential(**kwargs)
+
+        merged2: list[dict | None] = [None] * len(batches[0])
+        for batch in batches:
+            for j, met in enumerate(batch):
+                merged2[j] = _merge_metrics_worst_case(merged2[j], met)
+        return [m if m is not None else {} for m in merged2]
+
+    def _simulate_rule_batch_sequential(self, **kwargs: Any) -> list[dict]:
+        merged: list[dict | None] = [None] * 0
         for eng in self._fold_engines:
             batch = eng.simulate_rule_batch(**kwargs)
-            if merged is None:
+            if not merged:
                 merged = [None] * len(batch)
             for j, met in enumerate(batch):
                 merged[j] = _merge_metrics_worst_case(merged[j], met)

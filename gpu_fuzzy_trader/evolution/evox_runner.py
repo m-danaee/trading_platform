@@ -12,6 +12,7 @@ from gpu_fuzzy_trader.phases.phase2_rule_pool import (
     _mutate,
 )
 from gpu_fuzzy_trader.evolution.numba_ops import (
+    batch_hamming_min,
     crowding_distance,
     non_dominated_sort,
 )
@@ -293,9 +294,14 @@ def _make_offspring_population(
     dont_cares: np.ndarray,
     rng: np.random.Generator,
     feature_probs: np.ndarray | None = None,
+    fronts: list[list[int]] | None = None,
 ) -> np.ndarray:
-    """Generate pop_size offspring via binary tournament, crossover, mutation."""
-    fronts = non_dominated_sort(objectives)
+    """Generate pop_size offspring via binary tournament, crossover, mutation.
+
+    *fronts* may be passed in from the caller to avoid recomputing the sort.
+    """
+    if fronts is None:
+        fronts = non_dominated_sort(objectives)
     rank, crowding = _build_rank_and_crowding(objectives, fronts)
     all_indices = list(range(pop_size))
     offspring_list: list[np.ndarray] = []
@@ -462,11 +468,10 @@ def _evaluate_population_indices(
                 metrics["regime_specialist"] = True
                 metrics["dominant_regime"] = dominant_regime
 
+            # Vectorized min-Hamming against pareto archive
             diversity_penalty = 0.0
             if pareto_archive:
-                min_hamming = min(
-                    _hamming_distance(chromosome, pf) for pf in pareto_archive
-                )
+                min_hamming = batch_hamming_min(chromosome, pareto_archive)
                 if min_hamming <= _cfg.PHASE2_DIVERSITY_HAMMING_THRESHOLD:
                     diversity_penalty = _cfg.PHASE2_DIVERSITY_PENALTY
 
@@ -610,6 +615,7 @@ def _run_nsga2_fallback(
         _metrics_dict_from_population,
         _pareto_sortino_stats,
     )
+    from gpu_fuzzy_trader.phases.phase2_support import passes_pool_trade_floor
 
     K = len(feature_infos)
     dont_cares = _get_dont_cares(feature_infos)
@@ -665,7 +671,6 @@ def _run_nsga2_fallback(
             ),
         })
 
-        from gpu_fuzzy_trader.phases.phase2_support import passes_pool_trade_floor
         mean_f1 = float(np.mean(pareto_obj[:, 0])) if len(pareto_obj) else 0.0
         returns = [
             float(metrics_cache[i].get("total_return_pct", 0.0))
@@ -717,6 +722,7 @@ def _run_nsga2_fallback(
         offspring = _make_offspring_population(
             population, objectives, pop_size, feature_infos, dont_cares, rng,
             feature_probs=feature_probs,
+            fronts=fronts,
         )
         off_obj = np.full((pop_size, 3), np.inf)
         off_metrics: list[dict] = [{} for _ in range(pop_size)]
@@ -780,6 +786,7 @@ def _run_nsga3(
         _metrics_dict_from_population,
         _pareto_sortino_stats,
     )
+    from gpu_fuzzy_trader.phases.phase2_support import passes_pool_trade_floor
 
     K = len(feature_infos)
     dont_cares = _get_dont_cares(feature_infos)
@@ -819,6 +826,7 @@ def _run_nsga3(
             val_regime_row_counts=val_regime_row_counts,
         )
 
+        # Compute fronts once — reused for logging, offspring, and archive.
         fronts = non_dominated_sort(objectives)
         pareto_indices = fronts[0]
         pareto_archive = [population[i].copy() for i in pareto_indices]
@@ -838,7 +846,6 @@ def _run_nsga3(
             ),
         })
 
-        from gpu_fuzzy_trader.phases.phase2_support import passes_pool_trade_floor
         mean_f1 = float(np.mean(pareto_obj[:, 0])) if len(pareto_obj) else 0.0
         returns = [
             float(metrics_cache[i].get("total_return_pct", 0.0))
@@ -887,9 +894,11 @@ def _run_nsga3(
         if gen == n_generations - 1:
             break
 
+        # Pass pre-computed fronts to avoid a redundant NDS call in offspring maker.
         offspring = _make_offspring_population(
             population, objectives, pop_size, feature_infos, dont_cares, rng,
             feature_probs=feature_probs,
+            fronts=fronts,
         )
         off_obj = np.full((pop_size, 3), np.inf)
         off_metrics: list[dict] = [{} for _ in range(pop_size)]
@@ -914,6 +923,10 @@ def _run_nsga3(
             merge_pop, merge_fit, ref_vec, pop_size, feature_infos, dont_cares,
         )
 
+        # Carry objectives directly from merge_fit by index matching instead of
+        # expensive tuple-key dict lookup — objectives are already correct after
+        # environmental selection since _nsga3_environmental_selection returns
+        # the sliced merge_fit directly.
         n_alive = len(population)
         _merge_metrics_by_key: dict[tuple, dict] = {
             tuple(merge_pop[j].tolist()): m
@@ -926,8 +939,8 @@ def _run_nsga3(
         ]
 
     metrics_by_chrom = _metrics_dict_from_population(population, metrics_cache)
-    harvest_archive = list(hall_of_fame.values()
-                           ) if hall_of_fame else pareto_archive
+    harvest_archive = list(hall_of_fame.values(
+    )) if hall_of_fame else pareto_archive
     pareto_pool = _build_pool_from_archive(
         harvest_archive,
         feature_infos,
