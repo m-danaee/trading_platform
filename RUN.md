@@ -34,7 +34,7 @@ pip install -r requirements.txt
 **CPU-only minimum** (omit GPU/RL packages; Phase 2/4 use built-in fallbacks):
 
 ```bash
-pip install pandas numpy scikit-learn matplotlib pyarrow pytest hypothesis
+pip install "numpy>=1.26,<2.4" pandas scikit-learn matplotlib pyarrow pytest hypothesis
 ```
 
 | Package                                   | Used by                                                                                        |
@@ -52,6 +52,57 @@ pip install pandas numpy scikit-learn matplotlib pyarrow pytest hypothesis
 ```bash
 python -c "from gpu_fuzzy_trader.run_pipeline import Pipeline_Orchestrator; print('OK')"
 ```
+
+### Older x86 CPUs (NumPy `X86_V2` error)
+
+If import fails with:
+
+```text
+RuntimeError: NumPy was built with baseline optimizations:
+(X86_V2) but your machine doesn't support:
+(X86_V2).
+```
+
+your host lacks **x86-64-v2** (typical on pre-2009 hardware or some cheap VPS). NumPy **2.4+** wheels target that baseline.
+
+**Fix** (inside `.venv` on the server):
+
+```bash
+pip install --upgrade "numpy>=1.26,<2.4"
+python -c "import numpy; print(numpy.__version__)"
+python -c "from gpu_fuzzy_trader.run_pipeline import Pipeline_Orchestrator; print('OK')"
+```
+
+If you still need the newest NumPy on that machine, build from source for your CPU:
+
+```bash
+pip install --no-binary numpy "numpy>=1.26,<2.4" -Csetup-args=-Dcpu-baseline=none
+```
+
+Re-run `pip install -r requirements.txt` afterward so other packages stay aligned.
+
+### JAX / AVX error on old CPUs
+
+If you see:
+
+```text
+RuntimeError: This version of jaxlib was built using AVX instructions,
+which your CPU and/or operating system do not support.
+```
+
+the pipeline **automatically falls back to `CPUBacktestEngine`** (Phase 2/3/5). You do not need JAX on that host. After updating the repo, verify:
+
+```bash
+python -c "from gpu_fuzzy_trader.run_pipeline import Pipeline_Orchestrator; print('OK')"
+```
+
+Optional: remove JAX entirely on CPU-only servers (faster imports, no failed probe):
+
+```bash
+pip uninstall jax jaxlib -y
+```
+
+Phase 2 evolution still runs via **Numba CPU**; only GPU-accelerated backtests are disabled.
 
 ---
 

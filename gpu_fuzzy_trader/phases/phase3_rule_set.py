@@ -222,9 +222,10 @@ def _build_phase3_engines(
     train_engine: object
 
     if use_jax:
-        try:
-            from gpu_fuzzy_trader.backtest.gpu_engine import GPUBacktestEngine
+        from gpu_fuzzy_trader.backtest.jax_compat import get_gpu_backtest_engine_class
 
+        GPUBacktestEngine = get_gpu_backtest_engine_class()
+        if GPUBacktestEngine is not None:
             val_engine = GPUBacktestEngine(
                 val_df,
                 feature_modes,
@@ -239,9 +240,9 @@ def _build_phase3_engines(
             )
             logger.info(
                 "Phase 3 using GPUBacktestEngine (JAX mask + batch eval)")
-        except ImportError:
+        else:
             logger.warning(
-                "PHASE3_USE_GPU=True but JAX unavailable; using CPU.")
+                "PHASE3_USE_GPU=True but JAX/GPU backtest unavailable; using CPU.")
             use_jax = False
             val_engine = CPUBacktestEngine(
                 val_df,
