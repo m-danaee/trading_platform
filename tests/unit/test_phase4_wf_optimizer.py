@@ -14,6 +14,7 @@ import pandas as pd
 import pytest
 
 from gpu_fuzzy_trader import config as _cfg
+from gpu_fuzzy_trader.data.cv_folds import PurgedFold
 from gpu_fuzzy_trader.phases.phase4_wf_optimizer import (
     Phase4NoFeasibleTrialError,
     Phase4WalkForwardEvaluator,
@@ -24,6 +25,7 @@ from gpu_fuzzy_trader.phases.phase4_wf_optimizer import (
     _params_within_bounds,
     _select_pareto_trial,
     _tp_sl_ratio_valid,
+    build_phase4_multi_cv_fold_splits,
     build_phase4_walk_forward_splits,
     build_tail_holdout_split,
     split_validation_walk_forward,
@@ -196,7 +198,7 @@ class TestParamsWithinBounds:
         for rule in rs["rules_set"]:
             rule["tp"] = 3.0
             rule["sl"] = 2.0
-            rule["capital_pct"] = 35.0
+            rule["capital_pct"] = 30.0
         assert _params_within_bounds(rs) is True
 
     def test_invalid_capital(self):
@@ -233,6 +235,34 @@ class TestBuildCandidateRuleSet:
         built = _build_candidate_rule_set(rules, params)
         assert built[0]["conditions"] == rules[0]["conditions"]
         assert built[0]["tp"] == 3.0
+
+
+class TestMultiCvFoldSplits:
+    def test_more_windows_than_single_val_block(self, monkeypatch):
+        monkeypatch.setattr(_cfg, "PHASE4_INCLUDE_TAIL_HOLDOUT", False)
+        val_df = _make_val_df(rows_per_sym=20, symbols=["A", "B"])
+        mid = len(val_df) // 2
+        folds = [
+            PurgedFold(0, val_df.iloc[:mid].copy(), val_df.iloc[:mid].copy()),
+            PurgedFold(1, val_df.iloc[mid:].copy(), val_df.iloc[mid:].copy()),
+        ]
+        single = build_phase4_walk_forward_splits(val_df, k=2)
+        multi = build_phase4_multi_cv_fold_splits(folds, k=2)
+        assert len(multi) > len(single)
+
+    def test_cv_folds_evaluator_uses_all_folds(self, monkeypatch):
+        monkeypatch.setattr(_cfg, "PHASE4_INCLUDE_TAIL_HOLDOUT", False)
+        val_df = _make_val_df(rows_per_sym=24, symbols=["A", "B"])
+        mid = len(val_df) // 2
+        folds = [
+            PurgedFold(0, val_df.iloc[:mid].copy(), val_df.iloc[:mid].copy()),
+            PurgedFold(1, val_df.iloc[mid:].copy(), val_df.iloc[mid:].copy()),
+        ]
+        k = 2
+        multi_eval = Phase4WalkForwardEvaluator(
+            val_df, "long", k, cv_folds=folds)
+        single_eval = Phase4WalkForwardEvaluator(val_df, "long", k)
+        assert len(multi_eval._engines) > len(single_eval._engines)
 
 
 class TestPhase4WalkForwardEvaluator:
@@ -291,7 +321,7 @@ class TestWalkForwardRiskOptimizer:
         for r in data["rules_set"]:
             r["tp"] = 3.0
             r["sl"] = 2.0
-            r["capital_pct"] = 35.0
+            r["capital_pct"] = 30.0
         path.write_text(json.dumps(data), encoding="utf-8")
         monkeypatch.setitem(m._OUTPUT_PATHS, "long", str(path))
 

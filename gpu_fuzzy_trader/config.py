@@ -210,7 +210,7 @@ MIN_CONDITIONS = 3
 MAX_CONDITIONS = 4
 
 # --- Trade support & pool admission ---
-MIN_TRADE_SUPPORT = 120  # target executed trades for support penalty
+MIN_TRADE_SUPPORT = 150  # target executed trades for support penalty
 SUPPORT_PENALTY_MAX = 12.0
 MIN_TRADE_POOL_FLOOR = 50  # hard reject below this in archive
 PHASE2_SUPPORT_PENALTY_WEIGHT_F1 = 0.8  # Sortino objective
@@ -257,8 +257,8 @@ PHASE2_EARLY_STOP_DISABLED_IN_CV = False  # enable early stop in purged CV mode
 PHASE2_CV_FOLD_WORKERS = 0  # 0 = auto (= number of folds)
 
 # --- NSGA-III budget ---
-PHASE2_POPULATION_SIZE = 450
-PHASE2_GENERATIONS = 80
+PHASE2_POPULATION_SIZE = 600
+PHASE2_GENERATIONS = 120
 PHASE2_ALGORITHM = "NSGA3"
 PHASE2_ARCHIVE_MAX_SIZE = 500
 PHASE2_ARCHIVE_SEED_FRACTION = 0.35
@@ -276,7 +276,7 @@ PHASE2_REGIME_REQUIRE_VAL_CONFIRMATION = False
 # --- Engine & initialization ---
 PHASE2_NUMBA_ENABLED = True
 PHASE2_INIT_STRATEGY = "stratified_sparse"  # "stratified_sparse" | "legacy"
-PHASE2_INIT_STRATUM_FRACTIONS = (0.50, 0.30, 0.20)
+PHASE2_INIT_STRATUM_FRACTIONS = (0.50, 0.25, 0.25)
 PHASE2_INIT_SOFTMAX_TEMP = 0.5
 PHASE2_INIT_SCORE_EPS = 1e-6
 PHASE2_INIT_UNIFORM_MIX = 0.05
@@ -300,9 +300,9 @@ PHASE3_BATCH_WORKERS = min(32, os.cpu_count() or 4)
 PHASE3_NUMBA_ENABLED = True
 
 # --- Refinement budget ---
-PHASE3_REFINE_GENERATIONS = 80
-PHASE3_REFINE_POP_SIZE = 100
-PHASE3_GREEDY_WEIGHTS = (1.0, 0.7, 0.5)  # sortino, drawdown, win_rate
+PHASE3_REFINE_GENERATIONS = 200
+PHASE3_REFINE_POP_SIZE = 200
+PHASE3_GREEDY_WEIGHTS = (0.8, 0.6, 0.5)  # sortino, drawdown, win_rate
 
 # --- Objectives & anti-overfit gates ---
 # RECOMMENDATION: keep USE_TRAIN_TARGET True; rely on CV + gates, not val-only fit.
@@ -310,11 +310,11 @@ PHASE3_USE_TRAIN_TARGET = True
 PHASE3_USE_MAXIMIN_SCORE = True
 PHASE3_SYMBOL_CONSISTENCY_WEIGHT = 10.0
 PHASE3_TRAIN_VAL_CORR_WEIGHT = 8.0
-PHASE3_VAL_GATE_PENALTY = 100.0
+PHASE3_VAL_GATE_PENALTY = 10.0
 
 PHASE3_VAL_SORTINO_RATIO_GATE = 0.5  # val_sortino ≥ ratio × train_sortino
 PHASE3_VAL_DRAWDOWN_RATIO_GATE = 1.15  # val_dd ≤ ratio × train_dd
-PHASE3_PER_RULE_MIN_VAL_TRADES_PER_SYMBOL = 8
+PHASE3_PER_RULE_MIN_VAL_TRADES_PER_SYMBOL = 4
 
 PHASE3_VAL_RETURN_FLOOR_PCT = 0.0
 PHASE3_VAL_PROFIT_FACTOR_FLOOR = 1.0
@@ -336,19 +336,20 @@ PHASE3_JACCARD_SIMILARITY_GATE = 0.75
 
 
 # =============================================================================
-# Phase 4 — Walk-forward risk (TP / SL / capital on validation_25)
+# Phase 4 — Walk-forward risk (TP / SL / capital; all CV val folds when available)
 # =============================================================================
 # Rule conditions are frozen; only risk params are optimized.
-# PHASE4_WF_SPLITS slices validation_25 only (not full CV folds).
+# With purged_rolling_cv, WF windows are built on every fold's val block (not only
+# validation_25). Final deployment gate still uses validation_25 (last fold).
 
 # --- Search space ---
 PHASE4_TP_MIN = 2.0
-PHASE4_TP_MAX = 5.0
+PHASE4_TP_MAX = 4.0
 PHASE4_SL_MIN = 1.0
 PHASE4_SL_MAX = 2.0
 PHASE4_MIN_TP_SL_RATIO = 1.2  # tp must exceed sl (trend-following risk/reward)
 PHASE4_CAPITAL_PCT_MIN = 30.0
-PHASE4_CAPITAL_PCT_MAX = 50.0
+PHASE4_CAPITAL_PCT_MAX = 30.0
 PHASE4_TP_STEP = 0.5
 PHASE4_SL_STEP = 0.5
 PHASE4_CAPITAL_STEP = 5.0

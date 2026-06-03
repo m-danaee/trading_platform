@@ -1187,6 +1187,7 @@ class Pipeline_Orchestrator:
                     val_df=val_df,
                     rule_set=rule_set,
                     direction=direction,
+                    cv_folds=getattr(self, "_cv_folds", None) or None,
                 )
                 result = optimizer.train()
             except Exception as exc:
