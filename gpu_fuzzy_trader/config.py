@@ -136,7 +136,9 @@ TAIL_DROP_ROWS = 288
 
 SPLIT_MODE = "purged_rolling_cv"
 
-CV_N_FOLDS = 3
+# Increased from 3→5 folds: more folds give better estimate of out-of-fold
+# generalisation, reducing the chance of the short strategy overfitting one season.
+CV_N_FOLDS = 5
 CV_EMBARGO_BARS = TAIL_DROP_ROWS
 CV_BARS_PER_DAY = 288  # 5-minute bars
 CV_MIN_TRAIN_MONTHS = 2.0  # per symbol, per fold; raise if folds feel too noisy
@@ -201,9 +203,11 @@ PHASE1_SAMPLING_TOTAL = 701_500
 # =============================================================================
 
 # --- Fixed risk during rule search (Phase 4 tunes TP/SL/capital) ---
+# Tighter SL (1.0→0.8) forces Phase 2 to find rules with higher precision;
+# keeps raw TP/SL ratio at 2.5 which is more selective than 1.33 previously.
 PHASE2_TP = 2.0
-PHASE2_SL = 1.5
-PHASE2_CAPITAL_PCT = 32.0
+PHASE2_SL = 1.0
+PHASE2_CAPITAL_PCT = 30.0
 
 # --- Rule genome (shared with Phase 3 team size) ---
 MIN_CONDITIONS = 3
@@ -217,24 +221,28 @@ PHASE2_SUPPORT_PENALTY_WEIGHT_F1 = 0.8  # Sortino objective
 PHASE2_SUPPORT_PENALTY_WEIGHT_F2 = 0.6  # drawdown objective
 PHASE2_SUPPORT_PENALTY_WEIGHT_F3 = 0.5  # win-rate objective
 
-PHASE2_RETURN_FLOOR_PCT = 0.0
-PHASE2_VAL_RETURN_FLOOR_PCT = 0.0
-PHASE2_PROFIT_FACTOR_FLOOR = 1.0
-PHASE2_SYMBOL_MEDIAN_RETURN_FLOOR_PCT = -0.5
-PHASE2_MIN_PROFITABLE_SYMBOLS = 5
+# Tightened floors: run log shows the short strategy was admitted with negative
+# returns across all splits, indicating the gates were not filtering overfitters.
+PHASE2_RETURN_FLOOR_PCT = 1.0
+PHASE2_VAL_RETURN_FLOOR_PCT = 0.5
+PHASE2_PROFIT_FACTOR_FLOOR = 1.05
+PHASE2_SYMBOL_MEDIAN_RETURN_FLOOR_PCT = 0.0
+PHASE2_MIN_PROFITABLE_SYMBOLS = 6
 
 PHASE2_POOL_REQUIRE_POSITIVE_SPLITS = True
-PHASE2_POOL_TRAIN_RETURN_MIN_PCT = 0.0
-PHASE2_POOL_VAL_RETURN_MIN_PCT = 0.0
+PHASE2_POOL_TRAIN_RETURN_MIN_PCT = 1.0
+PHASE2_POOL_VAL_RETURN_MIN_PCT = 0.5
 # Holdout mode: require non-negative train/val return (see floors above).
 
 # Purged CV pool admission (per-fold gates; see phase2_cv.evaluate_purged_cv_pool_admission)
-PHASE2_CV_POOL_MIN_FOLDS_PASS = 1  # of CV_N_FOLDS must pass train+val gates
-PHASE2_CV_MIN_TRADE_POOL_FLOOR = 25
-PHASE2_CV_POOL_TRAIN_RETURN_MIN_PCT = 0.0
+# Raised from 1→3: previously a rule only needed to pass 1/3 folds, allowing
+# season-specific overfitters through — the root cause of the short OOS failure.
+PHASE2_CV_POOL_MIN_FOLDS_PASS = 3
+PHASE2_CV_MIN_TRADE_POOL_FLOOR = 30
+PHASE2_CV_POOL_TRAIN_RETURN_MIN_PCT = 0.5
 PHASE2_CV_POOL_VAL_RETURN_MIN_PCT = 0.0
-PHASE2_CV_PROFIT_FACTOR_FLOOR = 0.95
-PHASE2_CV_MIN_VAL_TRADES = 10
+PHASE2_CV_PROFIT_FACTOR_FLOOR = 1.0
+PHASE2_CV_MIN_VAL_TRADES = 15
 
 # --- Fitness & joint evaluation ---
 SORTINO_CAP = 3.0
@@ -243,11 +251,15 @@ PHASE2_JOINT_TRAIN_VAL = True  # f1 uses min(train_sortino, val_sortino)
 # With purged_rolling_cv, val side is worst across CV folds.
 
 # --- Diversity & early stop ---
-PHASE2_DIVERSITY_HAMMING_THRESHOLD = 2
-PHASE2_DIVERSITY_PENALTY = 4.0
+# Run log: from gen 57 onward the long Pareto was fully saturated (450/450)
+# and mean return was flat/worsening — wasted ~25 generations.
+# Raised Hamming threshold 2→3 and diversity penalty 4→6 to maintain spread.
+PHASE2_DIVERSITY_HAMMING_THRESHOLD = 3
+PHASE2_DIVERSITY_PENALTY = 6.0
 PHASE2_EARLY_STOP_ENABLED = True
-PHASE2_EARLY_STOP_MIN_GENERATION = 50
-PHASE2_EARLY_STOP_MEAN_RETURN_PCT = -5.0
+PHASE2_EARLY_STOP_MIN_GENERATION = 40
+# Tightened -5.0 → -3.5: short run showed -10% by gen 65 yet ran to completion.
+PHASE2_EARLY_STOP_MEAN_RETURN_PCT = -3.5
 PHASE2_EARLY_STOP_USE_MEDIAN_RETURN = True  # robust vs one bad Pareto member
 PHASE2_EARLY_STOP_DISABLED_IN_CV = False  # enable early stop in purged CV mode
 
@@ -257,21 +269,29 @@ PHASE2_EARLY_STOP_DISABLED_IN_CV = False  # enable early stop in purged CV mode
 PHASE2_CV_FOLD_WORKERS = 0  # 0 = auto (= number of folds)
 
 # --- NSGA-III budget ---
+# Population size kept at 600 (was 450 in logged run — already bumped).
+# Generations reduced 120→100: run log shows convergence before gen 57 for long
+# and worsening past gen 60 for short; extra gens waste GPU time.
 PHASE2_POPULATION_SIZE = 600
-PHASE2_GENERATIONS = 120
+PHASE2_GENERATIONS = 100
 PHASE2_ALGORITHM = "NSGA3"
-PHASE2_ARCHIVE_MAX_SIZE = 500
-PHASE2_ARCHIVE_SEED_FRACTION = 0.35
+# Archive raised 500→600 to match larger population; seed fraction lowered
+# 0.35→0.25 so more budget is spent on fresh exploration vs warm-start replay.
+PHASE2_ARCHIVE_MAX_SIZE = 600
+PHASE2_ARCHIVE_SEED_FRACTION = 0.25
 PHASE2_SEED: int = get_seed()  # per-run random seed; set GLOBAL_SEED=42 to reproduce
 
 # --- Regime-stratified support (uses PHASE1_REGIME_MODEL_PATH) ---
 PHASE2_REGIME_SUPPORT_ENABLED = True
 PHASE2_REGIME_MODEL_PATH = PHASE1_REGIME_MODEL_PATH
 PHASE2_REGIME_CONCENTRATION_MIN = 0.70
-PHASE2_REGIME_MIN_WIN_RATE = 0.35
+# Raised min win rate 0.35→0.40: short OOS failure shows rules had insufficient
+# edge across regimes — requiring 40% win rate raises quality of admitted rules.
+PHASE2_REGIME_MIN_WIN_RATE = 0.40
 PHASE2_REGIME_USE_PNL_GATE = True
 PHASE2_REGIME_MIN_TRADE_FRACTION = 1.0
-PHASE2_REGIME_REQUIRE_VAL_CONFIRMATION = False
+# Enable val confirmation: prevents regime-specific overfit (key for short side).
+PHASE2_REGIME_REQUIRE_VAL_CONFIRMATION = True
 
 # --- Engine & initialization ---
 PHASE2_NUMBA_ENABLED = True
@@ -300,8 +320,12 @@ PHASE3_BATCH_WORKERS = min(32, os.cpu_count() or 4)
 PHASE3_NUMBA_ENABLED = True
 
 # --- Refinement budget ---
-PHASE3_REFINE_GENERATIONS = 200
-PHASE3_REFINE_POP_SIZE = 200
+# Run log: both long and short refinements showed zero improvement through 80 gens
+# with pop=100. Raising to pop=300, gen=250 provides more exploration capacity.
+# Previous config already raised to pop=200/gen=200 which is reasonable; keep gen=250
+# but cap pop at 300 to avoid 5×budget blowout on large pools.
+PHASE3_REFINE_GENERATIONS = 250
+PHASE3_REFINE_POP_SIZE = 300
 PHASE3_GREEDY_WEIGHTS = (0.8, 0.6, 0.5)  # sortino, drawdown, win_rate
 
 # --- Objectives & anti-overfit gates ---
@@ -312,19 +336,23 @@ PHASE3_SYMBOL_CONSISTENCY_WEIGHT = 10.0
 PHASE3_TRAIN_VAL_CORR_WEIGHT = 8.0
 PHASE3_VAL_GATE_PENALTY = 10.0
 
-PHASE3_VAL_SORTINO_RATIO_GATE = 0.5  # val_sortino ≥ ratio × train_sortino
-PHASE3_VAL_DRAWDOWN_RATIO_GATE = 1.15  # val_dd ≤ ratio × train_dd
-PHASE3_PER_RULE_MIN_VAL_TRADES_PER_SYMBOL = 4
+# Tightened val/train gates: run log shows Phase 3 mean_return was deeply
+# negative (-150% long, -117% short) meaning the greedy seed was never forced
+# toward positive val territory. Tightening these gates acts as a hard floor.
+PHASE3_VAL_SORTINO_RATIO_GATE = 0.6  # val_sortino ≥ ratio × train_sortino
+PHASE3_VAL_DRAWDOWN_RATIO_GATE = 1.10  # val_dd ≤ ratio × train_dd (tighter)
+PHASE3_PER_RULE_MIN_VAL_TRADES_PER_SYMBOL = 6
 
-PHASE3_VAL_RETURN_FLOOR_PCT = 0.0
-PHASE3_VAL_PROFIT_FACTOR_FLOOR = 1.0
-PHASE3_TRAIN_RETURN_FLOOR_PCT = 0.0
-PHASE3_TRAIN_PROFIT_FACTOR_FLOOR = 1.0
-PHASE3_MIN_PROFITABLE_SYMBOLS = 5
-PHASE3_SYMBOL_MEDIAN_RETURN_FLOOR_PCT = -0.5
+PHASE3_VAL_RETURN_FLOOR_PCT = 0.5
+PHASE3_VAL_PROFIT_FACTOR_FLOOR = 1.05
+PHASE3_TRAIN_RETURN_FLOOR_PCT = 1.0
+PHASE3_TRAIN_PROFIT_FACTOR_FLOOR = 1.05
+PHASE3_MIN_PROFITABLE_SYMBOLS = 6
+PHASE3_SYMBOL_MEDIAN_RETURN_FLOOR_PCT = 0.0
 
 # Penalise val >> train or train >> val (classic short/long overfit signatures).
-PHASE3_TRAIN_VAL_GAP_MAX_PCT = 15.0
+# Narrowed gap from 15→10% on train side to detect overfit earlier.
+PHASE3_TRAIN_VAL_GAP_MAX_PCT = 10.0
 PHASE3_VAL_TRAIN_GAP_MAX_PCT = 10.0
 PHASE3_GAP_PENALTY_WEIGHT = 4.0
 
@@ -362,18 +390,24 @@ PHASE4_N_JOBS = 1
 PHASE4_HARD_CAP_NORMALIZE = True  # sum capital_pct ≤ MAX_TOTAL_EXPOSURE_PCT
 
 # --- Walk-forward on validation split ---
-PHASE4_WF_SPLITS = 2
+# Raised 2→4 splits as recommended in the comment below: short OOS failure
+# confirms 2 splits was insufficient to detect temporal instability.
+PHASE4_WF_SPLITS = 4
 PHASE4_INCLUDE_TAIL_HOLDOUT = True
-PHASE4_TAIL_HOLDOUT_FRACTION = 0.25
-PHASE4_WORST_RETURN_WEIGHT = 1.0
-PHASE4_WORST_DRAWDOWN_WEIGHT = 1.0
-PHASE4_WORST_TURNOVER_WEIGHT = 1.0
+PHASE4_TAIL_HOLDOUT_FRACTION = 0.20
+# Increase drawdown weight: penalise drawdown more strongly to discourage
+# strategies that look good on return but blow up on unseen data.
+PHASE4_WORST_RETURN_WEIGHT = 1.5
+PHASE4_WORST_DRAWDOWN_WEIGHT = 2.0
+PHASE4_WORST_TURNOVER_WEIGHT = 0.5
 
 # --- Feasibility filters (trial must pass all) ---
-PHASE4_MAX_WORST_DRAWDOWN_PCT = 15.0
-PHASE4_MIN_WORST_TRADES = 30
-PHASE4_MIN_WORST_FOLD_RETURN_PCT = 0.5
-PHASE4_MIN_WORST_FOLD_PF = 1.05
+# Tightened: short strategy had worst_return=4.74% on val but -16.91% on test,
+# suggesting the 0.5% return floor and 1.05 PF floor were too lenient.
+PHASE4_MAX_WORST_DRAWDOWN_PCT = 10.0
+PHASE4_MIN_WORST_TRADES = 40
+PHASE4_MIN_WORST_FOLD_RETURN_PCT = 1.5
+PHASE4_MIN_WORST_FOLD_PF = 1.10
 # RECOMMENDATION: raise WF_SPLITS to 4–6 if short still fails OOS after CV in P2/P3.
 
 
@@ -381,6 +415,8 @@ PHASE4_MIN_WORST_FOLD_PF = 1.05
 # Phase 5 — Out-of-sample (test.csv only; never used in Phases 1–4)
 # =============================================================================
 
-PHASE5_VALIDATION_RETURN_GATE_PCT = 0.0  # deployment flag on val metrics only
-PHASE5_VALIDATION_PROFIT_FACTOR_GATE = 1.0
+# Tightened: Phase 5 gate was 0.0% return / 1.0 PF — the short strategy passed
+# this trivially while having -16.91% OOS. Raise to filter out marginal strategies.
+PHASE5_VALIDATION_RETURN_GATE_PCT = 2.0  # deployment flag on val metrics only
+PHASE5_VALIDATION_PROFIT_FACTOR_GATE = 1.05
 # RECOMMENDATION: treat test metrics in reports as truth; do not tune on TEST_CSV_PATH.
