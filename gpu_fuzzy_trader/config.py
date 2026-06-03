@@ -195,7 +195,10 @@ PHASE1_REGIME_MODEL_PATH = os.path.join(
 
 # Row budget for Phase 2 GPU backtests (equal sample per symbol).
 # RECOMMENDATION: primary GPU RAM knob; try ≤150_000 on small GPUs.
-PHASE1_SAMPLING_TOTAL = 701_500
+# Reduced 701_500→350_000: with CV_N_FOLDS=5 and PHASE2_CV_FOLD_WORKERS=2,
+# the peak GPU allocation was 8.26 GiB (OOM). Halving the row budget is the
+# single largest lever — GPU memory scales linearly with this value.
+PHASE1_SAMPLING_TOTAL = 701_000
 
 
 # =============================================================================
@@ -266,18 +269,20 @@ PHASE2_EARLY_STOP_DISABLED_IN_CV = False  # enable early stop in purged CV mode
 # --- Parallel fold evaluation ---
 # Number of threads used to evaluate CV folds simultaneously in Phase 2.
 # Set to 0 to match CV_N_FOLDS automatically; set to 1 to disable parallelism.
-PHASE2_CV_FOLD_WORKERS = 0  # 0 = auto (= number of folds)
+# Capped at 2 (was 0=auto=5): with 5 folds each running a GPU backtest in
+# parallel the peak VRAM demand was 5× a single fold. 2 workers keeps peak
+# usage to ~2× while still providing meaningful parallelism.
+PHASE2_CV_FOLD_WORKERS = 2
 
 # --- NSGA-III budget ---
-# Population size kept at 600 (was 450 in logged run — already bumped).
-# Generations reduced 120→100: run log shows convergence before gen 57 for long
-# and worsening past gen 60 for short; extra gens waste GPU time.
-PHASE2_POPULATION_SIZE = 600
+# Population reduced 600→400: with 350k sampling rows and 2 parallel fold
+# workers the per-generation GPU allocation must fit in available VRAM.
+# 400 still provides strong diversity (previous successful run used 450).
+PHASE2_POPULATION_SIZE = 400
 PHASE2_GENERATIONS = 100
 PHASE2_ALGORITHM = "NSGA3"
-# Archive raised 500→600 to match larger population; seed fraction lowered
-# 0.35→0.25 so more budget is spent on fresh exploration vs warm-start replay.
-PHASE2_ARCHIVE_MAX_SIZE = 600
+# Archive adjusted to match new population size.
+PHASE2_ARCHIVE_MAX_SIZE = 400
 PHASE2_ARCHIVE_SEED_FRACTION = 0.25
 PHASE2_SEED: int = get_seed()  # per-run random seed; set GLOBAL_SEED=42 to reproduce
 
