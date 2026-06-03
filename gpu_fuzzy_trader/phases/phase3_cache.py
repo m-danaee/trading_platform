@@ -11,10 +11,8 @@ import numpy as np
 import pandas as pd
 
 from gpu_fuzzy_trader import config as _cfg
-from gpu_fuzzy_trader.backtest.cpu_engine import (
-    _build_rule_signal_mask,
-    _build_entries_from_rule_set,
-)
+from gpu_fuzzy_trader.backtest.condition_cache import get_or_build_rule_mask
+from gpu_fuzzy_trader.backtest.cpu_engine import _build_entries_from_rule_set
 from gpu_fuzzy_trader.phases.phase3_objectives import (
     conditions_key,
     min_per_symbol_trades_from_metrics,
@@ -117,6 +115,8 @@ def build_phase3_eval_cache(
         n_rows_train=len(train_df),
         n_rows_val=len(val_df),
     )
+    train_mask_cache: dict[tuple[str, ...], np.ndarray] = {}
+    val_mask_cache: dict[tuple[str, ...], np.ndarray] = {}
     seen: set[frozenset] = set()
 
     for rule in pool:
@@ -128,8 +128,12 @@ def build_phase3_eval_cache(
         fmt = _rule_to_engine_format(rule)
         conditions = fmt["conditions"]
 
-        cache.train_masks[key] = _build_rule_signal_mask(train_df, conditions)
-        cache.val_masks[key] = _build_rule_signal_mask(val_df, conditions)
+        cache.train_masks[key] = get_or_build_rule_mask(
+            train_df, conditions, train_mask_cache,
+        )
+        cache.val_masks[key] = get_or_build_rule_mask(
+            val_df, conditions, val_mask_cache,
+        )
 
         try:
             metrics = val_engine.simulate_rule_set([fmt])

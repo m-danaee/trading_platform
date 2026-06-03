@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 
 from gpu_fuzzy_trader import config as _cfg
+from gpu_fuzzy_trader.backtest.condition_cache import get_or_build_rule_mask
 
 logger = logging.getLogger(__name__)
 
@@ -203,8 +204,11 @@ def _apply_dynamic_rule(df: pd.DataFrame, condition: str) -> np.ndarray:
     )
 
 
-def _build_rule_signal_mask(df: pd.DataFrame, conditions: list[str]) -> np.ndarray:
-    """AND all conditions together → boolean mask of matching rows."""
+def _compute_rule_signal_mask(
+    df: pd.DataFrame,
+    conditions: list[str],
+) -> np.ndarray:
+    """AND all conditions together → boolean mask of matching rows (no cache)."""
     if not conditions:
         raise ValueError("Rule must contain a non-empty 'conditions' list.")
     signal = np.ones(len(df), dtype=bool)
@@ -213,9 +217,21 @@ def _build_rule_signal_mask(df: pd.DataFrame, conditions: list[str]) -> np.ndarr
     return signal
 
 
+def _build_rule_signal_mask(
+    df: pd.DataFrame,
+    conditions: list[str],
+    mask_cache: dict[tuple[str, ...], np.ndarray] | None = None,
+) -> np.ndarray:
+    """Cached wrapper around :func:`_compute_rule_signal_mask`."""
+    if not conditions:
+        raise ValueError("Rule must contain a non-empty 'conditions' list.")
+    return get_or_build_rule_mask(df, conditions, mask_cache)
+
+
 def _build_entries_from_rule_set(
     df: pd.DataFrame,
     rule_set: list[dict],
+    mask_cache: dict[tuple[str, ...], np.ndarray] | None = None,
 ) -> list[dict]:
     """
     Priority-based rule assignment: first matching rule wins per row.
@@ -244,7 +260,7 @@ def _build_entries_from_rule_set(
             )
 
         conditions = rule_entry.get("conditions", [])
-        rule_signals = _build_rule_signal_mask(df, conditions)
+        rule_signals = _build_rule_signal_mask(df, conditions, mask_cache)
 
         new_match_mask = rule_signals & (~assigned_mask)
         matched_indices = np.flatnonzero(new_match_mask)
@@ -361,6 +377,7 @@ class CPUBacktestEngine:
             len(self.df),
             self.max_hold_candles,
         )
+        self._condition_mask_cache: dict[tuple[str, ...], np.ndarray] = {}
 
     def _build_trade_outcome_single(
         self, idx: int, tp: float, sl: float
@@ -542,7 +559,9 @@ class CPUBacktestEngine:
 
         Used by Phase 4 RL env to avoid per-step DataFrame/engine allocation.
         """
-        entries = _build_entries_from_rule_set(self.df, rule_set)
+        entries = _build_entries_from_rule_set(
+            self.df, rule_set, self._condition_mask_cache,
+        )
         entries = [
             e for e in entries
             if row_start <= int(e["idx"]) < row_end
@@ -580,7 +599,9 @@ class CPUBacktestEngine:
         tuple[dict, pd.DataFrame]
             If return_logs=True, also returns the trade log DataFrame.
         """
-        entries = _build_entries_from_rule_set(self.df, rule_set)
+        entries = _build_entries_from_rule_set(
+            self.df, rule_set, self._condition_mask_cache,
+        )
         return self._simulate_rule_set_entries(
             entries, return_logs=return_logs, initial_capital=self.initial_capital
         )

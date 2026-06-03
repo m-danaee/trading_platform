@@ -154,42 +154,65 @@ def _build_candidate_rule_set(
     ]
 
 
+class Phase4WalkForwardEvaluator:
+    """
+    Pre-built per-window backtest engines for walk-forward evaluation.
+
+    Engines are created once per walk-forward split (not per Optuna trial).
+    """
+
+    __slots__ = ("_engines",)
+
+    def __init__(
+        self,
+        val_df: pd.DataFrame,
+        direction: str,
+        k: int,
+    ) -> None:
+        splits = build_phase4_walk_forward_splits(val_df, k)
+        self._engines = [
+            CPUBacktestEngine(split_df, {}, direction)
+            for split_df in splits
+        ]
+
+    def evaluate_worst_case(
+        self,
+        candidate_rule_set: list[dict],
+    ) -> tuple[float, float, float, float]:
+        """Run backtest on each pre-built window engine."""
+        split_returns: list[float] = []
+        split_drawdowns: list[float] = []
+        split_turnover: list[float] = []
+        split_pf: list[float] = []
+
+        for engine in self._engines:
+            try:
+                metrics = engine.simulate_rule_set(candidate_rule_set)
+            except Exception:
+                split_returns.append(-100.0)
+                split_drawdowns.append(100.0)
+                split_turnover.append(0.0)
+                split_pf.append(0.0)
+                continue
+
+            split_returns.append(float(metrics.get("total_return_pct", 0.0)))
+            split_drawdowns.append(float(metrics.get("max_drawdown_pct", 0.0)))
+            split_turnover.append(float(metrics.get("executed_trades", 0.0)))
+            split_pf.append(float(metrics.get("profit_factor", 0.0)))
+
+        worst_return = min(split_returns) if split_returns else -100.0
+        worst_drawdown = max(split_drawdowns) if split_drawdowns else 100.0
+        worst_turnover = min(split_turnover) if split_turnover else 0.0
+        worst_pf = min(split_pf) if split_pf else 0.0
+        return worst_return, worst_drawdown, worst_turnover, worst_pf
+
+
 def _evaluate_params_worst_case(
-    val_splits: list[pd.DataFrame],
-    direction: str,
+    wf_eval: Phase4WalkForwardEvaluator,
     candidate_rule_set: list[dict],
 ) -> tuple[float, float, float, float]:
-    """
-    Run backtest on each walk-forward window.
-
-    Returns worst return %, worst drawdown %, worst (min) trade count, worst PF.
-    """
-    split_returns: list[float] = []
-    split_drawdowns: list[float] = []
-    split_turnover: list[float] = []
-    split_pf: list[float] = []
-
-    for split_df in val_splits:
-        engine = CPUBacktestEngine(split_df, {}, direction)
-        try:
-            metrics = engine.simulate_rule_set(candidate_rule_set)
-        except Exception:
-            split_returns.append(-100.0)
-            split_drawdowns.append(100.0)
-            split_turnover.append(0.0)
-            split_pf.append(0.0)
-            continue
-
-        split_returns.append(float(metrics.get("total_return_pct", 0.0)))
-        split_drawdowns.append(float(metrics.get("max_drawdown_pct", 0.0)))
-        split_turnover.append(float(metrics.get("executed_trades", 0.0)))
-        split_pf.append(float(metrics.get("profit_factor", 0.0)))
-
-    worst_return = min(split_returns)
-    worst_drawdown = max(split_drawdowns)
-    worst_turnover = min(split_turnover)
-    worst_pf = min(split_pf) if split_pf else 0.0
-    return worst_return, worst_drawdown, worst_turnover, worst_pf
+    """Delegate to a pre-built walk-forward evaluator."""
+    return wf_eval.evaluate_worst_case(candidate_rule_set)
 
 
 def _normalize_capital_pct(rules_set: list[dict]) -> list[dict]:
@@ -425,8 +448,8 @@ class WalkForwardRiskOptimizer:
 
         rules = self.rule_set.get("rules_set", [])
         n_rules = len(rules)
-        val_splits = build_phase4_walk_forward_splits(
-            self.val_df, self.n_splits)
+        wf_eval = Phase4WalkForwardEvaluator(
+            self.val_df, self.direction, self.n_splits)
         n_jobs = int(_cfg.PHASE4_N_JOBS)
 
         logger.info(
@@ -476,11 +499,7 @@ class WalkForwardRiskOptimizer:
 
             candidate_rule_set = _build_candidate_rule_set(rules, params_list)
             worst_return, worst_drawdown, worst_turnover, worst_pf = (
-                _evaluate_params_worst_case(
-                    val_splits,
-                    self.direction,
-                    candidate_rule_set,
-                )
+                _evaluate_params_worst_case(wf_eval, candidate_rule_set)
             )
             fold_penalty = 0.0
             if worst_return < float(_cfg.PHASE4_MIN_WORST_FOLD_RETURN_PCT):

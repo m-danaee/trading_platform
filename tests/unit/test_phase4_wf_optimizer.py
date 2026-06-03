@@ -16,6 +16,7 @@ import pytest
 from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.phases.phase4_wf_optimizer import (
     Phase4NoFeasibleTrialError,
+    Phase4WalkForwardEvaluator,
     WalkForwardRiskOptimizer,
     _build_candidate_rule_set,
     _load_rule_set,
@@ -232,6 +233,32 @@ class TestBuildCandidateRuleSet:
         built = _build_candidate_rule_set(rules, params)
         assert built[0]["conditions"] == rules[0]["conditions"]
         assert built[0]["tp"] == 3.0
+
+
+class TestPhase4WalkForwardEvaluator:
+    def test_engine_count_matches_splits(self):
+        val_df = _make_val_df(rows_per_sym=24, symbols=["A", "B"])
+        k = 2
+        splits = build_phase4_walk_forward_splits(val_df, k)
+        wf_eval = Phase4WalkForwardEvaluator(val_df, "long", k)
+        assert len(wf_eval._engines) == len(splits)
+
+    def test_evaluator_matches_fresh_engines(self):
+        from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
+
+        val_df = _make_val_df(rows_per_sym=30)
+        rule_set = _make_rule_set(n_rules=1)["rules_set"]
+        k = 2
+        wf_eval = Phase4WalkForwardEvaluator(val_df, "long", k)
+        worst = wf_eval.evaluate_worst_case(rule_set)
+
+        split_returns = []
+        for split_df in build_phase4_walk_forward_splits(val_df, k):
+            eng = CPUBacktestEngine(split_df, {}, "long")
+            m = eng.simulate_rule_set(rule_set)
+            split_returns.append(float(m.get("total_return_pct", 0.0)))
+        expected_worst = min(split_returns)
+        assert worst[0] == expected_worst
 
 
 class TestWalkForwardRiskOptimizer:

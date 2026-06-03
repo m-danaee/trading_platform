@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
@@ -61,6 +62,47 @@ _REQUIRED_FEATURE_KEYS = {"name", "mode", "score"}
 _VALID_DIRECTIONS = {"long", "short"}
 # Modes with small integer codewords — use discrete MI; others are continuous.
 _DISCRETE_FEATURE_MODES = frozenset({"binary", "ternary"})
+
+
+@dataclass
+class Phase1SharedContext:
+    """Direction-independent Phase 1 state computed once per train_df."""
+
+    feature_cols: list[str]
+    feature_modes: dict[str, str]
+    targets: dict[str, pd.Series]
+    regime_labels: Optional[pd.Series] = None
+
+
+def build_phase1_shared_context(
+    train_df: pd.DataFrame,
+    regime_labels: Optional[pd.Series] = None,
+) -> Phase1SharedContext:
+    """Precompute candidates, modes, and long/short targets in one pass."""
+    exclude = (
+        set(config.LABEL_COLUMNS)
+        | set(config.META_COLUMNS)
+        | set(config.INTERNAL_COLUMNS)
+    )
+    feature_cols = [
+        c for c in train_df.columns
+        if c not in exclude and not c.startswith("_")
+    ]
+    detector = Feature_Detector()
+    feature_modes = detector.detect_all_modes(train_df, feature_cols)
+    feature_cols = _remove_low_dispersion(
+        train_df, feature_cols, config.PHASE1_DISPERSION_THRESHOLD,
+    )
+    targets = {
+        direction: _build_target(train_df, direction)
+        for direction in _VALID_DIRECTIONS
+    }
+    return Phase1SharedContext(
+        feature_cols=feature_cols,
+        feature_modes=feature_modes,
+        targets=targets,
+        regime_labels=regime_labels,
+    )
 
 
 def _reduce_overlap(
@@ -160,6 +202,7 @@ class Feature_Selector:
         train_df: pd.DataFrame,
         direction: str,
         regime_labels: Optional[pd.Series] = None,
+        shared: Phase1SharedContext | None = None,
     ) -> list[dict]:
         """
         Select top features for the given direction.
@@ -182,51 +225,51 @@ class Feature_Selector:
 
         logger.info("Phase 1 [%s]: starting feature selection", direction)
 
-        # ----------------------------------------------------------------
-        # Step 1: Identify candidate feature columns
-        # ----------------------------------------------------------------
-        exclude = (
-            set(config.LABEL_COLUMNS)
-            | set(config.META_COLUMNS)
-            | set(config.INTERNAL_COLUMNS)
-        )
-        feature_cols = [
-            c for c in train_df.columns
-            if c not in exclude and not c.startswith("_")
-        ]
-        n_candidates = len(feature_cols)
+        if shared is not None:
+            feature_cols = list(shared.feature_cols)
+            feature_modes = shared.feature_modes
+            target = shared.targets[direction]
+            n_candidates = len(feature_cols)
+            logger.info(
+                "Phase 1 [%s]: using shared context (%d features after dispersion)",
+                direction, len(feature_cols),
+            )
+        else:
+            exclude = (
+                set(config.LABEL_COLUMNS)
+                | set(config.META_COLUMNS)
+                | set(config.INTERNAL_COLUMNS)
+            )
+            feature_cols = [
+                c for c in train_df.columns
+                if c not in exclude and not c.startswith("_")
+            ]
+            n_candidates = len(feature_cols)
+            if not feature_cols:
+                logger.warning(
+                    "Phase 1 [%s]: no candidate feature columns", direction)
+                return []
+            detector = Feature_Detector()
+            feature_modes = detector.detect_all_modes(train_df, feature_cols)
+            feature_cols = _remove_low_dispersion(
+                train_df, feature_cols, config.PHASE1_DISPERSION_THRESHOLD,
+            )
+            logger.info(
+                "Phase 1 [%s]: %d candidates → %d after dispersion filter",
+                direction, n_candidates, len(feature_cols),
+            )
+            if not feature_cols:
+                logger.warning(
+                    "Phase 1 [%s]: all features removed by dispersion filter",
+                    direction,
+                )
+                return []
+            target = _build_target(train_df, direction)
 
         if not feature_cols:
             logger.warning(
                 "Phase 1 [%s]: no candidate feature columns", direction)
             return []
-
-        # ----------------------------------------------------------------
-        # Step 2: Detect feature modes from training split only
-        # ----------------------------------------------------------------
-        detector = Feature_Detector()
-        feature_modes = detector.detect_all_modes(train_df, feature_cols)
-
-        # ----------------------------------------------------------------
-        # Step 3: Remove near-zero dispersion features
-        # ----------------------------------------------------------------
-        feature_cols = _remove_low_dispersion(
-            train_df, feature_cols, config.PHASE1_DISPERSION_THRESHOLD
-        )
-        logger.info(
-            "Phase 1 [%s]: %d candidates → %d after dispersion filter",
-            direction, n_candidates, len(feature_cols),
-        )
-
-        if not feature_cols:
-            logger.warning(
-                "Phase 1 [%s]: all features removed by dispersion filter", direction)
-            return []
-
-        # ----------------------------------------------------------------
-        # Step 4: Build direction-specific binary success target
-        # ----------------------------------------------------------------
-        target = _build_target(train_df, direction)
 
         # ----------------------------------------------------------------
         # Step 5 & 6: Score per symbol, compute stability
@@ -297,7 +340,11 @@ class Feature_Selector:
             stratify = config.PHASE1_STATIONARITY_STRATIFY.lower()
             rank_drift_max = config.PHASE1_STATIONARITY_RANK_DRIFT_MAX
             fold_scores: dict[str, list[float]]
-            labels = regime_labels if regime_labels is not None else self._regime_labels
+            labels = (
+                regime_labels
+                if regime_labels is not None
+                else (shared.regime_labels if shared is not None else self._regime_labels)
+            )
 
             if stratify == "regime":
                 fold_scores = _compute_regime_stationarity_scores(
@@ -419,10 +466,21 @@ class Feature_Selector:
                         "Phase 1: could not persist regime model: %s", exc,
                     )
 
+        shared = build_phase1_shared_context(
+            train_df, regime_labels=self._regime_labels,
+        )
+        logger.info(
+            "Phase 1: shared preprocessing — %d features after dispersion",
+            len(shared.feature_cols),
+        )
+
         ranked: dict[str, list[dict]] = {}
         for direction in ("long", "short"):
             ranked[direction] = self.select_features(
-                train_df, direction, regime_labels=self._regime_labels,
+                train_df,
+                direction,
+                regime_labels=self._regime_labels,
+                shared=shared,
             )
 
         results = _reduce_overlap(

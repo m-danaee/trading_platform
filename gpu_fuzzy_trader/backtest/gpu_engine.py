@@ -523,6 +523,63 @@ def _jax_simulate_equity_batch_regime(
 
 
 # ---------------------------------------------------------------------------
+# Batch result conversion (avoid per-row Python loops)
+# ---------------------------------------------------------------------------
+
+def _batch_metrics_from_array(
+    results_np: np.ndarray,
+    trade_direction: str,
+    regime_np: np.ndarray | None,
+    n_regimes: int,
+) -> list[dict]:
+    """Convert (B, 10) GPU result rows to list[dict] with minimal Python overhead."""
+    if results_np.ndim == 1:
+        results_np = results_np[None, :]
+    b_count = results_np.shape[0]
+    if b_count == 0:
+        return []
+
+    ruined = results_np[:, 7] > 0.5
+    base = {
+        "direction": trade_direction,
+        "total_return_pct": results_np[:, 0],
+        "sortino_ratio": results_np[:, 1],
+        "max_drawdown_pct": results_np[:, 2],
+        "win_rate": results_np[:, 3],
+        "profit_factor": results_np[:, 4],
+        "executed_trades": results_np[:, 5],
+        "final_equity": results_np[:, 6],
+        "account_ruined": ruined,
+        "raw_signal_count": results_np[:, 8],
+        "skipped_min_notional_count": results_np[:, 9],
+    }
+
+    out: list[dict] = []
+    for b in range(b_count):
+        entry = {
+            "direction": trade_direction,
+            "total_return_pct": float(base["total_return_pct"][b]),
+            "sortino_ratio": float(base["sortino_ratio"][b]),
+            "max_drawdown_pct": float(base["max_drawdown_pct"][b]),
+            "win_rate": float(base["win_rate"][b]),
+            "profit_factor": float(base["profit_factor"][b]),
+            "executed_trades": int(base["executed_trades"][b]),
+            "final_equity": float(base["final_equity"][b]),
+            "account_ruined": bool(base["account_ruined"][b]),
+            "raw_signal_count": int(base["raw_signal_count"][b]),
+            "skipped_min_notional_count": int(
+                base["skipped_min_notional_count"][b]),
+        }
+        if regime_np is not None and n_regimes > 0:
+            rs = regime_np[b]
+            entry["regime_trade_counts"] = rs[:, 0].astype(int).tolist()
+            entry["regime_win_counts"] = rs[:, 1].astype(int).tolist()
+            entry["regime_net_pnl"] = rs[:, 2].astype(float).tolist()
+        out.append(entry)
+    return out
+
+
+# ---------------------------------------------------------------------------
 # GPUBacktestEngine
 # ---------------------------------------------------------------------------
 
@@ -777,40 +834,16 @@ class GPUBacktestEngine:
             )
             regime_stats = None
 
-        # --- Step 4: Convert JAX results to list of dicts ---
+        # --- Step 4: Convert JAX results to list of dicts (vectorized) ---
         results_np = np.asarray(results_array)
-        regime_np = None
-        if regime_stats is not None:
-            regime_np = np.asarray(regime_stats)
-        results = []
-        for b in range(B):
-            row = results_np[b]
-            entry: dict = {
-                "direction": self.trade_direction,
-                "total_return_pct": float(row[0]),
-                "sortino_ratio": float(row[1]),
-                "max_drawdown_pct": float(row[2]),
-                "win_rate": float(row[3]),
-                "profit_factor": float(row[4]),
-                "executed_trades": int(row[5]),
-                "final_equity": float(row[6]),
-                "account_ruined": bool(row[7] > 0.5),
-                "raw_signal_count": int(row[8]),
-                "skipped_min_notional_count": int(row[9]),
-            }
-            if regime_np is not None:
-                rs = regime_np[b]
-                entry["regime_trade_counts"] = [
-                    int(rs[r, 0]) for r in range(self._n_regimes)
-                ]
-                entry["regime_win_counts"] = [
-                    int(rs[r, 1]) for r in range(self._n_regimes)
-                ]
-                entry["regime_net_pnl"] = [
-                    float(rs[r, 2]) for r in range(self._n_regimes)
-                ]
-            results.append(entry)
-        return results
+        regime_np = np.asarray(
+            regime_stats) if regime_stats is not None else None
+        return _batch_metrics_from_array(
+            results_np,
+            self.trade_direction,
+            regime_np,
+            self._n_regimes,
+        )
 
     # ------------------------------------------------------------------
     # Batched rule-set evaluation (Phase 3)
