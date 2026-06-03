@@ -100,7 +100,8 @@ def _symbol_robustness_penalty(metrics: dict) -> float:
         if not isinstance(v, dict):
             continue
         pnl = float(v.get("net_pnl", 0.0))
-        pnl_vec.append(pnl)
+        pnl_pct = (pnl / _cfg.INITIAL_CAPITAL) * 100.0
+        pnl_vec.append(pnl_pct)
         if pnl > 0.0:
             profitable += 1
     if not pnl_vec:
