@@ -159,7 +159,11 @@ class OOS_Evaluator:
                 if split == "test":
                     all_per_symbol.extend(per_symbol_rows)
 
-            results[direction] = metrics_by_split.get("test", {})
+            results[direction] = {
+                split: metrics_by_split[split]
+                for split in ("train", "validation", "test")
+                if split in metrics_by_split
+            }
 
             test_metrics = metrics_by_split.get("test", {})
             test_return = float(test_metrics.get("total_return_pct", 0.0))

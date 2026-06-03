@@ -133,6 +133,46 @@ python -m gpu_fuzzy_trader.run_pipeline --phase 2
 
 Tune Phase 2 hyperparameters in `gpu_fuzzy_trader/config.py` (`PHASE2_POPULATION_SIZE`, `PHASE2_GENERATIONS`, `PHASE2_ARCHIVE_SEED_FRACTION`, etc.).
 
+### Optuna config tuner (low-RAM profile)
+
+Automated search over high-impact `config.py` knobs using **validation** metrics (test is logged only, not optimized). Each trial runs **Phases 2–5** with Phase 1 features copied from a baseline run.
+
+**Prerequisites** (once):
+
+```bash
+source .venv/bin/activate
+python -m gpu_fuzzy_trader.run_pipeline --phase 1
+# or full pipeline into outputs/
+```
+
+**Run tuning** (2-core / 4GB friendly defaults: smaller pop/gen, `CV_N_FOLDS=2`, CPU JAX):
+
+```bash
+python -m gpu_fuzzy_trader.tuning \
+  --baseline-output outputs \
+  --study-dir tuning_studies/low_ram \
+  --n-trials 20 \
+  --profile low_ram \
+  --seed 42
+```
+
+Outputs under `tuning_studies/low_ram/`:
+
+| File | Purpose |
+|------|---------|
+| `optuna.db` | SQLite study storage |
+| `best_config.json` | Best trial params to paste into `config.py` |
+| `trials_summary.csv` | Val/test metrics per trial |
+| `trial_N/` | Isolated pipeline outputs per trial |
+
+Re-run a single trial path manually:
+
+```bash
+python -m gpu_fuzzy_trader.run_pipeline --output tuning_studies/low_ram/trial_0 --from-phase 2
+```
+
+After picking params, verify strategies in **`evaluator_v3.ipynb`** (same backtest contract as Phase 5).
+
 ---
 
 ## Configuration

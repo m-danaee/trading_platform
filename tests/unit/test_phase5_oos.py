@@ -735,7 +735,7 @@ class TestOOSEvaluatorRun:
         try:
             ev = OOS_Evaluator(test_csv_path=csv_path)
             result = ev.run()
-            metrics = result["long"]
+            metrics = result["long"]["test"]
             for key in ("total_return_pct", "max_drawdown_pct", "win_rate",
                         "executed_trades", "account_ruined"):
                 assert key in metrics, f"Missing key: {key}"

@@ -275,6 +275,13 @@ def _log_phase_entry(
     )
 
 
+def _phase5_test_metrics(metrics: dict) -> dict:
+    """Return test-split metrics (supports nested Phase 5 result shape)."""
+    if "test" in metrics:
+        return metrics["test"]
+    return metrics
+
+
 def _print_run_summary(results: dict[str, Any], phase: int | None, log_path: str) -> None:
     """Print a concise CLI summary for a full or single-phase run."""
     print("\n=== Pipeline Summary ===")
@@ -283,11 +290,12 @@ def _print_run_summary(results: dict[str, Any], phase: int | None, log_path: str
         phase5 = results.get("phase5", {})
         if phase5:
             for direction, metrics in phase5.items():
+                test_m = _phase5_test_metrics(metrics)
                 print(
                     f"  {direction.upper()}: "
-                    f"return={metrics.get('total_return_pct', 0.0):.2f}%, "
-                    f"trades={metrics.get('executed_trades', 0)}, "
-                    f"drawdown={metrics.get('max_drawdown_pct', 0.0):.2f}%"
+                    f"return={test_m.get('total_return_pct', 0.0):.2f}%, "
+                    f"trades={test_m.get('executed_trades', 0)}, "
+                    f"drawdown={test_m.get('max_drawdown_pct', 0.0):.2f}%"
                 )
         else:
             print(f"  No OOS results (check {log_path} for details)")
@@ -342,11 +350,12 @@ def _print_run_summary(results: dict[str, Any], phase: int | None, log_path: str
     phase5 = results.get("phase5", {})
     if phase5:
         for direction, metrics in phase5.items():
+            test_m = _phase5_test_metrics(metrics)
             print(
                 f"  {direction.upper()}: "
-                f"return={metrics.get('total_return_pct', 0.0):.2f}%, "
-                f"trades={metrics.get('executed_trades', 0)}, "
-                f"drawdown={metrics.get('max_drawdown_pct', 0.0):.2f}%"
+                f"return={test_m.get('total_return_pct', 0.0):.2f}%, "
+                f"trades={test_m.get('executed_trades', 0)}, "
+                f"drawdown={test_m.get('max_drawdown_pct', 0.0):.2f}%"
             )
     else:
         print(f"  No OOS results (check {log_path} for details)")
@@ -488,6 +497,100 @@ class Pipeline_Orchestrator:
                 total_elapsed = time.monotonic() - pipeline_start
                 logger.info("=" * 60)
                 logger.info("Pipeline complete in %.2fs", total_elapsed)
+                logger.info("=" * 60)
+
+                return results
+
+            finally:
+                _end_ts = datetime.now(timezone.utc).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ")
+                _run_log_handler.stream.write(
+                    f"{_sep}\n[{_end_ts}] Pipeline run END\n{_sep}\n")
+                _run_log_handler.stream.flush()
+                self._detach_run_log_handler(_run_log_handler)
+
+    def run_from_phase2(self, force: bool = True) -> dict:
+        """
+        Run Phases 2–5 using Phase 1 artifacts already on disk.
+
+        Expects ``selected_features_{long,short}.json`` under this run's output
+        directory (copy from a baseline run before calling). Does not re-run
+        feature selection.
+
+        Parameters
+        ----------
+        force : bool
+            When True, always rebuild Phases 2–4 outputs.
+
+        Returns
+        -------
+        dict
+            Keys: ``data``, ``phase1`` (loaded paths only), ``phase2`` … ``phase5``.
+        """
+        with _temporary_output_paths(self._output_dir):
+            logger.info("=" * 60)
+            logger.info("GPU-Fuzzy Trading Pipeline — Phases 2–5")
+            logger.info("=" * 60)
+            _log_pipeline_config()
+
+            pipeline_start = time.monotonic()
+            results: dict[str, Any] = {}
+
+            self._create_output_dirs()
+            _run_log_handler = self._attach_run_log_handler()
+            _sep = "=" * 80
+            _start_ts = datetime.now(
+                timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            _run_log_handler.stream.write(
+                f"{_sep}\n[{_start_ts}] Pipeline run START (from phase 2)\n{_sep}\n")
+            _run_log_handler.stream.flush()
+
+            try:
+                train_df, val_df = self._load_and_split_data()
+                results["data"] = {
+                    "train_rows": len(train_df),
+                    "val_rows": len(val_df),
+                }
+
+                phase1_result = self._load_phase1_outputs()
+                results["phase1"] = phase1_result
+                train_df, val_df = self._prune_splits_after_phase1(
+                    train_df, val_df, phase1_result)
+
+                phase2_result = self._run_phase2(
+                    train_df, phase1_result, force=force, val_df=val_df)
+                results["phase2"] = phase2_result
+
+                long_pool = phase2_result.get("long", [])
+                short_pool = phase2_result.get("short", [])
+                pool_empty = (not long_pool) and (not short_pool)
+
+                if pool_empty:
+                    logger.warning(
+                        "Phase 2 produced no rules for either direction. "
+                        "Skipping Phases 3 and 4."
+                    )
+                    results["phase3"] = {}
+                    results["phase4"] = {}
+                    phase5_directions: frozenset[str] = frozenset()
+                else:
+                    phase3_result = self._run_phase3(
+                        train_df, val_df, phase2_result, force=force)
+                    results["phase3"] = phase3_result
+
+                    phase4_result = self._run_phase4(
+                        train_df, val_df, phase3_result, force=force)
+                    results["phase4"] = phase4_result
+                    phase5_directions = frozenset(phase3_result.keys())
+
+                phase5_result = self._run_phase5(
+                    allowed_directions=phase5_directions)
+                results["phase5"] = phase5_result
+
+                total_elapsed = time.monotonic() - pipeline_start
+                logger.info("=" * 60)
+                logger.info(
+                    "Pipeline (phases 2–5) complete in %.2fs", total_elapsed)
                 logger.info("=" * 60)
 
                 return results
@@ -1270,8 +1373,10 @@ class Pipeline_Orchestrator:
             elapsed, skipped=False,
             result_summary={
                 d: {
-                    "total_return_pct": m.get("total_return_pct", 0.0),
-                    "executed_trades": m.get("executed_trades", 0),
+                    "total_return_pct": _phase5_test_metrics(m).get(
+                        "total_return_pct", 0.0),
+                    "executed_trades": _phase5_test_metrics(m).get(
+                        "executed_trades", 0),
                 }
                 for d, m in result.items()
             },
@@ -1306,11 +1411,20 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Skip phases 1–4 when valid outputs already exist (default: full rerun).",
     )
+    parser.add_argument(
+        "--from-phase",
+        type=int,
+        choices=(2,),
+        default=None,
+        help="Start at phase 2 (requires Phase 1 outputs in --output).",
+    )
 
     args = parser.parse_args([] if argv is None else argv)
     orchestrator = Pipeline_Orchestrator(output_dir=args.output)
     try:
-        if args.phase is None:
+        if args.from_phase == 2:
+            results = orchestrator.run_from_phase2(force=True)
+        elif args.phase is None:
             results = orchestrator.run(force=not args.resume)
         else:
             results = orchestrator.run_phase(args.phase)
