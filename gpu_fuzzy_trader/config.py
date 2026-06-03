@@ -138,7 +138,7 @@ SPLIT_MODE = "purged_rolling_cv"
 
 # Increased from 3→5 folds: more folds give better estimate of out-of-fold
 # generalisation, reducing the chance of the short strategy overfitting one season.
-CV_N_FOLDS = 5
+CV_N_FOLDS = 3
 CV_EMBARGO_BARS = TAIL_DROP_ROWS
 CV_BARS_PER_DAY = 288  # 5-minute bars
 CV_MIN_TRAIN_MONTHS = 2.0  # per symbol, per fold; raise if folds feel too noisy
@@ -272,7 +272,7 @@ PHASE2_EARLY_STOP_DISABLED_IN_CV = False  # enable early stop in purged CV mode
 # Capped at 2 (was 0=auto=5): with 5 folds each running a GPU backtest in
 # parallel the peak VRAM demand was 5× a single fold. 2 workers keeps peak
 # usage to ~2× while still providing meaningful parallelism.
-PHASE2_CV_FOLD_WORKERS = 2
+PHASE2_CV_FOLD_WORKERS = 1
 
 # --- NSGA-III budget ---
 # Population reduced 600→400: with 350k sampling rows and 2 parallel fold
