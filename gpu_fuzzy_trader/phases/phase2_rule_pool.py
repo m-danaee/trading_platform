@@ -1484,26 +1484,35 @@ class Rule_Pool_Generator:
             engine_kwargs["n_regimes"] = n_regimes
         engine_kwargs["fee_pct"] = _cfg.FEE_PCT
 
-        from gpu_fuzzy_trader.backtest.jax_compat import get_gpu_backtest_engine_class
-
-        GPUBacktestEngine = get_gpu_backtest_engine_class()
-        if GPUBacktestEngine is not None:
-            engine = GPUBacktestEngine(
-                df,
-                self._feature_modes,
-                self.direction,
-                **engine_kwargs,
-            )
-            if self._regime_row_fractions is not None:
-                engine._regime_row_fractions = self._regime_row_fractions
-            logger.info(
-                "Phase 2 using GPUBacktestEngine (backend: %s)", engine.backend)
-            return engine
-
-        logger.warning(
-            "JAX/GPU backtest unavailable on this host; "
-            "falling back to CPUBacktestEngine for Phase 2.")
         from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
+
+        if _cfg.PHASE2_USE_GPU:
+            from gpu_fuzzy_trader.backtest.jax_compat import (
+                get_gpu_backtest_engine_class,
+            )
+
+            GPUBacktestEngine = get_gpu_backtest_engine_class()
+            if GPUBacktestEngine is not None:
+                engine = GPUBacktestEngine(
+                    df,
+                    self._feature_modes,
+                    self.direction,
+                    **engine_kwargs,
+                )
+                if self._regime_row_fractions is not None:
+                    engine._regime_row_fractions = self._regime_row_fractions
+                logger.info(
+                    "Phase 2 using GPUBacktestEngine (backend: %s)",
+                    engine.backend,
+                )
+                return engine
+            logger.warning(
+                "PHASE2_USE_GPU=True but JAX/GPU backtest unavailable; "
+                "falling back to CPUBacktestEngine for Phase 2.",
+            )
+        else:
+            logger.info(
+                "Phase 2 using CPUBacktestEngine (PHASE2_USE_GPU=False).")
 
         engine = CPUBacktestEngine(
             df,

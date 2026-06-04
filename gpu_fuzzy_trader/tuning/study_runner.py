@@ -17,8 +17,9 @@ import optuna
 
 from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.run_pipeline import Pipeline_Orchestrator
+from gpu_fuzzy_trader.tuning._bootstrap import configure_tuning_cpu_env
 from gpu_fuzzy_trader.tuning.config_overlay import apply_trial_params
-from gpu_fuzzy_trader.tuning.config_space import suggest_trial_params
+from gpu_fuzzy_trader.tuning.config_space import get_profile_params, suggest_trial_params
 from gpu_fuzzy_trader.tuning.objective import compute_validation_objective
 
 logger = logging.getLogger(__name__)
@@ -60,16 +61,56 @@ def validate_baseline_prerequisites(baseline_output_dir: str) -> None:
             )
 
 
-def export_best_config(study: optuna.Study, path: str) -> None:
+def build_merged_trial_config(
+    trial_params: dict[str, Any],
+    profile: str,
+) -> dict[str, Any]:
+    """Profile fixed caps plus Optuna-suggested knobs (trial overlay dict)."""
+    merged = get_profile_params(profile)
+    merged.update(trial_params)
+    return merged
+
+
+def _log_tuning_runtime(*, force_cpu: bool, profile: str) -> None:
+    """Log JAX platform and Phase 2/3 engine flags at study start."""
+    profile_caps = get_profile_params(profile)
+    p2_gpu = profile_caps.get("PHASE2_USE_GPU", _cfg.PHASE2_USE_GPU)
+    p3_gpu = profile_caps.get("PHASE3_USE_GPU", _cfg.PHASE3_USE_GPU)
+    logger.info(
+        "Tuning runtime: JAX_PLATFORMS=%s force_cpu=%s profile=%s | "
+        "trial PHASE2_USE_GPU=%s PHASE3_USE_GPU=%s",
+        os.environ.get("JAX_PLATFORMS", "(unset)"),
+        force_cpu,
+        profile,
+        p2_gpu,
+        p3_gpu,
+    )
+
+
+def export_best_config(
+    study: optuna.Study,
+    path: str,
+    *,
+    profile: str = "low_ram",
+) -> None:
     """Write winning trial params to JSON for pasting into config.py."""
     if study.best_trial is None:
         raise RuntimeError("Study has no completed trials")
+
+    merged = build_merged_trial_config(
+        dict(study.best_trial.params), profile)
 
     payload = {
         "trial_number": study.best_trial.number,
         "value": study.best_value,
         "params": dict(study.best_trial.params),
+        "merged_config": merged,
         "user_attrs": dict(study.best_trial.user_attrs),
+        "note": (
+            "Paste generalization knobs from params or merged_config into "
+            "config.py. On Colab GPU runs keep PHASE2_USE_GPU=True (default) "
+            "and omit tuning-only CPU caps unless you want a slow run."
+        ),
     }
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
@@ -126,6 +167,7 @@ def run_study(
     seed: int = 42,
     storage_url: str | None = None,
     study_name: str = "config_tuner",
+    force_cpu: bool = True,
 ) -> optuna.Study:
     """
     Run an Optuna study over pipeline config hyperparameters.
@@ -133,6 +175,9 @@ def run_study(
     Each trial executes Phases 2–5 in an isolated output directory under
     ``study_dir/trial_N``.
     """
+    configure_tuning_cpu_env(force=force_cpu)
+    _log_tuning_runtime(force_cpu=force_cpu, profile=profile)
+
     validate_baseline_prerequisites(baseline_output_dir)
     study_path = Path(study_dir)
     study_path.mkdir(parents=True, exist_ok=True)
@@ -167,7 +212,13 @@ def run_study(
 
         phase5 = results.get("phase5", {})
         phase2 = results.get("phase2", {})
-        score, details = compute_validation_objective(phase5)
+        pool_long = len(phase2.get("long", []))
+        pool_short = len(phase2.get("short", []))
+        score, details = compute_validation_objective(
+            phase5,
+            phase2_pool_long=pool_long,
+            phase2_pool_short=pool_short,
+        )
 
         elapsed = time.monotonic() - t0
         trial.set_user_attr("duration_sec", round(elapsed, 2))
@@ -178,8 +229,9 @@ def run_study(
                             details.get("test_return_long"))
         trial.set_user_attr("test_return_short",
                             details.get("test_return_short"))
-        trial.set_user_attr("phase2_pool_long", len(phase2.get("long", [])))
-        trial.set_user_attr("phase2_pool_short", len(phase2.get("short", [])))
+        trial.set_user_attr("phase2_pool_long", pool_long)
+        trial.set_user_attr("phase2_pool_short", pool_short)
+        trial.set_user_attr("pool_penalty", details.get("pool_penalty"))
         trial.set_user_attr("score_details", json.dumps(details))
 
         logger.info(
@@ -197,7 +249,8 @@ def run_study(
 
     study.optimize(objective, n_trials=n_trials, n_jobs=1)
 
-    export_best_config(study, str(study_path / "best_config.json"))
+    export_best_config(
+        study, str(study_path / "best_config.json"), profile=profile)
     write_trials_summary_csv(study, str(study_path / "trials_summary.csv"))
 
     logger.info(
@@ -253,6 +306,15 @@ def main(argv: list[str] | None = None) -> None:
         default=42,
         help="Base random seed (each trial uses seed + trial number).",
     )
+    parser.add_argument(
+        "--force-cpu",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Pin JAX to CPU and use low_ram CPU engine caps (default: on). "
+            "Use --no-force-cpu to allow GPU JAX if installed."
+        ),
+    )
 
     args = parser.parse_args(argv)
     study = run_study(
@@ -261,6 +323,7 @@ def main(argv: list[str] | None = None) -> None:
         n_trials=args.n_trials,
         profile=args.profile,
         seed=args.seed,
+        force_cpu=args.force_cpu,
     )
 
     print("\n=== Tuning complete ===")

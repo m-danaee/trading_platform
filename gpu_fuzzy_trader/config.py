@@ -307,6 +307,8 @@ PHASE2_REGIME_MIN_TRADE_FRACTION = 1.0
 PHASE2_REGIME_REQUIRE_VAL_CONFIRMATION = True
 
 # --- Engine & initialization ---
+# When False, Phase 2 uses CPUBacktestEngine only (no JAX). Tuning low_ram sets False.
+PHASE2_USE_GPU = True
 PHASE2_NUMBA_ENABLED = True
 PHASE2_INIT_STRATEGY = "stratified_sparse"  # "stratified_sparse" | "legacy"
 PHASE2_INIT_STRATUM_FRACTIONS = (0.50, 0.25, 0.25)

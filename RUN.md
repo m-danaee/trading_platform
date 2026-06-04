@@ -188,6 +188,10 @@ Tune Phase 2 hyperparameters in `gpu_fuzzy_trader/config.py` (`PHASE2_POPULATION
 
 Automated search over high-impact `config.py` knobs using **validation** metrics (test is logged only, not optimized). Each trial runs **Phases 2–5** with Phase 1 features copied from a baseline run.
 
+The tuner CLI pins **CPU-only** execution (`JAX_PLATFORMS=cpu`, `PHASE2_USE_GPU=False`, `PHASE3_USE_GPU=False` via the `low_ram` profile). Full pipeline runs on **Colab GPU** are unchanged — use `main.ipynb` or `run_pipeline` there with default `PHASE2_USE_GPU=True`.
+
+#### Local CPU-only (WSL / no GPU)
+
 **Prerequisites** (once):
 
 ```bash
@@ -196,33 +200,42 @@ python -m gpu_fuzzy_trader.run_pipeline --phase 1
 # or full pipeline into outputs/
 ```
 
-**Run tuning** (2-core / 4GB friendly defaults: smaller pop/gen, `CV_N_FOLDS=2`, CPU JAX):
+**Run tuning** (2-core / 4GB friendly defaults: fixed pop=100/gen=50, searches CV folds {2,3}, Phase 2–4 gates, pool-size objective penalty, CPU engines):
 
 ```bash
 python -m gpu_fuzzy_trader.tuning \
   --baseline-output outputs \
   --study-dir tuning_studies/low_ram \
-  --n-trials 20 \
+  --n-trials 2 \
   --profile low_ram \
   --seed 42
 ```
+
+`--force-cpu` is on by default. Use `--no-force-cpu` only if you intentionally want JAX GPU on the tuning host.
+
+Confirm CPU mode in the log line `Tuning runtime: JAX_PLATFORMS=cpu ... trial PHASE2_USE_GPU=False`.
+
+#### Colab GPU verification
+
+1. Copy **generalization knobs** from `tuning_studies/low_ram/best_config.json` → `params` or `merged_config` into `gpu_fuzzy_trader/config.py` (gates, CV floors, pop/gen, etc.).
+2. On Colab, **keep** `PHASE2_USE_GPU=True` (default) and do **not** copy tuning-only CPU caps (`PHASE2_USE_GPU=False`, small pop caps) unless you want a slow run.
+3. Run `main.ipynb` or `python -m gpu_fuzzy_trader.run_pipeline` and confirm: `Phase 2 using GPUBacktestEngine (backend: gpu)`.
+4. Final acceptance: **`evaluator_v3.ipynb`** (same backtest contract as Phase 5). CPU trial scores may differ slightly from GPU Phase 2.
 
 Outputs under `tuning_studies/low_ram/`:
 
 | File | Purpose |
 |------|---------|
 | `optuna.db` | SQLite study storage |
-| `best_config.json` | Best trial params to paste into `config.py` |
+| `best_config.json` | `params` (Optuna knobs), `merged_config` (profile + knobs for handoff) |
 | `trials_summary.csv` | Val/test metrics per trial |
 | `trial_N/` | Isolated pipeline outputs per trial |
 
-Re-run a single trial path manually:
+Re-run a single trial path manually (uses current `config.py`, not trial overlay):
 
 ```bash
 python -m gpu_fuzzy_trader.run_pipeline --output tuning_studies/low_ram/trial_0 --from-phase 2
 ```
-
-After picking params, verify strategies in **`evaluator_v3.ipynb`** (same backtest contract as Phase 5).
 
 ---
 
