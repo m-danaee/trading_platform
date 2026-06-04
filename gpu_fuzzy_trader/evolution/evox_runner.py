@@ -378,7 +378,6 @@ def _evaluate_population_indices(
         from gpu_fuzzy_trader import config as _cfg
         from gpu_fuzzy_trader.phases.phase2_rule_pool import (
             _count_active_conditions,
-            _hamming_distance,
             _saturating_sortino,
         )
         from gpu_fuzzy_trader.phases.phase2_support import (
