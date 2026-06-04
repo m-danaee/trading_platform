@@ -174,11 +174,10 @@ def _jax_compute_trade_outcomes(
 # Batched equity simulation via vmap + lax.scan
 # ---------------------------------------------------------------------------
 
-@partial(jit, static_argnums=(4, 5, 6, 7, 8, 9))
+@partial(jit, static_argnums=(3, 4, 5, 6, 7, 8))
 def _jax_simulate_equity_batch(
     signals_batch: jnp.ndarray,       # (B, N) bool
     price_returns_all: jnp.ndarray,   # (N,) float64
-    release_indices: jnp.ndarray,     # (N,) int32
     initial_capital: float,
     n_rows: int,
     fee_rate: float,
@@ -187,13 +186,6 @@ def _jax_simulate_equity_batch(
     max_exposure_rate: float,
     min_position_notional: float,
 ) -> jnp.ndarray:
-    """Simulate equity for B chromosomes fully on-device via vmap.
-
-    Returns (B, 10) array:
-        [total_return_pct, sortino_ratio, max_drawdown_pct, win_rate,
-         profit_factor, executed_trades, final_equity, account_ruined,
-         raw_signal_count, skipped_count]
-    """
     fee_rate_f = jnp.float64(fee_rate)
     leverage_f = jnp.float64(leverage)
     capital_rate_f = jnp.float64(capital_rate)
@@ -202,18 +194,15 @@ def _jax_simulate_equity_batch(
     init_cap = jnp.float64(initial_capital)
     sortino_cap = jnp.float64(_cfg.SORTINO_CAP)
 
-    def simulate_one(signal_mask):
-        """Simulate equity for one chromosome's signal mask via lax.scan.
+    N = price_returns_all.shape[0]
+    recency_weights = jnp.ones(N, dtype=jnp.float64)
+    if _cfg.PHASE2_RECENCY_WEIGHT_ENABLED:
+        cutoff = int(N * (1.0 - _cfg.PHASE2_RECENCY_WEIGHT_FRACTION))
+        recency_weights = recency_weights.at[cutoff:].set(_cfg.PHASE2_RECENCY_WEIGHT_MULTIPLIER)
 
-        Uses a simplified sequential model where trades are realized
-        immediately (no overlapping position queue). This is numerically
-        equivalent to the CPU engine when positions don't overlap, and a
-        close approximation otherwise. The speedup from full GPU
-        parallelization justifies this simplification for Phase 2's
-        evolutionary fitness evaluation.
-        """
+    def simulate_one(signal_mask):
         is_signal = signal_mask.astype(jnp.float64)
-        scan_xs = jnp.stack([is_signal, price_returns_all], axis=-1)
+        scan_xs = jnp.stack([is_signal, price_returns_all, recency_weights], axis=-1)
 
         init_carry = (
             init_cap,           # equity
@@ -240,6 +229,7 @@ def _jax_simulate_equity_batch(
 
             is_sig = x[0]
             price_return_pct = x[1]
+            w = x[2]
 
             # Position sizing
             target = equity * capital_rate_f * leverage_f
@@ -253,11 +243,12 @@ def _jax_simulate_equity_batch(
             gross_pnl = position_notional * (price_return_pct / 100.0)
             fee = position_notional * fee_rate_f
             net_pnl = gross_pnl - fee
+            weighted_net_pnl = net_pnl * w
 
             trade_ret = jnp.where(
-                can_trade & (equity > 0.0), net_pnl / equity, 0.0)
+                can_trade & (equity > 0.0), weighted_net_pnl / equity, 0.0)
 
-            new_equity = jnp.where(can_trade, equity + net_pnl, equity)
+            new_equity = jnp.where(can_trade, equity + weighted_net_pnl, equity)
             new_peak = jnp.maximum(peak_equity, new_equity)
             dd = jnp.where(
                 new_peak > 0.0,
@@ -352,13 +343,6 @@ def _jax_simulate_equity_batch_regime(
     max_exposure_rate: float,
     min_position_notional: float,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
-    """Like _jax_simulate_equity_batch but also returns per-regime stats.
-
-    Returns
-    -------
-    base : (B, 10) — same layout as _jax_simulate_equity_batch
-    regime_stats : (B, n_regimes, 3) — trades, wins, net_pnl per regime
-    """
     fee_rate_f = jnp.float64(fee_rate)
     leverage_f = jnp.float64(leverage)
     capital_rate_f = jnp.float64(capital_rate)
@@ -368,10 +352,16 @@ def _jax_simulate_equity_batch_regime(
     sortino_cap = jnp.float64(_cfg.SORTINO_CAP)
     n_reg = int(n_regimes)
 
+    N = price_returns_all.shape[0]
+    recency_weights = jnp.ones(N, dtype=jnp.float64)
+    if _cfg.PHASE2_RECENCY_WEIGHT_ENABLED:
+        cutoff = int(N * (1.0 - _cfg.PHASE2_RECENCY_WEIGHT_FRACTION))
+        recency_weights = recency_weights.at[cutoff:].set(_cfg.PHASE2_RECENCY_WEIGHT_MULTIPLIER)
+
     def simulate_one(signal_mask):
         is_signal = signal_mask.astype(jnp.float64)
         scan_xs = jnp.stack(
-            [is_signal, price_returns_all, regime_ids.astype(jnp.float64)],
+            [is_signal, price_returns_all, regime_ids.astype(jnp.float64), recency_weights],
             axis=-1,
         )
 
@@ -409,6 +399,7 @@ def _jax_simulate_equity_batch_regime(
             is_sig = x[0]
             price_return_pct = x[1]
             regime_idx = jnp.clip(x[2].astype(jnp.int32), 0, n_reg - 1)
+            w = x[3]
 
             target = equity * capital_rate_f * leverage_f
             max_exp = equity * max_exposure_rate_f * leverage_f
@@ -421,11 +412,12 @@ def _jax_simulate_equity_batch_regime(
             gross_pnl = position_notional * (price_return_pct / 100.0)
             fee = position_notional * fee_rate_f
             net_pnl = gross_pnl - fee
+            weighted_net_pnl = net_pnl * w
 
             trade_ret = jnp.where(
-                can_trade & (equity > 0.0), net_pnl / equity, 0.0)
+                can_trade & (equity > 0.0), weighted_net_pnl / equity, 0.0)
 
-            new_equity = jnp.where(can_trade, equity + net_pnl, equity)
+            new_equity = jnp.where(can_trade, equity + weighted_net_pnl, equity)
             new_peak = jnp.maximum(peak_equity, new_equity)
             dd = jnp.where(
                 new_peak > 0.0,
@@ -823,7 +815,6 @@ class GPUBacktestEngine:
             results_array = _jax_simulate_equity_batch(
                 signals_batch,
                 price_returns_all,
-                self._release_indices_jax,
                 self.initial_capital,
                 N,
                 self.fee_rate,
