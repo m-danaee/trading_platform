@@ -55,6 +55,16 @@ def _merge_metrics_worst_case(
     trades = int(new.get("executed_trades", 0))
     out["executed_trades"] = min(
         int(out.get("executed_trades", trades)), trades)
+
+    # Merge regime stats element-wise (worst-case minimums)
+    for k in ("regime_net_pnl", "regime_trade_counts", "regime_win_counts"):
+        if k in new:
+            new_val = list(new[k])
+            if k in out:
+                out[k] = [min(c, n) for c, n in zip(out[k], new_val)]
+            else:
+                out[k] = new_val
+
     return out
 
 

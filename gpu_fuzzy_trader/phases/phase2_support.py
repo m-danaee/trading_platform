@@ -209,6 +209,15 @@ def _passes_pool_admission_impl(
     if train_pf < pf_floor:
         return False
 
+    # Regime Profitability Gate
+    if _cfg.PHASE2_REGIME_PROFITABILITY_GATE:
+        regime_pnl = train_metrics.get("regime_net_pnl")
+        if regime_pnl is not None:
+            n_passing = sum(1 for p in regime_pnl if p > _cfg.PHASE2_REGIME_MIN_RETURN_PER_REGIME)
+            min_pass = 2 if len(regime_pnl) >= 2 else len(regime_pnl)
+            if n_passing < min_pass:
+                return False
+
     if not _cfg.PHASE2_JOINT_TRAIN_VAL:
         return True
     if val_metrics is None:
