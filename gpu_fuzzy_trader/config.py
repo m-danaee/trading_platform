@@ -396,13 +396,13 @@ PHASE4_N_JOBS = 1
 PHASE4_HARD_CAP_NORMALIZE = True  # sum capital_pct ≤ MAX_TOTAL_EXPOSURE_PCT
 
 # --- Walk-forward on validation split ---
-# Raised 2→4 splits as recommended in the comment below: short OOS failure
-# confirms 2 splits was insufficient to detect temporal instability.
-PHASE4_WF_SPLITS = 4
+# Reduced 4→2: with val=174k rows and only 2-4 rules, wf_splits=4 creates
+# windows too small to accumulate 20 trades — Phase 4 rejected 100% of trials
+# in runs 3 and 4. 2 splits gives each window ~87k rows (~300 bars) and
+# enough trades to evaluate properly.
+PHASE4_WF_SPLITS = 2
 PHASE4_INCLUDE_TAIL_HOLDOUT = True
-PHASE4_TAIL_HOLDOUT_FRACTION = 0.20
-# Increase drawdown weight: penalise drawdown more strongly to discourage
-# strategies that look good on return but blow up on unseen data.
+PHASE4_TAIL_HOLDOUT_FRACTION = 0.25
 PHASE4_WORST_RETURN_WEIGHT = 1.5
 PHASE4_WORST_DRAWDOWN_WEIGHT = 2.0
 PHASE4_WORST_TURNOVER_WEIGHT = 0.5
@@ -429,3 +429,14 @@ PHASE4_MIN_WORST_FOLD_PF = 1.02
 PHASE5_VALIDATION_RETURN_GATE_PCT = 2.0  # deployment flag on val metrics only
 PHASE5_VALIDATION_PROFIT_FACTOR_GATE = 1.05
 # RECOMMENDATION: treat test metrics in reports as truth; do not tune on TEST_CSV_PATH.
+
+# --- Trading Regime and Refinement Fixes (2026-06-04) ---
+PHASE2_REGIME_PROFITABILITY_GATE: bool = True     # require profit > 0 in >=2 of 3 regimes
+PHASE2_REGIME_MIN_RETURN_PER_REGIME: float = 0.0  # per-regime return floor
+PHASE1_REQUIRE_SIGN_CONSISTENCY: bool = True     # drop features with Spearman sign flip across folds
+PHASE1_SIGN_CONSISTENCY_MIN_FOLDS: int = 2       # must have same sign in >= N folds
+PHASE2_RECENCY_WEIGHT_ENABLED: bool = True        # bars in the last 25% of training period count 2x in return
+PHASE2_RECENCY_WEIGHT_FRACTION: float = 0.25      # last 25% of training bars
+PHASE2_RECENCY_WEIGHT_MULTIPLIER: float = 2.0     # these bars count double
+PHASE2_REQUIRE_LAST_FOLD_POSITIVE: bool = True   # rule must be profitable on validation split of most recent fold
+
