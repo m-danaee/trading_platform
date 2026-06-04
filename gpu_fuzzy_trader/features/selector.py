@@ -222,14 +222,24 @@ def _check_spearman_sign_consistency(
     n_folds: int,
     min_folds: int,
     val_df: pd.DataFrame | None = None,
+    min_abs_corr: float | None = None,
 ) -> set[str]:
+    """
+    Keep features whose Spearman sign vs ``label_close_288`` is stable across folds.
+
+    Only correlations with ``|rho| >= min_abs_corr`` participate in the sign-flip
+    check so near-zero noise does not blacklist features.
+    """
+    if min_abs_corr is None:
+        min_abs_corr = float(config.PHASE1_SIGN_CONSISTENCY_MIN_ABS_CORR)
+
     folds = _get_spearman_folds(df, n_folds)
     if val_df is not None:
         folds.append(val_df)
     label_col = "label_close_288"
     if label_col not in df.columns:
         return set(feature_cols)
-        
+
     stable_features = set()
     for col in feature_cols:
         corrs = []
@@ -241,12 +251,19 @@ def _check_spearman_sign_consistency(
                 corrs.append(corr)
         if len(corrs) < min_folds:
             continue
-        has_pos = any(c > 0 for c in corrs)
-        has_neg = any(c < 0 for c in corrs)
+
+        significant = [c for c in corrs if abs(c) >= min_abs_corr]
+        if not significant:
+            stable_features.add(col)
+            continue
+
+        has_pos = any(c > 0 for c in significant)
+        has_neg = any(c < 0 for c in significant)
         if has_pos and has_neg:
             logger.info(
-                "Blacklisting non-stationary feature %s: Spearman signs across folds: %s",
-                col, corrs
+                "Blacklisting non-stationary feature %s: Spearman signs across "
+                "folds (|rho|>=%.3f): %s (all folds: %s)",
+                col, min_abs_corr, significant, corrs,
             )
         else:
             stable_features.add(col)

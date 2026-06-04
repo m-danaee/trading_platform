@@ -171,13 +171,13 @@ LOG_GENERATION_INTERVAL = 0  # 0 = auto ~10% of generations; N = every N gens
 PHASE1_DISPERSION_THRESHOLD = 0.95  # drop near-constant columns
 PHASE1_TOP_K_FEATURES = 25
 # max Jaccard overlap long vs short lists (was 0.50 → 12 shared)
-PHASE1_MAX_FEATURE_OVERLAP = 0.40
+PHASE1_MAX_FEATURE_OVERLAP = 0.65
 PHASE1_ASYMMETRIC_TARGET = True  # separate MI targets for long / short
 
 # --- Stationarity (reduce regime-specific features) ---
 PHASE1_STATIONARITY_FOLDS = 3
 PHASE1_STATIONARITY_CV_MAX = 1.0
-PHASE1_STATIONARITY_RANK_DRIFT_MAX = 5
+PHASE1_STATIONARITY_RANK_DRIFT_MAX = 8
 PHASE1_STATIONARITY_STRATIFY = "regime"  # "regime" | "chronological"
 
 # --- Regime detection (rolling regression when STRATIFY == "regime") ---
@@ -324,7 +324,7 @@ PHASE2_MUTATION_WEIGHTED_ACTIVATE_PROB = 0.70
 
 # --- Team shape ---
 PHASE3_MIN_RULES = 2
-PHASE3_MAX_RULES = 5
+PHASE3_MAX_RULES = 3
 PHASE3_MIN_SYMBOL_COVERAGE = 7  # of 10 symbols with ≥1 val trade
 PHASE3_MAX_CAPITAL_PCT_PER_RULE = 50.0
 
@@ -450,6 +450,8 @@ PHASE2_REGIME_PROFITABILITY_GATE: bool = True     # require profit > 0 in >=2 of
 PHASE2_REGIME_MIN_RETURN_PER_REGIME: float = 0.0  # per-regime return floor
 PHASE1_REQUIRE_SIGN_CONSISTENCY: bool = True     # drop features with Spearman sign flip across folds
 PHASE1_SIGN_CONSISTENCY_MIN_FOLDS: int = 2       # must have same sign in >= N folds
+# Ignore sign flips when |Spearman rho| is below this (noise-level correlations).
+PHASE1_SIGN_CONSISTENCY_MIN_ABS_CORR: float = 0.02
 PHASE2_RECENCY_WEIGHT_ENABLED: bool = True        # bars in the last 25% of training period count 2x in return
 PHASE2_RECENCY_WEIGHT_FRACTION: float = 0.25      # last 25% of training bars
 PHASE2_RECENCY_WEIGHT_MULTIPLIER: float = 2.0     # these bars count double

@@ -26,6 +26,20 @@ Requirements: 13.1, 13.2, 13.3, 13.4, 13.5
 """
 
 from __future__ import annotations
+from gpu_fuzzy_trader.reporting import reporter as _reporter_module
+from gpu_fuzzy_trader.phases import phase5_oos as _phase5_module
+from gpu_fuzzy_trader.phases import phase4_wf_optimizer as _phase4_module
+from gpu_fuzzy_trader.phases import phase3_rule_set as _phase3_module
+from gpu_fuzzy_trader.phases import phase2_rule_pool as _phase2_module
+from gpu_fuzzy_trader.features import selector as _selector_module
+from gpu_fuzzy_trader import config as _cfg
+from gpu_fuzzy_trader.data.loader import Data_Loader
+from gpu_fuzzy_trader.data.splitter import Data_Splitter
+from gpu_fuzzy_trader.features.selector import Feature_Selector
+from gpu_fuzzy_trader.phases.phase2_rule_pool import Rule_Pool_Generator
+from gpu_fuzzy_trader.phases.phase3_rule_set import Rule_Set_Selector
+from gpu_fuzzy_trader.phases.phase4_wf_optimizer import WalkForwardRiskOptimizer
+from gpu_fuzzy_trader.phases.phase5_oos import OOS_Evaluator
 
 import argparse
 from contextlib import contextmanager
@@ -38,28 +52,14 @@ import os
 import logging
 import json
 
-from gpu_fuzzy_trader.phases.phase5_oos import OOS_Evaluator
-from gpu_fuzzy_trader.phases.phase4_wf_optimizer import WalkForwardRiskOptimizer
-from gpu_fuzzy_trader.phases.phase3_rule_set import Rule_Set_Selector
-from gpu_fuzzy_trader.phases.phase2_rule_pool import Rule_Pool_Generator
-from gpu_fuzzy_trader.features.selector import Feature_Selector
-from gpu_fuzzy_trader.data.splitter import Data_Splitter
-from gpu_fuzzy_trader.data.loader import Data_Loader
-from gpu_fuzzy_trader import config as _cfg
-from gpu_fuzzy_trader.features import selector as _selector_module
-from gpu_fuzzy_trader.phases import phase2_rule_pool as _phase2_module
-from gpu_fuzzy_trader.phases import phase3_rule_set as _phase3_module
-from gpu_fuzzy_trader.phases import phase4_wf_optimizer as _phase4_module
-from gpu_fuzzy_trader.phases import phase5_oos as _phase5_module
-from gpu_fuzzy_trader.reporting import reporter as _reporter_module
-
 from gpu_fuzzy_trader._jax_env import configure_jax_env
 
 configure_jax_env()
 
 
 # ---------------------------------------------------------------------------
-# Logging setup
+# Logging setup (must run before phase imports — EvoX adds a root handler that
+# would otherwise make basicConfig a no-op and leave the root level at WARNING)
 # ---------------------------------------------------------------------------
 
 _LOG_LEVEL_NAME = os.environ.get("GPU_FUZZY_LOG_LEVEL", "INFO").upper()
@@ -69,7 +69,11 @@ logging.basicConfig(
     level=_LOG_LEVEL,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
+    force=True,
 )
+
+
+logging.getLogger().setLevel(_LOG_LEVEL)
 logger = logging.getLogger(__name__)
 
 _PIPELINE_LOG_PATH = os.path.join(_cfg.OUTPUTS_DIR, "pipeline.log")
