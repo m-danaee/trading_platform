@@ -646,8 +646,7 @@ def _run_nsga2_combinatorial(
             f"Pool has only {len(pool)} rules, need at least {min_rules}."
         )
 
-    # Clamp pop_size to a reasonable value given pool size
-    effective_pop = min(pop_size, max(4, len(pool) * 2))
+    effective_pop = pop_size
 
     # Initialise population
     if initial_population:
