@@ -213,10 +213,16 @@ def _passes_pool_admission_impl(
     if _cfg.PHASE2_REGIME_PROFITABILITY_GATE:
         regime_pnl = train_metrics.get("regime_net_pnl")
         if regime_pnl is not None:
-            n_passing = sum(1 for p in regime_pnl if p > _cfg.PHASE2_REGIME_MIN_RETURN_PER_REGIME)
-            min_pass = 2 if len(regime_pnl) >= 2 else len(regime_pnl)
-            if n_passing < min_pass:
-                return False
+            if train_metrics.get("regime_specialist", False):
+                dom = int(train_metrics.get("dominant_regime", -1))
+                if dom >= 0 and dom < len(regime_pnl):
+                    if regime_pnl[dom] <= _cfg.PHASE2_REGIME_MIN_RETURN_PER_REGIME:
+                        return False
+            else:
+                n_passing = sum(1 for p in regime_pnl if p > _cfg.PHASE2_REGIME_MIN_RETURN_PER_REGIME)
+                min_pass = 2 if len(regime_pnl) >= 2 else len(regime_pnl)
+                if n_passing < min_pass:
+                    return False
 
     if not _cfg.PHASE2_JOINT_TRAIN_VAL:
         return True
