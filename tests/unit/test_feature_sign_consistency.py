@@ -14,3 +14,22 @@ def test_check_spearman_sign_consistency():
     stable = _check_spearman_sign_consistency(df, ["feature_a", "feature_b"], n_folds=3, min_folds=2)
     assert "feature_a" in stable
     assert "feature_b" not in stable
+
+
+def test_check_spearman_sign_consistency_with_validation():
+    n = 100
+    train_df = pd.DataFrame({
+        "symbol": ["A"] * n,
+        "feature_c": np.linspace(1, 10, n),
+        "label_close_288": np.linspace(1, 10, n)
+    })
+    val_df = pd.DataFrame({
+        "symbol": ["A"] * n,
+        "feature_c": np.linspace(10, 1, n),
+        "label_close_288": np.linspace(1, 10, n)
+    })
+    
+    # feature_c is consistent in train, but flips in val
+    stable = _check_spearman_sign_consistency(train_df, ["feature_c"], n_folds=2, min_folds=1, val_df=val_df)
+    assert "feature_c" not in stable
+

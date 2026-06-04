@@ -443,7 +443,7 @@ class Pipeline_Orchestrator:
                 # ------------------------------------------------------------------
                 # Phase 1: Feature Selection
                 # ------------------------------------------------------------------
-                phase1_result = self._run_phase1(train_df, force=force)
+                phase1_result = self._run_phase1(train_df, force=force, val_df=val_df)
                 results["phase1"] = phase1_result
                 train_df, val_df = self._prune_splits_after_phase1(
                     train_df, val_df, phase1_result)
@@ -630,7 +630,7 @@ class Pipeline_Orchestrator:
                     "train_rows": len(train_df),
                     "val_rows": len(val_df),
                 }
-                results["phase1"] = self._run_phase1(train_df, force=True)
+                results["phase1"] = self._run_phase1(train_df, force=True, val_df=val_df)
 
             elif phase == 2:
                 train_df, val_df = self._load_and_split_data()
@@ -944,6 +944,7 @@ class Pipeline_Orchestrator:
         self,
         train_df: pd.DataFrame,
         force: bool = False,
+        val_df: pd.DataFrame | None = None,
     ) -> dict[str, list[dict]]:
         """
         Run Phase 1 (Feature Selection) or skip if valid outputs exist.
@@ -986,7 +987,7 @@ class Pipeline_Orchestrator:
         logger.info("Running %s …", phase_name)
         try:
             selector = Feature_Selector()
-            result = selector.run(train_df)
+            result = selector.run(train_df, val_df=val_df)
         except Exception as exc:
             logger.error("Phase 1 failed: %s", exc, exc_info=True)
             raise

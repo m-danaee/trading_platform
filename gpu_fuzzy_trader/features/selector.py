@@ -221,8 +221,11 @@ def _check_spearman_sign_consistency(
     feature_cols: list[str],
     n_folds: int,
     min_folds: int,
+    val_df: pd.DataFrame | None = None,
 ) -> set[str]:
     folds = _get_spearman_folds(df, n_folds)
+    if val_df is not None:
+        folds.append(val_df)
     label_col = "label_close_288"
     if label_col not in df.columns:
         return set(feature_cols)
@@ -272,6 +275,7 @@ class Feature_Selector:
         direction: str,
         regime_labels: Optional[pd.Series] = None,
         shared: Phase1SharedContext | None = None,
+        val_df: pd.DataFrame | None = None,
     ) -> list[dict]:
         """
         Select top features for the given direction.
@@ -344,7 +348,7 @@ class Feature_Selector:
             n_folds = config.PHASE1_STATIONARITY_FOLDS
             min_folds = config.PHASE1_SIGN_CONSISTENCY_MIN_FOLDS
             stable_cols = _check_spearman_sign_consistency(
-                train_df, feature_cols, n_folds, min_folds
+                train_df, feature_cols, n_folds, min_folds, val_df=val_df
             )
             logger.info(
                 "Phase 1 [%s]: sign consistency filter kept %d/%d candidate features",
@@ -510,7 +514,7 @@ class Feature_Selector:
 
         return selected
 
-    def run(self, train_df: pd.DataFrame) -> dict[str, list[dict]]:
+    def run(self, train_df: pd.DataFrame, val_df: pd.DataFrame | None = None) -> dict[str, list[dict]]:
         """
         Run feature selection for both directions.
 
@@ -562,6 +566,7 @@ class Feature_Selector:
                 direction,
                 regime_labels=self._regime_labels,
                 shared=shared,
+                val_df=val_df,
             )
 
         results = _reduce_overlap(
