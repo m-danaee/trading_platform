@@ -80,6 +80,7 @@ def _objectives_from_metrics(
     rule_set_template: list[dict],
     val_engine: Any | None = None,
     cache: Phase3EvalCache | None = None,
+    pool_size: int | None = None,
 ) -> np.ndarray:
     """Compute objectives from precomputed metrics (backward-compatible wrapper)."""
     _ = val_engine  # legacy callers may pass engine; cache replaces gate sims
@@ -93,6 +94,7 @@ def _objectives_from_metrics(
         per_rule_min_val_trades=per_rule,
         val_masks_by_key=val_masks,
         n_rows_val=n_rows_val,
+        pool_size=pool_size,
     )
 
 
@@ -104,6 +106,7 @@ def _evaluate_candidates_batch(
     use_jax: bool = False,
     cache: Phase3EvalCache | None = None,
     cv_fold_contexts: list[tuple] | None = None,
+    pool_size: int | None = None,
 ) -> list[tuple[np.ndarray, dict, dict]]:
     """Evaluate rule-set candidates; parallel or JAX batch when available."""
     p3 = _helpers()
@@ -122,6 +125,7 @@ def _evaluate_candidates_batch(
                 train_engine,
                 cache=cache,
                 cv_fold_contexts=cv_fold_contexts,
+                pool_size=pool_size,
             )
             results.append((obj, val_m, train_m))
         return results
@@ -137,6 +141,7 @@ def _evaluate_candidates_batch(
                 per_rule_min_val_trades=per_rule,
                 val_masks_by_key=val_masks,
                 n_rows_val=n_rows_val,
+                pool_size=pool_size,
             )
             results.append((obj, val_m, train_m))
         return results
@@ -152,6 +157,7 @@ def _evaluate_candidates_batch(
             per_rule_min_val_trades=per_rule,
             val_masks_by_key=val_masks,
             n_rows_val=n_rows_val,
+            pool_size=pool_size,
         )
         results.append((obj, val_m, train_m))
 
@@ -181,6 +187,7 @@ def greedy_rule_set_search(
         Number of candidate rule sets evaluated.
     """
     weights = weights if weights is not None else _cfg.PHASE3_GREEDY_WEIGHTS
+    pool_size = len(pool)
     n_evals = 0
 
     if len(pool) < min_rules:
@@ -198,6 +205,7 @@ def greedy_rule_set_search(
         use_jax,
         cache,
         cv_fold_contexts=cv_fold_contexts,
+        pool_size=pool_size,
     )
     n_evals += len(candidates)
 
@@ -239,6 +247,7 @@ def greedy_rule_set_search(
             use_jax,
             cache,
             cv_fold_contexts=cv_fold_contexts,
+            pool_size=pool_size,
         )
         n_evals += len(extensions)
 
@@ -251,6 +260,19 @@ def greedy_rule_set_search(
                 round_best = ext
 
         if round_best is not None:
+            if (
+                bool(_cfg.PHASE3_GREEDY_STOP_ON_WORSEN)
+                and round_best_score <= best_score
+            ):
+                logger.info(
+                    "Phase 3 greedy: stop at round %d — marginal score "
+                    "%.2f did not improve over %.2f",
+                    k,
+                    round_best_score,
+                    best_score,
+                )
+                break
+            best_score = round_best_score
             best_set = round_best
             used_keys = {p3._conditions_key(r["conditions"]) for r in best_set}
             logger.info(

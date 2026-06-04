@@ -204,6 +204,14 @@ def _jaccard_similarity_penalty(
     return penalty
 
 
+def effective_symbol_coverage_target(pool_size: int | None) -> int:
+    """Scale coverage requirement when the Phase 2 pool is small."""
+    base = int(_cfg.PHASE3_MIN_SYMBOL_COVERAGE)
+    if pool_size is None or pool_size >= int(_cfg.PHASE3_SMALL_POOL_THRESHOLD):
+        return base
+    return max(3, min(base, pool_size))
+
+
 def compute_phase3_objectives(
     train_metrics: dict,
     val_metrics: dict,
@@ -212,6 +220,7 @@ def compute_phase3_objectives(
     per_rule_min_val_trades: dict[frozenset, int] | None = None,
     val_masks_by_key: dict[frozenset, np.ndarray] | None = None,
     n_rows_val: int = 0,
+    pool_size: int | None = None,
 ) -> np.ndarray:
     """
     Compute minimised objectives [f1, f2, f3] with all penalties applied.
@@ -240,10 +249,11 @@ def compute_phase3_objectives(
     zero_penalty = 100.0 if (train_trades == 0 or val_trades == 0) else 0.0
 
     val_symbols_with_trades = count_symbols_with_trades(val_metrics)
+    coverage_target = effective_symbol_coverage_target(pool_size)
     coverage_penalty = 0.0
-    if val_symbols_with_trades < _cfg.PHASE3_MIN_SYMBOL_COVERAGE:
+    if val_symbols_with_trades < coverage_target:
         coverage_penalty = (
-            (_cfg.PHASE3_MIN_SYMBOL_COVERAGE - val_symbols_with_trades) * 5.0
+            (coverage_target - val_symbols_with_trades) * 5.0
         )
 
     symbol_consistency_penalty_val = symbol_consistency_penalty(

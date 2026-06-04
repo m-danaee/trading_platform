@@ -520,13 +520,19 @@ class TestRuleSetSelectorInit:
         pool = _make_pool(4)
         df = _make_df()
         sel = Rule_Set_Selector(df, df, pool, "long")
-        assert sel.refine_pop_size == _cfg.PHASE3_REFINE_POP_SIZE
+        if len(pool) < _cfg.PHASE3_SMALL_POOL_THRESHOLD:
+            assert sel.refine_pop_size == _cfg.PHASE3_SMALL_POOL_POP
+        else:
+            assert sel.refine_pop_size == _cfg.PHASE3_REFINE_POP_SIZE
 
     def test_default_refine_generations_from_config(self):
         pool = _make_pool(4)
         df = _make_df()
         sel = Rule_Set_Selector(df, df, pool, "long")
-        assert sel.refine_generations == _cfg.PHASE3_REFINE_GENERATIONS
+        if len(pool) < _cfg.PHASE3_SMALL_POOL_THRESHOLD:
+            assert sel.refine_generations == _cfg.PHASE3_SMALL_POOL_GEN
+        else:
+            assert sel.refine_generations == _cfg.PHASE3_REFINE_GENERATIONS
 
 
 # ---------------------------------------------------------------------------
@@ -603,9 +609,10 @@ class TestRuleSetSelectorRun:
         finally:
             m._OUTPUT_PATHS.update(original)
 
-    def test_greedy_eval_count(self):
+    def test_greedy_eval_count(self, monkeypatch):
         from gpu_fuzzy_trader.phases.phase3_greedy import greedy_rule_set_search
 
+        monkeypatch.setattr(_cfg, "PHASE3_GREEDY_STOP_ON_WORSEN", False)
         pool = _make_pool(10)
         df = _make_df(n_rows=200)
         p3 = __import__(

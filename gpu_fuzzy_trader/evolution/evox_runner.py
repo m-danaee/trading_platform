@@ -183,7 +183,11 @@ def _pareto_return_pct_for_early_stop(
     return _pareto_mean_return_pct(pareto_indices, metrics_cache)
 
 
-def _should_early_stop_phase2(gen: int, pareto_return_pct: float) -> bool:
+def _should_early_stop_phase2(
+    gen: int,
+    pareto_return_pct: float,
+    valid_count: int,
+) -> bool:
     if not _cfg.PHASE2_EARLY_STOP_ENABLED:
         return False
     if (
@@ -193,7 +197,12 @@ def _should_early_stop_phase2(gen: int, pareto_return_pct: float) -> bool:
         return False
     if gen + 1 < int(_cfg.PHASE2_EARLY_STOP_MIN_GENERATION):
         return False
-    return pareto_return_pct < float(_cfg.PHASE2_EARLY_STOP_MEAN_RETURN_PCT)
+    if pareto_return_pct >= float(_cfg.PHASE2_EARLY_STOP_MEAN_RETURN_PCT):
+        return False
+    min_valid = int(_cfg.PHASE2_EARLY_STOP_MIN_VALID_RULES)
+    if valid_count >= min_valid:
+        return False
+    return True
 
 
 def _median_pairwise_hamming(chromosomes: list[np.ndarray]) -> float:
@@ -677,11 +686,12 @@ def _run_nsga2_fallback(
             ),
         })
 
-        mean_f1 = float(np.mean(pareto_obj[:, 0])) if len(pareto_obj) else 0.0
         returns = [
             float(metrics_cache[i].get("total_return_pct", 0.0))
             for i in pareto_indices
         ]
+        mean_ret = float(np.mean(returns)) if returns else -100.0
+        median_ret = _pareto_median_return_pct(pareto_indices, metrics_cache)
         max_ret = max(returns) if returns else 0.0
         sortinos = [
             float(metrics_cache[i].get("sortino_ratio", 0.0))
@@ -697,8 +707,9 @@ def _run_nsga2_fallback(
             )
         )
         maybe_log_generation(
-            logger, tag, gen, n_generations, len(pareto_indices), mean_f1,
+            logger, tag, gen, n_generations, len(pareto_indices), mean_ret,
             max_return_pct=max_ret,
+            median_return_pct=median_ret,
             max_sortino=max_sort,
             valid_count=val_count,
             loop_start=gen_loop_start,
@@ -707,18 +718,21 @@ def _run_nsga2_fallback(
         pareto_ret = _pareto_return_pct_for_early_stop(
             pareto_indices, metrics_cache,
         )
-        if _should_early_stop_phase2(gen, pareto_ret):
+        if _should_early_stop_phase2(gen, pareto_ret, val_count):
             stat_label = (
                 "median_return" if _cfg.PHASE2_EARLY_STOP_USE_MEDIAN_RETURN
                 else "mean_return"
             )
             logger.info(
-                "%s: early stop at gen %d (%s=%.2f%% < %.2f%%)",
+                "%s: early stop at gen %d (%s=%.2f%% < %.2f%%, "
+                "valid_rules=%d < %d)",
                 tag,
                 gen + 1,
                 stat_label,
                 pareto_ret,
                 float(_cfg.PHASE2_EARLY_STOP_MEAN_RETURN_PCT),
+                val_count,
+                int(_cfg.PHASE2_EARLY_STOP_MIN_VALID_RULES),
             )
             break
 
@@ -853,11 +867,12 @@ def _run_nsga3(
             ),
         })
 
-        mean_f1 = float(np.mean(pareto_obj[:, 0])) if len(pareto_obj) else 0.0
         returns = [
             float(metrics_cache[i].get("total_return_pct", 0.0))
             for i in pareto_indices
         ]
+        mean_ret = float(np.mean(returns)) if returns else -100.0
+        median_ret = _pareto_median_return_pct(pareto_indices, metrics_cache)
         max_ret = max(returns) if returns else 0.0
         sortinos = [
             float(metrics_cache[i].get("sortino_ratio", 0.0))
@@ -873,8 +888,9 @@ def _run_nsga3(
             )
         )
         maybe_log_generation(
-            logger, tag, gen, n_generations, len(pareto_indices), mean_f1,
+            logger, tag, gen, n_generations, len(pareto_indices), mean_ret,
             max_return_pct=max_ret,
+            median_return_pct=median_ret,
             max_sortino=max_sort,
             valid_count=val_count,
             loop_start=gen_loop_start,
@@ -883,18 +899,21 @@ def _run_nsga3(
         pareto_ret = _pareto_return_pct_for_early_stop(
             pareto_indices, metrics_cache,
         )
-        if _should_early_stop_phase2(gen, pareto_ret):
+        if _should_early_stop_phase2(gen, pareto_ret, val_count):
             stat_label = (
                 "median_return" if _cfg.PHASE2_EARLY_STOP_USE_MEDIAN_RETURN
                 else "mean_return"
             )
             logger.info(
-                "%s: early stop at gen %d (%s=%.2f%% < %.2f%%)",
+                "%s: early stop at gen %d (%s=%.2f%% < %.2f%%, "
+                "valid_rules=%d < %d)",
                 tag,
                 gen + 1,
                 stat_label,
                 pareto_ret,
                 float(_cfg.PHASE2_EARLY_STOP_MEAN_RETURN_PCT),
+                val_count,
+                int(_cfg.PHASE2_EARLY_STOP_MIN_VALID_RULES),
             )
             break
 

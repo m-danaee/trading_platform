@@ -883,6 +883,92 @@ def _build_pool_from_archive(
                 pool_entry["regime_trade_counts"] = list(metrics["regime_trade_counts"])
             pool.append(pool_entry)
 
+        target_min = int(_cfg.PHASE2_CV_POOL_TARGET_MIN)
+        if len(pool) < target_min:
+            rank_min_folds = int(_cfg.PHASE2_CV_RANK_MIN_FOLDS_PASS)
+            rank_candidates: list[tuple[float,
+                                        np.ndarray, dict, dict | None, int]] = []
+            for chrom, (admitted, metrics, val_metrics, folds_passing) in zip(
+                unique_chroms, batch_results
+            ):
+                if admitted or not metrics:
+                    continue
+                if int(folds_passing) < rank_min_folds:
+                    continue
+                executed = int(metrics.get("executed_trades", 0))
+                if not passes_pool_trade_floor(
+                    executed,
+                    metrics,
+                    regime_row_fractions_arr=regime_row_fractions_arr,
+                ):
+                    continue
+                val_ret = 0.0
+                if val_metrics is not None:
+                    val_ret = float(val_metrics.get("total_return_pct", 0.0))
+                rank_candidates.append(
+                    (val_ret, chrom, metrics, val_metrics, int(folds_passing))
+                )
+            rank_candidates.sort(key=lambda row: row[0], reverse=True)
+            seen_pool = {tuple(e["chromosome"]) for e in pool}
+            top_k = int(_cfg.PHASE2_CV_POOL_RANK_ADMIT_TOP_K)
+            added = 0
+            for val_ret, chrom, metrics, val_metrics, folds_passing in rank_candidates[:top_k]:
+                key = tuple(chrom.tolist())
+                if key in seen_pool:
+                    continue
+                try:
+                    conditions = decode_chromosome(chrom, feature_infos)
+                except Exception:
+                    continue
+                if not conditions:
+                    continue
+                executed = int(metrics.get("executed_trades", 0))
+                pool_entry = {
+                    "chromosome": chrom.tolist(),
+                    "conditions": conditions,
+                    "objectives": {
+                        "sortino_ratio": float(metrics.get(
+                            "sortino_ratio",
+                            metrics.get("total_return_pct", 0.0),
+                        )),
+                        "total_return_pct": float(metrics.get("total_return_pct", 0.0)),
+                        "profit_factor": float(metrics.get("profit_factor", 0.0)),
+                        "max_drawdown_pct": float(metrics.get("max_drawdown_pct", 0.0)),
+                        "win_rate": float(metrics.get("win_rate", 0.0)),
+                    },
+                    "executed_trades": executed,
+                    "cv_folds_passing": folds_passing,
+                    "cv_folds_total": int(cv_folds_total),
+                    "rank_fallback": True,
+                }
+                if val_metrics is not None:
+                    pool_entry["val_objectives"] = {
+                        "sortino_ratio": float(val_metrics.get(
+                            "sortino_ratio",
+                            val_metrics.get("total_return_pct", 0.0),
+                        )),
+                        "total_return_pct": float(val_metrics.get("total_return_pct", 0.0)),
+                        "profit_factor": float(val_metrics.get("profit_factor", 0.0)),
+                        "max_drawdown_pct": float(val_metrics.get("max_drawdown_pct", 0.0)),
+                        "win_rate": float(val_metrics.get("win_rate", 0.0)),
+                    }
+                    pool_entry["val_executed_trades"] = int(
+                        val_metrics.get("executed_trades", 0))
+                pool.append(pool_entry)
+                seen_pool.add(key)
+                added += 1
+                if len(pool) >= target_min:
+                    break
+            if added:
+                logger.info(
+                    "Phase 2 [%s] CV rank fallback: added %d rules "
+                    "(pool %d → target %d)",
+                    direction,
+                    added,
+                    len(pool) - added,
+                    target_min,
+                )
+
     else:
         # --- Non-CV path: one chromosome at a time (unchanged) ---
         if regime_row_fractions_arr is None:

@@ -48,7 +48,7 @@ from gpu_fuzzy_trader.evolution.numba_ops import (
     crowding_distance as _crowding_distance_numba,
     non_dominated_sort as _non_dominated_sort_numba,
 )
-from gpu_fuzzy_trader.log_progress import maybe_log_generation
+from gpu_fuzzy_trader.log_progress import maybe_log_phase3_generation
 from gpu_fuzzy_trader.phases.phase3_cache import (
     Phase3EvalCache,
     build_phase3_eval_cache,
@@ -309,6 +309,50 @@ def _merge_phase3_metrics_worst(
     return out
 
 
+def _refine_budget_for_pool(pool_size: int) -> tuple[int, int]:
+    """Reduce NSGA refine cost when the Phase 2 pool is small."""
+    if pool_size >= int(_cfg.PHASE3_SMALL_POOL_THRESHOLD):
+        return int(_cfg.PHASE3_REFINE_POP_SIZE), int(_cfg.PHASE3_REFINE_GENERATIONS)
+    return int(_cfg.PHASE3_SMALL_POOL_POP), int(_cfg.PHASE3_SMALL_POOL_GEN)
+
+
+def _pool_rule_val_score(rule: dict) -> float:
+    """Higher is better; used for single-rule / small-pool fallbacks."""
+    val_obj = rule.get("val_objectives") or rule.get("objectives") or {}
+    train_obj = rule.get("objectives") or {}
+    val_ret = float(val_obj.get("total_return_pct", 0.0))
+    train_ret = float(train_obj.get("total_return_pct", 0.0))
+    return min(val_ret, train_ret)
+
+
+def _best_rules_from_pool_fallback(
+    pool: list[dict],
+    n_rules: int,
+) -> list[dict]:
+    """Pick top *n_rules* distinct pool rules by conservative val/train return."""
+    ranked = sorted(pool, key=_pool_rule_val_score, reverse=True)
+    out: list[dict] = []
+    seen: set[frozenset] = set()
+    for rule in ranked:
+        key = _conditions_key(rule.get("conditions", []))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(rule)
+        if len(out) >= n_rules:
+            break
+    while len(out) < n_rules and len(out) < len(pool):
+        for rule in pool:
+            key = _conditions_key(rule.get("conditions", []))
+            if key not in seen:
+                out.append(rule)
+                seen.add(key)
+                break
+        else:
+            break
+    return out
+
+
 def _evaluate_rule_set(
     rule_set: list[dict],
     val_engine,
@@ -316,6 +360,7 @@ def _evaluate_rule_set(
     cache: Phase3EvalCache | None = None,
     *,
     cv_fold_contexts: list[tuple] | None = None,
+    pool_size: int | None = None,
 ) -> tuple[np.ndarray, dict, dict]:
     """
     Evaluate a candidate rule set and return (objectives, train_metrics, val_metrics).
@@ -341,6 +386,7 @@ def _evaluate_rule_set(
                 per_rule_min_val_trades=per_rule,
                 val_masks_by_key=val_masks,
                 n_rows_val=n_rows,
+                pool_size=pool_size,
             )
             if worst_obj is None or float(np.sum(obj)) > float(np.sum(worst_obj)):
                 worst_obj = obj
@@ -361,6 +407,7 @@ def _evaluate_rule_set(
         per_rule_min_val_trades=per_rule,
         val_masks_by_key=val_masks,
         n_rows_val=n_rows_val,
+        pool_size=pool_size,
     )
     return objectives, train_metrics, val_metrics
 
@@ -664,7 +711,11 @@ def _run_nsga2_combinatorial(
         ]
 
     objectives = np.full((effective_pop, 3), np.inf)
+    train_metrics_cache: list[dict | None] = [None] * effective_pop
+    val_metrics_cache: list[dict | None] = [None] * effective_pop
     history: list[dict] = []
+    pool_size = len(pool)
+    pareto_one_streak = 0
 
     tag = log_tag or "Phase 3 NSGA-II"
     use_batch_eff = bool(use_batch) and not cv_fold_contexts
@@ -686,23 +737,29 @@ def _run_nsga2_combinatorial(
             val_masks = cache.val_masks if cache else None
             n_rows_val = cache.n_rows_val if cache else 0
             for j, i in enumerate(pending):
+                train_metrics_cache[i] = train_list[j]
+                val_metrics_cache[i] = val_list[j]
                 objectives[i] = compute_phase3_objectives(
                     train_list[j], val_list[j], population[i],
                     per_rule_min_val_trades=per_rule,
                     val_masks_by_key=val_masks,
                     n_rows_val=n_rows_val,
+                    pool_size=pool_size,
                 )
         else:
             for i in pending:
                 engine_fmt = _rule_set_to_engine_format(population[i])
-                obj, _, _ = _evaluate_rule_set(
+                obj, train_m, val_m = _evaluate_rule_set(
                     engine_fmt,
                     val_engine,
                     train_engine,
                     cache=cache,
                     cv_fold_contexts=cv_fold_contexts,
+                    pool_size=pool_size,
                 )
                 objectives[i] = obj
+                train_metrics_cache[i] = train_m
+                val_metrics_cache[i] = val_m
 
         # Non-dominated sort
         fronts = _non_dominated_sort(objectives)
@@ -710,19 +767,52 @@ def _run_nsga2_combinatorial(
 
         # Record history
         pareto_obj = objectives[pareto_indices]
+        train_rets = [
+            float((train_metrics_cache[i] or {}).get("total_return_pct", 0.0))
+            for i in pareto_indices
+        ]
+        val_rets = [
+            float((val_metrics_cache[i] or {}).get("total_return_pct", 0.0))
+            for i in pareto_indices
+        ]
         history.append({
             "generation": gen,
             "pareto_size": len(pareto_indices),
             "mean_f1": float(np.mean(pareto_obj[:, 0])),
             "mean_f2": float(np.mean(pareto_obj[:, 1])),
             "mean_f3": float(np.mean(pareto_obj[:, 2])),
+            "mean_train_return_pct": float(np.mean(train_rets)) if train_rets else 0.0,
+            "mean_val_return_pct": float(np.mean(val_rets)) if val_rets else 0.0,
         })
 
-        mean_f1 = float(np.mean(pareto_obj[:, 0])) if len(pareto_obj) else 0.0
-        maybe_log_generation(
-            logger, tag, gen, n_generations, len(pareto_indices), mean_f1,
+        maybe_log_phase3_generation(
+            logger,
+            tag,
+            gen,
+            n_generations,
+            len(pareto_indices),
+            float(np.mean(train_rets)) if train_rets else 0.0,
+            float(np.mean(val_rets)) if val_rets else 0.0,
+            max_val_return_pct=max(val_rets) if val_rets else None,
             loop_start=gen_loop_start,
         )
+
+        if len(pareto_indices) <= 1:
+            pareto_one_streak += 1
+        else:
+            pareto_one_streak = 0
+        if (
+            pareto_one_streak
+            >= int(_cfg.PHASE3_REFINE_EARLY_STOP_PARETO_ONE_GENS)
+            and gen + 1 >= int(_cfg.PHASE3_REFINE_EARLY_STOP_PARETO_ONE_GENS)
+        ):
+            logger.info(
+                "%s: early stop at gen %d (pareto<=1 for %d generations)",
+                tag,
+                gen + 1,
+                pareto_one_streak,
+            )
+            break
 
         if gen == n_generations - 1:
             break
@@ -824,6 +914,7 @@ def _select_best_from_pareto(
     train_engine: CPUBacktestEngine,
     cache: Phase3EvalCache | None = None,
     cv_fold_contexts: list[tuple] | None = None,
+    pool_size: int | None = None,
 ) -> list[dict]:
     """
     Select the best rule set from the Pareto front.
@@ -848,6 +939,7 @@ def _select_best_from_pareto(
             train_engine,
             cache=cache,
             cv_fold_contexts=cv_fold_contexts,
+            pool_size=pool_size,
         )
         score = _maximin_selection_score(train_metrics, val_metrics)
         f1 = float(obj[0])
@@ -976,17 +1068,22 @@ class Rule_Set_Selector:
 
         self.direction = direction
         self.pool = pool
+        self._full_train_df = train_df
+        self._full_val_df = val_df
+        default_pop, default_gen = _refine_budget_for_pool(len(pool))
         self.refine_pop_size = (
-            refine_pop_size if refine_pop_size is not None else _cfg.PHASE3_REFINE_POP_SIZE
+            refine_pop_size if refine_pop_size is not None else default_pop
         )
         self.refine_generations = (
             refine_generations
             if refine_generations is not None
-            else _cfg.PHASE3_REFINE_GENERATIONS
+            else default_gen
         )
         self.seed = seed
 
         self._cv_fold_contexts: list[tuple] | None = None
+        self._report_train_engine = None
+        self._report_val_engine = None
         use_cv = (
             cv_folds
             and len(cv_folds) > 0
@@ -1017,6 +1114,16 @@ class Rule_Set_Selector:
                 self._use_jax_gpu,
                 self._eval_cache,
             ) = _build_phase3_engines(train_df, val_df, direction, pool)
+
+        (
+            self._report_val_engine,
+            self._report_train_engine,
+            _,
+            _,
+            _,
+        ) = _build_phase3_engines(
+            self._full_train_df, self._full_val_df, direction, pool
+        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -1092,13 +1199,19 @@ class Rule_Set_Selector:
             self.direction, len(pareto_rule_sets),
         )
 
-        if not pareto_rule_sets:
-            # Fallback: use first min_rules rules from pool
+        min_pareto = int(_cfg.PHASE3_MIN_PARETO_FRONT)
+        if not pareto_rule_sets or len(pareto_rule_sets) < min_pareto:
             logger.warning(
-                "Phase 3 [%s]: Pareto front empty, using first %d pool rules.",
-                self.direction, _cfg.PHASE3_MIN_RULES,
+                "Phase 3 [%s]: Pareto front size %d < %d, "
+                "using pool-ranked fallback.",
+                self.direction,
+                len(pareto_rule_sets),
+                min_pareto,
             )
-            best_rule_set = self.pool[: _cfg.PHASE3_MIN_RULES]
+            best_rule_set = _best_rules_from_pool_fallback(
+                self.pool,
+                max(_cfg.PHASE3_MIN_RULES, min(3, len(self.pool))),
+            )
         else:
             best_rule_set = _select_best_from_pareto(
                 pareto_rule_sets,
@@ -1106,6 +1219,7 @@ class Rule_Set_Selector:
                 self._train_engine,
                 cache=self._eval_cache,
                 cv_fold_contexts=self._cv_fold_contexts,
+                pool_size=len(self.pool),
             )
 
         output_dict = _build_output_dict(best_rule_set, self.direction)
@@ -1121,10 +1235,10 @@ class Rule_Set_Selector:
             self.direction, len(output_dict["rules_set"]), output_path,
         )
 
-        # Reporter: equity curves and per-symbol CSVs for train and validation splits
+        # Reporter: full train/val splits (same scope as Phase 4/5)
         try:
             engine_fmt = _rule_set_to_engine_format(best_rule_set)
-            train_metrics, train_log = self._train_engine.simulate_rule_set(
+            train_metrics, train_log = self._report_train_engine.simulate_rule_set(
                 engine_fmt, return_logs=True
             )
             Reporter().plot_equity_curve(train_log, "train", self.direction)
@@ -1137,7 +1251,7 @@ class Rule_Set_Selector:
 
         try:
             engine_fmt = _rule_set_to_engine_format(best_rule_set)
-            val_metrics, val_log = self._val_engine.simulate_rule_set(
+            val_metrics, val_log = self._report_val_engine.simulate_rule_set(
                 engine_fmt, return_logs=True
             )
             Reporter().plot_equity_curve(val_log, "validation", self.direction)

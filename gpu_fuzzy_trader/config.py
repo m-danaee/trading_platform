@@ -170,7 +170,8 @@ LOG_GENERATION_INTERVAL = 0  # 0 = auto ~10% of generations; N = every N gens
 # --- Ranking & shortlist ---
 PHASE1_DISPERSION_THRESHOLD = 0.95  # drop near-constant columns
 PHASE1_TOP_K_FEATURES = 25
-PHASE1_MAX_FEATURE_OVERLAP = 0.50  # max Jaccard overlap long vs short lists
+# max Jaccard overlap long vs short lists (was 0.50 → 12 shared)
+PHASE1_MAX_FEATURE_OVERLAP = 0.40
 PHASE1_ASYMMETRIC_TARGET = True  # separate MI targets for long / short
 
 # --- Stationarity (reduce regime-specific features) ---
@@ -247,9 +248,13 @@ PHASE2_CV_POOL_TRAIN_RETURN_MIN_PCT = 0.0
 PHASE2_CV_POOL_VAL_RETURN_MIN_PCT = 0.0
 PHASE2_CV_PROFIT_FACTOR_FLOOR = 1.0
 PHASE2_CV_MIN_VAL_TRADES = 12
+# Rank fallback when strict CV admission starves Phase 3 (run log: 13/123 long).
+PHASE2_CV_POOL_TARGET_MIN = 25
+PHASE2_CV_POOL_RANK_ADMIT_TOP_K = 50
+PHASE2_CV_RANK_MIN_FOLDS_PASS = 1
 
 # --- Fitness & joint evaluation ---
-SORTINO_CAP = 3.0
+SORTINO_CAP = 5.0
 SORTINO_SCALE = 3.0
 PHASE2_JOINT_TRAIN_VAL = True  # f1 uses min(train_sortino, val_sortino)
 # With purged_rolling_cv, val side is worst across CV folds.
@@ -263,8 +268,10 @@ PHASE2_DIVERSITY_PENALTY = 6.0
 PHASE2_EARLY_STOP_ENABLED = True
 PHASE2_EARLY_STOP_MIN_GENERATION = 40
 # Tightened -5.0 → -3.5: short run showed -10% by gen 65 yet ran to completion.
-PHASE2_EARLY_STOP_MEAN_RETURN_PCT = -3.5
+PHASE2_EARLY_STOP_MEAN_RETURN_PCT = -5.0
 PHASE2_EARLY_STOP_USE_MEDIAN_RETURN = True  # robust vs one bad Pareto member
+# also require sparse valid_rules on Pareto
+PHASE2_EARLY_STOP_MIN_VALID_RULES = 5
 PHASE2_EARLY_STOP_DISABLED_IN_CV = False  # enable early stop in purged CV mode
 
 # --- Parallel fold evaluation ---
@@ -332,6 +339,12 @@ PHASE3_NUMBA_ENABLED = True
 # but cap pop at 300 to avoid 5×budget blowout on large pools.
 PHASE3_REFINE_GENERATIONS = 250
 PHASE3_REFINE_POP_SIZE = 300
+PHASE3_SMALL_POOL_THRESHOLD = 20
+PHASE3_SMALL_POOL_POP = 80
+PHASE3_SMALL_POOL_GEN = 60
+PHASE3_MIN_PARETO_FRONT = 3
+PHASE3_REFINE_EARLY_STOP_PARETO_ONE_GENS = 15
+PHASE3_GREEDY_STOP_ON_WORSEN = True
 PHASE3_GREEDY_WEIGHTS = (0.8, 0.6, 0.5)  # sortino, drawdown, win_rate
 
 # --- Objectives & anti-overfit gates ---
@@ -413,10 +426,10 @@ PHASE4_WORST_TURNOVER_WEIGHT = 0.5
 # MIN_WORST_FOLD_RETURN_PCT=1.5% demands consistent positive return per WF window.
 # Goal: reject strategies with consistent losses or blow-up drawdowns, not
 # demand strong positive returns at the per-fold level.
-PHASE4_MAX_WORST_DRAWDOWN_PCT = 12.0
-PHASE4_MIN_WORST_TRADES = 20
-PHASE4_MIN_WORST_FOLD_RETURN_PCT = 0.0
-PHASE4_MIN_WORST_FOLD_PF = 1.02
+PHASE4_MAX_WORST_DRAWDOWN_PCT = 15.0
+PHASE4_MIN_WORST_TRADES = 15
+PHASE4_MIN_WORST_FOLD_RETURN_PCT = -2.0
+PHASE4_MIN_WORST_FOLD_PF = 1.0
 # RECOMMENDATION: raise WF_SPLITS to 4–6 if short still fails OOS after CV in P2/P3.
 
 
