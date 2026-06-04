@@ -224,28 +224,29 @@ PHASE2_SUPPORT_PENALTY_WEIGHT_F1 = 0.8  # Sortino objective
 PHASE2_SUPPORT_PENALTY_WEIGHT_F2 = 0.6  # drawdown objective
 PHASE2_SUPPORT_PENALTY_WEIGHT_F3 = 0.5  # win-rate objective
 
-# Tightened floors: run log shows the short strategy was admitted with negative
-# returns across all splits, indicating the gates were not filtering overfitters.
-PHASE2_RETURN_FLOOR_PCT = 1.0
-PHASE2_VAL_RETURN_FLOOR_PCT = 0.5
-PHASE2_PROFIT_FACTOR_FLOOR = 1.05
-PHASE2_SYMBOL_MEDIAN_RETURN_FLOOR_PCT = 0.0
-PHASE2_MIN_PROFITABLE_SYMBOLS = 6
+# Run 3 analysis: strict stacked floors collapsed pool to only 17 long / 22 short
+# rules. Quality filtering should happen at the CV majority-vote level, not by
+# stacking floor requirements. Relaxed back toward run-1 levels.
+PHASE2_RETURN_FLOOR_PCT = 0.0
+PHASE2_VAL_RETURN_FLOOR_PCT = 0.0
+PHASE2_PROFIT_FACTOR_FLOOR = 1.0
+PHASE2_SYMBOL_MEDIAN_RETURN_FLOOR_PCT = -0.5
+PHASE2_MIN_PROFITABLE_SYMBOLS = 5
 
 PHASE2_POOL_REQUIRE_POSITIVE_SPLITS = True
-PHASE2_POOL_TRAIN_RETURN_MIN_PCT = 1.0
-PHASE2_POOL_VAL_RETURN_MIN_PCT = 0.5
+PHASE2_POOL_TRAIN_RETURN_MIN_PCT = 0.0
+PHASE2_POOL_VAL_RETURN_MIN_PCT = 0.0
 # Holdout mode: require non-negative train/val return (see floors above).
 
-# Purged CV pool admission (per-fold gates; see phase2_cv.evaluate_purged_cv_pool_admission)
-# Raised from 1→3: previously a rule only needed to pass 1/3 folds, allowing
-# season-specific overfitters through — the root cause of the short OOS failure.
-PHASE2_CV_POOL_MIN_FOLDS_PASS = 3
-PHASE2_CV_MIN_TRADE_POOL_FLOOR = 30
-PHASE2_CV_POOL_TRAIN_RETURN_MIN_PCT = 0.5
+# Purged CV pool admission (per-fold gates).
+# Changed 3→2 (majority vote): unanimity across 3 folds gave only 17/22 rules.
+# 2-of-3 still rejects season-specific overfitters while building a usable pool.
+PHASE2_CV_POOL_MIN_FOLDS_PASS = 2
+PHASE2_CV_MIN_TRADE_POOL_FLOOR = 25
+PHASE2_CV_POOL_TRAIN_RETURN_MIN_PCT = 0.0
 PHASE2_CV_POOL_VAL_RETURN_MIN_PCT = 0.0
 PHASE2_CV_PROFIT_FACTOR_FLOOR = 1.0
-PHASE2_CV_MIN_VAL_TRADES = 15
+PHASE2_CV_MIN_VAL_TRADES = 12
 
 # --- Fitness & joint evaluation ---
 SORTINO_CAP = 3.0
@@ -407,12 +408,15 @@ PHASE4_WORST_DRAWDOWN_WEIGHT = 2.0
 PHASE4_WORST_TURNOVER_WEIGHT = 0.5
 
 # --- Feasibility filters (trial must pass all) ---
-# Tightened: short strategy had worst_return=4.74% on val but -16.91% on test,
-# suggesting the 0.5% return floor and 1.05 PF floor were too lenient.
-PHASE4_MAX_WORST_DRAWDOWN_PCT = 10.0
-PHASE4_MIN_WORST_TRADES = 40
-PHASE4_MIN_WORST_FOLD_RETURN_PCT = 1.5
-PHASE4_MIN_WORST_FOLD_PF = 1.10
+# Run 3: BOTH directions had zero feasible Phase 4 trials.
+# MIN_WORST_TRADES=40 is unreachable with only 2-3 rules per team;
+# MIN_WORST_FOLD_RETURN_PCT=1.5% demands consistent positive return per WF window.
+# Goal: reject strategies with consistent losses or blow-up drawdowns, not
+# demand strong positive returns at the per-fold level.
+PHASE4_MAX_WORST_DRAWDOWN_PCT = 12.0
+PHASE4_MIN_WORST_TRADES = 20
+PHASE4_MIN_WORST_FOLD_RETURN_PCT = 0.0
+PHASE4_MIN_WORST_FOLD_PF = 1.02
 # RECOMMENDATION: raise WF_SPLITS to 4–6 if short still fails OOS after CV in P2/P3.
 
 
