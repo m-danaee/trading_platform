@@ -476,8 +476,15 @@ def _evaluate_population_indices(
                     diversity_penalty = _cfg.PHASE2_DIVERSITY_PENALTY
 
             pen = support_penalty + diversity_penalty + cond_penalty
+
+            executed = int(metrics.get("executed_trades", 0))
+            dd_val = max_dd
+            trade_floor = _cfg.PHASE2_CV_MIN_TRADE_POOL_FLOOR if str(_cfg.SPLIT_MODE).strip().lower() == "purged_rolling_cv" else _cfg.MIN_TRADE_POOL_FLOOR
+            if executed < trade_floor:
+                dd_val = 100.0
+
             objectives[i] = np.array(
-                [-sortino_for_obj + pen, max_dd + pen, -win_rate + pen],
+                [-sortino_for_obj + pen, dd_val + pen, -win_rate + pen],
                 dtype=np.float64,
             )
             metrics_cache[i] = metrics

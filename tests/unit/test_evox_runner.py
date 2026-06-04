@@ -7,8 +7,10 @@ from unittest import mock
 import numpy as np
 import pytest
 
+from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.evolution.evox_runner import (
     _EVOX_AVAILABLE,
+    _evaluate_population_indices,
     _update_hall_of_fame,
     run_phase2_evolution,
 )
@@ -151,3 +153,35 @@ class TestRunPhase2EvolutionFallback:
             )
 
         assert np.array_equal(captured["seed_chromosomes"], seeds)
+
+
+def test_low_trade_drawdown_penalty():
+    # Set CV fold mode trade floor to 25
+    orig_mode = _cfg.SPLIT_MODE
+    orig_floor = _cfg.PHASE2_CV_MIN_TRADE_POOL_FLOOR
+    try:
+        _cfg.SPLIT_MODE = "purged_rolling_cv"
+        _cfg.PHASE2_CV_MIN_TRADE_POOL_FLOOR = 25
+        
+        # population of 1 candidate
+        pop = np.zeros((1, 10), dtype=np.int32)
+        dont_cares = np.ones(10, dtype=np.int32) * 5
+        objectives = np.full((1, 3), np.inf)
+        metrics_cache = [{}]
+        
+        class MockEngine:
+            def simulate_rule_batch(self, chromosomes, **kwargs):
+                # return metrics with 5 executed trades and 0.0 drawdown
+                return [{"executed_trades": 5, "total_return_pct": 1.0, "sortino_ratio": 0.5, "max_drawdown_pct": 0.0, "win_rate": 0.5}]
+                
+        engine = MockEngine()
+        _evaluate_population_indices(
+            pop, [0], dont_cares, engine, [], objectives, metrics_cache
+        )
+        
+        # Drawdown objective (index 1) should be penalized to 100.0 + support_penalty
+        assert objectives[0, 1] >= 100.0
+    finally:
+        _cfg.SPLIT_MODE = orig_mode
+        _cfg.PHASE2_CV_MIN_TRADE_POOL_FLOOR = orig_floor
+
