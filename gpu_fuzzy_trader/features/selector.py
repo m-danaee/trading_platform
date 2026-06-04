@@ -32,6 +32,8 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 from sklearn.feature_selection import mutual_info_classif
+from scipy.stats import spearmanr
+
 
 from gpu_fuzzy_trader import config
 from gpu_fuzzy_trader.features.detector import Feature_Detector
@@ -181,6 +183,73 @@ def _reduce_overlap(
     }
 
 
+def _spearman(a: pd.Series, b: pd.Series) -> float:
+    mask = a.notna() & b.notna()
+    if mask.sum() < 2:
+        return float("nan")
+    if np.std(a[mask].values) == 0.0 or np.std(b[mask].values) == 0.0:
+        return float("nan")
+    corr, _ = spearmanr(a[mask].values, b[mask].values)
+    return float(corr)
+
+
+def _get_spearman_folds(df: pd.DataFrame, n_folds: int) -> list[pd.DataFrame]:
+    if "symbol" not in df.columns:
+        n = len(df)
+        boundaries = np.linspace(0, n, n_folds + 1, dtype=int)
+        return [df.iloc[boundaries[i]:boundaries[i+1]] for i in range(n_folds)]
+    
+    sort_col = "datetime" if "datetime" in df.columns else None
+    per_sym_folds = {}
+    for symbol, group in df.groupby("symbol", sort=True):
+        g = group.sort_values(sort_col) if sort_col else group
+        g = g.reset_index(drop=True)
+        n = len(g)
+        boundaries = np.linspace(0, n, n_folds + 1, dtype=int)
+        per_sym_folds[symbol] = [g.iloc[boundaries[i]:boundaries[i+1]] for i in range(n_folds)]
+        
+    folds = []
+    for i in range(n_folds):
+        parts = [per_sym_folds[sym][i] for sym in per_sym_folds if i < len(per_sym_folds[sym])]
+        if parts:
+            folds.append(pd.concat(parts, ignore_index=True))
+    return folds
+
+
+def _check_spearman_sign_consistency(
+    df: pd.DataFrame,
+    feature_cols: list[str],
+    n_folds: int,
+    min_folds: int,
+) -> set[str]:
+    folds = _get_spearman_folds(df, n_folds)
+    label_col = "label_close_288"
+    if label_col not in df.columns:
+        return set(feature_cols)
+        
+    stable_features = set()
+    for col in feature_cols:
+        corrs = []
+        for fold in folds:
+            if col not in fold.columns:
+                continue
+            corr = _spearman(fold[col], fold[label_col])
+            if not np.isnan(corr):
+                corrs.append(corr)
+        if len(corrs) < min_folds:
+            continue
+        has_pos = any(c > 0 for c in corrs)
+        has_neg = any(c < 0 for c in corrs)
+        if has_pos and has_neg:
+            logger.info(
+                "Blacklisting non-stationary feature %s: Spearman signs across folds: %s",
+                col, corrs
+            )
+        else:
+            stable_features.add(col)
+    return stable_features
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -270,6 +339,18 @@ class Feature_Selector:
             logger.warning(
                 "Phase 1 [%s]: no candidate feature columns", direction)
             return []
+
+        if config.PHASE1_REQUIRE_SIGN_CONSISTENCY:
+            n_folds = config.PHASE1_STATIONARITY_FOLDS
+            min_folds = config.PHASE1_SIGN_CONSISTENCY_MIN_FOLDS
+            stable_cols = _check_spearman_sign_consistency(
+                train_df, feature_cols, n_folds, min_folds
+            )
+            logger.info(
+                "Phase 1 [%s]: sign consistency filter kept %d/%d candidate features",
+                direction, len(stable_cols), len(feature_cols)
+            )
+            feature_cols = [c for c in feature_cols if c in stable_cols]
 
         # ----------------------------------------------------------------
         # Step 5 & 6: Score per symbol, compute stability
