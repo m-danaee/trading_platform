@@ -360,6 +360,7 @@ class TestInitPopulation:
             rng,
             dont_care_prob=1.0,
             seeded_chromosomes=seeds,
+            seed_fraction=0.35,
             init_strategy="legacy",
         )
 
@@ -391,12 +392,12 @@ class TestInitPopulation:
             rng,
             dont_care_prob=1.0,
             seeded_chromosomes=seeds,
-            seed_fraction=_cfg.PHASE2_ARCHIVE_SEED_FRACTION,
+            seed_fraction=0.35,
             init_strategy="legacy",
         )
         expected_seed_slots = min(
             200,
-            max(1, int(round(200 * _cfg.PHASE2_ARCHIVE_SEED_FRACTION))),
+            max(1, int(round(200 * 0.35))),
             len(seeds),
         )
         assert expected_seed_slots == 70

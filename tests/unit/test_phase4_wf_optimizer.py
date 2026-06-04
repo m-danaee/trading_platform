@@ -340,6 +340,8 @@ class TestWalkForwardRiskOptimizer:
         monkeypatch.setattr(_cfg, "PHASE4_MIN_WORST_FOLD_RETURN_PCT", -100.0)
         monkeypatch.setattr(_cfg, "PHASE4_MIN_WORST_FOLD_PF", 0.0)
         monkeypatch.setattr(_cfg, "PHASE4_MIN_WORST_TRADES", 1)
+        monkeypatch.setattr(_cfg, "PHASE5_VALIDATION_RETURN_GATE_PCT", -100.0)
+        monkeypatch.setattr(_cfg, "PHASE5_VALIDATION_PROFIT_FACTOR_GATE", 0.0)
 
         val_df = _make_val_df(rows_per_sym=30)
         opt = WalkForwardRiskOptimizer(
@@ -366,6 +368,8 @@ class TestWalkForwardRiskOptimizer:
         monkeypatch.setattr(_cfg, "PHASE4_MIN_WORST_FOLD_RETURN_PCT", -100.0)
         monkeypatch.setattr(_cfg, "PHASE4_MIN_WORST_FOLD_PF", 0.0)
         monkeypatch.setattr(_cfg, "PHASE4_MIN_WORST_TRADES", 1)
+        monkeypatch.setattr(_cfg, "PHASE5_VALIDATION_RETURN_GATE_PCT", -100.0)
+        monkeypatch.setattr(_cfg, "PHASE5_VALIDATION_PROFIT_FACTOR_GATE", 0.0)
 
         val_df = _make_val_df(rows_per_sym=30)
         opt = WalkForwardRiskOptimizer(

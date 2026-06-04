@@ -326,7 +326,8 @@ def evaluate_purged_cv_pool_admission(
         return False, {}, None, 0
 
     folds_passing = 0
-    for train_eng, val_eng in zip(train_folds, val_folds):
+    last_fold_val_ret = 0.0
+    for idx, (train_eng, val_eng) in enumerate(zip(train_folds, val_folds)):
         try:
             train_m = _simulate_one_chrom(train_eng, chrom)
             val_m = _simulate_one_chrom(val_eng, chrom)
@@ -334,12 +335,17 @@ def evaluate_purged_cv_pool_admission(
             continue
         if passes_pool_admission_cv_fold(train_m, val_m):
             folds_passing += 1
+        if idx == len(train_folds) - 1:
+            last_fold_val_ret = float(val_m.get("total_return_pct", 0.0))
 
     min_pass = min(
         int(_cfg.PHASE2_CV_POOL_MIN_FOLDS_PASS),
         len(train_folds),
     )
     admitted = folds_passing >= min_pass
+    if admitted and _cfg.PHASE2_REQUIRE_LAST_FOLD_POSITIVE:
+        if last_fold_val_ret <= 0.0:
+            admitted = False
 
     try:
         merged_train = _simulate_one_chrom(train_cv, chrom)
@@ -377,6 +383,7 @@ def evaluate_purged_cv_pool_admission_batch(
 
     min_pass = min(int(_cfg.PHASE2_CV_POOL_MIN_FOLDS_PASS), len(train_folds))
     folds_passing_arr = np.zeros(n, dtype=np.int32)
+    last_fold_val_ret = np.zeros(n, dtype=np.float64)
 
     tag = f"Phase 2 [{direction}] CV admission" if direction else "Phase 2 CV admission"
     t0 = _time.monotonic()
@@ -408,6 +415,8 @@ def evaluate_purged_cv_pool_admission_batch(
             v_m = val_batch[i] if i < len(val_batch) else {}
             if passes_pool_admission_cv_fold(t_m, v_m):
                 folds_passing_arr[i] += 1
+            if fold_idx == len(train_folds) - 1:
+                last_fold_val_ret[i] = float(v_m.get("total_return_pct", 0.0))
         logger.info(
             "%s: fold %d/%d done — elapsed=%.1fs",
             tag, fold_idx + 1, len(train_folds), _time.monotonic() - t0,
@@ -433,16 +442,20 @@ def evaluate_purged_cv_pool_admission_batch(
     except Exception:
         merged_val_batch = [None for _ in range(n)]
 
-    n_admitted = int(np.sum(folds_passing_arr >= min_pass))
+    results: list[tuple[bool, dict, dict | None, int]] = []
+    for i in range(n):
+        fp = int(folds_passing_arr[i])
+        admitted = fp >= min_pass
+        if admitted and _cfg.PHASE2_REQUIRE_LAST_FOLD_POSITIVE:
+            if last_fold_val_ret[i] <= 0.0:
+                admitted = False
+        m_train = merged_train_batch[i] if i < len(merged_train_batch) else {}
+        m_val = merged_val_batch[i] if i < len(merged_val_batch) else None
+        results.append((admitted, m_train, m_val, fp))
+
+    n_admitted = sum(1 for r in results if r[0])
     logger.info(
         "%s: batch complete — %d/%d admitted in %.1fs",
         tag, n_admitted, n, _time.monotonic() - t0,
     )
-
-    results: list[tuple[bool, dict, dict | None, int]] = []
-    for i in range(n):
-        fp = int(folds_passing_arr[i])
-        m_train = merged_train_batch[i] if i < len(merged_train_batch) else {}
-        m_val = merged_val_batch[i] if i < len(merged_val_batch) else None
-        results.append((fp >= min_pass, m_train, m_val, fp))
     return results

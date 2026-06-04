@@ -223,6 +223,11 @@ def _passes_pool_admission_impl(
     if val_metrics is None:
         return False
 
+    if not cv_fold and _cfg.PHASE2_REQUIRE_LAST_FOLD_POSITIVE:
+        val_ret = float(val_metrics.get("total_return_pct", 0.0))
+        if val_ret <= 0.0:
+            return False
+
     val_trades = int(val_metrics.get("executed_trades", 0))
     if val_trades < min_val_trades:
         return False
