@@ -3,9 +3,9 @@ data/splitter.py — Data_Splitter
 
 Per-symbol chronological splits for Phases 2–3:
 
-- ``holdout_75_25`` (legacy): single 75/25 train/validation split.
+- ``holdout_70_30`` (legacy): single 70/30 train/validation split.
 - ``purged_rolling_cv``: K purged expanding-window folds with embargo; the last
-  fold's train/val blocks are persisted as train_75 / validation_25 for Phases 4–5.
+  fold's train/val blocks are persisted as train_70 / validation_30 for Phases 4–5.
 """
 
 from __future__ import annotations
@@ -21,13 +21,13 @@ from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.backtest.df_slim import downcast_numeric_df
 from gpu_fuzzy_trader.config import (
     CV_FOLDS_MANIFEST_PATH,
-    TRAIN_75_PATH,
-    VALIDATION_25_PATH,
+    TRAIN_70_PATH,
+    VALIDATION_30_PATH,
 )
 from gpu_fuzzy_trader.data.cv_folds import (
     PurgedFold,
     build_purged_rolling_folds,
-    holdout_75_25_split,
+    holdout_70_30_split,
     primary_holdout_from_folds,
 )
 
@@ -45,8 +45,8 @@ class Data_Splitter:
         Build train/validation DataFrames and persist to Parquet.
 
         When ``SPLIT_MODE == "purged_rolling_cv"``, also writes a fold manifest.
-        Persisted train_75 / validation_25 always match the **last** CV fold
-        (or the 75/25 holdout when legacy mode is selected).
+        Persisted train_70 / validation_30 always match the **last** CV fold
+        (or the 70/30 holdout when legacy mode is selected).
 
         Returns
         -------
@@ -62,27 +62,27 @@ class Data_Splitter:
             if not folds:
                 logger.warning(
                     "Purged rolling CV produced no folds (min_train=%d bars, "
-                    "K=%d); falling back to holdout_75_25",
+                    "K=%d); falling back to holdout_70_30",
                     int(_cfg.CV_MIN_TRAIN_MONTHS * 30 * _cfg.CV_BARS_PER_DAY),
                     _cfg.CV_N_FOLDS,
                 )
-                train_df, validation_df = holdout_75_25_split(df)
+                train_df, validation_df = holdout_70_30_split(df)
             else:
                 train_df, validation_df = primary_holdout_from_folds(folds)
                 self._persist_cv_manifest(folds, train_df, validation_df)
-        elif mode == "holdout_75_25":
-            train_df, validation_df = holdout_75_25_split(df)
+        elif mode == "holdout_70_30":
+            train_df, validation_df = holdout_70_30_split(df)
         else:
             raise ValueError(
                 f"Unknown SPLIT_MODE={_cfg.SPLIT_MODE!r}; "
-                "use 'holdout_75_25' or 'purged_rolling_cv'"
+                "use 'holdout_70_30' or 'purged_rolling_cv'"
             )
 
         train_df = downcast_numeric_df(train_df)
         validation_df = downcast_numeric_df(validation_df)
 
-        train_df.to_parquet(TRAIN_75_PATH, index=False)
-        validation_df.to_parquet(VALIDATION_25_PATH, index=False)
+        train_df.to_parquet(TRAIN_70_PATH, index=False)
+        validation_df.to_parquet(VALIDATION_30_PATH, index=False)
 
         return train_df, validation_df, folds
 
@@ -135,7 +135,7 @@ class Data_Splitter:
             "persisted_holdout": {
                 "train_rows": len(train_df),
                 "val_rows": len(val_df),
-                "note": "train_75/validation_25 parquet = last fold",
+                "note": "train_70/validation_30 parquet = last fold",
             },
         }
         with open(CV_FOLDS_MANIFEST_PATH, "w", encoding="utf-8") as fh:
