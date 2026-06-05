@@ -7,8 +7,8 @@ Property 5: Per-Symbol Chronological Split Ratio
   For any valid dataset with multiple symbols, after calling
   Data_Splitter().split_and_persist():
 
-  1. Each symbol has exactly floor(N * 0.75) rows in the train set.
-  2. Each symbol has exactly N - floor(N * 0.75) rows in the validation set.
+  1. Each symbol has exactly floor(N * 0.70) rows in the train set.
+  2. Each symbol has exactly N - floor(N * 0.70) rows in the validation set.
   3. No row appears in both train and validation sets (no overlap).
   4. Train rows are chronologically before validation rows for each symbol.
   5. The split is per-symbol (independent for each symbol).
@@ -37,8 +37,8 @@ from gpu_fuzzy_trader.data.splitter import Data_Splitter
 SYMBOL_POOL = ["SYM_A", "SYM_B", "SYM_C", "SYM_D"]
 
 # Keep row counts small enough for fast tests but large enough to exercise
-# the floor(N * 0.75) split meaningfully (at least 4 rows so both train and
-# validation are non-empty: floor(4 * 0.75) = 3 train, 1 validation).
+# the floor(N * 0.70) split meaningfully (at least 4 rows so both train and
+# validation are non-empty: floor(4 * 0.70) = 2 train, 2 validation).
 MIN_ROWS_PER_SYMBOL = 4
 MAX_ROWS_PER_SYMBOL = 60
 
@@ -104,24 +104,24 @@ def _run_split(
     df: pd.DataFrame,
     tmp_path: str,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Patch TRAIN_75_PATH / VALIDATION_25_PATH to tmp_path and run split."""
-    original_train = config_mod.TRAIN_75_PATH
-    original_val = config_mod.VALIDATION_25_PATH
+    """Patch TRAIN_70_PATH / VALIDATION_30_PATH to tmp_path and run split."""
+    original_train = config_mod.TRAIN_70_PATH
+    original_val = config_mod.VALIDATION_30_PATH
 
-    train_path = os.path.join(tmp_path, "train_75.parquet")
-    val_path = os.path.join(tmp_path, "validation_25.parquet")
+    train_path = os.path.join(tmp_path, "train_70.parquet")
+    val_path = os.path.join(tmp_path, "validation_30.parquet")
 
-    splitter_mod.TRAIN_75_PATH = train_path
-    splitter_mod.VALIDATION_25_PATH = val_path
+    splitter_mod.TRAIN_70_PATH = train_path
+    splitter_mod.VALIDATION_30_PATH = val_path
 
     prev_mode = config_mod.SPLIT_MODE
-    config_mod.SPLIT_MODE = "holdout_75_25"
+    config_mod.SPLIT_MODE = "holdout_70_30"
     try:
         train_df, val_df, _folds = Data_Splitter().split_and_persist(df)
     finally:
         config_mod.SPLIT_MODE = prev_mode
-        splitter_mod.TRAIN_75_PATH = original_train
-        splitter_mod.VALIDATION_25_PATH = original_val
+        splitter_mod.TRAIN_70_PATH = original_train
+        splitter_mod.VALIDATION_30_PATH = original_val
 
     return train_df, val_df
 
@@ -146,8 +146,8 @@ def test_property_5_per_symbol_split_ratio_and_no_overlap(
     For any valid dataset with multiple symbols, after calling
     Data_Splitter().split_and_persist():
 
-    1. Each symbol has exactly floor(N * 0.75) rows in the train set.
-    2. Each symbol has exactly N - floor(N * 0.75) rows in the validation set.
+    1. Each symbol has exactly floor(N * 0.70) rows in the train set.
+    2. Each symbol has exactly N - floor(N * 0.70) rows in the validation set.
     3. No row appears in both train and validation sets (no overlap).
     4. Train rows are chronologically before validation rows for each symbol.
     5. The split is per-symbol (independent for each symbol).
@@ -156,9 +156,9 @@ def test_property_5_per_symbol_split_ratio_and_no_overlap(
     with tempfile.TemporaryDirectory() as tmp_dir:
         train_df, val_df = _run_split(df, tmp_dir)
 
-    # --- 1 & 2: Per-symbol row counts use floor(N * 0.75) ---
+    # --- 1 & 2: Per-symbol row counts use floor(N * 0.70) ---
     for sym, n in symbol_counts.items():
-        expected_train = math.floor(n * 0.75)
+        expected_train = math.floor(n * 0.70)
         expected_val = n - expected_train
 
         actual_train = len(train_df[train_df["symbol"] == sym])
@@ -166,11 +166,11 @@ def test_property_5_per_symbol_split_ratio_and_no_overlap(
 
         assert actual_train == expected_train, (
             f"Symbol '{sym}' (N={n}): expected {expected_train} train rows "
-            f"(floor({n} * 0.75)), got {actual_train}."
+            f"(floor({n} * 0.70)), got {actual_train}."
         )
         assert actual_val == expected_val, (
             f"Symbol '{sym}' (N={n}): expected {expected_val} validation rows "
-            f"(N - floor(N * 0.75) = {n} - {expected_train}), got {actual_val}."
+            f"(N - floor(N * 0.70) = {n} - {expected_train}), got {actual_val}."
         )
 
     # --- 3: No overlap — no (symbol, datetime) pair appears in both sets ---
@@ -202,12 +202,12 @@ def test_property_5_per_symbol_split_ratio_and_no_overlap(
         )
 
     # --- 5: Split is per-symbol (total counts are sum of per-symbol splits) ---
-    total_expected_train = sum(math.floor(n * 0.75) for n in symbol_counts.values())
-    total_expected_val = sum(n - math.floor(n * 0.75) for n in symbol_counts.values())
+    total_expected_train = sum(math.floor(n * 0.70) for n in symbol_counts.values())
+    total_expected_val = sum(n - math.floor(n * 0.70) for n in symbol_counts.values())
 
     assert len(train_df) == total_expected_train, (
         f"Total train rows: expected {total_expected_train} "
-        f"(sum of per-symbol floor(N * 0.75)), got {len(train_df)}. "
+        f"(sum of per-symbol floor(N * 0.70)), got {len(train_df)}. "
         f"This indicates the split is not being done per-symbol independently."
     )
     assert len(val_df) == total_expected_val, (
