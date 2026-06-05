@@ -487,18 +487,23 @@ def _evaluate_population_indices(
             dd_val = max_dd
             trade_floor = _cfg.PHASE2_CV_MIN_TRADE_POOL_FLOOR if str(_cfg.SPLIT_MODE).strip().lower() == "purged_rolling_cv" else _cfg.MIN_TRADE_POOL_FLOOR
             
+            if _cfg.PHASE2_USE_TOTAL_RETURN_OBJ:
+                f3_val = float(metrics.get("total_return_pct", 0.0))
+            else:
+                f3_val = win_rate
+
             # Local trade penalty to add to objectives
             trade_penalty = 0.0
             if executed < trade_floor:
                 dd_val = 100.0
                 sortino_for_obj = 0.0
-                win_rate = 0.0
+                f3_val = 0.0
                 trade_penalty = 50.0  # Dominating penalty
 
             pen = support_penalty + diversity_penalty + cond_penalty + trade_penalty
 
             objectives[i] = np.array(
-                [-sortino_for_obj + pen, dd_val + pen, -win_rate + pen],
+                [-sortino_for_obj + pen, dd_val + pen, -f3_val + pen],
                 dtype=np.float64,
             )
             metrics_cache[i] = metrics

@@ -363,8 +363,9 @@ class Reporter:
                 label="mean_f1 (−Sortino)", color="tab:blue")
         ax.plot(generations, mean_f2,
                 label="mean_f2 (drawdown)", color="tab:orange")
+        f3_label = "mean_f3 (−total_return)" if _cfg.PHASE2_USE_TOTAL_RETURN_OBJ else "mean_f3 (−win_rate)"
         ax.plot(generations, mean_f3,
-                label="mean_f3 (−win_rate)", color="tab:green")
+                label=f3_label, color="tab:green")
 
         ax.set_title(f"Phase 2 Objectives vs. Generation — {direction}")
         ax.set_xlabel("Generation")

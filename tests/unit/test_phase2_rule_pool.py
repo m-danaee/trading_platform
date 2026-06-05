@@ -1201,3 +1201,55 @@ class TestRulePoolGeneratorRun:
         finally:
             m._POOL_PATHS.update(original_pool)
             m._HISTORY_PATHS.update(original_hist)
+
+
+class TestEvaluateChromosome:
+    def test_evaluate_chromosome_use_total_return_obj(self):
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import _evaluate_chromosome
+        
+        has_orig = hasattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ")
+        orig_val = getattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ", False)
+        orig_floor = _cfg.MIN_TRADE_SUPPORT
+        
+        try:
+            _cfg.PHASE2_USE_TOTAL_RETURN_OBJ = True
+            _cfg.MIN_TRADE_SUPPORT = 5
+            
+            chromosome = np.full(10, 5, dtype=np.int32)
+            chromosome[:3] = 0  # 3 active conditions
+            dont_cares = np.ones(10, dtype=np.int32) * 5
+            
+            class MockEngine:
+                def simulate_rule_batch(self, chromosomes, **kwargs):
+                    return [{
+                        "executed_trades": 100,
+                        "total_return_pct": 15.0,
+                        "sortino_ratio": 0.5,
+                        "max_drawdown_pct": 2.0,
+                        "win_rate": 50.0,
+                        "profit_factor": 1.0,
+                    }]
+            
+            engine = MockEngine()
+            objectives, metrics = _evaluate_chromosome(
+                chromosome, dont_cares, engine, []
+            )
+            
+            # With total return obj enabled: f3 = -total_return_pct = -15.0 (plus penalties)
+            assert np.isclose(objectives[2], -15.0)
+            
+            # Disable it -> should use win_rate = 50.0
+            _cfg.PHASE2_USE_TOTAL_RETURN_OBJ = False
+            objectives, metrics = _evaluate_chromosome(
+                chromosome, dont_cares, engine, []
+            )
+            assert np.isclose(objectives[2], -50.0)
+            
+        finally:
+            _cfg.MIN_TRADE_SUPPORT = orig_floor
+            if has_orig:
+                _cfg.PHASE2_USE_TOTAL_RETURN_OBJ = orig_val
+            else:
+                if hasattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ"):
+                    delattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ")
+

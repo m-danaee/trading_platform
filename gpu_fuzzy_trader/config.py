@@ -224,6 +224,7 @@ MIN_TRADE_POOL_FLOOR = 50  # hard reject below this in archive
 PHASE2_SUPPORT_PENALTY_WEIGHT_F1 = 0.8  # Sortino objective
 PHASE2_SUPPORT_PENALTY_WEIGHT_F2 = 0.6  # drawdown objective
 PHASE2_SUPPORT_PENALTY_WEIGHT_F3 = 0.5  # win-rate objective
+PHASE2_USE_TOTAL_RETURN_OBJ = True  # True: f3 is total_return_pct, False: f3 is win_rate
 
 # Run 3 analysis: strict stacked floors collapsed pool to only 17 long / 22 short
 # rules. Quality filtering should happen at the CV majority-vote level, not by
@@ -446,14 +447,18 @@ PHASE5_VALIDATION_PROFIT_FACTOR_GATE = 1.05
 # RECOMMENDATION: treat test metrics in reports as truth; do not tune on TEST_CSV_PATH.
 
 # --- Trading Regime and Refinement Fixes (2026-06-04) ---
-PHASE2_REGIME_PROFITABILITY_GATE: bool = True     # require profit > 0 in >=2 of 3 regimes
+# require profit > 0 in >=2 of 3 regimes
+PHASE2_REGIME_PROFITABILITY_GATE: bool = True
 PHASE2_REGIME_MIN_RETURN_PER_REGIME: float = 0.0  # per-regime return floor
-PHASE1_REQUIRE_SIGN_CONSISTENCY: bool = True     # drop features with Spearman sign flip across folds
-PHASE1_SIGN_CONSISTENCY_MIN_FOLDS: int = 2       # must have same sign in >= N folds
+# drop features with Spearman sign flip across folds
+PHASE1_REQUIRE_SIGN_CONSISTENCY: bool = True
+# must have same sign in >= N folds
+PHASE1_SIGN_CONSISTENCY_MIN_FOLDS: int = 2
 # Ignore sign flips when |Spearman rho| is below this (noise-level correlations).
 PHASE1_SIGN_CONSISTENCY_MIN_ABS_CORR: float = 0.02
-PHASE2_RECENCY_WEIGHT_ENABLED: bool = True        # bars in the last 25% of training period count 2x in return
+# bars in the last 25% of training period count 2x in return
+PHASE2_RECENCY_WEIGHT_ENABLED: bool = True
 PHASE2_RECENCY_WEIGHT_FRACTION: float = 0.25      # last 25% of training bars
 PHASE2_RECENCY_WEIGHT_MULTIPLIER: float = 2.0     # these bars count double
-PHASE2_REQUIRE_LAST_FOLD_POSITIVE: bool = True   # rule must be profitable on validation split of most recent fold
-
+# rule must be profitable on validation split of most recent fold
+PHASE2_REQUIRE_LAST_FOLD_POSITIVE: bool = True

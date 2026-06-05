@@ -193,3 +193,57 @@ def test_low_trade_drawdown_penalty():
         _cfg.MIN_TRADE_SUPPORT = orig_support
 
 
+def test_phase2_use_total_return_obj():
+    has_orig = hasattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ")
+    orig_val = getattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ", False)
+    orig_floor = _cfg.MIN_TRADE_SUPPORT
+    
+    try:
+        _cfg.PHASE2_USE_TOTAL_RETURN_OBJ = True
+        _cfg.MIN_TRADE_SUPPORT = 5
+        
+        pop = np.full((1, 10), 5, dtype=np.int32)
+        pop[0, :3] = 0  # 3 active conditions
+        dont_cares = np.ones(10, dtype=np.int32) * 5
+        objectives = np.full((1, 3), np.inf)
+        metrics_cache = [{}]
+        
+        class MockEngine:
+            def simulate_rule_batch(self, chromosomes, **kwargs):
+                return [{
+                    "executed_trades": 100,
+                    "total_return_pct": 15.0,
+                    "sortino_ratio": 0.5,
+                    "max_drawdown_pct": 2.0,
+                    "win_rate": 50.0,
+                    "profit_factor": 1.0,
+                }]
+                
+        engine = MockEngine()
+        _evaluate_population_indices(
+            pop, [0], dont_cares, engine, [], objectives, metrics_cache
+        )
+        
+        # With total return obj enabled: f3 = -total_return_pct = -15.0 (plus penalties)
+        # Objectives are: [-sortino + pen, dd + pen, -total_return + pen]
+        # Sortino obj should be -0.5 + pen, DD should be 2.0 + pen, F3 should be -15.0 + pen
+        assert np.isclose(objectives[0, 2], -15.0)
+        
+        # Disable it -> should use win_rate = 50.0
+        _cfg.PHASE2_USE_TOTAL_RETURN_OBJ = False
+        objectives[0] = np.inf
+        _evaluate_population_indices(
+            pop, [0], dont_cares, engine, [], objectives, metrics_cache
+        )
+        assert np.isclose(objectives[0, 2], -50.0)
+        
+    finally:
+        _cfg.MIN_TRADE_SUPPORT = orig_floor
+        if has_orig:
+            _cfg.PHASE2_USE_TOTAL_RETURN_OBJ = orig_val
+        else:
+            if hasattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ"):
+                delattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ")
+
+
+

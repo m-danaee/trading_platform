@@ -385,23 +385,38 @@ def _evaluate_chromosome(
         if min_hamming <= _cfg.PHASE2_DIVERSITY_HAMMING_THRESHOLD:
             diversity_penalty = _cfg.PHASE2_DIVERSITY_PENALTY
 
+    f3_val = win_rate
+    if _cfg.PHASE2_USE_TOTAL_RETURN_OBJ:
+        f3_val = total_return
+
+    trade_penalty = 0.0
+    trade_floor = _cfg.PHASE2_CV_MIN_TRADE_POOL_FLOOR if str(_cfg.SPLIT_MODE).strip().lower() == "purged_rolling_cv" else _cfg.MIN_TRADE_POOL_FLOOR
+    if executed < trade_floor:
+        max_dd = 100.0
+        sortino_for_obj = 0.0
+        f3_val = 0.0
+        trade_penalty = 50.0  # Dominating penalty
+
     f1 = (
         -sortino_for_obj
         + (_cfg.PHASE2_SUPPORT_PENALTY_WEIGHT_F1 * support_penalty)
         + diversity_penalty
         + cond_penalty
+        + trade_penalty
     )
     f2 = (
         max_dd
         + (_cfg.PHASE2_SUPPORT_PENALTY_WEIGHT_F2 * support_penalty)
         + diversity_penalty
         + cond_penalty
+        + trade_penalty
     )
     f3 = (
-        -win_rate
+        -f3_val
         + (_cfg.PHASE2_SUPPORT_PENALTY_WEIGHT_F3 * support_penalty)
         + diversity_penalty
         + cond_penalty
+        + trade_penalty
     )
 
     objectives = np.array([f1, f2, f3], dtype=np.float64)
