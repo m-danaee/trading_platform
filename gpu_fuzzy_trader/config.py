@@ -9,7 +9,7 @@ Docs (per-phase behaviour and formulas):
 Quick tuning map
 ----------------
   Generalization (short OOS failures)  → SPLIT_MODE, CV_*, PHASE3_* gates, PHASE2_JOINT_TRAIN_VAL
-  GPU RAM                              → PHASE1_SAMPLING_TOTAL, PHASE2_POPULATION_SIZE
+  GPU RAM                              → PHASE1_SAMPLING_TOTAL, PHASE2_GPU_BATCH_SIZE, PHASE2_POPULATION_SIZE
   Search budget                        → PHASE2_GENERATIONS, PHASE3_REFINE_*, PHASE4_N_TRIALS
   Trade frequency / support            → MIN_TRADE_SUPPORT, MIN_CONDITIONS, MAX_CONDITIONS
   Risk after rules are fixed           → PHASE4_TP_*, PHASE4_SL_*, PHASE4_CAPITAL_*
@@ -200,6 +200,11 @@ PHASE1_REGIME_MODEL_PATH = os.path.join(
 # the peak GPU allocation was 8.26 GiB (OOM). Halving the row budget is the
 # single largest lever — GPU memory scales linearly with this value.
 PHASE1_SAMPLING_TOTAL = 701_000
+
+# Chromosomes per GPU vmap chunk in Phase 2 simulate_rule_batch.
+# Peak VRAM scales ~linearly with this value (rule matching is O(B×N×K)).
+# Reduce to 16–32 on 8–12 GB GPUs; raise toward 64–128 on 24 GB+.
+PHASE2_GPU_BATCH_SIZE = 32
 
 
 # =============================================================================

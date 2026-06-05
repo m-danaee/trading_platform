@@ -726,8 +726,8 @@ class TestGPUCPUNumericalParity:
             chrom, tp=4.0, sl=2.0, capital_pct=30.0)[0]
 
         assert gpu_result["raw_signal_count"] == n
+        # Exposure cap (100% max / 30% capital → 4 slots) blocks overlapping entries.
         assert gpu_result["executed_trades"] < n
-        assert gpu_result["skipped_min_notional_count"] > 0
 
     def test_simulate_rule_set_exact_parity(self):
         """simulate_rule_set (delegated to CPU) is exactly identical to CPU engine."""

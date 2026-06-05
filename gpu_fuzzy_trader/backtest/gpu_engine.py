@@ -10,11 +10,10 @@ search (simulate_rule_batch). Compatibility interface (simulate_rule_set)
 delegates to CPUBacktestEngine.
 
 Performance notes:
-  - Rule matching is fully vectorized across the entire batch using a single
-    batched JAX operation (no Python loop over chromosomes).
+  - Rule matching is vectorized per chunk (PHASE2_GPU_BATCH_SIZE chromosomes).
   - Trade outcomes are computed once for all N rows and cached.
-  - Equity simulation uses vmap'd jax.lax.scan to process all B chromosomes
-    in parallel on GPU, eliminating the Python-level sequential loop.
+  - Equity simulation uses vmap'd jax.lax.scan per chunk on GPU.
+  - Open-exposure slots are sized by max_exposure/capital (not hold window).
 """
 
 from __future__ import annotations
@@ -25,6 +24,7 @@ from gpu_fuzzy_trader.backtest.cpu_engine import (
 from gpu_fuzzy_trader import config as _cfg
 
 from functools import partial
+import math
 
 import numpy as np
 import pandas as pd
@@ -174,6 +174,16 @@ def _jax_compute_trade_outcomes(
 # Batched equity simulation via vmap + lax.scan
 # ---------------------------------------------------------------------------
 
+def _exposure_slot_capacity(
+    max_exposure_rate: float,
+    capital_rate: float,
+) -> int:
+    """Max concurrent positions allowed by total-exposure cap."""
+    if capital_rate <= 0.0:
+        return 1
+    return max(1, int(math.ceil(max_exposure_rate / capital_rate)))
+
+
 def _jax_release_open_slots(
     slot_release: jnp.ndarray,
     slot_notional: jnp.ndarray,
@@ -226,7 +236,7 @@ def _jax_simulate_equity_batch(
     release_indices: jnp.ndarray,     # (N,) int32
     initial_capital: float,
     n_rows: int,
-    max_hold_candles: int,
+    max_open_slots: int,
     fee_rate: float,
     leverage: float,
     capital_rate: float,
@@ -247,7 +257,7 @@ def _jax_simulate_equity_batch(
         cutoff = int(N * (1.0 - _cfg.PHASE2_RECENCY_WEIGHT_FRACTION))
         recency_weights = recency_weights.at[cutoff:].set(_cfg.PHASE2_RECENCY_WEIGHT_MULTIPLIER)
 
-    max_slots = int(max_hold_candles)
+    max_slots = int(max_open_slots)
     init_slot_release = jnp.full(max_slots, -1, dtype=jnp.int32)
     init_slot_notional = jnp.zeros(max_slots, dtype=jnp.float64)
     row_indices = jnp.arange(N, dtype=jnp.int32)
@@ -414,7 +424,7 @@ def _jax_simulate_equity_batch_regime(
     initial_capital: float,
     n_rows: int,
     n_regimes: int,
-    max_hold_candles: int,
+    max_open_slots: int,
     fee_rate: float,
     leverage: float,
     capital_rate: float,
@@ -436,7 +446,7 @@ def _jax_simulate_equity_batch_regime(
         cutoff = int(N * (1.0 - _cfg.PHASE2_RECENCY_WEIGHT_FRACTION))
         recency_weights = recency_weights.at[cutoff:].set(_cfg.PHASE2_RECENCY_WEIGHT_MULTIPLIER)
 
-    max_slots = int(max_hold_candles)
+    max_slots = int(max_open_slots)
     init_slot_release = jnp.full(max_slots, -1, dtype=jnp.int32)
     init_slot_notional = jnp.zeros(max_slots, dtype=jnp.float64)
     row_indices = jnp.arange(N, dtype=jnp.int32)
@@ -860,6 +870,50 @@ class GPUBacktestEngine:
     # Primary GPU-accelerated batch evaluation
     # ------------------------------------------------------------------
 
+    def _simulate_signals_batch(
+        self,
+        signals_batch: jnp.ndarray,
+        price_returns_all: jnp.ndarray,
+        capital_rate: float,
+        max_exposure_rate: float,
+        n_rows: int,
+    ) -> tuple[np.ndarray, np.ndarray | None]:
+        """Run equity simulation for one GPU chunk of signal masks."""
+        max_open_slots = _exposure_slot_capacity(
+            max_exposure_rate, capital_rate)
+        if self._regime_ids_jax is not None and self._n_regimes > 0:
+            results_array, regime_stats = _jax_simulate_equity_batch_regime(
+                signals_batch,
+                price_returns_all,
+                self._regime_ids_jax,
+                self._release_indices_jax,
+                self.initial_capital,
+                n_rows,
+                self._n_regimes,
+                max_open_slots,
+                self.fee_rate,
+                self.leverage,
+                capital_rate,
+                max_exposure_rate,
+                self.min_position_notional,
+            )
+            return np.asarray(results_array), np.asarray(regime_stats)
+
+        results_array = _jax_simulate_equity_batch(
+            signals_batch,
+            price_returns_all,
+            self._release_indices_jax,
+            self.initial_capital,
+            n_rows,
+            max_open_slots,
+            self.fee_rate,
+            self.leverage,
+            capital_rate,
+            max_exposure_rate,
+            self.min_position_notional,
+        )
+        return np.asarray(results_array), None
+
     def simulate_rule_batch(
         self,
         chromosomes: np.ndarray,
@@ -867,12 +921,10 @@ class GPUBacktestEngine:
         sl: float,
         capital_pct: float,
     ) -> list[dict]:
-        """Evaluate a batch of rule chromosomes simultaneously on GPU.
+        """Evaluate a batch of rule chromosomes on GPU.
 
-        The entire batch is processed in fused JAX operations:
-        1. Batch rule matching: (B, K) → (B, N) signal masks
-        2. Trade outcomes: computed once for all N rows (cached)
-        3. Batch equity simulation: vmap'd lax.scan over B chromosomes
+        Large populations are processed in chunks of ``PHASE2_GPU_BATCH_SIZE``
+        to cap peak VRAM (rule matching materializes a (B, N, K) tensor).
         """
         chromosomes = np.asarray(chromosomes, dtype=np.int32)
         if chromosomes.ndim == 1:
@@ -888,55 +940,40 @@ class GPUBacktestEngine:
         capital_rate = capital_pct / 100.0
         max_exposure_rate = self.max_total_exposure_pct / 100.0
         N = len(self.df)
-
-        # --- Step 1: Batch rule matching on GPU ---
-        chroms_jax = jnp.array(chromosomes, dtype=jnp.int32)
-        if K > 0 and self._data_matrix_jax.shape[1] > 0:
-            signals_batch = _jax_compute_rule_signals_batch(
-                self._data_matrix_jax, chroms_jax, self._dont_cares_jax)
-        else:
-            signals_batch = jnp.zeros((B, N), dtype=jnp.bool_)
-
-        # --- Step 2: Get trade outcomes for all rows (cached) ---
+        chunk_size = max(1, int(_cfg.PHASE2_GPU_BATCH_SIZE))
         price_returns_all = self._get_trade_outcomes(tp, sl)
 
-        # --- Step 3: Batch equity simulation via vmap'd lax.scan ---
-        if self._regime_ids_jax is not None and self._n_regimes > 0:
-            results_array, regime_stats = _jax_simulate_equity_batch_regime(
-                signals_batch,
-                price_returns_all,
-                self._regime_ids_jax,
-                self._release_indices_jax,
-                self.initial_capital,
-                N,
-                self._n_regimes,
-                self.max_hold_candles,
-                self.fee_rate,
-                self.leverage,
-                capital_rate,
-                max_exposure_rate,
-                self.min_position_notional,
-            )
-        else:
-            results_array = _jax_simulate_equity_batch(
-                signals_batch,
-                price_returns_all,
-                self._release_indices_jax,
-                self.initial_capital,
-                N,
-                self.max_hold_candles,
-                self.fee_rate,
-                self.leverage,
-                capital_rate,
-                max_exposure_rate,
-                self.min_position_notional,
-            )
-            regime_stats = None
+        result_chunks: list[np.ndarray] = []
+        regime_chunks: list[np.ndarray] = []
+        has_regime = (
+            self._regime_ids_jax is not None and self._n_regimes > 0)
 
-        # --- Step 4: Convert JAX results to list of dicts (vectorized) ---
-        results_np = np.asarray(results_array)
-        regime_np = np.asarray(
-            regime_stats) if regime_stats is not None else None
+        for start in range(0, B, chunk_size):
+            end = min(start + chunk_size, B)
+            chroms_chunk = chromosomes[start:end]
+
+            if K > 0 and self._data_matrix_jax.shape[1] > 0:
+                chroms_jax = jnp.array(chroms_chunk, dtype=jnp.int32)
+                signals_batch = _jax_compute_rule_signals_batch(
+                    self._data_matrix_jax, chroms_jax, self._dont_cares_jax)
+            else:
+                signals_batch = jnp.zeros(
+                    (end - start, N), dtype=jnp.bool_)
+
+            results_np, regime_np = self._simulate_signals_batch(
+                signals_batch,
+                price_returns_all,
+                capital_rate,
+                max_exposure_rate,
+                N,
+            )
+            result_chunks.append(results_np)
+            if has_regime and regime_np is not None:
+                regime_chunks.append(regime_np)
+
+        results_np = np.concatenate(result_chunks, axis=0)
+        regime_np = (
+            np.concatenate(regime_chunks, axis=0) if regime_chunks else None)
         return _batch_metrics_from_array(
             results_np,
             self.trade_direction,
