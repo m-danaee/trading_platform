@@ -159,12 +159,16 @@ def test_low_trade_drawdown_penalty():
     # Set CV fold mode trade floor to 25
     orig_mode = _cfg.SPLIT_MODE
     orig_floor = _cfg.PHASE2_CV_MIN_TRADE_POOL_FLOOR
+    orig_support = _cfg.MIN_TRADE_SUPPORT
     try:
         _cfg.SPLIT_MODE = "purged_rolling_cv"
         _cfg.PHASE2_CV_MIN_TRADE_POOL_FLOOR = 25
+        _cfg.MIN_TRADE_SUPPORT = 5
         
         # population of 1 candidate
-        pop = np.zeros((1, 10), dtype=np.int32)
+        # dont_cares = 5, we make 3 active conditions, so cond_penalty is 0.0
+        pop = np.full((1, 10), 5, dtype=np.int32)
+        pop[0, :3] = 0  # 3 active conditions
         dont_cares = np.ones(10, dtype=np.int32) * 5
         objectives = np.full((1, 3), np.inf)
         metrics_cache = [{}]
@@ -179,9 +183,13 @@ def test_low_trade_drawdown_penalty():
             pop, [0], dont_cares, engine, [], objectives, metrics_cache
         )
         
-        # Drawdown objective (index 1) should be penalized to 100.0 + support_penalty
-        assert objectives[0, 1] >= 100.0
+        # Assert that all 3 objectives receive the full dominating penalty
+        assert objectives[0, 0] >= 50.0  # Sortino penalized to 0.0 + penalty >= 50.0
+        assert objectives[0, 1] >= 150.0 # Drawdown penalized to 100.0 + penalty >= 150.0
+        assert objectives[0, 2] >= 50.0  # Win rate penalized to 0.0 + penalty >= 50.0
     finally:
         _cfg.SPLIT_MODE = orig_mode
         _cfg.PHASE2_CV_MIN_TRADE_POOL_FLOOR = orig_floor
+        _cfg.MIN_TRADE_SUPPORT = orig_support
+
 

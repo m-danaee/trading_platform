@@ -483,13 +483,19 @@ def _evaluate_population_indices(
                 if min_hamming <= _cfg.PHASE2_DIVERSITY_HAMMING_THRESHOLD:
                     diversity_penalty = _cfg.PHASE2_DIVERSITY_PENALTY
 
-            pen = support_penalty + diversity_penalty + cond_penalty
-
             executed = int(metrics.get("executed_trades", 0))
             dd_val = max_dd
             trade_floor = _cfg.PHASE2_CV_MIN_TRADE_POOL_FLOOR if str(_cfg.SPLIT_MODE).strip().lower() == "purged_rolling_cv" else _cfg.MIN_TRADE_POOL_FLOOR
+            
+            # Local trade penalty to add to objectives
+            trade_penalty = 0.0
             if executed < trade_floor:
                 dd_val = 100.0
+                sortino_for_obj = 0.0
+                win_rate = 0.0
+                trade_penalty = 50.0  # Dominating penalty
+
+            pen = support_penalty + diversity_penalty + cond_penalty + trade_penalty
 
             objectives[i] = np.array(
                 [-sortino_for_obj + pen, dd_val + pen, -win_rate + pen],
@@ -499,14 +505,14 @@ def _evaluate_population_indices(
     except Exception as exc:
         logger.debug("Batch eval failed, falling back to single: %s", exc)
         for i in pending:
-            obj, met = _evaluate_chromosome(
+            obj, metrics = _evaluate_chromosome(
                 population[i], dont_cares, engine, pareto_archive,
                 val_engine=val_engine,
                 regime_row_fractions_arr=regime_row_fractions,
                 val_regime_row_counts=val_regime_row_counts,
             )
             objectives[i] = obj
-            metrics_cache[i] = met
+            metrics_cache[i] = metrics
 
 
 def _normalize_for_association(
@@ -658,14 +664,14 @@ def _run_nsga2_fallback(
     for gen in range(n_generations):
         for i in range(pop_size):
             if np.any(np.isinf(objectives[i])):
-                obj, met = _evaluate_chromosome(
+                obj, metrics = _evaluate_chromosome(
                     population[i], dont_cares, engine, pareto_archive,
                     val_engine=val_engine,
                     regime_row_fractions_arr=regime_row_fractions,
                     val_regime_row_counts=val_regime_row_counts,
                 )
                 objectives[i] = obj
-                metrics_cache[i] = met
+                metrics_cache[i] = metrics
 
         fronts = non_dominated_sort(objectives)
         pareto_indices = fronts[0]
@@ -747,14 +753,14 @@ def _run_nsga2_fallback(
         off_obj = np.full((pop_size, 3), np.inf)
         off_metrics: list[dict] = [{} for _ in range(pop_size)]
         for i in range(pop_size):
-            obj, met = _evaluate_chromosome(
+            obj, metrics = _evaluate_chromosome(
                 offspring[i], dont_cares, engine, pareto_archive,
                 val_engine=val_engine,
                 regime_row_fractions_arr=regime_row_fractions,
                 val_regime_row_counts=val_regime_row_counts,
             )
             off_obj[i] = obj
-            off_metrics[i] = met
+            off_metrics[i] = metrics
 
         merge_pop = np.vstack([population, offspring])
         merge_fit = np.vstack([objectives, off_obj])
