@@ -537,9 +537,8 @@ def _init_population(
     seed_fraction: float | None = None,
     *,
     init_strategy: str | None = None,
-    stratum_fractions: tuple[float, float, float] | None = None,
+    stratum_fractions: tuple[float, float] | None = None,
     feature_probs: np.ndarray | None = None,
-    regime_gene_indices: list[int] | None = None,
 ) -> np.ndarray:
     """
     Initialise a population of chromosomes.
@@ -552,7 +551,6 @@ def _init_population(
         assign_strata_to_indices,
         build_feature_sampling_probs,
         pick_active_count,
-        regime_gene_indices as _regime_gene_indices,
         repair_active_count,
         sample_sparse_chromosome,
     )
@@ -623,14 +621,11 @@ def _init_population(
 
     if feature_probs is None:
         feature_probs = build_feature_sampling_probs(feature_infos)
-    if regime_gene_indices is None:
-        regime_gene_indices = _regime_gene_indices(feature_infos)
 
     fresh_indices = np.where(~seeded_mask)[0]
     strata = assign_strata_to_indices(
         fresh_indices,
         stratum_fractions,
-        regime_gene_indices,
         rng,
     )
     for row_idx, stratum in zip(fresh_indices, strata):
@@ -642,7 +637,6 @@ def _init_population(
             k_active,
             stratum,
             feature_probs,
-            regime_gene_indices,
         )
         population[row_idx] = repair_active_count(
             population[row_idx],
@@ -1617,11 +1611,9 @@ class Rule_Pool_Generator:
 
         from gpu_fuzzy_trader.phases.phase2_init import (
             build_feature_sampling_probs,
-            regime_gene_indices,
         )
 
         feature_probs = build_feature_sampling_probs(self.feature_infos)
-        regime_indices = regime_gene_indices(self.feature_infos)
 
         progress_tag = "Phase 2 [%s] NSGA-III" % self.direction
         new_pool, history = run_phase2_evolution(
@@ -1636,7 +1628,6 @@ class Rule_Pool_Generator:
             regime_row_fractions=self._regime_row_fractions,
             val_regime_row_counts=self._val_regime_row_counts,
             feature_probs=feature_probs,
-            regime_gene_indices=regime_indices,
             init_strategy=_cfg.PHASE2_INIT_STRATEGY,
             stratum_fractions=_cfg.PHASE2_INIT_STRATUM_FRACTIONS,
         )

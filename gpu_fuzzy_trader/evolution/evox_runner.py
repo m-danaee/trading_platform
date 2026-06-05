@@ -1003,14 +1003,12 @@ def run_phase2_evolution(
     regime_row_fractions: np.ndarray | None = None,
     val_regime_row_counts: np.ndarray | None = None,
     feature_probs: np.ndarray | None = None,
-    regime_gene_indices: list[int] | None = None,
     init_strategy: str | None = None,
-    stratum_fractions: tuple[float, float, float] | None = None,
+    stratum_fractions: tuple[float, float] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Run Phase 2 NSGA-III evolution. Returns (pareto_pool, history)."""
     evo_kwargs = dict(
         feature_probs=feature_probs,
-        regime_gene_indices=regime_gene_indices,
         init_strategy=init_strategy,
         stratum_fractions=stratum_fractions,
     )

@@ -10,7 +10,7 @@ import numpy as np
 
 from gpu_fuzzy_trader import config as _cfg
 
-Stratum = Literal["elite", "explorer", "regime"]
+Stratum = Literal["elite", "explorer"]
 
 
 def build_feature_sampling_probs(
@@ -50,11 +50,6 @@ def build_feature_sampling_probs(
     if total <= 0:
         return np.ones(k, dtype=np.float64) / k
     return probs / total
-
-
-def regime_gene_indices(feature_infos: list[dict]) -> list[int]:
-    """Indices of selected features that are also regime indicators (none in regression mode)."""
-    return []
 
 
 def _sample_indices_without_replacement(
@@ -99,7 +94,6 @@ def sample_sparse_chromosome(
     k: int,
     stratum: Stratum,
     feature_probs: np.ndarray,
-    regime_indices: list[int],
 ) -> np.ndarray:
     """
     Build one chromosome with exactly *k* active genes.
@@ -112,23 +106,7 @@ def sample_sparse_chromosome(
     chrom = np.array(dont_cares, dtype=np.int32, copy=True)
     n_features = len(feature_infos)
 
-    if stratum == "regime" and regime_indices:
-        regime_idx = int(rng.choice(regime_indices))
-        other_indices = [i for i in range(n_features) if i != regime_idx]
-        n_other = k - 1
-        if n_other > 0 and other_indices:
-            picked_other = _sample_indices_without_replacement(
-                rng,
-                min(n_other, len(other_indices)),
-                len(other_indices),
-                feature_probs[other_indices],
-            )
-            active_indices = [regime_idx] + [
-                other_indices[int(i)] for i in picked_other
-            ]
-        else:
-            active_indices = [regime_idx]
-    elif stratum == "explorer":
+    if stratum == "explorer":
         active_indices = _sample_indices_without_replacement(
             rng, k, n_features, None,
         ).tolist()
@@ -137,14 +115,12 @@ def sample_sparse_chromosome(
             rng, k, n_features, feature_probs,
         ).tolist()
 
-    regime_set = set(regime_indices)
     for idx in active_indices:
         dc = int(dont_cares[idx])
         num_classes = dc
         mode = feature_infos[idx]["mode"]
-        extreme = stratum == "regime" and idx in regime_set
         chrom[idx] = _random_active_class(
-            rng, mode, num_classes, extreme_only=extreme,
+            rng, mode, num_classes, extreme_only=False,
         )
 
     return chrom
@@ -152,46 +128,28 @@ def sample_sparse_chromosome(
 
 def assign_strata_to_indices(
     indices: np.ndarray,
-    stratum_fractions: tuple[float, float, float],
-    regime_indices: list[int],
+    stratum_fractions: tuple[float, float],
     rng: np.random.Generator,
 ) -> list[Stratum]:
-    """Assign elite / explorer / regime labels to non-seeded population rows."""
+    """Assign elite / explorer labels to non-seeded population rows."""
     n = len(indices)
     if n == 0:
         return []
 
-    elite_f, explorer_f, regime_f = stratum_fractions
-    if not regime_indices:
-        total = elite_f + explorer_f
-        if total > 0:
-            elite_f /= total
-            explorer_f /= total
-        regime_f = 0.0
+    elite_f, explorer_f = stratum_fractions
+    total = elite_f + explorer_f
+    if total <= 0:
+        elite_f, explorer_f = 0.67, 0.33
     else:
-        total = elite_f + explorer_f + regime_f
-        if total <= 0:
-            elite_f, explorer_f, regime_f = 0.5, 0.3, 0.2
-        else:
-            elite_f /= total
-            explorer_f /= total
-            regime_f /= total
+        elite_f /= total
+        explorer_f /= total
 
     n_elite = int(round(n * elite_f))
-    n_explorer = int(round(n * explorer_f))
-    n_regime = n - n_elite - n_explorer
-    if regime_indices and n_regime < 0:
-        n_regime = 0
-        n_elite = max(0, n - n_explorer)
-    if not regime_indices:
-        n_regime = 0
-        remainder = n - n_elite - n_explorer
-        n_elite += remainder
+    n_explorer = n - n_elite
 
     labels: list[Stratum] = (
         ["elite"] * n_elite
         + ["explorer"] * n_explorer
-        + ["regime"] * n_regime
     )
     if len(labels) < n:
         labels.extend(["elite"] * (n - len(labels)))
