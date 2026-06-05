@@ -2,7 +2,7 @@
 Purged chronological rolling folds (per symbol) with label-horizon embargo.
 
 Used by Phase 2/3 when ``SPLIT_MODE == "purged_rolling_cv"``. Phase 4/5 still
-use the last fold's train/val blocks persisted as train_75 / validation_25.
+use the last fold's train/val blocks persisted as train_70 / validation_30.
 """
 
 from __future__ import annotations
@@ -161,8 +161,8 @@ def primary_holdout_from_folds(
     return last.train_df, last.val_df
 
 
-def holdout_75_25_split(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Legacy per-symbol 75/25 chronological split."""
+def holdout_70_30_split(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Legacy per-symbol 70/30 chronological split."""
     import math
 
     train_parts: list[pd.DataFrame] = []
@@ -170,7 +170,7 @@ def holdout_75_25_split(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
 
     for _, group in df.groupby("symbol", sort=True):
         n = len(group)
-        split_point = math.floor(n * 0.75)
+        split_point = math.floor(n * 0.70)
         train_parts.append(group.iloc[:split_point])
         validation_parts.append(group.iloc[split_point:])
 
