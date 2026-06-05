@@ -377,6 +377,15 @@ def _evaluate_chromosome(
         support_penalty += _symbol_robustness_penalty(val_metrics)
     support_penalty += val_floor_penalty
 
+    # Hard drawdown gate: penalise all objectives when drawdown exceeds the cap.
+    # This stops the Pareto front from drifting into the high-return/high-drawdown
+    # region (f2 growing to 30%+ while f3 reaches −100 in the metrics chart).
+    dd_gate = getattr(_cfg, "PHASE2_MAX_DRAWDOWN_GATE", 20.0)
+    drawdown_gate_penalty = 0.0
+    if max_dd > dd_gate:
+        excess = max_dd - dd_gate
+        drawdown_gate_penalty = excess * 2.0  # 2× penalty per % of excess
+
     # Diversity penalty: Hamming distance to nearest Pareto-front member
     diversity_penalty = 0.0
     if pareto_front:
@@ -403,6 +412,7 @@ def _evaluate_chromosome(
         + diversity_penalty
         + cond_penalty
         + trade_penalty
+        + drawdown_gate_penalty
     )
     f2 = (
         max_dd
@@ -410,6 +420,7 @@ def _evaluate_chromosome(
         + diversity_penalty
         + cond_penalty
         + trade_penalty
+        + drawdown_gate_penalty
     )
     f3 = (
         -f3_val
@@ -417,6 +428,7 @@ def _evaluate_chromosome(
         + diversity_penalty
         + cond_penalty
         + trade_penalty
+        + drawdown_gate_penalty
     )
 
     objectives = np.array([f1, f2, f3], dtype=np.float64)

@@ -229,11 +229,16 @@ PHASE2_USE_TOTAL_RETURN_OBJ = True  # True: f3 is total_return_pct, False: f3 is
 # Run 3 analysis: strict stacked floors collapsed pool to only 17 long / 22 short
 # rules. Quality filtering should happen at the CV majority-vote level, not by
 # stacking floor requirements. Relaxed back toward run-1 levels.
-PHASE2_RETURN_FLOOR_PCT = 0.0
+PHASE2_RETURN_FLOOR_PCT = 2.0  # was 0.0 — require positive train return so f3 (−return) doesn't diverge
 PHASE2_VAL_RETURN_FLOOR_PCT = 0.0
 PHASE2_PROFIT_FACTOR_FLOOR = 1.0
 PHASE2_SYMBOL_MEDIAN_RETURN_FLOOR_PCT = -0.5
 PHASE2_MIN_PROFITABLE_SYMBOLS = 5
+# Hard drawdown cap within the fitness function. Rules with max_drawdown > this
+# value receive a large penalty on ALL objectives (f1, f2, f3), steering the
+# Pareto front away from the high-return/high-drawdown region observed in the
+# phase2_long_metrics chart (drawdown drifting to 30%+ while return reaches 100%).
+PHASE2_MAX_DRAWDOWN_GATE = 20.0  # percent — rules above this are penalised hard
 
 PHASE2_POOL_REQUIRE_POSITIVE_SPLITS = True
 PHASE2_POOL_TRAIN_RETURN_MIN_PCT = 0.0
@@ -241,17 +246,18 @@ PHASE2_POOL_VAL_RETURN_MIN_PCT = 0.0
 # Holdout mode: require non-negative train/val return (see floors above).
 
 # Purged CV pool admission (per-fold gates).
-# Changed 3→2 (majority vote): unanimity across 3 folds gave only 17/22 rules.
-# 2-of-3 still rejects season-specific overfitters while building a usable pool.
-PHASE2_CV_POOL_MIN_FOLDS_PASS = 2
+# Relaxed 2→1: 2-of-3 folds was collapsing the pool to only 10 long rules,
+# giving Phase 3 only ~165 combos to search. 1-of-3 (rank-admit level) lets more
+# rules through; Phase 3 applies its own stricter quality gates on top.
+PHASE2_CV_POOL_MIN_FOLDS_PASS = 1
 PHASE2_CV_MIN_TRADE_POOL_FLOOR = 25
 PHASE2_CV_POOL_TRAIN_RETURN_MIN_PCT = 0.0
 PHASE2_CV_POOL_VAL_RETURN_MIN_PCT = 0.0
 PHASE2_CV_PROFIT_FACTOR_FLOOR = 1.0
 PHASE2_CV_MIN_VAL_TRADES = 12
-# Rank fallback when strict CV admission starves Phase 3 (run log: 13/123 long).
-PHASE2_CV_POOL_TARGET_MIN = 25
-PHASE2_CV_POOL_RANK_ADMIT_TOP_K = 50
+# Rank fallback: raised targets to fill a larger pool when strict gates fire.
+PHASE2_CV_POOL_TARGET_MIN = 40
+PHASE2_CV_POOL_RANK_ADMIT_TOP_K = 80
 PHASE2_CV_RANK_MIN_FOLDS_PASS = 1
 
 # --- Fitness & joint evaluation ---
@@ -365,18 +371,21 @@ PHASE3_VAL_SORTINO_RATIO_GATE = 0.6  # val_sortino ≥ ratio × train_sortino
 PHASE3_VAL_DRAWDOWN_RATIO_GATE = 1.10  # val_dd ≤ ratio × train_dd (tighter)
 PHASE3_PER_RULE_MIN_VAL_TRADES_PER_SYMBOL = 6
 
-PHASE3_VAL_RETURN_FLOOR_PCT = 0.5
-PHASE3_VAL_PROFIT_FACTOR_FLOOR = 1.05
-PHASE3_TRAIN_RETURN_FLOOR_PCT = 1.0
-PHASE3_TRAIN_PROFIT_FACTOR_FLOOR = 1.05
+# Raised floors: val return 0.5→2.0% and train 1.0→3.0% to push Phase 3 toward
+# rules with real positive edge, not marginally passing strategies.
+PHASE3_VAL_RETURN_FLOOR_PCT = 2.0
+PHASE3_VAL_PROFIT_FACTOR_FLOOR = 1.10
+PHASE3_TRAIN_RETURN_FLOOR_PCT = 3.0
+PHASE3_TRAIN_PROFIT_FACTOR_FLOOR = 1.10
 PHASE3_MIN_PROFITABLE_SYMBOLS = 6
 PHASE3_SYMBOL_MEDIAN_RETURN_FLOOR_PCT = 0.0
 
-# Penalise val >> train or train >> val (classic short/long overfit signatures).
-# Narrowed gap from 15→10% on train side to detect overfit earlier.
-PHASE3_TRAIN_VAL_GAP_MAX_PCT = 10.0
-PHASE3_VAL_TRAIN_GAP_MAX_PCT = 10.0
-PHASE3_GAP_PENALTY_WEIGHT = 4.0
+# Tightened gap penalty: equity curves showed extreme zigzag (train peaks at +20%,
+# val/test collapse). Narrowed gap 10→5% and doubled penalty weight 4→8 to force
+# selection of more stable, consistent rules.
+PHASE3_TRAIN_VAL_GAP_MAX_PCT = 5.0
+PHASE3_VAL_TRAIN_GAP_MAX_PCT = 5.0
+PHASE3_GAP_PENALTY_WEIGHT = 8.0
 
 # --- Rule-team orthogonality (validation masks) ---
 PHASE3_MIN_INCREMENTAL_TRADES = 60
@@ -449,7 +458,9 @@ PHASE5_VALIDATION_PROFIT_FACTOR_GATE = 1.05
 # --- Trading Regime and Refinement Fixes (2026-06-04) ---
 # require profit > 0 in >=2 of 3 regimes
 PHASE2_REGIME_PROFITABILITY_GATE: bool = True
-PHASE2_REGIME_MIN_RETURN_PER_REGIME: float = 0.0  # per-regime return floor
+# Raised 0.0→0.5: require a small but non-trivial positive return per regime
+# to avoid selecting rules that are profitable in only a marginal slice.
+PHASE2_REGIME_MIN_RETURN_PER_REGIME: float = 0.5  # per-regime return floor (was 0.0)
 # drop features with Spearman sign flip across folds
 PHASE1_REQUIRE_SIGN_CONSISTENCY: bool = True
 # must have same sign in >= N folds
@@ -460,5 +471,7 @@ PHASE1_SIGN_CONSISTENCY_MIN_ABS_CORR: float = 0.02
 PHASE2_RECENCY_WEIGHT_ENABLED: bool = True
 PHASE2_RECENCY_WEIGHT_FRACTION: float = 0.25      # last 25% of training bars
 PHASE2_RECENCY_WEIGHT_MULTIPLIER: float = 2.0     # these bars count double
-# rule must be profitable on validation split of most recent fold
-PHASE2_REQUIRE_LAST_FOLD_POSITIVE: bool = True
+# Relaxed True→False: REQUIRE_LAST_FOLD_POSITIVE was stacking with CV admission
+# gates to kill the long pool (only 10 rules passed). Phase 3 quality gates
+# are sufficient to filter weak rules after a richer pool is built.
+PHASE2_REQUIRE_LAST_FOLD_POSITIVE: bool = False
