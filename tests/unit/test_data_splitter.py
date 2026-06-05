@@ -2,11 +2,11 @@
 Unit tests for gpu_fuzzy_trader.data.splitter.Data_Splitter
 
 Tests cover:
-  - Per-symbol 75/25 split using floor(N * 0.75)
+  - Per-symbol 70/30 split using floor(N * 0.70)
   - Chronological ordering preserved (train rows precede validation rows)
   - No row overlap between train and validation sets
   - Row count conservation (train + validation == total)
-  - Parquet persistence to TRAIN_75_PATH and VALIDATION_25_PATH
+  - Parquet persistence to TRAIN_70_PATH and VALIDATION_30_PATH
   - Multi-symbol independence (each symbol split independently)
   - Edge cases: single-row symbol, odd/even row counts
   - Module-level convenience function
@@ -24,8 +24,8 @@ import pytest
 from gpu_fuzzy_trader.config import (
     LABEL_COLUMNS,
     TAIL_DROP_ROWS,
-    TRAIN_75_PATH,
-    VALIDATION_25_PATH,
+    TRAIN_70_PATH,
+    VALIDATION_30_PATH,
 )
 from gpu_fuzzy_trader.data.splitter import Data_Splitter, split_and_persist
 
@@ -86,25 +86,25 @@ def _split(symbol_sizes: dict, tmp_dir: str) -> tuple[pd.DataFrame, pd.DataFrame
     import gpu_fuzzy_trader.data.splitter as splitter_mod
     import gpu_fuzzy_trader.config as config_mod
 
-    original_train = config_mod.TRAIN_75_PATH
-    original_val = config_mod.VALIDATION_25_PATH
+    original_train = config_mod.TRAIN_70_PATH
+    original_val = config_mod.VALIDATION_30_PATH
 
-    train_path = os.path.join(tmp_dir, "train_75.parquet")
-    val_path = os.path.join(tmp_dir, "validation_25.parquet")
+    train_path = os.path.join(tmp_dir, "train_70.parquet")
+    val_path = os.path.join(tmp_dir, "validation_30.parquet")
 
     # Patch module-level constants used inside splitter
-    splitter_mod.TRAIN_75_PATH = train_path
-    splitter_mod.VALIDATION_25_PATH = val_path
+    splitter_mod.TRAIN_70_PATH = train_path
+    splitter_mod.VALIDATION_30_PATH = val_path
 
     prev_mode = config_mod.SPLIT_MODE
-    config_mod.SPLIT_MODE = "holdout_75_25"
+    config_mod.SPLIT_MODE = "holdout_70_30"
     try:
         df = _make_df(symbol_sizes)
         train_df, val_df, _folds = Data_Splitter().split_and_persist(df)
     finally:
         config_mod.SPLIT_MODE = prev_mode
-        splitter_mod.TRAIN_75_PATH = original_train
-        splitter_mod.VALIDATION_25_PATH = original_val
+        splitter_mod.TRAIN_70_PATH = original_train
+        splitter_mod.VALIDATION_30_PATH = original_val
 
     return train_df, val_df, train_path, val_path
 
@@ -115,25 +115,25 @@ def _split(symbol_sizes: dict, tmp_dir: str) -> tuple[pd.DataFrame, pd.DataFrame
 
 class TestSplitRatio:
     def test_single_symbol_train_size_uses_floor(self, tmp_path):
-        """floor(N * 0.75) rows go to train."""
+        """floor(N * 0.70) rows go to train."""
         n = 100
         train_df, val_df, _, _ = _split({1: n}, str(tmp_path))
-        expected_train = math.floor(n * 0.75)  # 75
+        expected_train = math.floor(n * 0.70)  # 70
         assert len(train_df) == expected_train
 
     def test_single_symbol_validation_size_is_remainder(self, tmp_path):
-        """Remaining rows after floor(N * 0.75) go to validation."""
+        """Remaining rows after floor(N * 0.70) go to validation."""
         n = 100
         train_df, val_df, _, _ = _split({1: n}, str(tmp_path))
-        expected_val = n - math.floor(n * 0.75)  # 25
+        expected_val = n - math.floor(n * 0.70)  # 30
         assert len(val_df) == expected_val
 
     def test_floor_not_round_for_odd_sizes(self, tmp_path):
-        """For N=101: floor(101 * 0.75) = 75, not 76."""
+        """For N=101: floor(101 * 0.70) = 70, not 71."""
         n = 101
         train_df, val_df, _, _ = _split({1: n}, str(tmp_path))
-        assert len(train_df) == math.floor(n * 0.75)
-        assert len(val_df) == n - math.floor(n * 0.75)
+        assert len(train_df) == math.floor(n * 0.70)
+        assert len(val_df) == n - math.floor(n * 0.70)
 
     def test_row_count_conservation(self, tmp_path):
         """train + validation == total rows."""
@@ -160,18 +160,18 @@ class TestPerSymbolIndependence:
         train_df, val_df, _, _ = _split(sizes, str(tmp_path))
 
         for sym, n in sizes.items():
-            expected_train = math.floor(n * 0.75)
+            expected_train = math.floor(n * 0.70)
             expected_val = n - expected_train
             assert len(train_df[train_df["symbol"] == sym]) == expected_train
             assert len(val_df[val_df["symbol"] == sym]) == expected_val
 
     def test_symbols_with_different_sizes_split_correctly(self, tmp_path):
-        """Symbols with different sizes each get the correct floor(N*0.75) split."""
+        """Symbols with different sizes each get the correct floor(N*0.70) split."""
         sizes = {1: 7, 2: 13, 3: 40}
         train_df, val_df, _, _ = _split(sizes, str(tmp_path))
 
         for sym, n in sizes.items():
-            expected_train = math.floor(n * 0.75)
+            expected_train = math.floor(n * 0.70)
             assert len(train_df[train_df["symbol"] == sym]) == expected_train
 
 
@@ -199,11 +199,11 @@ class TestChronologicalOrdering:
             val_min = val_df[val_df["symbol"] == sym]["datetime"].min()
             assert train_max < val_min, f"Symbol {sym}: train/val overlap"
 
-    def test_train_rows_are_first_floor_n_075_rows(self, tmp_path):
-        """Train rows should be the first floor(N*0.75) rows by feature_a index."""
+    def test_train_rows_are_first_floor_n_070_rows(self, tmp_path):
+        """Train rows should be the first floor(N*0.70) rows by feature_a index."""
         n = 20
         train_df, val_df, _, _ = _split({1: n}, str(tmp_path))
-        split_point = math.floor(n * 0.75)
+        split_point = math.floor(n * 0.70)
 
         # feature_a encodes the original row index (0..n-1)
         train_indices = sorted(train_df[train_df["symbol"] == 1]["feature_a"].tolist())
@@ -273,46 +273,46 @@ class TestParquetPersistence:
 
 class TestEdgeCases:
     def test_single_row_symbol_goes_to_train(self, tmp_path):
-        """floor(1 * 0.75) = 0, so the single row goes to validation."""
+        """floor(1 * 0.70) = 0, so the single row goes to validation."""
         train_df, val_df, _, _ = _split({1: 1}, str(tmp_path))
-        # floor(1 * 0.75) = 0 → 0 train rows, 1 validation row
+        # floor(1 * 0.70) = 0 → 0 train rows, 1 validation row
         assert len(train_df) == 0
         assert len(val_df) == 1
 
     def test_four_row_symbol_split(self, tmp_path):
-        """floor(4 * 0.75) = 3 → 3 train, 1 validation."""
+        """floor(4 * 0.70) = 2 → 2 train, 2 validation."""
         train_df, val_df, _, _ = _split({1: 4}, str(tmp_path))
-        assert len(train_df) == 3
-        assert len(val_df) == 1
+        assert len(train_df) == 2
+        assert len(val_df) == 2
 
     def test_empty_dataframe_returns_empty_dfs(self, tmp_path):
         """An empty input DataFrame should produce empty train and validation."""
         import gpu_fuzzy_trader.data.splitter as splitter_mod
         import gpu_fuzzy_trader.config as config_mod
 
-        original_train = config_mod.TRAIN_75_PATH
-        original_val = config_mod.VALIDATION_25_PATH
-        splitter_mod.TRAIN_75_PATH = str(tmp_path / "train_75.parquet")
-        splitter_mod.VALIDATION_25_PATH = str(tmp_path / "validation_25.parquet")
+        original_train = config_mod.TRAIN_70_PATH
+        original_val = config_mod.VALIDATION_30_PATH
+        splitter_mod.TRAIN_70_PATH = str(tmp_path / "train_70.parquet")
+        splitter_mod.VALIDATION_30_PATH = str(tmp_path / "validation_30.parquet")
 
         try:
             empty_df = pd.DataFrame(
                 columns=["datetime", "symbol", "feature_a", "_symbol_bar_index"]
             )
-            config_mod.SPLIT_MODE = "holdout_75_25"
+            config_mod.SPLIT_MODE = "holdout_70_30"
             train_df, val_df, _folds = Data_Splitter().split_and_persist(empty_df)
             assert len(train_df) == 0
             assert len(val_df) == 0
         finally:
-            splitter_mod.TRAIN_75_PATH = original_train
-            splitter_mod.VALIDATION_25_PATH = original_val
+            splitter_mod.TRAIN_70_PATH = original_train
+            splitter_mod.VALIDATION_30_PATH = original_val
 
-    def test_large_symbol_split_ratio_close_to_075(self, tmp_path):
-        """For large N, train/total should be very close to 0.75."""
+    def test_large_symbol_split_ratio_close_to_070(self, tmp_path):
+        """For large N, train/total should be very close to 0.70."""
         n = 10_000
         train_df, val_df, _, _ = _split({1: n}, str(tmp_path))
         ratio = len(train_df) / n
-        assert abs(ratio - 0.75) < 0.001
+        assert abs(ratio - 0.70) < 0.001
 
 
 # ---------------------------------------------------------------------------
@@ -346,34 +346,34 @@ class TestModuleLevelFunction:
         import gpu_fuzzy_trader.data.splitter as splitter_mod
         import gpu_fuzzy_trader.config as config_mod
 
-        original_train = config_mod.TRAIN_75_PATH
-        original_val = config_mod.VALIDATION_25_PATH
-        splitter_mod.TRAIN_75_PATH = str(tmp_path / "train_75.parquet")
-        splitter_mod.VALIDATION_25_PATH = str(tmp_path / "validation_25.parquet")
+        original_train = config_mod.TRAIN_70_PATH
+        original_val = config_mod.VALIDATION_30_PATH
+        splitter_mod.TRAIN_70_PATH = str(tmp_path / "train_70.parquet")
+        splitter_mod.VALIDATION_30_PATH = str(tmp_path / "validation_30.parquet")
 
         try:
             df = _make_df({1: 100})
-            config_mod.SPLIT_MODE = "holdout_75_25"
+            config_mod.SPLIT_MODE = "holdout_70_30"
             result = split_and_persist(df)
             assert isinstance(result, tuple)
             assert len(result) == 3
         finally:
-            splitter_mod.TRAIN_75_PATH = original_train
-            splitter_mod.VALIDATION_25_PATH = original_val
+            splitter_mod.TRAIN_70_PATH = original_train
+            splitter_mod.VALIDATION_30_PATH = original_val
 
     def test_split_and_persist_function_matches_class(self, tmp_path):
         """Module-level function should produce same result as class method."""
         import gpu_fuzzy_trader.data.splitter as splitter_mod
         import gpu_fuzzy_trader.config as config_mod
 
-        original_train = config_mod.TRAIN_75_PATH
-        original_val = config_mod.VALIDATION_25_PATH
-        splitter_mod.TRAIN_75_PATH = str(tmp_path / "train_75.parquet")
-        splitter_mod.VALIDATION_25_PATH = str(tmp_path / "validation_25.parquet")
+        original_train = config_mod.TRAIN_70_PATH
+        original_val = config_mod.VALIDATION_30_PATH
+        splitter_mod.TRAIN_70_PATH = str(tmp_path / "train_70.parquet")
+        splitter_mod.VALIDATION_30_PATH = str(tmp_path / "validation_30.parquet")
 
         try:
             df = _make_df({1: 100})
-            config_mod.SPLIT_MODE = "holdout_75_25"
+            config_mod.SPLIT_MODE = "holdout_70_30"
             train_func, val_func, _ = split_and_persist(df)
             train_class, val_class, _ = Data_Splitter().split_and_persist(df)
             pd.testing.assert_frame_equal(
@@ -385,5 +385,5 @@ class TestModuleLevelFunction:
                 val_class.reset_index(drop=True),
             )
         finally:
-            splitter_mod.TRAIN_75_PATH = original_train
-            splitter_mod.VALIDATION_25_PATH = original_val
+            splitter_mod.TRAIN_70_PATH = original_train
+            splitter_mod.VALIDATION_30_PATH = original_val
