@@ -73,8 +73,8 @@ TEST_CSV_PATH = _env_str(
 )
 
 # Cached splits from train.csv (Phases 2–5). Rebuilt when train.csv is newer.
-TRAIN_75_PATH = "data/train_75.parquet"
-VALIDATION_25_PATH = "data/validation_25.parquet"
+TRAIN_70_PATH = "data/train_70.parquet"
+VALIDATION_30_PATH = "data/validation_30.parquet"
 CV_FOLDS_MANIFEST_PATH = "data/cv_folds_manifest.json"
 
 OUTPUTS_DIR = "outputs"
@@ -123,15 +123,15 @@ TAIL_DROP_ROWS = 288
 # =============================================================================
 # Phase 0 — Train / validation split (Phases 2–3)
 # =============================================================================
-# Phases 4–5 always use persisted train_75 + validation_25 (see splitter.py).
+# Phases 4–5 always use persisted train_70 + validation_30 (see splitter.py).
 #
 # SPLIT_MODE options:
 #   "purged_rolling_cv" — K expanding-window folds, 288-bar embargo, ≥2 months
 #                         train per fold; Phase 2/3 score worst fold. Default.
-#   "holdout_75_25"     — legacy single 75/25 per symbol; faster, easier to
+#   "holdout_70_30"     — legacy single 70/30 per symbol; faster, easier to
 #                         overfit one validation season (risky for short).
 #
-# RECOMMENDATION: keep purged_rolling_cv for short; use holdout_75_25 only for
+# RECOMMENDATION: keep purged_rolling_cv for short; use holdout_70_30 only for
 # fast debugging or apples-to-apples with older runs.
 
 SPLIT_MODE = "purged_rolling_cv"
