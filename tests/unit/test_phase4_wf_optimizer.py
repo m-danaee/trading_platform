@@ -125,7 +125,13 @@ class TestSelectParetoTrial:
             number=number,
             state=SimpleNamespace(name="COMPLETE"),
             values=(sortino, dd, trades),
-            user_attrs={"rule_set": [{"tp": 2.0}], "worst_pf": pf},
+            user_attrs={
+                "rule_set": [{"tp": 2.0}],
+                "worst_pf": pf,
+                "worst_return": sortino,
+                "worst_drawdown": dd,
+                "worst_trades": trades,
+            },
         )
 
     def test_filters_by_drawdown_then_max_sortino(self):
@@ -256,7 +262,7 @@ class TestParamsWithinBounds:
 
     def test_invalid_capital(self):
         rs = _make_rule_set()
-        rs["rules_set"][0]["capital_pct"] = 5.0
+        rs["rules_set"][0]["capital_pct"] = 0.0
         assert _params_within_bounds(rs) is False
 
     def test_invalid_tp_below_sl(self):

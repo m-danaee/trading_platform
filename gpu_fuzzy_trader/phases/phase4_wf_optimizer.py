@@ -313,15 +313,14 @@ def _select_pareto_trial(study: Any, max_worst_dd_pct: float) -> Any:
     for stage_idx, gates in enumerate(stages):
         candidates = []
         for t in completed:
-            values = t.values or ()
-            if len(values) < 2:
-                continue
-            ret_ok = values[0] >= gates["min_ret"] - 1e-9
-            dd_ok = values[1] <= gates["max_dd"]
-            trades_ok = True
-            if len(values) >= 3:
-                trades_ok = values[2] >= gates["min_trades"]
+            worst_ret = float(t.user_attrs.get("worst_return", gates["min_ret"] - 100.0))
+            worst_dd = float(t.user_attrs.get("worst_drawdown", gates["max_dd"] + 100.0))
+            worst_tr = float(t.user_attrs.get("worst_trades", 0.0))
             worst_pf = float(t.user_attrs.get("worst_pf", gates["min_pf"]))
+
+            ret_ok = worst_ret >= gates["min_ret"] - 1e-9
+            dd_ok = worst_dd <= gates["max_dd"]
+            trades_ok = worst_tr >= gates["min_trades"]
             pf_ok = worst_pf >= gates["min_pf"] - 1e-9
 
             if ret_ok and dd_ok and trades_ok and pf_ok:
@@ -385,7 +384,7 @@ def _params_within_bounds(rule_set: dict) -> bool:
             return False
         if not _tp_sl_ratio_valid(tp, sl):
             return False
-        if not (_cfg.PHASE4_CAPITAL_PCT_MIN <= cap <= _cfg.PHASE4_CAPITAL_PCT_MAX):
+        if not (0.0 < cap <= _cfg.PHASE4_CAPITAL_PCT_MAX):
             return False
     return True
 
@@ -585,6 +584,9 @@ class WalkForwardRiskOptimizer:
             trial.set_user_attr("rule_set", candidate_rule_set)
             trial.set_user_attr("params_list", params_list)
             trial.set_user_attr("worst_pf", worst_pf)
+            trial.set_user_attr("worst_return", worst_return)
+            trial.set_user_attr("worst_drawdown", worst_drawdown)
+            trial.set_user_attr("worst_trades", worst_turnover)
             score_return = (
                 (worst_return - fold_penalty)
                 * float(_cfg.PHASE4_WORST_RETURN_WEIGHT)
