@@ -820,8 +820,8 @@ class Pipeline_Orchestrator:
             if cached_split is not None:
                 logger.info(
                     "Using cached train/validation split from %s and %s",
-                    _cfg.TRAIN_75_PATH,
-                    _cfg.VALIDATION_25_PATH,
+                    _cfg.TRAIN_70_PATH,
+                    _cfg.VALIDATION_30_PATH,
                 )
                 self._cv_folds = []
                 return cached_split
@@ -862,8 +862,8 @@ class Pipeline_Orchestrator:
     def _load_cached_split_if_fresh() -> tuple[pd.DataFrame, pd.DataFrame] | None:
         """Load cached split files when they are newer than the source CSV."""
         csv_path = _cfg.TRAIN_CSV_PATH
-        train_path = _cfg.TRAIN_75_PATH
-        val_path = _cfg.VALIDATION_25_PATH
+        train_path = _cfg.TRAIN_70_PATH
+        val_path = _cfg.VALIDATION_30_PATH
 
         if not (os.path.exists(csv_path) and os.path.exists(train_path) and os.path.exists(val_path)):
             return None

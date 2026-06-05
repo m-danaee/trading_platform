@@ -355,12 +355,12 @@ class OOS_Evaluator:
         """Load prepared train, validation, and test datasets."""
         datasets: dict[str, pd.DataFrame] = {}
 
-        if os.path.exists(_cfg.TRAIN_75_PATH) and os.path.exists(_cfg.VALIDATION_25_PATH):
+        if os.path.exists(_cfg.TRAIN_70_PATH) and os.path.exists(_cfg.VALIDATION_30_PATH):
             try:
                 datasets["train"] = downcast_numeric_df(
-                    pd.read_parquet(_cfg.TRAIN_75_PATH))
+                    pd.read_parquet(_cfg.TRAIN_70_PATH))
                 datasets["validation"] = downcast_numeric_df(
-                    pd.read_parquet(_cfg.VALIDATION_25_PATH))
+                    pd.read_parquet(_cfg.VALIDATION_30_PATH))
                 datasets["test"] = self.prepare_test_data(self.test_csv_path)
                 logger.info(
                     "Loaded cached train / validation splits and prepared test data: train=%d, validation=%d, test=%d",
