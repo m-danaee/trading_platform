@@ -697,6 +697,38 @@ class TestGPUCPUNumericalParity:
         assert gpu_results[0]["executed_trades"] >= 0
         assert cpu_metrics["executed_trades"] >= 0
 
+    def test_exposure_cap_skips_overlapping_signals(self):
+        """GPU must cap position sizing when open exposure fills capacity."""
+        n = 40
+        entry = 100.0
+        df = pd.DataFrame({
+            "symbol": ["SYM"] * n,
+            "datetime": pd.date_range("2024-01-01", periods=n, freq="5min"),
+            "_symbol_bar_index": list(range(n)),
+            "label_open_next": [entry] * n,
+            "label_max_288": [entry * 1.04] * n,
+            "label_min_288": [entry * 0.98] * n,
+            "label_close_288": [entry * 1.02] * n,
+            "label_max_before_min": [1] * n,
+            "feat_binary": [1] * n,
+        })
+        feature_modes = {"feat_binary": "binary"}
+        gpu_eng = GPUBacktestEngine(
+            df, feature_modes, "long",
+            initial_capital=1000.0,
+            max_hold_candles=10,
+            max_total_exposure_pct=100.0,
+            leverage=1.0,
+            min_position_notional=0.01,
+        )
+        chrom = np.array([[1]], dtype=np.int32)
+        gpu_result = gpu_eng.simulate_rule_batch(
+            chrom, tp=4.0, sl=2.0, capital_pct=30.0)[0]
+
+        assert gpu_result["raw_signal_count"] == n
+        assert gpu_result["executed_trades"] < n
+        assert gpu_result["skipped_min_notional_count"] > 0
+
     def test_simulate_rule_set_exact_parity(self):
         """simulate_rule_set (delegated to CPU) is exactly identical to CPU engine."""
         df = self._make_parity_df(n=40)

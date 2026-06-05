@@ -174,12 +174,59 @@ def _jax_compute_trade_outcomes(
 # Batched equity simulation via vmap + lax.scan
 # ---------------------------------------------------------------------------
 
-@partial(jit, static_argnums=(3, 4, 5, 6, 7, 8))
+def _jax_release_open_slots(
+    slot_release: jnp.ndarray,
+    slot_notional: jnp.ndarray,
+    open_exposure: jnp.ndarray,
+    current_row: jnp.ndarray,
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """Release positions due at or before current_row; reduce open exposure."""
+    active = slot_release >= 0
+    releasing = active & (slot_release <= current_row)
+    release_sum = jnp.sum(jnp.where(releasing, slot_notional, 0.0))
+    new_open_exposure = open_exposure - release_sum
+    new_slot_release = jnp.where(releasing, -1, slot_release)
+    new_slot_notional = jnp.where(releasing, 0.0, slot_notional)
+    return new_slot_release, new_slot_notional, new_open_exposure
+
+
+def _jax_open_slot(
+    slot_release: jnp.ndarray,
+    slot_notional: jnp.ndarray,
+    open_exposure: jnp.ndarray,
+    release_idx: jnp.ndarray,
+    position_notional: jnp.ndarray,
+    can_trade: jnp.ndarray,
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """Reserve one open-slot and add notional to open exposure."""
+    empty_mask = slot_release < 0
+    has_empty = jnp.any(empty_mask)
+    first_empty = jnp.argmax(empty_mask.astype(jnp.int32))
+    can_open = can_trade & has_empty
+
+    new_slot_release = jnp.where(
+        can_open,
+        slot_release.at[first_empty].set(release_idx),
+        slot_release,
+    )
+    new_slot_notional = jnp.where(
+        can_open,
+        slot_notional.at[first_empty].set(position_notional),
+        slot_notional,
+    )
+    new_open_exposure = open_exposure + jnp.where(
+        can_open, position_notional, 0.0)
+    return new_slot_release, new_slot_notional, new_open_exposure
+
+
+@partial(jit, static_argnums=(4, 5, 6, 7, 8, 9, 10))
 def _jax_simulate_equity_batch(
     signals_batch: jnp.ndarray,       # (B, N) bool
     price_returns_all: jnp.ndarray,   # (N,) float64
+    release_indices: jnp.ndarray,     # (N,) int32
     initial_capital: float,
     n_rows: int,
+    max_hold_candles: int,
     fee_rate: float,
     leverage: float,
     capital_rate: float,
@@ -200,9 +247,18 @@ def _jax_simulate_equity_batch(
         cutoff = int(N * (1.0 - _cfg.PHASE2_RECENCY_WEIGHT_FRACTION))
         recency_weights = recency_weights.at[cutoff:].set(_cfg.PHASE2_RECENCY_WEIGHT_MULTIPLIER)
 
+    max_slots = int(max_hold_candles)
+    init_slot_release = jnp.full(max_slots, -1, dtype=jnp.int32)
+    init_slot_notional = jnp.zeros(max_slots, dtype=jnp.float64)
+    row_indices = jnp.arange(N, dtype=jnp.int32)
+
     def simulate_one(signal_mask):
         is_signal = signal_mask.astype(jnp.float64)
-        scan_xs = jnp.stack([is_signal, price_returns_all, recency_weights], axis=-1)
+        scan_xs = jnp.stack(
+            [is_signal, price_returns_all, recency_weights,
+             row_indices.astype(jnp.float64)],
+            axis=-1,
+        )
 
         init_carry = (
             init_cap,           # equity
@@ -219,26 +275,34 @@ def _jax_simulate_equity_batch(
             jnp.float64(0.0),   # trade_return_sum
             jnp.int32(0),       # n_neg
             jnp.float64(0.0),   # neg_sq_sum
+            init_slot_release,
+            init_slot_notional,
         )
 
         def step(carry, x):
             (equity, peak_equity, max_dd, open_exposure,
              wins, losses, gross_profit, gross_loss,
              executed, skipped, account_ruined,
-             trade_return_sum, n_neg, neg_sq_sum) = carry
+             trade_return_sum, n_neg, neg_sq_sum,
+             slot_release, slot_notional) = carry
 
             is_sig = x[0]
             price_return_pct = x[1]
             w = x[2]
+            current_row = x[3].astype(jnp.int32)
 
-            # Position sizing
+            slot_release, slot_notional, open_exposure = _jax_release_open_slots(
+                slot_release, slot_notional, open_exposure, current_row)
+
+            # Position sizing (after releasing due positions)
             target = equity * capital_rate_f * leverage_f
             max_exp = equity * max_exposure_rate_f * leverage_f
             remaining = jnp.maximum(0.0, max_exp - open_exposure)
             position_notional = jnp.minimum(target, remaining)
+            has_empty = jnp.any(slot_release < 0)
 
             can_trade = ((is_sig > 0.5) & (~account_ruined)
-                         & (position_notional >= min_notional_f))
+                         & (position_notional >= min_notional_f) & has_empty)
 
             gross_pnl = position_notional * (price_return_pct / 100.0)
             fee = position_notional * fee_rate_f
@@ -281,11 +345,22 @@ def _jax_simulate_equity_batch(
             new_neg_sq_sum = neg_sq_sum + jnp.where(
                 is_neg, trade_ret ** 2, 0.0)
 
+            release_idx = release_indices[current_row]
+            slot_release, slot_notional, new_open_exposure = _jax_open_slot(
+                slot_release,
+                slot_notional,
+                open_exposure,
+                release_idx,
+                position_notional,
+                can_trade,
+            )
+
             new_carry = (
-                new_equity, new_peak, new_max_dd, open_exposure,
+                new_equity, new_peak, new_max_dd, new_open_exposure,
                 new_wins, new_losses, new_gross_profit, new_gross_loss,
                 new_executed, new_skipped, new_ruined,
                 new_trade_return_sum, new_n_neg, new_neg_sq_sum,
+                slot_release, slot_notional,
             )
             return new_carry, None
 
@@ -294,7 +369,8 @@ def _jax_simulate_equity_batch(
         (equity, peak_equity, max_dd, _open_exp,
          wins, losses, gross_profit, gross_loss,
          executed, skipped, account_ruined,
-         trade_return_sum, n_neg, neg_sq_sum) = final_carry
+         trade_return_sum, n_neg, neg_sq_sum,
+         _slot_release, _slot_notional) = final_carry
 
         total_return_pct = (equity / init_cap - 1.0) * 100.0
         raw_signal_count = jnp.sum(signal_mask).astype(jnp.float64)
@@ -329,14 +405,16 @@ def _jax_simulate_equity_batch(
     return batched_simulate(signals_batch)
 
 
-@partial(jit, static_argnums=(4, 5, 6, 7, 8, 9, 10))
+@partial(jit, static_argnums=(5, 6, 7, 8, 9, 10, 11, 12))
 def _jax_simulate_equity_batch_regime(
     signals_batch: jnp.ndarray,       # (B, N) bool
     price_returns_all: jnp.ndarray,   # (N,) float64
     regime_ids: jnp.ndarray,          # (N,) int32
+    release_indices: jnp.ndarray,     # (N,) int32
     initial_capital: float,
     n_rows: int,
     n_regimes: int,
+    max_hold_candles: int,
     fee_rate: float,
     leverage: float,
     capital_rate: float,
@@ -358,10 +436,16 @@ def _jax_simulate_equity_batch_regime(
         cutoff = int(N * (1.0 - _cfg.PHASE2_RECENCY_WEIGHT_FRACTION))
         recency_weights = recency_weights.at[cutoff:].set(_cfg.PHASE2_RECENCY_WEIGHT_MULTIPLIER)
 
+    max_slots = int(max_hold_candles)
+    init_slot_release = jnp.full(max_slots, -1, dtype=jnp.int32)
+    init_slot_notional = jnp.zeros(max_slots, dtype=jnp.float64)
+    row_indices = jnp.arange(N, dtype=jnp.int32)
+
     def simulate_one(signal_mask):
         is_signal = signal_mask.astype(jnp.float64)
         scan_xs = jnp.stack(
-            [is_signal, price_returns_all, regime_ids.astype(jnp.float64), recency_weights],
+            [is_signal, price_returns_all, regime_ids.astype(jnp.float64),
+             recency_weights, row_indices.astype(jnp.float64)],
             axis=-1,
         )
 
@@ -387,6 +471,8 @@ def _jax_simulate_equity_batch_regime(
             init_trades,
             init_wins,
             init_pnl,
+            init_slot_release,
+            init_slot_notional,
         )
 
         def step(carry, x):
@@ -394,20 +480,26 @@ def _jax_simulate_equity_batch_regime(
              wins, losses, gross_profit, gross_loss,
              executed, skipped, account_ruined,
              trade_return_sum, n_neg, neg_sq_sum,
-             trades_by_regime, wins_by_regime, pnl_by_regime) = carry
+             trades_by_regime, wins_by_regime, pnl_by_regime,
+             slot_release, slot_notional) = carry
 
             is_sig = x[0]
             price_return_pct = x[1]
             regime_idx = jnp.clip(x[2].astype(jnp.int32), 0, n_reg - 1)
             w = x[3]
+            current_row = x[4].astype(jnp.int32)
+
+            slot_release, slot_notional, open_exposure = _jax_release_open_slots(
+                slot_release, slot_notional, open_exposure, current_row)
 
             target = equity * capital_rate_f * leverage_f
             max_exp = equity * max_exposure_rate_f * leverage_f
             remaining = jnp.maximum(0.0, max_exp - open_exposure)
             position_notional = jnp.minimum(target, remaining)
+            has_empty = jnp.any(slot_release < 0)
 
             can_trade = ((is_sig > 0.5) & (~account_ruined)
-                         & (position_notional >= min_notional_f))
+                         & (position_notional >= min_notional_f) & has_empty)
 
             gross_pnl = position_notional * (price_return_pct / 100.0)
             fee = position_notional * fee_rate_f
@@ -457,12 +549,23 @@ def _jax_simulate_equity_batch_regime(
             new_wins_by_regime = wins_by_regime.at[regime_idx].add(win_inc)
             new_pnl_by_regime = pnl_by_regime.at[regime_idx].add(pnl_inc)
 
+            release_idx = release_indices[current_row]
+            slot_release, slot_notional, new_open_exposure = _jax_open_slot(
+                slot_release,
+                slot_notional,
+                open_exposure,
+                release_idx,
+                position_notional,
+                can_trade,
+            )
+
             new_carry = (
-                new_equity, new_peak, new_max_dd, open_exposure,
+                new_equity, new_peak, new_max_dd, new_open_exposure,
                 new_wins, new_losses, new_gross_profit, new_gross_loss,
                 new_executed, new_skipped, new_ruined,
                 new_trade_return_sum, new_n_neg, new_neg_sq_sum,
                 new_trades_by_regime, new_wins_by_regime, new_pnl_by_regime,
+                slot_release, slot_notional,
             )
             return new_carry, None
 
@@ -472,7 +575,8 @@ def _jax_simulate_equity_batch_regime(
          wins, losses, gross_profit, gross_loss,
          executed, skipped, account_ruined,
          trade_return_sum, n_neg, neg_sq_sum,
-         trades_by_regime, wins_by_regime, pnl_by_regime) = final_carry
+         trades_by_regime, wins_by_regime, pnl_by_regime,
+         _slot_release, _slot_notional) = final_carry
 
         total_return_pct = (equity / init_cap - 1.0) * 100.0
         raw_signal_count = jnp.sum(signal_mask).astype(jnp.float64)
@@ -802,9 +906,11 @@ class GPUBacktestEngine:
                 signals_batch,
                 price_returns_all,
                 self._regime_ids_jax,
+                self._release_indices_jax,
                 self.initial_capital,
                 N,
                 self._n_regimes,
+                self.max_hold_candles,
                 self.fee_rate,
                 self.leverage,
                 capital_rate,
@@ -815,8 +921,10 @@ class GPUBacktestEngine:
             results_array = _jax_simulate_equity_batch(
                 signals_batch,
                 price_returns_all,
+                self._release_indices_jax,
                 self.initial_capital,
                 N,
+                self.max_hold_candles,
                 self.fee_rate,
                 self.leverage,
                 capital_rate,
