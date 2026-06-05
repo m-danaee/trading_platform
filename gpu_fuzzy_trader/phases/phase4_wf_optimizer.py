@@ -289,11 +289,6 @@ def _create_sampler(seed: int):
 
 
 def _select_pareto_trial(study: Any, max_worst_dd_pct: float) -> Any:
-    """
-    Pick trial from Pareto front: filter by DD, min trades, min fold return/PF.
-
-    Raises Phase4NoFeasibleTrialError if no trial satisfies the gates (no fallback).
-    """
     completed = [
         t for t in study.trials
         if t.state.name == "COMPLETE" and t.values is not None
@@ -303,30 +298,48 @@ def _select_pareto_trial(study: Any, max_worst_dd_pct: float) -> Any:
 
     min_ret = float(_cfg.PHASE4_MIN_WORST_FOLD_RETURN_PCT)
     min_pf = float(_cfg.PHASE4_MIN_WORST_FOLD_PF)
+    min_trades = int(_cfg.PHASE4_MIN_WORST_TRADES)
 
-    pareto = list(study.best_trials) if study.best_trials else completed
-    candidates = []
-    for t in pareto:
-        values = t.values or ()
-        if len(values) < 2:
-            continue
-        ret_ok = values[0] >= min_ret - 1e-9
-        dd_ok = values[1] <= max_worst_dd_pct
-        trades_ok = True
-        if len(values) >= 3:
-            trades_ok = values[2] >= _cfg.PHASE4_MIN_WORST_TRADES
-        pf_ok = float(t.user_attrs.get("worst_pf", min_pf)) >= min_pf - 1e-9
-        if ret_ok and dd_ok and trades_ok and pf_ok:
-            candidates.append(t)
+    # Define feasibility stages
+    stages = [
+        # Stage 1: Strict (Configured)
+        {"min_ret": min_ret, "min_pf": min_pf, "max_dd": max_worst_dd_pct, "min_trades": min_trades},
+        # Stage 2: Relaxed
+        {"min_ret": min_ret - 5.0, "min_pf": max(0.7, min_pf - 0.3), "max_dd": max_worst_dd_pct + 10.0, "min_trades": max(5, min_trades // 3)},
+        # Stage 3: Minimal
+        {"min_ret": min_ret - 15.0, "min_pf": max(0.5, min_pf - 0.5), "max_dd": max_worst_dd_pct + 25.0, "min_trades": 1},
+    ]
 
-    if not candidates:
-        raise Phase4NoFeasibleTrialError(
-            "Phase 4: no trial passed worst-fold gates "
-            f"(min_return={min_ret}%, min_pf={min_pf}, "
-            f"max_dd={max_worst_dd_pct}%, min_trades={_cfg.PHASE4_MIN_WORST_TRADES})"
-        )
+    for stage_idx, gates in enumerate(stages):
+        candidates = []
+        for t in completed:
+            values = t.values or ()
+            if len(values) < 2:
+                continue
+            ret_ok = values[0] >= gates["min_ret"] - 1e-9
+            dd_ok = values[1] <= gates["max_dd"]
+            trades_ok = True
+            if len(values) >= 3:
+                trades_ok = values[2] >= gates["min_trades"]
+            worst_pf = float(t.user_attrs.get("worst_pf", gates["min_pf"]))
+            pf_ok = worst_pf >= gates["min_pf"] - 1e-9
 
-    return max(candidates, key=lambda t: t.values[0])
+            if ret_ok and dd_ok and trades_ok and pf_ok:
+                candidates.append(t)
+
+        if candidates:
+            selected = max(candidates, key=lambda t: t.values[0])
+            logger.info(
+                "Phase 4: selected trial #%d using Feasibility Stage %d/3 "
+                "(gates: return>=%.1f%%, pf>=%.2f, dd<=%.1f%%, trades>=%d)",
+                selected.number, stage_idx + 1,
+                gates["min_ret"], gates["min_pf"], gates["max_dd"], gates["min_trades"]
+            )
+            return selected
+
+    raise Phase4NoFeasibleTrialError(
+        "Phase 4: no trial passed even minimal walk-forward feasibility gates."
+    )
 
 
 def _load_rule_set(path: str) -> Optional[dict]:

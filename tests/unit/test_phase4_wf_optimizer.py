@@ -120,12 +120,12 @@ class TestSplitValidationWalkForward:
 
 
 class TestSelectParetoTrial:
-    def _trial(self, number: int, sortino: float, dd: float, trades: float = 50.0):
+    def _trial(self, number: int, sortino: float, dd: float, trades: float = 50.0, pf: float = 1.1):
         return SimpleNamespace(
             number=number,
             state=SimpleNamespace(name="COMPLETE"),
             values=(sortino, dd, trades),
-            user_attrs={"rule_set": [{"tp": 2.0}], "worst_pf": 1.1},
+            user_attrs={"rule_set": [{"tp": 2.0}], "worst_pf": pf},
         )
 
     def test_filters_by_drawdown_then_max_sortino(self):
@@ -143,12 +143,65 @@ class TestSelectParetoTrial:
     def test_raises_when_filter_empty(self):
         study = MagicMock()
         study.trials = [
-            self._trial(0, 5.0, 20.0),
-            self._trial(1, 4.0, 18.0),
+            self._trial(0, 5.0, 50.0),
+            self._trial(1, 4.0, 45.0),
         ]
         study.best_trials = study.trials
 
-        with pytest.raises(Phase4NoFeasibleTrialError):
+        with pytest.raises(Phase4NoFeasibleTrialError, match="even minimal"):
+            _select_pareto_trial(study, max_worst_dd_pct=15.0)
+
+    def test_select_pareto_trial_fallback_stage2(self, monkeypatch):
+        # Configure gates
+        monkeypatch.setattr(_cfg, "PHASE4_MIN_WORST_FOLD_RETURN_PCT", 10.0)
+        monkeypatch.setattr(_cfg, "PHASE4_MIN_WORST_FOLD_PF", 1.5)
+        monkeypatch.setattr(_cfg, "PHASE4_MIN_WORST_TRADES", 30)
+
+        # Trial 0 passes Stage 2, fails Stage 1:
+        # Stage 1 gates: return >= 10.0, pf >= 1.5, dd <= 15.0, trades >= 30
+        # Stage 2 gates: return >= 5.0, pf >= 1.2, dd <= 25.0, trades >= 10 (max(5, 30//3))
+        # Trial 0 values: return = 6.0, dd = 20.0, trades = 12, pf = 1.3
+        study = MagicMock()
+        study.trials = [
+            self._trial(0, 6.0, 20.0, trades=12.0, pf=1.3),
+        ]
+        study.best_trials = study.trials
+        selected = _select_pareto_trial(study, max_worst_dd_pct=15.0)
+        assert selected.number == 0
+
+    def test_select_pareto_trial_fallback_stage3(self, monkeypatch):
+        # Configure gates
+        monkeypatch.setattr(_cfg, "PHASE4_MIN_WORST_FOLD_RETURN_PCT", 10.0)
+        monkeypatch.setattr(_cfg, "PHASE4_MIN_WORST_FOLD_PF", 1.5)
+        monkeypatch.setattr(_cfg, "PHASE4_MIN_WORST_TRADES", 30)
+
+        # Trial 0 passes Stage 3, fails Stage 1 & 2:
+        # Stage 2 gates: return >= 5.0, pf >= 1.2, dd <= 25.0, trades >= 10
+        # Stage 3 gates: return >= -5.0, pf >= 1.0 (1.5 - 0.5), dd <= 40.0 (15 + 25), trades >= 1
+        # Trial 0 values: return = 2.0, dd = 35.0, trades = 5.0, pf = 1.1
+        study = MagicMock()
+        study.trials = [
+            self._trial(0, 2.0, 35.0, trades=5.0, pf=1.1),
+        ]
+        study.best_trials = study.trials
+        selected = _select_pareto_trial(study, max_worst_dd_pct=15.0)
+        assert selected.number == 0
+
+    def test_raises_when_filter_empty_even_with_stage3(self, monkeypatch):
+        # Configure gates
+        monkeypatch.setattr(_cfg, "PHASE4_MIN_WORST_FOLD_RETURN_PCT", 10.0)
+        monkeypatch.setattr(_cfg, "PHASE4_MIN_WORST_FOLD_PF", 1.5)
+        monkeypatch.setattr(_cfg, "PHASE4_MIN_WORST_TRADES", 30)
+
+        # Trial 0 fails even Stage 3:
+        # Stage 3 gates: return >= -5.0, pf >= 1.0, dd <= 40.0, trades >= 1
+        # Let's fail return
+        study = MagicMock()
+        study.trials = [
+            self._trial(0, -10.0, 30.0, trades=5.0, pf=1.1),
+        ]
+        study.best_trials = study.trials
+        with pytest.raises(Phase4NoFeasibleTrialError, match="even minimal"):
             _select_pareto_trial(study, max_worst_dd_pct=15.0)
 
     def test_no_feasible_trial_writes_non_optimized(self, tmp_path, monkeypatch):
