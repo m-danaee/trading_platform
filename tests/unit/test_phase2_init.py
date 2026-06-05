@@ -9,7 +9,6 @@ from gpu_fuzzy_trader.phases.phase2_init import (
     assign_strata_to_indices,
     build_feature_sampling_probs,
     pick_active_count,
-    regime_gene_indices,
     repair_active_count,
     sample_sparse_chromosome,
 )
@@ -35,13 +34,6 @@ class TestPhase2InitHelpers:
         assert p.shape == (3,)
         assert abs(p.sum() - 1.0) < 1e-9
         assert p[0] > p[1] > p[2]
-
-    def test_regime_gene_indices_empty_in_regression_mode(self):
-        fi = _feature_infos_with_scores([
-            ("amihud_illiquidity_20", 0.2),
-            ("rsi_centered_14", 0.1),
-        ])
-        assert regime_gene_indices(fi) == []
 
     def test_pick_active_count_in_bounds(self):
         rng = np.random.default_rng(0)
@@ -69,31 +61,24 @@ class TestStratifiedInitPopulation:
             active = _count_active_conditions(row, dc)
             assert _cfg.MIN_CONDITIONS <= active <= _cfg.MAX_CONDITIONS
 
-    def test_regime_stratum_extreme_classes(self):
-        fi = [
-            {
-                "name": "amihud_illiquidity_20",
-                "mode": "positive",
-                "score": 0.5,
-            },
-            {"name": "rsi_centered_14", "mode": "positive", "score": 0.1},
-            {"name": "bb_width_rel_20", "mode": "positive", "score": 0.05},
-            {"name": "channel_pos_20", "mode": "positive", "score": 0.02},
-        ]
+    def test_elite_stratum_uses_feature_probs(self):
+        fi = _feature_infos_with_scores([
+            ("high_score", 1.0),
+            ("low_score", 0.01),
+            ("mid_score", 0.1),
+            ("tiny_score", 0.001),
+        ])
         dont_cares = _get_dont_cares(fi)
         probs = build_feature_sampling_probs(fi)
-        # explicit regime slot (regression mode has none by default)
-        regime_idx = [0]
         rng = np.random.default_rng(0)
-        found_extreme = False
-        for _ in range(100):
+        active_counts: list[int] = []
+        for _ in range(50):
             chrom = sample_sparse_chromosome(
-                rng, fi, dont_cares, 4, "regime", probs, regime_idx,
+                rng, fi, dont_cares, 3, "elite", probs,
             )
-            for idx in regime_idx:
-                if chrom[idx] in (0, int(dont_cares[idx]) - 1):
-                    found_extreme = True
-        assert found_extreme
+            active_counts.append(_count_active_conditions(chrom, dont_cares))
+        assert all(_cfg.MIN_CONDITIONS <= c <=
+                   _cfg.MAX_CONDITIONS for c in active_counts)
 
     def test_repair_active_count(self):
         fi = _feature_infos_with_scores([("a", 1.0), ("b", 0.5), ("c", 0.1)])
@@ -110,14 +95,13 @@ class TestStratifiedInitPopulation:
             repaired, dont_cares,
         ) <= _cfg.MAX_CONDITIONS
 
-    def test_assign_strata_no_regime_merges_to_elite(self):
-        fi = _feature_infos_with_scores([("a", 1.0), ("b", 0.5)])
+    def test_assign_strata_elite_and_explorer_only(self):
         indices = np.arange(10)
         rng = np.random.default_rng(0)
         labels = assign_strata_to_indices(
-            indices, (0.5, 0.3, 0.2), [], rng,
+            indices, (0.67, 0.33), rng,
         )
-        assert "regime" not in labels
+        assert set(labels) <= {"elite", "explorer"}
         assert labels.count("elite") + labels.count("explorer") == 10
 
 

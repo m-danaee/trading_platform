@@ -628,7 +628,6 @@ def _run_nsga2_fallback(
     regime_row_fractions: np.ndarray | None = None,
     val_regime_row_counts: np.ndarray | None = None,
     feature_probs: np.ndarray | None = None,
-    regime_gene_indices: list[int] | None = None,
     init_strategy: str | None = None,
     stratum_fractions: tuple[float, float, float] | None = None,
 ) -> tuple[list[dict], list[dict]]:
@@ -653,7 +652,6 @@ def _run_nsga2_fallback(
         init_strategy=init_strategy,
         stratum_fractions=stratum_fractions,
         feature_probs=feature_probs,
-        regime_gene_indices=regime_gene_indices,
     )
     objectives = np.full((pop_size, 3), np.inf)
     metrics_cache: list[dict] = [{} for _ in range(pop_size)]
@@ -806,7 +804,6 @@ def _run_nsga3(
     regime_row_fractions: np.ndarray | None = None,
     val_regime_row_counts: np.ndarray | None = None,
     feature_probs: np.ndarray | None = None,
-    regime_gene_indices: list[int] | None = None,
     init_strategy: str | None = None,
     stratum_fractions: tuple[float, float, float] | None = None,
 ) -> tuple[list[dict], list[dict]]:
@@ -830,7 +827,6 @@ def _run_nsga3(
         init_strategy=init_strategy,
         stratum_fractions=stratum_fractions,
         feature_probs=feature_probs,
-        regime_gene_indices=regime_gene_indices,
     )
     objectives = np.full((pop_size, 3), np.inf)
     metrics_cache: list[dict] = [{} for _ in range(pop_size)]
