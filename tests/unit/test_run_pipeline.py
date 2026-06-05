@@ -400,8 +400,8 @@ class TestLoadAndSplitDataCache:
         val_df = _make_df(n_rows=40)
 
         csv_path = tmp_path / "train.csv"
-        train_path = tmp_path / "train_75.parquet"
-        val_path = tmp_path / "validation_25.parquet"
+        train_path = tmp_path / "train_70.parquet"
+        val_path = tmp_path / "validation_30.parquet"
 
         _make_df(n_rows=120).to_csv(csv_path, index=False)
         train_df.to_parquet(train_path, index=False)
@@ -413,8 +413,9 @@ class TestLoadAndSplitDataCache:
         os.utime(val_path, (now, now))
 
         monkeypatch.setattr(_cfg, "TRAIN_CSV_PATH", str(csv_path))
-        monkeypatch.setattr(_cfg, "TRAIN_75_PATH", str(train_path))
-        monkeypatch.setattr(_cfg, "VALIDATION_25_PATH", str(val_path))
+        monkeypatch.setattr(_cfg, "TRAIN_70_PATH", str(train_path))
+        monkeypatch.setattr(_cfg, "VALIDATION_30_PATH", str(val_path))
+        monkeypatch.setattr(_cfg, "SPLIT_MODE", "holdout_70_30")
 
         with patch("gpu_fuzzy_trader.run_pipeline.Data_Loader.load_dataset") as load_mock, \
                 patch("gpu_fuzzy_trader.run_pipeline.Data_Splitter.split_and_persist") as split_mock:
@@ -449,12 +450,13 @@ class TestLoadAndSplitDataCache:
         csv_path.write_text(_make_df(n_rows=120).to_csv(
             index=False), encoding="utf-8")
 
-        train_path = tmp_path / "train_75.parquet"
-        val_path = tmp_path / "validation_25.parquet"
+        train_path = tmp_path / "train_70.parquet"
+        val_path = tmp_path / "validation_30.parquet"
 
         monkeypatch.setattr(_cfg, "TRAIN_CSV_PATH", str(csv_path))
-        monkeypatch.setattr(_cfg, "TRAIN_75_PATH", str(train_path))
-        monkeypatch.setattr(_cfg, "VALIDATION_25_PATH", str(val_path))
+        monkeypatch.setattr(_cfg, "TRAIN_70_PATH", str(train_path))
+        monkeypatch.setattr(_cfg, "VALIDATION_30_PATH", str(val_path))
+        monkeypatch.setattr(_cfg, "SPLIT_MODE", "holdout_70_30")
 
         with patch("gpu_fuzzy_trader.run_pipeline.Data_Loader.load_dataset", return_value=train_df) as load_mock, \
                 patch("gpu_fuzzy_trader.run_pipeline.Data_Splitter.split_and_persist", return_value=(train_df, val_df, [])) as split_mock:

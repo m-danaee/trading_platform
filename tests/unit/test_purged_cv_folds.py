@@ -111,8 +111,8 @@ class TestSplitterPurgedMode:
 
         import gpu_fuzzy_trader.data.splitter as splitter_mod
 
-        splitter_mod.TRAIN_75_PATH = str(tmp_path / "train_75.parquet")
-        splitter_mod.VALIDATION_25_PATH = str(tmp_path / "val_25.parquet")
+        splitter_mod.TRAIN_70_PATH = str(tmp_path / "train_70.parquet")
+        splitter_mod.VALIDATION_30_PATH = str(tmp_path / "val_30.parquet")
         splitter_mod.CV_FOLDS_MANIFEST_PATH = str(tmp_path / "manifest.json")
 
         df = _make_symbol_df(2500)
