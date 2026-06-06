@@ -200,7 +200,7 @@ PHASE1_REGIME_MODEL_PATH = os.path.join(
 # Reduced 701_500→350_000: with CV_N_FOLDS=5 and PHASE2_CV_FOLD_WORKERS=2,
 # the peak GPU allocation was 8.26 GiB (OOM). Halving the row budget is the
 # single largest lever — GPU memory scales linearly with this value.
-PHASE1_SAMPLING_TOTAL = 701_000
+PHASE1_SAMPLING_TOTAL = 300_000
 
 # Chromosomes per GPU vmap chunk in Phase 2 simulate_rule_batch.
 # Peak VRAM scales ~linearly with this value (rule matching is O(B×N×K)).
@@ -231,9 +231,9 @@ MIN_CONDITIONS = 3
 MAX_CONDITIONS = 4
 
 # --- Trade support & pool admission ---
-MIN_TRADE_SUPPORT = 150  # target executed trades for support penalty
+MIN_TRADE_SUPPORT = 100  # target executed trades for support penalty
 SUPPORT_PENALTY_MAX = 12.0
-MIN_TRADE_POOL_FLOOR = 50  # hard reject below this in archive
+MIN_TRADE_POOL_FLOOR = 40  # hard reject below this in archive
 PHASE2_SUPPORT_PENALTY_WEIGHT_F1 = 0.8  # Sortino objective
 PHASE2_SUPPORT_PENALTY_WEIGHT_F2 = 0.6  # drawdown objective
 PHASE2_SUPPORT_PENALTY_WEIGHT_F3 = 0.5  # win-rate objective
@@ -263,11 +263,11 @@ PHASE2_POOL_VAL_RETURN_MIN_PCT = 0.0
 # giving Phase 3 only ~165 combos to search. 1-of-3 (rank-admit level) lets more
 # rules through; Phase 3 applies its own stricter quality gates on top.
 PHASE2_CV_POOL_MIN_FOLDS_PASS = 1
-PHASE2_CV_MIN_TRADE_POOL_FLOOR = 25
+PHASE2_CV_MIN_TRADE_POOL_FLOOR = 15
 PHASE2_CV_POOL_TRAIN_RETURN_MIN_PCT = 0.0
 PHASE2_CV_POOL_VAL_RETURN_MIN_PCT = 0.0
 PHASE2_CV_PROFIT_FACTOR_FLOOR = 1.0
-PHASE2_CV_MIN_VAL_TRADES = 12
+PHASE2_CV_MIN_VAL_TRADES = 8
 # Rank fallback: raised targets to fill a larger pool when strict gates fire.
 PHASE2_CV_POOL_TARGET_MIN = 40
 PHASE2_CV_POOL_RANK_ADMIT_TOP_K = 80
@@ -300,14 +300,14 @@ PHASE2_EARLY_STOP_DISABLED_IN_CV = False  # enable early stop in purged CV mode
 # Capped at 2 (was 0=auto=5): with 5 folds each running a GPU backtest in
 # parallel the peak VRAM demand was 5× a single fold. 2 workers keeps peak
 # usage to ~2× while still providing meaningful parallelism.
-PHASE2_CV_FOLD_WORKERS = 4
+PHASE2_CV_FOLD_WORKERS = 6
 
 # --- NSGA-III budget ---
 # Population reduced 600→400: with 350k sampling rows and 2 parallel fold
 # workers the per-generation GPU allocation must fit in available VRAM.
 # 400 still provides strong diversity (previous successful run used 450).
-PHASE2_POPULATION_SIZE = 400
-PHASE2_GENERATIONS = 100
+PHASE2_POPULATION_SIZE = 350
+PHASE2_GENERATIONS = 80
 PHASE2_ALGORITHM = "NSGA3"
 # Archive adjusted to match new population size.
 PHASE2_ARCHIVE_MAX_SIZE = 400
