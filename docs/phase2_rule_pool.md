@@ -230,7 +230,7 @@ At default settings, Phase 2 performs approximately 2 × 400 × 100 = 80,000 chr
 
 | Parameter | Default | Effect |
 | --- | --- | --- |
-| `PHASE2_SCAN_UNROLL` | `16` | `lax.scan` unroll steps — higher fuses more bar iterations (fewer kernel launches). |
+| `PHASE2_SCAN_UNROLL` | `32` | `lax.scan` unroll steps — higher fuses more bar iterations (fewer kernel launches). |
 | `PHASE2_GPU_BATCH_SIZE` | `32` | Chromosomes per GPU chunk; auto-tuned by VRAM via `_gpu_runtime` (4050 → 16, T4 → 32). |
 | `PHASE1_SAMPLING_TOTAL` | `701_000` | Row budget — primary VRAM knob; use `350_000` on 8 GiB GPUs if OOM. |
 
