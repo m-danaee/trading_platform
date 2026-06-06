@@ -100,8 +100,8 @@ When `SPLIT_MODE == "holdout_75_25"`, behaviour is unchanged: one train engine (
 During Phase 2, all rules are evaluated with fixed risk parameters:
 
 - `PHASE2_TP = 2.0` (%)
-- `PHASE2_SL = 1.5` (%)
-- `PHASE2_CAPITAL_PCT = 32.0` (%)
+- `PHASE2_SL = 1.0` (%)
+- `PHASE2_CAPITAL_PCT = 30.0` (%)
 
 **Why fixed?** Phase 2 is searching for rules with predictive alpha — the ability to identify market conditions that precede favorable price moves. By fixing TP/SL/capital, the search isolates rule quality from risk parameter tuning. Phase 4 handles risk optimization separately.
 
@@ -117,7 +117,7 @@ some penalties are scaled per-objective (notably the support penalty via
 
 ### Support penalty — `trade_support_penalty`
 
-If `executed_trades < MIN_TRADE_SUPPORT` (default: 200), a graduated penalty is applied:
+If `executed_trades < MIN_TRADE_SUPPORT` (default: 150), a graduated penalty is applied:
 
 ```python
 if executed < MIN_TRADE_POOL_FLOOR:
@@ -155,7 +155,7 @@ The per-regime threshold scales with both the regime's row fraction and the rule
 
 ### Diversity penalty — `PHASE2_DIVERSITY_HAMMING_THRESHOLD` / `PHASE2_DIVERSITY_PENALTY`
 
-If a chromosome's Hamming distance to the nearest Pareto-front member is ≤ `PHASE2_DIVERSITY_HAMMING_THRESHOLD` (default: 2), it receives a `PHASE2_DIVERSITY_PENALTY` (default: 5.0) on all objectives.
+If a chromosome's Hamming distance to the nearest Pareto-front member is ≤ `PHASE2_DIVERSITY_HAMMING_THRESHOLD` (default: 3), it receives a `PHASE2_DIVERSITY_PENALTY` (default: 6.0) on all objectives.
 
 **Why?** Without this, the Pareto front tends to cluster around a few high-performing chromosomes with minor variations. The diversity penalty encourages the search to explore different regions of the chromosome space.
 
@@ -181,8 +181,8 @@ backtests.
 
 Default strategy (`PHASE2_INIT_STRATEGY = "stratified_sparse"`):
 
-1. `PHASE2_ARCHIVE_SEED_FRACTION = 0.35` of slots are filled from the cross-run archive (unchanged).
-2. Each remaining individual picks `k` uniformly in `[MIN_CONDITIONS, MAX_CONDITIONS]`, starts with all genes at `dont_care`, then activates exactly `k` genes via one of three strata (fractions from `PHASE2_INIT_STRATUM_FRACTIONS`, default 50% / 30% / 20%):
+1. `PHASE2_ARCHIVE_SEED_FRACTION = 0.25` of slots are filled from the cross-run archive.
+2. Each remaining individual picks `k` uniformly in `[MIN_CONDITIONS, MAX_CONDITIONS]`, starts with all genes at `dont_care`, then activates exactly `k` genes via one of three strata (fractions from `PHASE2_INIT_STRATUM_FRACTIONS`, default 67% / 33%):
    - **Elite:** feature indices sampled without replacement using softmax Phase 1 scores (`PHASE2_INIT_SOFTMAX_TEMP`, with `PHASE2_INIT_UNIFORM_MIX` floor).
    - **Explorer:** uniform feature sampling.
    - **Regime specialist (disabled in regression mode):** this stratum is deactivated because regime features are not directly selected. The regime share automatically falls back to elites.
@@ -219,18 +219,26 @@ Das-Dennis style reference vectors are generated using EvoX's `uniform_sampling`
 
 | Parameter                | Default | Effect                                                                                                                                                       |
 | ------------------------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `PHASE2_POPULATION_SIZE` | `200`   | Number of chromosomes per generation. Increasing improves Pareto front coverage but linearly increases compute time per generation.                          |
-| `PHASE2_GENERATIONS`     | `200`   | Number of generations. Increasing allows more evolution but with diminishing returns after convergence. Total evaluations ≈ `POPULATION_SIZE × GENERATIONS`. |
+| `PHASE2_POPULATION_SIZE` | `400`   | Number of chromosomes per generation. Increasing improves Pareto front coverage but linearly increases compute time per generation.                          |
+| `PHASE2_GENERATIONS`     | `100`   | Number of generations. Increasing allows more evolution but with diminishing returns after convergence. Total evaluations ≈ `2 × POPULATION_SIZE × GENERATIONS` (pop + offspring per gen). |
 
-At default settings, Phase 2 performs approximately 200 × 200 = 40,000 chromosome evaluations per direction. Each evaluation is a full backtest simulation.
+At default settings, Phase 2 performs approximately 2 × 400 × 100 = 80,000 chromosome evaluations per direction (before early stop). Each evaluation is a full GPU backtest simulation.
 
-**Compute cost:** With the GPU engine (JAX), evaluations are batched and run in parallel on the GPU. With the CPU engine, evaluations are sequential. The GPU engine is roughly 10–100× faster depending on hardware.
+**Compute cost:** With the GPU engine (JAX), evaluations are batched via `simulate_rule_batch`. The batch path uses a **simplified equity model** for fast ranking during search; Phases 3–5 and `evaluator_v3.ipynb` use the CPU engine for ground-truth metrics.
+
+**GPU performance knobs:**
+
+| Parameter | Default | Effect |
+| --- | --- | --- |
+| `PHASE2_SCAN_UNROLL` | `16` | `lax.scan` unroll steps — higher fuses more bar iterations (fewer kernel launches). |
+| `PHASE2_GPU_BATCH_SIZE` | `32` | Chromosomes per GPU chunk; auto-tuned by VRAM via `_gpu_runtime` (4050 → 16, T4 → 32). |
+| `PHASE1_SAMPLING_TOTAL` | `701_000` | Row budget — primary VRAM knob; use `350_000` on 8 GiB GPUs if OOM. |
 
 ---
 
 ## 7. Data Sampling — `_sample_df`
 
-Phase 2 does not use the full training dataset. Instead, it draws a random sample of up to `PHASE1_SAMPLING_TOTAL = 600_000` rows, distributed equally across symbols:
+Phase 2 does not use the full training dataset. Instead, it draws a random sample of up to `PHASE1_SAMPLING_TOTAL = 701_000` rows, distributed equally across symbols:
 
 ```python
 rows_per_sym = max(1, total_rows // n_sym)
@@ -240,7 +248,9 @@ rows_per_sym = max(1, total_rows // n_sym)
 
 The subset is re-drawn on each run, so repeated runs can explore different slices of the data while keeping the per-symbol balance.
 
-**Effect of `PHASE1_SAMPLING_TOTAL`:** This is the primary GPU memory knob. Increasing it improves the statistical reliability of fitness evaluations but increases VRAM usage roughly linearly. On a 16GB GPU, 600,000 rows with ~100 features uses approximately 4–6GB. Decrease to 150,000–300,000 if you encounter OOM errors.
+**Effect of `PHASE1_SAMPLING_TOTAL`:** This is the primary GPU memory knob. Increasing it improves the statistical reliability of fitness evaluations but increases VRAM usage roughly linearly. On an 8 GiB GPU (RTX 4050), use `350_000` if OOM occurs with purged CV + joint val. On Colab T4 (~16 GiB), `701_000` is the current default.
+
+**JAX install:** Use default PyPI with matching plugin versions (`jaxlib==0.10.1`). Colab T4: `pip install -U "jax[cuda12]==0.10.1"`. Local WSL (CUDA 13 / RTX 4050): `pip install -r requirements-gpu.txt`. Mismatched `jax-cuda*_plugin` / `jaxlib` versions disable the CUDA plugin and slow Phase 2.
 
 ---
 

@@ -1,0 +1,9 @@
+# GPU JAX stack — install AFTER requirements.txt on NVIDIA hardware.
+# Use default PyPI (https://pypi.org/simple/). Plugin versions must match jaxlib.
+#
+# Colab T4 / cloud CUDA 12:
+#   pip install -U "jax[cuda12]==0.10.1"
+#
+# Local WSL/Linux with CUDA 13 driver (e.g. RTX 4050):
+jax-cuda13-plugin==0.10.1
+jax-cuda13-pjrt==0.10.1

@@ -2,8 +2,12 @@
 # Install from project root:
 #   pip install -r requirements.txt
 #
-# JAX note: for NVIDIA GPU, install jax/jaxlib per https://jax.readthedocs.io/en/latest/installation.html
-# instead of the generic jaxlib wheels below.
+# JAX: generic CPU wheels below. For Phase 2 GPU backtests on NVIDIA hardware,
+# install a matching CUDA build AFTER this file (plugin versions must align):
+#   pip install -r requirements-gpu.txt
+# Colab T4:  pip install -U "jax[cuda12]==0.10.1"
+# Local WSL (CUDA 13 / RTX 4050): pip install -r requirements-gpu.txt
+# See https://jax.readthedocs.io/en/latest/installation.html
 
 # --- Core (required) ---
 pandas>=2.0

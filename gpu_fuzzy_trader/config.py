@@ -9,7 +9,8 @@ Docs (per-phase behaviour and formulas):
 Quick tuning map
 ----------------
   Generalization (short OOS failures)  → SPLIT_MODE, CV_*, PHASE3_* gates, PHASE2_JOINT_TRAIN_VAL
-  GPU RAM                              → PHASE1_SAMPLING_TOTAL, PHASE2_GPU_BATCH_SIZE, PHASE2_POPULATION_SIZE
+  GPU RAM                              → PHASE1_SAMPLING_TOTAL, PHASE2_GPU_BATCH_SIZE, PHASE2_SCAN_UNROLL
+  Phase 2 GPU perf                     → PHASE2_SCAN_UNROLL (lax.scan unroll), PHASE2_GPU_BATCH_SIZE
   Search budget                        → PHASE2_GENERATIONS, PHASE3_REFINE_*, PHASE4_N_TRIALS
   Trade frequency / support            → MIN_TRADE_SUPPORT, MIN_CONDITIONS, MAX_CONDITIONS
   Risk after rules are fixed           → PHASE4_TP_*, PHASE4_SL_*, PHASE4_CAPITAL_*
@@ -203,8 +204,15 @@ PHASE1_SAMPLING_TOTAL = 701_000
 
 # Chromosomes per GPU vmap chunk in Phase 2 simulate_rule_batch.
 # Peak VRAM scales ~linearly with this value (rule matching is O(B×N×K)).
-# Reduce to 16–32 on 8–12 GB GPUs; raise toward 64–128 on 24 GB+.
+# Auto-tuned at runtime via gpu_fuzzy_trader._gpu_runtime.resolve_phase2_gpu_batch_size:
+#   RTX 4050 (~8 GiB): 16 | Colab T4 (~16 GiB): 32 | override: PHASE2_GPU_BATCH_SIZE env
+# Disable auto: PHASE2_GPU_BATCH_SIZE_AUTO=false
 PHASE2_GPU_BATCH_SIZE = 32
+
+# lax.scan unroll for equity simulation (JAX GPU perf knob).
+# Higher values fuse more scan steps → fewer kernel launches, longer XLA compile.
+# Start at 16; try 32–64 on T4 if VRAM allows. Lower to 8 on 8 GiB GPUs if OOM.
+PHASE2_SCAN_UNROLL = 16
 
 
 # =============================================================================

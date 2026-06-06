@@ -2,17 +2,20 @@
 gpu_engine.py — GPUBacktestEngine
 
 JAX-accelerated backtest engine for Phase 2 rule pool generation.
-Produces numerically equivalent results to CPUBacktestEngine within 1e-4
-relative tolerance.
 
 Primary use: evaluate batches of chromosome-encoded rules during evolutionary
-search (simulate_rule_batch). Compatibility interface (simulate_rule_set)
-delegates to CPUBacktestEngine.
+search (``simulate_rule_batch``). This path uses a simplified sequential
+equity model (vmap + ``lax.scan``) optimized for GPU throughput. It is an
+**approximate ranking model** for evolution — final strategies are validated
+on ``CPUBacktestEngine`` / ``evaluator_v3.ipynb``.
+
+Compatibility interface (``simulate_rule_set``) delegates to CPUBacktestEngine.
 
 Performance notes:
-  - Rule matching is vectorized per chunk (PHASE2_GPU_BATCH_SIZE chromosomes).
-  - Trade outcomes are computed once for all N rows and cached.
-  - Equity simulation uses vmap'd jax.lax.scan per chunk on GPU.
+  - Rule matching is vectorized per chunk (VRAM-aware batch size).
+  - Trade outcomes are computed once for all N rows and cached on GPU.
+  - Equity simulation uses vmap'd ``lax.scan`` with ``PHASE2_SCAN_UNROLL``.
+  - Chromosome batches are uploaded to GPU once per evaluation call.
   - Open-exposure slots are sized by max_exposure/capital (not hold window).
 """
 
@@ -374,7 +377,8 @@ def _jax_simulate_equity_batch(
             )
             return new_carry, None
 
-        final_carry, _ = lax.scan(step, init_carry, scan_xs)
+        final_carry, _ = lax.scan(
+            step, init_carry, scan_xs, unroll=_cfg.PHASE2_SCAN_UNROLL)
 
         (equity, peak_equity, max_dd, _open_exp,
          wins, losses, gross_profit, gross_loss,
@@ -579,7 +583,8 @@ def _jax_simulate_equity_batch_regime(
             )
             return new_carry, None
 
-        final_carry, _ = lax.scan(step, init_carry, scan_xs)
+        final_carry, _ = lax.scan(
+            step, init_carry, scan_xs, unroll=_cfg.PHASE2_SCAN_UNROLL)
 
         (equity, peak_equity, max_dd, _open_exp,
          wins, losses, gross_profit, gross_loss,
@@ -692,9 +697,8 @@ def _batch_metrics_from_array(
 class GPUBacktestEngine:
     """JAX-accelerated backtest engine for Phase 2 rule pool generation.
 
-    Performance: The entire batch of B chromosomes is evaluated in a single
-    fused GPU kernel via vmap over the equity scan. Rule matching and trade
-    outcome computation are also fully batched.
+    ``simulate_rule_batch`` ranks chromosomes on GPU using a simplified equity
+    model. Use ``simulate_rule_set`` (CPU) for ground-truth evaluation.
     """
 
     def __init__(
@@ -937,13 +941,15 @@ class GPUBacktestEngine:
                 f"Chromosome width {K} does not match engine feature "
                 f"count {expected_k}.")
 
+        from gpu_fuzzy_trader._gpu_runtime import resolve_phase2_gpu_batch_size
+
         capital_rate = capital_pct / 100.0
         max_exposure_rate = self.max_total_exposure_pct / 100.0
         N = len(self.df)
-        chunk_size = max(1, int(_cfg.PHASE2_GPU_BATCH_SIZE))
+        chunk_size = max(1, resolve_phase2_gpu_batch_size())
         price_returns_all = self._get_trade_outcomes(tp, sl)
 
-        # Pad chromosomes to a multiple of chunk_size to avoid shape recompilation for the last chunk
+        # Pad chromosomes to a multiple of chunk_size to avoid shape recompilation.
         padding_len = (chunk_size - (B % chunk_size)) % chunk_size
         if padding_len > 0:
             pad_chroms = np.repeat(chromosomes[-1:], padding_len, axis=0)
@@ -952,6 +958,7 @@ class GPUBacktestEngine:
             chromosomes_padded = chromosomes
 
         B_padded = len(chromosomes_padded)
+        chromosomes_gpu = jnp.array(chromosomes_padded, dtype=jnp.int32)
         result_chunks: list[jnp.ndarray] = []
         regime_chunks: list[jnp.ndarray] = []
         has_regime = (
@@ -959,15 +966,14 @@ class GPUBacktestEngine:
 
         for start in range(0, B_padded, chunk_size):
             end = start + chunk_size
-            chroms_chunk = chromosomes_padded[start:end]
+            chroms_chunk = chromosomes_gpu[start:end]
 
             if K > 0 and self._data_matrix_jax.shape[1] > 0:
-                chroms_jax = jnp.array(chroms_chunk, dtype=jnp.int32)
                 signals_batch = _jax_compute_rule_signals_batch(
-                    self._data_matrix_jax, chroms_jax, self._dont_cares_jax)
+                    self._data_matrix_jax, chroms_chunk, self._dont_cares_jax)
             else:
                 signals_batch = jnp.zeros(
-                    (chunk_size, N), dtype=jnp.bool_)
+                    (end - start, N), dtype=jnp.bool_)
 
             results_jax, regime_jax = self._simulate_signals_batch(
                 signals_batch,
@@ -980,9 +986,14 @@ class GPUBacktestEngine:
             if has_regime and regime_jax is not None:
                 regime_chunks.append(regime_jax)
 
-        results_np = np.asarray(jnp.concatenate(result_chunks, axis=0)[:B])
-        regime_np = (
-            np.asarray(jnp.concatenate(regime_chunks, axis=0)[:B]) if regime_chunks else None)
+        results_concat = jnp.concatenate(result_chunks, axis=0)[:B]
+        results_concat = jax.block_until_ready(results_concat)
+        results_np = np.asarray(results_concat)
+        regime_np = None
+        if regime_chunks:
+            regime_concat = jax.block_until_ready(
+                jnp.concatenate(regime_chunks, axis=0)[:B])
+            regime_np = np.asarray(regime_concat)
         return _batch_metrics_from_array(
             results_np,
             self.trade_direction,
@@ -1123,7 +1134,8 @@ class GPUBacktestEngine:
             jnp.bool_(False),
             init_equity, jnp.float64(0.0),
         )
-        final_carry, _ = lax.scan(_scan_step, init_carry, net_pnls_jax)
+        final_carry, _ = lax.scan(
+            _scan_step, init_carry, net_pnls_jax, unroll=_cfg.PHASE2_SCAN_UNROLL)
         (final_equity, wins, losses, gross_profit, gross_loss,
          ruined, peak, max_dd) = final_carry
 

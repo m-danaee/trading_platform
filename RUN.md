@@ -31,6 +31,22 @@ source .venv/bin/activate   # Linux/macOS
 pip install -r requirements.txt
 ```
 
+**NVIDIA GPU (Phase 2 JAX backtests)** — install after `requirements.txt` using default PyPI. Plugin versions must match `jaxlib` (currently `0.10.1`):
+
+```bash
+# Local WSL / Linux with CUDA 13 driver (e.g. RTX 4050)
+pip install -r requirements-gpu.txt
+
+# Colab T4 (CUDA 12)
+pip install -U "jax[cuda12]==0.10.1"
+```
+
+Verify GPU backend:
+
+```bash
+python -c "import jax; print(jax.__version__, jax.default_backend(), jax.devices())"
+```
+
 **CPU-only minimum** (omit GPU/RL packages; Phase 2/4 use built-in fallbacks):
 
 ```bash
