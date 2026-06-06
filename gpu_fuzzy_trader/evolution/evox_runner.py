@@ -17,6 +17,7 @@ from gpu_fuzzy_trader.evolution.numba_ops import (
     non_dominated_sort,
 )
 
+import copy
 import logging
 import time
 
@@ -380,6 +381,129 @@ def _get_reference_vectors(
     return refs[:pop_size]
 
 
+def _assign_eval_result(
+    i: int,
+    chromosome: np.ndarray,
+    metrics: dict,
+    val_metrics: dict | None,
+    dont_cares: np.ndarray,
+    pareto_archive: list[np.ndarray],
+    objectives: np.ndarray,
+    metrics_cache: list[dict],
+    regime_row_fractions: np.ndarray | None,
+    val_regime_row_counts: np.ndarray | None,
+) -> None:
+    """Compute penalties/objectives from metrics; write objectives[i] and metrics_cache[i]."""
+    from gpu_fuzzy_trader.phases.phase2_rule_pool import _count_active_conditions
+    from gpu_fuzzy_trader.phases.phase2_rule_pool import _saturating_sortino
+    from gpu_fuzzy_trader.phases.phase2_support import (
+        compute_support_penalty_and_specialist,
+    )
+
+    active = _count_active_conditions(chromosome, dont_cares)
+    cond_penalty = 0.0
+    if active < _cfg.MIN_CONDITIONS:
+        cond_penalty = (_cfg.MIN_CONDITIONS - active) * 10.0
+    elif active > _cfg.MAX_CONDITIONS:
+        cond_penalty = (active - _cfg.MAX_CONDITIONS) * 10.0
+
+    raw_sortino = float(metrics.get(
+        "sortino_ratio", metrics.get("total_return_pct", 0.0)))
+    sortino_train = _saturating_sortino(raw_sortino)
+    max_dd = float(metrics.get("max_drawdown_pct", 100.0))
+    win_rate = float(metrics.get("win_rate", 0.0))
+
+    sortino_for_obj = sortino_train
+    if val_metrics is not None:
+        raw_val_sortino = float(val_metrics.get(
+            "sortino_ratio",
+            val_metrics.get("total_return_pct", 0.0),
+        ))
+        sortino_val = _saturating_sortino(raw_val_sortino)
+        val_executed = int(val_metrics.get("executed_trades", 0))
+        metrics["val_sortino_ratio"] = raw_val_sortino
+        metrics["val_executed_trades"] = val_executed
+        if val_executed < max(_cfg.MIN_TRADE_POOL_FLOOR // 4, 10):
+            sortino_for_obj = min(sortino_train, 0.0)
+        else:
+            sortino_for_obj = min(sortino_train, sortino_val)
+
+    support_penalty, is_specialist, dominant_regime = (
+        compute_support_penalty_and_specialist(
+            metrics,
+            regime_row_fractions,
+            val_metrics=val_metrics,
+            val_regime_row_counts=val_regime_row_counts,
+        )
+    )
+    if val_metrics is not None and int(
+        val_metrics.get("executed_trades", 0),
+    ) < max(_cfg.MIN_TRADE_POOL_FLOOR // 4, 10):
+        support_penalty = max(
+            support_penalty, _cfg.SUPPORT_PENALTY_MAX)
+        sortino_for_obj = min(sortino_train, 0.0)
+        is_specialist = False
+    if is_specialist:
+        metrics["regime_specialist"] = True
+        metrics["dominant_regime"] = dominant_regime
+
+    diversity_penalty = 0.0
+    if pareto_archive:
+        min_hamming = batch_hamming_min(chromosome, pareto_archive)
+        if min_hamming <= _cfg.PHASE2_DIVERSITY_HAMMING_THRESHOLD:
+            diversity_penalty = _cfg.PHASE2_DIVERSITY_PENALTY
+
+    executed = int(metrics.get("executed_trades", 0))
+    dd_val = max_dd
+    trade_floor = (
+        _cfg.PHASE2_CV_MIN_TRADE_POOL_FLOOR
+        if str(_cfg.SPLIT_MODE).strip().lower() == "purged_rolling_cv"
+        else _cfg.MIN_TRADE_POOL_FLOOR
+    )
+
+    if _cfg.PHASE2_USE_TOTAL_RETURN_OBJ:
+        f3_val = float(metrics.get("total_return_pct", 0.0))
+    else:
+        f3_val = win_rate
+
+    trade_penalty = 0.0
+    if executed < trade_floor:
+        dd_val = 100.0
+        sortino_for_obj = 0.0
+        f3_val = 0.0
+        trade_penalty = 50.0
+
+    pen = support_penalty + diversity_penalty + cond_penalty + trade_penalty
+
+    objectives[i] = np.array(
+        [-sortino_for_obj + pen, dd_val + pen, -f3_val + pen],
+        dtype=np.float64,
+    )
+    metrics_cache[i] = metrics
+
+
+def _store_global_metrics_cache(
+    global_metrics_cache: dict[tuple[int, ...], dict],
+    key: tuple[int, ...],
+    metrics: dict,
+    val_metrics: dict | None,
+) -> None:
+    """Store processed metrics (and optional val sidecar) in the run-wide cache."""
+    entry = copy.deepcopy(metrics)
+    if val_metrics is not None:
+        entry["_cached_val_metrics"] = copy.deepcopy(val_metrics)
+    global_metrics_cache[key] = entry
+
+
+def _load_global_metrics_cache(
+    cached: dict,
+) -> tuple[dict, dict | None]:
+    """Restore metrics and optional val_metrics from a cache entry."""
+    entry = copy.deepcopy(cached)
+    val_metrics = entry.pop("_cached_val_metrics", None)
+    return entry, val_metrics
+
+
 def _evaluate_population_indices(
     population: np.ndarray,
     indices: list[int],
@@ -391,36 +515,79 @@ def _evaluate_population_indices(
     val_engine=None,
     regime_row_fractions: np.ndarray | None = None,
     val_regime_row_counts: np.ndarray | None = None,
+    global_metrics_cache: dict[tuple[int, ...], dict] | None = None,
 ) -> None:
     """Evaluate unevaluated individuals, preferring batch simulate_rule_batch."""
     from gpu_fuzzy_trader.phases.phase2_rule_pool import (
         _evaluate_chromosome,
     )
+    from gpu_fuzzy_trader.phases.phase2_sparse_encoding import chromosome_key
 
     pending = [i for i in indices if np.any(np.isinf(objectives[i]))]
     if not pending:
         return
 
+    if regime_row_fractions is None:
+        regime_row_fractions = getattr(
+            engine, "_regime_row_fractions", None)
+    if val_regime_row_counts is None and val_engine is not None:
+        val_regime_row_counts = getattr(
+            val_engine, "_regime_row_counts", None)
+
+    gpu_pending: list[int] = []
+    cache_hits = 0
+    if _cfg.PHASE2_EVAL_GLOBAL_CACHE and global_metrics_cache is not None:
+        for i in pending:
+            key = chromosome_key(population[i])
+            if key in global_metrics_cache:
+                metrics, val_metrics = _load_global_metrics_cache(
+                    global_metrics_cache[key],
+                )
+                _assign_eval_result(
+                    i,
+                    population[i],
+                    metrics,
+                    val_metrics,
+                    dont_cares,
+                    pareto_archive,
+                    objectives,
+                    metrics_cache,
+                    regime_row_fractions,
+                    val_regime_row_counts,
+                )
+                cache_hits += 1
+            else:
+                gpu_pending.append(i)
+    else:
+        gpu_pending = list(pending)
+
+    if not gpu_pending:
+        if cache_hits:
+            logger.debug(
+                "Phase 2 eval: %d cache hits, 0 GPU pending",
+                cache_hits,
+            )
+        return
+
     try:
-        from gpu_fuzzy_trader import config as _cfg
-        from gpu_fuzzy_trader.phases.phase2_rule_pool import (
-            _count_active_conditions,
-            _saturating_sortino,
-        )
-        from gpu_fuzzy_trader.phases.phase2_support import (
-            compute_support_penalty_and_specialist,
-        )
+        if _cfg.PHASE2_EVAL_BATCH_DEDUP:
+            key_to_uj: dict[tuple[int, ...], int] = {}
+            unique_rows: list[np.ndarray] = []
+            for i in gpu_pending:
+                key = chromosome_key(population[i])
+                if key not in key_to_uj:
+                    key_to_uj[key] = len(unique_rows)
+                    unique_rows.append(population[i])
+            unique_chroms = np.stack(unique_rows, axis=0)
+        else:
+            key_to_uj = {
+                chromosome_key(population[i]): j
+                for j, i in enumerate(gpu_pending)
+            }
+            unique_chroms = population[gpu_pending]
 
-        if regime_row_fractions is None:
-            regime_row_fractions = getattr(
-                engine, "_regime_row_fractions", None)
-        if val_regime_row_counts is None and val_engine is not None:
-            val_regime_row_counts = getattr(
-                val_engine, "_regime_row_counts", None)
-
-        chroms = population[pending]
         metrics_list = engine.simulate_rule_batch(
-            chromosomes=chroms,
+            chromosomes=unique_chroms,
             tp=_cfg.PHASE2_TP,
             sl=_cfg.PHASE2_SL,
             capital_pct=_cfg.PHASE2_CAPITAL_PCT,
@@ -430,7 +597,7 @@ def _evaluate_population_indices(
         if val_engine is not None and _cfg.PHASE2_JOINT_TRAIN_VAL:
             try:
                 val_metrics_list = val_engine.simulate_rule_batch(
-                    chromosomes=chroms,
+                    chromosomes=unique_chroms,
                     tp=_cfg.PHASE2_TP,
                     sl=_cfg.PHASE2_SL,
                     capital_pct=_cfg.PHASE2_CAPITAL_PCT,
@@ -442,92 +609,45 @@ def _evaluate_population_indices(
                 )
                 val_metrics_list = None
 
-        for j, i in enumerate(pending):
-            chromosome = population[i]
-            metrics = metrics_list[j]
-            active = _count_active_conditions(chromosome, dont_cares)
-            cond_penalty = 0.0
-            if active < _cfg.MIN_CONDITIONS:
-                cond_penalty = (_cfg.MIN_CONDITIONS - active) * 10.0
-            elif active > _cfg.MAX_CONDITIONS:
-                cond_penalty = (active - _cfg.MAX_CONDITIONS) * 10.0
+        unique_count = len(unique_chroms)
+        logger.debug(
+            "Phase 2 eval: %d cache hits, %d GPU pending, %d unique chromosomes",
+            cache_hits,
+            len(gpu_pending),
+            unique_count,
+        )
 
-            raw_sortino = float(metrics.get(
-                "sortino_ratio", metrics.get("total_return_pct", 0.0)))
-            sortino_train = _saturating_sortino(raw_sortino)
-            max_dd = float(metrics.get("max_drawdown_pct", 100.0))
-            win_rate = float(metrics.get("win_rate", 0.0))
-
+        for i in gpu_pending:
+            key = chromosome_key(population[i])
+            uj = key_to_uj[key]
+            metrics = copy.deepcopy(metrics_list[uj])
             val_metrics = None
-            sortino_for_obj = sortino_train
             if val_metrics_list is not None:
-                val_metrics = val_metrics_list[j]
-                raw_val_sortino = float(val_metrics.get(
-                    "sortino_ratio",
-                    val_metrics.get("total_return_pct", 0.0),
-                ))
-                sortino_val = _saturating_sortino(raw_val_sortino)
-                val_executed = int(val_metrics.get("executed_trades", 0))
-                metrics["val_sortino_ratio"] = raw_val_sortino
-                metrics["val_executed_trades"] = val_executed
-                if val_executed < max(_cfg.MIN_TRADE_POOL_FLOOR // 4, 10):
-                    sortino_for_obj = min(sortino_train, 0.0)
-                else:
-                    sortino_for_obj = min(sortino_train, sortino_val)
+                val_metrics = copy.deepcopy(val_metrics_list[uj])
 
-            support_penalty, is_specialist, dominant_regime = (
-                compute_support_penalty_and_specialist(
-                    metrics,
-                    regime_row_fractions,
-                    val_metrics=val_metrics,
-                    val_regime_row_counts=val_regime_row_counts,
+            _assign_eval_result(
+                i,
+                population[i],
+                metrics,
+                val_metrics,
+                dont_cares,
+                pareto_archive,
+                objectives,
+                metrics_cache,
+                regime_row_fractions,
+                val_regime_row_counts,
+            )
+
+            if _cfg.PHASE2_EVAL_GLOBAL_CACHE and global_metrics_cache is not None:
+                _store_global_metrics_cache(
+                    global_metrics_cache,
+                    key,
+                    metrics_cache[i],
+                    val_metrics,
                 )
-            )
-            if val_metrics is not None and int(
-                val_metrics.get("executed_trades", 0),
-            ) < max(_cfg.MIN_TRADE_POOL_FLOOR // 4, 10):
-                support_penalty = max(
-                    support_penalty, _cfg.SUPPORT_PENALTY_MAX)
-                sortino_for_obj = min(sortino_train, 0.0)
-                is_specialist = False
-            if is_specialist:
-                metrics["regime_specialist"] = True
-                metrics["dominant_regime"] = dominant_regime
-
-            # Vectorized min-Hamming against pareto archive
-            diversity_penalty = 0.0
-            if pareto_archive:
-                min_hamming = batch_hamming_min(chromosome, pareto_archive)
-                if min_hamming <= _cfg.PHASE2_DIVERSITY_HAMMING_THRESHOLD:
-                    diversity_penalty = _cfg.PHASE2_DIVERSITY_PENALTY
-
-            executed = int(metrics.get("executed_trades", 0))
-            dd_val = max_dd
-            trade_floor = _cfg.PHASE2_CV_MIN_TRADE_POOL_FLOOR if str(_cfg.SPLIT_MODE).strip().lower() == "purged_rolling_cv" else _cfg.MIN_TRADE_POOL_FLOOR
-            
-            if _cfg.PHASE2_USE_TOTAL_RETURN_OBJ:
-                f3_val = float(metrics.get("total_return_pct", 0.0))
-            else:
-                f3_val = win_rate
-
-            # Local trade penalty to add to objectives
-            trade_penalty = 0.0
-            if executed < trade_floor:
-                dd_val = 100.0
-                sortino_for_obj = 0.0
-                f3_val = 0.0
-                trade_penalty = 50.0  # Dominating penalty
-
-            pen = support_penalty + diversity_penalty + cond_penalty + trade_penalty
-
-            objectives[i] = np.array(
-                [-sortino_for_obj + pen, dd_val + pen, -f3_val + pen],
-                dtype=np.float64,
-            )
-            metrics_cache[i] = metrics
     except Exception as exc:
         logger.debug("Batch eval failed, falling back to single: %s", exc)
-        for i in pending:
+        for i in gpu_pending:
             obj, metrics = _evaluate_chromosome(
                 population[i], dont_cares, engine, pareto_archive,
                 val_engine=val_engine,
@@ -536,6 +656,13 @@ def _evaluate_population_indices(
             )
             objectives[i] = obj
             metrics_cache[i] = metrics
+            if _cfg.PHASE2_EVAL_GLOBAL_CACHE and global_metrics_cache is not None:
+                _store_global_metrics_cache(
+                    global_metrics_cache,
+                    chromosome_key(population[i]),
+                    metrics,
+                    None,
+                )
 
 
 def _normalize_for_association(
@@ -850,6 +977,7 @@ def _run_nsga3(
     metrics_cache: list[dict] = [{} for _ in range(pop_size)]
     pareto_archive: list[np.ndarray] = []
     hall_of_fame: dict[tuple[int, ...], np.ndarray] = {}
+    global_metrics_cache: dict[tuple[int, ...], dict] = {}
     history: list[dict] = []
 
     ref_vec = _get_reference_vectors(pop_size, 3, rng)
@@ -870,6 +998,7 @@ def _run_nsga3(
             val_engine=val_engine,
             regime_row_fractions=regime_row_fractions,
             val_regime_row_counts=val_regime_row_counts,
+            global_metrics_cache=global_metrics_cache,
         )
 
         # Compute fronts once — reused for logging, offspring, and archive.
@@ -964,6 +1093,7 @@ def _run_nsga3(
             val_engine=val_engine,
             regime_row_fractions=regime_row_fractions,
             val_regime_row_counts=val_regime_row_counts,
+            global_metrics_cache=global_metrics_cache,
         )
 
         merge_pop = np.vstack([population, offspring])

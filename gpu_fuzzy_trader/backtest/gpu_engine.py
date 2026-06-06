@@ -655,6 +655,17 @@ def _jax_simulate_equity_batch_regime(
 # Batch result conversion (avoid per-row Python loops)
 # ---------------------------------------------------------------------------
 
+def _zero_signal_result_row(initial_capital: float) -> jnp.ndarray:
+    """10-element row matching _jax_simulate_equity_batch when no bars match."""
+    return jnp.array([
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+        float(initial_capital),
+        0.0,
+        0.0,
+        0.0,
+    ], dtype=jnp.float64)
+
+
 def _batch_metrics_from_array(
     results_np: np.ndarray,
     trade_direction: str,
@@ -1012,13 +1023,44 @@ class GPUBacktestEngine:
                 signals_batch = jnp.zeros(
                     (end - start, N), dtype=jnp.bool_)
 
-            results_jax, regime_jax = self._simulate_signals_batch(
-                signals_batch,
-                price_returns_all,
-                capital_rate,
-                max_exposure_rate,
-                N,
-            )
+            chunk_b = end - start
+            if _cfg.PHASE2_SKIP_ZERO_SIGNAL_SCAN:
+                signal_counts = jnp.sum(
+                    signals_batch.astype(jnp.int32), axis=1)
+                counts_np = np.asarray(signal_counts)
+                nonzero_idx = np.flatnonzero(counts_np > 0)
+                zero_idx = np.flatnonzero(counts_np == 0)
+
+                zero_row = _zero_signal_result_row(self.initial_capital)
+                results_jax = jnp.zeros((chunk_b, 10), dtype=jnp.float64)
+                if zero_idx.size:
+                    results_jax = results_jax.at[zero_idx].set(zero_row)
+
+                regime_jax = None
+                if has_regime:
+                    regime_jax = jnp.zeros(
+                        (chunk_b, self._n_regimes, 3), dtype=jnp.float64)
+
+                if nonzero_idx.size:
+                    sub_signals = signals_batch[nonzero_idx]
+                    sub_results, sub_regime = self._simulate_signals_batch(
+                        sub_signals,
+                        price_returns_all,
+                        capital_rate,
+                        max_exposure_rate,
+                        N,
+                    )
+                    results_jax = results_jax.at[nonzero_idx].set(sub_results)
+                    if has_regime and sub_regime is not None:
+                        regime_jax = regime_jax.at[nonzero_idx].set(sub_regime)
+            else:
+                results_jax, regime_jax = self._simulate_signals_batch(
+                    signals_batch,
+                    price_returns_all,
+                    capital_rate,
+                    max_exposure_rate,
+                    N,
+                )
             result_chunks.append(results_jax)
             if has_regime and regime_jax is not None:
                 regime_chunks.append(regime_jax)

@@ -246,4 +246,136 @@ def test_phase2_use_total_return_obj():
                 delattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ")
 
 
+def _default_eval_metrics(executed_trades: int = 25) -> dict:
+    return {
+        "executed_trades": executed_trades,
+        "sortino_ratio": 1.0,
+        "max_drawdown_pct": 2.0,
+        "win_rate": 50.0,
+        "total_return_pct": 1.0,
+    }
+
+
+class TestEvalOptimizations:
+    def test_batch_dedup_evaluates_unique_chromosomes_once(self):
+        call_sizes: list[int] = []
+
+        class CountingEngine:
+            def simulate_rule_batch(self, chromosomes, tp, sl, capital_pct):
+                call_sizes.append(chromosomes.shape[0])
+                return [
+                    _default_eval_metrics()
+                    for _ in range(chromosomes.shape[0])
+                ]
+
+        pop = np.array([[0, 1], [0, 1], [2, 3]], dtype=np.int32)
+        objectives = np.full((3, 3), np.inf)
+        metrics_cache: list[dict] = [{}, {}, {}]
+        dont_cares = np.array([2, 2], dtype=np.int32)
+
+        _evaluate_population_indices(
+            pop,
+            [0, 1, 2],
+            dont_cares,
+            CountingEngine(),
+            [],
+            objectives,
+            metrics_cache,
+            global_metrics_cache={},
+        )
+
+        assert call_sizes == [2]
+        assert not np.any(np.isinf(objectives))
+
+    def test_global_cache_skips_second_gpu_eval(self):
+        call_count = 0
+
+        class CountingEngine:
+            def simulate_rule_batch(self, chromosomes, tp, sl, capital_pct):
+                nonlocal call_count
+                call_count += 1
+                return [
+                    _default_eval_metrics()
+                    for _ in range(chromosomes.shape[0])
+                ]
+
+        pop = np.array([[1, 0], [1, 0]], dtype=np.int32)
+        dont_cares = np.array([2, 2], dtype=np.int32)
+        engine = CountingEngine()
+        global_cache: dict[tuple[int, ...], dict] = {}
+
+        objectives_first = np.full((1, 3), np.inf)
+        metrics_first: list[dict] = [{}]
+        _evaluate_population_indices(
+            pop[:1],
+            [0],
+            dont_cares,
+            engine,
+            [],
+            objectives_first,
+            metrics_first,
+            global_metrics_cache=global_cache,
+        )
+
+        objectives_second = np.full((1, 3), np.inf)
+        metrics_second: list[dict] = [{}]
+        _evaluate_population_indices(
+            pop[1:2],
+            [0],
+            dont_cares,
+            engine,
+            [],
+            objectives_second,
+            metrics_second,
+            global_metrics_cache=global_cache,
+        )
+
+        assert call_count == 1
+        assert np.allclose(objectives_first[0], objectives_second[0])
+        assert metrics_first[0]["executed_trades"] == 25
+        assert metrics_second[0]["executed_trades"] == 25
+
+    def test_global_cache_recomputes_diversity_penalty(self):
+        call_count = 0
+
+        class CountingEngine:
+            def simulate_rule_batch(self, chromosomes, tp, sl, capital_pct):
+                nonlocal call_count
+                call_count += 1
+                return [_default_eval_metrics()]
+
+        pop = np.array([[1, 0]], dtype=np.int32)
+        dont_cares = np.array([2, 2], dtype=np.int32)
+        engine = CountingEngine()
+        global_cache: dict[tuple[int, ...], dict] = {}
+        objectives = np.full((1, 3), np.inf)
+        metrics_cache: list[dict] = [{}]
+
+        _evaluate_population_indices(
+            pop,
+            [0],
+            dont_cares,
+            engine,
+            [],
+            objectives,
+            metrics_cache,
+            global_metrics_cache=global_cache,
+        )
+        obj_no_archive = objectives[0].copy()
+
+        objectives[0] = np.inf
+        _evaluate_population_indices(
+            pop,
+            [0],
+            dont_cares,
+            engine,
+            [pop[0].copy()],
+            objectives,
+            metrics_cache,
+            global_metrics_cache=global_cache,
+        )
+        obj_with_archive = objectives[0]
+
+        assert call_count == 1
+        assert obj_with_archive[0] > obj_no_archive[0]
 

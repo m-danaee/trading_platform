@@ -214,6 +214,12 @@ PHASE2_GPU_BATCH_SIZE = 64
 # Start at 16; try 32–64 on T4 if VRAM allows. Lower to 8 on 8 GiB GPUs if OOM.
 PHASE2_SCAN_UNROLL = 32
 
+# Tier 1 eval optimizations (safe to disable for A/B or debugging)
+# unique chromosomes per simulate_rule_batch call
+PHASE2_EVAL_BATCH_DEDUP = True
+PHASE2_EVAL_GLOBAL_CACHE = True      # run-wide dict[chromosome_key -> metrics]
+PHASE2_SKIP_ZERO_SIGNAL_SCAN = True  # skip lax.scan when rule match finds 0 bars
+
 
 # =============================================================================
 # Phase 2 — Rule pool / NSGA-III

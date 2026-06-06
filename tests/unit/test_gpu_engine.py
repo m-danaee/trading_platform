@@ -405,6 +405,46 @@ class TestSimulateRuleBatch:
         assert results[0]["executed_trades"] == 0
         assert results[0]["total_return_pct"] == pytest.approx(0.0)
 
+    def test_zero_signal_skip_matches_full_scan(self):
+        """PHASE2_SKIP_ZERO_SIGNAL_SCAN must match always-scan metrics."""
+        from gpu_fuzzy_trader import config as cfg
+
+        df = _make_df(n=10, feature_val=0.9)
+        eng = _make_engine(df)
+        dont_care_signed = 10
+        dont_care_binary = 2
+        chroms = np.array(
+            [[0, 0], [dont_care_signed, dont_care_binary]],
+            dtype=np.int32,
+        )
+
+        orig_skip = cfg.PHASE2_SKIP_ZERO_SIGNAL_SCAN
+        try:
+            cfg.PHASE2_SKIP_ZERO_SIGNAL_SCAN = False
+            full_scan = eng.simulate_rule_batch(
+                chroms, tp=4.0, sl=2.0, capital_pct=50.0)
+
+            cfg.PHASE2_SKIP_ZERO_SIGNAL_SCAN = True
+            skip_scan = eng.simulate_rule_batch(
+                chroms, tp=4.0, sl=2.0, capital_pct=50.0)
+        finally:
+            cfg.PHASE2_SKIP_ZERO_SIGNAL_SCAN = orig_skip
+
+        assert len(full_scan) == len(skip_scan) == 2
+        for full, skip in zip(full_scan, skip_scan):
+            assert full["executed_trades"] == skip["executed_trades"]
+            assert full["raw_signal_count"] == skip["raw_signal_count"]
+            assert full["total_return_pct"] == pytest.approx(
+                skip["total_return_pct"])
+            assert full["sortino_ratio"] == pytest.approx(
+                skip["sortino_ratio"])
+            assert full["max_drawdown_pct"] == pytest.approx(
+                skip["max_drawdown_pct"])
+            assert full["win_rate"] == pytest.approx(skip["win_rate"])
+            assert full["profit_factor"] == pytest.approx(
+                skip["profit_factor"])
+            assert full["final_equity"] == pytest.approx(skip["final_equity"])
+
     def test_all_match_executes_trades(self):
         """Chromosome matching all rows should execute trades."""
         df = _make_df(n=10, feature_val=0.9)
