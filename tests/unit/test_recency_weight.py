@@ -19,13 +19,17 @@ def test_recency_weight_calculation():
         
         signals = jnp.ones((1, N), dtype=jnp.bool_)
         
+        release_indices = jnp.arange(1, N + 1, dtype=jnp.int32)
+
         # Run simulation with recency weight enabled
         _cfg.PHASE2_RECENCY_WEIGHT_ENABLED = True
         base_weighted = _jax_simulate_equity_batch(
             signals_batch=signals,
             price_returns_all=price_returns,
+            release_indices=release_indices,
             initial_capital=1000.0,
             n_rows=N,
+            max_open_slots=1,
             fee_rate=0.0,
             leverage=1.0,
             capital_rate=1.0,
@@ -39,8 +43,10 @@ def test_recency_weight_calculation():
         base_unweighted = _jax_simulate_equity_batch(
             signals_batch=signals,
             price_returns_all=price_returns,
+            release_indices=release_indices,
             initial_capital=1000.0,
             n_rows=N,
+            max_open_slots=1,
             fee_rate=0.0,
             leverage=1.0,
             capital_rate=1.0,
