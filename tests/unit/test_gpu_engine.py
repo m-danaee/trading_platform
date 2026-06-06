@@ -762,3 +762,27 @@ class TestGPUCPUNumericalParity:
             chroms, tp=4.0, sl=2.0, capital_pct=30.0)
         assert len(gpu_results) == 10
 
+    def test_cpu_engine_simulate_rule_batch_parity(self):
+        """CPU backtest engine must support simulate_rule_batch with correct metrics."""
+        df = self._make_parity_df(n=50)
+        feature_modes = {"feat_binary": "binary"}
+
+        cpu_eng = CPUBacktestEngine(df, feature_modes, "long")
+        chroms = np.array([[1], [0]], dtype=np.int32)
+        cpu_batch_results = cpu_eng.simulate_rule_batch(
+            chroms, tp=4.0, sl=2.0, capital_pct=30.0)
+
+        rule_set_1 = [{"conditions": ["[feat_binary] IS Active (1)"], "tp": 4.0, "sl": 2.0, "capital_pct": 30.0}]
+        cpu_single_1 = cpu_eng.simulate_rule_set(rule_set_1)
+
+        rule_set_0 = [{"conditions": ["[feat_binary] IS Inactive (0)"], "tp": 4.0, "sl": 2.0, "capital_pct": 30.0}]
+        cpu_single_0 = cpu_eng.simulate_rule_set(rule_set_0)
+
+        assert len(cpu_batch_results) == 2
+        assert cpu_batch_results[0]["total_return_pct"] == cpu_single_1["total_return_pct"]
+        assert cpu_batch_results[0]["executed_trades"] == cpu_single_1["executed_trades"]
+        assert cpu_batch_results[1]["total_return_pct"] == cpu_single_0["total_return_pct"]
+        assert cpu_batch_results[1]["executed_trades"] == cpu_single_0["executed_trades"]
+
+
+

@@ -339,9 +339,12 @@ class CPUBacktestEngine:
         self.min_position_notional = float(
             constants.get("min_position_notional", _cfg.MIN_POSITION_NOTIONAL)
         )
+        self._regime_ids = constants.get("regime_ids", None)
+        self._n_regimes = int(constants.get("n_regimes", 0))
 
         # --- Pre-extract arrays for speed ---
         entry = df["label_open_next"].values.astype(float)
+
         invalid_mask = (~np.isfinite(entry)) | (entry <= 0)
         if np.any(invalid_mask):
             bad = int(np.sum(invalid_mask))
@@ -485,6 +488,15 @@ class CPUBacktestEngine:
 
                 if pos["exit_reason"] == "Time_288":
                     stats["time_closed_count"] += 1
+
+                if self._regime_ids is not None and self._n_regimes > 0:
+                    entry_idx = pos["entry_index"]
+                    regime = int(self._regime_ids[entry_idx])
+                    if 0 <= regime < self._n_regimes:
+                        stats["regime_trade_counts"][regime] += 1
+                        if pos["net_pnl"] > 0:
+                            stats["regime_win_counts"][regime] += 1
+                        stats["regime_net_pnl"][regime] += pos["net_pnl"]
 
                 account_status = "ACTIVE"
                 if equity <= 0:
@@ -701,6 +713,11 @@ class CPUBacktestEngine:
             "gross_loss_sum": 0.0,
             "account_ruined": False,
         }
+
+        if self._regime_ids is not None and self._n_regimes > 0:
+            stats["regime_trade_counts"] = np.zeros(self._n_regimes, dtype=np.int64)
+            stats["regime_win_counts"] = np.zeros(self._n_regimes, dtype=np.int64)
+            stats["regime_net_pnl"] = np.zeros(self._n_regimes, dtype=np.float64)
 
         executed_trades = 0
         skipped_min_notional_count = 0
@@ -943,8 +960,64 @@ class CPUBacktestEngine:
             "per_symbol_metrics": per_symbol_metrics,
         }
 
+        if self._regime_ids is not None and self._n_regimes > 0:
+            metrics["regime_trade_counts"] = stats["regime_trade_counts"].tolist()
+            metrics["regime_win_counts"] = stats["regime_win_counts"].tolist()
+            metrics["regime_net_pnl"] = stats["regime_net_pnl"].tolist()
+
         if return_logs:
             logs_df = pd.DataFrame(logs)
             return metrics, logs_df
 
         return metrics
+
+    def simulate_rule_batch(
+        self,
+        chromosomes: np.ndarray,
+        tp: float,
+        sl: float,
+        capital_pct: float,
+    ) -> list[dict]:
+        """Evaluate a batch of rule chromosomes on CPU."""
+        chromosomes = np.asarray(chromosomes, dtype=np.int32)
+        if chromosomes.ndim == 1:
+            chromosomes = chromosomes[None, :]
+
+        B, K = chromosomes.shape
+        if not hasattr(self, "_data_matrix"):
+            from gpu_fuzzy_trader.backtest.gpu_engine import _build_data_matrix, _MODE_NUM_CLASSES
+            self._feature_names = sorted(list(self.feature_modes.keys()))
+            self._data_matrix = _build_data_matrix(self.df, self._feature_names, self.feature_modes)
+            self._dont_cares = np.array(
+                [_MODE_NUM_CLASSES[self.feature_modes[f]] for f in self._feature_names],
+                dtype=np.int32
+            )
+
+        results = []
+        for b in range(B):
+            chromosome = chromosomes[b]
+            active_mask = chromosome != self._dont_cares
+            condition_match = self._data_matrix == chromosome[None, :]
+            effective_match = np.where(active_mask[None, :], condition_match, True)
+            signals = np.all(effective_match, axis=-1)
+            
+            matched_indices = np.flatnonzero(signals)
+            entries = [
+                {
+                    "idx": int(idx),
+                    "rule_index": 1,
+                    "tp": tp,
+                    "sl": sl,
+                    "capital_pct": capital_pct,
+                }
+                for idx in matched_indices
+            ]
+            metrics = self._simulate_rule_set_entries(
+                entries,
+                return_logs=False,
+                initial_capital=self.initial_capital,
+            )
+            metrics["raw_signal_count"] = len(matched_indices)
+            metrics["skipped_min_notional_count"] = metrics.get("skipped_min_notional_count", 0)
+            results.append(metrics)
+        return results
