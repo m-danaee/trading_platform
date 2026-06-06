@@ -300,7 +300,7 @@ PHASE2_EARLY_STOP_DISABLED_IN_CV = False  # enable early stop in purged CV mode
 # Capped at 2 (was 0=auto=5): with 5 folds each running a GPU backtest in
 # parallel the peak VRAM demand was 5× a single fold. 2 workers keeps peak
 # usage to ~2× while still providing meaningful parallelism.
-PHASE2_CV_FOLD_WORKERS = 1
+PHASE2_CV_FOLD_WORKERS = 4
 
 # --- NSGA-III budget ---
 # Population reduced 600→400: with 350k sampling rows and 2 parallel fold
