@@ -750,3 +750,15 @@ class TestGPUCPUNumericalParity:
             cpu_metrics["win_rate"])
         assert gpu_metrics["max_drawdown_pct"] == pytest.approx(
             cpu_metrics["max_drawdown_pct"])
+
+    def test_gpu_compilation_no_redundancy(self):
+        """GPU backtest engine must handle padded chunking correctly."""
+        df = self._make_parity_df(n=50)
+        feature_modes = {"feat_binary": "binary"}
+
+        gpu_eng = GPUBacktestEngine(df, feature_modes, "long")
+        chroms = np.array([[1], [0], [1], [1], [0], [1], [0], [0], [1], [0]], dtype=np.int32)
+        gpu_results = gpu_eng.simulate_rule_batch(
+            chroms, tp=4.0, sl=2.0, capital_pct=30.0)
+        assert len(gpu_results) == 10
+

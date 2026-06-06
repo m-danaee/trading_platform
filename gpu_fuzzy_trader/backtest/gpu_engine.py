@@ -877,7 +877,7 @@ class GPUBacktestEngine:
         capital_rate: float,
         max_exposure_rate: float,
         n_rows: int,
-    ) -> tuple[np.ndarray, np.ndarray | None]:
+    ) -> tuple[jnp.ndarray, jnp.ndarray | None]:
         """Run equity simulation for one GPU chunk of signal masks."""
         max_open_slots = _exposure_slot_capacity(
             max_exposure_rate, capital_rate)
@@ -897,7 +897,7 @@ class GPUBacktestEngine:
                 max_exposure_rate,
                 self.min_position_notional,
             )
-            return np.asarray(results_array), np.asarray(regime_stats)
+            return results_array, regime_stats
 
         results_array = _jax_simulate_equity_batch(
             signals_batch,
@@ -912,7 +912,7 @@ class GPUBacktestEngine:
             max_exposure_rate,
             self.min_position_notional,
         )
-        return np.asarray(results_array), None
+        return results_array, None
 
     def simulate_rule_batch(
         self,
@@ -943,14 +943,23 @@ class GPUBacktestEngine:
         chunk_size = max(1, int(_cfg.PHASE2_GPU_BATCH_SIZE))
         price_returns_all = self._get_trade_outcomes(tp, sl)
 
-        result_chunks: list[np.ndarray] = []
-        regime_chunks: list[np.ndarray] = []
+        # Pad chromosomes to a multiple of chunk_size to avoid shape recompilation for the last chunk
+        padding_len = (chunk_size - (B % chunk_size)) % chunk_size
+        if padding_len > 0:
+            pad_chroms = np.repeat(chromosomes[-1:], padding_len, axis=0)
+            chromosomes_padded = np.concatenate([chromosomes, pad_chroms], axis=0)
+        else:
+            chromosomes_padded = chromosomes
+
+        B_padded = len(chromosomes_padded)
+        result_chunks: list[jnp.ndarray] = []
+        regime_chunks: list[jnp.ndarray] = []
         has_regime = (
             self._regime_ids_jax is not None and self._n_regimes > 0)
 
-        for start in range(0, B, chunk_size):
-            end = min(start + chunk_size, B)
-            chroms_chunk = chromosomes[start:end]
+        for start in range(0, B_padded, chunk_size):
+            end = start + chunk_size
+            chroms_chunk = chromosomes_padded[start:end]
 
             if K > 0 and self._data_matrix_jax.shape[1] > 0:
                 chroms_jax = jnp.array(chroms_chunk, dtype=jnp.int32)
@@ -958,28 +967,29 @@ class GPUBacktestEngine:
                     self._data_matrix_jax, chroms_jax, self._dont_cares_jax)
             else:
                 signals_batch = jnp.zeros(
-                    (end - start, N), dtype=jnp.bool_)
+                    (chunk_size, N), dtype=jnp.bool_)
 
-            results_np, regime_np = self._simulate_signals_batch(
+            results_jax, regime_jax = self._simulate_signals_batch(
                 signals_batch,
                 price_returns_all,
                 capital_rate,
                 max_exposure_rate,
                 N,
             )
-            result_chunks.append(results_np)
-            if has_regime and regime_np is not None:
-                regime_chunks.append(regime_np)
+            result_chunks.append(results_jax)
+            if has_regime and regime_jax is not None:
+                regime_chunks.append(regime_jax)
 
-        results_np = np.concatenate(result_chunks, axis=0)
+        results_np = np.asarray(jnp.concatenate(result_chunks, axis=0)[:B])
         regime_np = (
-            np.concatenate(regime_chunks, axis=0) if regime_chunks else None)
+            np.asarray(jnp.concatenate(regime_chunks, axis=0)[:B]) if regime_chunks else None)
         return _batch_metrics_from_array(
             results_np,
             self.trade_direction,
             regime_np,
             self._n_regimes,
         )
+
 
     # ------------------------------------------------------------------
     # Batched rule-set evaluation (Phase 3)
