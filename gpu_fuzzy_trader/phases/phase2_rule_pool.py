@@ -38,6 +38,15 @@ import pandas as pd
 
 from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.features.encoder import decode_chromosome, get_dont_care
+from gpu_fuzzy_trader.phases.phase2_sparse_encoding import (
+    chromosome_key,
+    dense_to_sparse,
+    is_sparse_chromosome,
+    max_slots,
+    sparse_hamming,
+    sparse_to_dense,
+    use_sparse_slots,
+)
 from gpu_fuzzy_trader.log_progress import maybe_log_generation
 from gpu_fuzzy_trader.phases.phase2_support import (
     compute_support_penalty_and_specialist,
@@ -162,12 +171,35 @@ def _get_dont_cares(feature_infos: list[dict]) -> np.ndarray:
 
 
 def _count_active_conditions(chromosome: np.ndarray, dont_cares: np.ndarray) -> int:
-    """Count genes that are NOT dont_care (i.e. active conditions)."""
+    """Count active rule conditions (sparse slots or dense dont_care encoding)."""
+    if is_sparse_chromosome(chromosome):
+        from gpu_fuzzy_trader.phases.phase2_sparse_encoding import count_active_slots
+        return count_active_slots(chromosome)
     return int(np.sum(chromosome != dont_cares))
 
 
+def _chromosome_batch(chromosome: np.ndarray) -> np.ndarray:
+    """Shape (1, ...) batch for simulate_rule_batch."""
+    chrom = np.asarray(chromosome, dtype=np.int32)
+    if is_sparse_chromosome(chrom):
+        return chrom[None, :, :]
+    return chrom[None, :]
+
+
+def _chromosome_for_pool_export(
+    chromosome: np.ndarray,
+    dont_cares: np.ndarray,
+) -> np.ndarray:
+    """Dense K-vector for pool JSON / decode_chromosome."""
+    if is_sparse_chromosome(chromosome):
+        return sparse_to_dense(chromosome, dont_cares)
+    return np.asarray(chromosome, dtype=np.int32)
+
+
 def _hamming_distance(a: np.ndarray, b: np.ndarray) -> int:
-    """Hamming distance between two integer arrays."""
+    """Hamming distance between two chromosomes (active pairs when sparse)."""
+    if is_sparse_chromosome(a) or is_sparse_chromosome(b):
+        return sparse_hamming(a, b)
     return int(np.sum(a != b))
 
 
@@ -280,7 +312,7 @@ def _evaluate_chromosome(
     # Evaluate via backtest engine (TRAIN)
     try:
         metrics_list = engine.simulate_rule_batch(
-            chromosomes=chromosome[None, :],
+            chromosomes=_chromosome_batch(chromosome),
             tp=_cfg.PHASE2_TP,
             sl=_cfg.PHASE2_SL,
             capital_pct=_cfg.PHASE2_CAPITAL_PCT,
@@ -312,7 +344,7 @@ def _evaluate_chromosome(
     if _cfg.PHASE2_JOINT_TRAIN_VAL and val_engine is not None:
         try:
             val_list = val_engine.simulate_rule_batch(
-                chromosomes=chromosome[None, :],
+                chromosomes=_chromosome_batch(chromosome),
                 tp=_cfg.PHASE2_TP,
                 sl=_cfg.PHASE2_SL,
                 capital_pct=_cfg.PHASE2_CAPITAL_PCT,
@@ -569,7 +601,15 @@ def _init_population(
 
     K = len(feature_infos)
     dont_cares = _get_dont_cares(feature_infos)
-    population = np.zeros((pop_size, K), dtype=np.int32)
+    if use_sparse_slots():
+        population = np.full(
+            (pop_size, max_slots(), 2),
+            -1,
+            dtype=np.int32,
+        )
+        population[:, :, 1] = 0
+    else:
+        population = np.zeros((pop_size, K), dtype=np.int32)
     if seed_fraction is None:
         seed_fraction = _cfg.PHASE2_ARCHIVE_SEED_FRACTION
     if init_strategy is None:
@@ -582,27 +622,47 @@ def _init_population(
         seed_array = np.asarray(seeded_chromosomes, dtype=np.int32)
         if seed_array.ndim == 1:
             seed_array = seed_array[None, :]
-        if seed_array.ndim != 2:
+        if use_sparse_slots() and seed_array.ndim == 3:
+            if seed_array.shape[1:] != (max_slots(), 2):
+                raise ValueError(
+                    f"sparse seeded_chromosomes must have shape (_, {max_slots()}, 2)")
+        elif seed_array.ndim != 2:
             raise ValueError(
-                "seeded_chromosomes must be a 1D or 2D array-like value")
-        if seed_array.shape[1] != K:
+                "seeded_chromosomes must be a 1D, 2D, or sparse 3D array-like value")
+        elif seed_array.shape[1] != K:
             raise ValueError(
-                f"seeded_chromosomes must have {K} genes per chromosome, got {seed_array.shape[1]}"
+                f"seeded_chromosomes must have {K} genes per chromosome, "
+                f"got {seed_array.shape[1]}"
             )
 
         seen: set[tuple[int, ...]] = set()
         for row in seed_array:
-            key = tuple(int(v) for v in row.tolist())
+            if use_sparse_slots():
+                if row.ndim == 1:
+                    repaired = dense_to_sparse(row, dont_cares)
+                else:
+                    from gpu_fuzzy_trader.phases.phase2_sparse_encoding import (
+                        repair_sparse_slots,
+                    )
+                    repaired = repair_sparse_slots(
+                        row.astype(np.int32, copy=True),
+                        feature_infos,
+                        dont_cares,
+                        rng,
+                    )
+                key = chromosome_key(repaired)
+            else:
+                repaired = row.astype(np.int32, copy=True)
+                for k, dc in enumerate(dont_cares):
+                    gene = int(repaired[k])
+                    if gene < 0:
+                        repaired[k] = 0
+                    elif gene > int(dc):
+                        repaired[k] = int(dc)
+                key = tuple(int(v) for v in repaired.tolist())
             if key in seen:
                 continue
             seen.add(key)
-            repaired = row.astype(np.int32, copy=True)
-            for k, dc in enumerate(dont_cares):
-                gene = int(repaired[k])
-                if gene < 0:
-                    repaired[k] = 0
-                elif gene > int(dc):
-                    repaired[k] = int(dc)
             seed_rows.append(repaired)
 
     seed_count = 0
@@ -621,14 +681,28 @@ def _init_population(
         seeded_mask[seed_positions] = True
 
     if init_strategy == "legacy":
-        for k, fi in enumerate(feature_infos):
-            dc = dont_cares[k]
-            num_classes = dc
-            for i in np.where(~seeded_mask)[0]:
-                if rng.random() < dont_care_prob:
-                    population[i, k] = dc
-                else:
-                    population[i, k] = int(rng.integers(0, num_classes))
+        if not use_sparse_slots():
+            for k, fi in enumerate(feature_infos):
+                dc = dont_cares[k]
+                num_classes = dc
+                for i in np.where(~seeded_mask)[0]:
+                    if rng.random() < dont_care_prob:
+                        population[i, k] = dc
+                    else:
+                        population[i, k] = int(rng.integers(0, num_classes))
+            return population
+
+        from gpu_fuzzy_trader.phases.phase2_sparse_encoding import (
+            sample_sparse_slots_chromosome,
+        )
+        if feature_probs is None:
+            feature_probs = build_feature_sampling_probs(feature_infos)
+        for i in np.where(~seeded_mask)[0]:
+            k_active = pick_active_count(rng)
+            population[i] = sample_sparse_slots_chromosome(
+                rng, feature_infos, dont_cares, k_active,
+                "explorer", feature_probs,
+            )
         return population
 
     if feature_probs is None:
@@ -642,21 +716,34 @@ def _init_population(
     )
     for row_idx, stratum in zip(fresh_indices, strata):
         k_active = pick_active_count(rng)
-        population[row_idx] = sample_sparse_chromosome(
-            rng,
-            feature_infos,
-            dont_cares,
-            k_active,
-            stratum,
-            feature_probs,
-        )
-        population[row_idx] = repair_active_count(
-            population[row_idx],
-            feature_infos,
-            dont_cares,
-            rng,
-            feature_probs,
-        )
+        if use_sparse_slots():
+            from gpu_fuzzy_trader.phases.phase2_sparse_encoding import (
+                sample_sparse_slots_chromosome,
+            )
+            population[row_idx] = sample_sparse_slots_chromosome(
+                rng,
+                feature_infos,
+                dont_cares,
+                k_active,
+                stratum,
+                feature_probs,
+            )
+        else:
+            population[row_idx] = sample_sparse_chromosome(
+                rng,
+                feature_infos,
+                dont_cares,
+                k_active,
+                stratum,
+                feature_probs,
+            )
+            population[row_idx] = repair_active_count(
+                population[row_idx],
+                feature_infos,
+                dont_cares,
+                rng,
+                feature_probs,
+            )
 
     return population
 
@@ -670,7 +757,10 @@ def _crossover(
     parent_b: np.ndarray,
     rng: np.random.Generator,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Uniform crossover: each gene independently chosen from either parent."""
+    """Uniform crossover (dense per-gene or sparse per-slot)."""
+    if use_sparse_slots() or is_sparse_chromosome(parent_a):
+        from gpu_fuzzy_trader.phases.phase2_sparse_encoding import crossover_sparse
+        return crossover_sparse(parent_a, parent_b, rng)
     K = len(parent_a)
     mask = rng.random(K) < 0.5
     child_a = np.where(mask, parent_a, parent_b).astype(np.int32)
@@ -703,6 +793,18 @@ def _mutate(
 
     if weighted_activate_prob is None:
         weighted_activate_prob = _cfg.PHASE2_MUTATION_WEIGHTED_ACTIVATE_PROB
+
+    if use_sparse_slots() or is_sparse_chromosome(chromosome):
+        from gpu_fuzzy_trader.phases.phase2_sparse_encoding import mutate_sparse
+        return mutate_sparse(
+            chromosome,
+            feature_infos,
+            dont_cares,
+            rng,
+            mutation_rate=mutation_rate,
+            feature_probs=feature_probs,
+            weighted_activate_prob=weighted_activate_prob,
+        )
 
     child = chromosome.copy()
     K = len(child)
@@ -754,7 +856,7 @@ def _metrics_dict_from_population(
     out: dict[tuple, dict] = {}
     for i, met in enumerate(metrics_cache):
         if met:
-            out[tuple(population[i].tolist())] = met
+            out[chromosome_key(population[i])] = met
     return out
 
 
@@ -771,7 +873,7 @@ def _simulate_val_metrics_for_chrom(
         return None
     try:
         val_list = val_engine.simulate_rule_batch(
-            chromosomes=chrom[None, :],
+            chromosomes=_chromosome_batch(chrom),
             tp=_cfg.PHASE2_TP,
             sl=_cfg.PHASE2_SL,
             capital_pct=_cfg.PHASE2_CAPITAL_PCT,
@@ -823,7 +925,7 @@ def _build_pool_from_archive(
     unique_chroms: list[np.ndarray] = []
     seen: set[tuple] = set()
     for chrom in archive:
-        key = tuple(chrom.tolist())
+        key = chromosome_key(chrom)
         if key in seen:
             continue
         seen.add(key)
@@ -866,14 +968,15 @@ def _build_pool_from_archive(
                 continue
 
             try:
-                conditions = decode_chromosome(chrom, feature_infos)
+                dense_chrom = _chromosome_for_pool_export(chrom, dont_cares)
+                conditions = decode_chromosome(dense_chrom, feature_infos)
             except Exception:
                 continue
             if not conditions:
                 continue
 
             pool_entry: dict = {
-                "chromosome": chrom.tolist(),
+                "chromosome": dense_chrom.tolist(),
                 "conditions": conditions,
                 "objectives": {
                     "sortino_ratio": float(metrics.get("sortino_ratio", metrics.get("total_return_pct", 0.0))),
@@ -934,18 +1037,20 @@ def _build_pool_from_archive(
             top_k = int(_cfg.PHASE2_CV_POOL_RANK_ADMIT_TOP_K)
             added = 0
             for val_ret, chrom, metrics, val_metrics, folds_passing in rank_candidates[:top_k]:
-                key = tuple(chrom.tolist())
+                key = chromosome_key(chrom)
                 if key in seen_pool:
                     continue
                 try:
-                    conditions = decode_chromosome(chrom, feature_infos)
+                    dense_chrom = _chromosome_for_pool_export(
+                        chrom, dont_cares)
+                    conditions = decode_chromosome(dense_chrom, feature_infos)
                 except Exception:
                     continue
                 if not conditions:
                     continue
                 executed = int(metrics.get("executed_trades", 0))
                 pool_entry = {
-                    "chromosome": chrom.tolist(),
+                    "chromosome": dense_chrom.tolist(),
                     "conditions": conditions,
                     "objectives": {
                         "sortino_ratio": float(metrics.get(
@@ -995,7 +1100,7 @@ def _build_pool_from_archive(
         if regime_row_fractions_arr is None:
             regime_row_fractions_arr = getattr(engine, "_regime_row_fractions", None)
 
-        chrom_keys = [tuple(c.tolist()) for c in unique_chroms]
+        chrom_keys = [chromosome_key(c) for c in unique_chroms]
         for chrom, key in zip(unique_chroms, chrom_keys):
             metrics = None
             if metrics_by_chrom is not None:
@@ -1003,7 +1108,7 @@ def _build_pool_from_archive(
             if metrics is None:
                 try:
                     metrics_list = engine.simulate_rule_batch(
-                        chromosomes=chrom[None, :],
+                        chromosomes=_chromosome_batch(chrom),
                         tp=_cfg.PHASE2_TP,
                         sl=_cfg.PHASE2_SL,
                         capital_pct=_cfg.PHASE2_CAPITAL_PCT,
@@ -1023,14 +1128,15 @@ def _build_pool_from_archive(
                 continue
 
             try:
-                conditions = decode_chromosome(chrom, feature_infos)
+                dense_chrom = _chromosome_for_pool_export(chrom, dont_cares)
+                conditions = decode_chromosome(dense_chrom, feature_infos)
             except Exception:
                 continue
             if not conditions:
                 continue
 
             pool_entry = {
-                "chromosome": chrom.tolist(),
+                "chromosome": dense_chrom.tolist(),
                 "conditions": conditions,
                 "objectives": {
                     "sortino_ratio": float(metrics.get("sortino_ratio", metrics.get("total_return_pct", 0.0))),
@@ -1163,7 +1269,10 @@ def _merge_archive_entries(
     return [unique_entries[i] for i in selected[:max_size]]
 
 
-def _pool_seed_chromosomes(pool: list[dict]) -> np.ndarray | None:
+def _pool_seed_chromosomes(
+    pool: list[dict],
+    dont_cares: np.ndarray | None = None,
+) -> np.ndarray | None:
     """Extract deduplicated chromosomes from a Phase 2 pool for population seeding."""
     if not pool:
         return None
@@ -1174,11 +1283,14 @@ def _pool_seed_chromosomes(pool: list[dict]) -> np.ndarray | None:
         chrom = entry.get("chromosome")
         if not isinstance(chrom, list) or not chrom:
             continue
-        key = tuple(int(v) for v in chrom)
+        chrom_arr = np.asarray(chrom, dtype=np.int32)
+        if use_sparse_slots() and dont_cares is not None:
+            chrom_arr = dense_to_sparse(chrom_arr, dont_cares)
+        key = chromosome_key(chrom_arr)
         if key in seen:
             continue
         seen.add(key)
-        rows.append(np.asarray(chrom, dtype=np.int32))
+        rows.append(chrom_arr)
 
     if not rows:
         return None
@@ -1605,7 +1717,8 @@ class Rule_Pool_Generator:
                 )
             previous_pool = compatible_pool
 
-        seed_chromosomes = _pool_seed_chromosomes(previous_pool)
+        dont_cares = _get_dont_cares(self.feature_infos)
+        seed_chromosomes = _pool_seed_chromosomes(previous_pool, dont_cares)
         if seed_chromosomes is not None:
             seed_slots = min(
                 self.pop_size,

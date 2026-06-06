@@ -128,6 +128,15 @@ def _repair_population(
     dont_cares: np.ndarray,
 ) -> np.ndarray:
     """Repair every row in a population matrix."""
+    from gpu_fuzzy_trader.phases.phase2_sparse_encoding import (
+        repair_population as _repair_population_sparse,
+        use_sparse_slots,
+    )
+
+    if use_sparse_slots():
+        return _repair_population_sparse(
+            population, feature_infos, dont_cares,
+        )
     return np.stack(
         [
             _repair_chromosome(population[i], feature_infos, dont_cares)
@@ -143,9 +152,11 @@ def _update_hall_of_fame(
     pareto_indices: list[int],
 ) -> None:
     """Accumulate unique Pareto chromosomes discovered across generations."""
+    from gpu_fuzzy_trader.phases.phase2_sparse_encoding import chromosome_key
+
     for i in pareto_indices:
         chrom = population[int(i)].copy()
-        hall_of_fame[tuple(chrom.tolist())] = chrom
+        hall_of_fame[chromosome_key(chrom)] = chrom
 
 
 def _pareto_mean_return_pct(
@@ -209,12 +220,15 @@ def _should_early_stop_phase2(
 
 def _median_pairwise_hamming(chromosomes: list[np.ndarray]) -> float:
     """Median Hamming distance across unique Pareto chromosomes (sample cap 40)."""
+    from gpu_fuzzy_trader.phases.phase2_rule_pool import _hamming_distance
+    from gpu_fuzzy_trader.phases.phase2_sparse_encoding import chromosome_key
+
     if len(chromosomes) < 2:
         return 0.0
     uniq: list[np.ndarray] = []
     seen: set[tuple[int, ...]] = set()
     for chrom in chromosomes:
-        key = tuple(int(v) for v in chrom.tolist())
+        key = chromosome_key(chrom)
         if key in seen:
             continue
         seen.add(key)
@@ -228,7 +242,7 @@ def _median_pairwise_hamming(chromosomes: list[np.ndarray]) -> float:
     dists: list[float] = []
     for i in range(len(uniq)):
         for j in range(i + 1, len(uniq)):
-            dists.append(float(np.sum(uniq[i] != uniq[j])))
+            dists.append(float(_hamming_distance(uniq[i], uniq[j])))
     return float(np.median(dists)) if dists else 0.0
 
 
@@ -283,7 +297,9 @@ def _pareto_diagnostics(
     unique_ratio = 0.0
     median_hamming = 0.0
     if chromosomes:
-        keys = {tuple(int(v) for v in c.tolist()) for c in chromosomes}
+        from gpu_fuzzy_trader.phases.phase2_sparse_encoding import chromosome_key
+
+        keys = {chromosome_key(c) for c in chromosomes}
         unique_ratio = float(len(keys) / len(chromosomes))
         median_hamming = _median_pairwise_hamming(chromosomes)
 
@@ -963,13 +979,15 @@ def _run_nsga3(
         # environmental selection since _nsga3_environmental_selection returns
         # the sliced merge_fit directly.
         n_alive = len(population)
+        from gpu_fuzzy_trader.phases.phase2_sparse_encoding import chromosome_key
+
         _merge_metrics_by_key: dict[tuple, dict] = {
-            tuple(merge_pop[j].tolist()): m
+            chromosome_key(merge_pop[j]): m
             for j, m in enumerate(merge_metrics)
             if m
         }
         metrics_cache = [
-            _merge_metrics_by_key.get(tuple(population[i].tolist()), {})
+            _merge_metrics_by_key.get(chromosome_key(population[i]), {})
             for i in range(n_alive)
         ]
 

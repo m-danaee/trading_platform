@@ -980,10 +980,21 @@ class CPUBacktestEngine:
     ) -> list[dict]:
         """Evaluate a batch of rule chromosomes on CPU."""
         chromosomes = np.asarray(chromosomes, dtype=np.int32)
+        from gpu_fuzzy_trader.phases.phase2_sparse_encoding import (
+            compute_rule_signals_numpy,
+            is_sparse_batch,
+        )
+
         if chromosomes.ndim == 1:
             chromosomes = chromosomes[None, :]
+        if is_sparse_batch(chromosomes) and chromosomes.ndim == 2:
+            chromosomes = chromosomes[None, :, :]
 
-        B, K = chromosomes.shape
+        sparse_batch = is_sparse_batch(chromosomes)
+        if not sparse_batch:
+            B, K = chromosomes.shape
+        else:
+            B = chromosomes.shape[0]
         if not hasattr(self, "_data_matrix"):
             from gpu_fuzzy_trader.backtest.gpu_engine import _build_data_matrix, _MODE_NUM_CLASSES
             self._feature_names = sorted(list(self.feature_modes.keys()))
@@ -995,11 +1006,17 @@ class CPUBacktestEngine:
 
         results = []
         for b in range(B):
-            chromosome = chromosomes[b]
-            active_mask = chromosome != self._dont_cares
-            condition_match = self._data_matrix == chromosome[None, :]
-            effective_match = np.where(active_mask[None, :], condition_match, True)
-            signals = np.all(effective_match, axis=-1)
+            if sparse_batch:
+                signals = compute_rule_signals_numpy(
+                    self._data_matrix, chromosomes[b],
+                )
+            else:
+                chromosome = chromosomes[b]
+                active_mask = chromosome != self._dont_cares
+                condition_match = self._data_matrix == chromosome[None, :]
+                effective_match = np.where(
+                    active_mask[None, :], condition_match, True)
+                signals = np.all(effective_match, axis=-1)
             
             matched_indices = np.flatnonzero(signals)
             entries = [

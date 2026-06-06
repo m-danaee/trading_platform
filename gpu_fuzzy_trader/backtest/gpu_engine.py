@@ -132,6 +132,24 @@ def _jax_compute_rule_signals_batch(
 
 
 @jit
+def _jax_compute_rule_signals_sparse_batch(
+    data_matrix: jnp.ndarray,    # (N, K) int32
+    # (B, S, 2) int32 — [:,:,0]=feat_idx, [:,:,1]=gene
+    slots: jnp.ndarray,
+) -> jnp.ndarray:
+    """Batch rule matching using only active sparse slots (feat_idx >= 0)."""
+    feat_idx = slots[:, :, 0]
+    gene_val = slots[:, :, 1]
+    active = feat_idx >= 0
+    safe_idx = jnp.maximum(feat_idx, 0)
+    gathered = jnp.take(data_matrix, safe_idx, axis=1)         # (N, B, S)
+    gathered = jnp.transpose(gathered, (1, 0, 2))             # (B, N, S)
+    match = gathered == gene_val[:, None, :]
+    effective = jnp.where(active[:, None, :], match, True)
+    return jnp.all(effective, axis=-1)                        # (B, N)
+
+
+@jit
 def _jax_compute_trade_outcomes(
     max_ret: jnp.ndarray,        # (N,) float64
     min_ret: jnp.ndarray,        # (N,) float64
@@ -931,15 +949,27 @@ class GPUBacktestEngine:
         to cap peak VRAM (rule matching materializes a (B, N, K) tensor).
         """
         chromosomes = np.asarray(chromosomes, dtype=np.int32)
+        from gpu_fuzzy_trader.phases.phase2_sparse_encoding import is_sparse_batch
+
         if chromosomes.ndim == 1:
             chromosomes = chromosomes[None, :]
+        if is_sparse_batch(chromosomes) and chromosomes.ndim == 2:
+            chromosomes = chromosomes[None, :, :]
 
-        B, K = chromosomes.shape
-        expected_k = len(self._feature_names)
-        if K != expected_k:
-            raise ValueError(
-                f"Chromosome width {K} does not match engine feature "
-                f"count {expected_k}.")
+        sparse_batch = is_sparse_batch(chromosomes)
+        if sparse_batch:
+            B = chromosomes.shape[0]
+            expected_k = len(self._feature_names)
+            if chromosomes.shape[2] != 2:
+                raise ValueError(
+                    "Sparse chromosomes must have shape (B, S, 2).")
+        else:
+            B, K = chromosomes.shape
+            expected_k = len(self._feature_names)
+            if K != expected_k:
+                raise ValueError(
+                    f"Chromosome width {K} does not match engine feature "
+                    f"count {expected_k}.")
 
         from gpu_fuzzy_trader._gpu_runtime import resolve_phase2_gpu_batch_size
 
@@ -968,7 +998,14 @@ class GPUBacktestEngine:
             end = start + chunk_size
             chroms_chunk = chromosomes_gpu[start:end]
 
-            if K > 0 and self._data_matrix_jax.shape[1] > 0:
+            if sparse_batch:
+                if self._data_matrix_jax.shape[1] > 0:
+                    signals_batch = _jax_compute_rule_signals_sparse_batch(
+                        self._data_matrix_jax, chroms_chunk)
+                else:
+                    signals_batch = jnp.zeros(
+                        (end - start, N), dtype=jnp.bool_)
+            elif K > 0 and self._data_matrix_jax.shape[1] > 0:
                 signals_batch = _jax_compute_rule_signals_batch(
                     self._data_matrix_jax, chroms_chunk, self._dont_cares_jax)
             else:

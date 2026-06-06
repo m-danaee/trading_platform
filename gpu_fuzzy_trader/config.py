@@ -205,9 +205,9 @@ PHASE1_SAMPLING_TOTAL = 300_000
 # Chromosomes per GPU vmap chunk in Phase 2 simulate_rule_batch.
 # Peak VRAM scales ~linearly with this value (rule matching is O(B×N×K)).
 # Auto-tuned at runtime via gpu_fuzzy_trader._gpu_runtime.resolve_phase2_gpu_batch_size:
-#   RTX 4050 (~8 GiB): 16 | Colab T4 (~16 GiB): 32 | override: PHASE2_GPU_BATCH_SIZE env
-# Disable auto: PHASE2_GPU_BATCH_SIZE_AUTO=false
-PHASE2_GPU_BATCH_SIZE = 32
+#   <=8 GiB: 16 | <=12 GiB: 32 | Colab T4 (~15 GiB): 64 | <=24 GiB: 96
+# Override: PHASE2_GPU_BATCH_SIZE env. Disable auto: PHASE2_GPU_BATCH_SIZE_AUTO=false
+PHASE2_GPU_BATCH_SIZE = 64
 
 # lax.scan unroll for equity simulation (JAX GPU perf knob).
 # Higher values fuse more scan steps → fewer kernel launches, longer XLA compile.
@@ -229,6 +229,13 @@ PHASE2_CAPITAL_PCT = 30.0
 # --- Rule genome (shared with Phase 3 team size) ---
 MIN_CONDITIONS = 3
 MAX_CONDITIONS = 4
+
+# Phase 2 chromosome layout during evolution:
+#   "dense"        — length-K vector with per-feature dont_care sentinels (legacy)
+#   "sparse_slots" — (MAX_CONDITIONS, 2) [feat_idx, gene]; inactive slots use feat_idx=-1
+# Active condition count is dynamic in [MIN_CONDITIONS, MAX_CONDITIONS].
+# Pool JSON / archives remain dense K-vectors for Phase 3 compatibility.
+PHASE2_ENCODING = "sparse_slots"
 
 # --- Trade support & pool admission ---
 # Scaled for PHASE1_SAMPLING_TOTAL=300k (~43% of 701k baseline).
