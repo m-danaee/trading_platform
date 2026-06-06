@@ -28,13 +28,15 @@ from gpu_fuzzy_trader.log_progress import maybe_log_generation
 logger = logging.getLogger(__name__)
 
 _EVOX_AVAILABLE = False
+_EVOX_IMPORT_ERROR: str | None = None
 try:
     import torch
     from evox.operators.sampling.uniform import uniform_sampling
     from evox.operators.selection.non_dominate import non_dominate_rank
 
     _EVOX_AVAILABLE = True
-except ImportError:
+except ImportError as exc:
+    _EVOX_IMPORT_ERROR = str(exc)
     torch = None  # type: ignore[assignment]
     uniform_sampling = None  # type: ignore[assignment]
     non_dominate_rank = None  # type: ignore[assignment]
@@ -1010,12 +1012,16 @@ def run_phase2_evolution(
     )
     if not _EVOX_AVAILABLE:
         logger.warning(
-            "EvoX not available; falling back to NumPy NSGA-II for Phase 2.",
+            "EvoX not available (%s); falling back to NumPy NSGA-II for Phase 2.",
+            _EVOX_IMPORT_ERROR or "import failed",
         )
+        fallback_tag = "NSGA-II (fallback)"
+        if log_tag:
+            fallback_tag = log_tag.replace("NSGA-III", "NSGA-II (fallback)")
         return _run_nsga2_fallback(
             feature_infos, engine, pop_size, n_generations, rng,
             seed_chromosomes=seed_chromosomes,
-            log_tag=log_tag or "NSGA-II (fallback)",
+            log_tag=fallback_tag,
             val_engine=val_engine,
             regime_row_fractions=regime_row_fractions,
             val_regime_row_counts=val_regime_row_counts,

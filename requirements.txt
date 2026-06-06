@@ -21,7 +21,8 @@ pyarrow>=14.0
 # --- Phase 2: GPU backtest + evolutionary search (CPU fallbacks if omitted) ---
 jax>=0.4.20
 jaxlib>=0.4.20
-evox>=0.9.0
+evox>=1.0.0,<2
+torch>=2.0
 
 # --- Phase 4: walk-forward risk optimization (required) ---
 optuna>=3.5.0
