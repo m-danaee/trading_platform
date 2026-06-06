@@ -9,3 +9,5 @@ def test_new_config_parameters_exist():
     assert c.PHASE2_RECENCY_WEIGHT_FRACTION == 0.25
     assert c.PHASE2_RECENCY_WEIGHT_MULTIPLIER == 2.0
     assert c.PHASE2_REQUIRE_LAST_FOLD_POSITIVE is False
+    assert c.PHASE2_SCAN_UNROLL == 32
+

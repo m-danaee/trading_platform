@@ -212,7 +212,7 @@ PHASE2_GPU_BATCH_SIZE = 32
 # lax.scan unroll for equity simulation (JAX GPU perf knob).
 # Higher values fuse more scan steps → fewer kernel launches, longer XLA compile.
 # Start at 16; try 32–64 on T4 if VRAM allows. Lower to 8 on 8 GiB GPUs if OOM.
-PHASE2_SCAN_UNROLL = 16
+PHASE2_SCAN_UNROLL = 32
 
 
 # =============================================================================
