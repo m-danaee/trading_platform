@@ -231,9 +231,10 @@ MIN_CONDITIONS = 3
 MAX_CONDITIONS = 4
 
 # --- Trade support & pool admission ---
-MIN_TRADE_SUPPORT = 100  # target executed trades for support penalty
+# Scaled for PHASE1_SAMPLING_TOTAL=300k (~43% of 701k baseline).
+MIN_TRADE_SUPPORT = 60  # target executed trades for support penalty
 SUPPORT_PENALTY_MAX = 12.0
-MIN_TRADE_POOL_FLOOR = 40  # hard reject below this in archive
+MIN_TRADE_POOL_FLOOR = 17  # hard reject below this in archive
 PHASE2_SUPPORT_PENALTY_WEIGHT_F1 = 0.8  # Sortino objective
 PHASE2_SUPPORT_PENALTY_WEIGHT_F2 = 0.6  # drawdown objective
 PHASE2_SUPPORT_PENALTY_WEIGHT_F3 = 0.5  # win-rate objective
@@ -263,11 +264,11 @@ PHASE2_POOL_VAL_RETURN_MIN_PCT = 0.0
 # giving Phase 3 only ~165 combos to search. 1-of-3 (rank-admit level) lets more
 # rules through; Phase 3 applies its own stricter quality gates on top.
 PHASE2_CV_POOL_MIN_FOLDS_PASS = 1
-PHASE2_CV_MIN_TRADE_POOL_FLOOR = 15
+PHASE2_CV_MIN_TRADE_POOL_FLOOR = 7
 PHASE2_CV_POOL_TRAIN_RETURN_MIN_PCT = 0.0
 PHASE2_CV_POOL_VAL_RETURN_MIN_PCT = 0.0
 PHASE2_CV_PROFIT_FACTOR_FLOOR = 1.0
-PHASE2_CV_MIN_VAL_TRADES = 8
+PHASE2_CV_MIN_VAL_TRADES = 4
 # Rank fallback: raised targets to fill a larger pool when strict gates fire.
 PHASE2_CV_POOL_TARGET_MIN = 40
 PHASE2_CV_POOL_RANK_ADMIT_TOP_K = 80
@@ -276,8 +277,9 @@ PHASE2_CV_RANK_MIN_FOLDS_PASS = 1
 # --- Fitness & joint evaluation ---
 SORTINO_CAP = 5.0
 SORTINO_SCALE = 3.0
-PHASE2_JOINT_TRAIN_VAL = True  # f1 uses min(train_sortino, val_sortino)
-# With purged_rolling_cv, val side is worst across CV folds.
+# train-only fitness during evolution (~2× faster)
+PHASE2_JOINT_TRAIN_VAL = False
+# Val folds still gate pool admission via PHASE2_CV_* thresholds.
 
 # --- Diversity & early stop ---
 # Run log: from gen 57 onward the long Pareto was fully saturated (450/450)
@@ -297,16 +299,13 @@ PHASE2_EARLY_STOP_DISABLED_IN_CV = False  # enable early stop in purged CV mode
 # --- Parallel fold evaluation ---
 # Number of threads used to evaluate CV folds simultaneously in Phase 2.
 # Set to 0 to match CV_N_FOLDS automatically; set to 1 to disable parallelism.
-# Capped at 2 (was 0=auto=5): with 5 folds each running a GPU backtest in
-# parallel the peak VRAM demand was 5× a single fold. 2 workers keeps peak
-# usage to ~2× while still providing meaningful parallelism.
-PHASE2_CV_FOLD_WORKERS = 6
+# Default 1 for single-GPU Colab: threaded folds queue on one device without
+# meaningful speedup and increase peak VRAM. Raise only on multi-GPU hosts.
+PHASE2_CV_FOLD_WORKERS = 1
 
 # --- NSGA-III budget ---
-# Population reduced 600→400: with 350k sampling rows and 2 parallel fold
-# workers the per-generation GPU allocation must fit in available VRAM.
-# 400 still provides strong diversity (previous successful run used 450).
-PHASE2_POPULATION_SIZE = 350
+# Population 300 with train-only evolution and sequential fold eval fits T4 VRAM.
+PHASE2_POPULATION_SIZE = 300
 PHASE2_GENERATIONS = 80
 PHASE2_ALGORITHM = "NSGA3"
 # Archive adjusted to match new population size.

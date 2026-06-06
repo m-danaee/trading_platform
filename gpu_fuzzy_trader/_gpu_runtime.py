@@ -93,16 +93,18 @@ def log_gpu_runtime_config() -> None:
     )
 
 
-def _warmup_engine(engine: GPUBacktestEngine) -> None:
-    """Run one representative ``simulate_rule_batch`` to compile JAX kernels."""
+def _warmup_engine(engine: object, batch_size: int = 1) -> None:
+    """Run a representative ``simulate_rule_batch`` to compile JAX kernels."""
     import numpy as np
 
-    k = int(engine._data_matrix_jax.shape[1])
+    target = getattr(engine, "_inner", engine)
+    k = int(target._data_matrix_jax.shape[1])
+    n = max(1, int(batch_size))
     if k == 0:
-        chrom = np.zeros((1, 0), dtype=np.int32)
+        chrom = np.zeros((n, 0), dtype=np.int32)
     else:
-        dc = int(np.asarray(engine._dont_cares_jax)[0])
-        chrom = np.full((1, k), dc, dtype=np.int32)
+        dc = int(np.asarray(target._dont_cares_jax)[0])
+        chrom = np.full((n, k), dc, dtype=np.int32)
 
     engine.simulate_rule_batch(
         chrom,
@@ -112,28 +114,54 @@ def _warmup_engine(engine: GPUBacktestEngine) -> None:
     )
 
 
-def warmup_phase2_gpu_kernels(engine: object) -> None:
+def _iter_warmup_targets(*engines: object | None) -> list[object]:
+    """Expand CV facades into per-fold engines for JAX warmup."""
+    targets: list[object] = []
+    for engine in engines:
+        if engine is None:
+            continue
+        fold_engines = getattr(engine, "_fold_engines", None)
+        if fold_engines:
+            targets.extend(fold_engines)
+        elif hasattr(engine, "simulate_rule_batch"):
+            targets.append(engine)
+    return targets
+
+
+def warmup_phase2_gpu_kernels(
+    engine: object,
+    val_engine: object | None = None,
+) -> None:
     """
     Compile JAX kernels with representative shapes before evolution.
 
-    Accepts ``GPUBacktestEngine`` or CV facades that delegate to fold engines.
+    Warms every fold engine in train (and optional val) CV facades at full
+    production batch size so Generation 1 does not pay lazy JIT costs.
     """
-    target = engine
-    fold_engines = getattr(target, "_fold_engines", None)
-    if fold_engines:
-        target = fold_engines[0]
-    if not hasattr(target, "simulate_rule_batch"):
+    batch_size = resolve_phase2_gpu_batch_size()
+    targets = _iter_warmup_targets(engine, val_engine)
+    if not targets:
         return
-    _warmup_engine(target)  # type: ignore[arg-type]
-    logger.info("Phase 2 JAX warmup complete (1 chromosome)")
+
+    for target in targets:
+        _warmup_engine(target, batch_size=batch_size)
+
+    logger.info(
+        "Phase 2 JAX warmup complete (%d engines, batch_size=%d)",
+        len(targets),
+        batch_size,
+    )
 
 
-def configure_phase2_gpu_runtime(engine: object) -> None:
+def configure_phase2_gpu_runtime(
+    engine: object,
+    val_engine: object | None = None,
+) -> None:
     """Log GPU config and warm up JAX kernels when Phase 2 uses GPU."""
     if not _cfg.PHASE2_USE_GPU:
         return
     log_gpu_runtime_config()
     try:
-        warmup_phase2_gpu_kernels(engine)
+        warmup_phase2_gpu_kernels(engine, val_engine=val_engine)
     except Exception as exc:
         logger.debug("Phase 2 JAX warmup skipped: %s", exc)

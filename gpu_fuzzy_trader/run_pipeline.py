@@ -207,7 +207,7 @@ def _log_pipeline_config() -> None:
     """Log key hyperparameters at pipeline start."""
     logger.info(
         "Pipeline config: SPLIT_MODE=%s CV_FOLDS=%d | PHASE1 top_k=%d | "
-        "PHASE2 algo=%s pop=%d gen=%d | "
+        "PHASE2 algo=%s pop=%d gen=%d joint_train_val=%s cv_workers=%d | "
         "PHASE3 refine pop=%d gen=%d parallel_batch=%s gpu=%s | "
         "PHASE4 trials=%d wf_splits=%d sampler=%s n_jobs=%d",
         _cfg.SPLIT_MODE,
@@ -216,6 +216,8 @@ def _log_pipeline_config() -> None:
         _cfg.PHASE2_ALGORITHM,
         _cfg.PHASE2_POPULATION_SIZE,
         _cfg.PHASE2_GENERATIONS,
+        _cfg.PHASE2_JOINT_TRAIN_VAL,
+        _cfg.PHASE2_CV_FOLD_WORKERS,
         _cfg.PHASE3_REFINE_POP_SIZE,
         _cfg.PHASE3_REFINE_GENERATIONS,
         _cfg.PHASE3_USE_PARALLEL_BATCH,
