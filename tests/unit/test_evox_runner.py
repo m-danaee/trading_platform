@@ -21,6 +21,16 @@ from gpu_fuzzy_trader.evolution.evox_runner import (
 )
 
 
+def _chromosome_with_min_active(
+    n_features: int = 10,
+    dont_care: int = 5,
+) -> np.ndarray:
+    """Build a dense chromosome with exactly MIN_CONDITIONS active genes."""
+    chrom = np.full(n_features, dont_care, dtype=np.int32)
+    chrom[: int(_cfg.MIN_CONDITIONS)] = 0
+    return chrom
+
+
 class TestHallOfFame:
     def test_update_hall_of_fame_accumulates_unique_pareto(self):
         hall: dict[tuple[int, ...], np.ndarray] = {}
@@ -170,10 +180,8 @@ def test_low_trade_drawdown_penalty():
         _cfg.PHASE2_CV_MIN_TRADE_POOL_FLOOR = 25
         _cfg.MIN_TRADE_SUPPORT = 5
         
-        # population of 1 candidate
-        # dont_cares = 5, we make 3 active conditions, so cond_penalty is 0.0
-        pop = np.full((1, 10), 5, dtype=np.int32)
-        pop[0, :3] = 0  # 3 active conditions
+        # population of 1 candidate with valid active count (no cond penalty)
+        pop = _chromosome_with_min_active()[np.newaxis, :]
         dont_cares = np.ones(10, dtype=np.int32) * 5
         objectives = np.full((1, 3), np.inf)
         metrics_cache = [{}]
@@ -207,8 +215,7 @@ def test_phase2_use_total_return_obj():
         _cfg.PHASE2_USE_TOTAL_RETURN_OBJ = True
         _cfg.MIN_TRADE_SUPPORT = 5
         
-        pop = np.full((1, 10), 5, dtype=np.int32)
-        pop[0, :3] = 0  # 3 active conditions
+        pop = _chromosome_with_min_active()[np.newaxis, :]
         dont_cares = np.ones(10, dtype=np.int32) * 5
         objectives = np.full((1, 3), np.inf)
         metrics_cache = [{}]
@@ -495,8 +502,7 @@ class TestBatchSingleObjectiveAlignment:
         monkeypatch.setattr(_cfg, "PHASE2_RETURN_FLOOR_PCT", 2.0)
         monkeypatch.setattr(_cfg, "PHASE2_JOINT_TRAIN_VAL", True)
 
-        pop = np.full((1, 10), 5, dtype=np.int32)
-        pop[0, :3] = 0
+        pop = _chromosome_with_min_active()[np.newaxis, :]
         dont_cares = np.ones(10, dtype=np.int32) * 5
         metrics = {
             "executed_trades": 100,

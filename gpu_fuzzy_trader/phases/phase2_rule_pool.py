@@ -771,16 +771,20 @@ def _init_population(
             return population
 
         from gpu_fuzzy_trader.phases.phase2_sparse_encoding import (
+            empty_slots,
             sample_sparse_slots_chromosome,
         )
         if feature_probs is None:
             feature_probs = build_feature_sampling_probs(feature_infos)
         for i in np.where(~seeded_mask)[0]:
-            k_active = pick_active_count(rng)
-            population[i] = sample_sparse_slots_chromosome(
-                rng, feature_infos, dont_cares, k_active,
-                "explorer", feature_probs,
-            )
+            if rng.random() < dont_care_prob:
+                population[i] = empty_slots()
+            else:
+                k_active = pick_active_count(rng)
+                population[i] = sample_sparse_slots_chromosome(
+                    rng, feature_infos, dont_cares, k_active,
+                    "explorer", feature_probs,
+                )
         return population
 
     if feature_probs is None:
@@ -874,8 +878,11 @@ def _mutate(
 
     if use_sparse_slots() or is_sparse_chromosome(chromosome):
         from gpu_fuzzy_trader.phases.phase2_sparse_encoding import mutate_sparse
+        chrom = np.asarray(chromosome, dtype=np.int32)
+        if use_sparse_slots() and chrom.ndim == 1:
+            chrom = dense_to_sparse(chrom, dont_cares)
         return mutate_sparse(
-            chromosome,
+            chrom,
             feature_infos,
             dont_cares,
             rng,
@@ -1381,6 +1388,16 @@ def _merge_archive_entries(
     return [unique_entries[i] for i in selected[:max_size]]
 
 
+def _stack_chromosome_rows(rows: list[np.ndarray]) -> np.ndarray:
+    """Stack chromosome rows into a batch (dense 2D or sparse 3D)."""
+    if not rows:
+        raise ValueError("rows must be non-empty")
+    first = rows[0]
+    if use_sparse_slots() or is_sparse_chromosome(first):
+        return np.stack(rows, axis=0)
+    return np.vstack(rows)
+
+
 def _pool_seed_chromosomes(
     pool: list[dict],
     dont_cares: np.ndarray | None = None,
@@ -1406,7 +1423,7 @@ def _pool_seed_chromosomes(
 
     if not rows:
         return None
-    return np.vstack(rows)
+    return _stack_chromosome_rows(rows)
 
 
 def _stage_b_seed_chromosomes(
@@ -1436,7 +1453,7 @@ def _stage_b_seed_chromosomes(
             continue
         seen.add(key)
         rows.append(row.copy())
-    return np.vstack(rows)
+    return _stack_chromosome_rows(rows)
 
 
 def _condition_feature_names(conditions: list[str]) -> set[str]:
@@ -1941,8 +1958,7 @@ class Rule_Pool_Generator:
             new_pool_b, history_b = run_phase2_evolution(
                 n_generations=stage_b_gens,
                 log_tag=f"{progress_tag} Stage B",
-                seed_chromosomes=stage_b_seeds,
-                **evo_kwargs,
+                **{**evo_kwargs, "seed_chromosomes": stage_b_seeds},
             )
             for entry in history_a:
                 entry["stage"] = "A"

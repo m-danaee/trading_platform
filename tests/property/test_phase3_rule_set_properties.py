@@ -90,18 +90,23 @@ def _make_df(
     return pd.concat(dfs, ignore_index=True)
 
 
-def _make_pool(n_rules: int, n_conditions_each: int = 2) -> list[dict]:
+def _make_pool(
+    n_rules: int,
+    n_features: int = 3,
+    n_conditions_each: int = 1,
+) -> list[dict]:
     """
-    Build a minimal pool of rules with distinct condition sets.
+    Build a minimal pool of rules with distinct, satisfiable condition sets.
 
-    Each rule has `n_conditions_each` unique conditions so that the pool
-    contains no duplicates.
+    Each rule uses conditions on different features so rows can match.
     """
     pool = []
     for i in range(n_rules):
-        conditions = [f"[feat_{i}] IS Very High", f"[feat_{i}] IS Low"]
+        conditions = [f"[feat_{i % n_features}] IS Very High"]
+        if n_conditions_each > 1:
+            conditions.append(f"[feat_{(i + 1) % n_features}] IS Low")
         if n_conditions_each > 2:
-            conditions.append(f"[feat_{i}] IS Medium")
+            conditions.append(f"[feat_{(i + 2) % n_features}] IS Medium")
         pool.append({
             "conditions": conditions[:n_conditions_each],
             "tp": float(_cfg.PHASE2_TP),
@@ -140,7 +145,7 @@ def selector_args(draw: st.DrawFn):
     n_feat = max(3, pool_size)
     train_df = _make_df(n_rows, symbols, n_features=n_feat, seed=seed)
     val_df = _make_df(n_rows, symbols, n_features=n_feat, seed=seed + 1)
-    pool = _make_pool(pool_size)
+    pool = _make_pool(pool_size, n_features=n_feat)
 
     return train_df, val_df, pool, direction
 
@@ -194,10 +199,15 @@ def test_property_21_rule_set_size_bounds(
             rules_set = result["rules_set"]
             n_rules = len(rules_set)
 
-            assert PHASE3_MIN_RULES <= n_rules <= PHASE3_MAX_RULES, (
-                f"Rule set has {n_rules} rules; expected [{PHASE3_MIN_RULES}, "
-                f"{PHASE3_MAX_RULES}]. direction={direction}, pool_size={len(pool)}"
-            )
+            if result.get("selection_accepted") is False:
+                assert n_rules == 0, (
+                    f"Rejected selection should yield empty rules_set, got {n_rules}"
+                )
+            else:
+                assert PHASE3_MIN_RULES <= n_rules <= PHASE3_MAX_RULES, (
+                    f"Rule set has {n_rules} rules; expected [{PHASE3_MIN_RULES}, "
+                    f"{PHASE3_MAX_RULES}]. direction={direction}, pool_size={len(pool)}"
+                )
         finally:
             m._OUTPUT_PATHS.update(original_paths)
 

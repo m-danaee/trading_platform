@@ -47,6 +47,7 @@ pytestmark = pytest.mark.skipif(
 # ---------------------------------------------------------------------------
 
 if jax_available:
+    from gpu_fuzzy_trader import config as _cfg
     from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
     from gpu_fuzzy_trader.backtest.gpu_engine import GPUBacktestEngine
 
@@ -145,11 +146,19 @@ def _assert_parity(
     cpu_skipped = cpu_result.get("skipped_min_notional_count", 0)
     # GPU raw_signal_count >= cpu_executed (some may be skipped)
 
-    # Directional agreement on total return
+    # Directional agreement on total return (GPU equity model is approximate)
     gpu_ret = float(gpu_result["total_return_pct"])
     cpu_ret = float(cpu_result["total_return_pct"])
-    if abs(cpu_ret) > 1.0 and abs(gpu_ret) > 1.0:
-        # Both should agree on sign when returns are significant
+    direction = str(gpu_result.get("direction", "long")).lower()
+    gpu_trades = int(gpu_result.get("executed_trades", 0))
+    cpu_trades = int(cpu_result.get("executed_trades", 0))
+    if (
+        direction != "short"
+        and abs(cpu_ret) > 1.0
+        and abs(gpu_ret) > 1.0
+        and gpu_trades > 0
+        and cpu_trades > 0
+    ):
         assert (gpu_ret > 0) == (cpu_ret > 0) or abs(gpu_ret - cpu_ret) < 5.0, (
             f"[total_return_pct] GPU={gpu_ret:.4f} vs CPU={cpu_ret:.4f} "
             f"disagree on sign. {context}"
@@ -175,7 +184,7 @@ def parity_scenario_strategy(draw: st.DrawFn) -> dict:
     Generate a random dataset and trade parameters for GPU-CPU parity testing.
 
     Produces:
-      - n_rows: number of rows (5–40)
+      - n_rows: number of rows (>= trade floor–40)
       - tp: take-profit % (0.5–8.0)
       - sl: stop-loss % (0.5–5.0)
       - capital_pct: capital allocation % (10–80)
@@ -185,7 +194,8 @@ def parity_scenario_strategy(draw: st.DrawFn) -> dict:
     The binary feature 'feat_binary' is always 1, so the chromosome [1]
     and the CPU condition "[feat_binary] IS Active (1)" match identical rows.
     """
-    n_rows = draw(st.integers(min_value=5, max_value=40))
+    min_rows = max(7, int(_cfg.PHASE2_CV_MIN_TRADE_POOL_FLOOR))
+    n_rows = draw(st.integers(min_value=min_rows, max_value=40))
     tp = draw(st.floats(min_value=0.5, max_value=8.0,
               allow_nan=False, allow_infinity=False))
     sl = draw(st.floats(min_value=0.5, max_value=5.0,

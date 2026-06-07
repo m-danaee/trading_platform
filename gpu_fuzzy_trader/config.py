@@ -321,7 +321,7 @@ PHASE2_EARLY_STOP_DISABLED_IN_CV = False  # enable early stop in purged CV mode
 # Stop when Pareto max_return fails to improve for N consecutive generations.
 PHASE2_PLATEAU_EARLY_STOP_ENABLED = True
 PHASE2_PLATEAU_EARLY_STOP_MIN_GENERATION = 20
-PHASE2_PLATEAU_EARLY_STOP_PATIENCE = 20
+PHASE2_PLATEAU_EARLY_STOP_PATIENCE = 10
 PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT = 0.01
 PHASE2_PLATEAU_EARLY_STOP_DISABLED_IN_CV = False
 # Plateau tracks deployable robust return (min train/val), not train-only max.

@@ -44,6 +44,12 @@ from gpu_fuzzy_trader.phases.phase2_rule_pool import (
     _validate_pool_schema,
 )
 from gpu_fuzzy_trader.features.encoder import get_dont_care
+from gpu_fuzzy_trader.phases.phase2_sparse_encoding import (
+    INACTIVE_FEAT_IDX,
+    dense_to_sparse,
+    max_slots,
+    sparse_to_dense,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -53,6 +59,27 @@ from gpu_fuzzy_trader.features.encoder import get_dont_care
 def _make_feature_infos(modes: list[str]) -> list[dict]:
     """Create minimal feature_infos list."""
     return [{"name": f"feat_{i}", "mode": m, "score": 0.5} for i, m in enumerate(modes)]
+
+
+def _is_all_inactive_sparse(row: np.ndarray) -> bool:
+    """True when every sparse slot is inactive (feat_idx == -1)."""
+    return bool(np.all(row[:, 0] == INACTIVE_FEAT_IDX))
+
+
+def _pop_contains_dense_seed(pop: np.ndarray, seed: np.ndarray, dc: np.ndarray) -> bool:
+    """Check whether *pop* contains a sparse row matching dense *seed*."""
+    target = dense_to_sparse(seed, dc)
+    return any(np.array_equal(row, target) for row in pop)
+
+
+def _chromosome_with_min_active(
+    n_features: int = 10,
+    dont_care: int = 5,
+) -> np.ndarray:
+    """Build a dense chromosome with exactly MIN_CONDITIONS active genes."""
+    chrom = np.full(n_features, dont_care, dtype=np.int32)
+    chrom[: int(_cfg.MIN_CONDITIONS)] = 0
+    return chrom
 
 
 def _make_train_df(
@@ -191,8 +218,10 @@ class TestHammingDistance:
 class TestParetoSortinoStats:
     def test_empty_pareto_front(self):
         stats = _pareto_sortino_stats([], [{"sortino_ratio": 10.0}])
-        assert stats == {"mean_sortino_ratio": 0.0,
-                         "best_sortino_ratio": 0.0}
+        assert stats["mean_sortino_ratio"] == 0.0
+        assert stats["best_sortino_ratio"] == 0.0
+        assert stats["mean_raw_train_return_pct"] == 0.0
+        assert stats["mean_val_return_pct"] == 0.0
 
     def test_mean_and_best_from_cache(self):
         metrics_cache = [
@@ -311,37 +340,38 @@ class TestInitPopulation:
         fi = _make_feature_infos(["positive", "binary", "signed"])
         rng = np.random.default_rng(0)
         pop = _init_population(10, fi, rng, init_strategy="legacy")
-        assert pop.shape == (10, 3)
+        assert pop.shape == (10, max_slots(), 2)
 
     def test_gene_values_in_valid_range(self):
-        """All genes must be in [0, dont_care] inclusive."""
+        """All active sparse genes must be in [0, dont_care] inclusive."""
         fi = _make_feature_infos(["positive", "binary", "ternary", "signed"])
         dc = _get_dont_cares(fi)
         rng = np.random.default_rng(0)
         pop = _init_population(50, fi, rng, init_strategy="legacy")
-        for k in range(len(fi)):
-            assert np.all(pop[:, k] >= 0)
-            assert np.all(pop[:, k] <= dc[k])
+        for row in pop:
+            for slot in row:
+                feat_idx = int(slot[0])
+                if feat_idx < 0:
+                    continue
+                gene = int(slot[1])
+                assert 0 <= gene <= dc[feat_idx]
 
     def test_dont_care_appears(self):
-        """With dont_care_prob=0.5, dont_care values should appear."""
+        """With dont_care_prob=0.5, inactive sparse rows should appear."""
         fi = _make_feature_infos(["positive"] * 10)
-        dc = _get_dont_cares(fi)
         rng = np.random.default_rng(0)
         pop = _init_population(
             100, fi, rng, dont_care_prob=0.5, init_strategy="legacy",
         )
-        # At least some dont_care values should appear
-        assert np.any(pop == dc[0])
+        assert any(_is_all_inactive_sparse(row) for row in pop)
 
     def test_all_active_when_dont_care_prob_zero(self):
-        """With dont_care_prob=0, no dont_care values should appear."""
+        """With dont_care_prob=0, no fully inactive sparse rows should appear."""
         fi = _make_feature_infos(["positive"] * 5)
-        dc = _get_dont_cares(fi)
         rng = np.random.default_rng(0)
         pop = _init_population(
             20, fi, rng, dont_care_prob=0.0, init_strategy="legacy")
-        assert not np.any(pop == dc[0])
+        assert not any(_is_all_inactive_sparse(row) for row in pop)
 
     def test_seeded_chromosomes_fill_requested_fraction(self):
         fi = _make_feature_infos(["positive"] * 4)
@@ -365,11 +395,11 @@ class TestInitPopulation:
         )
 
         seed_matches = sum(
-            any(np.array_equal(row, seed) for row in pop)
+            _pop_contains_dense_seed(pop, seed, _get_dont_cares(fi))
             for seed in seeds
         )
         assert seed_matches == len(seeds)
-        assert np.sum(np.all(pop == 5, axis=1)) == 7
+        assert sum(_is_all_inactive_sparse(row) for row in pop) == 7
 
     def test_init_population_seeds_35_percent_of_pop_200(self):
         fi = _make_feature_infos(["positive"] * 4)
@@ -401,8 +431,9 @@ class TestInitPopulation:
             len(seeds),
         )
         assert expected_seed_slots == 70
-        dont_care = _get_dont_cares(fi)[0]
-        non_random_rows = int(np.sum(~np.all(pop == dont_care, axis=1)))
+        non_random_rows = sum(
+            not _is_all_inactive_sparse(row) for row in pop
+        )
         assert non_random_rows == expected_seed_slots
 
 
@@ -424,14 +455,16 @@ class TestStratifiedInitPopulation:
 
 class TestPoolSeedChromosomes:
     def test_pool_seed_chromosomes_dedupes(self):
+        fi = _make_feature_infos(["positive"] * 4)
+        dc = _get_dont_cares(fi)
         pool = [
             {"chromosome": [0, 1, 2, 3]},
             {"chromosome": [0, 1, 2, 3]},
             {"chromosome": [1, 2, 3, 4]},
         ]
-        arr = _pool_seed_chromosomes(pool)
+        arr = _pool_seed_chromosomes(pool, dc)
         assert arr is not None
-        assert arr.shape == (2, 4)
+        assert arr.shape == (2, max_slots(), 2)
 
     def test_pool_seed_chromosomes_empty_returns_none(self):
         assert _pool_seed_chromosomes([]) is None
@@ -459,8 +492,9 @@ class TestMutate:
         chrom = np.array([2, 1, 5], dtype=np.int32)
         for _ in range(20):
             result = _mutate(chrom, fi, dc, rng, mutation_rate=1.0)
+            dense = sparse_to_dense(result, dc)
             for k in range(len(fi)):
-                assert 0 <= result[k] <= dc[k]
+                assert 0 <= dense[k] <= dc[k]
 
     def test_high_mutation_rate_changes_chromosome(self):
         fi = _make_feature_infos(["positive"] * 10)
@@ -470,7 +504,7 @@ class TestMutate:
         changed = False
         for _ in range(20):
             result = _mutate(chrom, fi, dc, rng, mutation_rate=1.0)
-            if not np.array_equal(result, chrom):
+            if not np.array_equal(sparse_to_dense(result, dc), chrom):
                 changed = True
                 break
         assert changed
@@ -960,11 +994,17 @@ class TestRulePoolGeneratorRun:
 
             assert isinstance(result, list)
             assert captured["seed_chromosomes"] is not None
-            assert captured["seed_chromosomes"].shape == (2, 4)
-            assert np.array_equal(captured["seed_chromosomes"][0], np.array(
-                [0, 1, 2, 3], dtype=np.int32))
-            assert np.array_equal(captured["seed_chromosomes"][1], np.array(
-                [1, 2, 3, 4], dtype=np.int32))
+            seeds = captured["seed_chromosomes"]
+            dc = _get_dont_cares(gen.feature_infos)
+            assert seeds.shape == (2, max_slots(), 2)
+            assert np.array_equal(
+                sparse_to_dense(seeds[0], dc),
+                np.array([0, 1, 2, 3], dtype=np.int32),
+            )
+            assert np.array_equal(
+                sparse_to_dense(seeds[1], dc),
+                np.array([1, 2, 3, 4], dtype=np.int32),
+            )
             chromosomes = {tuple(entry["chromosome"]) for entry in result}
             assert (0, 1, 2, 3) in chromosomes
             assert (2, 3, 4, 0) in chromosomes
@@ -1215,8 +1255,7 @@ class TestEvaluateChromosome:
             _cfg.PHASE2_USE_TOTAL_RETURN_OBJ = True
             _cfg.MIN_TRADE_SUPPORT = 5
             
-            chromosome = np.full(10, 5, dtype=np.int32)
-            chromosome[:3] = 0  # 3 active conditions
+            chromosome = _chromosome_with_min_active()
             dont_cares = np.ones(10, dtype=np.int32) * 5
             
             class MockEngine:
@@ -1269,8 +1308,8 @@ class TestRobustReturnObjective:
         monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR", 0.0)
         monkeypatch.setattr(_cfg, "PHASE2_VAL_RETURN_FLOOR_PCT", -100.0)
 
-        dont_cares = np.ones(4, dtype=np.int32) * 2
-        chrom = np.array([0, 1, 0, 2], dtype=np.int32)
+        dont_cares = np.full(4, 5, dtype=np.int32)
+        chrom = np.array([0, 1, 2, 3], dtype=np.int32)
         metrics = {
             "executed_trades": 100,
             "total_return_pct": 10.0,
@@ -1336,3 +1375,113 @@ class TestTwoStageOrchestration:
         assert seeds is not None
         assert seeds.shape[0] == 2
         assert np.array_equal(seeds[1], np.array([9, 9], dtype=np.int32))
+
+    def test_stage_b_overrides_seed_chromosomes_without_duplicate_kwarg(
+        self, tmp_path, monkeypatch,
+    ):
+        import gpu_fuzzy_trader.phases.phase2_rule_pool as m
+
+        monkeypatch.setattr(_cfg, "PHASE2_TWO_STAGE_ENABLED", True)
+        monkeypatch.setattr(_cfg, "PHASE2_POPULATION_SIZE", 8)
+        monkeypatch.setattr(_cfg, "PHASE2_GENERATIONS", 3)
+        monkeypatch.setattr(_cfg, "PHASE2_STAGE_A_GENERATIONS", 1)
+        monkeypatch.setattr(_cfg, "PHASE2_STAGE_B_GENERATIONS", 1)
+        monkeypatch.setattr(_cfg, "PHASE2_STAGE_B_SEED_TOP_K", 1)
+
+        original_pool = m._POOL_PATHS.copy()
+        original_hist = m._HISTORY_PATHS.copy()
+        pool_path = str(tmp_path / "phase2_long_pool.json")
+        m._POOL_PATHS["long"] = pool_path
+        m._HISTORY_PATHS["long"] = str(tmp_path / "phase2_long_history.json")
+
+        class StubReporter:
+            def plot_phase2_metrics(self, *args, **kwargs):
+                return None
+
+            def plot_phase2_pnl(self, *args, **kwargs):
+                return None
+
+        archive_seed = np.array([[0, 1, 2, 3]], dtype=np.int32)
+        calls: list[dict] = []
+
+        def fake_run_phase2_evolution(
+            feature_infos,
+            engine,
+            pop_size,
+            n_generations,
+            rng,
+            seed_chromosomes=None,
+            log_tag=None,
+            val_engine=None,
+            **kwargs,
+        ):
+            calls.append({
+                "log_tag": log_tag,
+                "seed_chromosomes": None if seed_chromosomes is None
+                else np.array(seed_chromosomes, copy=True),
+            })
+            chrom = [2, 3, 4, 0]
+            entry = {
+                "chromosome": chrom,
+                "conditions": ["[feat_0] IS Medium"],
+                "objectives": {
+                    "sortino_ratio": 10.0,
+                    "total_return_pct": 10.0,
+                    "profit_factor": 1.2,
+                    "max_drawdown_pct": 4.0,
+                    "win_rate": 60.0,
+                },
+                "val_objectives": {
+                    "sortino_ratio": 6.0,
+                    "total_return_pct": 6.0,
+                    "profit_factor": 1.1,
+                    "max_drawdown_pct": 3.0,
+                    "win_rate": 58.0,
+                },
+                "val_executed_trades": 120,
+                "executed_trades": 220,
+            }
+            return [entry], [{
+                "generation": 0,
+                "pareto_size": 1,
+                "mean_f1": 0.0,
+                "mean_f2": 0.0,
+                "mean_f3": 0.0,
+                "algorithm": "NSGA-III",
+                "mean_sortino_ratio": 0.0,
+                "best_sortino_ratio": 0.0,
+            }]
+
+        try:
+            with open(pool_path, "w", encoding="utf-8") as fh:
+                json.dump([], fh)
+
+            with patch(
+                "gpu_fuzzy_trader.evolution.evox_runner.run_phase2_evolution",
+                side_effect=fake_run_phase2_evolution,
+            ), patch(
+                "gpu_fuzzy_trader.phases.phase2_rule_pool.Reporter",
+                return_value=StubReporter(),
+            ), patch(
+                "gpu_fuzzy_trader.phases.phase2_rule_pool._pool_seed_chromosomes",
+                return_value=archive_seed,
+            ):
+                fi = _make_feature_infos(
+                    ["positive", "positive", "positive", "positive"])
+                df = _make_train_df(
+                    n_rows=200, n_features=4, symbols=["A", "B"])
+                gen = Rule_Pool_Generator(
+                    df, fi, "long",
+                    pop_size=8,
+                    n_generations=3,
+                    seed=42,
+                )
+                gen.run()
+
+            assert len(calls) == 2
+            assert "Stage A" in calls[0]["log_tag"]
+            assert "Stage B" in calls[1]["log_tag"]
+            assert calls[1]["seed_chromosomes"] is not None
+        finally:
+            m._POOL_PATHS.update(original_pool)
+            m._HISTORY_PATHS.update(original_hist)

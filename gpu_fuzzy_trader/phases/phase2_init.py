@@ -210,6 +210,25 @@ def repair_active_count(
     weighted_activate_prob: float | None = None,
 ) -> np.ndarray:
     """Enforce MIN_CONDITIONS <= active <= MAX_CONDITIONS on a copy."""
+    from gpu_fuzzy_trader.phases.phase2_sparse_encoding import (
+        dense_to_sparse,
+        repair_sparse_slots,
+        sparse_to_dense,
+        use_sparse_slots,
+    )
+
+    if use_sparse_slots() and np.asarray(chrom).ndim == 1:
+        sparse = dense_to_sparse(chrom, dont_cares)
+        repaired = repair_sparse_slots(
+            sparse,
+            feature_infos,
+            dont_cares,
+            rng,
+            feature_probs=feature_probs,
+            weighted_activate_prob=weighted_activate_prob,
+        )
+        return sparse_to_dense(repaired, dont_cares)
+
     out = chrom.copy()
     weighted_activate_prob = (
         _cfg.PHASE2_MUTATION_WEIGHTED_ACTIVATE_PROB

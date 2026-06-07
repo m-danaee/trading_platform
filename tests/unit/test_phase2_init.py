@@ -81,7 +81,9 @@ class TestStratifiedInitPopulation:
                    _cfg.MAX_CONDITIONS for c in active_counts)
 
     def test_repair_active_count(self):
-        fi = _feature_infos_with_scores([("a", 1.0), ("b", 0.5), ("c", 0.1)])
+        fi = _feature_infos_with_scores([
+            ("a", 1.0), ("b", 0.5), ("c", 0.1), ("d", 0.05),
+        ])
         dont_cares = _get_dont_cares(fi)
         chrom = dont_cares.copy()
         chrom[0] = 0
