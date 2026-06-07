@@ -91,6 +91,18 @@ class TestLogGeneration:
         assert "valid_rules=12" in msg
         assert "elapsed=45.2s" in msg
 
+    def test_emits_unique_chrom_and_cache_hit_rate(self):
+        log = MagicMock(spec=logging.Logger)
+        log_generation(
+            log, "Phase 2 [long] NSGA-III",
+            36, 80, 300, 9.69,
+            unique_chromosome_ratio=0.05,
+            cache_hit_rate=0.82,
+        )
+        msg = log.info.call_args[0][0]
+        assert "unique_chrom=0.05" in msg
+        assert "cache_hit_rate=0.82" in msg
+
 
 class TestMaybeLogGeneration:
     def test_skips_when_not_on_interval(self):

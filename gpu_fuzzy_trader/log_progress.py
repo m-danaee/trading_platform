@@ -62,6 +62,8 @@ def log_generation(
     median_return_pct: float | None = None,
     max_sortino: float | None = None,
     valid_count: int | None = None,
+    unique_chromosome_ratio: float | None = None,
+    cache_hit_rate: float | None = None,
     elapsed_s: float | None = None,
 ) -> None:
     """Emit a consistent INFO line for one evolutionary generation."""
@@ -77,6 +79,10 @@ def log_generation(
         msg += " max_sortino=%.2f" % max_sortino
     if valid_count is not None:
         msg += " valid_rules=%d" % valid_count
+    if unique_chromosome_ratio is not None:
+        msg += " unique_chrom=%.2f" % unique_chromosome_ratio
+    if cache_hit_rate is not None:
+        msg += " cache_hit_rate=%.2f" % cache_hit_rate
     if elapsed_s is not None:
         msg += " elapsed=%.1fs" % elapsed_s
     logger.info(msg)
@@ -126,6 +132,8 @@ def maybe_log_generation(
     median_return_pct: float | None = None,
     max_sortino: float | None = None,
     valid_count: int | None = None,
+    unique_chromosome_ratio: float | None = None,
+    cache_hit_rate: float | None = None,
     loop_start: float | None = None,
     interval: int | None = None,
 ) -> None:
@@ -150,6 +158,8 @@ def maybe_log_generation(
         median_return_pct=median_return_pct,
         max_sortino=max_sortino,
         valid_count=valid_count,
+        unique_chromosome_ratio=unique_chromosome_ratio,
+        cache_hit_rate=cache_hit_rate,
         elapsed_s=elapsed,
     )
 

@@ -299,7 +299,7 @@ PHASE2_JOINT_TRAIN_VAL = False
 # and mean return was flat/worsening — wasted ~25 generations.
 # Raised Hamming threshold 2→3 and diversity penalty 4→6 to maintain spread.
 PHASE2_DIVERSITY_HAMMING_THRESHOLD = 3
-PHASE2_DIVERSITY_PENALTY = 6.0
+PHASE2_DIVERSITY_PENALTY = 8.0
 PHASE2_EARLY_STOP_ENABLED = True
 PHASE2_EARLY_STOP_MIN_GENERATION = 40
 # Tightened -5.0 → -3.5: short run showed -10% by gen 65 yet ran to completion.
@@ -308,6 +308,12 @@ PHASE2_EARLY_STOP_USE_MEDIAN_RETURN = True  # robust vs one bad Pareto member
 # also require sparse valid_rules on Pareto
 PHASE2_EARLY_STOP_MIN_VALID_RULES = 5
 PHASE2_EARLY_STOP_DISABLED_IN_CV = False  # enable early stop in purged CV mode
+# Stop when Pareto max_return fails to improve for N consecutive generations.
+PHASE2_PLATEAU_EARLY_STOP_ENABLED = True
+PHASE2_PLATEAU_EARLY_STOP_MIN_GENERATION = 20
+PHASE2_PLATEAU_EARLY_STOP_PATIENCE = 20
+PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT = 0.01
+PHASE2_PLATEAU_EARLY_STOP_DISABLED_IN_CV = False
 
 # --- Parallel fold evaluation ---
 # Number of threads used to evaluate CV folds simultaneously in Phase 2.
@@ -347,6 +353,7 @@ PHASE2_INIT_STRATUM_FRACTIONS = (0.67, 0.33)
 PHASE2_INIT_SOFTMAX_TEMP = 0.5
 PHASE2_INIT_SCORE_EPS = 1e-6
 PHASE2_INIT_UNIFORM_MIX = 0.05
+PHASE2_MUTATION_RATE = 0.12
 PHASE2_MUTATION_WEIGHTED_ACTIVATE_PROB = 0.70
 
 

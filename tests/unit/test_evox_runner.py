@@ -11,7 +11,9 @@ from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.evolution.evox_runner import (
     _EVOX_AVAILABLE,
     _evaluate_population_indices,
+    _should_plateau_early_stop_phase2,
     _update_hall_of_fame,
+    _update_max_return_plateau,
     run_phase2_evolution,
 )
 
@@ -379,3 +381,29 @@ class TestEvalOptimizations:
         assert call_count == 1
         assert obj_with_archive[0] > obj_no_archive[0]
 
+
+class TestPlateauEarlyStop:
+    def test_update_resets_streak_on_improvement(self):
+        best, streak = _update_max_return_plateau(5.0, -np.inf, 3)
+        assert best == 5.0
+        assert streak == 0
+
+        best, streak = _update_max_return_plateau(5.0, best, streak)
+        assert best == 5.0
+        assert streak == 1
+
+        best, streak = _update_max_return_plateau(5.02, best, streak)
+        assert best == 5.02
+        assert streak == 0
+
+    def test_should_stop_after_patience(self, monkeypatch):
+        monkeypatch.setattr(_cfg, "PHASE2_PLATEAU_EARLY_STOP_ENABLED", True)
+        monkeypatch.setattr(
+            _cfg, "PHASE2_PLATEAU_EARLY_STOP_MIN_GENERATION", 5)
+        monkeypatch.setattr(_cfg, "PHASE2_PLATEAU_EARLY_STOP_PATIENCE", 3)
+        monkeypatch.setattr(
+            _cfg, "PHASE2_PLATEAU_EARLY_STOP_DISABLED_IN_CV", False)
+
+        assert not _should_plateau_early_stop_phase2(3, 3)
+        assert not _should_plateau_early_stop_phase2(10, 2)
+        assert _should_plateau_early_stop_phase2(10, 3)

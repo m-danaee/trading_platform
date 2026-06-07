@@ -219,6 +219,56 @@ def _should_early_stop_phase2(
     return True
 
 
+def _split_mode_is_purged_cv() -> bool:
+    return str(_cfg.SPLIT_MODE).strip().lower() == "purged_rolling_cv"
+
+
+def _empty_eval_stats() -> dict[str, int]:
+    return {"pending": 0, "cache_hits": 0}
+
+
+def _merge_gen_eval_stats(*stats_list: dict[str, int] | None) -> dict[str, int]:
+    merged = _empty_eval_stats()
+    for stats in stats_list:
+        if not stats:
+            continue
+        merged["pending"] += int(stats.get("pending", 0))
+        merged["cache_hits"] += int(stats.get("cache_hits", 0))
+    return merged
+
+
+def _eval_cache_hit_rate(stats: dict[str, int]) -> float | None:
+    pending = int(stats.get("pending", 0))
+    if pending <= 0:
+        return None
+    return float(stats.get("cache_hits", 0)) / float(pending)
+
+
+def _update_max_return_plateau(
+    max_return_pct: float,
+    best_max_return: float,
+    streak: int,
+) -> tuple[float, int]:
+    """Return updated (best_max_return, gens_without_improvement)."""
+    delta = float(_cfg.PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT)
+    if max_return_pct > best_max_return + delta:
+        return max_return_pct, 0
+    return best_max_return, streak + 1
+
+
+def _should_plateau_early_stop_phase2(gen: int, streak: int) -> bool:
+    if not _cfg.PHASE2_PLATEAU_EARLY_STOP_ENABLED:
+        return False
+    if (
+        _split_mode_is_purged_cv()
+        and bool(_cfg.PHASE2_PLATEAU_EARLY_STOP_DISABLED_IN_CV)
+    ):
+        return False
+    if gen + 1 < int(_cfg.PHASE2_PLATEAU_EARLY_STOP_MIN_GENERATION):
+        return False
+    return streak >= int(_cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE)
+
+
 def _median_pairwise_hamming(chromosomes: list[np.ndarray]) -> float:
     """Median Hamming distance across unique Pareto chromosomes (sample cap 40)."""
     from gpu_fuzzy_trader.phases.phase2_rule_pool import _hamming_distance
@@ -340,12 +390,14 @@ def _make_offspring_population(
         offspring_list.append(
             _mutate(
                 child_a, feature_infos, dont_cares, rng,
+                mutation_rate=float(_cfg.PHASE2_MUTATION_RATE),
                 feature_probs=feature_probs,
             )
         )
         offspring_list.append(
             _mutate(
                 child_b, feature_infos, dont_cares, rng,
+                mutation_rate=float(_cfg.PHASE2_MUTATION_RATE),
                 feature_probs=feature_probs,
             )
         )
@@ -516,7 +568,7 @@ def _evaluate_population_indices(
     regime_row_fractions: np.ndarray | None = None,
     val_regime_row_counts: np.ndarray | None = None,
     global_metrics_cache: dict[tuple[int, ...], dict] | None = None,
-) -> None:
+) -> dict[str, int]:
     """Evaluate unevaluated individuals, preferring batch simulate_rule_batch."""
     from gpu_fuzzy_trader.phases.phase2_rule_pool import (
         _evaluate_chromosome,
@@ -525,7 +577,7 @@ def _evaluate_population_indices(
 
     pending = [i for i in indices if np.any(np.isinf(objectives[i]))]
     if not pending:
-        return
+        return _empty_eval_stats()
 
     if regime_row_fractions is None:
         regime_row_fractions = getattr(
@@ -567,7 +619,7 @@ def _evaluate_population_indices(
                 "Phase 2 eval: %d cache hits, 0 GPU pending",
                 cache_hits,
             )
-        return
+        return {"pending": len(pending), "cache_hits": cache_hits}
 
     try:
         if _cfg.PHASE2_EVAL_BATCH_DEDUP:
@@ -663,6 +715,9 @@ def _evaluate_population_indices(
                     metrics,
                     None,
                 )
+        return {"pending": len(pending), "cache_hits": cache_hits}
+
+    return {"pending": len(pending), "cache_hits": cache_hits}
 
 
 def _normalize_for_association(
@@ -808,6 +863,8 @@ def _run_nsga2_fallback(
     logger.info("%s: %d features, pop=%d, gen=%d",
                 tag, K, pop_size, n_generations)
     gen_loop_start = time.monotonic()
+    plateau_best_max_return = -np.inf
+    plateau_streak = 0
 
     for gen in range(n_generations):
         for i in range(pop_size):
@@ -827,6 +884,9 @@ def _run_nsga2_fallback(
         _update_hall_of_fame(hall_of_fame, population, pareto_indices)
 
         pareto_obj = objectives[pareto_indices]
+        pareto_diag = _pareto_diagnostics(
+            pareto_indices, metrics_cache, pareto_obj, population,
+        )
         history.append({
             "generation": gen,
             "pareto_size": len(pareto_indices),
@@ -835,9 +895,7 @@ def _run_nsga2_fallback(
             "mean_f3": float(np.mean(pareto_obj[:, 2])),
             "algorithm": "NSGA-II (fallback)",
             **_pareto_sortino_stats(pareto_indices, metrics_cache),
-            **_pareto_diagnostics(
-                pareto_indices, metrics_cache, pareto_obj, population,
-            ),
+            **pareto_diag,
         })
 
         returns = [
@@ -860,12 +918,17 @@ def _run_nsga2_fallback(
                 regime_row_fractions_arr=regime_row_fractions,
             )
         )
+        plateau_best_max_return, plateau_streak = _update_max_return_plateau(
+            max_ret, plateau_best_max_return, plateau_streak,
+        )
         maybe_log_generation(
             logger, tag, gen, n_generations, len(pareto_indices), mean_ret,
             max_return_pct=max_ret,
             median_return_pct=median_ret,
             max_sortino=max_sort,
             valid_count=val_count,
+            unique_chromosome_ratio=float(
+                pareto_diag.get("unique_chromosome_ratio", 0.0)),
             loop_start=gen_loop_start,
         )
 
@@ -887,6 +950,19 @@ def _run_nsga2_fallback(
                 float(_cfg.PHASE2_EARLY_STOP_MEAN_RETURN_PCT),
                 val_count,
                 int(_cfg.PHASE2_EARLY_STOP_MIN_VALID_RULES),
+            )
+            break
+
+        if _should_plateau_early_stop_phase2(gen, plateau_streak):
+            logger.info(
+                "%s: plateau early stop at gen %d (max_return=%.2f%% unchanged "
+                "for %d gens, patience=%d, min_delta=%.2f%%)",
+                tag,
+                gen + 1,
+                max_ret,
+                plateau_streak,
+                int(_cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE),
+                float(_cfg.PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT),
             )
             break
 
@@ -985,9 +1061,11 @@ def _run_nsga3(
     logger.info("%s: %d features, pop=%d, gen=%d",
                 tag, K, pop_size, n_generations)
     gen_loop_start = time.monotonic()
+    plateau_best_max_return = -np.inf
+    plateau_streak = 0
 
     for gen in range(n_generations):
-        _evaluate_population_indices(
+        parent_stats = _evaluate_population_indices(
             population,
             list(range(pop_size)),
             dont_cares,
@@ -1008,6 +1086,9 @@ def _run_nsga3(
         _update_hall_of_fame(hall_of_fame, population, pareto_indices)
 
         pareto_obj = objectives[pareto_indices]
+        pareto_diag = _pareto_diagnostics(
+            pareto_indices, metrics_cache, pareto_obj, population,
+        )
         history.append({
             "generation": gen,
             "pareto_size": len(pareto_indices),
@@ -1016,9 +1097,7 @@ def _run_nsga3(
             "mean_f3": float(np.mean(pareto_obj[:, 2])) if len(pareto_obj) else 0.0,
             "algorithm": "NSGA-III",
             **_pareto_sortino_stats(pareto_indices, metrics_cache),
-            **_pareto_diagnostics(
-                pareto_indices, metrics_cache, pareto_obj, population,
-            ),
+            **pareto_diag,
         })
 
         returns = [
@@ -1041,12 +1120,48 @@ def _run_nsga3(
                 regime_row_fractions_arr=regime_row_fractions,
             )
         )
+
+        plateau_best_max_return, plateau_streak = _update_max_return_plateau(
+            max_ret, plateau_best_max_return, plateau_streak,
+        )
+
+        is_last_gen = gen == n_generations - 1
+        off_stats = _empty_eval_stats()
+        if not is_last_gen:
+            offspring = _make_offspring_population(
+                population, objectives, pop_size, feature_infos, dont_cares, rng,
+                feature_probs=feature_probs,
+                fronts=fronts,
+            )
+            off_obj = np.full((pop_size, 3), np.inf)
+            off_metrics: list[dict] = [{} for _ in range(pop_size)]
+            off_stats = _evaluate_population_indices(
+                offspring,
+                list(range(pop_size)),
+                dont_cares,
+                engine,
+                pareto_archive,
+                off_obj,
+                off_metrics,
+                val_engine=val_engine,
+                regime_row_fractions=regime_row_fractions,
+                val_regime_row_counts=val_regime_row_counts,
+                global_metrics_cache=global_metrics_cache,
+            )
+
+        gen_eval_stats = _merge_gen_eval_stats(parent_stats, off_stats)
+        history[-1]["eval_cache_hit_rate"] = _eval_cache_hit_rate(
+            gen_eval_stats)
+
         maybe_log_generation(
             logger, tag, gen, n_generations, len(pareto_indices), mean_ret,
             max_return_pct=max_ret,
             median_return_pct=median_ret,
             max_sortino=max_sort,
             valid_count=val_count,
+            unique_chromosome_ratio=float(
+                pareto_diag.get("unique_chromosome_ratio", 0.0)),
+            cache_hit_rate=_eval_cache_hit_rate(gen_eval_stats),
             loop_start=gen_loop_start,
         )
 
@@ -1071,30 +1186,21 @@ def _run_nsga3(
             )
             break
 
-        if gen == n_generations - 1:
+        if _should_plateau_early_stop_phase2(gen, plateau_streak):
+            logger.info(
+                "%s: plateau early stop at gen %d (max_return=%.2f%% unchanged "
+                "for %d gens, patience=%d, min_delta=%.2f%%)",
+                tag,
+                gen + 1,
+                max_ret,
+                plateau_streak,
+                int(_cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE),
+                float(_cfg.PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT),
+            )
             break
 
-        # Pass pre-computed fronts to avoid a redundant NDS call in offspring maker.
-        offspring = _make_offspring_population(
-            population, objectives, pop_size, feature_infos, dont_cares, rng,
-            feature_probs=feature_probs,
-            fronts=fronts,
-        )
-        off_obj = np.full((pop_size, 3), np.inf)
-        off_metrics: list[dict] = [{} for _ in range(pop_size)]
-        _evaluate_population_indices(
-            offspring,
-            list(range(pop_size)),
-            dont_cares,
-            engine,
-            pareto_archive,
-            off_obj,
-            off_metrics,
-            val_engine=val_engine,
-            regime_row_fractions=regime_row_fractions,
-            val_regime_row_counts=val_regime_row_counts,
-            global_metrics_cache=global_metrics_cache,
-        )
+        if is_last_gen:
+            break
 
         merge_pop = np.vstack([population, offspring])
         merge_fit = np.vstack([objectives, off_obj])
