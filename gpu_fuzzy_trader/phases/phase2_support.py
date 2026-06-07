@@ -279,14 +279,15 @@ def passes_pool_entry_admission(entry: dict) -> bool:
     if not _cfg.PHASE2_POOL_REQUIRE_POSITIVE_SPLITS:
         return True
 
+    val_obj = entry.get("val_objectives")
     if _split_mode_is_purged_cv():
         cv_pass = entry.get("cv_folds_passing")
         if cv_pass is not None:
             total = int(entry.get("cv_folds_total", _cfg.CV_N_FOLDS))
-            min_pass = min(
-                int(_cfg.PHASE2_CV_POOL_MIN_FOLDS_PASS), max(total, 1))
-            if int(cv_pass) < min_pass:
+            if not is_cv_deployable(int(cv_pass), total):
                 return False
+            # Fold majority is the hard gate; merged metrics are for ranking only.
+            return val_obj is not None
 
     objectives = entry.get("objectives", {}) or {}
     train_metrics = {
@@ -460,3 +461,125 @@ def compute_support_penalty_and_specialist(
             is_spec = False
 
     return penalty, is_spec, dom
+
+
+def cv_min_folds_to_pass(total_folds: int | None = None) -> int:
+    """Minimum CV folds required for deployability."""
+    total = int(total_folds if total_folds is not None else _cfg.CV_N_FOLDS)
+    return min(int(_cfg.PHASE2_CV_POOL_MIN_FOLDS_PASS), max(total, 1))
+
+
+def is_cv_deployable(folds_passing: int, total_folds: int | None = None) -> bool:
+    """True when enough CV folds pass per-fold admission."""
+    total = int(total_folds if total_folds is not None else _cfg.CV_N_FOLDS)
+    return int(folds_passing) >= cv_min_folds_to_pass(total)
+
+
+def robust_return_pct(
+    train_metrics: dict,
+    val_metrics: dict | None,
+) -> float:
+    """Conservative return used for objectives, plateau, and archive ranking."""
+    train_ret = float(train_metrics.get("total_return_pct", 0.0))
+    if val_metrics is None:
+        return train_ret
+    val_ret = float(val_metrics.get("total_return_pct", 0.0))
+    return min(train_ret, val_ret)
+
+
+def feasibility_violation_score(
+    train_metrics: dict,
+    val_metrics: dict | None,
+    *,
+    cv_fold: bool = False,
+) -> float:
+    """
+    Non-negative violation score; 0 means the rule meets deployability floors.
+
+    Used to penalize infeasible chromosomes during evolution.
+    """
+    if not _cfg.PHASE2_POOL_REQUIRE_POSITIVE_SPLITS:
+        return 0.0
+
+    train_floor, train_ret_min, val_ret_min, pf_floor, min_val_trades = (
+        _pool_admission_floors(cv_fold=cv_fold)
+    )
+    score = 0.0
+
+    train_trades = int(train_metrics.get("executed_trades", 0))
+    if train_trades < train_floor:
+        score += float(train_floor - train_trades)
+
+    train_ret = float(train_metrics.get("total_return_pct", 0.0))
+    train_pf = float(train_metrics.get("profit_factor", 0.0))
+    if train_ret <= train_ret_min:
+        score += abs(train_ret_min - train_ret) + 1.0
+    if train_pf < pf_floor:
+        score += (pf_floor - train_pf) * 5.0
+
+    if val_metrics is None:
+        return score + 5.0
+
+    val_trades = int(val_metrics.get("executed_trades", 0))
+    if val_trades < min_val_trades:
+        score += float(min_val_trades - val_trades)
+
+    val_ret = float(val_metrics.get("total_return_pct", 0.0))
+    val_pf = float(val_metrics.get("profit_factor", 0.0))
+    if val_ret <= val_ret_min:
+        score += abs(val_ret_min - val_ret) + 1.0
+    if val_pf < pf_floor:
+        score += (pf_floor - val_pf) * 5.0
+
+    return score
+
+
+def passes_evolution_deployability_preview(
+    train_metrics: dict,
+    val_metrics: dict | None,
+    *,
+    regime_row_fractions_arr: np.ndarray | None = None,
+) -> bool:
+    """
+    Lightweight deployability check used during evolution (no per-fold CV).
+
+    Mirrors holdout admission floors on merged train/val metrics from the
+    evolution engines.
+    """
+    if not passes_pool_trade_floor(
+        int(train_metrics.get("executed_trades", 0)),
+        train_metrics,
+        regime_row_fractions_arr=regime_row_fractions_arr,
+    ):
+        return False
+    return feasibility_violation_score(
+        train_metrics, val_metrics, cv_fold=_split_mode_is_purged_cv(),
+    ) <= 0.0
+
+
+def deployability_rank_score(
+    train_metrics: dict,
+    val_metrics: dict | None,
+    *,
+    folds_passing: int = 0,
+) -> float:
+    """
+    Higher is better. Used to rank deployable archive entries and Stage B seeds.
+    """
+    robust = robust_return_pct(train_metrics, val_metrics)
+    fold_bonus = float(folds_passing) * 0.5
+    sortino = float(
+        train_metrics.get("sortino_ratio", train_metrics.get(
+            "total_return_pct", 0.0))
+    )
+    if val_metrics is not None:
+        val_sortino = float(
+            val_metrics.get(
+                "sortino_ratio", val_metrics.get("total_return_pct", 0.0),
+            )
+        )
+        sortino = min(sortino, val_sortino)
+    dd = float(train_metrics.get("max_drawdown_pct", 100.0))
+    if val_metrics is not None:
+        dd = max(dd, float(val_metrics.get("max_drawdown_pct", dd)))
+    return robust + fold_bonus + 0.1 * sortino - 0.05 * dd

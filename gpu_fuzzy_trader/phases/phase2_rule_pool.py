@@ -344,6 +344,9 @@ def compute_phase2_objectives_from_metrics(
         metrics["val_sortino_ratio"] = raw_val_sortino
         metrics["val_total_return_pct"] = val_total_return
         metrics["val_executed_trades"] = val_executed
+        metrics["val_profit_factor"] = val_profit_factor
+        metrics["val_max_drawdown_pct"] = float(
+            val_metrics.get("max_drawdown_pct", 0.0))
         if _cfg.PHASE2_JOINT_TRAIN_VAL:
             if val_executed < max(_cfg.MIN_TRADE_POOL_FLOOR // 4, 10):
                 sortino_for_obj = min(sortino_train, 0.0)
@@ -401,9 +404,32 @@ def compute_phase2_objectives_from_metrics(
         if min_hamming <= _cfg.PHASE2_DIVERSITY_HAMMING_THRESHOLD:
             diversity_penalty = _cfg.PHASE2_DIVERSITY_PENALTY
 
+    from gpu_fuzzy_trader.phases.phase2_support import (
+        feasibility_violation_score,
+        robust_return_pct,
+    )
+
     f3_val = win_rate
     if _cfg.PHASE2_USE_TOTAL_RETURN_OBJ:
-        f3_val = total_return
+        if getattr(_cfg, "PHASE2_USE_ROBUST_RETURN_OBJ", True) and val_metrics is not None:
+            f3_val = robust_return_pct(metrics, val_metrics)
+        else:
+            f3_val = total_return
+
+    infeasible_penalty = 0.0
+    if val_metrics is not None and _cfg.PHASE2_POOL_REQUIRE_POSITIVE_SPLITS:
+        violation = feasibility_violation_score(
+            metrics,
+            val_metrics,
+            cv_fold=str(_cfg.SPLIT_MODE).strip(
+            ).lower() == "purged_rolling_cv",
+        )
+        if violation > 0.0:
+            infeasible_penalty = (
+                float(_cfg.PHASE2_INFEASIBLE_OBJECTIVE_PENALTY)
+                + violation * float(_cfg.PHASE2_FEASIBILITY_VIOLATION_WEIGHT)
+            )
+            metrics["feasibility_violation"] = violation
 
     trade_penalty = 0.0
     trade_floor = (
@@ -424,6 +450,7 @@ def compute_phase2_objectives_from_metrics(
         + cond_penalty
         + trade_penalty
         + drawdown_gate_penalty
+        + infeasible_penalty
     )
     f2 = (
         max_dd
@@ -432,6 +459,7 @@ def compute_phase2_objectives_from_metrics(
         + cond_penalty
         + trade_penalty
         + drawdown_gate_penalty
+        + infeasible_penalty
     )
     f3 = (
         -f3_val
@@ -440,7 +468,11 @@ def compute_phase2_objectives_from_metrics(
         + cond_penalty
         + trade_penalty
         + drawdown_gate_penalty
+        + infeasible_penalty
     )
+
+    if val_metrics is not None:
+        metrics["robust_return_pct"] = robust_return_pct(metrics, val_metrics)
 
     objectives = np.array([f1, f2, f3], dtype=np.float64)
     return objectives, metrics
@@ -1083,8 +1115,10 @@ def _build_pool_from_archive(
             top_k = int(_cfg.PHASE2_CV_POOL_RANK_ADMIT_TOP_K)
             added = 0
             for val_ret, chrom, metrics, val_metrics, folds_passing in rank_candidates[:top_k]:
-                if val_metrics is not None and not passes_pool_admission_gate(
-                    metrics, val_metrics
+                if (
+                    bool(_cfg.PHASE2_CV_MERGED_GATE_HARD)
+                    and val_metrics is not None
+                    and not passes_pool_admission_gate(metrics, val_metrics)
                 ):
                     continue
                 key = chromosome_key(chrom)
@@ -1236,15 +1270,43 @@ def _read_json_payload(path: str) -> object | None:
 
 
 def _archive_objective_vector(entry: dict) -> np.ndarray:
-    """Convert an archive entry into the minimisation objectives used for ranking."""
-    objectives = entry.get("objectives", {})
-    sortino_ratio = float(objectives.get(
-        "sortino_ratio", objectives.get("total_return_pct", 0.0)))
+    """Convert an archive entry into minimisation objectives for ranking."""
+    from gpu_fuzzy_trader.phases.phase2_support import deployability_rank_score
+
+    objectives = entry.get("objectives", {}) or {}
+    val_obj = entry.get("val_objectives")
+    val_metrics = None
+    if isinstance(val_obj, dict):
+        val_metrics = {
+            "total_return_pct": float(val_obj.get("total_return_pct", 0.0)),
+            "profit_factor": float(val_obj.get("profit_factor", 1.0)),
+            "executed_trades": int(entry.get("val_executed_trades", 0)),
+            "sortino_ratio": float(
+                val_obj.get("sortino_ratio", val_obj.get(
+                    "total_return_pct", 0.0))
+            ),
+            "max_drawdown_pct": float(val_obj.get("max_drawdown_pct", 0.0)),
+        }
+    train_metrics = {
+        "total_return_pct": float(objectives.get("total_return_pct", 0.0)),
+        "profit_factor": float(objectives.get("profit_factor", 1.0)),
+        "executed_trades": int(entry.get("executed_trades", 0)),
+        "sortino_ratio": float(
+            objectives.get("sortino_ratio", objectives.get(
+                "total_return_pct", 0.0))
+        ),
+        "max_drawdown_pct": float(objectives.get("max_drawdown_pct", 0.0)),
+    }
+    rank = deployability_rank_score(
+        train_metrics,
+        val_metrics,
+        folds_passing=int(entry.get("cv_folds_passing", 0)),
+    )
     return np.array(
         [
-            -sortino_ratio,
+            -rank,
             float(objectives.get("max_drawdown_pct", 0.0)),
-            -float(objectives.get("win_rate", 0.0)),
+            -float(objectives.get("total_return_pct", 0.0)),
         ],
         dtype=np.float64,
     )
@@ -1344,6 +1406,36 @@ def _pool_seed_chromosomes(
 
     if not rows:
         return None
+    return np.vstack(rows)
+
+
+def _stage_b_seed_chromosomes(
+    stage_a_pool: list[dict],
+    base_seeds: np.ndarray | None,
+    dont_cares: np.ndarray | None,
+    top_k: int,
+) -> np.ndarray | None:
+    """Pick top Stage A deployable rules and merge with optional base seeds."""
+    if not stage_a_pool and base_seeds is None:
+        return None
+
+    ranked = _merge_archive_entries(stage_a_pool, max_size=max(1, int(top_k)))
+    stage_seeds = _pool_seed_chromosomes(ranked, dont_cares)
+    if base_seeds is None:
+        return stage_seeds
+    if stage_seeds is None:
+        return base_seeds
+
+    from gpu_fuzzy_trader.phases.phase2_sparse_encoding import chromosome_key
+
+    rows: list[np.ndarray] = [row.copy() for row in stage_seeds]
+    seen = {chromosome_key(row) for row in rows}
+    for row in base_seeds:
+        key = chromosome_key(row)
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append(row.copy())
     return np.vstack(rows)
 
 
@@ -1795,13 +1887,17 @@ class Rule_Pool_Generator:
         feature_probs = build_feature_sampling_probs(self.feature_infos)
 
         progress_tag = "Phase 2 [%s] NSGA-III" % self.direction
-        new_pool, history = run_phase2_evolution(
+        use_two_stage = (
+            bool(getattr(_cfg, "PHASE2_TWO_STAGE_ENABLED", False))
+            and self.n_generations == _cfg.PHASE2_GENERATIONS
+            and self.pop_size == _cfg.PHASE2_POPULATION_SIZE
+        )
+
+        evo_kwargs = dict(
             feature_infos=self.feature_infos,
             engine=self._engine,
             pop_size=self.pop_size,
-            n_generations=self.n_generations,
             rng=rng,
-            log_tag=progress_tag,
             seed_chromosomes=seed_chromosomes,
             val_engine=self._val_engine,
             regime_row_fractions=self._regime_row_fractions,
@@ -1810,6 +1906,56 @@ class Rule_Pool_Generator:
             init_strategy=_cfg.PHASE2_INIT_STRATEGY,
             stratum_fractions=_cfg.PHASE2_INIT_STRATUM_FRACTIONS,
         )
+
+        if use_two_stage:
+            stage_a_gens = int(_cfg.PHASE2_STAGE_A_GENERATIONS)
+            stage_b_gens = int(_cfg.PHASE2_STAGE_B_GENERATIONS)
+            stage_b_top_k = int(_cfg.PHASE2_STAGE_B_SEED_TOP_K)
+            logger.info(
+                "Phase 2 [%s]: two-stage search enabled "
+                "(Stage A=%d gen, Stage B=%d gen, seed_top_k=%d)",
+                self.direction,
+                stage_a_gens,
+                stage_b_gens,
+                stage_b_top_k,
+            )
+            new_pool_a, history_a = run_phase2_evolution(
+                n_generations=stage_a_gens,
+                log_tag=f"{progress_tag} Stage A",
+                **evo_kwargs,
+            )
+            stage_b_seeds = _stage_b_seed_chromosomes(
+                list(new_pool_a),
+                seed_chromosomes,
+                dont_cares,
+                stage_b_top_k,
+            )
+            if stage_b_seeds is not None:
+                logger.info(
+                    "Phase 2 [%s]: Stage B seeding from %d chromosomes "
+                    "(top %d Stage A + archive seeds)",
+                    self.direction,
+                    stage_b_seeds.shape[0],
+                    stage_b_top_k,
+                )
+            new_pool_b, history_b = run_phase2_evolution(
+                n_generations=stage_b_gens,
+                log_tag=f"{progress_tag} Stage B",
+                seed_chromosomes=stage_b_seeds,
+                **evo_kwargs,
+            )
+            for entry in history_a:
+                entry["stage"] = "A"
+            for entry in history_b:
+                entry["stage"] = "B"
+            new_pool = list(new_pool_a) + list(new_pool_b)
+            history = history_a + history_b
+        else:
+            new_pool, history = run_phase2_evolution(
+                n_generations=self.n_generations,
+                log_tag=progress_tag,
+                **evo_kwargs,
+            )
 
         pool = _merge_archive_entries(previous_pool + list(new_pool))
         pool_before_admission = len(pool)

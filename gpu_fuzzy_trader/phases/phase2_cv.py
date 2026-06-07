@@ -356,7 +356,7 @@ def evaluate_purged_cv_pool_admission(
     except Exception:
         merged_train, merged_val = {}, None
 
-    if admitted and merged_val is not None:
+    if admitted and merged_val is not None and bool(_cfg.PHASE2_CV_MERGED_GATE_HARD):
         if not passes_pool_admission_gate(merged_train, merged_val):
             admitted = False
 
@@ -458,7 +458,7 @@ def evaluate_purged_cv_pool_admission_batch(
                 admitted = False
         m_train = merged_train_batch[i] if i < len(merged_train_batch) else {}
         m_val = merged_val_batch[i] if i < len(merged_val_batch) else None
-        if admitted and m_val is not None:
+        if admitted and m_val is not None and bool(_cfg.PHASE2_CV_MERGED_GATE_HARD):
             if not passes_pool_admission_gate(m_train, m_val):
                 admitted = False
         results.append((admitted, m_train, m_val, fp))

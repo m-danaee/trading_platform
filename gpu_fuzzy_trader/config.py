@@ -251,7 +251,10 @@ MIN_TRADE_POOL_FLOOR = 17  # hard reject below this in archive
 PHASE2_SUPPORT_PENALTY_WEIGHT_F1 = 0.8  # Sortino objective
 PHASE2_SUPPORT_PENALTY_WEIGHT_F2 = 0.6  # drawdown objective
 PHASE2_SUPPORT_PENALTY_WEIGHT_F3 = 0.5  # win-rate objective
-PHASE2_USE_TOTAL_RETURN_OBJ = True  # True: f3 is total_return_pct, False: f3 is win_rate
+# True: f3 is return-based, False: f3 is win_rate
+PHASE2_USE_TOTAL_RETURN_OBJ = True
+# When True (default), f3 uses min(train_return, val_return) when val metrics exist.
+PHASE2_USE_ROBUST_RETURN_OBJ = True
 
 # Run 3 analysis: strict stacked floors collapsed pool to only 17 long / 22 short
 # rules. Quality filtering should happen at the CV majority-vote level, not by
@@ -273,10 +276,11 @@ PHASE2_POOL_VAL_RETURN_MIN_PCT = 0.0
 # Holdout mode: require non-negative train/val return (see floors above).
 
 # Purged CV pool admission (per-fold gates).
-# Relaxed 2→1: 2-of-3 folds was collapsing the pool to only 10 long rules,
-# giving Phase 3 only ~165 combos to search. 1-of-3 (rank-admit level) lets more
-# rules through; Phase 3 applies its own stricter quality gates on top.
+# Hard gate: at least PHASE2_CV_POOL_MIN_FOLDS_PASS folds pass per-fold checks.
+# Merged worst-case metrics rank pool entries; they are not a second hard reject
+# unless PHASE2_CV_MERGED_GATE_HARD is True.
 PHASE2_CV_POOL_MIN_FOLDS_PASS = 2
+PHASE2_CV_MERGED_GATE_HARD = False
 PHASE2_CV_MIN_TRADE_POOL_FLOOR = 7
 PHASE2_CV_POOL_TRAIN_RETURN_MIN_PCT = 0.0
 PHASE2_CV_POOL_VAL_RETURN_MIN_PCT = 0.0
@@ -314,6 +318,23 @@ PHASE2_PLATEAU_EARLY_STOP_MIN_GENERATION = 20
 PHASE2_PLATEAU_EARLY_STOP_PATIENCE = 20
 PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT = 0.01
 PHASE2_PLATEAU_EARLY_STOP_DISABLED_IN_CV = False
+# Plateau tracks deployable robust return (min train/val), not train-only max.
+PHASE2_PLATEAU_USE_ROBUST_RETURN = True
+PHASE2_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO = True
+PHASE2_PLATEAU_BLOCK_WHEN_DIVERSITY_LOW = True
+PHASE2_FEASIBILITY_VIOLATION_WEIGHT = 25.0
+PHASE2_INFEASIBLE_OBJECTIVE_PENALTY = 100.0
+PHASE2_DEPLOYABLE_ARCHIVE_MAX_SIZE = 200
+# Diversity recovery when search collapses to a tiny niche.
+PHASE2_DIVERSITY_RECOVERY_ENABLED = True
+PHASE2_DIVERSITY_RECOVERY_MIN_UNIQUE_RATIO = 0.30
+PHASE2_DIVERSITY_RECOVERY_INJECT_FRACTION = 0.25
+PHASE2_DIVERSITY_RECOVERY_MUTATION_BOOST = 1.5
+# Two-stage Phase 2: wide exploration then val-robust refinement.
+PHASE2_TWO_STAGE_ENABLED = True
+PHASE2_STAGE_A_GENERATIONS = 35
+PHASE2_STAGE_B_GENERATIONS = 45
+PHASE2_STAGE_B_SEED_TOP_K = 100
 
 # --- Parallel fold evaluation ---
 # Number of threads used to evaluate CV folds simultaneously in Phase 2.

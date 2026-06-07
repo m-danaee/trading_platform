@@ -11,7 +11,10 @@ from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.evolution.evox_runner import (
     _EVOX_AVAILABLE,
     _evaluate_population_indices,
+    _harvest_archive_chromosomes,
+    _plateau_progress_metric,
     _should_plateau_early_stop_phase2,
+    _update_deployable_archive,
     _update_hall_of_fame,
     _update_max_return_plateau,
     run_phase2_evolution,
@@ -403,10 +406,83 @@ class TestPlateauEarlyStop:
         monkeypatch.setattr(_cfg, "PHASE2_PLATEAU_EARLY_STOP_PATIENCE", 3)
         monkeypatch.setattr(
             _cfg, "PHASE2_PLATEAU_EARLY_STOP_DISABLED_IN_CV", False)
+        monkeypatch.setattr(
+            _cfg, "PHASE2_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO", True)
+        monkeypatch.setattr(
+            _cfg, "PHASE2_PLATEAU_BLOCK_WHEN_DIVERSITY_LOW", True)
 
         assert not _should_plateau_early_stop_phase2(3, 3)
         assert not _should_plateau_early_stop_phase2(10, 2)
-        assert _should_plateau_early_stop_phase2(10, 3)
+        assert not _should_plateau_early_stop_phase2(
+            10, 3, deployable_count=0, unique_chromosome_ratio=1.0,
+        )
+        assert not _should_plateau_early_stop_phase2(
+            10, 3, deployable_count=2, unique_chromosome_ratio=0.1,
+        )
+        assert _should_plateau_early_stop_phase2(
+            10, 3, deployable_count=2, unique_chromosome_ratio=0.5,
+        )
+
+
+class TestDeployableArchive:
+    def test_harvest_prefers_deployable_archive(self):
+        deployable = {
+            (0, 1): {"chromosome": np.array([0, 1], dtype=np.int32), "rank_score": 5.0},
+        }
+        hall = {(2, 3): np.array([2, 3], dtype=np.int32)}
+        pareto = [np.array([4, 5], dtype=np.int32)]
+        harvested = _harvest_archive_chromosomes(deployable, hall, pareto)
+        assert len(harvested) == 1
+        assert np.array_equal(harvested[0], np.array([0, 1], dtype=np.int32))
+
+    def test_update_deployable_archive_keeps_best_rank(self, monkeypatch):
+        monkeypatch.setattr(_cfg, "PHASE2_DEPLOYABLE_ARCHIVE_MAX_SIZE", 10)
+        monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", True)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 10)
+        monkeypatch.setattr(_cfg, "PHASE2_CV_MIN_TRADE_POOL_FLOOR", 10)
+
+        archive: dict = {}
+        pop = np.array([[0, 1], [0, 1]], dtype=np.int32)
+        metrics_cache = [
+            {
+                "executed_trades": 50,
+                "total_return_pct": 3.0,
+                "profit_factor": 1.2,
+                "sortino_ratio": 1.0,
+                "max_drawdown_pct": 2.0,
+                "val_total_return_pct": 2.0,
+                "val_profit_factor": 1.1,
+                "val_executed_trades": 20,
+            },
+            {
+                "executed_trades": 50,
+                "total_return_pct": 5.0,
+                "profit_factor": 1.3,
+                "sortino_ratio": 1.5,
+                "max_drawdown_pct": 2.0,
+                "val_total_return_pct": 4.0,
+                "val_profit_factor": 1.2,
+                "val_executed_trades": 20,
+            },
+        ]
+        _update_deployable_archive(archive, pop, [0, 1], metrics_cache)
+        assert len(archive) == 1
+        assert float(archive[(0, 1)]["rank_score"]) > 0.0
+
+    def test_plateau_progress_uses_robust_return(self, monkeypatch):
+        monkeypatch.setattr(_cfg, "PHASE2_PLATEAU_USE_ROBUST_RETURN", True)
+        metrics_cache = [
+            {
+                "total_return_pct": 10.0,
+                "val_total_return_pct": 2.0,
+            },
+            {
+                "total_return_pct": 4.0,
+                "val_total_return_pct": 3.5,
+            },
+        ]
+        progress = _plateau_progress_metric([0, 1], metrics_cache)
+        assert progress == pytest.approx(3.5)
 
 
 class TestBatchSingleObjectiveAlignment:

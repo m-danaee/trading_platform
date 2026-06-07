@@ -87,6 +87,35 @@ class TestEvaluatePurgedCvPoolAdmission:
     ) -> None:
         monkeypatch.setattr(_cfg, "SPLIT_MODE", "purged_rolling_cv")
         monkeypatch.setattr(_cfg, "PHASE2_CV_POOL_MIN_FOLDS_PASS", 2)
+        monkeypatch.setattr(_cfg, "PHASE2_CV_MERGED_GATE_HARD", False)
+        good = _metrics(2.0, 1.2, 30)
+        bad = _metrics(0.1, 0.8, 30)
+        val_good = _metrics(1.0, 1.1, 15)
+        val_bad = _metrics(-2.0, 0.8, 15)
+
+        train_cv = PurgedCVTrainEngine([
+            _MockFoldEngine(good),
+            _MockFoldEngine(good),
+            _MockFoldEngine(bad),
+        ])
+        val_cv = PurgedCVValEngine([
+            _MockFoldEngine(val_good),
+            _MockFoldEngine(val_good),
+            _MockFoldEngine(val_bad),
+        ])
+        chrom = np.array([0, 1, 2], dtype=np.int64)
+        ok, _, _, folds_passing = evaluate_purged_cv_pool_admission(
+            train_cv, val_cv, chrom,
+        )
+        assert folds_passing == 2
+        assert ok is True
+
+    def test_merged_gate_hard_rejects_when_folds_pass_but_merged_bad(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(_cfg, "SPLIT_MODE", "purged_rolling_cv")
+        monkeypatch.setattr(_cfg, "PHASE2_CV_POOL_MIN_FOLDS_PASS", 2)
+        monkeypatch.setattr(_cfg, "PHASE2_CV_MERGED_GATE_HARD", True)
         good = _metrics(2.0, 1.2, 30)
         bad = _metrics(0.1, 0.8, 30)
         val_good = _metrics(1.0, 1.1, 15)
@@ -138,7 +167,7 @@ class TestEvaluatePurgedCvPoolAdmission:
 
 
 class TestPoolEntryAdmission:
-    def test_cv_metadata_rejected_when_merged_validation_bad(
+    def test_cv_metadata_passes_on_fold_majority_even_if_merged_val_negative(
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setattr(_cfg, "SPLIT_MODE", "purged_rolling_cv")
@@ -153,6 +182,27 @@ class TestPoolEntryAdmission:
             "val_objectives": {
                 "total_return_pct": -1.0,
                 "profit_factor": 0.9,
+            },
+            "executed_trades": 30,
+            "val_executed_trades": 15,
+        }
+        assert passes_pool_entry_admission(entry) is True
+
+    def test_cv_metadata_rejected_when_fold_majority_not_met(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(_cfg, "SPLIT_MODE", "purged_rolling_cv")
+        monkeypatch.setattr(_cfg, "PHASE2_CV_POOL_MIN_FOLDS_PASS", 2)
+        entry = {
+            "cv_folds_passing": 1,
+            "cv_folds_total": 3,
+            "objectives": {
+                "total_return_pct": 2.0,
+                "profit_factor": 1.2,
+            },
+            "val_objectives": {
+                "total_return_pct": 1.0,
+                "profit_factor": 1.1,
             },
             "executed_trades": 30,
             "val_executed_trades": 15,

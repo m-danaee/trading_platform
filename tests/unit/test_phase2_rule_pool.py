@@ -1253,3 +1253,86 @@ class TestEvaluateChromosome:
                 if hasattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ"):
                     delattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ")
 
+
+class TestRobustReturnObjective:
+    def test_f3_uses_min_train_val_return(self, monkeypatch):
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+            compute_phase2_objectives_from_metrics,
+        )
+
+        monkeypatch.setattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ", True)
+        monkeypatch.setattr(_cfg, "PHASE2_USE_ROBUST_RETURN_OBJ", True)
+        monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", False)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 1)
+        monkeypatch.setattr(_cfg, "PHASE2_RETURN_FLOOR_PCT", -100.0)
+        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR", 0.0)
+        monkeypatch.setattr(_cfg, "PHASE2_VAL_RETURN_FLOOR_PCT", -100.0)
+
+        dont_cares = np.ones(4, dtype=np.int32) * 2
+        chrom = np.array([0, 1, 0, 2], dtype=np.int32)
+        metrics = {
+            "executed_trades": 100,
+            "total_return_pct": 10.0,
+            "sortino_ratio": 1.0,
+            "max_drawdown_pct": 2.0,
+            "win_rate": 50.0,
+            "profit_factor": 1.2,
+        }
+        val_metrics = {
+            "executed_trades": 50,
+            "total_return_pct": 3.0,
+            "sortino_ratio": 0.8,
+            "max_drawdown_pct": 1.0,
+            "win_rate": 55.0,
+            "profit_factor": 1.1,
+        }
+        objectives, out_metrics = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, metrics, [], val_metrics=val_metrics,
+        )
+        assert np.isclose(objectives[2], -3.0)
+        assert out_metrics["robust_return_pct"] == pytest.approx(3.0)
+
+
+class TestTwoStageOrchestration:
+    def test_run_uses_two_stages_when_enabled(self, monkeypatch):
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+            _stage_b_seed_chromosomes,
+        )
+
+        monkeypatch.setattr(_cfg, "PHASE2_TWO_STAGE_ENABLED", True)
+        stage_a = [
+            {
+                "chromosome": [0, 1],
+                "objectives": {
+                    "total_return_pct": 5.0,
+                    "max_drawdown_pct": 2.0,
+                    "profit_factor": 1.2,
+                },
+                "val_objectives": {
+                    "total_return_pct": 4.0,
+                    "profit_factor": 1.1,
+                },
+                "executed_trades": 50,
+                "val_executed_trades": 20,
+            },
+            {
+                "chromosome": [2, 3],
+                "objectives": {
+                    "total_return_pct": 1.0,
+                    "max_drawdown_pct": 3.0,
+                    "profit_factor": 1.0,
+                },
+                "val_objectives": {
+                    "total_return_pct": 0.5,
+                    "profit_factor": 1.0,
+                },
+                "executed_trades": 50,
+                "val_executed_trades": 20,
+            },
+        ]
+        base = np.array([[9, 9]], dtype=np.int32)
+        seeds = _stage_b_seed_chromosomes(stage_a, base, None, top_k=1)
+        assert seeds is not None
+        assert seeds.shape[0] == 2
+        assert np.array_equal(seeds[1], np.array([9, 9], dtype=np.int32))

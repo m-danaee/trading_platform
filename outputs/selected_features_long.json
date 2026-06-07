@@ -1,0 +1,85 @@
+{
+  "direction": "long",
+  "features": [
+    {
+      "name": "range_compression_20_100",
+      "mode": "positive",
+      "score": 0.09935671296750964
+    },
+    {
+      "name": "dmi_balance_14",
+      "mode": "signed",
+      "score": 0.031486505869309594
+    },
+    {
+      "name": "open_gap_atr_14",
+      "mode": "sparse_signed",
+      "score": 0.004327222247227271
+    },
+    {
+      "name": "channel_pos_20",
+      "mode": "positive",
+      "score": 0.004061800027500833
+    },
+    {
+      "name": "up_close_ratio_5",
+      "mode": "sparse_positive",
+      "score": 0.0038302281252683493
+    },
+    {
+      "name": "upper_wick_to_tr",
+      "mode": "positive",
+      "score": 0.0026496270881914536
+    },
+    {
+      "name": "rsi_centered_14",
+      "mode": "signed",
+      "score": 0.002515801019486735
+    },
+    {
+      "name": "lower_wick_to_tr",
+      "mode": "positive",
+      "score": 0.0019463134778506435
+    },
+    {
+      "name": "return_skew_30",
+      "mode": "signed",
+      "score": 0.0012790573944436593
+    },
+    {
+      "name": "vol_regime_pct_120",
+      "mode": "positive",
+      "score": 0.0010652424490878454
+    },
+    {
+      "name": "efficiency_ratio_20",
+      "mode": "positive",
+      "score": 0.0010050000284324238
+    },
+    {
+      "name": "dollar_vol_rel_20",
+      "mode": "positive",
+      "score": 0.0007336281970198364
+    },
+    {
+      "name": "band_bb_percB_20_2",
+      "mode": "signed",
+      "score": 0.0004922990241845832
+    },
+    {
+      "name": "mom_stoch_rsi_14_14_3",
+      "mode": "positive",
+      "score": 0.0004760067705300385
+    },
+    {
+      "name": "rsi_hidden_div_flag",
+      "mode": "ternary",
+      "score": 0.00016781100507894632
+    },
+    {
+      "name": "tr_to_atr_14",
+      "mode": "positive",
+      "score": 0.0
+    }
+  ]
+}

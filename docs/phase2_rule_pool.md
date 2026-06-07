@@ -46,8 +46,19 @@ The number of active conditions in a chromosome is `sum(gene_i != dont_care_i)`.
 ```
 f1 = −sortino_ratio   (maximize Sortino)
 f2 = max_drawdown_pct (minimize drawdown)
-f3 = −win_rate        (maximize win rate)
+f3 = −return_target   (maximize return or win rate)
 ```
+
+When `PHASE2_USE_TOTAL_RETURN_OBJ = True` (default), f3 uses total return instead of win rate. With `PHASE2_USE_ROBUST_RETURN_OBJ = True` (default) and validation metrics available, f3 uses **robust return**:
+
+```python
+robust_return = min(train_total_return_pct, val_total_return_pct)
+f3 = −robust_return
+```
+
+This aligns evolution with deployable rules that hold up out-of-sample, not train-only return spikes.
+
+**Feasibility penalty:** When `PHASE2_POOL_REQUIRE_POSITIVE_SPLITS` is enabled, chromosomes that fail merged train/val admission floors receive a large `PHASE2_INFEASIBLE_OBJECTIVE_PENALTY` plus a weighted `feasibility_violation_score`, pushing infeasible rules below feasible ones on all objectives.
 
 All three objectives have penalties added before the evolutionary algorithm sees them. The penalties are described in Section 4.
 
@@ -89,7 +100,7 @@ When the pipeline passes `cv_folds` into `Rule_Pool_Generator`:
 
 **Effect:** A rule that shines in only one season but fails in another gets a poor f1.
 
-**Pool admission (CV):** `evaluate_purged_cv_pool_admission()` checks each fold with `passes_pool_admission_cv_fold` (lower trade/return floors). A rule enters the pool when at least `PHASE2_CV_POOL_MIN_FOLDS_PASS` folds pass (default 2 of 3). Stored objectives still use worst-case merged metrics from the CV facades; pool JSON also stores `cv_folds_passing` / `cv_folds_total` so the post-merge filter uses the same CV criterion (merged metrics alone can be negative while 2/3 folds pass). Early stop is disabled in CV (`PHASE2_EARLY_STOP_DISABLED_IN_CV`).
+**Pool admission (CV):** `evaluate_purged_cv_pool_admission()` checks each fold with `passes_pool_admission_cv_fold` (lower trade/return floors). A rule enters the pool when at least `PHASE2_CV_POOL_MIN_FOLDS_PASS` folds pass (default 2 of 3). **Fold majority is the hard deployability gate.** Merged worst-case train/val metrics from the CV facades are stored for ranking and conservatism; they do **not** reject an otherwise fold-admitted rule unless `PHASE2_CV_MERGED_GATE_HARD = True`. Pool JSON stores `cv_folds_passing` / `cv_folds_total` so post-merge filters use the same fold criterion (merged metrics alone can be negative while 2/3 folds pass).
 
 When `SPLIT_MODE == "holdout_75_25"`, behaviour is unchanged: one train engine (sampled full `train_75`) and one optional val engine (`validation_25`).
 
@@ -209,6 +220,27 @@ After merging parents and offspring (2N individuals), the next generation of N i
 
 **When EvoX is not available:** Falls back to NSGA-II (crowding distance truncation on the critical front instead of niche-based selection). The history records `"NSGA-II (fallback)"`.
 
+### Deployable archive (per run)
+
+During evolution, `_update_deployable_archive` tracks chromosomes that pass `passes_evolution_deployability_preview` (trade floor + merged train/val admission floors). The archive stores the best `deployability_rank_score` per chromosome, capped at `PHASE2_DEPLOYABLE_ARCHIVE_MAX_SIZE`. Pool harvest prefers this archive over the legacy Pareto hall-of-fame (`_harvest_archive_chromosomes`).
+
+### Plateau early stop
+
+Plateau stopping tracks `_plateau_progress_metric` (best Pareto **robust return** when `PHASE2_PLATEAU_USE_ROBUST_RETURN = True`), not train-only `max_return_pct`. Stopping is **blocked** when deployable preview count is zero (`PHASE2_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO`) or population diversity is below `PHASE2_DIVERSITY_RECOVERY_MIN_UNIQUE_RATIO` (`PHASE2_PLATEAU_BLOCK_WHEN_DIVERSITY_LOW`).
+
+### Diversity recovery
+
+When unique chromosome ratio on the Pareto front drops below `PHASE2_DIVERSITY_RECOVERY_MIN_UNIQUE_RATIO`, `_inject_diversity_recovery` replaces a fraction (`PHASE2_DIVERSITY_RECOVERY_INJECT_FRACTION`) of the population with fresh random individuals and temporarily boosts mutation (`PHASE2_DIVERSITY_RECOVERY_MUTATION_BOOST`).
+
+### Two-stage search
+
+When `PHASE2_TWO_STAGE_ENABLED = True` and default pop/gen budgets are used, `Rule_Pool_Generator.run()` executes:
+
+1. **Stage A** — `PHASE2_STAGE_A_GENERATIONS` exploratory search.
+2. **Stage B** — `PHASE2_STAGE_B_GENERATIONS` refinement seeded from top `PHASE2_STAGE_B_SEED_TOP_K` Stage A deployable rules plus archive seeds.
+
+History entries include `"stage": "A"` or `"B"`. Output pool schema is unchanged for Phase 3.
+
 ### Reference vectors — `_get_reference_vectors`
 
 Das-Dennis style reference vectors are generated using EvoX's `uniform_sampling`. These vectors define directions in the 3-objective space. The niche-based selection ensures that the final population covers all directions, not just the extremes.
@@ -271,8 +303,8 @@ The best rules from all runs are accumulated in `phase2_rule_archive/phase2_long
 
 Archive merging uses `_merge_archive_entries`:
 
-1. Deduplicate by chromosome (keep the entry with better objectives for duplicate chromosomes).
-2. Non-dominated sort all unique entries.
+1. Deduplicate by chromosome (keep the entry with better **deployability rank**, not train-only return).
+2. Non-dominated sort all unique entries using `_archive_objective_vector` (deployability-first).
 3. Keep the best `PHASE2_ARCHIVE_MAX_SIZE` (default: 500) entries using Pareto rank + crowding distance truncation.
 
 **Effect of `PHASE2_ARCHIVE_MAX_SIZE`:** Increasing this preserves more historical rules for warm-starting future runs. Decreasing it keeps only the most elite rules.

@@ -160,6 +160,145 @@ def _update_hall_of_fame(
         hall_of_fame[chromosome_key(chrom)] = chrom
 
 
+def _val_metrics_from_cache(metrics: dict) -> dict | None:
+    """Reconstruct validation metrics sidecar stored on train metrics."""
+    if metrics.get("val_total_return_pct") is None:
+        return None
+    return {
+        "total_return_pct": float(metrics.get("val_total_return_pct", 0.0)),
+        "profit_factor": float(metrics.get("val_profit_factor", 0.0)),
+        "executed_trades": int(metrics.get("val_executed_trades", 0)),
+        "sortino_ratio": float(
+            metrics.get("val_sortino_ratio", metrics.get(
+                "val_total_return_pct", 0.0))
+        ),
+        "max_drawdown_pct": float(metrics.get("val_max_drawdown_pct", 0.0)),
+    }
+
+
+def _update_deployable_archive(
+    deployable_archive: dict[tuple[int, ...], dict],
+    population: np.ndarray,
+    indices: list[int],
+    metrics_cache: list[dict],
+    *,
+    regime_row_fractions_arr: np.ndarray | None = None,
+) -> None:
+    """Keep best deployability-preview candidates across generations."""
+    from gpu_fuzzy_trader.phases.phase2_sparse_encoding import chromosome_key
+    from gpu_fuzzy_trader.phases.phase2_support import (
+        deployability_rank_score,
+        passes_evolution_deployability_preview,
+    )
+
+    max_size = int(_cfg.PHASE2_DEPLOYABLE_ARCHIVE_MAX_SIZE)
+    for i in indices:
+        metrics = metrics_cache[int(i)]
+        if not metrics:
+            continue
+        val_metrics = _val_metrics_from_cache(metrics)
+        if not passes_evolution_deployability_preview(
+            metrics,
+            val_metrics,
+            regime_row_fractions_arr=regime_row_fractions_arr,
+        ):
+            continue
+        chrom = population[int(i)].copy()
+        key = chromosome_key(chrom)
+        rank = deployability_rank_score(metrics, val_metrics)
+        incumbent = deployable_archive.get(key)
+        if incumbent is None or rank > float(incumbent.get("rank_score", -np.inf)):
+            deployable_archive[key] = {
+                "chromosome": chrom,
+                "rank_score": rank,
+                "metrics": copy.deepcopy(metrics),
+            }
+
+    if len(deployable_archive) <= max_size:
+        return
+    ranked = sorted(
+        deployable_archive.items(),
+        key=lambda kv: float(kv[1].get("rank_score", -np.inf)),
+        reverse=True,
+    )[:max_size]
+    deployable_archive.clear()
+    deployable_archive.update(dict(ranked))
+
+
+def _harvest_archive_chromosomes(
+    deployable_archive: dict[tuple[int, ...], dict],
+    hall_of_fame: dict[tuple[int, ...], np.ndarray],
+    pareto_archive: list[np.ndarray],
+) -> list[np.ndarray]:
+    """Prefer deployable archive; fall back to Pareto hall-of-fame."""
+    if deployable_archive:
+        ranked = sorted(
+            deployable_archive.values(),
+            key=lambda entry: float(entry.get("rank_score", -np.inf)),
+            reverse=True,
+        )
+        return [entry["chromosome"] for entry in ranked]
+    if hall_of_fame:
+        return list(hall_of_fame.values())
+    return list(pareto_archive)
+
+
+def _pareto_robust_return_pct(
+    pareto_indices: list[int],
+    metrics_cache: list[dict],
+) -> float:
+    """Best min(train, val) return across the current Pareto front."""
+    if not pareto_indices:
+        return -100.0
+    from gpu_fuzzy_trader.phases.phase2_support import robust_return_pct
+
+    scores = [
+        robust_return_pct(
+            metrics_cache[i],
+            _val_metrics_from_cache(metrics_cache[i]),
+        )
+        for i in pareto_indices
+    ]
+    return float(max(scores))
+
+
+def _count_deployable_preview(
+    pareto_indices: list[int],
+    metrics_cache: list[dict],
+    *,
+    regime_row_fractions_arr: np.ndarray | None = None,
+) -> int:
+    from gpu_fuzzy_trader.phases.phase2_support import (
+        passes_evolution_deployability_preview,
+    )
+
+    count = 0
+    for i in pareto_indices:
+        metrics = metrics_cache[i]
+        if not metrics:
+            continue
+        if passes_evolution_deployability_preview(
+            metrics,
+            _val_metrics_from_cache(metrics),
+            regime_row_fractions_arr=regime_row_fractions_arr,
+        ):
+            count += 1
+    return count
+
+
+def _plateau_progress_metric(
+    pareto_indices: list[int],
+    metrics_cache: list[dict],
+) -> float:
+    if bool(getattr(_cfg, "PHASE2_PLATEAU_USE_ROBUST_RETURN", True)):
+        return _pareto_robust_return_pct(pareto_indices, metrics_cache)
+    returns = [
+        float(metrics_cache[i].get("total_return_pct", 0.0))
+        for i in pareto_indices
+    ]
+    return max(returns) if returns else -100.0
+
+
 def _pareto_mean_return_pct(
     pareto_indices: list[int],
     metrics_cache: list[dict],
@@ -256,7 +395,13 @@ def _update_max_return_plateau(
     return best_max_return, streak + 1
 
 
-def _should_plateau_early_stop_phase2(gen: int, streak: int) -> bool:
+def _should_plateau_early_stop_phase2(
+    gen: int,
+    streak: int,
+    *,
+    deployable_count: int = 0,
+    unique_chromosome_ratio: float = 1.0,
+) -> bool:
     if not _cfg.PHASE2_PLATEAU_EARLY_STOP_ENABLED:
         return False
     if (
@@ -266,7 +411,49 @@ def _should_plateau_early_stop_phase2(gen: int, streak: int) -> bool:
         return False
     if gen + 1 < int(_cfg.PHASE2_PLATEAU_EARLY_STOP_MIN_GENERATION):
         return False
+    if bool(getattr(_cfg, "PHASE2_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO", True)):
+        if deployable_count <= 0:
+            return False
+    if bool(getattr(_cfg, "PHASE2_PLATEAU_BLOCK_WHEN_DIVERSITY_LOW", True)):
+        if unique_chromosome_ratio < float(
+            getattr(_cfg, "PHASE2_DIVERSITY_RECOVERY_MIN_UNIQUE_RATIO", 0.30)
+        ):
+            return False
     return streak >= int(_cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE)
+
+
+def _inject_diversity_recovery(
+    population: np.ndarray,
+    objectives: np.ndarray,
+    metrics_cache: list[dict],
+    feature_infos: list[dict],
+    dont_cares: np.ndarray,
+    rng: np.random.Generator,
+    *,
+    feature_probs: np.ndarray | None = None,
+) -> None:
+    """Replace a fraction of the population with fresh random individuals."""
+    from gpu_fuzzy_trader.phases.phase2_rule_pool import _init_population
+
+    pop_size = len(population)
+    if pop_size <= 0:
+        return
+    fraction = float(
+        getattr(_cfg, "PHASE2_DIVERSITY_RECOVERY_INJECT_FRACTION", 0.25))
+    n_inject = max(1, int(round(pop_size * fraction)))
+    positions = rng.choice(pop_size, size=n_inject, replace=False)
+    fresh = _init_population(
+        n_inject,
+        feature_infos,
+        rng,
+        init_strategy=_cfg.PHASE2_INIT_STRATEGY,
+        stratum_fractions=_cfg.PHASE2_INIT_STRATUM_FRACTIONS,
+        feature_probs=feature_probs,
+    )
+    for idx, pos in enumerate(positions):
+        population[int(pos)] = fresh[idx]
+        objectives[int(pos)] = np.inf
+        metrics_cache[int(pos)] = {}
 
 
 def _median_pairwise_hamming(chromosomes: list[np.ndarray]) -> float:
@@ -373,6 +560,7 @@ def _make_offspring_population(
     rng: np.random.Generator,
     feature_probs: np.ndarray | None = None,
     fronts: list[list[int]] | None = None,
+    mutation_rate: float | None = None,
 ) -> np.ndarray:
     """Generate pop_size offspring via binary tournament, crossover, mutation.
 
@@ -382,6 +570,11 @@ def _make_offspring_population(
         fronts = non_dominated_sort(objectives)
     rank, crowding = _build_rank_and_crowding(objectives, fronts)
     all_indices = list(range(pop_size))
+    mut_rate = (
+        float(mutation_rate)
+        if mutation_rate is not None
+        else float(_cfg.PHASE2_MUTATION_RATE)
+    )
     offspring_list: list[np.ndarray] = []
     for _ in range(0, pop_size, 2):
         pa = _binary_tournament_pick(all_indices, rank, crowding, rng)
@@ -390,14 +583,14 @@ def _make_offspring_population(
         offspring_list.append(
             _mutate(
                 child_a, feature_infos, dont_cares, rng,
-                mutation_rate=float(_cfg.PHASE2_MUTATION_RATE),
+                mutation_rate=mut_rate,
                 feature_probs=feature_probs,
             )
         )
         offspring_list.append(
             _mutate(
                 child_b, feature_infos, dont_cares, rng,
-                mutation_rate=float(_cfg.PHASE2_MUTATION_RATE),
+                mutation_rate=mut_rate,
                 feature_probs=feature_probs,
             )
         )
@@ -786,14 +979,16 @@ def _run_nsga2_fallback(
     metrics_cache: list[dict] = [{} for _ in range(pop_size)]
     pareto_archive: list[np.ndarray] = []
     hall_of_fame: dict[tuple[int, ...], np.ndarray] = {}
+    deployable_archive: dict[tuple[int, ...], dict] = {}
     history: list[dict] = []
 
     tag = log_tag or "NSGA-II (fallback)"
     logger.info("%s: %d features, pop=%d, gen=%d",
                 tag, K, pop_size, n_generations)
     gen_loop_start = time.monotonic()
-    plateau_best_max_return = -np.inf
+    plateau_best_progress = -np.inf
     plateau_streak = 0
+    mutation_rate = float(_cfg.PHASE2_MUTATION_RATE)
 
     for gen in range(n_generations):
         for i in range(pop_size):
@@ -811,11 +1006,26 @@ def _run_nsga2_fallback(
         pareto_indices = fronts[0]
         pareto_archive = [population[i].copy() for i in pareto_indices]
         _update_hall_of_fame(hall_of_fame, population, pareto_indices)
+        _update_deployable_archive(
+            deployable_archive,
+            population,
+            list(range(pop_size)),
+            metrics_cache,
+            regime_row_fractions_arr=regime_row_fractions,
+        )
 
         pareto_obj = objectives[pareto_indices]
         pareto_diag = _pareto_diagnostics(
             pareto_indices, metrics_cache, pareto_obj, population,
         )
+        deployable_count = _count_deployable_preview(
+            pareto_indices,
+            metrics_cache,
+            regime_row_fractions_arr=regime_row_fractions,
+        )
+        unique_ratio = float(pareto_diag.get("unique_chromosome_ratio", 0.0))
+        plateau_metric = _plateau_progress_metric(
+            pareto_indices, metrics_cache)
         history.append({
             "generation": gen,
             "pareto_size": len(pareto_indices),
@@ -823,6 +1033,9 @@ def _run_nsga2_fallback(
             "mean_f2": float(np.mean(pareto_obj[:, 1])),
             "mean_f3": float(np.mean(pareto_obj[:, 2])),
             "algorithm": "NSGA-II (fallback)",
+            "deployable_preview_count": deployable_count,
+            "deployable_archive_size": len(deployable_archive),
+            "plateau_progress_pct": plateau_metric,
             **_pareto_sortino_stats(pareto_indices, metrics_cache),
             **pareto_diag,
         })
@@ -847,8 +1060,8 @@ def _run_nsga2_fallback(
                 regime_row_fractions_arr=regime_row_fractions,
             )
         )
-        plateau_best_max_return, plateau_streak = _update_max_return_plateau(
-            max_ret, plateau_best_max_return, plateau_streak,
+        plateau_best_progress, plateau_streak = _update_max_return_plateau(
+            plateau_metric, plateau_best_progress, plateau_streak,
         )
         maybe_log_generation(
             logger, tag, gen, n_generations, len(pareto_indices), mean_ret,
@@ -882,26 +1095,58 @@ def _run_nsga2_fallback(
             )
             break
 
-        if _should_plateau_early_stop_phase2(gen, plateau_streak):
+        if _should_plateau_early_stop_phase2(
+            gen,
+            plateau_streak,
+            deployable_count=deployable_count,
+            unique_chromosome_ratio=unique_ratio,
+        ):
             logger.info(
-                "%s: plateau early stop at gen %d (max_return=%.2f%% unchanged "
-                "for %d gens, patience=%d, min_delta=%.2f%%)",
+                "%s: plateau early stop at gen %d (progress=%.2f%% unchanged "
+                "for %d gens, patience=%d, min_delta=%.2f%%, "
+                "deployable_preview=%d, unique_chrom=%.2f)",
                 tag,
                 gen + 1,
-                max_ret,
+                plateau_metric,
                 plateau_streak,
                 int(_cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE),
                 float(_cfg.PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT),
+                deployable_count,
+                unique_ratio,
             )
             break
 
         if gen == n_generations - 1:
             break
 
+        if (
+            bool(getattr(_cfg, "PHASE2_DIVERSITY_RECOVERY_ENABLED", True))
+            and unique_ratio < float(
+                getattr(_cfg, "PHASE2_DIVERSITY_RECOVERY_MIN_UNIQUE_RATIO", 0.30)
+            )
+        ):
+            _inject_diversity_recovery(
+                population,
+                objectives,
+                metrics_cache,
+                feature_infos,
+                dont_cares,
+                rng,
+                feature_probs=feature_probs,
+            )
+            mutation_rate = min(
+                0.5,
+                float(_cfg.PHASE2_MUTATION_RATE)
+                * float(getattr(_cfg, "PHASE2_DIVERSITY_RECOVERY_MUTATION_BOOST", 1.5)),
+            )
+        else:
+            mutation_rate = float(_cfg.PHASE2_MUTATION_RATE)
+
         offspring = _make_offspring_population(
             population, objectives, pop_size, feature_infos, dont_cares, rng,
             feature_probs=feature_probs,
             fronts=fronts,
+            mutation_rate=mutation_rate,
         )
         off_obj = np.full((pop_size, 3), np.inf)
         off_metrics: list[dict] = [{} for _ in range(pop_size)]
@@ -927,8 +1172,9 @@ def _run_nsga2_fallback(
     metrics_by_chrom = _metrics_dict_from_population(
         population, metrics_cache
     )
-    harvest_archive = list(hall_of_fame.values(
-    )) if hall_of_fame else pareto_archive
+    harvest_archive = _harvest_archive_chromosomes(
+        deployable_archive, hall_of_fame, pareto_archive,
+    )
     pareto_pool = _build_pool_from_archive(
         harvest_archive,
         feature_infos,
@@ -982,6 +1228,7 @@ def _run_nsga3(
     metrics_cache: list[dict] = [{} for _ in range(pop_size)]
     pareto_archive: list[np.ndarray] = []
     hall_of_fame: dict[tuple[int, ...], np.ndarray] = {}
+    deployable_archive: dict[tuple[int, ...], dict] = {}
     global_metrics_cache: dict[tuple[int, ...], dict] = {}
     history: list[dict] = []
 
@@ -990,8 +1237,9 @@ def _run_nsga3(
     logger.info("%s: %d features, pop=%d, gen=%d",
                 tag, K, pop_size, n_generations)
     gen_loop_start = time.monotonic()
-    plateau_best_max_return = -np.inf
+    plateau_best_progress = -np.inf
     plateau_streak = 0
+    mutation_rate = float(_cfg.PHASE2_MUTATION_RATE)
 
     for gen in range(n_generations):
         parent_stats = _evaluate_population_indices(
@@ -1013,11 +1261,26 @@ def _run_nsga3(
         pareto_indices = fronts[0]
         pareto_archive = [population[i].copy() for i in pareto_indices]
         _update_hall_of_fame(hall_of_fame, population, pareto_indices)
+        _update_deployable_archive(
+            deployable_archive,
+            population,
+            list(range(pop_size)),
+            metrics_cache,
+            regime_row_fractions_arr=regime_row_fractions,
+        )
 
         pareto_obj = objectives[pareto_indices]
         pareto_diag = _pareto_diagnostics(
             pareto_indices, metrics_cache, pareto_obj, population,
         )
+        deployable_count = _count_deployable_preview(
+            pareto_indices,
+            metrics_cache,
+            regime_row_fractions_arr=regime_row_fractions,
+        )
+        unique_ratio = float(pareto_diag.get("unique_chromosome_ratio", 0.0))
+        plateau_metric = _plateau_progress_metric(
+            pareto_indices, metrics_cache)
         history.append({
             "generation": gen,
             "pareto_size": len(pareto_indices),
@@ -1025,6 +1288,9 @@ def _run_nsga3(
             "mean_f2": float(np.mean(pareto_obj[:, 1])) if len(pareto_obj) else 0.0,
             "mean_f3": float(np.mean(pareto_obj[:, 2])) if len(pareto_obj) else 0.0,
             "algorithm": "NSGA-III",
+            "deployable_preview_count": deployable_count,
+            "deployable_archive_size": len(deployable_archive),
+            "plateau_progress_pct": plateau_metric,
             **_pareto_sortino_stats(pareto_indices, metrics_cache),
             **pareto_diag,
         })
@@ -1050,17 +1316,42 @@ def _run_nsga3(
             )
         )
 
-        plateau_best_max_return, plateau_streak = _update_max_return_plateau(
-            max_ret, plateau_best_max_return, plateau_streak,
+        plateau_best_progress, plateau_streak = _update_max_return_plateau(
+            plateau_metric, plateau_best_progress, plateau_streak,
         )
 
         is_last_gen = gen == n_generations - 1
         off_stats = _empty_eval_stats()
         if not is_last_gen:
+            if (
+                bool(getattr(_cfg, "PHASE2_DIVERSITY_RECOVERY_ENABLED", True))
+                and unique_ratio < float(
+                    getattr(
+                        _cfg, "PHASE2_DIVERSITY_RECOVERY_MIN_UNIQUE_RATIO", 0.30)
+                )
+            ):
+                _inject_diversity_recovery(
+                    population,
+                    objectives,
+                    metrics_cache,
+                    feature_infos,
+                    dont_cares,
+                    rng,
+                    feature_probs=feature_probs,
+                )
+                mutation_rate = min(
+                    0.5,
+                    float(_cfg.PHASE2_MUTATION_RATE)
+                    * float(getattr(_cfg, "PHASE2_DIVERSITY_RECOVERY_MUTATION_BOOST", 1.5)),
+                )
+            else:
+                mutation_rate = float(_cfg.PHASE2_MUTATION_RATE)
+
             offspring = _make_offspring_population(
                 population, objectives, pop_size, feature_infos, dont_cares, rng,
                 feature_probs=feature_probs,
                 fronts=fronts,
+                mutation_rate=mutation_rate,
             )
             off_obj = np.full((pop_size, 3), np.inf)
             off_metrics: list[dict] = [{} for _ in range(pop_size)]
@@ -1115,16 +1406,24 @@ def _run_nsga3(
             )
             break
 
-        if _should_plateau_early_stop_phase2(gen, plateau_streak):
+        if _should_plateau_early_stop_phase2(
+            gen,
+            plateau_streak,
+            deployable_count=deployable_count,
+            unique_chromosome_ratio=unique_ratio,
+        ):
             logger.info(
-                "%s: plateau early stop at gen %d (max_return=%.2f%% unchanged "
-                "for %d gens, patience=%d, min_delta=%.2f%%)",
+                "%s: plateau early stop at gen %d (progress=%.2f%% unchanged "
+                "for %d gens, patience=%d, min_delta=%.2f%%, "
+                "deployable_preview=%d, unique_chrom=%.2f)",
                 tag,
                 gen + 1,
-                max_ret,
+                plateau_metric,
                 plateau_streak,
                 int(_cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE),
                 float(_cfg.PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT),
+                deployable_count,
+                unique_ratio,
             )
             break
 
@@ -1157,8 +1456,9 @@ def _run_nsga3(
         ]
 
     metrics_by_chrom = _metrics_dict_from_population(population, metrics_cache)
-    harvest_archive = list(hall_of_fame.values(
-    )) if hall_of_fame else pareto_archive
+    harvest_archive = _harvest_archive_chromosomes(
+        deployable_archive, hall_of_fame, pareto_archive,
+    )
     pareto_pool = _build_pool_from_archive(
         harvest_archive,
         feature_infos,
