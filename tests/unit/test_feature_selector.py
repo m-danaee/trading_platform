@@ -28,6 +28,7 @@ import pytest
 
 from gpu_fuzzy_trader.features.selector import (
     Feature_Selector,
+    _align_feature_array,
     _build_target,
     _compute_stability,
     _mutual_info_discrete_mask,
@@ -36,6 +37,7 @@ from gpu_fuzzy_trader.features.selector import (
     _remove_redundant_features,
     _stationarity_filter,
     _validate_schema,
+    build_phase1_shared_context,
 )
 from gpu_fuzzy_trader import config
 
@@ -790,6 +792,41 @@ class TestStationarityFilter:
         survivors = _stationarity_filter(
             fold_scores, cv_max=1.0, rank_drift_max=2)
         assert survivors == {"a", "b", "c"}
+
+
+class TestAlignFeatureArray:
+    def test_subset_columns_preserve_order(self) -> None:
+        source_cols = ["a", "b", "c", "d"]
+        arr = np.array([[1, 2, 3, 4], [5, 6, 7, 8]], dtype=float)
+        aligned = _align_feature_array(arr, source_cols, ["b", "d", "a"])
+        np.testing.assert_array_equal(aligned, [[2, 4, 1], [6, 8, 5]])
+
+    def test_shared_context_after_sign_consistency_subset(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        train_df = _make_train_df(n_rows=400, n_features=8, symbols=["A", "B"])
+        shared = build_phase1_shared_context(train_df)
+
+        def fake_stable(
+            df: pd.DataFrame,
+            cols: list[str],
+            n_folds: int,
+            min_folds: int,
+            val_df: pd.DataFrame | None = None,
+        ) -> set[str]:
+            return set(cols[: max(3, len(cols) // 2)])
+
+        monkeypatch.setattr(
+            "gpu_fuzzy_trader.features.selector._check_spearman_sign_consistency",
+            fake_stable,
+        )
+        monkeypatch.setattr(config, "PHASE1_REQUIRE_SIGN_CONSISTENCY", True)
+        monkeypatch.setattr(config, "PHASE1_STATIONARITY_FOLDS", 0)
+
+        result = Feature_Selector().select_features(
+            train_df, "long", shared=shared)
+        assert len(result) > 0
+        assert any(entry["score"] > 0.0 for entry in result)
 
 
 class TestReduceOverlap:

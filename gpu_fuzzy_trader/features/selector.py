@@ -392,11 +392,14 @@ class Feature_Selector:
         )
 
         per_symbol_scores: dict[str, list[float]] = {col: [] for col in feature_cols}
-        feature_array = (
-            shared.feature_array
-            if shared is not None and shared.feature_array is not None
-            else train_df[feature_cols].to_numpy(copy=False)
-        )
+        if shared is not None and shared.feature_array is not None:
+            feature_array = _align_feature_array(
+                shared.feature_array,
+                shared.feature_cols,
+                feature_cols,
+            )
+        else:
+            feature_array = train_df[feature_cols].to_numpy(copy=False)
         symbol_masks = (
             shared.symbol_masks
             if shared is not None and shared.symbol_masks is not None
@@ -462,7 +465,11 @@ class Feature_Selector:
                 else (shared.regime_labels if shared is not None else self._regime_labels)
             )
             stationarity_feature_array = (
-                shared.feature_array
+                _align_feature_array(
+                    shared.feature_array,
+                    shared.feature_cols,
+                    feature_cols,
+                )
                 if shared is not None and shared.feature_array is not None
                 else None
             )
@@ -755,6 +762,21 @@ def _build_symbol_masks(df: pd.DataFrame) -> dict[str, np.ndarray]:
         str(sym): (codes == idx)
         for idx, sym in enumerate(uniques)
     }
+
+
+def _align_feature_array(
+    feature_array: np.ndarray | None,
+    source_cols: list[str],
+    selected_cols: list[str],
+) -> np.ndarray | None:
+    """Slice precomputed matrix columns when *selected_cols* is a subset."""
+    if feature_array is None:
+        return None
+    if source_cols == selected_cols:
+        return feature_array
+    col_to_idx = {name: idx for idx, name in enumerate(source_cols)}
+    indices = [col_to_idx[col] for col in selected_cols]
+    return feature_array[:, indices]
 
 
 def _remove_low_dispersion(
