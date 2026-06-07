@@ -590,9 +590,12 @@ class TestRuleSetSelectorRun:
             sel = self._make_selector("long")
             result = sel.run()
             n = len(result["rules_set"])
-            assert _cfg.PHASE3_MIN_RULES <= n <= _cfg.PHASE3_MAX_RULES, (
-                f"Expected {_cfg.PHASE3_MIN_RULES}–{_cfg.PHASE3_MAX_RULES} rules, got {n}"
-            )
+            if result.get("selection_accepted") is False:
+                assert n == 0
+            else:
+                assert _cfg.PHASE3_MIN_RULES <= n <= _cfg.PHASE3_MAX_RULES, (
+                    f"Expected {_cfg.PHASE3_MIN_RULES}–{_cfg.PHASE3_MAX_RULES} rules, got {n}"
+                )
         finally:
             m._OUTPUT_PATHS.update(original)
 
@@ -603,6 +606,8 @@ class TestRuleSetSelectorRun:
         try:
             sel = self._make_selector("long")
             result = sel.run()
+            if result.get("selection_accepted") is False:
+                pytest.skip("rule set rejected under profitability floors")
             assert not _has_duplicate_rules(result["rules_set"]), (
                 "Output rule set contains duplicate rules"
             )
@@ -881,3 +886,77 @@ class TestSkipIfValid:
             assert result is None
         finally:
             m._OUTPUT_PATHS.update(original)
+
+
+class TestSelectBestFromPareto:
+    def test_returns_none_when_all_candidates_infeasible(self, monkeypatch):
+        import gpu_fuzzy_trader.phases.phase3_rule_set as p3
+
+        def fake_eval(*args, **kwargs):
+            bad = {"total_return_pct": -1.0, "profit_factor": 0.9}
+            return np.array([1.0, 2.0, 3.0]), bad, bad
+
+        monkeypatch.setattr(p3, "_evaluate_rule_set", fake_eval)
+        result = p3._select_best_from_pareto(
+            [[{"conditions": ["[feat_0] IS Very High"],
+                "tp": 4, "sl": 2, "capital_pct": 50}]],
+            None,
+            None,
+        )
+        assert result is None
+
+
+class TestRejectedOutputSchema:
+    def test_rejected_output_allows_empty_rules_set(self, tmp_path):
+        from gpu_fuzzy_trader.phases.phase3_rule_set import (
+            _build_rejected_output_dict,
+            _validate_rule_set_schema,
+        )
+
+        data = _build_rejected_output_dict(
+            "long", "all_pareto_candidates_infeasible")
+        path = str(tmp_path / "long.json")
+        _validate_rule_set_schema(data, path)
+        assert data["selection_accepted"] is False
+        assert data["rules_set"] == []
+
+
+class TestGreedyCvMetricOrder:
+    def test_cv_path_preserves_train_val_order(self):
+        from gpu_fuzzy_trader.phases.phase3_greedy import _evaluate_candidates_batch
+
+        class FakeEngine:
+            pass
+
+        class FakeCache:
+            per_rule_min_val_trades = None
+            val_masks = None
+            n_rows_val = 0
+
+        seen: list[tuple[float, float]] = []
+
+        def fake_eval(rule_set, val_engine, train_engine, cache=None, cv_fold_contexts=None, pool_size=None):
+            seen.append((10.0, 20.0))
+            return np.array([1.0, 2.0, 3.0]), {"total_return_pct": 10.0}, {"total_return_pct": 20.0}
+
+        import gpu_fuzzy_trader.phases.phase3_greedy as greedy_mod
+        helpers = greedy_mod._helpers()
+        original = helpers._evaluate_rule_set
+        helpers._evaluate_rule_set = fake_eval
+        try:
+            results = _evaluate_candidates_batch(
+                [[{"conditions": ["[feat_0] IS Very High"]}]],
+                FakeEngine(),
+                FakeEngine(),
+                use_batch=False,
+                cache=FakeCache(),
+                cv_fold_contexts=[
+                    (FakeEngine(), FakeEngine(), None, None, FakeCache())],
+            )
+        finally:
+            helpers._evaluate_rule_set = original
+
+        assert seen == [(10.0, 20.0)]
+        _, val_m, train_m = results[0]
+        assert float(train_m["total_return_pct"]) == 10.0
+        assert float(val_m["total_return_pct"]) == 20.0

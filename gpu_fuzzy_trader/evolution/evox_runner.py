@@ -446,92 +446,21 @@ def _assign_eval_result(
     val_regime_row_counts: np.ndarray | None,
 ) -> None:
     """Compute penalties/objectives from metrics; write objectives[i] and metrics_cache[i]."""
-    from gpu_fuzzy_trader.phases.phase2_rule_pool import _count_active_conditions
-    from gpu_fuzzy_trader.phases.phase2_rule_pool import _saturating_sortino
-    from gpu_fuzzy_trader.phases.phase2_support import (
-        compute_support_penalty_and_specialist,
+    from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+        compute_phase2_objectives_from_metrics,
     )
 
-    active = _count_active_conditions(chromosome, dont_cares)
-    cond_penalty = 0.0
-    if active < _cfg.MIN_CONDITIONS:
-        cond_penalty = (_cfg.MIN_CONDITIONS - active) * 10.0
-    elif active > _cfg.MAX_CONDITIONS:
-        cond_penalty = (active - _cfg.MAX_CONDITIONS) * 10.0
-
-    raw_sortino = float(metrics.get(
-        "sortino_ratio", metrics.get("total_return_pct", 0.0)))
-    sortino_train = _saturating_sortino(raw_sortino)
-    max_dd = float(metrics.get("max_drawdown_pct", 100.0))
-    win_rate = float(metrics.get("win_rate", 0.0))
-
-    sortino_for_obj = sortino_train
-    if val_metrics is not None:
-        raw_val_sortino = float(val_metrics.get(
-            "sortino_ratio",
-            val_metrics.get("total_return_pct", 0.0),
-        ))
-        sortino_val = _saturating_sortino(raw_val_sortino)
-        val_executed = int(val_metrics.get("executed_trades", 0))
-        metrics["val_sortino_ratio"] = raw_val_sortino
-        metrics["val_executed_trades"] = val_executed
-        if val_executed < max(_cfg.MIN_TRADE_POOL_FLOOR // 4, 10):
-            sortino_for_obj = min(sortino_train, 0.0)
-        else:
-            sortino_for_obj = min(sortino_train, sortino_val)
-
-    support_penalty, is_specialist, dominant_regime = (
-        compute_support_penalty_and_specialist(
-            metrics,
-            regime_row_fractions,
-            val_metrics=val_metrics,
-            val_regime_row_counts=val_regime_row_counts,
-        )
+    obj, processed = compute_phase2_objectives_from_metrics(
+        chromosome,
+        dont_cares,
+        metrics,
+        pareto_archive,
+        val_metrics=val_metrics,
+        regime_row_fractions_arr=regime_row_fractions,
+        val_regime_row_counts=val_regime_row_counts,
     )
-    if val_metrics is not None and int(
-        val_metrics.get("executed_trades", 0),
-    ) < max(_cfg.MIN_TRADE_POOL_FLOOR // 4, 10):
-        support_penalty = max(
-            support_penalty, _cfg.SUPPORT_PENALTY_MAX)
-        sortino_for_obj = min(sortino_train, 0.0)
-        is_specialist = False
-    if is_specialist:
-        metrics["regime_specialist"] = True
-        metrics["dominant_regime"] = dominant_regime
-
-    diversity_penalty = 0.0
-    if pareto_archive:
-        min_hamming = batch_hamming_min(chromosome, pareto_archive)
-        if min_hamming <= _cfg.PHASE2_DIVERSITY_HAMMING_THRESHOLD:
-            diversity_penalty = _cfg.PHASE2_DIVERSITY_PENALTY
-
-    executed = int(metrics.get("executed_trades", 0))
-    dd_val = max_dd
-    trade_floor = (
-        _cfg.PHASE2_CV_MIN_TRADE_POOL_FLOOR
-        if str(_cfg.SPLIT_MODE).strip().lower() == "purged_rolling_cv"
-        else _cfg.MIN_TRADE_POOL_FLOOR
-    )
-
-    if _cfg.PHASE2_USE_TOTAL_RETURN_OBJ:
-        f3_val = float(metrics.get("total_return_pct", 0.0))
-    else:
-        f3_val = win_rate
-
-    trade_penalty = 0.0
-    if executed < trade_floor:
-        dd_val = 100.0
-        sortino_for_obj = 0.0
-        f3_val = 0.0
-        trade_penalty = 50.0
-
-    pen = support_penalty + diversity_penalty + cond_penalty + trade_penalty
-
-    objectives[i] = np.array(
-        [-sortino_for_obj + pen, dd_val + pen, -f3_val + pen],
-        dtype=np.float64,
-    )
-    metrics_cache[i] = metrics
+    objectives[i] = obj
+    metrics_cache[i] = processed
 
 
 def _store_global_metrics_cache(
@@ -646,7 +575,7 @@ def _evaluate_population_indices(
         )
 
         val_metrics_list = None
-        if val_engine is not None and _cfg.PHASE2_JOINT_TRAIN_VAL:
+        if val_engine is not None:
             try:
                 val_metrics_list = val_engine.simulate_rule_batch(
                     chromosomes=unique_chroms,

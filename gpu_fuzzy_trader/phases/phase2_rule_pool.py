@@ -207,17 +207,33 @@ def _pareto_sortino_stats(
     pareto_indices: list[int],
     metrics_cache: list[dict],
 ) -> dict[str, float]:
-    """Aggregate raw Sortino Ratio over the current Pareto front."""
+    """Aggregate raw Sortino and return health over the current Pareto front."""
     if not pareto_indices:
-        return {"mean_sortino_ratio": 0.0, "best_sortino_ratio": 0.0}
-    returns = [
+        return {
+            "mean_sortino_ratio": 0.0,
+            "best_sortino_ratio": 0.0,
+            "mean_raw_train_return_pct": 0.0,
+            "mean_val_return_pct": 0.0,
+        }
+    sortinos = [
         float(metrics_cache[i].get("sortino_ratio",
               metrics_cache[i].get("total_return_pct", 0.0)))
         for i in pareto_indices
     ]
+    train_returns = [
+        float(metrics_cache[i].get("total_return_pct", 0.0))
+        for i in pareto_indices
+    ]
+    val_returns = [
+        float(metrics_cache[i].get("val_total_return_pct", 0.0))
+        for i in pareto_indices
+        if metrics_cache[i].get("val_total_return_pct") is not None
+    ]
     return {
-        "mean_sortino_ratio": float(np.mean(returns)),
-        "best_sortino_ratio": float(np.max(returns)),
+        "mean_sortino_ratio": float(np.mean(sortinos)),
+        "best_sortino_ratio": float(np.max(sortinos)),
+        "mean_raw_train_return_pct": float(np.mean(train_returns)),
+        "mean_val_return_pct": float(np.mean(val_returns)) if val_returns else 0.0,
     }
 
 
@@ -282,51 +298,29 @@ def _sample_df(
 # Fitness evaluation
 # ---------------------------------------------------------------------------
 
-def _evaluate_chromosome(
+def compute_phase2_objectives_from_metrics(
     chromosome: np.ndarray,
     dont_cares: np.ndarray,
-    engine,  # GPUBacktestEngine or CPUBacktestEngine
+    metrics: dict,
     pareto_front: list[np.ndarray],
-    val_engine=None,  # optional second engine for joint train+val objective
+    *,
+    val_metrics: dict | None = None,
     regime_row_fractions_arr: np.ndarray | None = None,
     val_regime_row_counts: np.ndarray | None = None,
 ) -> tuple[np.ndarray, dict]:
     """
-    Evaluate a single chromosome and return (objectives, metrics).
+    Build Phase 2 minimisation objectives from precomputed train/val metrics.
 
-    objectives = [f1, f2, f3] (all minimised, with penalties applied).
-
-    When PHASE2_JOINT_TRAIN_VAL is enabled and *val_engine* is provided, f1 uses
-    min(saturated_train_sortino, saturated_val_sortino) so the search prefers
-    rules that hold up out-of-sample.
+    Shared by single-chromosome evaluation and EvoX batch assignment so penalty
+    logic stays identical across code paths.
     """
     active = _count_active_conditions(chromosome, dont_cares)
 
-    # Condition count penalty
     cond_penalty = 0.0
     if active < _cfg.MIN_CONDITIONS:
         cond_penalty = (_cfg.MIN_CONDITIONS - active) * 10.0
     elif active > _cfg.MAX_CONDITIONS:
         cond_penalty = (active - _cfg.MAX_CONDITIONS) * 10.0
-
-    # Evaluate via backtest engine (TRAIN)
-    try:
-        metrics_list = engine.simulate_rule_batch(
-            chromosomes=_chromosome_batch(chromosome),
-            tp=_cfg.PHASE2_TP,
-            sl=_cfg.PHASE2_SL,
-            capital_pct=_cfg.PHASE2_CAPITAL_PCT,
-        )
-        metrics = metrics_list[0]
-    except Exception as exc:
-        logger.debug("simulate_rule_batch failed: %s", exc)
-        metrics = {
-            "sortino_ratio": 0.0,
-            "total_return_pct": 0.0,
-            "max_drawdown_pct": 100.0,
-            "win_rate": 0.0,
-            "executed_trades": 0,
-        }
 
     raw_sortino = float(metrics.get(
         "sortino_ratio", metrics.get("total_return_pct", 0.0)))
@@ -337,46 +331,30 @@ def _evaluate_chromosome(
     win_rate = float(metrics.get("win_rate", 0.0))
     executed = int(metrics.get("executed_trades", 0))
 
-    val_metrics: dict | None = None
     sortino_for_obj = sortino_train
     val_floor_penalty = 0.0
 
-    if _cfg.PHASE2_JOINT_TRAIN_VAL and val_engine is not None:
-        try:
-            val_list = val_engine.simulate_rule_batch(
-                chromosomes=_chromosome_batch(chromosome),
-                tp=_cfg.PHASE2_TP,
-                sl=_cfg.PHASE2_SL,
-                capital_pct=_cfg.PHASE2_CAPITAL_PCT,
-            )
-            val_metrics = val_list[0]
-            raw_val_sortino = float(val_metrics.get(
-                "sortino_ratio", val_metrics.get("total_return_pct", 0.0)))
-            val_total_return = float(val_metrics.get("total_return_pct", 0.0))
-            val_profit_factor = float(val_metrics.get("profit_factor", 0.0))
-            sortino_val = _saturating_sortino(raw_val_sortino)
-            val_executed = int(val_metrics.get("executed_trades", 0))
-            metrics["val_sortino_ratio"] = raw_val_sortino
-            metrics["val_executed_trades"] = val_executed
+    if val_metrics is not None:
+        raw_val_sortino = float(val_metrics.get(
+            "sortino_ratio", val_metrics.get("total_return_pct", 0.0)))
+        val_total_return = float(val_metrics.get("total_return_pct", 0.0))
+        val_profit_factor = float(val_metrics.get("profit_factor", 0.0))
+        sortino_val = _saturating_sortino(raw_val_sortino)
+        val_executed = int(val_metrics.get("executed_trades", 0))
+        metrics["val_sortino_ratio"] = raw_val_sortino
+        metrics["val_total_return_pct"] = val_total_return
+        metrics["val_executed_trades"] = val_executed
+        if _cfg.PHASE2_JOINT_TRAIN_VAL:
             if val_executed < max(_cfg.MIN_TRADE_POOL_FLOOR // 4, 10):
                 sortino_for_obj = min(sortino_train, 0.0)
             else:
                 sortino_for_obj = min(sortino_train, sortino_val)
-            if val_total_return < _cfg.PHASE2_VAL_RETURN_FLOOR_PCT:
-                val_floor_penalty += _cfg.SUPPORT_PENALTY_MAX
-            if val_profit_factor < _cfg.PHASE2_PROFIT_FACTOR_FLOOR:
-                val_floor_penalty += (
-                    _cfg.PHASE2_PROFIT_FACTOR_FLOOR - val_profit_factor
-                ) * 5.0
-        except Exception as exc:
-            logger.debug("val simulate_rule_batch failed: %s", exc)
-            val_metrics = None
-
-    if regime_row_fractions_arr is None:
-        regime_row_fractions_arr = getattr(
-            engine, "_regime_row_fractions", None)
-    if val_regime_row_counts is None and val_engine is not None:
-        val_regime_row_counts = getattr(val_engine, "_regime_row_counts", None)
+        if val_total_return < _cfg.PHASE2_VAL_RETURN_FLOOR_PCT:
+            val_floor_penalty += _cfg.SUPPORT_PENALTY_MAX
+        if val_profit_factor < _cfg.PHASE2_PROFIT_FACTOR_FLOOR:
+            val_floor_penalty += (
+                _cfg.PHASE2_PROFIT_FACTOR_FLOOR - val_profit_factor
+            ) * 5.0
 
     support_penalty, is_specialist, dominant_regime = (
         compute_support_penalty_and_specialist(
@@ -392,7 +370,8 @@ def _evaluate_chromosome(
         < max(_cfg.MIN_TRADE_POOL_FLOOR // 4, 10)
     ):
         support_penalty = max(support_penalty, _cfg.SUPPORT_PENALTY_MAX)
-        sortino_for_obj = min(sortino_train, 0.0)
+        if _cfg.PHASE2_JOINT_TRAIN_VAL:
+            sortino_for_obj = min(sortino_train, 0.0)
         is_specialist = False
 
     if is_specialist:
@@ -409,16 +388,12 @@ def _evaluate_chromosome(
         support_penalty += _symbol_robustness_penalty(val_metrics)
     support_penalty += val_floor_penalty
 
-    # Hard drawdown gate: penalise all objectives when drawdown exceeds the cap.
-    # This stops the Pareto front from drifting into the high-return/high-drawdown
-    # region (f2 growing to 30%+ while f3 reaches −100 in the metrics chart).
     dd_gate = getattr(_cfg, "PHASE2_MAX_DRAWDOWN_GATE", 20.0)
     drawdown_gate_penalty = 0.0
     if max_dd > dd_gate:
         excess = max_dd - dd_gate
-        drawdown_gate_penalty = excess * 2.0  # 2× penalty per % of excess
+        drawdown_gate_penalty = excess * 2.0
 
-    # Diversity penalty: Hamming distance to nearest Pareto-front member
     diversity_penalty = 0.0
     if pareto_front:
         min_hamming = min(_hamming_distance(chromosome, pf)
@@ -431,12 +406,16 @@ def _evaluate_chromosome(
         f3_val = total_return
 
     trade_penalty = 0.0
-    trade_floor = _cfg.PHASE2_CV_MIN_TRADE_POOL_FLOOR if str(_cfg.SPLIT_MODE).strip().lower() == "purged_rolling_cv" else _cfg.MIN_TRADE_POOL_FLOOR
+    trade_floor = (
+        _cfg.PHASE2_CV_MIN_TRADE_POOL_FLOOR
+        if str(_cfg.SPLIT_MODE).strip().lower() == "purged_rolling_cv"
+        else _cfg.MIN_TRADE_POOL_FLOOR
+    )
     if executed < trade_floor:
         max_dd = 100.0
         sortino_for_obj = 0.0
         f3_val = 0.0
-        trade_penalty = 50.0  # Dominating penalty
+        trade_penalty = 50.0
 
     f1 = (
         -sortino_for_obj
@@ -465,6 +444,73 @@ def _evaluate_chromosome(
 
     objectives = np.array([f1, f2, f3], dtype=np.float64)
     return objectives, metrics
+
+
+def _evaluate_chromosome(
+    chromosome: np.ndarray,
+    dont_cares: np.ndarray,
+    engine,  # GPUBacktestEngine or CPUBacktestEngine
+    pareto_front: list[np.ndarray],
+    val_engine=None,  # optional second engine for joint train+val objective
+    regime_row_fractions_arr: np.ndarray | None = None,
+    val_regime_row_counts: np.ndarray | None = None,
+) -> tuple[np.ndarray, dict]:
+    """
+    Evaluate a single chromosome and return (objectives, metrics).
+
+    objectives = [f1, f2, f3] (all minimised, with penalties applied).
+
+    When PHASE2_JOINT_TRAIN_VAL is enabled and *val_engine* is provided, f1 uses
+    min(saturated_train_sortino, saturated_val_sortino) so the search prefers
+    rules that hold up out-of-sample.
+    """
+    try:
+        metrics_list = engine.simulate_rule_batch(
+            chromosomes=_chromosome_batch(chromosome),
+            tp=_cfg.PHASE2_TP,
+            sl=_cfg.PHASE2_SL,
+            capital_pct=_cfg.PHASE2_CAPITAL_PCT,
+        )
+        metrics = metrics_list[0]
+    except Exception as exc:
+        logger.debug("simulate_rule_batch failed: %s", exc)
+        metrics = {
+            "sortino_ratio": 0.0,
+            "total_return_pct": 0.0,
+            "max_drawdown_pct": 100.0,
+            "win_rate": 0.0,
+            "executed_trades": 0,
+        }
+
+    val_metrics: dict | None = None
+    if val_engine is not None:
+        try:
+            val_list = val_engine.simulate_rule_batch(
+                chromosomes=_chromosome_batch(chromosome),
+                tp=_cfg.PHASE2_TP,
+                sl=_cfg.PHASE2_SL,
+                capital_pct=_cfg.PHASE2_CAPITAL_PCT,
+            )
+            val_metrics = val_list[0]
+        except Exception as exc:
+            logger.debug("val simulate_rule_batch failed: %s", exc)
+            val_metrics = None
+
+    if regime_row_fractions_arr is None:
+        regime_row_fractions_arr = getattr(
+            engine, "_regime_row_fractions", None)
+    if val_regime_row_counts is None and val_engine is not None:
+        val_regime_row_counts = getattr(val_engine, "_regime_row_counts", None)
+
+    return compute_phase2_objectives_from_metrics(
+        chromosome,
+        dont_cares,
+        metrics,
+        pareto_front,
+        val_metrics=val_metrics,
+        regime_row_fractions_arr=regime_row_fractions_arr,
+        val_regime_row_counts=val_regime_row_counts,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1037,6 +1083,10 @@ def _build_pool_from_archive(
             top_k = int(_cfg.PHASE2_CV_POOL_RANK_ADMIT_TOP_K)
             added = 0
             for val_ret, chrom, metrics, val_metrics, folds_passing in rank_candidates[:top_k]:
+                if val_metrics is not None and not passes_pool_admission_gate(
+                    metrics, val_metrics
+                ):
+                    continue
                 key = chromosome_key(chrom)
                 if key in seen_pool:
                     continue
@@ -1338,6 +1388,8 @@ def _filter_compatible_previous_pool(
             continue
         cond_features = _condition_feature_names(conditions)
         if not cond_features.issubset(feature_names):
+            continue
+        if not _pool_entry_passes_admission(entry):
             continue
         filtered.append(entry)
     return filtered

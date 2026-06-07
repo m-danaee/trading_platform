@@ -224,8 +224,8 @@ def _passes_pool_admission_impl(
                 if n_passing < min_pass:
                     return False
 
-    if not _cfg.PHASE2_JOINT_TRAIN_VAL:
-        return True
+    # Pool admission always requires validation metrics when positive splits
+    # are enforced — independent of PHASE2_JOINT_TRAIN_VAL (evolution-only flag).
     if val_metrics is None:
         return False
 
@@ -285,7 +285,8 @@ def passes_pool_entry_admission(entry: dict) -> bool:
             total = int(entry.get("cv_folds_total", _cfg.CV_N_FOLDS))
             min_pass = min(
                 int(_cfg.PHASE2_CV_POOL_MIN_FOLDS_PASS), max(total, 1))
-            return int(cv_pass) >= min_pass
+            if int(cv_pass) < min_pass:
+                return False
 
     objectives = entry.get("objectives", {}) or {}
     train_metrics = {
@@ -297,7 +298,7 @@ def passes_pool_entry_admission(entry: dict) -> bool:
     }
     val_obj = entry.get("val_objectives")
     if val_obj is None:
-        return passes_pool_admission_gate(train_metrics, None)
+        return False
     val_metrics = {
         "total_return_pct": float(val_obj.get("total_return_pct", 0.0)),
         "profit_factor": float(val_obj.get("profit_factor", 1.0)),

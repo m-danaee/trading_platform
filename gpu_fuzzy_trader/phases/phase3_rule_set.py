@@ -109,9 +109,13 @@ def _validate_rule_set_schema(data: object, path: str) -> None:
             f"Rule set 'rules_set' must be a list: {path}"
         )
     if not (2 <= len(rules_set) <= 5):
-        raise ValueError(
-            f"Rule set 'rules_set' must have 2–5 rules, got {len(rules_set)}: {path}"
-        )
+        selection_accepted = data.get("selection_accepted")
+        if selection_accepted is False and len(rules_set) == 0:
+            pass
+        else:
+            raise ValueError(
+                f"Rule set 'rules_set' must have 2–5 rules, got {len(rules_set)}: {path}"
+            )
     for i, rule in enumerate(rules_set):
         if not isinstance(rule, dict):
             raise ValueError(
@@ -915,12 +919,12 @@ def _select_best_from_pareto(
     cache: Phase3EvalCache | None = None,
     cv_fold_contexts: list[tuple] | None = None,
     pool_size: int | None = None,
-) -> list[dict]:
+) -> list[dict] | None:
     """
     Select the best rule set from the Pareto front.
 
     Default: maximin(train_return, val_return) with profitability floors.
-    Tie-break: lower train/val gap, symbol consistency, Jaccard overlap.
+    Returns None when every candidate violates the profitability floors.
     """
     if not pareto_rule_sets:
         raise ValueError(
@@ -930,6 +934,7 @@ def _select_best_from_pareto(
     best_score = -np.inf
     best_tiebreak: tuple[float, ...] | None = None
     best_f1 = np.inf
+    any_feasible = False
 
     for i, rs in enumerate(pareto_rule_sets):
         engine_fmt = _rule_set_to_engine_format(rs)
@@ -942,6 +947,8 @@ def _select_best_from_pareto(
             pool_size=pool_size,
         )
         score = _maximin_selection_score(train_metrics, val_metrics)
+        if score > -1e8:
+            any_feasible = True
         f1 = float(obj[0])
         tiebreak = _pareto_selection_tiebreak(
             train_metrics, val_metrics, rs, cache)
@@ -955,6 +962,9 @@ def _select_best_from_pareto(
             best_tiebreak = tiebreak
             best_f1 = f1
             best_idx = i
+
+    if not any_feasible:
+        return None
 
     return _cap_capital_per_rule(pareto_rule_sets[best_idx])
 
@@ -1009,7 +1019,19 @@ def _build_output_dict(rule_set: list[dict], direction: str) -> dict:
     return {
         "direction": direction,
         "risk_optimized": False,
+        "selection_accepted": True,
         "rules_set": rules_list,
+    }
+
+
+def _build_rejected_output_dict(direction: str, reason: str) -> dict:
+    """Non-deployable artifact when no feasible rule set can be selected."""
+    return {
+        "direction": direction,
+        "risk_optimized": False,
+        "selection_accepted": False,
+        "selection_rejection_reason": reason,
+        "rules_set": [],
     }
 
 
@@ -1152,8 +1174,14 @@ class Rule_Set_Selector:
             self._use_jax_gpu,
         )
 
+        ranked_pool = sorted(
+            self.pool,
+            key=_pool_rule_val_score,
+            reverse=True,
+        )
+
         greedy_set, n_greedy_evals = greedy_rule_set_search(
-            pool=self.pool,
+            pool=ranked_pool,
             val_engine=self._val_engine,
             train_engine=self._train_engine,
             min_rules=_cfg.PHASE3_MIN_RULES,
@@ -1170,7 +1198,7 @@ class Rule_Set_Selector:
         )
         initial_pop = _seed_population_from_greedy(
             greedy_set,
-            self.pool,
+            ranked_pool,
             self.refine_pop_size,
             _cfg.PHASE3_MIN_RULES,
             _cfg.PHASE3_MAX_RULES,
@@ -1179,7 +1207,7 @@ class Rule_Set_Selector:
 
         refine_tag = "Phase 3 [%s] refine" % self.direction
         pareto_rule_sets, history = _run_nsga2_combinatorial(
-            pool=self.pool,
+            pool=ranked_pool,
             val_engine=self._val_engine,
             train_engine=self._train_engine,
             pop_size=self.refine_pop_size,
@@ -1200,35 +1228,91 @@ class Rule_Set_Selector:
         )
 
         min_pareto = int(_cfg.PHASE3_MIN_PARETO_FRONT)
-        if not pareto_rule_sets or len(pareto_rule_sets) < min_pareto:
+        best_rule_set: list[dict] | None = None
+        rejection_reason = "all_pareto_candidates_infeasible"
+
+        if not pareto_rule_sets:
+            rejection_reason = "empty_pareto_front"
             logger.warning(
-                "Phase 3 [%s]: Pareto front size %d < %d, "
-                "using pool-ranked fallback.",
+                "Phase 3 [%s]: empty Pareto front after refine.",
                 self.direction,
-                len(pareto_rule_sets),
-                min_pareto,
-            )
-            best_rule_set = _best_rules_from_pool_fallback(
-                self.pool,
-                max(_cfg.PHASE3_MIN_RULES, min(3, len(self.pool))),
             )
         else:
+            if len(pareto_rule_sets) < min_pareto:
+                logger.warning(
+                    "Phase 3 [%s]: Pareto front size %d < %d.",
+                    self.direction,
+                    len(pareto_rule_sets),
+                    min_pareto,
+                )
             best_rule_set = _select_best_from_pareto(
                 pareto_rule_sets,
                 self._val_engine,
                 self._train_engine,
                 cache=self._eval_cache,
                 cv_fold_contexts=self._cv_fold_contexts,
-                pool_size=len(self.pool),
+                pool_size=len(ranked_pool),
             )
 
-        output_dict = _build_output_dict(best_rule_set, self.direction)
+        if best_rule_set is None and pareto_rule_sets:
+            fallback = _best_rules_from_pool_fallback(
+                ranked_pool,
+                max(_cfg.PHASE3_MIN_RULES, min(3, len(ranked_pool))),
+            )
+            engine_fmt = _rule_set_to_engine_format(fallback)
+            train_m, val_m = _simulate_team(
+                engine_fmt,
+                self._train_engine,
+                self._val_engine,
+                self._eval_cache,
+            )
+            if _maximin_selection_score(train_m, val_m) > -1e8:
+                best_rule_set = fallback
+                rejection_reason = ""
+
+        if best_rule_set is None:
+            logger.warning(
+                "Phase 3 [%s]: rejecting direction — %s",
+                self.direction,
+                rejection_reason,
+            )
+            output_dict = _build_rejected_output_dict(
+                self.direction, rejection_reason)
+        else:
+            output_dict = _build_output_dict(best_rule_set, self.direction)
+            rejection_reason = ""
+
+        history_summary = {
+            "direction": self.direction,
+            "pareto_size": len(pareto_rule_sets),
+            "selection_accepted": best_rule_set is not None,
+            "selection_rejection_reason": rejection_reason or None,
+            "generations": history,
+        }
+        history_path = os.path.join(
+            _cfg.OUTPUTS_DIR,
+            f"phase3_{self.direction}_history.json",
+        )
+        try:
+            os.makedirs(_cfg.OUTPUTS_DIR, exist_ok=True)
+            with open(history_path, "w", encoding="utf-8") as fh:
+                json.dump(history_summary, fh, indent=2)
+        except OSError as exc:
+            logger.debug("Phase 3 history write failed: %s", exc)
 
         # Persist
         os.makedirs(_cfg.OUTPUTS_DIR, exist_ok=True)
         output_path = _OUTPUT_PATHS[self.direction]
         with open(output_path, "w", encoding="utf-8") as fh:
             json.dump(output_dict, fh, indent=2)
+
+        if best_rule_set is None:
+            logger.info(
+                "Phase 3 [%s]: no feasible rule set — saved rejection to %s",
+                self.direction,
+                output_path,
+            )
+            return output_dict
 
         logger.info(
             "Phase 3 [%s]: best rule set has %d rules, saved to %s",
@@ -1325,7 +1409,7 @@ class Rule_Set_Selector:
         for direction in ("long", "short"):
             try:
                 loaded = Rule_Set_Selector.load_rule_set(direction)
-                if loaded is not None:
+                if loaded is not None and loaded.get("selection_accepted") is not False:
                     result[direction] = loaded
             except ValueError:
                 # File exists but is invalid — treat as missing

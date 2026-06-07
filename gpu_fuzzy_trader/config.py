@@ -276,7 +276,7 @@ PHASE2_POOL_VAL_RETURN_MIN_PCT = 0.0
 # Relaxed 2→1: 2-of-3 folds was collapsing the pool to only 10 long rules,
 # giving Phase 3 only ~165 combos to search. 1-of-3 (rank-admit level) lets more
 # rules through; Phase 3 applies its own stricter quality gates on top.
-PHASE2_CV_POOL_MIN_FOLDS_PASS = 1
+PHASE2_CV_POOL_MIN_FOLDS_PASS = 2
 PHASE2_CV_MIN_TRADE_POOL_FLOOR = 7
 PHASE2_CV_POOL_TRAIN_RETURN_MIN_PCT = 0.0
 PHASE2_CV_POOL_VAL_RETURN_MIN_PCT = 0.0
@@ -290,9 +290,9 @@ PHASE2_CV_RANK_MIN_FOLDS_PASS = 1
 # --- Fitness & joint evaluation ---
 SORTINO_CAP = 5.0
 SORTINO_SCALE = 3.0
-# train-only fitness during evolution (~2× faster)
-PHASE2_JOINT_TRAIN_VAL = False
-# Val folds still gate pool admission via PHASE2_CV_* thresholds.
+# Joint train+val fitness during evolution (slower but aligned with admission).
+PHASE2_JOINT_TRAIN_VAL = True
+# Pool admission always checks merged validation regardless of this flag.
 
 # --- Diversity & early stop ---
 # Run log: from gen 57 onward the long Pareto was fully saturated (450/450)
@@ -390,7 +390,7 @@ PHASE3_GREEDY_WEIGHTS = (0.8, 0.6, 0.5)  # sortino, drawdown, win_rate
 
 # --- Objectives & anti-overfit gates ---
 # RECOMMENDATION: keep USE_TRAIN_TARGET True; rely on CV + gates, not val-only fit.
-PHASE3_USE_TRAIN_TARGET = True
+PHASE3_USE_TRAIN_TARGET = False
 PHASE3_USE_MAXIMIN_SCORE = True
 PHASE3_SYMBOL_CONSISTENCY_WEIGHT = 10.0
 PHASE3_TRAIN_VAL_CORR_WEIGHT = 8.0

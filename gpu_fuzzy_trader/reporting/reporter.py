@@ -358,6 +358,10 @@ class Reporter:
         mean_f1 = [entry.get("mean_f1", 0.0) for entry in history]
         mean_f2 = [entry.get("mean_f2", 0.0) for entry in history]
         mean_f3 = [entry.get("mean_f3", 0.0) for entry in history]
+        mean_raw_train = [
+            entry.get("mean_raw_train_return_pct", 0.0) for entry in history
+        ]
+        mean_val = [entry.get("mean_val_return_pct", 0.0) for entry in history]
 
         ax.plot(generations, mean_f1,
                 label="mean_f1 (−Sortino)", color="tab:blue")
@@ -366,6 +370,22 @@ class Reporter:
         f3_label = "mean_f3 (−total_return)" if _cfg.PHASE2_USE_TOTAL_RETURN_OBJ else "mean_f3 (−win_rate)"
         ax.plot(generations, mean_f3,
                 label=f3_label, color="tab:green")
+        if any(v != 0.0 for v in mean_raw_train):
+            ax.plot(
+                generations,
+                mean_raw_train,
+                label="mean raw train return %",
+                color="tab:red",
+                linestyle="--",
+            )
+        if any(v != 0.0 for v in mean_val):
+            ax.plot(
+                generations,
+                mean_val,
+                label="mean val return %",
+                color="tab:purple",
+                linestyle="--",
+            )
 
         ax.set_title(f"Phase 2 Objectives vs. Generation — {direction}")
         ax.set_xlabel("Generation")
@@ -434,6 +454,7 @@ class Reporter:
                 "best_total_return_pct", 0.0))
             for entry in history
         ]
+        mean_val = [entry.get("mean_val_return_pct", 0.0) for entry in history]
 
         ax.plot(
             generations,
@@ -447,6 +468,14 @@ class Reporter:
             label="Best Pareto Sortino Ratio",
             color="tab:orange",
         )
+        if any(v != 0.0 for v in mean_val):
+            ax.plot(
+                generations,
+                mean_val,
+                label="Mean Pareto val return %",
+                color="tab:purple",
+                linestyle="--",
+            )
         ax.axhline(y=0.0, color="gray", linestyle="--", linewidth=0.8)
 
         ax.set_title(f"Phase 2 Sortino per Generation — {direction}")

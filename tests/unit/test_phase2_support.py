@@ -9,6 +9,7 @@ from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.phases.phase2_support import (
     compute_support_penalty_and_specialist,
     passes_pool_admission_gate,
+    passes_pool_entry_admission,
     passes_pool_trade_floor,
     trade_support_penalty,
     val_regime_confirmation,
@@ -35,6 +36,30 @@ class TestPoolAdmissionGate:
         val = {"total_return_pct": 2.0,
                "profit_factor": 1.1, "executed_trades": 50}
         assert passes_pool_admission_gate(train, val) is True
+
+    def test_requires_validation_even_when_joint_train_val_disabled(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(_cfg, "PHASE2_JOINT_TRAIN_VAL", False)
+        train = {
+            "total_return_pct": 5.0,
+            "profit_factor": 1.5,
+            "executed_trades": _cfg.MIN_TRADE_POOL_FLOOR,
+        }
+        val = {
+            "total_return_pct": -1.0,
+            "profit_factor": 0.9,
+            "executed_trades": 50,
+        }
+        assert passes_pool_admission_gate(train, val) is False
+
+    def test_rejects_missing_validation_metrics(self) -> None:
+        train = {
+            "total_return_pct": 5.0,
+            "profit_factor": 1.5,
+            "executed_trades": _cfg.MIN_TRADE_POOL_FLOOR,
+        }
+        assert passes_pool_admission_gate(train, None) is False
 
 
 class TestTradeSupportPenaltyStatic:
@@ -82,9 +107,9 @@ class TestRegimeSpecialist:
     def test_specialist_waives_penalty(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(_cfg, "PHASE2_REGIME_SUPPORT_ENABLED", True)
         fracs = np.array([0.1, 0.8, 0.1], dtype=np.float64)
-        metrics = self._regime_metrics(80, 76, 35, 100.0)
+        metrics = self._regime_metrics(40, 38, 20, 100.0)
         pen, spec, dom = trade_support_penalty(
-            80,
+            40,
             regime_trade_counts=np.array(metrics["regime_trade_counts"]),
             regime_win_counts=np.array(metrics["regime_win_counts"]),
             regime_net_pnl=np.array(metrics["regime_net_pnl"]),
@@ -98,13 +123,13 @@ class TestRegimeSpecialist:
         monkeypatch.setattr(_cfg, "PHASE2_REGIME_SUPPORT_ENABLED", True)
         fracs = np.array([1.0 / 3, 1.0 / 3, 1.0 / 3], dtype=np.float64)
         metrics = {
-            "executed_trades": 90,
-            "regime_trade_counts": [30, 30, 30],
-            "regime_win_counts": [20, 20, 20],
+            "executed_trades": 40,
+            "regime_trade_counts": [14, 13, 13],
+            "regime_win_counts": [8, 8, 8],
             "regime_net_pnl": [1.0, 1.0, 1.0],
         }
         pen, spec, _ = trade_support_penalty(
-            90,
+            40,
             regime_trade_counts=np.array(metrics["regime_trade_counts"]),
             regime_win_counts=np.array(metrics["regime_win_counts"]),
             regime_net_pnl=np.array(metrics["regime_net_pnl"]),
@@ -116,9 +141,9 @@ class TestRegimeSpecialist:
     def test_pool_floor_waived_for_specialist(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(_cfg, "PHASE2_REGIME_SUPPORT_ENABLED", True)
         fracs = np.array([0.05, 0.9, 0.05], dtype=np.float64)
-        metrics = self._regime_metrics(80, 76, 35, 50.0)
+        metrics = self._regime_metrics(40, 38, 20, 50.0)
         assert passes_pool_trade_floor(
-            80, metrics, regime_row_fractions_arr=fracs)
+            40, metrics, regime_row_fractions_arr=fracs)
 
 
 class TestValRegimeConfirmation:

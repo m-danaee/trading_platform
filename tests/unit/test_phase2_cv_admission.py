@@ -55,19 +55,18 @@ class TestCvFoldAdmission:
 
 
 class TestEvaluatePurgedCvPoolAdmission:
-    def test_passes_when_two_of_three_folds_ok(
+    def test_passes_when_enough_folds_and_merged_metrics_ok(
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setattr(_cfg, "SPLIT_MODE", "purged_rolling_cv")
         monkeypatch.setattr(_cfg, "PHASE2_CV_POOL_MIN_FOLDS_PASS", 2)
         good = _metrics(2.0, 1.2, 30)
-        bad = _metrics(-5.0, 0.8, 30)
         val_good = _metrics(1.0, 1.1, 15)
 
         train_cv = PurgedCVTrainEngine([
             _MockFoldEngine(good),
             _MockFoldEngine(good),
-            _MockFoldEngine(bad),
+            _MockFoldEngine(good),
         ])
         val_cv = PurgedCVValEngine([
             _MockFoldEngine(val_good),
@@ -79,9 +78,36 @@ class TestEvaluatePurgedCvPoolAdmission:
             train_cv, val_cv, chrom,
         )
         assert ok is True
-        assert folds_passing == 2
-        assert float(train_m["total_return_pct"]) == pytest.approx(-5.0)
+        assert folds_passing == 3
+        assert float(train_m["total_return_pct"]) == pytest.approx(2.0)
         assert val_m is not None
+
+    def test_rejects_when_folds_pass_but_merged_validation_bad(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(_cfg, "SPLIT_MODE", "purged_rolling_cv")
+        monkeypatch.setattr(_cfg, "PHASE2_CV_POOL_MIN_FOLDS_PASS", 2)
+        good = _metrics(2.0, 1.2, 30)
+        bad = _metrics(0.1, 0.8, 30)
+        val_good = _metrics(1.0, 1.1, 15)
+        val_bad = _metrics(-2.0, 0.8, 15)
+
+        train_cv = PurgedCVTrainEngine([
+            _MockFoldEngine(good),
+            _MockFoldEngine(good),
+            _MockFoldEngine(bad),
+        ])
+        val_cv = PurgedCVValEngine([
+            _MockFoldEngine(val_good),
+            _MockFoldEngine(val_good),
+            _MockFoldEngine(val_bad),
+        ])
+        chrom = np.array([0, 1, 2], dtype=np.int64)
+        ok, _, _, folds_passing = evaluate_purged_cv_pool_admission(
+            train_cv, val_cv, chrom,
+        )
+        assert folds_passing == 2
+        assert ok is False
 
     def test_fails_when_only_one_fold_ok(
         self, monkeypatch: pytest.MonkeyPatch,
@@ -89,8 +115,9 @@ class TestEvaluatePurgedCvPoolAdmission:
         monkeypatch.setattr(_cfg, "SPLIT_MODE", "purged_rolling_cv")
         monkeypatch.setattr(_cfg, "PHASE2_CV_POOL_MIN_FOLDS_PASS", 2)
         good = _metrics(2.0, 1.2, 30)
-        bad = _metrics(-5.0, 0.8, 30)
+        bad = _metrics(0.1, 0.8, 30)
         val_good = _metrics(1.0, 1.1, 15)
+        val_bad = _metrics(-0.5, 0.9, 15)
 
         train_cv = PurgedCVTrainEngine([
             _MockFoldEngine(good),
@@ -111,7 +138,7 @@ class TestEvaluatePurgedCvPoolAdmission:
 
 
 class TestPoolEntryAdmission:
-    def test_cv_metadata_passes_despite_negative_merged_return(
+    def test_cv_metadata_rejected_when_merged_validation_bad(
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setattr(_cfg, "SPLIT_MODE", "purged_rolling_cv")
@@ -122,6 +149,27 @@ class TestPoolEntryAdmission:
             "objectives": {
                 "total_return_pct": -5.0,
                 "profit_factor": 0.8,
+            },
+            "val_objectives": {
+                "total_return_pct": -1.0,
+                "profit_factor": 0.9,
+            },
+            "executed_trades": 30,
+            "val_executed_trades": 15,
+        }
+        assert passes_pool_entry_admission(entry) is False
+
+    def test_cv_metadata_passes_when_merged_metrics_ok(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(_cfg, "SPLIT_MODE", "purged_rolling_cv")
+        monkeypatch.setattr(_cfg, "PHASE2_CV_POOL_MIN_FOLDS_PASS", 2)
+        entry = {
+            "cv_folds_passing": 2,
+            "cv_folds_total": 3,
+            "objectives": {
+                "total_return_pct": 2.0,
+                "profit_factor": 1.2,
             },
             "val_objectives": {
                 "total_return_pct": 1.0,

@@ -119,7 +119,7 @@ def _evaluate_candidates_batch(
     if cv_fold_contexts:
         for rs in candidates:
             fmt = p3._rule_set_to_engine_format(rs)
-            obj, val_m, train_m = p3._evaluate_rule_set(
+            obj, train_m, val_m = p3._evaluate_rule_set(
                 fmt,
                 val_engine,
                 train_engine,
@@ -133,7 +133,7 @@ def _evaluate_candidates_batch(
     if use_batch:
         train_list, val_list = p3._simulate_teams_batch(
             engine_fmt, train_engine, val_engine, cache, use_jax)
-        for rs, val_m, train_m in zip(candidates, val_list, train_list):
+        for rs, train_m, val_m in zip(candidates, train_list, val_list):
             obj = compute_phase3_objectives(
                 train_m,
                 val_m,

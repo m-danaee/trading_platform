@@ -13,7 +13,10 @@ import pandas as pd
 
 from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.data.cv_folds import PurgedFold
-from gpu_fuzzy_trader.phases.phase2_support import passes_pool_admission_cv_fold
+from gpu_fuzzy_trader.phases.phase2_support import (
+    passes_pool_admission_cv_fold,
+    passes_pool_admission_gate,
+)
 from gpu_fuzzy_trader.phases.phase2_rule_pool import (
     Rule_Pool_Generator,
     _sample_df,
@@ -353,6 +356,10 @@ def evaluate_purged_cv_pool_admission(
     except Exception:
         merged_train, merged_val = {}, None
 
+    if admitted and merged_val is not None:
+        if not passes_pool_admission_gate(merged_train, merged_val):
+            admitted = False
+
     return admitted, merged_train, merged_val, folds_passing
 
 
@@ -451,6 +458,9 @@ def evaluate_purged_cv_pool_admission_batch(
                 admitted = False
         m_train = merged_train_batch[i] if i < len(merged_train_batch) else {}
         m_val = merged_val_batch[i] if i < len(merged_val_batch) else None
+        if admitted and m_val is not None:
+            if not passes_pool_admission_gate(m_train, m_val):
+                admitted = False
         results.append((admitted, m_train, m_val, fp))
 
     n_admitted = sum(1 for r in results if r[0])

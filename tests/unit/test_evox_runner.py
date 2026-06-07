@@ -407,3 +407,54 @@ class TestPlateauEarlyStop:
         assert not _should_plateau_early_stop_phase2(3, 3)
         assert not _should_plateau_early_stop_phase2(10, 2)
         assert _should_plateau_early_stop_phase2(10, 3)
+
+
+class TestBatchSingleObjectiveAlignment:
+    def test_return_floor_penalty_matches_single_path(self, monkeypatch):
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+            _evaluate_chromosome,
+            compute_phase2_objectives_from_metrics,
+        )
+
+        monkeypatch.setattr(_cfg, "PHASE2_RETURN_FLOOR_PCT", 2.0)
+        monkeypatch.setattr(_cfg, "PHASE2_JOINT_TRAIN_VAL", True)
+
+        pop = np.full((1, 10), 5, dtype=np.int32)
+        pop[0, :3] = 0
+        dont_cares = np.ones(10, dtype=np.int32) * 5
+        metrics = {
+            "executed_trades": 100,
+            "total_return_pct": 1.0,
+            "sortino_ratio": 0.5,
+            "max_drawdown_pct": 2.0,
+            "win_rate": 50.0,
+            "profit_factor": 1.2,
+        }
+        val_metrics = {
+            "executed_trades": 50,
+            "total_return_pct": 3.0,
+            "sortino_ratio": 1.0,
+            "max_drawdown_pct": 1.0,
+            "win_rate": 55.0,
+            "profit_factor": 1.3,
+        }
+
+        batch_obj, _ = compute_phase2_objectives_from_metrics(
+            pop[0], dont_cares, dict(metrics), [],
+            val_metrics=dict(val_metrics),
+        )
+
+        class MockEngine:
+            def simulate_rule_batch(self, chromosomes, **kwargs):
+                return [dict(metrics)]
+
+        class MockValEngine:
+            def simulate_rule_batch(self, chromosomes, **kwargs):
+                return [dict(val_metrics)]
+
+        single_obj, _ = _evaluate_chromosome(
+            pop[0], dont_cares, MockEngine(), [],
+            val_engine=MockValEngine(),
+        )
+
+        assert np.allclose(batch_obj, single_obj)
