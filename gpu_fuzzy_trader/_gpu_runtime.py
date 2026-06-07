@@ -116,13 +116,15 @@ def log_gpu_runtime_config() -> None:
     used_str = f"{used:.2f} GiB" if used is not None else "unknown"
     logger.info(
         "Phase 2 GPU runtime: backend=%s devices=%s vram=%s used=%s "
-        "batch_size=%d scan_unroll=%d",
+        "batch_size=%d scan_unroll=%d fp32=%s data_int8=%s",
         backend,
         devices,
         vram_str,
         used_str,
         batch,
         _cfg.PHASE2_SCAN_UNROLL,
+        getattr(_cfg, "PHASE2_GPU_USE_FP32", True),
+        getattr(_cfg, "PHASE2_GPU_DATA_INT8", True),
     )
 
 

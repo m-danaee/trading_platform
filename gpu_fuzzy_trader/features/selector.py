@@ -74,6 +74,8 @@ class Phase1SharedContext:
     feature_modes: dict[str, str]
     targets: dict[str, pd.Series]
     regime_labels: Optional[pd.Series] = None
+    feature_array: np.ndarray | None = None
+    symbol_masks: dict[str, np.ndarray] | None = None
 
 
 def build_phase1_shared_context(
@@ -99,11 +101,17 @@ def build_phase1_shared_context(
         direction: _build_target(train_df, direction)
         for direction in _VALID_DIRECTIONS
     }
+    feature_array = (
+        train_df[feature_cols].to_numpy(copy=False)
+        if feature_cols else np.empty((len(train_df), 0))
+    )
     return Phase1SharedContext(
         feature_cols=feature_cols,
         feature_modes=feature_modes,
         targets=targets,
         regime_labels=regime_labels,
+        feature_array=feature_array,
+        symbol_masks=_build_symbol_masks(train_df),
     )
 
 
@@ -384,29 +392,35 @@ class Feature_Selector:
         )
 
         per_symbol_scores: dict[str, list[float]] = {col: [] for col in feature_cols}
+        feature_array = (
+            shared.feature_array
+            if shared is not None and shared.feature_array is not None
+            else train_df[feature_cols].to_numpy(copy=False)
+        )
+        symbol_masks = (
+            shared.symbol_masks
+            if shared is not None and shared.symbol_masks is not None
+            else _build_symbol_masks(train_df)
+        )
+        target_values = target.to_numpy(copy=False)
+        discrete_mask = _mutual_info_discrete_mask(
+            feature_cols, feature_modes)
 
         for sym in symbols:
             if sym is not None:
-                mask = train_df["symbol"] == sym
-                sym_df = train_df[mask]
-                sym_target = target[mask]
+                mask = symbol_masks[str(sym)]
             else:
-                sym_df = train_df
-                sym_target = target
+                mask = symbol_masks["__all__"]
 
-            # Skip symbol if target has only one class
-            if sym_target.nunique() < 2:
+            sym_target = target_values[mask]
+            if len(np.unique(sym_target)) < 2:
                 continue
 
-            X = sym_df[feature_cols].values
-            y = sym_target.values.astype(np.int32, copy=False)
-            discrete_mask = _mutual_info_discrete_mask(
-                feature_cols, feature_modes)
-
+            X = feature_array[mask]
             try:
                 scores = mutual_info_classif(
                     X,
-                    y,
+                    sym_target.astype(np.int32, copy=False),
                     discrete_features=discrete_mask,
                     random_state=config.get_seed(),
                 )
@@ -447,6 +461,11 @@ class Feature_Selector:
                 if regime_labels is not None
                 else (shared.regime_labels if shared is not None else self._regime_labels)
             )
+            stationarity_feature_array = (
+                shared.feature_array
+                if shared is not None and shared.feature_array is not None
+                else None
+            )
 
             if stratify == "regime":
                 fold_scores = _compute_regime_stationarity_scores(
@@ -457,6 +476,7 @@ class Feature_Selector:
                     labels,
                     config.PHASE1_STATIONARITY_FOLDS,
                     config.PHASE1_REGIME_MIN_SAMPLES,
+                    feature_array=stationarity_feature_array,
                 )
                 n_valid = _count_valid_stationarity_folds(fold_scores)
                 if n_valid < 2:
@@ -471,6 +491,7 @@ class Feature_Selector:
                         feature_modes,
                         target,
                         config.PHASE1_STATIONARITY_FOLDS,
+                        feature_array=stationarity_feature_array,
                     )
             else:
                 fold_scores = _compute_chronological_stationarity_scores(
@@ -479,6 +500,7 @@ class Feature_Selector:
                     feature_modes,
                     target,
                     config.PHASE1_STATIONARITY_FOLDS,
+                    feature_array=stationarity_feature_array,
                 )
 
             survivors = _stationarity_filter(
@@ -724,6 +746,17 @@ def _mutual_info_discrete_mask(
     ]
 
 
+def _build_symbol_masks(df: pd.DataFrame) -> dict[str, np.ndarray]:
+    """Precompute boolean row masks per symbol (or one mask for single-series data)."""
+    if "symbol" not in df.columns:
+        return {"__all__": np.ones(len(df), dtype=bool)}
+    codes, uniques = pd.factorize(df["symbol"], sort=False)
+    return {
+        str(sym): (codes == idx)
+        for idx, sym in enumerate(uniques)
+    }
+
+
 def _remove_low_dispersion(
     df: pd.DataFrame,
     feature_cols: list[str],
@@ -744,14 +777,19 @@ def _remove_low_dispersion(
     list[str]
         Filtered feature column names.
     """
-    kept = []
-    for col in feature_cols:
-        series = df[col]
-        if len(series) == 0:
+    if not feature_cols:
+        return []
+    n_rows = len(df)
+    if n_rows == 0:
+        return []
+    matrix = df[feature_cols].to_numpy(copy=False)
+    kept: list[str] = []
+    for idx, col in enumerate(feature_cols):
+        col_vals = matrix[:, idx]
+        if col_vals.size == 0:
             continue
-        # Fraction of the most common value
-        top_freq = series.value_counts(normalize=True, dropna=False).iloc[0]
-        if top_freq <= threshold:
+        _, counts = np.unique(col_vals, return_counts=True)
+        if float(counts.max()) / float(n_rows) <= threshold:
             kept.append(col)
     return kept
 
@@ -875,18 +913,18 @@ def _count_valid_stationarity_folds(
 
 
 def _mi_scores_for_mask(
-    df: pd.DataFrame,
+    feature_array: np.ndarray,
     feature_cols: list[str],
     feature_modes: dict[str, str],
-    target: pd.Series,
+    target_values: np.ndarray,
     mask: np.ndarray,
     min_samples: int,
 ) -> Optional[list[float]]:
     """Compute MI vector for rows where *mask* is True; None if insufficient."""
     if mask.sum() < min_samples:
         return None
-    Xf = df.loc[mask, feature_cols].values
-    yf = target.loc[mask].values.astype(np.int32, copy=False)
+    Xf = feature_array[mask]
+    yf = target_values[mask].astype(np.int32, copy=False)
     if len(np.unique(yf)) < 2:
         return None
     discrete_mask = _mutual_info_discrete_mask(feature_cols, feature_modes)
@@ -905,6 +943,8 @@ def _compute_chronological_stationarity_scores(
     feature_modes: dict[str, str],
     target: pd.Series,
     n_folds: int,
+    *,
+    feature_array: np.ndarray | None = None,
 ) -> dict[str, list[float]]:
     """
     Per-fold MI by splitting *df* chronologically into *n_folds*.
@@ -914,14 +954,19 @@ def _compute_chronological_stationarity_scores(
 
     if "datetime" in df.columns and "symbol" in df.columns:
         order = df.sort_values(["symbol", "datetime"]).index
-        df_ordered = df.loc[order]
-        target_ordered = target.loc[order]
+        row_idx = df.index.get_indexer(order)
+        target_values = target.loc[order].to_numpy(copy=False)
+        if feature_array is None:
+            feature_array = df.loc[order, feature_cols].to_numpy(copy=False)
+        else:
+            feature_array = feature_array[row_idx]
     else:
-        df_ordered = df
-        target_ordered = target
+        target_values = target.to_numpy(copy=False)
+        if feature_array is None:
+            feature_array = df[feature_cols].to_numpy(copy=False)
 
     fold_scores: dict[str, list[float]] = {col: [] for col in feature_cols}
-    n = len(df_ordered)
+    n = len(target_values)
     min_samples = config.PHASE1_REGIME_MIN_SAMPLES
     if n < n_folds * min_samples:
         return fold_scores
@@ -932,10 +977,10 @@ def _compute_chronological_stationarity_scores(
         mask = np.zeros(n, dtype=bool)
         mask[lo:hi] = True
         scores = _mi_scores_for_mask(
-            df_ordered,
+            feature_array,
             feature_cols,
             feature_modes,
-            target_ordered,
+            target_values,
             mask,
             min_samples,
         )
@@ -955,6 +1000,8 @@ def _compute_regime_stationarity_scores(
     regime_labels: Optional[pd.Series],
     n_regimes: int,
     min_samples: int,
+    *,
+    feature_array: np.ndarray | None = None,
 ) -> dict[str, list[float]]:
     """
     Per-regime MI using pre-fitted row labels (train only).
@@ -963,11 +1010,20 @@ def _compute_regime_stationarity_scores(
     if regime_labels is None or n_regimes < 2:
         return fold_scores
 
-    labels = regime_labels.reindex(df.index)
+    if feature_array is None:
+        feature_array = df[feature_cols].to_numpy(copy=False)
+    target_values = target.to_numpy(copy=False)
+    labels = regime_labels.reindex(df.index).to_numpy()
+
     for regime_id in range(n_regimes):
-        mask = (labels == regime_id).values
+        mask = labels == regime_id
         scores = _mi_scores_for_mask(
-            df, feature_cols, feature_modes, target, mask, min_samples,
+            feature_array,
+            feature_cols,
+            feature_modes,
+            target_values,
+            mask,
+            min_samples,
         )
         if scores is None:
             continue

@@ -139,7 +139,7 @@ SPLIT_MODE = "purged_rolling_cv"
 
 # Increased from 3→5 folds: more folds give better estimate of out-of-fold
 # generalisation, reducing the chance of the short strategy overfitting one season.
-CV_N_FOLDS = 3
+CV_N_FOLDS = 2
 CV_EMBARGO_BARS = TAIL_DROP_ROWS
 CV_BARS_PER_DAY = 288  # 5-minute bars
 CV_MIN_TRAIN_MONTHS = 2.0  # per symbol, per fold; raise if folds feel too noisy
@@ -170,7 +170,7 @@ LOG_GENERATION_INTERVAL = 0  # 0 = auto ~10% of generations; N = every N gens
 
 # --- Ranking & shortlist ---
 PHASE1_DISPERSION_THRESHOLD = 0.95  # drop near-constant columns
-PHASE1_TOP_K_FEATURES = 25
+PHASE1_TOP_K_FEATURES = 15
 # max Jaccard overlap long vs short lists (was 0.50 → 12 shared)
 PHASE1_MAX_FEATURE_OVERLAP = 0.65
 PHASE1_ASYMMETRIC_TARGET = True  # separate MI targets for long / short
@@ -219,6 +219,12 @@ PHASE2_SCAN_UNROLL = 32
 PHASE2_EVAL_BATCH_DEDUP = True
 PHASE2_EVAL_GLOBAL_CACHE = True      # run-wide dict[chromosome_key -> metrics]
 PHASE2_SKIP_ZERO_SIGNAL_SCAN = True  # skip lax.scan when rule match finds 0 bars
+# Skip full equity scan when raw rule matches cannot reach trade-floor support.
+PHASE2_SKIP_INFEASIBLE_SIGNAL_SCAN = True
+# Phase 2 GPU ranking uses float32 on T4-class GPUs (final truth remains CPU / notebook).
+PHASE2_GPU_USE_FP32 = True
+# Store discretized feature matrix as int8 (classes/dont_care fit in 0..10).
+PHASE2_GPU_DATA_INT8 = True
 
 
 # =============================================================================
@@ -233,7 +239,7 @@ PHASE2_SL = 1.0
 PHASE2_CAPITAL_PCT = 30.0
 
 # --- Rule genome (shared with Phase 3 team size) ---
-MIN_CONDITIONS = 3
+MIN_CONDITIONS = 4
 MAX_CONDITIONS = 4
 
 # Phase 2 chromosome layout during evolution:
@@ -345,7 +351,7 @@ PHASE2_CV_FOLD_WORKERS = 1
 
 # --- NSGA-III budget ---
 # Population 300 with train-only evolution and sequential fold eval fits T4 VRAM.
-PHASE2_POPULATION_SIZE = 300
+PHASE2_POPULATION_SIZE = 200
 PHASE2_GENERATIONS = 80
 PHASE2_ALGORITHM = "NSGA3"
 # Archive adjusted to match new population size.

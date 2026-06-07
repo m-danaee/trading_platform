@@ -17,7 +17,6 @@ from gpu_fuzzy_trader.evolution.numba_ops import (
     non_dominated_sort,
 )
 
-import copy
 import logging
 import time
 
@@ -211,7 +210,7 @@ def _update_deployable_archive(
             deployable_archive[key] = {
                 "chromosome": chrom,
                 "rank_score": rank,
-                "metrics": copy.deepcopy(metrics),
+                "metrics": _metrics_snapshot(metrics),
             }
 
     if len(deployable_archive) <= max_size:
@@ -656,6 +655,11 @@ def _assign_eval_result(
     metrics_cache[i] = processed
 
 
+def _metrics_snapshot(metrics: dict) -> dict:
+    """Shallow copy for evolution caches (metrics are flat numeric dicts)."""
+    return dict(metrics)
+
+
 def _store_global_metrics_cache(
     global_metrics_cache: dict[tuple[int, ...], dict],
     key: tuple[int, ...],
@@ -663,9 +667,9 @@ def _store_global_metrics_cache(
     val_metrics: dict | None,
 ) -> None:
     """Store processed metrics (and optional val sidecar) in the run-wide cache."""
-    entry = copy.deepcopy(metrics)
+    entry = _metrics_snapshot(metrics)
     if val_metrics is not None:
-        entry["_cached_val_metrics"] = copy.deepcopy(val_metrics)
+        entry["_cached_val_metrics"] = _metrics_snapshot(val_metrics)
     global_metrics_cache[key] = entry
 
 
@@ -673,7 +677,7 @@ def _load_global_metrics_cache(
     cached: dict,
 ) -> tuple[dict, dict | None]:
     """Restore metrics and optional val_metrics from a cache entry."""
-    entry = copy.deepcopy(cached)
+    entry = _metrics_snapshot(cached)
     val_metrics = entry.pop("_cached_val_metrics", None)
     return entry, val_metrics
 
@@ -794,10 +798,10 @@ def _evaluate_population_indices(
         for i in gpu_pending:
             key = chromosome_key(population[i])
             uj = key_to_uj[key]
-            metrics = copy.deepcopy(metrics_list[uj])
+            metrics = _metrics_snapshot(metrics_list[uj])
             val_metrics = None
             if val_metrics_list is not None:
-                val_metrics = copy.deepcopy(val_metrics_list[uj])
+                val_metrics = _metrics_snapshot(val_metrics_list[uj])
 
             _assign_eval_result(
                 i,

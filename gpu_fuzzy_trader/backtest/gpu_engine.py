@@ -41,13 +41,38 @@ try:
     import jax.numpy as jnp
     from jax import jit, vmap
     import jax.lax as lax
-    jax.config.update("jax_enable_x64", True)
+
+    def _resolve_jax_float_dtype():
+        use_fp32 = bool(getattr(_cfg, "PHASE2_GPU_USE_FP32", True))
+        if use_fp32:
+            jax.config.update("jax_enable_x64", False)
+            return jnp.float32
+        jax.config.update("jax_enable_x64", True)
+        return jnp.float64
+
+    _JXF = _resolve_jax_float_dtype()
+    _JX_INT = jnp.int8 if bool(
+        getattr(_cfg, "PHASE2_GPU_DATA_INT8", True)) else jnp.int32
 except ImportError as _jax_err:
     raise ImportError(
         "JAX is required for GPUBacktestEngine but could not be imported. "
         "Install it with: pip install jax jaxlib\n"
         f"Original error: {_jax_err}"
     ) from _jax_err
+
+
+def _phase2_trade_floor() -> int:
+    """Minimum executed trades required for a rule to avoid hard trade penalty."""
+    if str(_cfg.SPLIT_MODE).strip().lower() == "purged_rolling_cv":
+        return int(_cfg.PHASE2_CV_MIN_TRADE_POOL_FLOOR)
+    return int(_cfg.MIN_TRADE_POOL_FLOOR)
+
+
+def _min_raw_signals_for_full_scan() -> int:
+    """Raw match count below this cannot reach trade-floor support."""
+    if not bool(getattr(_cfg, "PHASE2_SKIP_INFEASIBLE_SIGNAL_SCAN", True)):
+        return 1
+    return max(1, _phase2_trade_floor())
 
 
 # ---------------------------------------------------------------------------
@@ -164,8 +189,8 @@ def _jax_compute_trade_outcomes(
     Mirrors CPUBacktestEngine._build_trade_outcome_single exactly.
     Returns (N,) float64 price_return_pct.
     """
-    tp_f = jnp.float64(tp)
-    sl_f = jnp.float64(sl)
+    tp_f = _JXF(tp)
+    sl_f = _JXF(sl)
 
     # Long path
     long_hit_tp = max_ret >= tp_f
@@ -264,48 +289,48 @@ def _jax_simulate_equity_batch(
     max_exposure_rate: float,
     min_position_notional: float,
 ) -> jnp.ndarray:
-    fee_rate_f = jnp.float64(fee_rate)
-    leverage_f = jnp.float64(leverage)
-    capital_rate_f = jnp.float64(capital_rate)
-    max_exposure_rate_f = jnp.float64(max_exposure_rate)
-    min_notional_f = jnp.float64(min_position_notional)
-    init_cap = jnp.float64(initial_capital)
-    sortino_cap = jnp.float64(_cfg.SORTINO_CAP)
+    fee_rate_f = _JXF(fee_rate)
+    leverage_f = _JXF(leverage)
+    capital_rate_f = _JXF(capital_rate)
+    max_exposure_rate_f = _JXF(max_exposure_rate)
+    min_notional_f = _JXF(min_position_notional)
+    init_cap = _JXF(initial_capital)
+    sortino_cap = _JXF(_cfg.SORTINO_CAP)
 
     N = price_returns_all.shape[0]
-    recency_weights = jnp.ones(N, dtype=jnp.float64)
+    recency_weights = jnp.ones(N, dtype=_JXF)
     if _cfg.PHASE2_RECENCY_WEIGHT_ENABLED:
         cutoff = int(N * (1.0 - _cfg.PHASE2_RECENCY_WEIGHT_FRACTION))
         recency_weights = recency_weights.at[cutoff:].set(_cfg.PHASE2_RECENCY_WEIGHT_MULTIPLIER)
 
     max_slots = int(max_open_slots)
     init_slot_release = jnp.full(max_slots, -1, dtype=jnp.int32)
-    init_slot_notional = jnp.zeros(max_slots, dtype=jnp.float64)
+    init_slot_notional = jnp.zeros(max_slots, dtype=_JXF)
     row_indices = jnp.arange(N, dtype=jnp.int32)
 
     def simulate_one(signal_mask):
-        is_signal = signal_mask.astype(jnp.float64)
+        is_signal = signal_mask.astype(_JXF)
         scan_xs = jnp.stack(
             [is_signal, price_returns_all, recency_weights,
-             row_indices.astype(jnp.float64)],
+             row_indices.astype(_JXF)],
             axis=-1,
         )
 
         init_carry = (
             init_cap,           # equity
             init_cap,           # peak_equity
-            jnp.float64(0.0),   # max_dd
-            jnp.float64(0.0),   # open_exposure
+            _JXF(0.0),   # max_dd
+            _JXF(0.0),   # open_exposure
             jnp.int32(0),       # wins
             jnp.int32(0),       # losses
-            jnp.float64(0.0),   # gross_profit
-            jnp.float64(0.0),   # gross_loss
+            _JXF(0.0),   # gross_profit
+            _JXF(0.0),   # gross_loss
             jnp.int32(0),       # executed
             jnp.int32(0),       # skipped
             jnp.bool_(False),   # account_ruined
-            jnp.float64(0.0),   # trade_return_sum
+            _JXF(0.0),   # trade_return_sum
             jnp.int32(0),       # n_neg
-            jnp.float64(0.0),   # neg_sq_sum
+            _JXF(0.0),   # neg_sq_sum
             init_slot_release,
             init_slot_notional,
         )
@@ -405,10 +430,10 @@ def _jax_simulate_equity_batch(
          _slot_release, _slot_notional) = final_carry
 
         total_return_pct = (equity / init_cap - 1.0) * 100.0
-        raw_signal_count = jnp.sum(signal_mask).astype(jnp.float64)
+        raw_signal_count = jnp.sum(signal_mask).astype(_JXF)
 
         # Compute Sortino ratio from running stats
-        n_trades = (wins + losses).astype(jnp.float64)
+        n_trades = (wins + losses).astype(_JXF)
         mean_ret = jnp.where(n_trades > 0, trade_return_sum / n_trades, 0.0)
         downside_var = jnp.where(n_trades > 0, neg_sq_sum / n_trades, 0.0)
         downside_dev = jnp.sqrt(downside_var)
@@ -419,7 +444,7 @@ def _jax_simulate_equity_batch(
         )
 
         win_rate = jnp.where(
-            n_trades > 0, wins.astype(jnp.float64) / n_trades * 100.0, 0.0)
+            n_trades > 0, wins.astype(_JXF) / n_trades * 100.0, 0.0)
         profit_factor = jnp.where(
             (gross_loss <= 0.0) & (gross_profit > 0.0), 99.0,
             jnp.where(gross_loss <= 0.0, 0.0, gross_profit / gross_loss),
@@ -428,8 +453,8 @@ def _jax_simulate_equity_batch(
         return jnp.array([
             total_return_pct, sortino, max_dd, win_rate,
             profit_factor, n_trades, equity,
-            account_ruined.astype(jnp.float64),
-            raw_signal_count, skipped.astype(jnp.float64),
+            account_ruined.astype(_JXF),
+            raw_signal_count, skipped.astype(_JXF),
         ])
 
     # vmap over the batch dimension
@@ -453,53 +478,53 @@ def _jax_simulate_equity_batch_regime(
     max_exposure_rate: float,
     min_position_notional: float,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
-    fee_rate_f = jnp.float64(fee_rate)
-    leverage_f = jnp.float64(leverage)
-    capital_rate_f = jnp.float64(capital_rate)
-    max_exposure_rate_f = jnp.float64(max_exposure_rate)
-    min_notional_f = jnp.float64(min_position_notional)
-    init_cap = jnp.float64(initial_capital)
-    sortino_cap = jnp.float64(_cfg.SORTINO_CAP)
+    fee_rate_f = _JXF(fee_rate)
+    leverage_f = _JXF(leverage)
+    capital_rate_f = _JXF(capital_rate)
+    max_exposure_rate_f = _JXF(max_exposure_rate)
+    min_notional_f = _JXF(min_position_notional)
+    init_cap = _JXF(initial_capital)
+    sortino_cap = _JXF(_cfg.SORTINO_CAP)
     n_reg = int(n_regimes)
 
     N = price_returns_all.shape[0]
-    recency_weights = jnp.ones(N, dtype=jnp.float64)
+    recency_weights = jnp.ones(N, dtype=_JXF)
     if _cfg.PHASE2_RECENCY_WEIGHT_ENABLED:
         cutoff = int(N * (1.0 - _cfg.PHASE2_RECENCY_WEIGHT_FRACTION))
         recency_weights = recency_weights.at[cutoff:].set(_cfg.PHASE2_RECENCY_WEIGHT_MULTIPLIER)
 
     max_slots = int(max_open_slots)
     init_slot_release = jnp.full(max_slots, -1, dtype=jnp.int32)
-    init_slot_notional = jnp.zeros(max_slots, dtype=jnp.float64)
+    init_slot_notional = jnp.zeros(max_slots, dtype=_JXF)
     row_indices = jnp.arange(N, dtype=jnp.int32)
 
     def simulate_one(signal_mask):
-        is_signal = signal_mask.astype(jnp.float64)
+        is_signal = signal_mask.astype(_JXF)
         scan_xs = jnp.stack(
-            [is_signal, price_returns_all, regime_ids.astype(jnp.float64),
-             recency_weights, row_indices.astype(jnp.float64)],
+            [is_signal, price_returns_all, regime_ids.astype(_JXF),
+             recency_weights, row_indices.astype(_JXF)],
             axis=-1,
         )
 
         init_trades = jnp.zeros(n_reg, dtype=jnp.int32)
         init_wins = jnp.zeros(n_reg, dtype=jnp.int32)
-        init_pnl = jnp.zeros(n_reg, dtype=jnp.float64)
+        init_pnl = jnp.zeros(n_reg, dtype=_JXF)
 
         init_carry = (
             init_cap,
             init_cap,
-            jnp.float64(0.0),
-            jnp.float64(0.0),
+            _JXF(0.0),
+            _JXF(0.0),
             jnp.int32(0),
             jnp.int32(0),
-            jnp.float64(0.0),
-            jnp.float64(0.0),
+            _JXF(0.0),
+            _JXF(0.0),
             jnp.int32(0),
             jnp.int32(0),
             jnp.bool_(False),
-            jnp.float64(0.0),
+            _JXF(0.0),
             jnp.int32(0),
-            jnp.float64(0.0),
+            _JXF(0.0),
             init_trades,
             init_wins,
             init_pnl,
@@ -612,9 +637,9 @@ def _jax_simulate_equity_batch_regime(
          _slot_release, _slot_notional) = final_carry
 
         total_return_pct = (equity / init_cap - 1.0) * 100.0
-        raw_signal_count = jnp.sum(signal_mask).astype(jnp.float64)
+        raw_signal_count = jnp.sum(signal_mask).astype(_JXF)
 
-        n_trades = (wins + losses).astype(jnp.float64)
+        n_trades = (wins + losses).astype(_JXF)
         mean_ret = jnp.where(n_trades > 0, trade_return_sum / n_trades, 0.0)
         downside_var = jnp.where(n_trades > 0, neg_sq_sum / n_trades, 0.0)
         downside_dev = jnp.sqrt(downside_var)
@@ -625,7 +650,7 @@ def _jax_simulate_equity_batch_regime(
         )
 
         win_rate = jnp.where(
-            n_trades > 0, wins.astype(jnp.float64) / n_trades * 100.0, 0.0)
+            n_trades > 0, wins.astype(_JXF) / n_trades * 100.0, 0.0)
         profit_factor = jnp.where(
             (gross_loss <= 0.0) & (gross_profit > 0.0), 99.0,
             jnp.where(gross_loss <= 0.0, 0.0, gross_profit / gross_loss),
@@ -634,13 +659,13 @@ def _jax_simulate_equity_batch_regime(
         base = jnp.array([
             total_return_pct, sortino, max_dd, win_rate,
             profit_factor, n_trades, equity,
-            account_ruined.astype(jnp.float64),
-            raw_signal_count, skipped.astype(jnp.float64),
+            account_ruined.astype(_JXF),
+            raw_signal_count, skipped.astype(_JXF),
         ])
         regime_stats = jnp.stack(
             [
-                trades_by_regime.astype(jnp.float64),
-                wins_by_regime.astype(jnp.float64),
+                trades_by_regime.astype(_JXF),
+                wins_by_regime.astype(_JXF),
                 pnl_by_regime,
             ],
             axis=-1,
@@ -663,7 +688,28 @@ def _zero_signal_result_row(initial_capital: float) -> jnp.ndarray:
         0.0,
         0.0,
         0.0,
-    ], dtype=jnp.float64)
+    ], dtype=_JXF)
+
+
+def _fast_reject_result_rows(
+    counts: np.ndarray,
+    initial_capital: float,
+) -> np.ndarray:
+    """
+    Build fast-reject metric rows for chromosomes with insufficient raw matches.
+
+    Zero-signal rows match ``_zero_signal_result_row``. Non-zero but below the
+    trade floor use penalized placeholders (objectives treat them as infeasible).
+    """
+    host_dtype = np.float32 if bool(
+        getattr(_cfg, "PHASE2_GPU_USE_FP32", True)) else np.float64
+    rows = np.zeros((len(counts), 10), dtype=host_dtype)
+    rows[:, 6] = initial_capital
+    rows[:, 8] = counts.astype(host_dtype, copy=False)
+    infeasible = counts > 0
+    if np.any(infeasible):
+        rows[infeasible, 2] = 100.0
+    return rows
 
 
 def _batch_metrics_from_array(
@@ -762,16 +808,17 @@ class GPUBacktestEngine:
         self._backend = jax.default_backend()
 
         # --- Pre-extract label arrays as JAX arrays ---
-        entry = df["label_open_next"].values.astype(np.float64)
+        entry = df["label_open_next"].values.astype(
+            np.float32 if bool(getattr(_cfg, "PHASE2_GPU_USE_FP32", True)) else np.float64)
         self._max_ret_jax = jnp.array(
             (df["label_max_288"].values - entry) / entry * 100.0,
-            dtype=jnp.float64)
+            dtype=_JXF)
         self._min_ret_jax = jnp.array(
             (df["label_min_288"].values - entry) / entry * 100.0,
-            dtype=jnp.float64)
+            dtype=_JXF)
         self._close_ret_jax = jnp.array(
             (df["label_close_288"].values - entry) / entry * 100.0,
-            dtype=jnp.float64)
+            dtype=_JXF)
         self._max_before_min_jax = jnp.array(
             df["label_max_before_min"].values, dtype=jnp.int32)
 
@@ -789,17 +836,18 @@ class GPUBacktestEngine:
 
         # --- Build data matrix (N, K) ---
         if self._feature_names:
+            matrix_dtype = _JX_INT
             self._data_matrix_jax = jnp.array(
                 _build_data_matrix(df, self._feature_names, feature_modes),
-                dtype=jnp.int32)
+                dtype=matrix_dtype)
             self._dont_cares_jax = jnp.array(
                 [_MODE_NUM_CLASSES[feature_modes[f]]
                     for f in self._feature_names],
-                dtype=jnp.int32)
+                dtype=matrix_dtype)
         else:
             self._data_matrix_jax = jnp.zeros(
-                (len(df), 0), dtype=jnp.int32)
-            self._dont_cares_jax = jnp.zeros((0,), dtype=jnp.int32)
+                (len(df), 0), dtype=_JX_INT)
+            self._dont_cares_jax = jnp.zeros((0,), dtype=_JX_INT)
 
         # --- Pre-compute release indices ---
         from gpu_fuzzy_trader.backtest.cpu_engine import (
@@ -1024,25 +1072,32 @@ class GPUBacktestEngine:
                     (end - start, N), dtype=jnp.bool_)
 
             chunk_b = end - start
-            if _cfg.PHASE2_SKIP_ZERO_SIGNAL_SCAN:
+            use_fast_skip = (
+                _cfg.PHASE2_SKIP_ZERO_SIGNAL_SCAN
+                or bool(getattr(_cfg, "PHASE2_SKIP_INFEASIBLE_SIGNAL_SCAN", True))
+            )
+            if use_fast_skip:
                 signal_counts = jnp.sum(
                     signals_batch.astype(jnp.int32), axis=1)
-                counts_np = np.asarray(signal_counts)
-                nonzero_idx = np.flatnonzero(counts_np > 0)
-                zero_idx = np.flatnonzero(counts_np == 0)
+                counts_np = np.asarray(signal_counts, dtype=np.int64)
+                min_scan = _min_raw_signals_for_full_scan()
+                scan_idx = np.flatnonzero(counts_np >= min_scan)
+                skip_idx = np.flatnonzero(counts_np < min_scan)
 
-                zero_row = _zero_signal_result_row(self.initial_capital)
-                results_jax = jnp.zeros((chunk_b, 10), dtype=jnp.float64)
-                if zero_idx.size:
-                    results_jax = results_jax.at[zero_idx].set(zero_row)
+                results_jax = jnp.zeros((chunk_b, 10), dtype=_JXF)
+                if skip_idx.size:
+                    skip_rows = _fast_reject_result_rows(
+                        counts_np[skip_idx], self.initial_capital)
+                    results_jax = results_jax.at[skip_idx].set(
+                        jnp.asarray(skip_rows, dtype=_JXF))
 
                 regime_jax = None
                 if has_regime:
                     regime_jax = jnp.zeros(
-                        (chunk_b, self._n_regimes, 3), dtype=jnp.float64)
+                        (chunk_b, self._n_regimes, 3), dtype=_JXF)
 
-                if nonzero_idx.size:
-                    sub_signals = signals_batch[nonzero_idx]
+                if scan_idx.size:
+                    sub_signals = signals_batch[scan_idx]
                     sub_results, sub_regime = self._simulate_signals_batch(
                         sub_signals,
                         price_returns_all,
@@ -1050,9 +1105,9 @@ class GPUBacktestEngine:
                         max_exposure_rate,
                         N,
                     )
-                    results_jax = results_jax.at[nonzero_idx].set(sub_results)
+                    results_jax = results_jax.at[scan_idx].set(sub_results)
                     if has_regime and sub_regime is not None:
-                        regime_jax = regime_jax.at[nonzero_idx].set(sub_regime)
+                        regime_jax = regime_jax.at[scan_idx].set(sub_regime)
             else:
                 results_jax, regime_jax = self._simulate_signals_batch(
                     signals_batch,
@@ -1181,8 +1236,8 @@ class GPUBacktestEngine:
                 "account_ruined": False,
             }
 
-        net_pnls_jax = jnp.array(net_pnls, dtype=jnp.float64)
-        init_equity = jnp.float64(initial_capital)
+        net_pnls_jax = jnp.array(net_pnls, dtype=_JXF)
+        init_equity = _JXF(initial_capital)
 
         def _scan_step(carry, net_pnl):
             (equity, wins, losses, gross_profit, gross_loss,
@@ -1209,9 +1264,9 @@ class GPUBacktestEngine:
         init_carry = (
             init_equity,
             jnp.int32(0), jnp.int32(0),
-            jnp.float64(0.0), jnp.float64(0.0),
+            _JXF(0.0), _JXF(0.0),
             jnp.bool_(False),
-            init_equity, jnp.float64(0.0),
+            init_equity, _JXF(0.0),
         )
         final_carry, _ = lax.scan(
             _scan_step, init_carry, net_pnls_jax, unroll=_cfg.PHASE2_SCAN_UNROLL)

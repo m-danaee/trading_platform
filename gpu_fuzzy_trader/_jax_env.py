@@ -22,7 +22,8 @@ def configure_jax_env() -> None:
     os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
     os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.8")
     os.environ.setdefault("JAX_PLATFORMS", "cuda,cpu")
-    os.environ.setdefault("JAX_ENABLE_X64", "True")
+    # Default off: Phase 2 GPU ranking uses float32; T4 FP64 throughput is poor.
+    os.environ.setdefault("JAX_ENABLE_X64", "False")
     os.environ.setdefault("JAX_COMPILATION_CACHE_DIR", "/tmp/jax_cache")
     os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
     os.environ.setdefault("ABSL_MIN_LOGLEVEL", "3")
