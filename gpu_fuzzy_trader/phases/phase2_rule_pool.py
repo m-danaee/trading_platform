@@ -351,6 +351,7 @@ def compute_phase2_objectives_from_metrics(
     regime_row_fractions_arr: np.ndarray | None = None,
     val_regime_row_counts: np.ndarray | None = None,
     diversity_reference: list[np.ndarray] | None = None,
+    stage_params=None,
 ) -> tuple[np.ndarray, dict]:
     """
     Build Phase 2 minimisation objectives from precomputed train/val metrics.
@@ -454,11 +455,21 @@ def compute_phase2_objectives_from_metrics(
             seen_keys.add(key)
             merged_refs.append(ref)
         diversity_refs = merged_refs
+    diversity_hamming_threshold = (
+        int(stage_params.diversity_hamming_threshold)
+        if stage_params is not None
+        else int(_cfg.PHASE2_DIVERSITY_HAMMING_THRESHOLD)
+    )
+    diversity_penalty_weight = (
+        float(stage_params.diversity_penalty)
+        if stage_params is not None
+        else float(_cfg.PHASE2_DIVERSITY_PENALTY)
+    )
     if diversity_refs:
         min_hamming = min(_hamming_distance(chromosome, pf)
                           for pf in diversity_refs)
-        if min_hamming <= _cfg.PHASE2_DIVERSITY_HAMMING_THRESHOLD:
-            diversity_penalty = _cfg.PHASE2_DIVERSITY_PENALTY
+        if min_hamming <= diversity_hamming_threshold:
+            diversity_penalty = diversity_penalty_weight
 
     from gpu_fuzzy_trader.phases.phase2_support import (
         feasibility_violation_score,
@@ -543,6 +554,7 @@ def _evaluate_chromosome(
     regime_row_fractions_arr: np.ndarray | None = None,
     val_regime_row_counts: np.ndarray | None = None,
     diversity_reference: list[np.ndarray] | None = None,
+    stage_params=None,
 ) -> tuple[np.ndarray, dict]:
     """
     Evaluate a single chromosome and return (objectives, metrics).
@@ -600,6 +612,7 @@ def _evaluate_chromosome(
         regime_row_fractions_arr=regime_row_fractions_arr,
         val_regime_row_counts=val_regime_row_counts,
         diversity_reference=diversity_reference,
+        stage_params=stage_params,
     )
 
 
@@ -2003,6 +2016,7 @@ class Rule_Pool_Generator:
             new_pool_a, history_a = run_phase2_evolution(
                 n_generations=stage_a_gens,
                 log_tag=f"{progress_tag} Stage A",
+                stage="A",
                 **evo_kwargs,
             )
             stage_b_seeds = _stage_b_seed_chromosomes(
@@ -2022,6 +2036,7 @@ class Rule_Pool_Generator:
             new_pool_b, history_b = run_phase2_evolution(
                 n_generations=stage_b_gens,
                 log_tag=f"{progress_tag} Stage B",
+                stage="B",
                 seed_fraction=float(_cfg.PHASE2_STAGE_B_SEED_FRACTION),
                 reset_plateau=True,
                 **{**evo_kwargs, "seed_chromosomes": stage_b_seeds},

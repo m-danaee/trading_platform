@@ -24,6 +24,11 @@ import numpy as np
 
 from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.log_progress import maybe_log_generation
+from gpu_fuzzy_trader.phases.phase2_stage import (
+    Phase2StageParams,
+    StageLabel,
+    resolve_phase2_stage_params,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -474,6 +479,7 @@ def _should_early_stop_phase2(
     gen: int,
     pareto_return_pct: float,
     valid_count: int,
+    stage_params: Phase2StageParams | None = None,
 ) -> bool:
     if not _cfg.PHASE2_EARLY_STOP_ENABLED:
         return False
@@ -482,7 +488,12 @@ def _should_early_stop_phase2(
         and bool(_cfg.PHASE2_EARLY_STOP_DISABLED_IN_CV)
     ):
         return False
-    if gen + 1 < int(_cfg.PHASE2_EARLY_STOP_MIN_GENERATION):
+    min_gen = (
+        int(stage_params.early_stop_min_generation)
+        if stage_params is not None
+        else int(_cfg.PHASE2_EARLY_STOP_MIN_GENERATION)
+    )
+    if gen + 1 < min_gen:
         return False
     if pareto_return_pct >= float(_cfg.PHASE2_EARLY_STOP_MEAN_RETURN_PCT):
         return False
@@ -536,6 +547,7 @@ def _should_plateau_early_stop_phase2(
     deployable_count: int = 0,
     unique_chromosome_ratio: float = 1.0,
     population_unique_ratio: float | None = None,
+    stage_params: Phase2StageParams | None = None,
 ) -> bool:
     if not _cfg.PHASE2_PLATEAU_EARLY_STOP_ENABLED:
         return False
@@ -544,7 +556,12 @@ def _should_plateau_early_stop_phase2(
         and bool(_cfg.PHASE2_PLATEAU_EARLY_STOP_DISABLED_IN_CV)
     ):
         return False
-    if gen + 1 < int(_cfg.PHASE2_PLATEAU_EARLY_STOP_MIN_GENERATION):
+    min_gen = (
+        int(stage_params.plateau_early_stop_min_generation)
+        if stage_params is not None
+        else int(_cfg.PHASE2_PLATEAU_EARLY_STOP_MIN_GENERATION)
+    )
+    if gen + 1 < min_gen:
         return False
     if bool(getattr(_cfg, "PHASE2_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO", True)):
         if deployable_count <= 0:
@@ -555,9 +572,14 @@ def _should_plateau_early_stop_phase2(
             if population_unique_ratio is not None
             else unique_chromosome_ratio
         )
-        if diversity_ratio < _diversity_recovery_min_unique_ratio():
+        if diversity_ratio < _diversity_recovery_min_unique_ratio(stage_params):
             return False
-    return streak >= int(_cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE)
+    patience = (
+        int(stage_params.plateau_early_stop_patience)
+        if stage_params is not None
+        else int(_cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE)
+    )
+    return streak >= patience
 
 
 def _inject_diversity_recovery(
@@ -569,6 +591,7 @@ def _inject_diversity_recovery(
     rng: np.random.Generator,
     *,
     feature_probs: np.ndarray | None = None,
+    stage_params: Phase2StageParams | None = None,
 ) -> list[int]:
     """Replace a fraction of the population with fresh random individuals."""
     from gpu_fuzzy_trader.phases.phase2_rule_pool import _init_population
@@ -576,8 +599,13 @@ def _inject_diversity_recovery(
     pop_size = len(population)
     if pop_size <= 0:
         return []
-    fraction = float(
-        getattr(_cfg, "PHASE2_DIVERSITY_RECOVERY_INJECT_FRACTION", 0.25))
+    fraction = (
+        float(stage_params.diversity_recovery_inject_fraction)
+        if stage_params is not None
+        else float(
+            getattr(_cfg, "PHASE2_DIVERSITY_RECOVERY_INJECT_FRACTION", 0.25)
+        )
+    )
     n_inject = max(1, int(round(pop_size * fraction)))
     positions = rng.choice(pop_size, size=n_inject, replace=False)
     fresh = _init_population(
@@ -608,16 +636,56 @@ def _population_unique_chromosome_ratio(population: np.ndarray) -> float:
     return float(len(keys) / n)
 
 
-def _diversity_recovery_min_unique_ratio() -> float:
+def _diversity_recovery_min_unique_ratio(
+    stage_params: Phase2StageParams | None = None,
+) -> float:
+    if stage_params is not None:
+        return float(stage_params.diversity_recovery_min_unique_ratio)
     return float(
         getattr(_cfg, "PHASE2_DIVERSITY_RECOVERY_MIN_UNIQUE_RATIO", 0.30)
     )
 
 
-def _should_inject_diversity_recovery(population_unique_ratio: float) -> bool:
+def _should_inject_diversity_recovery(
+    population_unique_ratio: float,
+    stage_params: Phase2StageParams | None = None,
+) -> bool:
     if not bool(getattr(_cfg, "PHASE2_DIVERSITY_RECOVERY_ENABLED", True)):
         return False
-    return population_unique_ratio < _diversity_recovery_min_unique_ratio()
+    return (
+        population_unique_ratio
+        < _diversity_recovery_min_unique_ratio(stage_params)
+    )
+
+
+def _stage_mutation_rate(
+    stage_params: Phase2StageParams | None,
+    *,
+    diversity_recovery: bool = False,
+) -> float:
+    base = (
+        float(stage_params.mutation_rate)
+        if stage_params is not None
+        else float(_cfg.PHASE2_MUTATION_RATE)
+    )
+    if not diversity_recovery:
+        return base
+    boost = (
+        float(stage_params.diversity_recovery_mutation_boost)
+        if stage_params is not None
+        else float(
+            getattr(_cfg, "PHASE2_DIVERSITY_RECOVERY_MUTATION_BOOST", 1.5)
+        )
+    )
+    return min(0.5, base * boost)
+
+
+def _stage_weighted_activate_prob(
+    stage_params: Phase2StageParams | None,
+) -> float:
+    if stage_params is not None:
+        return float(stage_params.mutation_weighted_activate_prob)
+    return float(_cfg.PHASE2_MUTATION_WEIGHTED_ACTIVATE_PROB)
 
 
 def _median_pairwise_hamming(chromosomes: list[np.ndarray]) -> float:
@@ -725,6 +793,7 @@ def _make_offspring_population(
     feature_probs: np.ndarray | None = None,
     fronts: list[list[int]] | None = None,
     mutation_rate: float | None = None,
+    weighted_activate_prob: float | None = None,
 ) -> np.ndarray:
     """Generate pop_size offspring via binary tournament, crossover, mutation.
 
@@ -749,6 +818,7 @@ def _make_offspring_population(
                 child_a, feature_infos, dont_cares, rng,
                 mutation_rate=mut_rate,
                 feature_probs=feature_probs,
+                weighted_activate_prob=weighted_activate_prob,
             )
         )
         offspring_list.append(
@@ -756,6 +826,7 @@ def _make_offspring_population(
                 child_b, feature_infos, dont_cares, rng,
                 mutation_rate=mut_rate,
                 feature_probs=feature_probs,
+                weighted_activate_prob=weighted_activate_prob,
             )
         )
     return np.stack(offspring_list[:pop_size], axis=0)
@@ -802,6 +873,7 @@ def _assign_eval_result(
     regime_row_fractions: np.ndarray | None,
     val_regime_row_counts: np.ndarray | None,
     diversity_reference: list[np.ndarray] | None = None,
+    stage_params: Phase2StageParams | None = None,
 ) -> None:
     """Compute penalties/objectives from metrics; write objectives[i] and metrics_cache[i]."""
     from gpu_fuzzy_trader.phases.phase2_rule_pool import (
@@ -817,6 +889,7 @@ def _assign_eval_result(
         regime_row_fractions_arr=regime_row_fractions,
         val_regime_row_counts=val_regime_row_counts,
         diversity_reference=diversity_reference,
+        stage_params=stage_params,
     )
     objectives[i] = obj
     metrics_cache[i] = processed
@@ -862,6 +935,7 @@ def _evaluate_population_indices(
     val_regime_row_counts: np.ndarray | None = None,
     global_metrics_cache: dict[tuple[int, ...], dict] | None = None,
     diversity_reference: list[np.ndarray] | None = None,
+    stage_params: Phase2StageParams | None = None,
 ) -> dict[str, int]:
     """Evaluate unevaluated individuals, preferring batch simulate_rule_batch."""
     from gpu_fuzzy_trader.phases.phase2_rule_pool import (
@@ -901,6 +975,7 @@ def _evaluate_population_indices(
                     regime_row_fractions,
                     val_regime_row_counts,
                     diversity_reference=diversity_reference,
+                    stage_params=stage_params,
                 )
                 cache_hits += 1
             else:
@@ -984,6 +1059,7 @@ def _evaluate_population_indices(
                 regime_row_fractions,
                 val_regime_row_counts,
                 diversity_reference=diversity_reference,
+                stage_params=stage_params,
             )
 
             if _cfg.PHASE2_EVAL_GLOBAL_CACHE and global_metrics_cache is not None:
@@ -1002,6 +1078,7 @@ def _evaluate_population_indices(
                 regime_row_fractions_arr=regime_row_fractions,
                 val_regime_row_counts=val_regime_row_counts,
                 diversity_reference=diversity_reference,
+                stage_params=stage_params,
             )
             objectives[i] = obj
             metrics_cache[i] = metrics
@@ -1047,6 +1124,7 @@ def _reevaluate_infinite_objectives(
     val_regime_row_counts: np.ndarray | None = None,
     global_metrics_cache: dict[tuple[int, ...], dict] | None = None,
     diversity_reference: list[np.ndarray] | None = None,
+    stage_params: Phase2StageParams | None = None,
 ) -> dict[str, int]:
     """Evaluate any individuals still marked with inf objectives."""
     if indices is None:
@@ -1071,6 +1149,7 @@ def _reevaluate_infinite_objectives(
         val_regime_row_counts=val_regime_row_counts,
         global_metrics_cache=global_metrics_cache,
         diversity_reference=diversity_reference,
+        stage_params=stage_params,
     )
 
 
@@ -1196,6 +1275,9 @@ def _run_nsga2_fallback(
     feature_probs: np.ndarray | None = None,
     init_strategy: str | None = None,
     stratum_fractions: tuple[float, float, float] | None = None,
+    seed_fraction: float | None = None,
+    reset_plateau: bool = False,
+    stage: StageLabel = None,
 ) -> tuple[list[dict], list[dict]]:
     """NumPy NSGA-II loop when EvoX is not installed."""
     from gpu_fuzzy_trader.phases.phase2_rule_pool import (
@@ -1208,13 +1290,17 @@ def _run_nsga2_fallback(
     )
     from gpu_fuzzy_trader.phases.phase2_support import passes_pool_trade_floor
 
+    stage_params = resolve_phase2_stage_params(stage)
     K = len(feature_infos)
     dont_cares = _get_dont_cares(feature_infos)
+    if seed_fraction is None:
+        seed_fraction = stage_params.seed_fraction
     population = _init_population(
         pop_size,
         feature_infos,
         rng,
         seeded_chromosomes=seed_chromosomes,
+        seed_fraction=seed_fraction,
         init_strategy=init_strategy,
         stratum_fractions=stratum_fractions,
         feature_probs=feature_probs,
@@ -1227,12 +1313,18 @@ def _run_nsga2_fallback(
     history: list[dict] = []
 
     tag = log_tag or "NSGA-II (fallback)"
-    logger.info("%s: %d features, pop=%d, gen=%d",
-                tag, K, pop_size, n_generations)
+    logger.info(
+        "%s: %d features, pop=%d, gen=%d, mutation=%.3f",
+        tag, K, pop_size, n_generations, stage_params.mutation_rate,
+    )
     gen_loop_start = time.monotonic()
     plateau_best_progress = -np.inf
     plateau_streak = 0
-    mutation_rate = float(_cfg.PHASE2_MUTATION_RATE)
+    if reset_plateau:
+        plateau_best_progress = -np.inf
+        plateau_streak = 0
+    mutation_rate = _stage_mutation_rate(stage_params)
+    weighted_activate_prob = _stage_weighted_activate_prob(stage_params)
 
     for gen in range(n_generations):
         for i in range(pop_size):
@@ -1242,6 +1334,7 @@ def _run_nsga2_fallback(
                     val_engine=val_engine,
                     regime_row_fractions_arr=regime_row_fractions,
                     val_regime_row_counts=val_regime_row_counts,
+                    stage_params=stage_params,
                 )
                 objectives[i] = obj
                 metrics_cache[i] = metrics
@@ -1324,7 +1417,9 @@ def _run_nsga2_fallback(
         pareto_ret = _pareto_return_pct_for_early_stop(
             pareto_indices, metrics_cache,
         )
-        if _should_early_stop_phase2(gen, pareto_ret, val_count):
+        if _should_early_stop_phase2(
+            gen, pareto_ret, val_count, stage_params=stage_params,
+        ):
             stat_label = (
                 "median_return" if _cfg.PHASE2_EARLY_STOP_USE_MEDIAN_RETURN
                 else "mean_return"
@@ -1348,6 +1443,7 @@ def _run_nsga2_fallback(
             deployable_count=deployable_count,
             unique_chromosome_ratio=unique_ratio,
             population_unique_ratio=pop_unique_ratio,
+            stage_params=stage_params,
         ):
             logger.info(
                 "%s: plateau early stop at gen %d (progress=%.2f%% unchanged "
@@ -1357,7 +1453,7 @@ def _run_nsga2_fallback(
                 gen + 1,
                 plateau_metric,
                 plateau_streak,
-                int(_cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE),
+                int(stage_params.plateau_early_stop_patience),
                 float(_cfg.PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT),
                 deployable_count,
                 pop_unique_ratio,
@@ -1368,7 +1464,9 @@ def _run_nsga2_fallback(
             break
 
         injected_positions: list[int] = []
-        if _should_inject_diversity_recovery(pop_unique_ratio):
+        if _should_inject_diversity_recovery(
+            pop_unique_ratio, stage_params=stage_params,
+        ):
             injected_positions = _inject_diversity_recovery(
                 population,
                 objectives,
@@ -1377,6 +1475,7 @@ def _run_nsga2_fallback(
                 dont_cares,
                 rng,
                 feature_probs=feature_probs,
+                stage_params=stage_params,
             )
             _reevaluate_infinite_objectives(
                 population,
@@ -1389,20 +1488,20 @@ def _run_nsga2_fallback(
                 val_engine=val_engine,
                 regime_row_fractions=regime_row_fractions,
                 val_regime_row_counts=val_regime_row_counts,
+                stage_params=stage_params,
             )
-            mutation_rate = min(
-                0.5,
-                float(_cfg.PHASE2_MUTATION_RATE)
-                * float(getattr(_cfg, "PHASE2_DIVERSITY_RECOVERY_MUTATION_BOOST", 1.5)),
+            mutation_rate = _stage_mutation_rate(
+                stage_params, diversity_recovery=True,
             )
         else:
-            mutation_rate = float(_cfg.PHASE2_MUTATION_RATE)
+            mutation_rate = _stage_mutation_rate(stage_params)
 
         offspring = _make_offspring_population(
             population, objectives, pop_size, feature_infos, dont_cares, rng,
             feature_probs=feature_probs,
             fronts=fronts,
             mutation_rate=mutation_rate,
+            weighted_activate_prob=weighted_activate_prob,
         )
         off_obj = np.full((pop_size, 3), np.inf)
         off_metrics: list[dict] = [{} for _ in range(pop_size)]
@@ -1412,6 +1511,7 @@ def _run_nsga2_fallback(
                 val_engine=val_engine,
                 regime_row_fractions_arr=regime_row_fractions,
                 val_regime_row_counts=val_regime_row_counts,
+                stage_params=stage_params,
             )
             off_obj[i] = obj
             off_metrics[i] = metrics
@@ -1460,6 +1560,7 @@ def _run_nsga3(
     stratum_fractions: tuple[float, float, float] | None = None,
     seed_fraction: float | None = None,
     reset_plateau: bool = False,
+    stage: StageLabel = None,
 ) -> tuple[list[dict], list[dict]]:
     """NSGA-III evolutionary loop for Phase 2 rule pool generation."""
     from gpu_fuzzy_trader.phases.phase2_rule_pool import (
@@ -1471,8 +1572,11 @@ def _run_nsga3(
     )
     from gpu_fuzzy_trader.phases.phase2_support import passes_pool_trade_floor
 
+    stage_params = resolve_phase2_stage_params(stage)
     K = len(feature_infos)
     dont_cares = _get_dont_cares(feature_infos)
+    if seed_fraction is None:
+        seed_fraction = stage_params.seed_fraction
     population = _init_population(
         pop_size,
         feature_infos,
@@ -1493,15 +1597,18 @@ def _run_nsga3(
 
     ref_vec = _get_reference_vectors(pop_size, 3, rng)
     tag = log_tag or "NSGA-III"
-    logger.info("%s: %d features, pop=%d, gen=%d",
-                tag, K, pop_size, n_generations)
+    logger.info(
+        "%s: %d features, pop=%d, gen=%d, mutation=%.3f",
+        tag, K, pop_size, n_generations, stage_params.mutation_rate,
+    )
     gen_loop_start = time.monotonic()
     plateau_best_progress = -np.inf
     plateau_streak = 0
     if reset_plateau:
         plateau_best_progress = -np.inf
         plateau_streak = 0
-    mutation_rate = float(_cfg.PHASE2_MUTATION_RATE)
+    mutation_rate = _stage_mutation_rate(stage_params)
+    weighted_activate_prob = _stage_weighted_activate_prob(stage_params)
 
     for gen in range(n_generations):
         diversity_reference = _build_diversity_reference(
@@ -1520,6 +1627,7 @@ def _run_nsga3(
             val_regime_row_counts=val_regime_row_counts,
             global_metrics_cache=global_metrics_cache,
             diversity_reference=diversity_reference,
+            stage_params=stage_params,
         )
 
         # Compute fronts once — reused for logging, offspring, and archive.
@@ -1617,7 +1725,9 @@ def _run_nsga3(
                 "valid_rules": val_count,
                 "deployable_count": deployable_count,
                 "diversity_recovery_would_trigger": (
-                    _should_inject_diversity_recovery(pop_unique_ratio)
+                    _should_inject_diversity_recovery(
+                        pop_unique_ratio, stage_params=stage_params,
+                    )
                 ),
             },
             run_id="post-fix",
@@ -1661,7 +1771,9 @@ def _run_nsga3(
         inject_stats = _empty_eval_stats()
         if not is_last_gen:
             injected_positions: list[int] = []
-            if _should_inject_diversity_recovery(pop_unique_ratio):
+            if _should_inject_diversity_recovery(
+                pop_unique_ratio, stage_params=stage_params,
+            ):
                 injected_positions = _inject_diversity_recovery(
                     population,
                     objectives,
@@ -1670,6 +1782,7 @@ def _run_nsga3(
                     dont_cares,
                     rng,
                     feature_probs=feature_probs,
+                    stage_params=stage_params,
                 )
                 inject_stats = _reevaluate_infinite_objectives(
                     population,
@@ -1684,6 +1797,7 @@ def _run_nsga3(
                     val_regime_row_counts=val_regime_row_counts,
                     global_metrics_cache=global_metrics_cache,
                     diversity_reference=diversity_reference,
+                    stage_params=stage_params,
                 )
                 # #region agent log
                 _agent_debug_log(
@@ -1704,19 +1818,18 @@ def _run_nsga3(
                     run_id="post-fix",
                 )
                 # #endregion
-                mutation_rate = min(
-                    0.5,
-                    float(_cfg.PHASE2_MUTATION_RATE)
-                    * float(getattr(_cfg, "PHASE2_DIVERSITY_RECOVERY_MUTATION_BOOST", 1.5)),
+                mutation_rate = _stage_mutation_rate(
+                    stage_params, diversity_recovery=True,
                 )
             else:
-                mutation_rate = float(_cfg.PHASE2_MUTATION_RATE)
+                mutation_rate = _stage_mutation_rate(stage_params)
 
             offspring = _make_offspring_population(
                 population, objectives, pop_size, feature_infos, dont_cares, rng,
                 feature_probs=feature_probs,
                 fronts=fronts,
                 mutation_rate=mutation_rate,
+                weighted_activate_prob=weighted_activate_prob,
             )
             off_obj = np.full((pop_size, 3), np.inf)
             off_metrics: list[dict] = [{} for _ in range(pop_size)]
@@ -1733,6 +1846,7 @@ def _run_nsga3(
                 val_regime_row_counts=val_regime_row_counts,
                 global_metrics_cache=global_metrics_cache,
                 diversity_reference=diversity_reference,
+                stage_params=stage_params,
             )
             # #region agent log
             off_keys = {chromosome_key(offspring[i]) for i in range(pop_size)}
@@ -1750,7 +1864,7 @@ def _run_nsga3(
                     "offspring_cache_hits": int(off_stats.get("cache_hits", 0)),
                     "mutation_rate": mutation_rate,
                     "diversity_injection": _should_inject_diversity_recovery(
-                        pop_unique_ratio
+                        pop_unique_ratio, stage_params=stage_params,
                     ),
                 },
                 run_id="post-fix",
@@ -1782,7 +1896,9 @@ def _run_nsga3(
         pareto_ret = _pareto_return_pct_for_early_stop(
             pareto_indices, metrics_cache,
         )
-        if _should_early_stop_phase2(gen, pareto_ret, val_count):
+        if _should_early_stop_phase2(
+            gen, pareto_ret, val_count, stage_params=stage_params,
+        ):
             stat_label = (
                 "median_return" if _cfg.PHASE2_EARLY_STOP_USE_MEDIAN_RETURN
                 else "mean_return"
@@ -1806,6 +1922,7 @@ def _run_nsga3(
             deployable_count=deployable_count,
             unique_chromosome_ratio=unique_ratio,
             population_unique_ratio=pop_unique_ratio,
+            stage_params=stage_params,
         ):
             logger.info(
                 "%s: plateau early stop at gen %d (progress=%.2f%% unchanged "
@@ -1815,7 +1932,7 @@ def _run_nsga3(
                 gen + 1,
                 plateau_metric,
                 plateau_streak,
-                int(_cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE),
+                int(stage_params.plateau_early_stop_patience),
                 float(_cfg.PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT),
                 deployable_count,
                 pop_unique_ratio,
@@ -1884,6 +2001,7 @@ def run_phase2_evolution(
     stratum_fractions: tuple[float, float] | None = None,
     seed_fraction: float | None = None,
     reset_plateau: bool = False,
+    stage: StageLabel = None,
 ) -> tuple[list[dict], list[dict]]:
     """Run Phase 2 NSGA-III evolution. Returns (pareto_pool, history)."""
     evo_kwargs = dict(
@@ -1906,6 +2024,9 @@ def run_phase2_evolution(
             val_engine=val_engine,
             regime_row_fractions=regime_row_fractions,
             val_regime_row_counts=val_regime_row_counts,
+            seed_fraction=seed_fraction,
+            reset_plateau=reset_plateau,
+            stage=stage,
             **evo_kwargs,
         )
 
@@ -1917,5 +2038,6 @@ def run_phase2_evolution(
         val_regime_row_counts=val_regime_row_counts,
         seed_fraction=seed_fraction,
         reset_plateau=reset_plateau,
+        stage=stage,
         **evo_kwargs,
     )

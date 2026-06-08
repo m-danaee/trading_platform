@@ -1438,6 +1438,7 @@ class TestTwoStageOrchestration:
         ):
             calls.append({
                 "log_tag": log_tag,
+                "stage": kwargs.get("stage"),
                 "seed_chromosomes": None if seed_chromosomes is None
                 else np.array(seed_chromosomes, copy=True),
             })
@@ -1502,6 +1503,8 @@ class TestTwoStageOrchestration:
             assert len(calls) == 2
             assert "Stage A" in calls[0]["log_tag"]
             assert "Stage B" in calls[1]["log_tag"]
+            assert calls[0]["stage"] == "A"
+            assert calls[1]["stage"] == "B"
             assert calls[1]["seed_chromosomes"] is not None
         finally:
             m._POOL_PATHS.update(original_pool)

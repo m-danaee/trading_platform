@@ -707,12 +707,12 @@ PHASE2_TWO_STAGE_ENABLED = True
 # PHASE2_STAGE_A_GENERATIONS — Stage A (exploration) generation budget.
 #   Higher → more diverse initial Pareto before val-focused Stage B.
 #   Lower  → quicker handoff; Stage B may miss good regions.
-PHASE2_STAGE_A_GENERATIONS = 35
+PHASE2_STAGE_A_GENERATIONS = 80
 
 # PHASE2_STAGE_B_GENERATIONS — Stage B (refinement) generation budget.
 #   Higher → more val-robust polishing; total time = A + B gens.
 #   Lower  → less refinement after exploration.
-PHASE2_STAGE_B_GENERATIONS = 45
+PHASE2_STAGE_B_GENERATIONS = 40
 
 # PHASE2_STAGE_B_SEED_TOP_K — elites from Stage A seeded into Stage B.
 #   Higher → broader refinement starting set; slower Stage B per gen.
@@ -723,6 +723,74 @@ PHASE2_STAGE_B_SEED_TOP_K = 100
 #   Higher → more refinement around known good regions; risk of clone collapse.
 #   Lower  → more random exploration in Stage B.
 PHASE2_STAGE_B_SEED_FRACTION = 0.50
+
+# --- Stage A hyperparameters (exploration: higher mutation, stronger diversity) ---
+
+# PHASE2_STAGE_A_MUTATION_RATE — per-gene mutation in Stage A.
+#   Higher → more genetic exploration before Stage B refinement.
+PHASE2_STAGE_A_MUTATION_RATE = 0.18
+
+# PHASE2_STAGE_A_MUTATION_WEIGHTED_ACTIVATE_PROB — bias toward activating genes in A.
+PHASE2_STAGE_A_MUTATION_WEIGHTED_ACTIVATE_PROB = 0.75
+
+# PHASE2_STAGE_A_DIVERSITY_PENALTY — crowding penalty on objectives in Stage A.
+PHASE2_STAGE_A_DIVERSITY_PENALTY = 10.0
+
+# PHASE2_STAGE_A_DIVERSITY_HAMMING_THRESHOLD — min Hamming distance before penalty in A.
+PHASE2_STAGE_A_DIVERSITY_HAMMING_THRESHOLD = 4
+
+# PHASE2_STAGE_A_DIVERSITY_RECOVERY_MIN_UNIQUE_RATIO — trigger diversity injection in A.
+PHASE2_STAGE_A_DIVERSITY_RECOVERY_MIN_UNIQUE_RATIO = 0.35
+
+# PHASE2_STAGE_A_DIVERSITY_RECOVERY_INJECT_FRACTION — pop replaced on recovery in A.
+PHASE2_STAGE_A_DIVERSITY_RECOVERY_INJECT_FRACTION = 0.35
+
+# PHASE2_STAGE_A_DIVERSITY_RECOVERY_MUTATION_BOOST — mutation multiplier after recovery in A.
+PHASE2_STAGE_A_DIVERSITY_RECOVERY_MUTATION_BOOST = 2.0
+
+# PHASE2_STAGE_A_PLATEAU_EARLY_STOP_PATIENCE — gens without progress before stop in A.
+PHASE2_STAGE_A_PLATEAU_EARLY_STOP_PATIENCE = 14
+
+# PHASE2_STAGE_A_PLATEAU_EARLY_STOP_MIN_GENERATION — earliest plateau stop gen in A.
+PHASE2_STAGE_A_PLATEAU_EARLY_STOP_MIN_GENERATION = 20
+
+# PHASE2_STAGE_A_EARLY_STOP_MIN_GENERATION — earliest return-based early stop in A.
+PHASE2_STAGE_A_EARLY_STOP_MIN_GENERATION = 32
+
+# PHASE2_STAGE_A_ARCHIVE_SEED_FRACTION — warm-start fraction from prior pool in Stage A.
+PHASE2_STAGE_A_ARCHIVE_SEED_FRACTION = 0.20
+
+# --- Stage B hyperparameters (refinement: lower mutation, allow clustering) ---
+
+# PHASE2_STAGE_B_MUTATION_RATE — per-gene mutation in Stage B.
+PHASE2_STAGE_B_MUTATION_RATE = 0.10
+
+# PHASE2_STAGE_B_MUTATION_WEIGHTED_ACTIVATE_PROB — conservative gene activation in B.
+PHASE2_STAGE_B_MUTATION_WEIGHTED_ACTIVATE_PROB = 0.60
+
+# PHASE2_STAGE_B_DIVERSITY_PENALTY — weaker crowding penalty during refinement.
+PHASE2_STAGE_B_DIVERSITY_PENALTY = 5.0
+
+# PHASE2_STAGE_B_DIVERSITY_HAMMING_THRESHOLD — allow nearer-duplicate elites in B.
+PHASE2_STAGE_B_DIVERSITY_HAMMING_THRESHOLD = 2
+
+# PHASE2_STAGE_B_DIVERSITY_RECOVERY_MIN_UNIQUE_RATIO — later diversity recovery in B.
+PHASE2_STAGE_B_DIVERSITY_RECOVERY_MIN_UNIQUE_RATIO = 0.25
+
+# PHASE2_STAGE_B_DIVERSITY_RECOVERY_INJECT_FRACTION — smaller injection shock in B.
+PHASE2_STAGE_B_DIVERSITY_RECOVERY_INJECT_FRACTION = 0.20
+
+# PHASE2_STAGE_B_DIVERSITY_RECOVERY_MUTATION_BOOST — milder post-recovery mutation in B.
+PHASE2_STAGE_B_DIVERSITY_RECOVERY_MUTATION_BOOST = 1.4
+
+# PHASE2_STAGE_B_PLATEAU_EARLY_STOP_PATIENCE — shorter patience while polishing in B.
+PHASE2_STAGE_B_PLATEAU_EARLY_STOP_PATIENCE = 8
+
+# PHASE2_STAGE_B_PLATEAU_EARLY_STOP_MIN_GENERATION — earliest plateau stop gen in B.
+PHASE2_STAGE_B_PLATEAU_EARLY_STOP_MIN_GENERATION = 1
+
+# PHASE2_STAGE_B_EARLY_STOP_MIN_GENERATION — earliest return-based early stop in B.
+PHASE2_STAGE_B_EARLY_STOP_MIN_GENERATION = 20
 
 # PHASE2_GPU_ENRICH_SYMBOL_METRICS — merge CPU per-symbol metrics after GPU batch eval.
 PHASE2_GPU_ENRICH_SYMBOL_METRICS = True
@@ -1142,6 +1210,23 @@ assert PHASE2_CV_RANK_MIN_FOLDS_PASS <= PHASE2_CV_POOL_MIN_FOLDS_PASS, (
 )
 assert PHASE2_PLATEAU_EARLY_STOP_MIN_GENERATION <= PHASE2_STAGE_A_GENERATIONS, (
     "plateau min gen should not exceed Stage A budget"
+)
+assert PHASE2_STAGE_A_PLATEAU_EARLY_STOP_MIN_GENERATION <= PHASE2_STAGE_A_GENERATIONS, (
+    "Stage A plateau min gen should not exceed Stage A budget"
+)
+assert PHASE2_STAGE_B_PLATEAU_EARLY_STOP_MIN_GENERATION <= PHASE2_STAGE_B_GENERATIONS, (
+    "Stage B plateau min gen should not exceed Stage B budget"
+)
+assert PHASE2_STAGE_A_EARLY_STOP_MIN_GENERATION <= PHASE2_STAGE_A_GENERATIONS, (
+    "Stage A early-stop min gen should not exceed Stage A budget"
+)
+assert PHASE2_STAGE_B_EARLY_STOP_MIN_GENERATION <= PHASE2_STAGE_B_GENERATIONS, (
+    "Stage B early-stop min gen should not exceed Stage B budget"
+)
+assert 0.0 < PHASE2_STAGE_A_MUTATION_RATE <= 0.5
+assert 0.0 < PHASE2_STAGE_B_MUTATION_RATE <= 0.5
+assert PHASE2_STAGE_A_MUTATION_RATE >= PHASE2_STAGE_B_MUTATION_RATE, (
+    "Stage A should be at least as explorative as Stage B on mutation rate"
 )
 assert PHASE1_SIGN_CONSISTENCY_MIN_FOLDS <= PHASE1_STATIONARITY_FOLDS, (
     "sign-consistency cannot require more folds than stationarity uses"
