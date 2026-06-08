@@ -537,6 +537,27 @@ class TestSampleDf:
         sampled = _sample_df(df, total_rows=1000)
         assert len(sampled) <= 50
 
+    def test_preserves_chronological_order_per_symbol(self):
+        df = _make_train_df(n_rows=400, symbols=["A", "B", "C", "D"])
+        sampled = _sample_df(df, total_rows=120)
+        for sym in ["A", "B", "C", "D"]:
+            sym_df = sampled[sampled["symbol"] == sym]
+            if sym_df.empty:
+                continue
+            bar_idx = sym_df["_symbol_bar_index"].to_numpy()
+            assert np.all(bar_idx[:-1] <= bar_idx[1:])
+            dt = sym_df["datetime"].to_numpy()
+            assert np.all(dt[:-1] <= dt[1:])
+
+    def test_sampling_is_deterministic(self):
+        df = _make_train_df(n_rows=400, symbols=["A", "B"])
+        first = _sample_df(df, total_rows=80)
+        second = _sample_df(df, total_rows=80, random_state=999)
+        pd.testing.assert_frame_equal(
+            first.reset_index(drop=True),
+            second.reset_index(drop=True),
+        )
+
 
 # ---------------------------------------------------------------------------
 # Tests: _validate_pool_schema

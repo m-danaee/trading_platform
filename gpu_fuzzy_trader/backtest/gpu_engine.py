@@ -20,11 +20,16 @@ Performance notes:
 """
 
 from __future__ import annotations
+
+import logging
+
 from gpu_fuzzy_trader.backtest.cpu_engine import (
     CPUBacktestEngine,
     _sortino_ratio_from_returns,
 )
 from gpu_fuzzy_trader import config as _cfg
+
+logger = logging.getLogger(__name__)
 
 from functools import partial
 import math
@@ -1128,12 +1133,30 @@ class GPUBacktestEngine:
             regime_concat = jax.block_until_ready(
                 jnp.concatenate(regime_chunks, axis=0)[:B])
             regime_np = np.asarray(regime_concat)
-        return _batch_metrics_from_array(
+        metrics_list = _batch_metrics_from_array(
             results_np,
             self.trade_direction,
             regime_np,
             self._n_regimes,
         )
+        if bool(getattr(_cfg, "PHASE2_GPU_ENRICH_SYMBOL_METRICS", False)):
+            try:
+                cpu_metrics = self._lazy_cpu_engine.simulate_rule_batch(
+                    chromosomes=chromosomes,
+                    tp=tp,
+                    sl=sl,
+                    capital_pct=capital_pct,
+                )
+                for i, cm in enumerate(cpu_metrics):
+                    per_sym = cm.get("per_symbol_metrics") if isinstance(
+                        cm, dict) else None
+                    if per_sym:
+                        metrics_list[i]["per_symbol_metrics"] = per_sym
+            except Exception as exc:
+                logger.debug(
+                    "GPU per-symbol metrics enrichment skipped: %s", exc,
+                )
+        return metrics_list
 
 
     # ------------------------------------------------------------------

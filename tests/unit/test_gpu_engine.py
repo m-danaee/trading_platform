@@ -544,6 +544,37 @@ class TestSimulateRuleBatch:
             chrom, tp=4.0, sl=2.0, capital_pct=50.0)
         assert 0.0 <= results[0]["win_rate"] <= 100.0
 
+    def test_enriches_per_symbol_metrics_from_cpu(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gpu_fuzzy_trader import config as cfg
+
+        monkeypatch.setattr(cfg, "PHASE2_GPU_ENRICH_SYMBOL_METRICS", True)
+        df = _make_df(n=20, label_max=106.0, label_min=99.0, label_close=104.0)
+        eng = _make_engine(df)
+        per_sym = {"SYM": {"net_pnl": 12.5, "executed_trades": 3}}
+
+        class FakeCpuEngine:
+            def simulate_rule_batch(self, chromosomes, tp, sl, capital_pct):
+                return [
+                    {
+                        "total_return_pct": 1.0,
+                        "sortino_ratio": 1.0,
+                        "max_drawdown_pct": 1.0,
+                        "win_rate": 50.0,
+                        "profit_factor": 1.2,
+                        "executed_trades": 5,
+                        "per_symbol_metrics": per_sym,
+                    }
+                    for _ in range(len(chromosomes))
+                ]
+
+        eng._cpu_engine_ref = FakeCpuEngine()
+        chrom = np.array([[10, 2]], dtype=np.int32)
+        results = eng.simulate_rule_batch(
+            chrom, tp=4.0, sl=2.0, capital_pct=50.0)
+        assert results[0].get("per_symbol_metrics") == per_sym
+
 
 # ---------------------------------------------------------------------------
 # Test: simulate_equity_sequential

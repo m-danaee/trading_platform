@@ -211,6 +211,105 @@ def _val_metrics_from_cache(metrics: dict) -> dict | None:
     }
 
 
+def _build_diversity_reference(
+    hall_of_fame: dict[tuple[int, ...], np.ndarray],
+    pareto_archive: list[np.ndarray],
+) -> list[np.ndarray]:
+    """Chromosomes used for Hamming diversity pressure beyond the live Pareto set."""
+    refs: list[np.ndarray] = []
+    seen: set[tuple[int, ...]] = set()
+    for chrom in list(hall_of_fame.values()) + list(pareto_archive):
+        from gpu_fuzzy_trader.phases.phase2_sparse_encoding import chromosome_key
+
+        key = chromosome_key(chrom)
+        if key in seen:
+            continue
+        seen.add(key)
+        refs.append(chrom.copy())
+    return refs
+
+
+def _deduplicate_selection_indices(
+    selected_idx: np.ndarray,
+    merge_pop: np.ndarray,
+    merge_fit: np.ndarray,
+    pop_size: int,
+) -> np.ndarray:
+    """Replace duplicate genotypes in survivors with unused unique merge rows."""
+    from gpu_fuzzy_trader.phases.phase2_sparse_encoding import chromosome_key
+
+    chosen = [int(i) for i in selected_idx[:pop_size]]
+    seen: set[tuple[int, ...]] = set()
+    survivors: list[int] = []
+
+    for idx in chosen:
+        key = chromosome_key(merge_pop[idx])
+        if key not in seen:
+            seen.add(key)
+            survivors.append(idx)
+
+    if len(survivors) < pop_size:
+        chosen_set = set(chosen)
+        extras = sorted(
+            (i for i in range(len(merge_pop)) if i not in chosen_set),
+            key=lambda i: (float(np.sum(merge_fit[i])), i),
+        )
+        for idx in extras:
+            if len(survivors) >= pop_size:
+                break
+            key = chromosome_key(merge_pop[idx])
+            if key not in seen:
+                seen.add(key)
+                survivors.append(idx)
+
+    if len(survivors) < pop_size:
+        for idx in chosen:
+            if len(survivors) >= pop_size:
+                break
+            if idx not in survivors:
+                survivors.append(idx)
+
+    return np.asarray(survivors[:pop_size], dtype=np.intp)
+
+
+def _pareto_robust_stats(
+    pareto_indices: list[int],
+    metrics_cache: list[dict],
+) -> dict[str, float]:
+    """Aggregate min(train, val) return and Sortino over the Pareto front."""
+    if not pareto_indices:
+        return {
+            "mean_robust_return_pct": 0.0,
+            "max_robust_return_pct": 0.0,
+            "max_robust_sortino": 0.0,
+        }
+    from gpu_fuzzy_trader.phases.phase2_rule_pool import _saturating_sortino
+    from gpu_fuzzy_trader.phases.phase2_support import robust_return_pct
+
+    robust_returns: list[float] = []
+    robust_sortinos: list[float] = []
+    for i in pareto_indices:
+        train_m = metrics_cache[i]
+        val_m = _val_metrics_from_cache(train_m)
+        robust_returns.append(robust_return_pct(train_m, val_m))
+        train_s = _saturating_sortino(float(
+            train_m.get("sortino_ratio", train_m.get("total_return_pct", 0.0)),
+        ))
+        if val_m is None:
+            robust_sortinos.append(train_s)
+        else:
+            val_s = _saturating_sortino(float(
+                val_m.get("sortino_ratio", val_m.get("total_return_pct", 0.0)),
+            ))
+            robust_sortinos.append(min(train_s, val_s))
+
+    return {
+        "mean_robust_return_pct": float(np.mean(robust_returns)),
+        "max_robust_return_pct": float(np.max(robust_returns)),
+        "max_robust_sortino": float(np.max(robust_sortinos)),
+    }
+
+
 def _update_deployable_archive(
     deployable_archive: dict[tuple[int, ...], dict],
     population: np.ndarray,
@@ -702,6 +801,7 @@ def _assign_eval_result(
     metrics_cache: list[dict],
     regime_row_fractions: np.ndarray | None,
     val_regime_row_counts: np.ndarray | None,
+    diversity_reference: list[np.ndarray] | None = None,
 ) -> None:
     """Compute penalties/objectives from metrics; write objectives[i] and metrics_cache[i]."""
     from gpu_fuzzy_trader.phases.phase2_rule_pool import (
@@ -716,6 +816,7 @@ def _assign_eval_result(
         val_metrics=val_metrics,
         regime_row_fractions_arr=regime_row_fractions,
         val_regime_row_counts=val_regime_row_counts,
+        diversity_reference=diversity_reference,
     )
     objectives[i] = obj
     metrics_cache[i] = processed
@@ -760,6 +861,7 @@ def _evaluate_population_indices(
     regime_row_fractions: np.ndarray | None = None,
     val_regime_row_counts: np.ndarray | None = None,
     global_metrics_cache: dict[tuple[int, ...], dict] | None = None,
+    diversity_reference: list[np.ndarray] | None = None,
 ) -> dict[str, int]:
     """Evaluate unevaluated individuals, preferring batch simulate_rule_batch."""
     from gpu_fuzzy_trader.phases.phase2_rule_pool import (
@@ -798,6 +900,7 @@ def _evaluate_population_indices(
                     metrics_cache,
                     regime_row_fractions,
                     val_regime_row_counts,
+                    diversity_reference=diversity_reference,
                 )
                 cache_hits += 1
             else:
@@ -880,6 +983,7 @@ def _evaluate_population_indices(
                 metrics_cache,
                 regime_row_fractions,
                 val_regime_row_counts,
+                diversity_reference=diversity_reference,
             )
 
             if _cfg.PHASE2_EVAL_GLOBAL_CACHE and global_metrics_cache is not None:
@@ -897,6 +1001,7 @@ def _evaluate_population_indices(
                 val_engine=val_engine,
                 regime_row_fractions_arr=regime_row_fractions,
                 val_regime_row_counts=val_regime_row_counts,
+                diversity_reference=diversity_reference,
             )
             objectives[i] = obj
             metrics_cache[i] = metrics
@@ -941,6 +1046,7 @@ def _reevaluate_infinite_objectives(
     regime_row_fractions: np.ndarray | None = None,
     val_regime_row_counts: np.ndarray | None = None,
     global_metrics_cache: dict[tuple[int, ...], dict] | None = None,
+    diversity_reference: list[np.ndarray] | None = None,
 ) -> dict[str, int]:
     """Evaluate any individuals still marked with inf objectives."""
     if indices is None:
@@ -964,6 +1070,7 @@ def _reevaluate_infinite_objectives(
         regime_row_fractions=regime_row_fractions,
         val_regime_row_counts=val_regime_row_counts,
         global_metrics_cache=global_metrics_cache,
+        diversity_reference=diversity_reference,
     )
 
 
@@ -974,12 +1081,22 @@ def _nsga3_environmental_selection(
     pop_size: int,
     feature_infos: list[dict],
     dont_cares: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """NSGA-III environmental selection (rank + niche on last front)."""
     if not _EVOX_AVAILABLE or non_dominate_rank is None:
-        pop, fit, _ = environmental_selection_nsga2(
+        pop, fit, selected = environmental_selection_nsga2(
             merge_pop, merge_fit, pop_size)
-        return _repair_population(pop, feature_infos, dont_cares), fit
+        idx = _deduplicate_selection_indices(
+            np.asarray(selected, dtype=np.intp),
+            merge_pop,
+            merge_fit,
+            pop_size,
+        )
+        return (
+            _repair_population(merge_pop[idx], feature_infos, dont_cares),
+            merge_fit[idx],
+            idx,
+        )
 
     f = torch.tensor(merge_fit.astype(np.float32))
     rank = non_dominate_rank(f)
@@ -989,18 +1106,27 @@ def _nsga3_environmental_selection(
     candi_idx = np.where(rank_np <= worst_rank)[0]
 
     if len(candi_idx) <= pop_size:
-        idx = candi_idx[:pop_size]
+        idx = _deduplicate_selection_indices(
+            candi_idx[:pop_size], merge_pop, merge_fit, pop_size,
+        )
         return (
             _repair_population(merge_pop[idx], feature_infos, dont_cares),
             merge_fit[idx],
+            idx,
         )
 
     selected = [int(i) for i in candi_idx if rank_np[i] < worst_rank]
     if len(selected) >= pop_size:
-        idx = np.array(selected[:pop_size], dtype=np.intp)
+        idx = _deduplicate_selection_indices(
+            np.asarray(selected[:pop_size], dtype=np.intp),
+            merge_pop,
+            merge_fit,
+            pop_size,
+        )
         return (
             _repair_population(merge_pop[idx], feature_infos, dont_cares),
             merge_fit[idx],
+            idx,
         )
 
     need = pop_size - len(selected)
@@ -1043,10 +1169,16 @@ def _nsga3_environmental_selection(
                         break
             break
 
-    idx = np.array(selected[:pop_size], dtype=np.intp)
+    idx = _deduplicate_selection_indices(
+        np.asarray(selected[:pop_size], dtype=np.intp),
+        merge_pop,
+        merge_fit,
+        pop_size,
+    )
     return (
         _repair_population(merge_pop[idx], feature_infos, dont_cares),
         merge_fit[idx],
+        idx,
     )
 
 
@@ -1326,6 +1458,8 @@ def _run_nsga3(
     feature_probs: np.ndarray | None = None,
     init_strategy: str | None = None,
     stratum_fractions: tuple[float, float, float] | None = None,
+    seed_fraction: float | None = None,
+    reset_plateau: bool = False,
 ) -> tuple[list[dict], list[dict]]:
     """NSGA-III evolutionary loop for Phase 2 rule pool generation."""
     from gpu_fuzzy_trader.phases.phase2_rule_pool import (
@@ -1344,6 +1478,7 @@ def _run_nsga3(
         feature_infos,
         rng,
         seeded_chromosomes=seed_chromosomes,
+        seed_fraction=seed_fraction,
         init_strategy=init_strategy,
         stratum_fractions=stratum_fractions,
         feature_probs=feature_probs,
@@ -1363,9 +1498,15 @@ def _run_nsga3(
     gen_loop_start = time.monotonic()
     plateau_best_progress = -np.inf
     plateau_streak = 0
+    if reset_plateau:
+        plateau_best_progress = -np.inf
+        plateau_streak = 0
     mutation_rate = float(_cfg.PHASE2_MUTATION_RATE)
 
     for gen in range(n_generations):
+        diversity_reference = _build_diversity_reference(
+            hall_of_fame, pareto_archive,
+        )
         parent_stats = _evaluate_population_indices(
             population,
             list(range(pop_size)),
@@ -1378,6 +1519,7 @@ def _run_nsga3(
             regime_row_fractions=regime_row_fractions,
             val_regime_row_counts=val_regime_row_counts,
             global_metrics_cache=global_metrics_cache,
+            diversity_reference=diversity_reference,
         )
 
         # Compute fronts once — reused for logging, offspring, and archive.
@@ -1406,6 +1548,7 @@ def _run_nsga3(
         pop_unique_ratio = _population_unique_chromosome_ratio(population)
         plateau_metric = _plateau_progress_metric(
             pareto_indices, metrics_cache)
+        robust_stats = _pareto_robust_stats(pareto_indices, metrics_cache)
         history.append({
             "generation": gen,
             "pareto_size": len(pareto_indices),
@@ -1418,6 +1561,7 @@ def _run_nsga3(
             "plateau_progress_pct": plateau_metric,
             "pop_unique_chromosome_ratio": pop_unique_ratio,
             **_pareto_sortino_stats(pareto_indices, metrics_cache),
+            **robust_stats,
             **pareto_diag,
         })
 
@@ -1539,6 +1683,7 @@ def _run_nsga3(
                     regime_row_fractions=regime_row_fractions,
                     val_regime_row_counts=val_regime_row_counts,
                     global_metrics_cache=global_metrics_cache,
+                    diversity_reference=diversity_reference,
                 )
                 # #region agent log
                 _agent_debug_log(
@@ -1587,6 +1732,7 @@ def _run_nsga3(
                 regime_row_fractions=regime_row_fractions,
                 val_regime_row_counts=val_regime_row_counts,
                 global_metrics_cache=global_metrics_cache,
+                diversity_reference=diversity_reference,
             )
             # #region agent log
             off_keys = {chromosome_key(offspring[i]) for i in range(pop_size)}
@@ -1622,6 +1768,9 @@ def _run_nsga3(
             max_return_pct=max_ret,
             median_return_pct=median_ret,
             max_sortino=max_sort,
+            mean_robust_return_pct=robust_stats["mean_robust_return_pct"],
+            max_robust_return_pct=robust_stats["max_robust_return_pct"],
+            max_robust_sortino=robust_stats["max_robust_sortino"],
             valid_count=val_count,
             unique_chromosome_ratio=float(
                 pareto_diag.get("unique_chromosome_ratio", 0.0)),
@@ -1680,26 +1829,12 @@ def _run_nsga3(
         merge_fit = np.vstack([objectives, off_obj])
         merge_metrics = metrics_cache + off_metrics
 
-        population, objectives = _nsga3_environmental_selection(
+        population, objectives, sel_idx = _nsga3_environmental_selection(
             merge_pop, merge_fit, ref_vec, pop_size, feature_infos, dont_cares,
         )
 
-        # Carry objectives directly from merge_fit by index matching instead of
-        # expensive tuple-key dict lookup — objectives are already correct after
-        # environmental selection since _nsga3_environmental_selection returns
-        # the sliced merge_fit directly.
         n_alive = len(population)
-        from gpu_fuzzy_trader.phases.phase2_sparse_encoding import chromosome_key
-
-        _merge_metrics_by_key: dict[tuple, dict] = {
-            chromosome_key(merge_pop[j]): m
-            for j, m in enumerate(merge_metrics)
-            if m
-        }
-        metrics_cache = [
-            _merge_metrics_by_key.get(chromosome_key(population[i]), {})
-            for i in range(n_alive)
-        ]
+        metrics_cache = [merge_metrics[int(i)] for i in sel_idx[:n_alive]]
         # #region agent log
         next_pop_keys = {chromosome_key(population[i]) for i in range(n_alive)}
         _agent_debug_log(
@@ -1747,6 +1882,8 @@ def run_phase2_evolution(
     feature_probs: np.ndarray | None = None,
     init_strategy: str | None = None,
     stratum_fractions: tuple[float, float] | None = None,
+    seed_fraction: float | None = None,
+    reset_plateau: bool = False,
 ) -> tuple[list[dict], list[dict]]:
     """Run Phase 2 NSGA-III evolution. Returns (pareto_pool, history)."""
     evo_kwargs = dict(
@@ -1778,5 +1915,7 @@ def run_phase2_evolution(
         val_engine=val_engine,
         regime_row_fractions=regime_row_fractions,
         val_regime_row_counts=val_regime_row_counts,
+        seed_fraction=seed_fraction,
+        reset_plateau=reset_plateau,
         **evo_kwargs,
     )

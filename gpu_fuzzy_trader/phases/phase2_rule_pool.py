@@ -266,6 +266,38 @@ def _symbol_robustness_penalty(metrics: dict) -> float:
     return penalty
 
 
+def _sort_chronological(df: pd.DataFrame) -> pd.DataFrame:
+    """Preserve per-symbol time order required by exposure/release simulation."""
+    if df.empty:
+        return df
+    if "symbol" in df.columns and "datetime" in df.columns:
+        return df.sort_values(
+            ["symbol", "datetime"], kind="mergesort",
+        ).reset_index(drop=True)
+    if "symbol" in df.columns and "_symbol_bar_index" in df.columns:
+        return df.sort_values(
+            ["symbol", "_symbol_bar_index"], kind="mergesort",
+        ).reset_index(drop=True)
+    if "datetime" in df.columns:
+        return df.sort_values("datetime", kind="mergesort").reset_index(drop=True)
+    if "_symbol_bar_index" in df.columns:
+        return df.sort_values("_symbol_bar_index", kind="mergesort").reset_index(
+            drop=True,
+        )
+    return df.reset_index(drop=True)
+
+
+def _downsample_chronological(df: pd.DataFrame, n_rows: int) -> pd.DataFrame:
+    """Evenly spaced chronological downsampling (deterministic, order-preserving)."""
+    ordered = _sort_chronological(df)
+    total = len(ordered)
+    if total <= n_rows:
+        return ordered
+    idx = np.linspace(0, total - 1, num=n_rows, dtype=np.int64)
+    idx = np.unique(idx)
+    return ordered.iloc[idx].reset_index(drop=True)
+
+
 def _sample_df(
     df: pd.DataFrame,
     total_rows: int,
@@ -274,12 +306,16 @@ def _sample_df(
     """
     Sample up to *total_rows* rows from *df*, distributed equally across symbols.
 
-    If a symbol has fewer rows than its share, all its rows are used.
-    Sampling is random by default; pass a fixed random_state to reproduce a
-    particular subset.
+    Rows are taken in chronological order per symbol (deterministic stride
+    downsampling). Random sampling is intentionally avoided because backtest
+    engines rely on row order and ``_symbol_bar_index`` for exposure release,
+    matching ``evaluator_v3.ipynb`` semantics.
+
+    *random_state* is accepted for API compatibility but ignored.
     """
+    del random_state  # chronology-preserving sampling is deterministic
     if "symbol" not in df.columns:
-        return df.sample(n=min(total_rows, len(df)), random_state=random_state)
+        return _downsample_chronological(df, min(total_rows, len(df)))
 
     symbols = df["symbol"].unique()
     n_sym = len(symbols)
@@ -289,7 +325,7 @@ def _sample_df(
     for sym in symbols:
         sym_df = df[df["symbol"] == sym]
         n = min(rows_per_sym, len(sym_df))
-        parts.append(sym_df.sample(n=n, random_state=random_state))
+        parts.append(_downsample_chronological(sym_df, n))
 
     return pd.concat(parts, ignore_index=True)
 
@@ -297,6 +333,13 @@ def _sample_df(
 # ---------------------------------------------------------------------------
 # Fitness evaluation
 # ---------------------------------------------------------------------------
+
+def _val_trade_floor_for_objectives() -> int:
+    """Minimum validation trades before joint Sortino is trusted."""
+    if str(_cfg.SPLIT_MODE).strip().lower() == "purged_rolling_cv":
+        return max(int(_cfg.PHASE2_CV_MIN_VAL_TRADES), 1)
+    return max(int(_cfg.MIN_TRADE_POOL_FLOOR) // 4, 10)
+
 
 def compute_phase2_objectives_from_metrics(
     chromosome: np.ndarray,
@@ -307,6 +350,7 @@ def compute_phase2_objectives_from_metrics(
     val_metrics: dict | None = None,
     regime_row_fractions_arr: np.ndarray | None = None,
     val_regime_row_counts: np.ndarray | None = None,
+    diversity_reference: list[np.ndarray] | None = None,
 ) -> tuple[np.ndarray, dict]:
     """
     Build Phase 2 minimisation objectives from precomputed train/val metrics.
@@ -333,6 +377,7 @@ def compute_phase2_objectives_from_metrics(
 
     sortino_for_obj = sortino_train
     val_floor_penalty = 0.0
+    val_trade_floor = _val_trade_floor_for_objectives()
 
     if val_metrics is not None:
         raw_val_sortino = float(val_metrics.get(
@@ -348,7 +393,7 @@ def compute_phase2_objectives_from_metrics(
         metrics["val_max_drawdown_pct"] = float(
             val_metrics.get("max_drawdown_pct", 0.0))
         if _cfg.PHASE2_JOINT_TRAIN_VAL:
-            if val_executed < max(_cfg.MIN_TRADE_POOL_FLOOR // 4, 10):
+            if val_executed < val_trade_floor:
                 sortino_for_obj = min(sortino_train, 0.0)
             else:
                 sortino_for_obj = min(sortino_train, sortino_val)
@@ -369,8 +414,7 @@ def compute_phase2_objectives_from_metrics(
     )
     if (
         val_metrics is not None
-        and int(val_metrics.get("executed_trades", 0))
-        < max(_cfg.MIN_TRADE_POOL_FLOOR // 4, 10)
+        and int(val_metrics.get("executed_trades", 0)) < val_trade_floor
     ):
         support_penalty = max(support_penalty, _cfg.SUPPORT_PENALTY_MAX)
         if _cfg.PHASE2_JOINT_TRAIN_VAL:
@@ -398,9 +442,21 @@ def compute_phase2_objectives_from_metrics(
         drawdown_gate_penalty = excess * 2.0
 
     diversity_penalty = 0.0
-    if pareto_front:
+    diversity_refs = list(pareto_front)
+    if diversity_reference:
+        seen_keys: set[tuple[int, ...]] = set()
+        from gpu_fuzzy_trader.phases.phase2_sparse_encoding import chromosome_key
+        merged_refs: list[np.ndarray] = []
+        for ref in diversity_refs + list(diversity_reference):
+            key = chromosome_key(ref)
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            merged_refs.append(ref)
+        diversity_refs = merged_refs
+    if diversity_refs:
         min_hamming = min(_hamming_distance(chromosome, pf)
-                          for pf in pareto_front)
+                          for pf in diversity_refs)
         if min_hamming <= _cfg.PHASE2_DIVERSITY_HAMMING_THRESHOLD:
             diversity_penalty = _cfg.PHASE2_DIVERSITY_PENALTY
 
@@ -486,6 +542,7 @@ def _evaluate_chromosome(
     val_engine=None,  # optional second engine for joint train+val objective
     regime_row_fractions_arr: np.ndarray | None = None,
     val_regime_row_counts: np.ndarray | None = None,
+    diversity_reference: list[np.ndarray] | None = None,
 ) -> tuple[np.ndarray, dict]:
     """
     Evaluate a single chromosome and return (objectives, metrics).
@@ -542,6 +599,7 @@ def _evaluate_chromosome(
         val_metrics=val_metrics,
         regime_row_fractions_arr=regime_row_fractions_arr,
         val_regime_row_counts=val_regime_row_counts,
+        diversity_reference=diversity_reference,
     )
 
 
@@ -753,9 +811,15 @@ def _init_population(
 
     seeded_mask = np.zeros(pop_size, dtype=bool)
     if seed_count > 0:
-        seed_positions = rng.choice(pop_size, size=seed_count, replace=False)
-        for position, chrom in zip(seed_positions, seed_rows[:seed_count]):
-            population[position] = chrom
+        pick = min(seed_count, len(seed_rows))
+        if pick >= len(seed_rows):
+            chosen_rows = seed_rows[:pick]
+        else:
+            chosen_idx = rng.choice(len(seed_rows), size=pick, replace=False)
+            chosen_rows = [seed_rows[int(i)] for i in chosen_idx]
+        seed_positions = rng.choice(pop_size, size=pick, replace=False)
+        for position, chrom in zip(seed_positions, chosen_rows):
+            population[int(position)] = chrom
         seeded_mask[seed_positions] = True
 
     if init_strategy == "legacy":
@@ -1958,6 +2022,8 @@ class Rule_Pool_Generator:
             new_pool_b, history_b = run_phase2_evolution(
                 n_generations=stage_b_gens,
                 log_tag=f"{progress_tag} Stage B",
+                seed_fraction=float(_cfg.PHASE2_STAGE_B_SEED_FRACTION),
+                reset_plateau=True,
                 **{**evo_kwargs, "seed_chromosomes": stage_b_seeds},
             )
             for entry in history_a:

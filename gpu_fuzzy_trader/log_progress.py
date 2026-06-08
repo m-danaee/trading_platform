@@ -61,6 +61,9 @@ def log_generation(
     max_return_pct: float | None = None,
     median_return_pct: float | None = None,
     max_sortino: float | None = None,
+    mean_robust_return_pct: float | None = None,
+    max_robust_return_pct: float | None = None,
+    max_robust_sortino: float | None = None,
     valid_count: int | None = None,
     unique_chromosome_ratio: float | None = None,
     pop_unique_chromosome_ratio: float | None = None,
@@ -78,6 +81,12 @@ def log_generation(
         msg += " max_return=%.2f%%" % max_return_pct
     if max_sortino is not None:
         msg += " max_sortino=%.2f" % max_sortino
+    if mean_robust_return_pct is not None:
+        msg += " mean_robust_return=%.2f%%" % mean_robust_return_pct
+    if max_robust_return_pct is not None:
+        msg += " max_robust_return=%.2f%%" % max_robust_return_pct
+    if max_robust_sortino is not None:
+        msg += " max_robust_sortino=%.2f" % max_robust_sortino
     if valid_count is not None:
         msg += " valid_rules=%d" % valid_count
     if unique_chromosome_ratio is not None:
@@ -134,6 +143,9 @@ def maybe_log_generation(
     max_return_pct: float | None = None,
     median_return_pct: float | None = None,
     max_sortino: float | None = None,
+    mean_robust_return_pct: float | None = None,
+    max_robust_return_pct: float | None = None,
+    max_robust_sortino: float | None = None,
     valid_count: int | None = None,
     unique_chromosome_ratio: float | None = None,
     pop_unique_chromosome_ratio: float | None = None,
@@ -161,6 +173,9 @@ def maybe_log_generation(
         max_return_pct=max_return_pct,
         median_return_pct=median_return_pct,
         max_sortino=max_sortino,
+        mean_robust_return_pct=mean_robust_return_pct,
+        max_robust_return_pct=max_robust_return_pct,
+        max_robust_sortino=max_robust_sortino,
         valid_count=valid_count,
         unique_chromosome_ratio=unique_chromosome_ratio,
         pop_unique_chromosome_ratio=pop_unique_chromosome_ratio,

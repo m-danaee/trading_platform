@@ -172,6 +172,7 @@ class TestPoolEntryAdmission:
     ) -> None:
         monkeypatch.setattr(_cfg, "SPLIT_MODE", "purged_rolling_cv")
         monkeypatch.setattr(_cfg, "PHASE2_CV_POOL_MIN_FOLDS_PASS", 2)
+        monkeypatch.setattr(_cfg, "PHASE2_CV_MERGED_GATE_HARD", False)
         entry = {
             "cv_folds_passing": 2,
             "cv_folds_total": 3,

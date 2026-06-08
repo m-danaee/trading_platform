@@ -26,8 +26,9 @@ class TestNsga3Selection:
 
         dont_cares = _get_dont_cares(feature_infos)
 
-        pop, fit = _nsga3_environmental_selection(
+        pop, fit, sel_idx = _nsga3_environmental_selection(
             merge_pop, merge_fit, ref, pop_size, feature_infos, dont_cares,
         )
         assert pop.shape == (pop_size, k)
         assert fit.shape == (pop_size, 3)
+        assert len(sel_idx) == pop_size

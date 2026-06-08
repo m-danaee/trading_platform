@@ -292,6 +292,7 @@ class TestEdgeCases:
 
         original_train = config_mod.TRAIN_70_PATH
         original_val = config_mod.VALIDATION_30_PATH
+        prev_mode = config_mod.SPLIT_MODE
         splitter_mod.TRAIN_70_PATH = str(tmp_path / "train_70.parquet")
         splitter_mod.VALIDATION_30_PATH = str(tmp_path / "validation_30.parquet")
 
@@ -304,6 +305,7 @@ class TestEdgeCases:
             assert len(train_df) == 0
             assert len(val_df) == 0
         finally:
+            config_mod.SPLIT_MODE = prev_mode
             splitter_mod.TRAIN_70_PATH = original_train
             splitter_mod.VALIDATION_30_PATH = original_val
 
@@ -348,6 +350,7 @@ class TestModuleLevelFunction:
 
         original_train = config_mod.TRAIN_70_PATH
         original_val = config_mod.VALIDATION_30_PATH
+        prev_mode = config_mod.SPLIT_MODE
         splitter_mod.TRAIN_70_PATH = str(tmp_path / "train_70.parquet")
         splitter_mod.VALIDATION_30_PATH = str(tmp_path / "validation_30.parquet")
 
@@ -358,6 +361,7 @@ class TestModuleLevelFunction:
             assert isinstance(result, tuple)
             assert len(result) == 3
         finally:
+            config_mod.SPLIT_MODE = prev_mode
             splitter_mod.TRAIN_70_PATH = original_train
             splitter_mod.VALIDATION_30_PATH = original_val
 
@@ -368,6 +372,7 @@ class TestModuleLevelFunction:
 
         original_train = config_mod.TRAIN_70_PATH
         original_val = config_mod.VALIDATION_30_PATH
+        prev_mode = config_mod.SPLIT_MODE
         splitter_mod.TRAIN_70_PATH = str(tmp_path / "train_70.parquet")
         splitter_mod.VALIDATION_30_PATH = str(tmp_path / "validation_30.parquet")
 
@@ -385,5 +390,6 @@ class TestModuleLevelFunction:
                 val_class.reset_index(drop=True),
             )
         finally:
+            config_mod.SPLIT_MODE = prev_mode
             splitter_mod.TRAIN_70_PATH = original_train
             splitter_mod.VALIDATION_30_PATH = original_val

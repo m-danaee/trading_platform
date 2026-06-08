@@ -806,6 +806,7 @@ class TestAlignFeatureArray:
     ) -> None:
         train_df = _make_train_df(n_rows=400, n_features=8, symbols=["A", "B"])
         shared = build_phase1_shared_context(train_df)
+        stable_cols = list(shared.feature_cols[:4])
 
         def fake_stable(
             df: pd.DataFrame,
@@ -816,9 +817,25 @@ class TestAlignFeatureArray:
         ) -> set[str]:
             return set(cols[: max(3, len(cols) // 2)])
 
+        def fake_mi(
+            X: np.ndarray,
+            y: np.ndarray,
+            *,
+            discrete_features: list[bool],
+            random_state: int | None = None,
+        ) -> np.ndarray:
+            del y, discrete_features, random_state
+            # Deterministic positive scores so the shared-context path is testable
+            # without depending on random MI from synthetic labels.
+            return np.linspace(0.9, 0.1, num=X.shape[1], dtype=float)
+
         monkeypatch.setattr(
             "gpu_fuzzy_trader.features.selector._check_spearman_sign_consistency",
             fake_stable,
+        )
+        monkeypatch.setattr(
+            "gpu_fuzzy_trader.features.selector.mutual_info_classif",
+            fake_mi,
         )
         monkeypatch.setattr(config, "PHASE1_REQUIRE_SIGN_CONSISTENCY", True)
         monkeypatch.setattr(config, "PHASE1_STATIONARITY_FOLDS", 0)
@@ -826,7 +843,8 @@ class TestAlignFeatureArray:
         result = Feature_Selector().select_features(
             train_df, "long", shared=shared)
         assert len(result) > 0
-        assert any(entry["score"] > 0.0 for entry in result)
+        assert all(entry["score"] > 0.0 for entry in result)
+        assert {entry["name"] for entry in result}.issubset(set(stable_cols))
 
 
 class TestReduceOverlap:

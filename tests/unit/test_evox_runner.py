@@ -10,9 +10,12 @@ import pytest
 from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.evolution.evox_runner import (
     _EVOX_AVAILABLE,
+    _deduplicate_selection_indices,
     _evaluate_population_indices,
     _harvest_archive_chromosomes,
     _normalize_for_association,
+    _nsga3_environmental_selection,
+    _pareto_robust_stats,
     _plateau_progress_metric,
     _population_unique_chromosome_ratio,
     _should_inject_diversity_recovery,
@@ -581,3 +584,61 @@ class TestBatchSingleObjectiveAlignment:
         )
 
         assert np.allclose(batch_obj, single_obj)
+
+
+class TestDuplicateSuppression:
+    def test_deduplicate_replaces_clone_with_unique_genotype(self):
+        merge_pop = np.array([[0], [0], [1], [2]], dtype=np.int32)
+        merge_fit = np.array([
+            [1.0, 1.0, 1.0],
+            [2.0, 2.0, 2.0],
+            [3.0, 3.0, 3.0],
+            [4.0, 4.0, 4.0],
+        ])
+        selected = np.array([0, 0, 1], dtype=np.intp)
+        idx = _deduplicate_selection_indices(selected, merge_pop, merge_fit, 3)
+        keys = {tuple(int(x) for x in merge_pop[i]) for i in idx}
+        assert len(keys) == 3
+
+    @pytest.mark.skipif(not _EVOX_AVAILABLE, reason="EvoX not installed")
+    def test_nsga3_survivors_limit_duplicate_genotypes(self):
+        feature_infos = [
+            {"name": "feat_0", "mode": "binary", "score": 0.5},
+        ]
+        dont_cares = np.array([2], dtype=np.int32)
+        merge_pop = np.vstack([
+            np.array([[0]], dtype=np.int32),
+            np.array([[0]], dtype=np.int32),
+            np.array([[1]], dtype=np.int32),
+            np.array([[2]], dtype=np.int32),
+        ])
+        merge_fit = np.array([
+            [1.0, 5.0, 5.0],
+            [1.0, 4.0, 4.0],
+            [2.0, 2.0, 2.0],
+            [3.0, 1.0, 1.0],
+        ], dtype=np.float64)
+        ref = np.array([[1.0, 1.0, 1.0]], dtype=np.float64)
+        pop, _, sel_idx = _nsga3_environmental_selection(
+            merge_pop, merge_fit, ref, 3, feature_infos, dont_cares,
+        )
+        assert len(pop) == 3
+        keys = {tuple(int(x) for x in row) for row in pop}
+        assert len(keys) == 3
+        assert len(sel_idx) == 3
+
+
+class TestParetoRobustStats:
+    def test_uses_min_train_val_return(self):
+        metrics_cache = [{
+            "total_return_pct": 5.0,
+            "sortino_ratio": 2.0,
+            "val_total_return_pct": 1.0,
+            "val_sortino_ratio": 0.5,
+            "val_profit_factor": 1.1,
+            "val_executed_trades": 20,
+            "val_max_drawdown_pct": 1.0,
+        }]
+        stats = _pareto_robust_stats([0], metrics_cache)
+        assert stats["max_robust_return_pct"] == pytest.approx(1.0)
+        assert stats["mean_robust_return_pct"] == pytest.approx(1.0)
