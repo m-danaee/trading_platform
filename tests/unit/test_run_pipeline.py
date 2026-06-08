@@ -30,6 +30,7 @@ from gpu_fuzzy_trader.phases import phase3_rule_set as phase3_module
 from gpu_fuzzy_trader.phases import phase4_wf_optimizer as phase4_module
 from gpu_fuzzy_trader.phases import phase5_oos as phase5_module
 from gpu_fuzzy_trader.reporting import reporter as reporter_module
+from gpu_fuzzy_trader.data.cv_folds import PurgedFold
 from gpu_fuzzy_trader.run_pipeline import Pipeline_Orchestrator, _log_phase_entry
 
 
@@ -638,6 +639,43 @@ class TestPhase2SkipLogic:
             result = orch._run_phase2(train_df, phase1_result)
         assert result["long"] == []
         assert result["short"] == []
+
+
+class TestPruneCvFoldsAfterPhase1:
+    def test_prunes_cached_cv_fold_columns(self):
+        orch = Pipeline_Orchestrator()
+        train_fold = _make_df(n_rows=200)
+        val_fold = _make_df(n_rows=80)
+        orch._cv_folds = [
+            PurgedFold(fold_index=0, train_df=train_fold, val_df=val_fold),
+        ]
+        phase1_result = {
+            "long": [{"name": "feat_0", "mode": "positive", "score": 1.0}],
+            "short": [],
+        }
+
+        orch._prune_cv_folds_after_phase1(phase1_result)
+
+        pruned_train_cols = set(orch._cv_folds[0].train_df.columns)
+        pruned_val_cols = set(orch._cv_folds[0].val_df.columns)
+        assert "feat_0" in pruned_train_cols
+        assert "feat_1" not in pruned_train_cols
+        assert "feat_2" not in pruned_train_cols
+        assert pruned_train_cols == pruned_val_cols
+
+    def test_noop_when_phase1_has_no_features(self):
+        orch = Pipeline_Orchestrator()
+        train_fold = _make_df(n_rows=200)
+        val_fold = _make_df(n_rows=80)
+        orch._cv_folds = [
+            PurgedFold(fold_index=0, train_df=train_fold, val_df=val_fold),
+        ]
+        before_cols = tuple(orch._cv_folds[0].train_df.columns)
+
+        orch._prune_cv_folds_after_phase1({"long": [], "short": []})
+
+        after_cols = tuple(orch._cv_folds[0].train_df.columns)
+        assert after_cols == before_cols
 
 
 # ---------------------------------------------------------------------------

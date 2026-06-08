@@ -453,6 +453,7 @@ class Pipeline_Orchestrator:
                 results["phase1"] = phase1_result
                 train_df, val_df = self._prune_splits_after_phase1(
                     train_df, val_df, phase1_result)
+                self._prune_cv_folds_after_phase1(phase1_result)
 
                 # ------------------------------------------------------------------
                 # Phase 2: Rule Pool Generation
@@ -562,6 +563,7 @@ class Pipeline_Orchestrator:
                 results["phase1"] = phase1_result
                 train_df, val_df = self._prune_splits_after_phase1(
                     train_df, val_df, phase1_result)
+                self._prune_cv_folds_after_phase1(phase1_result)
 
                 phase2_result = self._run_phase2(
                     train_df, phase1_result, force=force, val_df=val_df)
@@ -647,6 +649,7 @@ class Pipeline_Orchestrator:
                 phase1_result = self._load_phase1_outputs()
                 train_df, val_df = self._prune_splits_after_phase1(
                     train_df, val_df, phase1_result)
+                self._prune_cv_folds_after_phase1(phase1_result)
                 results["phase2"] = self._run_phase2(
                     train_df, phase1_result, force=True, val_df=val_df)
 
@@ -941,6 +944,46 @@ class Pipeline_Orchestrator:
             train_df, None, phase1_result,
         )
         return pruned_train
+
+    def _prune_cv_folds_after_phase1(
+        self,
+        phase1_result: dict[str, list[dict]],
+    ) -> None:
+        """Drop unused feature columns from cached CV folds after Phase 1."""
+        if not self._cv_folds:
+            return
+
+        from gpu_fuzzy_trader.backtest.df_slim import prune_train_columns
+        from gpu_fuzzy_trader.data.cv_folds import PurgedFold
+        from gpu_fuzzy_trader._memory import log_memory_rss
+
+        names = Pipeline_Orchestrator._phase1_keep_feature_names(phase1_result)
+        if not names:
+            return
+
+        before_train_cols = len(self._cv_folds[0].train_df.columns)
+        before_val_cols = len(self._cv_folds[0].val_df.columns)
+
+        for idx, fold in enumerate(self._cv_folds):
+            pruned_train = prune_train_columns(fold.train_df, names)
+            pruned_val = prune_train_columns(fold.val_df, names)
+            self._cv_folds[idx] = PurgedFold(
+                fold_index=fold.fold_index,
+                train_df=pruned_train,
+                val_df=pruned_val,
+            )
+
+        after_train_cols = len(self._cv_folds[0].train_df.columns)
+        after_val_cols = len(self._cv_folds[0].val_df.columns)
+        logger.info(
+            "Pruned CV fold columns after Phase 1: folds=%d train=%d→%d val=%d→%d",
+            len(self._cv_folds),
+            before_train_cols,
+            after_train_cols,
+            before_val_cols,
+            after_val_cols,
+        )
+        log_memory_rss("after Phase 1 CV prune")
 
     # ------------------------------------------------------------------
     # Phase 1

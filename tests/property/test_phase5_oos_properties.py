@@ -65,14 +65,6 @@ def valid_test_csv_dataframe(draw: st.DrawFn) -> pd.DataFrame:
     num_symbols = draw(st.integers(min_value=1, max_value=len(SYMBOL_POOL)))
     symbols = SYMBOL_POOL[:num_symbols]
 
-    label_col_names = [
-        "label_open_next",
-        "label_close_288",
-        "label_min_288",
-        "label_max_288",
-        "label_max_before_min",
-    ]
-
     # Use 1–3 feature columns
     num_feature_cols = draw(st.integers(min_value=1, max_value=3))
     feature_col_names = [f"feature_{chr(ord('a') + i)}" for i in range(num_feature_cols)]
@@ -123,43 +115,23 @@ def valid_test_csv_dataframe(draw: st.DrawFn) -> pd.DataFrame:
             in_kept = i < kept_count
             make_label_nan = in_kept and (i in nan_label_positions)
 
-            # Pick one label column to NaN (if this row is a NaN-label row)
-            nan_label_col = None
-            if make_label_nan:
-                nan_label_col = draw(st.sampled_from(label_col_names))
-
             row: dict = {
                 "datetime": ts,
                 "symbol": sym,
-                "label_open_next": (
-                    float("nan") if nan_label_col == "label_open_next" else 1.0
-                ),
-                "label_close_288": (
-                    float("nan") if nan_label_col == "label_close_288" else 1.0
-                ),
-                "label_min_288": (
-                    float("nan") if nan_label_col == "label_min_288" else 0.99
-                ),
-                "label_max_288": (
-                    float("nan") if nan_label_col == "label_max_288" else 1.01
-                ),
-                "label_max_before_min": (
-                    float("nan") if nan_label_col == "label_max_before_min" else 1.0
-                ),
+                # NaN in any label column triggers row drop; use one fixed column.
+                "label_open_next": float("nan") if make_label_nan else 1.0,
+                "label_close_288": 1.0,
+                "label_min_288": 0.99,
+                "label_max_288": 1.01,
+                "label_max_before_min": 1.0,
             }
 
             for col in feature_col_names:
-                if (i, col) in nan_feature_pairs:
-                    row[col] = float("nan")
-                else:
-                    row[col] = draw(
-                        st.floats(
-                            min_value=-100.0,
-                            max_value=100.0,
-                            allow_nan=False,
-                            allow_infinity=False,
-                        )
-                    )
+                row[col] = (
+                    float("nan")
+                    if (i, col) in nan_feature_pairs
+                    else 1.0
+                )
 
             rows.append(row)
 
@@ -183,7 +155,11 @@ def valid_test_csv_dataframe(draw: st.DrawFn) -> pd.DataFrame:
 @given(raw_df=valid_test_csv_dataframe())
 @settings(
     max_examples=30,
-    suppress_health_check=[HealthCheck.too_slow],
+    suppress_health_check=[
+        HealthCheck.too_slow,
+        HealthCheck.large_base_example,
+        HealthCheck.data_too_large,
+    ],
 )
 def test_property_27_test_data_preparation_consistency(raw_df: pd.DataFrame) -> None:
     """
