@@ -12,6 +12,7 @@ from gpu_fuzzy_trader.evolution.evox_runner import (
     _EVOX_AVAILABLE,
     _evaluate_population_indices,
     _harvest_archive_chromosomes,
+    _normalize_for_association,
     _plateau_progress_metric,
     _population_unique_chromosome_ratio,
     _should_inject_diversity_recovery,
@@ -441,6 +442,18 @@ class TestPlateauEarlyStop:
             unique_chromosome_ratio=1.0,
             population_unique_ratio=0.5,
         )
+
+
+class TestNormalizeForAssociation:
+    def test_inf_objectives_do_not_raise(self):
+        merge_fit = np.array(
+            [[1.0, 2.0, 3.0], [np.inf, 2.0, 3.0], [2.0, 3.0, 4.0]],
+            dtype=np.float64,
+        )
+        ref = np.array([[1.0, 1.0, 1.0], [0.5, 0.5, 0.5]], dtype=np.float64)
+        fit_n, ref_n = _normalize_for_association(merge_fit, ref)
+        assert np.all(np.isfinite(fit_n))
+        assert np.all(np.isfinite(ref_n))
 
 
 class TestPopulationDiversityMetrics:

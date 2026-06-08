@@ -470,13 +470,13 @@ def _inject_diversity_recovery(
     rng: np.random.Generator,
     *,
     feature_probs: np.ndarray | None = None,
-) -> None:
+) -> list[int]:
     """Replace a fraction of the population with fresh random individuals."""
     from gpu_fuzzy_trader.phases.phase2_rule_pool import _init_population
 
     pop_size = len(population)
     if pop_size <= 0:
-        return
+        return []
     fraction = float(
         getattr(_cfg, "PHASE2_DIVERSITY_RECOVERY_INJECT_FRACTION", 0.25))
     n_inject = max(1, int(round(pop_size * fraction)))
@@ -489,10 +489,13 @@ def _inject_diversity_recovery(
         stratum_fractions=_cfg.PHASE2_INIT_STRATUM_FRACTIONS,
         feature_probs=feature_probs,
     )
+    injected: list[int] = []
     for idx, pos in enumerate(positions):
         population[int(pos)] = fresh[idx]
         objectives[int(pos)] = np.inf
         metrics_cache[int(pos)] = {}
+        injected.append(int(pos))
+    return injected
 
 
 def _population_unique_chromosome_ratio(population: np.ndarray) -> float:
@@ -914,12 +917,54 @@ def _normalize_for_association(
     ref: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Min-max normalize objectives; unit-normalize rows for association."""
-    norm_fit = merge_fit - merge_fit.min(axis=0)
+    fit = np.asarray(merge_fit, dtype=np.float64)
+    # Unevaluated (inf) or corrupt rows must not reach NSGA-III association.
+    fit = np.where(np.isfinite(fit), fit, 1e12)
+    norm_fit = fit - fit.min(axis=0)
     norm_fit = norm_fit / np.maximum(norm_fit.max(axis=0), 1e-6)
     ref_n = ref / np.linalg.norm(ref, axis=1, keepdims=True).clip(1e-10)
     fit_n = norm_fit / \
         np.linalg.norm(norm_fit, axis=1, keepdims=True).clip(1e-10)
     return fit_n, ref_n
+
+
+def _reevaluate_infinite_objectives(
+    population: np.ndarray,
+    objectives: np.ndarray,
+    metrics_cache: list[dict],
+    indices: list[int] | None,
+    dont_cares: np.ndarray,
+    engine,
+    pareto_archive: list[np.ndarray],
+    *,
+    val_engine=None,
+    regime_row_fractions: np.ndarray | None = None,
+    val_regime_row_counts: np.ndarray | None = None,
+    global_metrics_cache: dict[tuple[int, ...], dict] | None = None,
+) -> dict[str, int]:
+    """Evaluate any individuals still marked with inf objectives."""
+    if indices is None:
+        pending = [
+            i for i in range(len(population))
+            if np.any(np.isinf(objectives[i]))
+        ]
+    else:
+        pending = [i for i in indices if np.any(np.isinf(objectives[i]))]
+    if not pending:
+        return _empty_eval_stats()
+    return _evaluate_population_indices(
+        population,
+        pending,
+        dont_cares,
+        engine,
+        pareto_archive,
+        objectives,
+        metrics_cache,
+        val_engine=val_engine,
+        regime_row_fractions=regime_row_fractions,
+        val_regime_row_counts=val_regime_row_counts,
+        global_metrics_cache=global_metrics_cache,
+    )
 
 
 def _nsga3_environmental_selection(
@@ -1190,8 +1235,9 @@ def _run_nsga2_fallback(
         if gen == n_generations - 1:
             break
 
+        injected_positions: list[int] = []
         if _should_inject_diversity_recovery(pop_unique_ratio):
-            _inject_diversity_recovery(
+            injected_positions = _inject_diversity_recovery(
                 population,
                 objectives,
                 metrics_cache,
@@ -1199,6 +1245,18 @@ def _run_nsga2_fallback(
                 dont_cares,
                 rng,
                 feature_probs=feature_probs,
+            )
+            _reevaluate_infinite_objectives(
+                population,
+                objectives,
+                metrics_cache,
+                injected_positions,
+                dont_cares,
+                engine,
+                pareto_archive,
+                val_engine=val_engine,
+                regime_row_fractions=regime_row_fractions,
+                val_regime_row_counts=val_regime_row_counts,
             )
             mutation_rate = min(
                 0.5,
@@ -1456,9 +1514,11 @@ def _run_nsga3(
 
         is_last_gen = gen == n_generations - 1
         off_stats = _empty_eval_stats()
+        inject_stats = _empty_eval_stats()
         if not is_last_gen:
+            injected_positions: list[int] = []
             if _should_inject_diversity_recovery(pop_unique_ratio):
-                _inject_diversity_recovery(
+                injected_positions = _inject_diversity_recovery(
                     population,
                     objectives,
                     metrics_cache,
@@ -1467,6 +1527,38 @@ def _run_nsga3(
                     rng,
                     feature_probs=feature_probs,
                 )
+                inject_stats = _reevaluate_infinite_objectives(
+                    population,
+                    objectives,
+                    metrics_cache,
+                    injected_positions,
+                    dont_cares,
+                    engine,
+                    pareto_archive,
+                    val_engine=val_engine,
+                    regime_row_fractions=regime_row_fractions,
+                    val_regime_row_counts=val_regime_row_counts,
+                    global_metrics_cache=global_metrics_cache,
+                )
+                # #region agent log
+                _agent_debug_log(
+                    "F",
+                    "evox_runner.py:_run_nsga3:inject_reeval",
+                    "diversity injection re-evaluation",
+                    {
+                        "gen": gen,
+                        "injected_count": len(injected_positions),
+                        "inject_pending": int(inject_stats.get("pending", 0)),
+                        "inject_cache_hits": int(
+                            inject_stats.get("cache_hits", 0)
+                        ),
+                        "remaining_inf": int(
+                            np.sum(np.any(np.isinf(objectives), axis=1))
+                        ),
+                    },
+                    run_id="post-fix",
+                )
+                # #endregion
                 mutation_rate = min(
                     0.5,
                     float(_cfg.PHASE2_MUTATION_RATE)
@@ -1519,7 +1611,9 @@ def _run_nsga3(
             )
             # #endregion
 
-        gen_eval_stats = _merge_gen_eval_stats(parent_stats, off_stats)
+        gen_eval_stats = _merge_gen_eval_stats(
+            parent_stats, inject_stats, off_stats,
+        )
         history[-1]["eval_cache_hit_rate"] = _eval_cache_hit_rate(
             gen_eval_stats)
 
