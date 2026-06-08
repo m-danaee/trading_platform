@@ -137,12 +137,15 @@ TAIL_DROP_ROWS = 288
 
 SPLIT_MODE = "purged_rolling_cv"
 
-# Increased from 3→5 folds: more folds give better estimate of out-of-fold
-# generalisation, reducing the chance of the short strategy overfitting one season.
+# Purged CV fold count. Production: 3–5 for generalisation; 2 is a fast-debug budget.
+# When you change this, coupled knobs below (PHASE2_CV_*_MIN_FOLDS_PASS) auto-scale.
 CV_N_FOLDS = 2
 CV_EMBARGO_BARS = TAIL_DROP_ROWS
 CV_BARS_PER_DAY = 288  # 5-minute bars
 CV_MIN_TRAIN_MONTHS = 2.0  # per symbol, per fold; raise if folds feel too noisy
+# ~50% of folds must pass pool admission (minimum 1). K=2→1, K=5→2 (not 100%).
+_CV_POOL_MIN_FOLDS_PASS = max(1, CV_N_FOLDS // 2)
+_CV_RANK_MIN_FOLDS_PASS = 1
 
 # =============================================================================
 # Phase 0 — Backtest simulation (must match evaluator_v3.ipynb)
@@ -264,8 +267,8 @@ PHASE2_USE_ROBUST_RETURN_OBJ = True
 
 # Run 3 analysis: strict stacked floors collapsed pool to only 17 long / 22 short
 # rules. Quality filtering should happen at the CV majority-vote level, not by
-# stacking floor requirements. Relaxed back toward run-1 levels.
-PHASE2_RETURN_FLOOR_PCT = 2.0  # was 0.0 — require positive train return so f3 (−return) doesn't diverge
+# stacking floor requirements. Keep evolution floor modest so search can explore.
+PHASE2_RETURN_FLOOR_PCT = 1.0
 PHASE2_VAL_RETURN_FLOOR_PCT = 0.0
 PHASE2_PROFIT_FACTOR_FLOOR = 1.0
 PHASE2_SYMBOL_MEDIAN_RETURN_FLOOR_PCT = -0.5
@@ -283,19 +286,21 @@ PHASE2_POOL_VAL_RETURN_MIN_PCT = 0.0
 
 # Purged CV pool admission (per-fold gates).
 # Hard gate: at least PHASE2_CV_POOL_MIN_FOLDS_PASS folds pass per-fold checks.
+# Coupled to CV_N_FOLDS via _CV_POOL_MIN_FOLDS_PASS (do not set to CV_N_FOLDS
+# unless you intend 100% fold pass — that starves Phase 3).
 # Merged worst-case metrics rank pool entries; they are not a second hard reject
 # unless PHASE2_CV_MERGED_GATE_HARD is True.
-PHASE2_CV_POOL_MIN_FOLDS_PASS = 2
+PHASE2_CV_POOL_MIN_FOLDS_PASS = _CV_POOL_MIN_FOLDS_PASS
 PHASE2_CV_MERGED_GATE_HARD = False
 PHASE2_CV_MIN_TRADE_POOL_FLOOR = 7
 PHASE2_CV_POOL_TRAIN_RETURN_MIN_PCT = 0.0
 PHASE2_CV_POOL_VAL_RETURN_MIN_PCT = 0.0
 PHASE2_CV_PROFIT_FACTOR_FLOOR = 1.0
 PHASE2_CV_MIN_VAL_TRADES = 4
-# Rank fallback: raised targets to fill a larger pool when strict gates fire.
+# Rank fallback: looser than strict pool gate to fill Phase 3 when K is small.
 PHASE2_CV_POOL_TARGET_MIN = 40
 PHASE2_CV_POOL_RANK_ADMIT_TOP_K = 80
-PHASE2_CV_RANK_MIN_FOLDS_PASS = 1
+PHASE2_CV_RANK_MIN_FOLDS_PASS = _CV_RANK_MIN_FOLDS_PASS
 
 # --- Fitness & joint evaluation ---
 SORTINO_CAP = 5.0
@@ -320,9 +325,10 @@ PHASE2_EARLY_STOP_MIN_VALID_RULES = 5
 PHASE2_EARLY_STOP_DISABLED_IN_CV = False  # enable early stop in purged CV mode
 # Stop when Pareto max_return fails to improve for N consecutive generations.
 PHASE2_PLATEAU_EARLY_STOP_ENABLED = True
-PHASE2_PLATEAU_EARLY_STOP_MIN_GENERATION = 20
-PHASE2_PLATEAU_EARLY_STOP_PATIENCE = 10
-PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT = 0.01
+# Run log: plateau fired at gen 20 while STAGE_A=35 — wasted exploration budget.
+PHASE2_PLATEAU_EARLY_STOP_MIN_GENERATION = 28
+PHASE2_PLATEAU_EARLY_STOP_PATIENCE = 12
+PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT = 0.02
 PHASE2_PLATEAU_EARLY_STOP_DISABLED_IN_CV = False
 # Plateau tracks deployable robust return (min train/val), not train-only max.
 PHASE2_PLATEAU_USE_ROBUST_RETURN = True
@@ -334,8 +340,8 @@ PHASE2_DEPLOYABLE_ARCHIVE_MAX_SIZE = 200
 # Diversity recovery when search collapses to a tiny niche.
 PHASE2_DIVERSITY_RECOVERY_ENABLED = True
 PHASE2_DIVERSITY_RECOVERY_MIN_UNIQUE_RATIO = 0.30
-PHASE2_DIVERSITY_RECOVERY_INJECT_FRACTION = 0.25
-PHASE2_DIVERSITY_RECOVERY_MUTATION_BOOST = 1.5
+PHASE2_DIVERSITY_RECOVERY_INJECT_FRACTION = 0.30
+PHASE2_DIVERSITY_RECOVERY_MUTATION_BOOST = 1.75
 # Two-stage Phase 2: wide exploration then val-robust refinement.
 PHASE2_TWO_STAGE_ENABLED = True
 PHASE2_STAGE_A_GENERATIONS = 35
@@ -380,7 +386,7 @@ PHASE2_INIT_STRATUM_FRACTIONS = (0.67, 0.33)
 PHASE2_INIT_SOFTMAX_TEMP = 0.5
 PHASE2_INIT_SCORE_EPS = 1e-6
 PHASE2_INIT_UNIFORM_MIX = 0.05
-PHASE2_MUTATION_RATE = 0.12
+PHASE2_MUTATION_RATE = 0.14
 PHASE2_MUTATION_WEIGHTED_ACTIVATE_PROB = 0.70
 
 
@@ -423,31 +429,26 @@ PHASE3_SYMBOL_CONSISTENCY_WEIGHT = 10.0
 PHASE3_TRAIN_VAL_CORR_WEIGHT = 8.0
 PHASE3_VAL_GATE_PENALTY = 10.0
 
-# Tightened val/train gates: run log shows Phase 3 mean_return was deeply
-# negative (-150% long, -117% short) meaning the greedy seed was never forced
-# toward positive val territory. Tightening these gates acts as a hard floor.
-PHASE3_VAL_SORTINO_RATIO_GATE = 0.6  # val_sortino ≥ ratio × train_sortino
-PHASE3_VAL_DRAWDOWN_RATIO_GATE = 1.10  # val_dd ≤ ratio × train_dd (tighter)
-PHASE3_PER_RULE_MIN_VAL_TRADES_PER_SYMBOL = 6
+# Phase 3 gates must match Phase 2 pool quality. With CV_N_FOLDS=2 and robust
+# returns ~2–6%, train floors of 3%+ rejected most teams and shrank diversity.
+PHASE3_VAL_SORTINO_RATIO_GATE = 0.5  # val_sortino ≥ ratio × train_sortino
+PHASE3_VAL_DRAWDOWN_RATIO_GATE = 1.20  # val_dd ≤ ratio × train_dd
+PHASE3_PER_RULE_MIN_VAL_TRADES_PER_SYMBOL = 5
 
-# Raised floors: val return 0.5→2.0% and train 1.0→3.0% to push Phase 3 toward
-# rules with real positive edge, not marginally passing strategies.
-PHASE3_VAL_RETURN_FLOOR_PCT = 2.0
-PHASE3_VAL_PROFIT_FACTOR_FLOOR = 1.10
-PHASE3_TRAIN_RETURN_FLOOR_PCT = 3.0
-PHASE3_TRAIN_PROFIT_FACTOR_FLOOR = 1.10
-PHASE3_MIN_PROFITABLE_SYMBOLS = 6
+PHASE3_VAL_RETURN_FLOOR_PCT = 0.5
+PHASE3_VAL_PROFIT_FACTOR_FLOOR = 1.05
+PHASE3_TRAIN_RETURN_FLOOR_PCT = 1.0
+PHASE3_TRAIN_PROFIT_FACTOR_FLOOR = 1.05
+PHASE3_MIN_PROFITABLE_SYMBOLS = 5
 PHASE3_SYMBOL_MEDIAN_RETURN_FLOOR_PCT = 0.0
 
-# Tightened gap penalty: equity curves showed extreme zigzag (train peaks at +20%,
-# val/test collapse). Narrowed gap 10→5% and doubled penalty weight 4→8 to force
-# selection of more stable, consistent rules.
-PHASE3_TRAIN_VAL_GAP_MAX_PCT = 5.0
-PHASE3_VAL_TRAIN_GAP_MAX_PCT = 5.0
-PHASE3_GAP_PENALTY_WEIGHT = 8.0
+# Allow modest train/val gap when only 2 CV folds — over-tight gaps empty Pareto.
+PHASE3_TRAIN_VAL_GAP_MAX_PCT = 8.0
+PHASE3_VAL_TRAIN_GAP_MAX_PCT = 8.0
+PHASE3_GAP_PENALTY_WEIGHT = 6.0
 
 # --- Rule-team orthogonality (validation masks) ---
-PHASE3_MIN_INCREMENTAL_TRADES = 60
+PHASE3_MIN_INCREMENTAL_TRADES = 45
 PHASE3_INCREMENTAL_GATE_PENALTY = 60.0
 PHASE3_JACCARD_PENALTY_WEIGHT = 35.0
 PHASE3_JACCARD_SIMILARITY_GATE = 0.75
@@ -519,7 +520,7 @@ PHASE5_VALIDATION_PROFIT_FACTOR_GATE = 1.05
 PHASE2_REGIME_PROFITABILITY_GATE: bool = True
 # Raised 0.0→0.5: require a small but non-trivial positive return per regime
 # to avoid selecting rules that are profitable in only a marginal slice.
-PHASE2_REGIME_MIN_RETURN_PER_REGIME: float = 0.5  # per-regime return floor (was 0.0)
+PHASE2_REGIME_MIN_RETURN_PER_REGIME: float = 0.25
 # drop features with Spearman sign flip across folds
 PHASE1_REQUIRE_SIGN_CONSISTENCY: bool = True
 # must have same sign in >= N folds
@@ -534,3 +535,26 @@ PHASE2_RECENCY_WEIGHT_MULTIPLIER: float = 2.0     # these bars count double
 # gates to kill the long pool (only 10 rules passed). Phase 3 quality gates
 # are sufficient to filter weak rules after a richer pool is built.
 PHASE2_REQUIRE_LAST_FOLD_POSITIVE: bool = False
+
+
+# =============================================================================
+# Cross-parameter sanity (import-time; catches CV / fold-gate drift)
+# =============================================================================
+
+assert CV_N_FOLDS >= 1, f"CV_N_FOLDS must be >= 1, got {CV_N_FOLDS}"
+assert 1 <= PHASE2_CV_POOL_MIN_FOLDS_PASS <= CV_N_FOLDS, (
+    "PHASE2_CV_POOL_MIN_FOLDS_PASS must be in [1, CV_N_FOLDS]; "
+    f"got {PHASE2_CV_POOL_MIN_FOLDS_PASS} with CV_N_FOLDS={CV_N_FOLDS}"
+)
+assert 1 <= PHASE2_CV_RANK_MIN_FOLDS_PASS <= CV_N_FOLDS, (
+    "PHASE2_CV_RANK_MIN_FOLDS_PASS must be in [1, CV_N_FOLDS]"
+)
+assert PHASE2_CV_RANK_MIN_FOLDS_PASS <= PHASE2_CV_POOL_MIN_FOLDS_PASS, (
+    "rank fallback must be looser than or equal to strict pool gate"
+)
+assert PHASE2_PLATEAU_EARLY_STOP_MIN_GENERATION <= PHASE2_STAGE_A_GENERATIONS, (
+    "plateau min gen should not exceed Stage A budget"
+)
+assert PHASE1_SIGN_CONSISTENCY_MIN_FOLDS <= PHASE1_STATIONARITY_FOLDS, (
+    "sign-consistency cannot require more folds than stationarity uses"
+)

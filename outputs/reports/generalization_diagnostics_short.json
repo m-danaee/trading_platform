@@ -1,0 +1,282 @@
+{
+  "direction": "short",
+  "split_metrics": {
+    "train": {
+      "total_return_pct": 14.240414465781814,
+      "profit_factor": 1.1796015566591012,
+      "win_rate": 37.72455089820359,
+      "max_drawdown_pct": 5.522297216213701,
+      "executed_trades": 334
+    },
+    "validation": {
+      "total_return_pct": 12.273039753662452,
+      "profit_factor": 1.5415400540388577,
+      "win_rate": 44.14414414414414,
+      "max_drawdown_pct": 2.845240358385174,
+      "executed_trades": 111
+    },
+    "test": {
+      "total_return_pct": -1.937287129336407,
+      "profit_factor": 0.9651651256644839,
+      "win_rate": 30.970149253731343,
+      "max_drawdown_pct": 11.238360282174414,
+      "executed_trades": 268
+    }
+  },
+  "split_shift": {
+    "train_to_validation_delta_pct": -1.967374712119362,
+    "validation_to_test_delta_pct": -14.21032688299886,
+    "train_to_test_delta_pct": -16.177701595118222,
+    "train_to_test_sign_flip": true
+  },
+  "symbol_concentration": {
+    "train": {
+      "hhi_abs_pnl": 0.13788029314367925,
+      "top_symbol_share_abs_pnl": 0.20624136384791847,
+      "top_symbol": "8"
+    },
+    "validation": {
+      "hhi_abs_pnl": 0.176720055911637,
+      "top_symbol_share_abs_pnl": 0.2641526844941537,
+      "top_symbol": "7"
+    },
+    "test": {
+      "hhi_abs_pnl": 0.16148157711356614,
+      "top_symbol_share_abs_pnl": 0.2464622553656633,
+      "top_symbol": "6"
+    }
+  },
+  "feature_bucket_concentration": {
+    "train": {
+      "range_compression_20_100": {
+        "top_bucket": "Very Low",
+        "top_bucket_share": 0.3353044119001566,
+        "unique_buckets": 5
+      },
+      "downside_semivol_20": {
+        "top_bucket": "Very Low",
+        "top_bucket_share": 0.3456180344478217,
+        "unique_buckets": 5
+      },
+      "dmi_balance_14": {
+        "top_bucket": "Extreme Bearish",
+        "top_bucket_share": 0.2515220595007829,
+        "unique_buckets": 10
+      },
+      "drawdown_from_peak_60": {
+        "top_bucket": "Very Low",
+        "top_bucket_share": 0.36779036566270606,
+        "unique_buckets": 5
+      },
+      "open_gap_atr_14": {
+        "top_bucket": "Exactly Zero",
+        "top_bucket_share": 0.4962351478308925,
+        "unique_buckets": 5
+      },
+      "rsi_centered_14": {
+        "top_bucket": "Extreme Bullish",
+        "top_bucket_share": 0.25522934512296214,
+        "unique_buckets": 10
+      },
+      "mom_stoch_rsi_14_14_3": {
+        "top_bucket": "Very High",
+        "top_bucket_share": 0.3318227871419361,
+        "unique_buckets": 5
+      },
+      "efficiency_ratio_20": {
+        "top_bucket": "Very Low",
+        "top_bucket_share": 0.34998848669061433,
+        "unique_buckets": 5
+      },
+      "band_bb_percB_20_2": {
+        "top_bucket": "Extreme Bullish",
+        "top_bucket_share": 0.2671479229989868,
+        "unique_buckets": 10
+      },
+      "lower_wick_to_tr": {
+        "top_bucket": "Very Low",
+        "top_bucket_share": 0.3439877498388137,
+        "unique_buckets": 5
+      },
+      "vol_over_median20": {
+        "top_bucket": "Very Low",
+        "top_bucket_share": 0.3651469098277609,
+        "unique_buckets": 5
+      },
+      "sign_flip_rate_20": {
+        "top_bucket": "Very High",
+        "top_bucket_share": 0.27594869669337757,
+        "unique_buckets": 5
+      },
+      "close_location_value": {
+        "top_bucket": "Very High",
+        "top_bucket_share": 0.33246753246753247,
+        "unique_buckets": 5
+      },
+      "dollar_vol_rel_20": {
+        "top_bucket": "Very Low",
+        "top_bucket_share": 0.34467164041632126,
+        "unique_buckets": 5
+      },
+      "upper_wick_to_tr": {
+        "top_bucket": "Very Low",
+        "top_bucket_share": 0.3449134199134199,
+        "unique_buckets": 5
+      }
+    },
+    "validation": {
+      "range_compression_20_100": {
+        "top_bucket": "Very Low",
+        "top_bucket_share": 0.3520345724338382,
+        "unique_buckets": 5
+      },
+      "downside_semivol_20": {
+        "top_bucket": "Very Low",
+        "top_bucket_share": 0.4114769772066697,
+        "unique_buckets": 5
+      },
+      "dmi_balance_14": {
+        "top_bucket": "Extreme Bullish",
+        "top_bucket_share": 0.2563561266636072,
+        "unique_buckets": 10
+      },
+      "drawdown_from_peak_60": {
+        "top_bucket": "Very Low",
+        "top_bucket_share": 0.40577482025393913,
+        "unique_buckets": 5
+      },
+      "open_gap_atr_14": {
+        "top_bucket": "Exactly Zero",
+        "top_bucket_share": 0.5205522410891846,
+        "unique_buckets": 5
+      },
+      "rsi_centered_14": {
+        "top_bucket": "Extreme Bearish",
+        "top_bucket_share": 0.25188924583142114,
+        "unique_buckets": 10
+      },
+      "mom_stoch_rsi_14_14_3": {
+        "top_bucket": "Very High",
+        "top_bucket_share": 0.32748967416245983,
+        "unique_buckets": 5
+      },
+      "efficiency_ratio_20": {
+        "top_bucket": "Very Low",
+        "top_bucket_share": 0.3548378461067768,
+        "unique_buckets": 5
+      },
+      "band_bb_percB_20_2": {
+        "top_bucket": "Extreme Bullish",
+        "top_bucket_share": 0.2607656417316812,
+        "unique_buckets": 10
+      },
+      "lower_wick_to_tr": {
+        "top_bucket": "Very Low",
+        "top_bucket_share": 0.3719404925806945,
+        "unique_buckets": 5
+      },
+      "vol_over_median20": {
+        "top_bucket": "Very Low",
+        "top_bucket_share": 0.3811802049869971,
+        "unique_buckets": 5
+      },
+      "sign_flip_rate_20": {
+        "top_bucket": "Very Low",
+        "top_bucket_share": 0.3025279180052012,
+        "unique_buckets": 5
+      },
+      "close_location_value": {
+        "top_bucket": "Very Low",
+        "top_bucket_share": 0.3311802049869971,
+        "unique_buckets": 5
+      },
+      "dollar_vol_rel_20": {
+        "top_bucket": "Very Low",
+        "top_bucket_share": 0.40345341899954107,
+        "unique_buckets": 5
+      },
+      "upper_wick_to_tr": {
+        "top_bucket": "Very Low",
+        "top_bucket_share": 0.35030595074193055,
+        "unique_buckets": 5
+      }
+    },
+    "test": {
+      "range_compression_20_100": {
+        "top_bucket": "Very Low",
+        "top_bucket_share": 0.33056469298245617,
+        "unique_buckets": 5
+      },
+      "downside_semivol_20": {
+        "top_bucket": "Very High",
+        "top_bucket_share": 0.33471080043859647,
+        "unique_buckets": 5
+      },
+      "dmi_balance_14": {
+        "top_bucket": "Extreme Bullish",
+        "top_bucket_share": 0.2584338450292398,
+        "unique_buckets": 10
+      },
+      "drawdown_from_peak_60": {
+        "top_bucket": "Very Low",
+        "top_bucket_share": 0.3554824561403509,
+        "unique_buckets": 5
+      },
+      "open_gap_atr_14": {
+        "top_bucket": "Exactly Zero",
+        "top_bucket_share": 0.498921783625731,
+        "unique_buckets": 5
+      },
+      "rsi_centered_14": {
+        "top_bucket": "Extreme Bullish",
+        "top_bucket_share": 0.25531798245614035,
+        "unique_buckets": 10
+      },
+      "mom_stoch_rsi_14_14_3": {
+        "top_bucket": "Very High",
+        "top_bucket_share": 0.33351151315789473,
+        "unique_buckets": 5
+      },
+      "efficiency_ratio_20": {
+        "top_bucket": "Very Low",
+        "top_bucket_share": 0.34996345029239767,
+        "unique_buckets": 5
+      },
+      "band_bb_percB_20_2": {
+        "top_bucket": "Extreme Bullish",
+        "top_bucket_share": 0.26555418494152044,
+        "unique_buckets": 10
+      },
+      "lower_wick_to_tr": {
+        "top_bucket": "Very Low",
+        "top_bucket_share": 0.3560832419590643,
+        "unique_buckets": 5
+      },
+      "vol_over_median20": {
+        "top_bucket": "Very Low",
+        "top_bucket_share": 0.3742484466374269,
+        "unique_buckets": 5
+      },
+      "sign_flip_rate_20": {
+        "top_bucket": "Very Low",
+        "top_bucket_share": 0.271797331871345,
+        "unique_buckets": 5
+      },
+      "close_location_value": {
+        "top_bucket": "Very High",
+        "top_bucket_share": 0.3298656798245614,
+        "unique_buckets": 5
+      },
+      "dollar_vol_rel_20": {
+        "top_bucket": "Very Low",
+        "top_bucket_share": 0.3749200475146199,
+        "unique_buckets": 5
+      },
+      "upper_wick_to_tr": {
+        "top_bucket": "Very Low",
+        "top_bucket_share": 0.34167123538011696,
+        "unique_buckets": 5
+      }
+    }
+  }
+}

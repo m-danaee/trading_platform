@@ -13,6 +13,8 @@ from gpu_fuzzy_trader.evolution.evox_runner import (
     _evaluate_population_indices,
     _harvest_archive_chromosomes,
     _plateau_progress_metric,
+    _population_unique_chromosome_ratio,
+    _should_inject_diversity_recovery,
     _should_plateau_early_stop_phase2,
     _update_deployable_archive,
     _update_hall_of_fame,
@@ -402,8 +404,10 @@ class TestPlateauEarlyStop:
         assert best == 5.0
         assert streak == 1
 
-        best, streak = _update_max_return_plateau(5.02, best, streak)
-        assert best == 5.02
+        delta = float(_cfg.PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT)
+        best, streak = _update_max_return_plateau(
+            5.0 + delta + 0.01, best, streak)
+        assert best == 5.0 + delta + 0.01
         assert streak == 0
 
     def test_should_stop_after_patience(self, monkeypatch):
@@ -424,11 +428,35 @@ class TestPlateauEarlyStop:
             10, 3, deployable_count=0, unique_chromosome_ratio=1.0,
         )
         assert not _should_plateau_early_stop_phase2(
-            10, 3, deployable_count=2, unique_chromosome_ratio=0.1,
+            10,
+            3,
+            deployable_count=2,
+            unique_chromosome_ratio=1.0,
+            population_unique_ratio=0.1,
         )
         assert _should_plateau_early_stop_phase2(
-            10, 3, deployable_count=2, unique_chromosome_ratio=0.5,
+            10,
+            3,
+            deployable_count=2,
+            unique_chromosome_ratio=1.0,
+            population_unique_ratio=0.5,
         )
+
+
+class TestPopulationDiversityMetrics:
+    def test_population_unique_ratio_counts_full_population(self):
+        pop = np.array(
+            [[0, 1], [0, 1], [2, 3], [4, 5]],
+            dtype=np.int32,
+        )
+        assert _population_unique_chromosome_ratio(pop) == 0.75
+
+    def test_diversity_recovery_uses_population_not_pareto(self, monkeypatch):
+        monkeypatch.setattr(_cfg, "PHASE2_DIVERSITY_RECOVERY_ENABLED", True)
+        monkeypatch.setattr(
+            _cfg, "PHASE2_DIVERSITY_RECOVERY_MIN_UNIQUE_RATIO", 0.30)
+        assert not _should_inject_diversity_recovery(1.0)
+        assert _should_inject_diversity_recovery(0.1)
 
 
 class TestDeployableArchive:

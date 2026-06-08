@@ -436,6 +436,7 @@ def _should_plateau_early_stop_phase2(
     *,
     deployable_count: int = 0,
     unique_chromosome_ratio: float = 1.0,
+    population_unique_ratio: float | None = None,
 ) -> bool:
     if not _cfg.PHASE2_PLATEAU_EARLY_STOP_ENABLED:
         return False
@@ -450,9 +451,12 @@ def _should_plateau_early_stop_phase2(
         if deployable_count <= 0:
             return False
     if bool(getattr(_cfg, "PHASE2_PLATEAU_BLOCK_WHEN_DIVERSITY_LOW", True)):
-        if unique_chromosome_ratio < float(
-            getattr(_cfg, "PHASE2_DIVERSITY_RECOVERY_MIN_UNIQUE_RATIO", 0.30)
-        ):
+        diversity_ratio = (
+            population_unique_ratio
+            if population_unique_ratio is not None
+            else unique_chromosome_ratio
+        )
+        if diversity_ratio < _diversity_recovery_min_unique_ratio():
             return False
     return streak >= int(_cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE)
 
@@ -489,6 +493,29 @@ def _inject_diversity_recovery(
         population[int(pos)] = fresh[idx]
         objectives[int(pos)] = np.inf
         metrics_cache[int(pos)] = {}
+
+
+def _population_unique_chromosome_ratio(population: np.ndarray) -> float:
+    """Unique genotypes in the full population (not just the Pareto front)."""
+    from gpu_fuzzy_trader.phases.phase2_sparse_encoding import chromosome_key
+
+    n = len(population)
+    if n <= 0:
+        return 0.0
+    keys = {chromosome_key(population[i]) for i in range(n)}
+    return float(len(keys) / n)
+
+
+def _diversity_recovery_min_unique_ratio() -> float:
+    return float(
+        getattr(_cfg, "PHASE2_DIVERSITY_RECOVERY_MIN_UNIQUE_RATIO", 0.30)
+    )
+
+
+def _should_inject_diversity_recovery(population_unique_ratio: float) -> bool:
+    if not bool(getattr(_cfg, "PHASE2_DIVERSITY_RECOVERY_ENABLED", True)):
+        return False
+    return population_unique_ratio < _diversity_recovery_min_unique_ratio()
 
 
 def _median_pairwise_hamming(chromosomes: list[np.ndarray]) -> float:
@@ -1064,6 +1091,7 @@ def _run_nsga2_fallback(
             regime_row_fractions_arr=regime_row_fractions,
         )
         unique_ratio = float(pareto_diag.get("unique_chromosome_ratio", 0.0))
+        pop_unique_ratio = _population_unique_chromosome_ratio(population)
         plateau_metric = _plateau_progress_metric(
             pareto_indices, metrics_cache)
         history.append({
@@ -1076,6 +1104,7 @@ def _run_nsga2_fallback(
             "deployable_preview_count": deployable_count,
             "deployable_archive_size": len(deployable_archive),
             "plateau_progress_pct": plateau_metric,
+            "pop_unique_chromosome_ratio": pop_unique_ratio,
             **_pareto_sortino_stats(pareto_indices, metrics_cache),
             **pareto_diag,
         })
@@ -1111,6 +1140,7 @@ def _run_nsga2_fallback(
             valid_count=val_count,
             unique_chromosome_ratio=float(
                 pareto_diag.get("unique_chromosome_ratio", 0.0)),
+            pop_unique_chromosome_ratio=pop_unique_ratio,
             loop_start=gen_loop_start,
         )
 
@@ -1140,11 +1170,12 @@ def _run_nsga2_fallback(
             plateau_streak,
             deployable_count=deployable_count,
             unique_chromosome_ratio=unique_ratio,
+            population_unique_ratio=pop_unique_ratio,
         ):
             logger.info(
                 "%s: plateau early stop at gen %d (progress=%.2f%% unchanged "
                 "for %d gens, patience=%d, min_delta=%.2f%%, "
-                "deployable_preview=%d, unique_chrom=%.2f)",
+                "deployable_preview=%d, pop_unique=%.2f)",
                 tag,
                 gen + 1,
                 plateau_metric,
@@ -1152,19 +1183,14 @@ def _run_nsga2_fallback(
                 int(_cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE),
                 float(_cfg.PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT),
                 deployable_count,
-                unique_ratio,
+                pop_unique_ratio,
             )
             break
 
         if gen == n_generations - 1:
             break
 
-        if (
-            bool(getattr(_cfg, "PHASE2_DIVERSITY_RECOVERY_ENABLED", True))
-            and unique_ratio < float(
-                getattr(_cfg, "PHASE2_DIVERSITY_RECOVERY_MIN_UNIQUE_RATIO", 0.30)
-            )
-        ):
+        if _should_inject_diversity_recovery(pop_unique_ratio):
             _inject_diversity_recovery(
                 population,
                 objectives,
@@ -1319,6 +1345,7 @@ def _run_nsga3(
             regime_row_fractions_arr=regime_row_fractions,
         )
         unique_ratio = float(pareto_diag.get("unique_chromosome_ratio", 0.0))
+        pop_unique_ratio = _population_unique_chromosome_ratio(population)
         plateau_metric = _plateau_progress_metric(
             pareto_indices, metrics_cache)
         history.append({
@@ -1331,6 +1358,7 @@ def _run_nsga3(
             "deployable_preview_count": deployable_count,
             "deployable_archive_size": len(deployable_archive),
             "plateau_progress_pct": plateau_metric,
+            "pop_unique_chromosome_ratio": pop_unique_ratio,
             **_pareto_sortino_stats(pareto_indices, metrics_cache),
             **pareto_diag,
         })
@@ -1360,7 +1388,6 @@ def _run_nsga3(
         from gpu_fuzzy_trader.phases.phase2_sparse_encoding import chromosome_key
 
         pop_keys = {chromosome_key(population[i]) for i in range(pop_size)}
-        pop_unique_ratio = float(len(pop_keys) / max(pop_size, 1))
         trade_floor = (
             int(_cfg.PHASE2_CV_MIN_TRADE_POOL_FLOOR)
             if _split_mode_is_purged_cv()
@@ -1388,16 +1415,10 @@ def _run_nsga3(
                 "valid_rules": val_count,
                 "deployable_count": deployable_count,
                 "diversity_recovery_would_trigger": (
-                    unique_ratio
-                    < float(
-                        getattr(
-                            _cfg,
-                            "PHASE2_DIVERSITY_RECOVERY_MIN_UNIQUE_RATIO",
-                            0.30,
-                        )
-                    )
+                    _should_inject_diversity_recovery(pop_unique_ratio)
                 ),
             },
+            run_id="post-fix",
         )
         _agent_debug_log(
             "B",
@@ -1436,13 +1457,7 @@ def _run_nsga3(
         is_last_gen = gen == n_generations - 1
         off_stats = _empty_eval_stats()
         if not is_last_gen:
-            if (
-                bool(getattr(_cfg, "PHASE2_DIVERSITY_RECOVERY_ENABLED", True))
-                and unique_ratio < float(
-                    getattr(
-                        _cfg, "PHASE2_DIVERSITY_RECOVERY_MIN_UNIQUE_RATIO", 0.30)
-                )
-            ):
+            if _should_inject_diversity_recovery(pop_unique_ratio):
                 _inject_diversity_recovery(
                     population,
                     objectives,
@@ -1496,18 +1511,11 @@ def _run_nsga3(
                     "offspring_pending": int(off_stats.get("pending", 0)),
                     "offspring_cache_hits": int(off_stats.get("cache_hits", 0)),
                     "mutation_rate": mutation_rate,
-                    "diversity_injection": (
-                        bool(getattr(_cfg, "PHASE2_DIVERSITY_RECOVERY_ENABLED", True))
-                        and unique_ratio
-                        < float(
-                            getattr(
-                                _cfg,
-                                "PHASE2_DIVERSITY_RECOVERY_MIN_UNIQUE_RATIO",
-                                0.30,
-                            )
-                        )
+                    "diversity_injection": _should_inject_diversity_recovery(
+                        pop_unique_ratio
                     ),
                 },
+                run_id="post-fix",
             )
             # #endregion
 
@@ -1523,6 +1531,7 @@ def _run_nsga3(
             valid_count=val_count,
             unique_chromosome_ratio=float(
                 pareto_diag.get("unique_chromosome_ratio", 0.0)),
+            pop_unique_chromosome_ratio=pop_unique_ratio,
             cache_hit_rate=_eval_cache_hit_rate(gen_eval_stats),
             loop_start=gen_loop_start,
         )
@@ -1553,11 +1562,12 @@ def _run_nsga3(
             plateau_streak,
             deployable_count=deployable_count,
             unique_chromosome_ratio=unique_ratio,
+            population_unique_ratio=pop_unique_ratio,
         ):
             logger.info(
                 "%s: plateau early stop at gen %d (progress=%.2f%% unchanged "
                 "for %d gens, patience=%d, min_delta=%.2f%%, "
-                "deployable_preview=%d, unique_chrom=%.2f)",
+                "deployable_preview=%d, pop_unique=%.2f)",
                 tag,
                 gen + 1,
                 plateau_metric,
@@ -1565,7 +1575,7 @@ def _run_nsga3(
                 int(_cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE),
                 float(_cfg.PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT),
                 deployable_count,
-                unique_ratio,
+                pop_unique_ratio,
             )
             break
 

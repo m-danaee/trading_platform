@@ -1,0 +1,35 @@
+{
+  "direction": "short",
+  "risk_optimized": true,
+  "deployment_accepted": true,
+  "validation_gate": {
+    "return_pct": 25.7256325040357,
+    "profit_factor": 1.3476471930544425,
+    "required_return_pct": 2.0,
+    "required_profit_factor": 1.05
+  },
+  "rules_set": [
+    {
+      "conditions": [
+        "[range_compression_20_100] IS Very High",
+        "[open_gap_atr_14] IS Strong Negative",
+        "[efficiency_ratio_20] IS Very High",
+        "[rsi_hidden_div_flag] IS Negative (-1)"
+      ],
+      "tp": 3.5,
+      "sl": 2.0,
+      "capital_pct": 30.0
+    },
+    {
+      "conditions": [
+        "[open_gap_atr_14] IS Strong Negative",
+        "[up_close_ratio_5] IS Medium",
+        "[atr_ratio_14_63] IS High",
+        "[macd_hist_atr] IS Extreme Bullish"
+      ],
+      "tp": 2.0,
+      "sl": 1.0,
+      "capital_pct": 30.0
+    }
+  ]
+}

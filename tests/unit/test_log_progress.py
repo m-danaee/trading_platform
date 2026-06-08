@@ -96,11 +96,13 @@ class TestLogGeneration:
         log_generation(
             log, "Phase 2 [long] NSGA-III",
             36, 80, 300, 9.69,
-            unique_chromosome_ratio=0.05,
+            unique_chromosome_ratio=1.0,
+            pop_unique_chromosome_ratio=0.05,
             cache_hit_rate=0.82,
         )
         msg = log.info.call_args[0][0]
-        assert "unique_chrom=0.05" in msg
+        assert "pareto_unique=1.00" in msg
+        assert "pop_unique=0.05" in msg
         assert "cache_hit_rate=0.82" in msg
 
 

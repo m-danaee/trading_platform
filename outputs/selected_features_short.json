@@ -1,0 +1,80 @@
+{
+  "direction": "short",
+  "features": [
+    {
+      "name": "range_compression_20_100",
+      "mode": "positive",
+      "score": 0.11519359225888605
+    },
+    {
+      "name": "downside_semivol_20",
+      "mode": "positive",
+      "score": 0.07345228800354414
+    },
+    {
+      "name": "dmi_balance_14",
+      "mode": "signed",
+      "score": 0.03299791912010684
+    },
+    {
+      "name": "drawdown_from_peak_60",
+      "mode": "positive",
+      "score": 0.020816922406680906
+    },
+    {
+      "name": "roc_10",
+      "mode": "signed",
+      "score": 0.005975562652038422
+    },
+    {
+      "name": "open_gap_atr_14",
+      "mode": "sparse_signed",
+      "score": 0.004528504552941122
+    },
+    {
+      "name": "channel_pos_20",
+      "mode": "positive",
+      "score": 0.0037835511575021004
+    },
+    {
+      "name": "mom_stoch_rsi_14_14_3",
+      "mode": "positive",
+      "score": 0.002541327313453168
+    },
+    {
+      "name": "rsi_centered_14",
+      "mode": "signed",
+      "score": 0.00235569552227542
+    },
+    {
+      "name": "up_close_ratio_5",
+      "mode": "sparse_positive",
+      "score": 0.0018931223346941068
+    },
+    {
+      "name": "vol_regime_pct_120",
+      "mode": "positive",
+      "score": 0.0018920217627282506
+    },
+    {
+      "name": "cand_up_down_vol_ratio_20",
+      "mode": "positive",
+      "score": 0.0014896882436925087
+    },
+    {
+      "name": "close_location_value",
+      "mode": "positive",
+      "score": 0.0007092031008978883
+    },
+    {
+      "name": "percent_b_20",
+      "mode": "signed",
+      "score": 0.0005193337267378708
+    },
+    {
+      "name": "sign_flip_rate_20",
+      "mode": "positive",
+      "score": 0.0004315993415200454
+    }
+  ]
+}

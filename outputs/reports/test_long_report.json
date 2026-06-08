@@ -1,0 +1,62 @@
+{
+  "direction": "long",
+  "total_return_pct": -6.730085438200661,
+  "max_drawdown_pct": 8.857843823425231,
+  "win_rate": 28.000000000000004,
+  "profit_factor": 0.7862278564598608,
+  "executed_trades": 150,
+  "account_status": "survived",
+  "final_equity": 932.6991456179934,
+  "per_symbol_metrics": {
+    "1": {
+      "trade_count": 17,
+      "win_rate": 52.94117647058824,
+      "net_pnl": 23.033317764740147
+    },
+    "10": {
+      "trade_count": 16,
+      "win_rate": 18.75,
+      "net_pnl": -24.756828657158394
+    },
+    "2": {
+      "trade_count": 24,
+      "win_rate": 20.833333333333336,
+      "net_pnl": -26.649228170685515
+    },
+    "3": {
+      "trade_count": 17,
+      "win_rate": 23.52941176470588,
+      "net_pnl": -19.09228908247033
+    },
+    "4": {
+      "trade_count": 9,
+      "win_rate": 33.33333333333333,
+      "net_pnl": 6.813008896985685
+    },
+    "5": {
+      "trade_count": 11,
+      "win_rate": 9.090909090909092,
+      "net_pnl": -25.86126757441039
+    },
+    "6": {
+      "trade_count": 27,
+      "win_rate": 22.22222222222222,
+      "net_pnl": -24.07306132016734
+    },
+    "7": {
+      "trade_count": 7,
+      "win_rate": 14.285714285714285,
+      "net_pnl": -9.70121301200832
+    },
+    "8": {
+      "trade_count": 16,
+      "win_rate": 56.25,
+      "net_pnl": 37.095861936340384
+    },
+    "9": {
+      "trade_count": 6,
+      "win_rate": 16.666666666666664,
+      "net_pnl": -4.109155163172734
+    }
+  }
+}

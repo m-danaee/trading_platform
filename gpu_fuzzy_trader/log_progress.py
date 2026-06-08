@@ -63,6 +63,7 @@ def log_generation(
     max_sortino: float | None = None,
     valid_count: int | None = None,
     unique_chromosome_ratio: float | None = None,
+    pop_unique_chromosome_ratio: float | None = None,
     cache_hit_rate: float | None = None,
     elapsed_s: float | None = None,
 ) -> None:
@@ -80,7 +81,9 @@ def log_generation(
     if valid_count is not None:
         msg += " valid_rules=%d" % valid_count
     if unique_chromosome_ratio is not None:
-        msg += " unique_chrom=%.2f" % unique_chromosome_ratio
+        msg += " pareto_unique=%.2f" % unique_chromosome_ratio
+    if pop_unique_chromosome_ratio is not None:
+        msg += " pop_unique=%.2f" % pop_unique_chromosome_ratio
     if cache_hit_rate is not None:
         msg += " cache_hit_rate=%.2f" % cache_hit_rate
     if elapsed_s is not None:
@@ -133,6 +136,7 @@ def maybe_log_generation(
     max_sortino: float | None = None,
     valid_count: int | None = None,
     unique_chromosome_ratio: float | None = None,
+    pop_unique_chromosome_ratio: float | None = None,
     cache_hit_rate: float | None = None,
     loop_start: float | None = None,
     interval: int | None = None,
@@ -159,6 +163,7 @@ def maybe_log_generation(
         max_sortino=max_sortino,
         valid_count=valid_count,
         unique_chromosome_ratio=unique_chromosome_ratio,
+        pop_unique_chromosome_ratio=pop_unique_chromosome_ratio,
         cache_hit_rate=cache_hit_rate,
         elapsed_s=elapsed,
     )
