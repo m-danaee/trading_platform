@@ -27,6 +27,42 @@ from gpu_fuzzy_trader.log_progress import maybe_log_generation
 
 logger = logging.getLogger(__name__)
 
+# #region agent log
+
+
+def _agent_debug_log(
+    hypothesis_id: str,
+    location: str,
+    message: str,
+    data: dict,
+    *,
+    run_id: str = "pre-fix",
+) -> None:
+    import json
+
+    payload = {
+        "sessionId": "faf67e",
+        "hypothesisId": hypothesis_id,
+        "location": location,
+        "message": message,
+        "data": data,
+        "timestamp": int(time.time() * 1000),
+        "runId": run_id,
+    }
+    try:
+        from pathlib import Path
+
+        log_path = (
+            Path(__file__).resolve().parents[2] /
+            ".cursor" / "debug-faf67e.log"
+        )
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(log_path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload) + "\n")
+    except OSError:
+        pass
+# #endregion
+
 _EVOX_AVAILABLE = False
 _EVOX_IMPORT_ERROR: str | None = None
 try:
@@ -1320,6 +1356,79 @@ def _run_nsga3(
             )
         )
 
+        # #region agent log
+        from gpu_fuzzy_trader.phases.phase2_sparse_encoding import chromosome_key
+
+        pop_keys = {chromosome_key(population[i]) for i in range(pop_size)}
+        pop_unique_ratio = float(len(pop_keys) / max(pop_size, 1))
+        trade_floor = (
+            int(_cfg.PHASE2_CV_MIN_TRADE_POOL_FLOOR)
+            if _split_mode_is_purged_cv()
+            else int(_cfg.MIN_TRADE_POOL_FLOOR)
+        )
+        n_below_trade_floor = sum(
+            1
+            for i in range(pop_size)
+            if int(metrics_cache[i].get("executed_trades", 0)) < trade_floor
+        )
+        n_inf_obj = int(np.sum(np.any(np.isinf(objectives), axis=1)))
+        _agent_debug_log(
+            "A",
+            "evox_runner.py:_run_nsga3:pareto_diag",
+            "population vs pareto diversity",
+            {
+                "gen": gen,
+                "pop_size": pop_size,
+                "pareto_size": len(pareto_indices),
+                "pareto_unique_ratio": unique_ratio,
+                "pop_unique_ratio": pop_unique_ratio,
+                "pop_unique_count": len(pop_keys),
+                "mean_ret": mean_ret,
+                "max_ret": max_ret,
+                "valid_rules": val_count,
+                "deployable_count": deployable_count,
+                "diversity_recovery_would_trigger": (
+                    unique_ratio
+                    < float(
+                        getattr(
+                            _cfg,
+                            "PHASE2_DIVERSITY_RECOVERY_MIN_UNIQUE_RATIO",
+                            0.30,
+                        )
+                    )
+                ),
+            },
+        )
+        _agent_debug_log(
+            "B",
+            "evox_runner.py:_run_nsga3:objective_health",
+            "population objective and trade-floor health",
+            {
+                "gen": gen,
+                "n_below_trade_floor": n_below_trade_floor,
+                "trade_floor": trade_floor,
+                "n_inf_objectives": n_inf_obj,
+                "obj_std_f1": float(pareto_diag.get("objective_std_f1", 0.0)),
+                "obj_std_f2": float(pareto_diag.get("objective_std_f2", 0.0)),
+                "obj_std_f3": float(pareto_diag.get("objective_std_f3", 0.0)),
+                "median_pairwise_hamming": float(
+                    pareto_diag.get("median_pairwise_hamming", 0.0)
+                ),
+            },
+        )
+        _agent_debug_log(
+            "C",
+            "evox_runner.py:_run_nsga3:parent_eval",
+            "parent evaluation cache stats",
+            {
+                "gen": gen,
+                "parent_pending": int(parent_stats.get("pending", 0)),
+                "parent_cache_hits": int(parent_stats.get("cache_hits", 0)),
+                "global_cache_size": len(global_metrics_cache),
+            },
+        )
+        # #endregion
+
         plateau_best_progress, plateau_streak = _update_max_return_plateau(
             plateau_metric, plateau_best_progress, plateau_streak,
         )
@@ -1372,6 +1481,35 @@ def _run_nsga3(
                 val_regime_row_counts=val_regime_row_counts,
                 global_metrics_cache=global_metrics_cache,
             )
+            # #region agent log
+            off_keys = {chromosome_key(offspring[i]) for i in range(pop_size)}
+            _agent_debug_log(
+                "D",
+                "evox_runner.py:_run_nsga3:offspring",
+                "offspring diversity after eval",
+                {
+                    "gen": gen,
+                    "offspring_unique_count": len(off_keys),
+                    "offspring_unique_ratio": float(
+                        len(off_keys) / max(pop_size, 1)
+                    ),
+                    "offspring_pending": int(off_stats.get("pending", 0)),
+                    "offspring_cache_hits": int(off_stats.get("cache_hits", 0)),
+                    "mutation_rate": mutation_rate,
+                    "diversity_injection": (
+                        bool(getattr(_cfg, "PHASE2_DIVERSITY_RECOVERY_ENABLED", True))
+                        and unique_ratio
+                        < float(
+                            getattr(
+                                _cfg,
+                                "PHASE2_DIVERSITY_RECOVERY_MIN_UNIQUE_RATIO",
+                                0.30,
+                            )
+                        )
+                    ),
+                },
+            )
+            # #endregion
 
         gen_eval_stats = _merge_gen_eval_stats(parent_stats, off_stats)
         history[-1]["eval_cache_hit_rate"] = _eval_cache_hit_rate(
@@ -1458,6 +1596,21 @@ def _run_nsga3(
             _merge_metrics_by_key.get(chromosome_key(population[i]), {})
             for i in range(n_alive)
         ]
+        # #region agent log
+        next_pop_keys = {chromosome_key(population[i]) for i in range(n_alive)}
+        _agent_debug_log(
+            "E",
+            "evox_runner.py:_run_nsga3:env_selection",
+            "post-selection population diversity",
+            {
+                "gen": gen,
+                "next_pop_unique_count": len(next_pop_keys),
+                "next_pop_unique_ratio": float(
+                    len(next_pop_keys) / max(n_alive, 1)
+                ),
+            },
+        )
+        # #endregion
 
     metrics_by_chrom = _metrics_dict_from_population(population, metrics_cache)
     harvest_archive = _harvest_archive_chromosomes(
