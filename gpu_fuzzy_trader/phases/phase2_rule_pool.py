@@ -590,19 +590,13 @@ def compute_phase2_objectives_from_metrics(
         -sortino_for_obj
         + (_cfg.PHASE2_SUPPORT_PENALTY_WEIGHT_F1 * support_penalty)
         + diversity_penalty
-        + cond_penalty
-        + trade_penalty
-        + drawdown_gate_penalty
         + infeasible_penalty
     )
     f2 = (
         max_dd
         + (_cfg.PHASE2_SUPPORT_PENALTY_WEIGHT_F2 * support_penalty)
-        + diversity_penalty
-        + cond_penalty
-        + trade_penalty
         + drawdown_gate_penalty
-        + infeasible_penalty
+        + trade_penalty
     )
     f3 = (
         -f3_val
@@ -610,8 +604,6 @@ def compute_phase2_objectives_from_metrics(
         + diversity_penalty
         + cond_penalty
         + trade_penalty
-        + drawdown_gate_penalty
-        + infeasible_penalty
     )
 
     if val_metrics is not None:

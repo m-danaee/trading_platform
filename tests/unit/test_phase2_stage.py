@@ -92,7 +92,7 @@ class TestStageObjectivePenalties:
         )
 
         assert obj_a[0] > obj_b[0]
-        assert obj_a[1] > obj_b[1]
+        assert obj_a[1] == obj_b[1]
         assert obj_a[2] > obj_b[2]
 
 

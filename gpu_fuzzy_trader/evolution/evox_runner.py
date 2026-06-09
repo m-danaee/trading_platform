@@ -79,30 +79,8 @@ def _agent_debug_log(
     *,
     run_id: str = "pre-fix",
 ) -> None:
-    import json
+    return
 
-    payload = {
-        "sessionId": "faf67e",
-        "hypothesisId": hypothesis_id,
-        "location": location,
-        "message": message,
-        "data": data,
-        "timestamp": int(time.time() * 1000),
-        "runId": run_id,
-    }
-    try:
-        from pathlib import Path
-
-        log_path = (
-            Path(__file__).resolve().parents[2] /
-            ".cursor" / "debug-faf67e.log"
-        )
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(log_path, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(payload) + "\n")
-    except OSError:
-        pass
-# #endregion
 
 _EVOX_AVAILABLE = False
 _EVOX_IMPORT_ERROR: str | None = None
@@ -227,6 +205,8 @@ def _update_hall_of_fame(
     hall_of_fame: dict[tuple[int, ...], np.ndarray],
     population: np.ndarray,
     pareto_indices: list[int],
+    *,
+    max_entries: int = 500,
 ) -> None:
     """Accumulate unique Pareto chromosomes discovered across generations."""
     from gpu_fuzzy_trader.phases.phase2_sparse_encoding import chromosome_key
@@ -234,6 +214,10 @@ def _update_hall_of_fame(
     for i in pareto_indices:
         chrom = population[int(i)].copy()
         hall_of_fame[chromosome_key(chrom)] = chrom
+    overflow = len(hall_of_fame) - int(max_entries)
+    if overflow > 0:
+        for key in list(hall_of_fame.keys())[:overflow]:
+            del hall_of_fame[key]
 
 
 def _val_metrics_from_cache(metrics: dict) -> dict | None:
@@ -255,6 +239,8 @@ def _val_metrics_from_cache(metrics: dict) -> dict | None:
 def _build_diversity_reference(
     hall_of_fame: dict[tuple[int, ...], np.ndarray],
     pareto_archive: list[np.ndarray],
+    *,
+    max_refs: int = 500,
 ) -> list[np.ndarray]:
     """Chromosomes used for Hamming diversity pressure beyond the live Pareto set."""
     refs: list[np.ndarray] = []
@@ -267,6 +253,8 @@ def _build_diversity_reference(
             continue
         seen.add(key)
         refs.append(chrom.copy())
+        if len(refs) >= int(max_refs):
+            break
     return refs
 
 
@@ -704,7 +692,7 @@ def _inject_diversity_recovery(
                     rng,
                     init_strategy=_cfg.PHASE2_INIT_STRATEGY,
                     stratum_fractions=_cfg.PHASE2_INIT_STRATUM_FRACTIONS,
-                    feature_probs=feature_probs,
+                    feature_probs=None,
                 )
             )
     else:
@@ -715,7 +703,7 @@ def _inject_diversity_recovery(
                 rng,
                 init_strategy=_cfg.PHASE2_INIT_STRATEGY,
                 stratum_fractions=_cfg.PHASE2_INIT_STRATUM_FRACTIONS,
-                feature_probs=feature_probs,
+                feature_probs=None,
             )
         )
 
@@ -1072,7 +1060,11 @@ def _trim_global_metrics_cache(
     overflow = len(global_metrics_cache) - int(max_size)
     if overflow <= 0:
         return
-    for key in list(global_metrics_cache.keys())[:overflow]:
+    import numpy as _trim_np
+    keys_to_remove = _trim_np.random.choice(
+        list(global_metrics_cache.keys()), size=overflow, replace=False,
+    )
+    for key in keys_to_remove:
         global_metrics_cache.pop(key, None)
 
 

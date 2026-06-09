@@ -718,7 +718,7 @@ SORTINO_CAP = 5.0
 # SORTINO_SCALE — divisor inside tanh(raw_sortino / scale); controls saturation.
 #   Higher → less compression; extreme Sortino values still differentiate f1.
 #   Lower  → aggressive compression; reduces Sortino-driven dominance.
-SORTINO_SCALE = 3.0
+SORTINO_SCALE = 5.0
 
 # PHASE2_JOINT_TRAIN_VAL — fitness uses min(train, val) Sortino/return where applicable.
 #   True  → slower (eval val every gen) but aligned with deployment; less overfit.
@@ -814,7 +814,7 @@ PHASE2_PLATEAU_EARLY_STOP_DISABLED_IN_CV = False
 PHASE2_PLATEAU_USE_ROBUST_RETURN = True
 
 PHASE2_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO = True
-PHASE2_PLATEAU_BLOCK_WHEN_DIVERSITY_LOW = True
+PHASE2_PLATEAU_BLOCK_WHEN_DIVERSITY_LOW = False
 
 # PHASE2_FEASIBILITY_VIOLATION_WEIGHT — scales soft penalty for floor violations.
 #   Higher → infeasible rules pushed far down on all objectives.
@@ -867,21 +867,21 @@ PHASE2_STAGE_B_GENERATIONS = 40
 # PHASE2_STAGE_B_SEED_TOP_K — elites from Stage A seeded into Stage B.
 #   Higher → broader refinement starting set; slower Stage B per gen.
 #   Lower  → refine only top performers; risk missing dark horses.
-PHASE2_STAGE_B_SEED_TOP_K = 100
+PHASE2_STAGE_B_SEED_TOP_K = 50
 
 # PHASE2_STAGE_B_SEED_FRACTION — fraction of Stage B pop seeded from Stage A elites.
 #   Higher → more refinement around known good regions; risk of clone collapse.
 #   Lower  → more random exploration in Stage B.
-PHASE2_STAGE_B_SEED_FRACTION = 0.50
+PHASE2_STAGE_B_SEED_FRACTION = 0.30
 
 # --- Stage A hyperparameters (exploration: higher mutation, stronger diversity) ---
 
 # PHASE2_STAGE_A_MUTATION_RATE — per-gene mutation in Stage A.
 #   Higher → more genetic exploration before Stage B refinement.
-PHASE2_STAGE_A_MUTATION_RATE = 0.18
+PHASE2_STAGE_A_MUTATION_RATE = 0.25
 
 # PHASE2_STAGE_A_MUTATION_WEIGHTED_ACTIVATE_PROB — bias toward activating genes in A.
-PHASE2_STAGE_A_MUTATION_WEIGHTED_ACTIVATE_PROB = 0.75
+PHASE2_STAGE_A_MUTATION_WEIGHTED_ACTIVATE_PROB = 0.50
 
 # PHASE2_STAGE_A_DIVERSITY_PENALTY — crowding penalty on objectives in Stage A.
 PHASE2_STAGE_A_DIVERSITY_PENALTY = 10.0
@@ -938,10 +938,10 @@ PHASE2_VIABILITY_RECOVERY_DEPLOYABLE_MUTATE_FRACTION = 0.5
 # --- Stage B hyperparameters (refinement: lower mutation, allow clustering) ---
 
 # PHASE2_STAGE_B_MUTATION_RATE — per-gene mutation in Stage B.
-PHASE2_STAGE_B_MUTATION_RATE = 0.10
+PHASE2_STAGE_B_MUTATION_RATE = 0.18
 
 # PHASE2_STAGE_B_MUTATION_WEIGHTED_ACTIVATE_PROB — conservative gene activation in B.
-PHASE2_STAGE_B_MUTATION_WEIGHTED_ACTIVATE_PROB = 0.60
+PHASE2_STAGE_B_MUTATION_WEIGHTED_ACTIVATE_PROB = 0.40
 
 # PHASE2_STAGE_B_DIVERSITY_PENALTY — weaker crowding penalty during refinement.
 PHASE2_STAGE_B_DIVERSITY_PENALTY = 5.0
@@ -1086,7 +1086,7 @@ PHASE2_INIT_STRATUM_FRACTIONS = (0.67, 0.33)
 # PHASE2_INIT_SOFTMAX_TEMP — temperature for weighted feature activation in init.
 #   Higher → more uniform random feature picks.
 #   Lower  → strongly favor high-MI features in initial conditions.
-PHASE2_INIT_SOFTMAX_TEMP = 0.5
+PHASE2_INIT_SOFTMAX_TEMP = 1.5
 
 PHASE2_INIT_SCORE_EPS = 1e-6
 
@@ -1098,12 +1098,12 @@ PHASE2_INIT_UNIFORM_MIX = 0.05
 # PHASE2_MUTATION_RATE — per-gene mutation probability.
 #   Higher → more exploration, noisier convergence, better escape local optima.
 #   Lower  → finer local search, risk of premature convergence.
-PHASE2_MUTATION_RATE = 0.14
+PHASE2_MUTATION_RATE = 0.20
 
 # PHASE2_MUTATION_WEIGHTED_ACTIVATE_PROB — bias mutations toward activating genes.
 #   Higher → mutations tend to add conditions rather than dont_care.
 #   Lower  → mutations more often deactivate or flip existing conditions.
-PHASE2_MUTATION_WEIGHTED_ACTIVATE_PROB = 0.70
+PHASE2_MUTATION_WEIGHTED_ACTIVATE_PROB = 0.45
 
 
 # =============================================================================
