@@ -1,6 +1,9 @@
 from gpu_fuzzy_trader import config as c
 
 def test_new_config_parameters_exist():
+    assert c.DEBUG_SYMBOL_SCOPE_ENABLED is False
+    assert c.DEBUG_SYMBOL == "1"
+    assert c.DEBUG_SYMBOL_COUNT == 1
     assert c.PHASE2_SYMBOL_SPECIALIST_ENABLED is True
     assert c.PHASE2_ISLAND_EPOCH_GENERATIONS >= 1
     assert c.PHASE2_MIGRATION_SEED_FRACTION < 1.0

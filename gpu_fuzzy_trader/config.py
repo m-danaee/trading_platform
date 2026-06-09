@@ -38,6 +38,8 @@ from __future__ import annotations
 
 import os
 
+import pandas as pd
+
 # Repo root (parent of gpu_fuzzy_trader/) — paths outside per-run OUTPUTS_DIR.
 _PROJECT_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), os.pardir))
@@ -129,6 +131,65 @@ PHASE2_SHARED_ARCHIVE_MIN_SYMBOLS = 3
 PHASE2_SHARED_ARCHIVE_MIN_ROBUST_SCORE = 1.0
 PHASE3_SYMBOL_RULE_MIN_TRAIN_TRADES = 17
 PHASE3_SYMBOL_RULE_MIN_VAL_TRADES = 5
+
+# Debug: scope pipeline to N symbols starting at DEBUG_SYMBOL (sorted universe).
+DEBUG_SYMBOL_SCOPE_ENABLED = True
+DEBUG_SYMBOL = "1"
+DEBUG_SYMBOL_COUNT = 2
+
+
+def filter_df_to_symbols(df: pd.DataFrame, symbols: list[str]) -> pd.DataFrame:
+    """Return rows for the given symbols; raises if column missing or no rows."""
+    if "symbol" not in df.columns:
+        raise ValueError(
+            "DataFrame must contain a 'symbol' column for symbol scope")
+    sym_set = {str(s) for s in symbols}
+    scoped = df[df["symbol"].astype(str).isin(sym_set)]
+    if scoped.empty:
+        raise ValueError(f"No rows for symbols {list(symbols)!r}")
+    return scoped.reset_index(drop=True)
+
+
+def filter_df_to_symbol(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
+    """Return rows for a single symbol; raises if column missing or no rows."""
+    return filter_df_to_symbols(df, [symbol])
+
+
+def resolve_debug_symbols(train_df) -> list[str] | None:
+    """Return N debug symbols starting at DEBUG_SYMBOL when scope is enabled."""
+    if not DEBUG_SYMBOL_SCOPE_ENABLED:
+        return None
+    count = int(DEBUG_SYMBOL_COUNT)
+    if count < 1:
+        raise ValueError(
+            "DEBUG_SYMBOL_SCOPE_ENABLED is True but DEBUG_SYMBOL_COUNT < 1"
+        )
+    start_symbol = str(DEBUG_SYMBOL).strip()
+    if not start_symbol:
+        raise ValueError(
+            "DEBUG_SYMBOL_SCOPE_ENABLED is True but DEBUG_SYMBOL is empty"
+        )
+    if train_df is None or getattr(train_df, "empty", True):
+        raise ValueError(
+            "DEBUG_SYMBOL_SCOPE_ENABLED but train data is empty"
+        )
+    if "symbol" not in train_df.columns:
+        raise ValueError(
+            "DEBUG_SYMBOL_SCOPE_ENABLED but train data has no 'symbol' column"
+        )
+    available = sorted(
+        train_df["symbol"].dropna().astype(str).unique().tolist())
+    if not available:
+        raise ValueError(
+            "DEBUG_SYMBOL_SCOPE_ENABLED but train data has no symbols"
+        )
+    if start_symbol not in available:
+        raise ValueError(
+            f"DEBUG_SYMBOL {start_symbol!r} not in train data; "
+            f"available symbols: {available}"
+        )
+    start_idx = available.index(start_symbol)
+    return available[start_idx:start_idx + count]
 
 
 def phase2_symbol_pool_path(
@@ -430,14 +491,19 @@ PHASE1_REGIME_MODEL_PATH = os.path.join(
 # Peak GPU RAM scales ~linearly with this value (largest VRAM lever).
 #   Higher → more statistical power, slower, OOM risk on small GPUs.
 #   Lower  → faster, less RAM; trade/support floors may need proportional cut.
-PHASE1_SAMPLING_TOTAL = 300_000
+PHASE1_SAMPLING_TOTAL = 701_000
 
 # PHASE2_GPU_BATCH_SIZE — chromosomes per JAX vmap chunk in simulate_rule_batch.
 # Peak VRAM scales ~linearly (rule matching is O(batch × rows × conditions)).
-# Auto-tuned at runtime via _gpu_runtime.resolve_phase2_gpu_batch_size.
-#   Higher → faster throughput until OOM; try 64 on T4, 16 on 8 GiB.
+# Used directly when PHASE2_GPU_BATCH_SIZE_AUTO is False; otherwise VRAM-capped.
+#   Higher → faster throughput until OOM; 128 is fine on Colab T4 when VRAM headroom.
 #   Lower  → safer on small GPUs, more kernel launches, slower.
-PHASE2_GPU_BATCH_SIZE = 128
+PHASE2_GPU_BATCH_SIZE = 198
+
+# PHASE2_GPU_BATCH_SIZE_AUTO — cap batch size by detected GPU VRAM at runtime.
+#   True  → apply VRAM tiers in _gpu_runtime (e.g. T4 ≤16 GiB → min(config, 64)).
+#   False → use PHASE2_GPU_BATCH_SIZE exactly (env PHASE2_GPU_BATCH_SIZE still wins).
+PHASE2_GPU_BATCH_SIZE_AUTO = False
 
 # PHASE2_SCAN_UNROLL — lax.scan unroll for equity simulation.
 #   Higher → fewer kernel launches, longer XLA compile, slightly more VRAM.

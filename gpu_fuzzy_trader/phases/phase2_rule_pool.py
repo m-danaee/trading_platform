@@ -194,14 +194,6 @@ def _resolve_history_path(direction: str, symbol: str | None = None) -> str:
     return _cfg.PHASE2_HISTORY_PATHS[direction]
 
 
-def _filter_df_to_symbol(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
-    if "symbol" not in df.columns:
-        raise ValueError("train_df must contain a 'symbol' column for symbol scope")
-    scoped = df[df["symbol"].astype(str) == str(symbol)]
-    if scoped.empty:
-        raise ValueError(f"No rows for symbol {symbol!r}")
-    return scoped.reset_index(drop=True)
-
 # ---------------------------------------------------------------------------
 # EvoX optional import
 # ---------------------------------------------------------------------------
@@ -1811,9 +1803,11 @@ class Rule_Pool_Generator:
         scoped_train_df = train_df
         scoped_val_df = val_df
         if self.symbol_scope is not None:
-            scoped_train_df = _filter_df_to_symbol(train_df, self.symbol_scope)
+            scoped_train_df = _cfg.filter_df_to_symbol(
+                train_df, self.symbol_scope)
             if val_df is not None:
-                scoped_val_df = _filter_df_to_symbol(val_df, self.symbol_scope)
+                scoped_val_df = _cfg.filter_df_to_symbol(
+                    val_df, self.symbol_scope)
 
         # Sample training data to budget, then slim to backtest-only columns
         sample_seed = seed if seed is not None else _cfg.PHASE2_SEED

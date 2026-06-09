@@ -33,6 +33,18 @@ def test_resolve_batch_size_vram_tiers(monkeypatch) -> None:
     assert resolve_phase2_gpu_batch_size() == 96
 
 
+def test_resolve_batch_size_config_auto_disabled(monkeypatch) -> None:
+    monkeypatch.delenv("PHASE2_GPU_BATCH_SIZE", raising=False)
+    monkeypatch.delenv("PHASE2_GPU_BATCH_SIZE_AUTO", raising=False)
+    monkeypatch.setattr(_cfg, "PHASE2_GPU_BATCH_SIZE", 128)
+    monkeypatch.setattr(_cfg, "PHASE2_GPU_BATCH_SIZE_AUTO", False)
+
+    from gpu_fuzzy_trader import _gpu_runtime as gr
+
+    monkeypatch.setattr(gr, "detect_gpu_vram_gb", lambda: 15.0)
+    assert resolve_phase2_gpu_batch_size() == 128
+
+
 def test_resolve_batch_size_respects_config_cap(monkeypatch) -> None:
     monkeypatch.delenv("PHASE2_GPU_BATCH_SIZE", raising=False)
     monkeypatch.setenv("PHASE2_GPU_BATCH_SIZE_AUTO", "true")

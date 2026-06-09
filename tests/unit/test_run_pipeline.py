@@ -1125,3 +1125,106 @@ class TestSymbolSpecialistOrchestration:
         assert set(result["long"]) == {"SYM_A", "SYM_B"}
         assert len(epoch_calls) >= 4
         assert len(getattr(orch, "_phase2_migration_log", [])) >= 1
+
+
+class TestDebugSymbolScope:
+    def test_debug_symbol_scope_filters_one_symbol(self, monkeypatch) -> None:
+        monkeypatch.setattr(_cfg, "DEBUG_SYMBOL_SCOPE_ENABLED", True)
+        monkeypatch.setattr(_cfg, "DEBUG_SYMBOL", "1")
+        monkeypatch.setattr(_cfg, "DEBUG_SYMBOL_COUNT", 1)
+
+        train_df = _make_df(n_rows=200, symbols=["1", "10"])
+        val_df = _make_df(n_rows=100, symbols=["1", "10"])
+        fold = PurgedFold(
+            fold_index=0,
+            train_df=train_df.copy(),
+            val_df=val_df.copy(),
+        )
+        orch = Pipeline_Orchestrator()
+        orch._cv_folds = [fold]
+
+        scoped_train, scoped_val = orch._apply_debug_symbol_scope(
+            train_df, val_df)
+
+        assert set(scoped_train["symbol"].unique()) == {"1"}
+        assert set(scoped_val["symbol"].unique()) == {"1"}
+        assert len(scoped_train) == 100
+        assert len(scoped_val) == 50
+        assert set(orch._cv_folds[0].train_df["symbol"].unique()) == {"1"}
+        assert set(orch._cv_folds[0].val_df["symbol"].unique()) == {"1"}
+        assert _cfg.enumerate_phase2_symbols(scoped_train) == ["1"]
+
+    def test_debug_symbol_scope_filters_multiple_symbols(self, monkeypatch) -> None:
+        monkeypatch.setattr(_cfg, "DEBUG_SYMBOL_SCOPE_ENABLED", True)
+        monkeypatch.setattr(_cfg, "DEBUG_SYMBOL", "1")
+        monkeypatch.setattr(_cfg, "DEBUG_SYMBOL_COUNT", 2)
+
+        train_df = _make_df(n_rows=200, symbols=["1", "10", "20"])
+        val_df = _make_df(n_rows=150, symbols=["1", "10", "20"])
+        orch = Pipeline_Orchestrator()
+
+        scoped_train, scoped_val = orch._apply_debug_symbol_scope(
+            train_df, val_df)
+
+        assert set(scoped_train["symbol"].unique()) == {"1", "10"}
+        assert _cfg.enumerate_phase2_symbols(scoped_train) == ["1", "10"]
+        assert len(scoped_train) == 132
+        assert len(scoped_val) == 100
+
+    def test_debug_symbol_starts_from_anchor(self, monkeypatch) -> None:
+        monkeypatch.setattr(_cfg, "DEBUG_SYMBOL_SCOPE_ENABLED", True)
+        monkeypatch.setattr(_cfg, "DEBUG_SYMBOL", "10")
+        monkeypatch.setattr(_cfg, "DEBUG_SYMBOL_COUNT", 2)
+
+        train_df = _make_df(n_rows=200, symbols=["1", "10", "20"])
+        val_df = _make_df(n_rows=150, symbols=["1", "10", "20"])
+        orch = Pipeline_Orchestrator()
+
+        scoped_train, _ = orch._apply_debug_symbol_scope(train_df, val_df)
+
+        assert _cfg.enumerate_phase2_symbols(scoped_train) == ["10", "20"]
+
+    def test_debug_symbol_count_invalid_raises(self, monkeypatch) -> None:
+        monkeypatch.setattr(_cfg, "DEBUG_SYMBOL_SCOPE_ENABLED", True)
+        monkeypatch.setattr(_cfg, "DEBUG_SYMBOL", "1")
+        monkeypatch.setattr(_cfg, "DEBUG_SYMBOL_COUNT", 0)
+
+        train_df = _make_df(n_rows=100, symbols=["1", "10"])
+        val_df = _make_df(n_rows=50, symbols=["1", "10"])
+        orch = Pipeline_Orchestrator()
+
+        with pytest.raises(ValueError, match="DEBUG_SYMBOL_COUNT"):
+            orch._apply_debug_symbol_scope(train_df, val_df)
+
+    def test_debug_symbol_invalid_raises(self, monkeypatch) -> None:
+        monkeypatch.setattr(_cfg, "DEBUG_SYMBOL_SCOPE_ENABLED", True)
+        monkeypatch.setattr(_cfg, "DEBUG_SYMBOL", "MISSING")
+        monkeypatch.setattr(_cfg, "DEBUG_SYMBOL_COUNT", 1)
+
+        train_df = _make_df(n_rows=100, symbols=["1", "10"])
+        val_df = _make_df(n_rows=50, symbols=["1", "10"])
+        orch = Pipeline_Orchestrator()
+
+        with pytest.raises(ValueError, match="available symbols"):
+            orch._apply_debug_symbol_scope(train_df, val_df)
+
+    def test_debug_disabled_passes_through(self, monkeypatch) -> None:
+        monkeypatch.setattr(_cfg, "DEBUG_SYMBOL_SCOPE_ENABLED", False)
+
+        train_df = _make_df(n_rows=200, symbols=["1", "10"])
+        val_df = _make_df(n_rows=100, symbols=["1", "10"])
+        fold = PurgedFold(
+            fold_index=0,
+            train_df=train_df.copy(),
+            val_df=val_df.copy(),
+        )
+        orch = Pipeline_Orchestrator()
+        orch._cv_folds = [fold]
+
+        scoped_train, scoped_val = orch._apply_debug_symbol_scope(
+            train_df, val_df)
+
+        assert len(scoped_train) == len(train_df)
+        assert len(scoped_val) == len(val_df)
+        assert set(scoped_train["symbol"].unique()) == {"1", "10"}
+        assert len(orch._cv_folds[0].train_df) == len(train_df)

@@ -59,10 +59,10 @@ def resolve_phase2_gpu_batch_size() -> int:
     """
     Return Phase 2 GPU vmap chunk size.
 
-    Priority: ``PHASE2_GPU_BATCH_SIZE`` env override > VRAM heuristic >
-    ``config.PHASE2_GPU_BATCH_SIZE``.
+    Priority: ``PHASE2_GPU_BATCH_SIZE`` env override > config auto flag >
+    VRAM heuristic > ``config.PHASE2_GPU_BATCH_SIZE``.
 
-    Heuristic (when ``PHASE2_GPU_BATCH_SIZE_AUTO`` is not disabled):
+    Heuristic (when ``PHASE2_GPU_BATCH_SIZE_AUTO`` is enabled):
 
     Peak VRAM scales ~linearly with batch size (rule match is O(B×N×K)).
     With ``PHASE2_CV_FOLD_WORKERS=1`` only one fold runs at a time, so T4
@@ -78,8 +78,12 @@ def resolve_phase2_gpu_batch_size() -> int:
     if env_override:
         return max(1, int(env_override))
 
+    auto_default = (
+        "true" if getattr(_cfg, "PHASE2_GPU_BATCH_SIZE_AUTO", True) else "false"
+    )
     auto = os.environ.get(
-        "PHASE2_GPU_BATCH_SIZE_AUTO", "true").strip().lower()
+        "PHASE2_GPU_BATCH_SIZE_AUTO", auto_default,
+    ).strip().lower()
     if auto in ("0", "false", "no"):
         return max(1, int(_cfg.PHASE2_GPU_BATCH_SIZE))
 

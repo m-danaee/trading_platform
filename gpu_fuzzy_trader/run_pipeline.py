@@ -236,11 +236,17 @@ def _now_iso() -> str:
 
 def _log_pipeline_config() -> None:
     """Log key hyperparameters at pipeline start."""
+    debug_suffix = ""
+    if _cfg.DEBUG_SYMBOL_SCOPE_ENABLED:
+        debug_suffix = (
+            f" | DEBUG start={_cfg.DEBUG_SYMBOL!r} "
+            f"count={_cfg.DEBUG_SYMBOL_COUNT}"
+        )
     logger.info(
         "Pipeline config: SPLIT_MODE=%s CV_FOLDS=%d | PHASE1 top_k=%d | "
         "PHASE2 algo=%s pop=%d gen=%d joint_train_val=%s cv_workers=%d | "
         "PHASE3 refine pop=%d gen=%d parallel_batch=%s gpu=%s | "
-        "PHASE4 trials=%d wf_splits=%d sampler=%s n_jobs=%d",
+        "PHASE4 trials=%d wf_splits=%d sampler=%s n_jobs=%d%s",
         _cfg.SPLIT_MODE,
         _cfg.CV_N_FOLDS,
         _cfg.PHASE1_TOP_K_FEATURES,
@@ -257,6 +263,7 @@ def _log_pipeline_config() -> None:
         _cfg.PHASE4_WF_SPLITS,
         _cfg.PHASE4_SAMPLER,
         _cfg.PHASE4_N_JOBS,
+        debug_suffix,
     )
 
 
@@ -856,7 +863,7 @@ class Pipeline_Orchestrator:
                     _cfg.VALIDATION_30_PATH,
                 )
                 self._cv_folds = []
-                return cached_split
+                return self._apply_debug_symbol_scope(*cached_split)
 
         logger.info("Loading training data from %s …", _cfg.TRAIN_CSV_PATH)
         loader = Data_Loader()
@@ -888,7 +895,42 @@ class Pipeline_Orchestrator:
             len(val_df),
             len(cv_folds),
         )
-        return train_df, val_df
+        return self._apply_debug_symbol_scope(train_df, val_df)
+
+    def _apply_debug_symbol_scope(
+        self,
+        train_df: pd.DataFrame,
+        val_df: pd.DataFrame,
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Filter train/val/CV folds to first N symbols when debug scope is enabled."""
+        from gpu_fuzzy_trader.data.cv_folds import PurgedFold
+
+        symbols = _cfg.resolve_debug_symbols(train_df)
+        if symbols is None:
+            return train_df, val_df
+
+        scoped_train = _cfg.filter_df_to_symbols(train_df, symbols)
+        scoped_val = _cfg.filter_df_to_symbols(val_df, symbols)
+        if self._cv_folds:
+            self._cv_folds = [
+                PurgedFold(
+                    fold_index=fold.fold_index,
+                    train_df=_cfg.filter_df_to_symbols(fold.train_df, symbols),
+                    val_df=_cfg.filter_df_to_symbols(fold.val_df, symbols),
+                )
+                for fold in self._cv_folds
+            ]
+
+        logger.info(
+            "DEBUG SYMBOL SCOPE: enabled, count=%d symbols=%s, "
+            "train=%d val=%d folds=%d",
+            len(symbols),
+            symbols,
+            len(scoped_train),
+            len(scoped_val),
+            len(self._cv_folds),
+        )
+        return scoped_train, scoped_val
 
     @staticmethod
     def _load_cached_split_if_fresh() -> tuple[pd.DataFrame, pd.DataFrame] | None:
