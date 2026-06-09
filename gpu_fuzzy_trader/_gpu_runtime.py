@@ -222,7 +222,7 @@ def _warmup_engine(engine: object, batch_size: int = 1) -> None:
 
     if use_sparse_slots():
         slots = np.tile(empty_slots()[None, :, :], (n, 1, 1))
-        engine.simulate_rule_batch(
+        target.simulate_rule_batch(
             slots,
             tp=_cfg.PHASE2_TP,
             sl=_cfg.PHASE2_SL,
@@ -236,7 +236,7 @@ def _warmup_engine(engine: object, batch_size: int = 1) -> None:
             dc = int(np.asarray(target._dont_cares_jax)[0])
             chrom = np.full((n, k), dc, dtype=np.int32)
 
-        engine.simulate_rule_batch(
+        target.simulate_rule_batch(
             chrom,
             tp=_cfg.PHASE2_TP,
             sl=_cfg.PHASE2_SL,

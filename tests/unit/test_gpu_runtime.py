@@ -72,6 +72,37 @@ def test_resolve_batch_size_low_ram_colab_cap(monkeypatch) -> None:
     assert resolve_phase2_gpu_batch_size() == 32
 
 
+def test_warmup_engine_unwraps_fold_backtest_wrapper(monkeypatch) -> None:
+    """_FoldBacktestEngine only accepts kwargs; warmup must call inner engine."""
+    import numpy as np
+
+    from gpu_fuzzy_trader import _gpu_runtime as gr
+    from gpu_fuzzy_trader.phases.phase2_cv import _FoldBacktestEngine
+
+    calls: list[tuple] = []
+
+    class _Inner:
+        df = [None] * 100
+        _data_matrix_jax = type("M", (), {"shape": (100, 14)})()
+        _dont_cares_jax = np.array([0], dtype=np.int32)
+        _n_regimes = 0
+
+        def simulate_rule_batch(self, chromosomes, tp, sl, capital_pct):
+            calls.append((chromosomes.shape, tp, sl, capital_pct))
+            return [{}]
+
+    inner = _Inner()
+    wrapper = _FoldBacktestEngine(inner)
+    gr._WARMED_SIGNATURES.clear()
+    monkeypatch.setattr(
+        "gpu_fuzzy_trader.phases.phase2_sparse_encoding.use_sparse_slots",
+        lambda: False,
+    )
+    gr._warmup_engine(wrapper, batch_size=2)
+    assert len(calls) == 1
+    assert calls[0][0] == (2, 14)
+
+
 def test_resolve_batch_size_unknown_vram_uses_conservative_cap(monkeypatch) -> None:
     monkeypatch.delenv("PHASE2_GPU_BATCH_SIZE", raising=False)
     monkeypatch.setenv("PHASE2_GPU_BATCH_SIZE_AUTO", "true")
