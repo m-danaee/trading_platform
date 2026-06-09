@@ -119,6 +119,90 @@ PHASE2_ARCHIVE_PATHS = {
     "short": os.path.join(PHASE2_ARCHIVE_DIR, "phase2_short_archive.json"),
 }
 
+# Symbol-specialist Phase 2: one island per direction × symbol.
+PHASE2_SYMBOL_SPECIALIST_ENABLED = True
+PHASE2_SYMBOL_UNIVERSE_MODE = "train_present"
+PHASE2_ISLAND_EPOCH_GENERATIONS = 20
+PHASE2_MIGRATION_EPOCH_INTERVAL = 3
+PHASE2_MIGRATION_SEED_FRACTION = 0.15
+PHASE2_SHARED_ARCHIVE_MIN_SYMBOLS = 3
+PHASE2_SHARED_ARCHIVE_MIN_ROBUST_SCORE = 1.0
+PHASE3_SYMBOL_RULE_MIN_TRAIN_TRADES = 17
+PHASE3_SYMBOL_RULE_MIN_VAL_TRADES = 5
+
+
+def phase2_symbol_pool_path(
+    direction: str,
+    symbol: str,
+    outputs_dir: str | None = None,
+) -> str:
+    """Per-symbol Phase 2 pool under ``outputs/phase2/{direction}/{symbol}/``."""
+    root = outputs_dir or OUTPUTS_DIR
+    return os.path.join(root, "phase2", direction, symbol, "pool.json")
+
+
+def phase2_symbol_history_path(
+    direction: str,
+    symbol: str,
+    outputs_dir: str | None = None,
+) -> str:
+    """Per-symbol Phase 2 history JSON path."""
+    root = outputs_dir or OUTPUTS_DIR
+    return os.path.join(root, "phase2", direction, symbol, "history.json")
+
+
+def phase2_symbol_archive_path(direction: str, symbol: str) -> str:
+    """Persistent local symbol archive (cross-run warm start)."""
+    return os.path.join(PHASE2_ARCHIVE_DIR, direction, symbol, "archive.json")
+
+
+def phase2_shared_archive_path(direction: str) -> str:
+    """Direction-level shared archive of broadly robust rules."""
+    return os.path.join(PHASE2_ARCHIVE_DIR, direction, "shared_archive.json")
+
+
+def enumerate_phase2_symbols(train_df) -> list[str]:
+    """Return sorted symbol universe for symbol-specialist Phase 2."""
+    if PHASE2_SYMBOL_UNIVERSE_MODE != "train_present":
+        raise ValueError(
+            f"Unsupported PHASE2_SYMBOL_UNIVERSE_MODE: {PHASE2_SYMBOL_UNIVERSE_MODE!r}"
+        )
+    if train_df is None or getattr(train_df, "empty", True):
+        return []
+    if "symbol" not in train_df.columns:
+        return []
+    return sorted(train_df["symbol"].dropna().astype(str).unique().tolist())
+
+
+def phase2_pool_path(
+    direction: str,
+    symbol: str | None = None,
+    outputs_dir: str | None = None,
+) -> str:
+    """Resolve Phase 2 pool path (symbol-scoped or legacy direction-level)."""
+    if PHASE2_SYMBOL_SPECIALIST_ENABLED and symbol is not None:
+        return phase2_symbol_pool_path(direction, symbol, outputs_dir)
+    if symbol is None:
+        if outputs_dir is None:
+            return PHASE2_POOL_PATHS[direction]
+        return os.path.join(outputs_dir, f"phase2_{direction}_pool.json")
+    return phase2_symbol_pool_path(direction, symbol, outputs_dir)
+
+
+def phase2_history_path(
+    direction: str,
+    symbol: str | None = None,
+    outputs_dir: str | None = None,
+) -> str:
+    """Resolve Phase 2 history path (symbol-scoped or legacy direction-level)."""
+    if PHASE2_SYMBOL_SPECIALIST_ENABLED and symbol is not None:
+        return phase2_symbol_history_path(direction, symbol, outputs_dir)
+    if symbol is None:
+        if outputs_dir is None:
+            return PHASE2_HISTORY_PATHS[direction]
+        return os.path.join(outputs_dir, f"phase2_{direction}_history.json")
+    return phase2_symbol_history_path(direction, symbol, outputs_dir)
+
 
 # =============================================================================
 # Phase 0 — Schema & labels
@@ -1231,3 +1315,9 @@ assert PHASE2_STAGE_A_MUTATION_RATE >= PHASE2_STAGE_B_MUTATION_RATE, (
 assert PHASE1_SIGN_CONSISTENCY_MIN_FOLDS <= PHASE1_STATIONARITY_FOLDS, (
     "sign-consistency cannot require more folds than stationarity uses"
 )
+assert PHASE2_ISLAND_EPOCH_GENERATIONS >= 1
+assert PHASE2_MIGRATION_EPOCH_INTERVAL >= 1
+assert 0.0 < PHASE2_MIGRATION_SEED_FRACTION < 1.0
+assert PHASE2_SHARED_ARCHIVE_MIN_SYMBOLS >= 1
+assert PHASE3_SYMBOL_RULE_MIN_TRAIN_TRADES >= 1
+assert PHASE3_SYMBOL_RULE_MIN_VAL_TRADES >= 1

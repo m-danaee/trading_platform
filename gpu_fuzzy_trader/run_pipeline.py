@@ -86,6 +86,35 @@ def _resolve_output_root(output_dir: str | None) -> str:
     return os.path.abspath(os.path.expanduser(output_dir))
 
 
+def _phase2_result_has_rules(phase2_result: dict) -> bool:
+    """True when Phase 2 produced at least one rule in any work unit."""
+    if not phase2_result:
+        return False
+    if _cfg.PHASE2_SYMBOL_SPECIALIST_ENABLED:
+        for direction_pools in phase2_result.values():
+            if not isinstance(direction_pools, dict):
+                continue
+            for pool in direction_pools.values():
+                if pool:
+                    return True
+        return False
+    return bool(phase2_result.get("long")) or bool(phase2_result.get("short"))
+
+
+def _phase2_work_units(
+    symbols: list[str],
+    phase1_result: dict[str, list[dict]],
+) -> list[tuple[str, str]]:
+    """Expand direction × symbol islands with Phase 1 feature coverage."""
+    units: list[tuple[str, str]] = []
+    for direction in ("long", "short"):
+        if not phase1_result.get(direction):
+            continue
+        for symbol in symbols:
+            units.append((direction, symbol))
+    return units
+
+
 @contextmanager
 def _temporary_output_paths(output_dir: str | None):
     """Temporarily rebind all cached output paths for one pipeline run."""
@@ -144,6 +173,8 @@ def _temporary_output_paths(output_dir: str | None):
         # Update phase2 module's cached paths
         _phase2_module._POOL_PATHS = _cfg.PHASE2_POOL_PATHS.copy()
         _phase2_module._HISTORY_PATHS = _cfg.PHASE2_HISTORY_PATHS.copy()
+        if _cfg.PHASE2_SYMBOL_SPECIALIST_ENABLED:
+            _phase2_module.rebind_symbol_phase2_paths(output_root, [])
 
         _phase3_module._OUTPUT_PATHS = {
             "long": os.path.join(output_root, "long.json"),
@@ -463,13 +494,11 @@ class Pipeline_Orchestrator:
                 results["phase2"] = phase2_result
 
                 # Check if Phase 2 produced any rules; if not, skip Phases 3 and 4
-                long_pool = phase2_result.get("long", [])
-                short_pool = phase2_result.get("short", [])
-                pool_empty = (not long_pool) and (not short_pool)
+                pool_empty = not _phase2_result_has_rules(phase2_result)
 
                 if pool_empty:
                     logger.warning(
-                        "Phase 2 produced no rules for either direction. "
+                        "Phase 2 produced no rules for any island. "
                         "Skipping Phases 3 and 4."
                     )
                     results["phase3"] = {}
@@ -569,13 +598,11 @@ class Pipeline_Orchestrator:
                     train_df, phase1_result, force=force, val_df=val_df)
                 results["phase2"] = phase2_result
 
-                long_pool = phase2_result.get("long", [])
-                short_pool = phase2_result.get("short", [])
-                pool_empty = (not long_pool) and (not short_pool)
+                pool_empty = not _phase2_result_has_rules(phase2_result)
 
                 if pool_empty:
                     logger.warning(
-                        "Phase 2 produced no rules for either direction. "
+                        "Phase 2 produced no rules for any island. "
                         "Skipping Phases 3 and 4."
                     )
                     results["phase3"] = {}
@@ -1062,15 +1089,21 @@ class Pipeline_Orchestrator:
         phase1_result: dict[str, list[dict]],
         force: bool = False,
         val_df: pd.DataFrame | None = None,
-    ) -> dict[str, list[dict]]:
+    ) -> dict:
         """
         Run Phase 2 (Rule Pool Generation) or skip if valid outputs exist.
 
         Returns
         -------
-        dict[str, list[dict]]
-            {"long": [...], "short": [...]}
+        dict
+            Legacy: ``{"long": [...], "short": [...]}``
+            Symbol specialist: ``{"long": {symbol: [...]}, "short": {...}}``
         """
+        if _cfg.PHASE2_SYMBOL_SPECIALIST_ENABLED:
+            return self._run_phase2_symbol_specialist(
+                train_df, phase1_result, force=force, val_df=val_df,
+            )
+
         phase_name = "Phase 2: Rule Pool Generation"
         start_ts = _now_iso()
         t0 = time.monotonic()
@@ -1150,6 +1183,155 @@ class Pipeline_Orchestrator:
         )
         return pools
 
+    def _run_phase2_symbol_specialist(
+        self,
+        train_df: pd.DataFrame,
+        phase1_result: dict[str, list[dict]],
+        force: bool = False,
+        val_df: pd.DataFrame | None = None,
+    ) -> dict[str, dict[str, list[dict]]]:
+        """Round-robin single-process scheduler over direction × symbol islands."""
+        phase_name = "Phase 2: Symbol Specialist Rule Pools"
+        start_ts = _now_iso()
+        t0 = time.monotonic()
+
+        symbols = _cfg.enumerate_phase2_symbols(train_df)
+        _phase2_module.rebind_symbol_phase2_paths(_cfg.OUTPUTS_DIR, symbols)
+        work_units = _phase2_work_units(symbols, phase1_result)
+        pools: dict[str, dict[str, list[dict]]] = {"long": {}, "short": {}}
+        generators: dict[tuple[str, str], Rule_Pool_Generator] = {}
+        pending_migrants: dict[tuple[str, str], list[dict]] = {}
+        migration_log: list[dict] = []
+        self._phase2_migration_log = migration_log
+
+        total_generations = int(_cfg.PHASE2_GENERATIONS)
+        epoch_gens = int(_cfg.PHASE2_ISLAND_EPOCH_GENERATIONS)
+        epochs_per_island = max(1, (total_generations + epoch_gens - 1) // epoch_gens)
+        total_epochs = epochs_per_island * max(len(work_units), 1)
+
+        for direction in ("long", "short"):
+            if not phase1_result.get(direction):
+                continue
+            for symbol in symbols:
+                if not force:
+                    existing = Rule_Pool_Generator.skip_if_valid(direction, symbol)
+                    if existing is not None:
+                        pools[direction][symbol] = existing
+                        continue
+                try:
+                    generators[(direction, symbol)] = Rule_Pool_Generator(
+                        train_df=train_df,
+                        feature_infos=phase1_result[direction],
+                        direction=direction,
+                        symbol_scope=symbol,
+                        val_df=val_df,
+                        seed=_cfg.PHASE2_SEED,
+                        cv_folds=getattr(self, "_cv_folds", None) or None,
+                    )
+                except ValueError as exc:
+                    logger.warning(
+                        "Phase 2 [%s/%s]: skipping island (%s)",
+                        direction, symbol, exc,
+                    )
+                    pools[direction][symbol] = []
+
+        active_units = [
+            unit for unit in work_units
+            if unit in generators
+        ]
+        global_epoch = 0
+        unit_index = 0
+        completed: dict[tuple[str, str], int] = {unit: 0 for unit in active_units}
+
+        while global_epoch < total_epochs and active_units:
+            if all(
+                completed[u] >= epochs_per_island for u in active_units
+            ):
+                break
+
+            direction, symbol = active_units[unit_index % len(active_units)]
+            unit_index += 1
+            if completed[(direction, symbol)] >= epochs_per_island:
+                continue
+
+            generator = generators[(direction, symbol)]
+            inbound = pending_migrants.pop((direction, symbol), [])
+            if inbound:
+                accepted, rejected = generator.validate_migrants_on_target(inbound)
+                migration_log.append({
+                    "epoch": global_epoch,
+                    "target_direction": direction,
+                    "target_symbol": symbol,
+                    "accepted": len(accepted),
+                    "rejected": len(rejected),
+                })
+                migrant_entries = accepted
+            else:
+                migrant_entries = None
+
+            generator.run_epoch(migrant_entries=migrant_entries)
+            completed[(direction, symbol)] += 1
+            global_epoch += 1
+
+            if global_epoch % int(_cfg.PHASE2_MIGRATION_EPOCH_INTERVAL) == 0:
+                outbound = generator.snapshot_migrants(top_k=5)
+                for target_direction, target_symbol in active_units:
+                    if target_direction != direction or target_symbol == symbol:
+                        continue
+                    pending_migrants.setdefault(
+                        (target_direction, target_symbol), [],
+                    ).extend(outbound)
+
+        symbol_pools_by_direction: dict[str, dict[str, list[dict]]] = {
+            "long": {}, "short": {},
+        }
+        for (direction, symbol), generator in generators.items():
+            try:
+                pool = generator.finalize_island()
+            except Exception as exc:
+                logger.error(
+                    "Phase 2 [%s/%s] finalize failed: %s",
+                    direction, symbol, exc, exc_info=True,
+                )
+                pool = []
+            pools[direction][symbol] = pool
+            symbol_pools_by_direction[direction][symbol] = pool
+
+        for direction in ("long", "short"):
+            if symbol_pools_by_direction[direction]:
+                promoted = _phase2_module.Rule_Pool_Generator.collect_shared_archive_candidates(
+                    direction,
+                    phase1_result.get(direction, []),
+                    symbol_pools_by_direction[direction],
+                )
+                if promoted:
+                    _phase2_module.Rule_Pool_Generator.save_archive(
+                        direction,
+                        phase1_result[direction],
+                        promoted,
+                        shared=True,
+                        source_symbols=list(
+                            symbol_pools_by_direction[direction].keys()
+                        ),
+                    )
+
+        elapsed = time.monotonic() - t0
+        _log_phase_entry(
+            self._log_path, phase_name, start_ts, _now_iso(),
+            elapsed, skipped=False,
+            result_summary={
+                "symbols": len(symbols),
+                "long_rules": sum(
+                    len(p) for p in pools.get("long", {}).values()
+                ),
+                "short_rules": sum(
+                    len(p) for p in pools.get("short", {}).values()
+                ),
+                "migration_events": len(migration_log),
+            },
+        )
+        return pools
+
     # ------------------------------------------------------------------
     # Phase 3
     # ------------------------------------------------------------------
@@ -1206,7 +1388,64 @@ class Pipeline_Orchestrator:
             dir_start_ts = _now_iso()
             dir_t0 = time.monotonic()
 
-            pool = phase2_result.get(direction, [])
+            pool_payload = phase2_result.get(direction, [])
+            if _cfg.PHASE2_SYMBOL_SPECIALIST_ENABLED and isinstance(
+                pool_payload, dict,
+            ):
+                if not pool_payload:
+                    logger.warning(
+                        "Phase 3 [%s]: no symbol pools from Phase 2; skipping.",
+                        direction,
+                    )
+                    continue
+                try:
+                    rule_set = _phase3_module.run_symbol_specialist_export(
+                        direction,
+                        pool_payload,
+                        train_df,
+                        val_df,
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "Phase 3 [%s] symbol-specialist export failed: %s",
+                        direction, exc, exc_info=True,
+                    )
+                    rule_set = None
+                dir_elapsed = time.monotonic() - dir_t0
+                if rule_set is not None:
+                    rule_sets[direction] = rule_set
+                    try:
+                        reporter = _reporter_module.Reporter()
+                        reporter.write_symbol_specialist_report(
+                            direction=direction,
+                            symbol_pools=pool_payload,
+                            phase3_export=rule_set,
+                            migration_log=getattr(
+                                self, "_phase2_migration_log", None,
+                            ),
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "Symbol-specialist report failed (non-fatal): %s",
+                            exc,
+                        )
+                    _log_phase_entry(
+                        self._log_path, dir_phase_name, dir_start_ts, _now_iso(),
+                        dir_elapsed, skipped=False,
+                        result_summary={
+                            "rules": len(rule_set.get("rules_set", [])),
+                            "skipped_symbols": rule_set.get("skipped_symbols", []),
+                        },
+                    )
+                else:
+                    _log_phase_entry(
+                        self._log_path, dir_phase_name, dir_start_ts, _now_iso(),
+                        dir_elapsed, skipped=False,
+                        result_summary={"error": "phase failed"},
+                    )
+                continue
+
+            pool = pool_payload
             if not pool:
                 logger.warning(
                     "Phase 3 [%s]: empty pool from Phase 2; skipping direction.",

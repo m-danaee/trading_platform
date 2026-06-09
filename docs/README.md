@@ -38,6 +38,7 @@ data/train.csv
 | Rule complexity | `MIN_CONDITIONS`, `MAX_CONDITIONS` | Phase 2 |
 | Evolution budget | `PHASE2_POPULATION_SIZE`, `PHASE2_GENERATIONS` | Phase 2 |
 | Warm-start from prior runs | `PHASE2_ARCHIVE_SEED_FRACTION` | Phase 2 |
+| Per-symbol rule evolution | `PHASE2_SYMBOL_SPECIALIST_ENABLED` | Phase 2, 3 |
 | Symbol coverage in teams | `PHASE3_MIN_SYMBOL_COVERAGE` | Phase 3 |
 | Anti-overlap rule teams | `PHASE3_JACCARD_SIMILARITY_GATE` | Phase 3 |
 | Train/val stability gates | `PHASE3_VAL_SORTINO_RATIO_GATE`, `PHASE3_*_GAP_*` | Phase 3 |

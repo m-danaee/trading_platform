@@ -156,7 +156,7 @@ class TestArchiveSaveCallOrdering:
 
         call_order: list[str] = []
 
-        def fake_save_archive(direction, feature_infos, pool):
+        def fake_save_archive(direction, feature_infos, pool, symbol_scope=None, **kwargs):
             call_order.append("save_archive")
             return pool
 
@@ -195,7 +195,7 @@ class TestArchiveSaveCallOrdering:
 
         captured_direction: list[str] = []
 
-        def fake_save_archive(direction, feature_infos, pool):
+        def fake_save_archive(direction, feature_infos, pool, symbol_scope=None, **kwargs):
             captured_direction.append(direction)
             return pool
 

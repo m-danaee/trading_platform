@@ -24,9 +24,10 @@ def get_or_build_rule_mask(
     df: "pd.DataFrame",
     conditions: list[str],
     cache: dict[tuple[str, ...], np.ndarray] | None,
+    rule_number: int = 1,
 ) -> np.ndarray:
     """
-  Return a boolean row mask for *conditions*, using *cache* when provided.
+    Return a boolean row mask for *conditions*, using *cache* when provided.
 
     The cache is updated in place when *cache* is not None.
     """
@@ -35,7 +36,7 @@ def get_or_build_rule_mask(
     key = conditions_cache_key(conditions)
     if cache is not None and key in cache:
         return cache[key]
-    mask = _compute_rule_signal_mask(df, conditions)
+    mask = _compute_rule_signal_mask(df, conditions, rule_number=rule_number)
     if cache is not None:
         cache[key] = mask
     return mask

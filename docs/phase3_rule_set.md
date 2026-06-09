@@ -8,6 +8,8 @@
 
 Phase 3 takes the pool of individual rules from Phase 2 and selects the best **combination** of 2–3 rules to form a complete trading strategy. The key insight is that a team of rules can cover more market conditions than any single rule, and the interaction between rules (priority ordering, symbol coverage) matters.
 
+When `PHASE2_SYMBOL_SPECIALIST_ENABLED` is on, Phase 3 uses **`run_symbol_specialist_export`** instead of greedy + Pareto refinement: it picks the best deployable rule per symbol island, merges identical feature signatures, and writes `symbol is X` conditions (evaluator_v4 parity via `symbol_conditions.py`). Cross-symbol coverage/consistency/robustness penalties in `compute_phase3_objectives` are skipped for these exports. A summary report is written to `outputs/reports/symbol_specialist_{direction}.json`.
+
 ---
 
 ## 1. The Search Problem

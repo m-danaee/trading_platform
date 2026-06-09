@@ -30,6 +30,7 @@ import pytest
 from hypothesis import given, settings, HealthCheck
 from hypothesis import strategies as st
 
+from gpu_fuzzy_trader.backtest.symbol_conditions import parse_symbol_condition
 from gpu_fuzzy_trader.output.writer import Output_Writer, ValidationError
 
 
@@ -38,6 +39,15 @@ from gpu_fuzzy_trader.output.writer import Output_Writer, ValidationError
 # ---------------------------------------------------------------------------
 
 _CONDITION_RE = re.compile(r"^\[(.+?)\] IS (.+)$")
+
+
+def _is_valid_exported_condition(condition: str) -> bool:
+    if parse_symbol_condition(condition) is not None:
+        return True
+    match = _CONDITION_RE.match(condition)
+    if match is None:
+        return False
+    return bool(match.group(1).strip()) and bool(match.group(2).strip())
 
 # Valid fuzzy value names from the design document (all modes)
 _FUZZY_VALUE_NAMES = [
@@ -245,16 +255,18 @@ def test_property_23a_valid_rule_set_schema(rule_set: dict) -> None:
                 f"Rule {i}: 'conditions' must be a non-empty list."
             )
 
-            # Requirement 12.6 / 12.7: each condition matches the required pattern
+            # Requirement 12.6 / 12.7: feature or symbol filter pattern
             for j, cond in enumerate(conditions):
                 assert isinstance(cond, str), (
                     f"Rule {i}, condition {j}: must be a string, got {type(cond).__name__}"
                 )
-                m = _CONDITION_RE.match(cond)
-                assert m is not None, (
-                    f"Rule {i}, condition {j}: {cond!r} does not match "
-                    "'[feature_name] IS Fuzzy Value Name' pattern."
+                assert _is_valid_exported_condition(cond), (
+                    f"Rule {i}, condition {j}: {cond!r} is not a valid feature or "
+                    "symbol filter condition."
                 )
+                if parse_symbol_condition(cond) is not None:
+                    continue
+                m = _CONDITION_RE.match(cond)
                 feature_name = m.group(1).strip()
                 value_name = m.group(2).strip()
                 assert feature_name, (

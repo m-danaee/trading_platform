@@ -291,6 +291,45 @@ class TestWriteAllZeroRejection:
 # Tests: write() — condition string validation
 # ---------------------------------------------------------------------------
 
+class TestWriteSymbolConditionValidation:
+    def test_symbol_is_format_accepted(self):
+        rule = _make_rule(
+            conditions=["symbol is 1", "[feat_x] IS Bullish", "[feat_y] IS High"]
+        )
+        rule_set = {"direction": "long", "rules_set": [rule, rule]}
+        data = _write_and_reload(rule_set)
+        assert data["rules_set"][0]["conditions"][0] == "symbol is 1"
+
+    def test_bracket_symbol_format_accepted(self):
+        rule = _make_rule(
+            conditions=["[symbol] IS 2", "[feat_x] IS Bullish", "[feat_y] IS High"]
+        )
+        rule_set = {"direction": "long", "rules_set": [rule, rule]}
+        data = _write_and_reload(rule_set)
+        assert data["rules_set"][0]["conditions"][0] == "[symbol] IS 2"
+
+    def test_comma_separated_symbol_list_accepted(self):
+        rule = _make_rule(
+            conditions=["symbol is 1,2", "[feat_x] IS Bullish", "[feat_y] IS High"]
+        )
+        rule_set = {"direction": "long", "rules_set": [rule, rule]}
+        data = _write_and_reload(rule_set)
+        assert data["rules_set"][0]["conditions"][0] == "symbol is 1,2"
+
+    def test_empty_symbol_value_raises_validation_error(self):
+        bad_rule = _make_rule(conditions=["symbol is ", "[f] IS High", "[g] IS Low"])
+        rule_set = {"direction": "long", "rules_set": [bad_rule, _make_rule()]}
+        writer = Output_Writer()
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            tmp_path = f.name
+        try:
+            with pytest.raises(ValidationError):
+                writer.write(rule_set, tmp_path)
+        finally:
+            if Path(tmp_path).exists():
+                os.unlink(tmp_path)
+
+
 class TestWriteConditionValidation:
     def test_valid_condition_accepted(self):
         rule = _make_rule(conditions=["[feature_a] IS Bearish"])

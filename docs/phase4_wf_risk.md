@@ -2,7 +2,7 @@
 
 **Module:** `gpu_fuzzy_trader/phases/phase4_wf_optimizer.py` → `WalkForwardRiskOptimizer`
 
-Phase 4 fine-tunes the risk parameters (TP, SL, and capital allocation) for each rule in the strategy selected by Phase 3. The rule conditions are frozen — Phase 4 only adjusts the numbers, not the logic.
+Phase 4 fine-tunes the risk parameters (TP, SL, and capital allocation) for each rule in the strategy selected by Phase 3. The rule conditions are frozen — Phase 4 only adjusts the numbers, not the logic. Symbol filter clauses (`symbol is X`) from symbol-specialist Phase 3 exports are preserved unchanged.
 
 Defaults (see `config.py`): `PHASE4_N_TRIALS = 200`, `PHASE4_WF_SPLITS = 2`, `PHASE4_SAMPLER = "tpe"`, quantized TP/SL steps of `0.5`.
 

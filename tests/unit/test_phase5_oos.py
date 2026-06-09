@@ -22,6 +22,7 @@ import pandas as pd
 import pytest
 
 from gpu_fuzzy_trader import config as _cfg
+from gpu_fuzzy_trader.output.writer import Output_Writer
 from gpu_fuzzy_trader.phases.phase5_oos import (
     OOS_Evaluator,
     _STRATEGY_PATHS,
@@ -140,6 +141,47 @@ class TestLoadStrategies:
         try:
             result = OOS_Evaluator.load_strategies()
             assert result == {}
+        finally:
+            m._STRATEGY_PATHS.update(original)
+
+    def test_loads_strategy_with_symbol_filters(self, tmp_path):
+        import gpu_fuzzy_trader.phases.phase5_oos as m
+
+        long_path = str(tmp_path / "long.json")
+        rule_set = {
+            "direction": "long",
+            "rules_set": [
+                {
+                    "tp": _cfg.PHASE2_TP,
+                    "sl": _cfg.PHASE2_SL,
+                    "capital_pct": _cfg.PHASE2_CAPITAL_PCT,
+                    "conditions": [
+                        "symbol is 1",
+                        "[feat_0] IS Very High",
+                        "[feat_1] IS High",
+                    ],
+                },
+                {
+                    "tp": _cfg.PHASE2_TP,
+                    "sl": _cfg.PHASE2_SL,
+                    "capital_pct": _cfg.PHASE2_CAPITAL_PCT,
+                    "conditions": [
+                        "[symbol] IS 2",
+                        "[feat_0] IS Very High",
+                        "[feat_1] IS High",
+                    ],
+                },
+            ],
+        }
+        Output_Writer().write(rule_set, long_path)
+        original = m._STRATEGY_PATHS.copy()
+        m._STRATEGY_PATHS["long"] = long_path
+        m._STRATEGY_PATHS["short"] = str(tmp_path / "short.json")
+        try:
+            result = OOS_Evaluator.load_strategies()
+            assert "long" in result
+            assert result["long"]["rules_set"][0]["conditions"][0] == "symbol is 1"
+            assert result["long"]["rules_set"][1]["conditions"][0] == "[symbol] IS 2"
         finally:
             m._STRATEGY_PATHS.update(original)
 

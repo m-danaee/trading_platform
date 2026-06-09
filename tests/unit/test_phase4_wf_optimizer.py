@@ -295,6 +295,17 @@ class TestBuildCandidateRuleSet:
         assert built[0]["conditions"] == rules[0]["conditions"]
         assert built[0]["tp"] == 3.0
 
+    def test_symbol_filters_preserved(self):
+        rules = _make_rule_set()["rules_set"]
+        rules[0]["conditions"] = [
+            "symbol is 1",
+            "[symbol] IS 2",
+            "[feat_0] IS Very High",
+        ]
+        params = [{"tp": 3.0, "sl": 1.5, "capital_pct": 25.0}] * 2
+        built = _build_candidate_rule_set(rules, params)
+        assert built[0]["conditions"] == rules[0]["conditions"]
+
 
 class TestMultiCvFoldSplits:
     def test_more_windows_than_single_val_block(self, monkeypatch):

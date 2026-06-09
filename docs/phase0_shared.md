@@ -2,6 +2,8 @@
 
 This document covers the foundational components that every phase depends on: data loading, the train/validation split, the backtest engine, and all shared configuration constants. Understanding these is a prerequisite for understanding any individual phase.
 
+Exported strategies may include optional symbol filters (`symbol is X` or `[symbol] IS X`) alongside feature conditions. Runtime parsing matches `evaluator_v4.ipynb` via `gpu_fuzzy_trader/backtest/symbol_conditions.py` (feature conditions are AND-ed; symbol clauses within a rule are OR-ed).
+
 ---
 
 ## 1. Data Loading — `Data_Loader` (`gpu_fuzzy_trader/data/loader.py`)

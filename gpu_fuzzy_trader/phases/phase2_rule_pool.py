@@ -137,17 +137,70 @@ def _saturating_sortino(raw: float) -> float:
 # ---------------------------------------------------------------------------
 
 # These are set dynamically by run_pipeline._temporary_output_paths()
-# to support run-specific output directories
-_POOL_PATHS = {
+# to support run-specific output directories.
+# Legacy direction keys ("long"/"short") or symbol keys ("long", "SYM_A").
+_POOL_PATHS: dict = {
     "long": _cfg.PHASE2_POOL_PATHS["long"],
     "short": _cfg.PHASE2_POOL_PATHS["short"],
 }
-_HISTORY_PATHS = {
+_HISTORY_PATHS: dict = {
     "long": _cfg.PHASE2_HISTORY_PATHS["long"],
     "short": _cfg.PHASE2_HISTORY_PATHS["short"],
 }
 # Archive stays persistent in project root (not run-specific)
 _ARCHIVE_PATHS = dict(_cfg.PHASE2_ARCHIVE_PATHS)
+
+
+def _pool_path_key(direction: str, symbol: str | None = None):
+    if symbol is not None:
+        return (direction, symbol)
+    return direction
+
+
+def rebind_symbol_phase2_paths(
+    output_root: str,
+    symbols: list[str],
+) -> None:
+    """Register per-symbol pool/history paths for the active run output root."""
+    global _POOL_PATHS, _HISTORY_PATHS
+    if not _cfg.PHASE2_SYMBOL_SPECIALIST_ENABLED:
+        return
+    for direction in ("long", "short"):
+        for symbol in symbols:
+            key = _pool_path_key(direction, symbol)
+            _POOL_PATHS[key] = _cfg.phase2_symbol_pool_path(
+                direction, symbol, output_root,
+            )
+            _HISTORY_PATHS[key] = _cfg.phase2_symbol_history_path(
+                direction, symbol, output_root,
+            )
+
+
+def _resolve_pool_path(direction: str, symbol: str | None = None) -> str:
+    key = _pool_path_key(direction, symbol)
+    if key in _POOL_PATHS:
+        return _POOL_PATHS[key]
+    if symbol is not None:
+        return _cfg.phase2_symbol_pool_path(direction, symbol)
+    return _cfg.PHASE2_POOL_PATHS[direction]
+
+
+def _resolve_history_path(direction: str, symbol: str | None = None) -> str:
+    key = _pool_path_key(direction, symbol)
+    if key in _HISTORY_PATHS:
+        return _HISTORY_PATHS[key]
+    if symbol is not None:
+        return _cfg.phase2_symbol_history_path(direction, symbol)
+    return _cfg.PHASE2_HISTORY_PATHS[direction]
+
+
+def _filter_df_to_symbol(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
+    if "symbol" not in df.columns:
+        raise ValueError("train_df must contain a 'symbol' column for symbol scope")
+    scoped = df[df["symbol"].astype(str) == str(symbol)]
+    if scoped.empty:
+        raise ValueError(f"No rows for symbol {symbol!r}")
+    return scoped.reset_index(drop=True)
 
 # ---------------------------------------------------------------------------
 # EvoX optional import
@@ -352,6 +405,7 @@ def compute_phase2_objectives_from_metrics(
     val_regime_row_counts: np.ndarray | None = None,
     diversity_reference: list[np.ndarray] | None = None,
     stage_params=None,
+    symbol_scope: str | None = None,
 ) -> tuple[np.ndarray, dict]:
     """
     Build Phase 2 minimisation objectives from precomputed train/val metrics.
@@ -431,9 +485,17 @@ def compute_phase2_objectives_from_metrics(
     if profit_factor < _cfg.PHASE2_PROFIT_FACTOR_FLOOR:
         support_penalty += (_cfg.PHASE2_PROFIT_FACTOR_FLOOR - profit_factor) * 5.0
 
-    support_penalty += _symbol_robustness_penalty(metrics)
-    if val_metrics is not None:
-        support_penalty += _symbol_robustness_penalty(val_metrics)
+    if symbol_scope is None:
+        support_penalty += _symbol_robustness_penalty(metrics)
+        if val_metrics is not None:
+            support_penalty += _symbol_robustness_penalty(val_metrics)
+    else:
+        from gpu_fuzzy_trader.phases.phase2_support import (
+            passes_symbol_island_robustness_gate,
+        )
+
+        if not passes_symbol_island_robustness_gate(metrics, val_metrics):
+            support_penalty = max(support_penalty, _cfg.SUPPORT_PENALTY_MAX)
     support_penalty += val_floor_penalty
 
     dd_gate = getattr(_cfg, "PHASE2_MAX_DRAWDOWN_GATE", 20.0)
@@ -555,6 +617,7 @@ def _evaluate_chromosome(
     val_regime_row_counts: np.ndarray | None = None,
     diversity_reference: list[np.ndarray] | None = None,
     stage_params=None,
+    symbol_scope: str | None = None,
 ) -> tuple[np.ndarray, dict]:
     """
     Evaluate a single chromosome and return (objectives, metrics).
@@ -603,6 +666,7 @@ def _evaluate_chromosome(
     if val_regime_row_counts is None and val_engine is not None:
         val_regime_row_counts = getattr(val_engine, "_regime_row_counts", None)
 
+    symbol_scope = getattr(engine, "_symbol_scope", None)
     return compute_phase2_objectives_from_metrics(
         chromosome,
         dont_cares,
@@ -613,6 +677,7 @@ def _evaluate_chromosome(
         val_regime_row_counts=val_regime_row_counts,
         diversity_reference=diversity_reference,
         stage_params=stage_params,
+        symbol_scope=symbol_scope,
     )
 
 
@@ -1597,7 +1662,7 @@ def _validate_archive_payload(
     if missing:
         raise ValueError(f"Phase 2 archive missing keys {missing}: {path}")
 
-    if payload["direction"] not in _ARCHIVE_PATHS:
+    if payload["direction"] not in ("long", "short"):
         raise ValueError(
             f"Phase 2 archive has invalid direction {payload['direction']!r}: {path}"
         )
@@ -1722,6 +1787,7 @@ class Rule_Pool_Generator:
         seed: int | None = None,
         val_df: pd.DataFrame | None = None,
         cv_folds: list | None = None,
+        symbol_scope: str | None = None,
     ) -> None:
         if direction not in ("long", "short"):
             raise ValueError(
@@ -1730,6 +1796,7 @@ class Rule_Pool_Generator:
             raise ValueError("feature_infos must not be empty.")
 
         self.direction = direction
+        self.symbol_scope = str(symbol_scope) if symbol_scope is not None else None
         self.feature_infos = feature_infos
         self.pop_size = pop_size if pop_size is not None else _cfg.PHASE2_POPULATION_SIZE
         self.n_generations = n_generations if n_generations is not None else _cfg.PHASE2_GENERATIONS
@@ -1738,11 +1805,20 @@ class Rule_Pool_Generator:
         self._regime_row_fractions: np.ndarray | None = None
         self._n_regimes = 0
         self._val_regime_row_counts: np.ndarray | None = None
+        self._evolution_state = None
+        self._island_history: list[dict] = []
+
+        scoped_train_df = train_df
+        scoped_val_df = val_df
+        if self.symbol_scope is not None:
+            scoped_train_df = _filter_df_to_symbol(train_df, self.symbol_scope)
+            if val_df is not None:
+                scoped_val_df = _filter_df_to_symbol(val_df, self.symbol_scope)
 
         # Sample training data to budget, then slim to backtest-only columns
         sample_seed = seed if seed is not None else _cfg.PHASE2_SEED
         sampled = _sample_df(
-            train_df, _cfg.PHASE1_SAMPLING_TOTAL, random_state=sample_seed,
+            scoped_train_df, _cfg.PHASE1_SAMPLING_TOTAL, random_state=sample_seed,
         )
         feature_names = [fi["name"] for fi in feature_infos]
         from gpu_fuzzy_trader.backtest.df_slim import slim_backtest_df
@@ -1785,10 +1861,10 @@ class Rule_Pool_Generator:
                 n_regimes=self._n_regimes,
             )
 
-            if val_df is not None and _cfg.PHASE2_JOINT_TRAIN_VAL:
+            if scoped_val_df is not None and _cfg.PHASE2_JOINT_TRAIN_VAL:
                 try:
                     val_sampled = _sample_df(
-                        val_df,
+                        scoped_val_df,
                         _cfg.PHASE1_SAMPLING_TOTAL,
                         random_state=sample_seed,
                     )
@@ -1874,6 +1950,9 @@ class Rule_Pool_Generator:
                 )
                 if self._regime_row_fractions is not None:
                     engine._regime_row_fractions = self._regime_row_fractions
+                symbol_scope = getattr(self, "symbol_scope", None)
+                if symbol_scope is not None:
+                    engine._symbol_scope = symbol_scope
                 logger.info(
                     "Phase 2 using GPUBacktestEngine (backend: %s)",
                     engine.backend,
@@ -1895,6 +1974,9 @@ class Rule_Pool_Generator:
         )
         if self._regime_row_fractions is not None:
             engine._regime_row_fractions = self._regime_row_fractions
+        symbol_scope = getattr(self, "symbol_scope", None)
+        if symbol_scope is not None:
+            engine._symbol_scope = symbol_scope
         return engine
 
     # ------------------------------------------------------------------
@@ -1931,7 +2013,9 @@ class Rule_Pool_Generator:
 
         previous_pool: list[dict] = []
         try:
-            loaded_pool = Rule_Pool_Generator.load_pool(self.direction)
+            loaded_pool = Rule_Pool_Generator.load_pool(
+                self.direction, self.symbol_scope,
+            )
             if loaded_pool:
                 previous_pool = loaded_pool
         except ValueError:
@@ -2074,8 +2158,8 @@ class Rule_Pool_Generator:
             len(pool),
         )
 
-        pool_path = _POOL_PATHS[self.direction]
-        history_path = _HISTORY_PATHS[self.direction]
+        pool_path = _resolve_pool_path(self.direction, self.symbol_scope)
+        history_path = _resolve_history_path(self.direction, self.symbol_scope)
         pool_dir = os.path.dirname(pool_path)
         history_dir = os.path.dirname(history_path)
         if pool_dir:
@@ -2104,11 +2188,17 @@ class Rule_Pool_Generator:
 
         try:
             saved = Rule_Pool_Generator.save_archive(
-                self.direction, self.feature_infos, pool
+                self.direction,
+                self.feature_infos,
+                pool,
+                symbol_scope=self.symbol_scope,
+            )
+            archive_path = Rule_Pool_Generator._archive_path_for(
+                self.direction, self.symbol_scope,
             )
             logger.info(
                 "Phase 2 [%s]: archive saved with %d rules to %s",
-                self.direction, len(saved), _ARCHIVE_PATHS[self.direction],
+                self.direction, len(saved), archive_path,
             )
         except Exception as exc:
             logger.warning(
@@ -2130,30 +2220,17 @@ class Rule_Pool_Generator:
         release_phase2_resources()
 
     @staticmethod
-    def load_pool(direction: str) -> Optional[list[dict]]:
+    def load_pool(
+        direction: str,
+        symbol: str | None = None,
+    ) -> Optional[list[dict]]:
         """
         Load existing pool if valid, return None if missing.
-
-        Parameters
-        ----------
-        direction : str
-            "long" or "short".
-
-        Returns
-        -------
-        list[dict] | None
-            Loaded pool if file exists and is valid JSON, None if missing.
-
-        Raises
-        ------
-        ValueError
-            If the file exists but is corrupted or has an invalid schema.
         """
-        if direction not in _POOL_PATHS:
+        if direction not in ("long", "short"):
             raise ValueError(
                 f"direction must be 'long' or 'short', got {direction!r}")
-
-        path = _POOL_PATHS[direction]
+        path = _resolve_pool_path(direction, symbol)
         if not os.path.exists(path):
             return None
 
@@ -2208,17 +2285,112 @@ class Rule_Pool_Generator:
         }
 
     @staticmethod
+    def _archive_path_for(
+        direction: str,
+        symbol: str | None = None,
+        *,
+        shared: bool = False,
+    ) -> str:
+        if shared:
+            return _cfg.phase2_shared_archive_path(direction)
+        if symbol is not None:
+            return _cfg.phase2_symbol_archive_path(direction, symbol)
+        return _ARCHIVE_PATHS[direction]
+
+    @staticmethod
+    def _annotate_archive_entries(
+        rules: list[dict],
+        *,
+        symbol_scope: str | None = None,
+        shared_archive: bool = False,
+        source_symbols: list[str] | None = None,
+    ) -> list[dict]:
+        annotated: list[dict] = []
+        for entry in rules:
+            row = dict(entry)
+            if symbol_scope is not None:
+                row["symbol_scope"] = symbol_scope
+            if shared_archive:
+                row["shared_archive"] = True
+            if source_symbols:
+                row["source_symbols"] = sorted(set(source_symbols))
+            val_obj = row.get("val_objectives") or {}
+            train_obj = row.get("objectives") or {}
+            from gpu_fuzzy_trader.phases.phase2_support import compute_robust_score
+
+            row["robust_score"] = compute_robust_score(
+                {
+                    "total_return_pct": float(train_obj.get("total_return_pct", 0.0)),
+                    "profit_factor": float(train_obj.get("profit_factor", 1.0)),
+                    "executed_trades": int(row.get("executed_trades", 0)),
+                    "sortino_ratio": float(train_obj.get("sortino_ratio", 0.0)),
+                    "max_drawdown_pct": float(train_obj.get("max_drawdown_pct", 0.0)),
+                },
+                {
+                    "total_return_pct": float(val_obj.get("total_return_pct", 0.0)),
+                    "profit_factor": float(val_obj.get("profit_factor", 1.0)),
+                    "executed_trades": int(row.get("val_executed_trades", 0)),
+                },
+                source_symbols=source_symbols,
+            )
+            annotated.append(row)
+        return annotated
+
+    @staticmethod
+    def load_local_symbol_archive(
+        direction: str,
+        symbol: str,
+        feature_infos: list[dict],
+    ) -> Optional[dict]:
+        path = Rule_Pool_Generator._archive_path_for(direction, symbol)
+        return Rule_Pool_Generator._load_archive_at(path, direction, feature_infos)
+
+    @staticmethod
+    def load_shared_archive(
+        direction: str,
+        feature_infos: list[dict],
+    ) -> Optional[dict]:
+        path = Rule_Pool_Generator._archive_path_for(direction, shared=True)
+        return Rule_Pool_Generator._load_archive_at(path, direction, feature_infos)
+
+    @staticmethod
+    def _load_archive_at(
+        path: str,
+        direction: str,
+        feature_infos: list[dict],
+    ) -> Optional[dict]:
+        if not os.path.exists(path):
+            return None
+        payload = _read_json_payload(path)
+        if payload is None:
+            return None
+        try:
+            _validate_archive_payload(payload, path, feature_infos)
+        except ValueError as exc:
+            logger.info("Ignoring Phase 2 archive at %s: %s", path, exc)
+            return None
+        rules = _merge_archive_entries(payload["rules"])
+        return {
+            "version": int(payload.get("version", 1)),
+            "direction": direction,
+            "feature_signature": _archive_feature_signature(feature_infos),
+            "rules": rules,
+        }
+
+    @staticmethod
     def save_archive(
         direction: str,
         feature_infos: list[dict],
         rules: list[dict],
+        symbol_scope: str | None = None,
+        *,
+        shared: bool = False,
+        source_symbols: list[str] | None = None,
     ) -> list[dict]:
-        """Merge the latest pool into the persistent archive and write it atomically."""
-        if direction not in _ARCHIVE_PATHS:
-            raise ValueError(
-                f"direction must be 'long' or 'short', got {direction!r}")
-
-        path = _ARCHIVE_PATHS[direction]
+        """Merge the latest pool into a persistent archive and write atomically."""
+        path = Rule_Pool_Generator._archive_path_for(
+            direction, symbol_scope, shared=shared,
+        )
         existing_rules: list[dict] = []
         raw_payload = _read_json_payload(path)
         if raw_payload is not None:
@@ -2234,12 +2406,22 @@ class Rule_Pool_Generator:
         if not merged:
             return []
 
+        merged = Rule_Pool_Generator._annotate_archive_entries(
+            merged,
+            symbol_scope=symbol_scope,
+            shared_archive=shared,
+            source_symbols=source_symbols,
+        )
         payload = {
             "version": 1,
             "direction": direction,
             "feature_signature": _archive_feature_signature(feature_infos),
             "rules": merged,
         }
+        if symbol_scope is not None:
+            payload["symbol_scope"] = symbol_scope
+        if shared:
+            payload["shared_archive"] = True
 
         archive_dir = os.path.dirname(path)
         if archive_dir:
@@ -2252,22 +2434,269 @@ class Rule_Pool_Generator:
         return merged
 
     @staticmethod
-    def skip_if_valid(direction: str) -> Optional[list[dict]]:
-        """
-        Return loaded pool if valid, None if need to run.
+    def collect_shared_archive_candidates(
+        direction: str,
+        feature_infos: list[dict],
+        symbol_pools: dict[str, list[dict]],
+    ) -> list[dict]:
+        """Promote broadly robust rules into the direction-level shared archive."""
+        from gpu_fuzzy_trader.phases.phase2_support import compute_robust_score
 
-        Parameters
-        ----------
-        direction : str
-            "long" or "short".
+        by_chrom: dict[tuple, list[dict]] = {}
+        for symbol, pool in symbol_pools.items():
+            for entry in pool:
+                chrom = entry.get("chromosome")
+                if not isinstance(chrom, list):
+                    continue
+                key = tuple(int(v) for v in chrom)
+                tagged = dict(entry)
+                tagged["symbol_scope"] = symbol
+                by_chrom.setdefault(key, []).append(tagged)
 
-        Returns
-        -------
-        list[dict] | None
-            Loaded pool if file exists and is valid, None otherwise.
-        """
+        promoted: list[dict] = []
+        min_score = float(_cfg.PHASE2_SHARED_ARCHIVE_MIN_ROBUST_SCORE)
+        min_symbols = int(_cfg.PHASE2_SHARED_ARCHIVE_MIN_SYMBOLS)
+        for entries in by_chrom.values():
+            passing: list[dict] = []
+            for entry in entries:
+                train_obj = entry.get("objectives") or {}
+                val_obj = entry.get("val_objectives") or {}
+                score = compute_robust_score(
+                    {
+                        "total_return_pct": float(
+                            train_obj.get("total_return_pct", 0.0)),
+                        "profit_factor": float(train_obj.get("profit_factor", 1.0)),
+                        "executed_trades": int(entry.get("executed_trades", 0)),
+                        "sortino_ratio": float(train_obj.get("sortino_ratio", 0.0)),
+                        "max_drawdown_pct": float(
+                            train_obj.get("max_drawdown_pct", 0.0)),
+                    },
+                    {
+                        "total_return_pct": float(
+                            val_obj.get("total_return_pct", 0.0)),
+                        "profit_factor": float(val_obj.get("profit_factor", 1.0)),
+                        "executed_trades": int(entry.get("val_executed_trades", 0)),
+                    },
+                    source_symbols=[str(entry.get("symbol_scope", ""))],
+                )
+                if score >= min_score:
+                    row = dict(entry)
+                    row["robust_score"] = score
+                    passing.append(row)
+            source_symbols = sorted({
+                str(e.get("symbol_scope"))
+                for e in passing
+                if e.get("symbol_scope")
+            })
+            if len(source_symbols) < min_symbols:
+                continue
+            best = max(passing, key=lambda e: float(e.get("robust_score", 0.0)))
+            best = dict(best)
+            best["shared_archive"] = True
+            best["source_symbols"] = source_symbols
+            promoted.append(best)
+        return _merge_archive_entries(promoted)
+
+    def _assemble_epoch_seed_entries(self) -> list[dict]:
+        """Merge local pool, symbol archive, and shared archive (dominant seeds)."""
+        seeds: list[dict] = []
+        local_pool = Rule_Pool_Generator.load_pool(
+            self.direction, self.symbol_scope,
+        ) or []
+        seeds.extend(_filter_compatible_previous_pool(local_pool, self.feature_infos))
+
+        if self.symbol_scope is not None:
+            local_archive = Rule_Pool_Generator.load_local_symbol_archive(
+                self.direction, self.symbol_scope, self.feature_infos,
+            )
+            if local_archive:
+                seeds.extend(local_archive["rules"])
+            shared_archive = Rule_Pool_Generator.load_shared_archive(
+                self.direction, self.feature_infos,
+            )
+            if shared_archive:
+                seeds.extend(shared_archive["rules"])
+        return _merge_archive_entries(seeds)
+
+    def validate_migrants_on_target(
+        self,
+        migrant_entries: list[dict],
+    ) -> tuple[list[dict], list[dict]]:
+        """Re-score migrants on this island and split accepted vs rejected."""
+        from gpu_fuzzy_trader.phases.phase2_support import passes_migrant_target_gate
+
+        dont_cares = _get_dont_cares(self.feature_infos)
+        accepted: list[dict] = []
+        rejected: list[dict] = []
+        for entry in migrant_entries:
+            chrom = np.asarray(entry["chromosome"], dtype=np.int32)
+            if use_sparse_slots():
+                chrom = dense_to_sparse(chrom, dont_cares)
+            _, metrics = _evaluate_chromosome(
+                chrom,
+                dont_cares,
+                self._engine,
+                [],
+                val_engine=self._val_engine,
+                regime_row_fractions_arr=self._regime_row_fractions,
+                val_regime_row_counts=self._val_regime_row_counts,
+            )
+            val_metrics = {
+                "total_return_pct": float(metrics.get("val_total_return_pct", 0.0)),
+                "profit_factor": float(metrics.get("val_profit_factor", 1.0)),
+                "executed_trades": int(metrics.get("val_executed_trades", 0)),
+                "max_drawdown_pct": float(metrics.get("val_max_drawdown_pct", 0.0)),
+            }
+            train_metrics = {
+                "total_return_pct": float(metrics.get("total_return_pct", 0.0)),
+                "profit_factor": float(metrics.get("profit_factor", 1.0)),
+                "executed_trades": int(metrics.get("executed_trades", 0)),
+                "max_drawdown_pct": float(metrics.get("max_drawdown_pct", 0.0)),
+            }
+            if passes_migrant_target_gate(train_metrics, val_metrics):
+                accepted.append(entry)
+            else:
+                rejected.append({
+                    **entry,
+                    "rejection_reason": "target_gate_failed",
+                })
+        return accepted, rejected
+
+    def run_epoch(
+        self,
+        n_generations: int | None = None,
+        *,
+        migrant_entries: list[dict] | None = None,
+    ) -> list[dict]:
+        """Evolve this island for one scheduler epoch."""
+        from gpu_fuzzy_trader.evolution.evox_runner import (
+            extract_deployable_migrants,
+            run_phase2_evolution_epoch,
+        )
+        from gpu_fuzzy_trader.phases.phase2_init import build_feature_sampling_probs
+
+        epoch_gens = int(
+            n_generations if n_generations is not None
+            else _cfg.PHASE2_ISLAND_EPOCH_GENERATIONS
+        )
+        seed_entries = self._assemble_epoch_seed_entries()
+        dont_cares = _get_dont_cares(self.feature_infos)
+        migrant_fraction = float(_cfg.PHASE2_MIGRATION_SEED_FRACTION)
+        local_fraction = max(0.0, 1.0 - migrant_fraction)
+        local_cap = max(1, int(round(self.pop_size * local_fraction)))
+        migrant_cap = max(0, self.pop_size - local_cap)
+        local_seeds = seed_entries[:local_cap]
+        migrant_seeds = (
+            migrant_entries[:migrant_cap] if migrant_entries else []
+        )
+        seed_chromosomes = _pool_seed_chromosomes(local_seeds + migrant_seeds, dont_cares)
+        rng = np.random.default_rng(self.seed)
+        feature_probs = build_feature_sampling_probs(self.feature_infos)
+        tag = f"Phase 2 [{self.direction}"
+        if self.symbol_scope:
+            tag += f"/{self.symbol_scope}"
+        tag += "]"
+
+        self._evolution_state, epoch_history = run_phase2_evolution_epoch(
+            feature_infos=self.feature_infos,
+            engine=self._engine,
+            pop_size=self.pop_size,
+            n_generations=epoch_gens,
+            rng=rng,
+            state=self._evolution_state,
+            seed_chromosomes=seed_chromosomes,
+            log_tag=tag,
+            val_engine=self._val_engine,
+            regime_row_fractions=self._regime_row_fractions,
+            val_regime_row_counts=self._val_regime_row_counts,
+            feature_probs=feature_probs,
+            init_strategy=_cfg.PHASE2_INIT_STRATEGY,
+            stratum_fractions=_cfg.PHASE2_INIT_STRATUM_FRACTIONS,
+            seed_fraction=migrant_fraction if migrant_entries else _cfg.PHASE2_ARCHIVE_SEED_FRACTION,
+        )
+        self._island_history.extend(epoch_history)
+        return extract_deployable_migrants(self._evolution_state)
+
+    def snapshot_migrants(self, top_k: int = 5) -> list[dict]:
+        from gpu_fuzzy_trader.evolution.evox_runner import extract_deployable_migrants
+
+        if self._evolution_state is None:
+            return []
+        return extract_deployable_migrants(self._evolution_state, top_k=top_k)
+
+    def finalize_island(self) -> list[dict]:
+        """Build, filter, and persist the final pool for this island."""
+        from gpu_fuzzy_trader.evolution.evox_runner import run_phase2_evolution
+        from gpu_fuzzy_trader.phases.phase2_init import build_feature_sampling_probs
+
+        rng = np.random.default_rng(self.seed)
+        feature_probs = build_feature_sampling_probs(self.feature_infos)
+        tag = f"Phase 2 [{self.direction}"
+        if self.symbol_scope:
+            tag += f"/{self.symbol_scope}"
+        tag += "] finalize"
+
+        if self._evolution_state is None:
+            return self.run()
+
+        result = run_phase2_evolution(
+            feature_infos=self.feature_infos,
+            engine=self._engine,
+            pop_size=self.pop_size,
+            n_generations=0,
+            rng=rng,
+            state=self._evolution_state,
+            build_pool=True,
+            return_state=False,
+            log_tag=tag,
+            val_engine=self._val_engine,
+            regime_row_fractions=self._regime_row_fractions,
+            val_regime_row_counts=self._val_regime_row_counts,
+            feature_probs=feature_probs,
+        )
+        new_pool = result[0] if isinstance(result, tuple) else []
+        previous_pool = Rule_Pool_Generator.load_pool(
+            self.direction, self.symbol_scope,
+        ) or []
+        pool = _merge_archive_entries(previous_pool + list(new_pool))
+        pool = _filter_pool_by_admission(pool)
+        pool = Rule_Pool_Generator._annotate_archive_entries(
+            pool, symbol_scope=self.symbol_scope,
+        )
+
+        pool_path = _resolve_pool_path(self.direction, self.symbol_scope)
+        history_path = _resolve_history_path(self.direction, self.symbol_scope)
+        for path in (pool_path, history_path):
+            parent = os.path.dirname(path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+        with open(pool_path, "w", encoding="utf-8") as fh:
+            json.dump(pool, fh, indent=2)
+        with open(history_path, "w", encoding="utf-8") as fh:
+            json.dump(self._island_history, fh, indent=2)
+
+        if self.symbol_scope is not None:
+            Rule_Pool_Generator.save_archive(
+                self.direction,
+                self.feature_infos,
+                pool,
+                symbol_scope=self.symbol_scope,
+            )
+        else:
+            Rule_Pool_Generator.save_archive(
+                self.direction, self.feature_infos, pool,
+            )
+        self._release_resources()
+        return pool
+
+    @staticmethod
+    def skip_if_valid(
+        direction: str,
+        symbol: str | None = None,
+    ) -> Optional[list[dict]]:
+        """Return loaded pool if valid, None if need to run."""
         try:
-            return Rule_Pool_Generator.load_pool(direction)
+            return Rule_Pool_Generator.load_pool(direction, symbol)
         except ValueError:
             return None
 

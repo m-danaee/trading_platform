@@ -12,7 +12,12 @@ Schema (must match evaluator_v3.ipynb exactly):
       "tp": <float>,
       "sl": <float>,
       "capital_pct": <float>,
-      "conditions": ["[feature_name] IS Fuzzy Value Name", ...]
+      "conditions": [
+        "[feature_name] IS Fuzzy Value Name",
+        "symbol is 1",
+        "[symbol] IS 1",
+        ...
+      ]
     }
   ]
 }
@@ -24,7 +29,9 @@ Constraints (Requirements 12.1–12.9):
   - Each rule must have exactly: tp, sl, capital_pct, conditions
   - tp, sl, capital_pct must be floats
   - If all three of tp/sl/capital_pct are zero → reject rule (log ERROR, raise ValidationError)
-  - conditions must be a non-empty list of strings matching [feature_name] IS Fuzzy Value Name
+  - conditions must be a non-empty list of strings: feature conditions match
+    [feature_name] IS Fuzzy Value Name; optional symbol filters match
+    symbol is X or [symbol] IS X (evaluator_v4 parity)
 """
 
 from __future__ import annotations
@@ -33,6 +40,12 @@ import json
 import logging
 import re
 from pathlib import Path
+
+from gpu_fuzzy_trader.backtest.symbol_conditions import (
+    MAX_SYMBOL_FILTERS_PER_RULE,
+    parse_symbol_condition,
+    split_feature_and_symbol_conditions,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,15 +65,35 @@ class ValidationError(Exception):
 _CONDITION_RE = re.compile(r"^\[(.+?)\] IS (.+)$")
 
 
+def _validate_symbol_condition(condition: str) -> None:
+    """Validate an optional symbol filter (symbol is X / [symbol] IS X)."""
+    try:
+        parsed_symbols = parse_symbol_condition(condition)
+    except ValueError as exc:
+        raise ValidationError(str(exc)) from exc
+
+    if parsed_symbols is None:
+        raise ValidationError(
+            f"Condition {condition!r} is not a valid symbol filter."
+        )
+    if not parsed_symbols:
+        raise ValidationError(
+            f"Symbol filter {condition!r} must include at least one symbol value."
+        )
+    if len(parsed_symbols) > MAX_SYMBOL_FILTERS_PER_RULE:
+        raise ValidationError(
+            f"Symbol filter {condition!r} includes more than "
+            f"{MAX_SYMBOL_FILTERS_PER_RULE} symbol values."
+        )
+
+
 def _validate_condition(condition: str) -> None:
     """
     Validate a single condition string.
 
-    Must match: [feature_name] IS Fuzzy Value Name
-      - Must start with '['
-      - Must contain '] IS '
-      - Feature name must be non-empty
-      - Fuzzy value name must be non-empty
+    Accepts either:
+      - [feature_name] IS Fuzzy Value Name
+      - symbol is X / [symbol] IS X (including comma-separated lists)
 
     Raises ValidationError if invalid.
     """
@@ -68,6 +101,11 @@ def _validate_condition(condition: str) -> None:
         raise ValidationError(
             f"Condition must be a string, got {type(condition).__name__!r}: {condition!r}"
         )
+
+    if parse_symbol_condition(condition) is not None:
+        _validate_symbol_condition(condition)
+        return
+
     m = _CONDITION_RE.match(condition)
     if not m:
         raise ValidationError(
@@ -158,6 +196,11 @@ def _validate_rule(rule: object, rule_index: int) -> dict:
             raise ValidationError(
                 f"Rule {rule_index}, condition {i}: {exc}"
             ) from exc
+
+    try:
+        split_feature_and_symbol_conditions(list(conditions), rule_number=rule_index)
+    except ValueError as exc:
+        raise ValidationError(f"Rule {rule_index}: {exc}") from exc
 
     return {
         "tp": tp,

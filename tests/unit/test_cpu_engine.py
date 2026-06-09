@@ -25,9 +25,15 @@ from gpu_fuzzy_trader.backtest.cpu_engine import (
     CPUBacktestEngine,
     _apply_dynamic_rule,
     _build_entries_from_rule_set,
+    _compute_rule_signal_mask,
     _normalize_direction,
     _safe_profit_factor,
     _sortino_ratio_from_returns,
+)
+from gpu_fuzzy_trader.backtest.symbol_conditions import (
+    normalize_symbol_value,
+    parse_symbol_condition,
+    split_feature_and_symbol_conditions,
 )
 
 
@@ -207,6 +213,97 @@ class TestApplyDynamicRule:
 # ---------------------------------------------------------------------------
 # Priority-based rule assignment
 # ---------------------------------------------------------------------------
+
+class TestSymbolConditionParsing:
+    def test_normalize_symbol_value_integer_float_and_text(self):
+        assert normalize_symbol_value(1) == "1"
+        assert normalize_symbol_value(1.0) == "1"
+        assert normalize_symbol_value("1.0") == "1"
+        assert normalize_symbol_value("SYM_A") == "SYM_A"
+
+    def test_parse_symbol_condition_formats(self):
+        assert parse_symbol_condition("symbol is 1") == ["1"]
+        assert parse_symbol_condition("[symbol] IS 1") == ["1"]
+        assert parse_symbol_condition("symbol is 1,2,3") == ["1", "2", "3"]
+        assert parse_symbol_condition("[feat_a] IS Very High") is None
+
+    def test_split_feature_and_symbol_conditions_or_merge(self):
+        features, symbols = split_feature_and_symbol_conditions(
+            [
+                "symbol is 1",
+                "[symbol] IS 2",
+                "[feat_a] IS Very High",
+            ],
+            rule_number=1,
+        )
+        assert features == ["[feat_a] IS Very High"]
+        assert symbols == ["1", "2"]
+
+
+class TestSymbolFilterSignalMask:
+    def _multi_symbol_df(self) -> pd.DataFrame:
+        return pd.DataFrame(
+            {
+                "symbol": [1, 1, 2, 2, "SYM_A", "SYM_A"],
+                "datetime": pd.date_range("2024-01-01", periods=6, freq="5min"),
+                "_symbol_bar_index": list(range(6)),
+                "label_open_next": [100.0] * 6,
+                "label_max_288": [105.0] * 6,
+                "label_min_288": [97.0] * 6,
+                "label_close_288": [102.0] * 6,
+                "label_max_before_min": [1] * 6,
+                "feat_a": [0.9, 0.5, 0.9, 0.5, 0.9, 0.5],
+            }
+        )
+
+    def test_symbol_filter_and_feature_mask(self):
+        df = self._multi_symbol_df()
+        mask = _compute_rule_signal_mask(
+            df,
+            ["symbol is 1", "[feat_a] IS Very High"],
+        )
+        np.testing.assert_array_equal(mask, [True, False, False, False, False, False])
+
+    def test_bracket_symbol_filter_format(self):
+        df = self._multi_symbol_df()
+        mask = _compute_rule_signal_mask(
+            df,
+            ["[symbol] IS 2", "[feat_a] IS Very High"],
+        )
+        np.testing.assert_array_equal(mask, [False, False, True, False, False, False])
+
+    def test_multiple_symbol_conditions_are_or_ed(self):
+        df = self._multi_symbol_df()
+        mask = _compute_rule_signal_mask(
+            df,
+            ["symbol is 1", "symbol is 2", "[feat_a] IS Very High"],
+        )
+        np.testing.assert_array_equal(mask, [True, False, True, False, False, False])
+
+    def test_no_symbol_filter_applies_to_all_symbols(self):
+        df = self._multi_symbol_df()
+        mask = _compute_rule_signal_mask(df, ["[feat_a] IS Very High"])
+        np.testing.assert_array_equal(mask, [True, False, True, False, True, False])
+
+    def test_symbol_only_rule_matches_allowed_symbols(self):
+        df = self._multi_symbol_df()
+        mask = _compute_rule_signal_mask(df, ["symbol is SYM_A"])
+        np.testing.assert_array_equal(mask, [False, False, False, False, True, True])
+
+    def test_build_entries_respects_symbol_filter(self):
+        df = self._multi_symbol_df()
+        rule_set = [
+            {
+                "conditions": ["symbol is 1", "[feat_a] IS Very High"],
+                "tp": 2.0,
+                "sl": 1.0,
+                "capital_pct": 50.0,
+            }
+        ]
+        entries = _build_entries_from_rule_set(df, rule_set)
+        assert len(entries) == 1
+        assert entries[0]["idx"] == 0
+
 
 class TestBuildEntriesFromRuleSet:
     def test_empty_rule_set_returns_empty(self):

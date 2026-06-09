@@ -7,6 +7,9 @@ environmental selection when EvoX is unavailable.
 """
 
 from __future__ import annotations
+
+from dataclasses import dataclass, field
+
 from gpu_fuzzy_trader.phases.phase2_rule_pool import (
     _crossover,
     _mutate,
@@ -31,6 +34,27 @@ from gpu_fuzzy_trader.phases.phase2_stage import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class Phase2EvolutionState:
+    """Resumable NSGA-III state for symbol-island epoch scheduling."""
+
+    population: np.ndarray
+    objectives: np.ndarray
+    metrics_cache: list[dict]
+    pareto_archive: list[np.ndarray]
+    hall_of_fame: dict[tuple[int, ...], np.ndarray]
+    deployable_archive: dict[tuple[int, ...], dict]
+    global_metrics_cache: dict[tuple[int, ...], dict]
+    history: list[dict] = field(default_factory=list)
+    generation_offset: int = 0
+    plateau_best_progress: float = -np.inf
+    plateau_streak: int = 0
+    ref_vec: np.ndarray | None = None
+    mutation_rate: float | None = None
+    weighted_activate_prob: float | None = None
+
 
 # #region agent log
 
@@ -874,12 +898,14 @@ def _assign_eval_result(
     val_regime_row_counts: np.ndarray | None,
     diversity_reference: list[np.ndarray] | None = None,
     stage_params: Phase2StageParams | None = None,
+    engine=None,
 ) -> None:
     """Compute penalties/objectives from metrics; write objectives[i] and metrics_cache[i]."""
     from gpu_fuzzy_trader.phases.phase2_rule_pool import (
         compute_phase2_objectives_from_metrics,
     )
 
+    symbol_scope = getattr(engine, "_symbol_scope", None) if engine is not None else None
     obj, processed = compute_phase2_objectives_from_metrics(
         chromosome,
         dont_cares,
@@ -890,6 +916,7 @@ def _assign_eval_result(
         val_regime_row_counts=val_regime_row_counts,
         diversity_reference=diversity_reference,
         stage_params=stage_params,
+        symbol_scope=symbol_scope,
     )
     objectives[i] = obj
     metrics_cache[i] = processed
@@ -976,6 +1003,7 @@ def _evaluate_population_indices(
                     val_regime_row_counts,
                     diversity_reference=diversity_reference,
                     stage_params=stage_params,
+                    engine=engine,
                 )
                 cache_hits += 1
             else:
@@ -1060,6 +1088,7 @@ def _evaluate_population_indices(
                 val_regime_row_counts,
                 diversity_reference=diversity_reference,
                 stage_params=stage_params,
+                engine=engine,
             )
 
             if _cfg.PHASE2_EVAL_GLOBAL_CACHE and global_metrics_cache is not None:
@@ -1561,7 +1590,10 @@ def _run_nsga3(
     seed_fraction: float | None = None,
     reset_plateau: bool = False,
     stage: StageLabel = None,
-) -> tuple[list[dict], list[dict]]:
+    state: Phase2EvolutionState | None = None,
+    build_pool: bool = True,
+    return_state: bool = False,
+) -> tuple[list[dict], list[dict]] | tuple[list[dict], list[dict], Phase2EvolutionState]:
     """NSGA-III evolutionary loop for Phase 2 rule pool generation."""
     from gpu_fuzzy_trader.phases.phase2_rule_pool import (
         _build_pool_from_archive,
@@ -1577,39 +1609,77 @@ def _run_nsga3(
     dont_cares = _get_dont_cares(feature_infos)
     if seed_fraction is None:
         seed_fraction = stage_params.seed_fraction
-    population = _init_population(
-        pop_size,
-        feature_infos,
-        rng,
-        seeded_chromosomes=seed_chromosomes,
-        seed_fraction=seed_fraction,
-        init_strategy=init_strategy,
-        stratum_fractions=stratum_fractions,
-        feature_probs=feature_probs,
-    )
-    objectives = np.full((pop_size, 3), np.inf)
-    metrics_cache: list[dict] = [{} for _ in range(pop_size)]
-    pareto_archive: list[np.ndarray] = []
-    hall_of_fame: dict[tuple[int, ...], np.ndarray] = {}
-    deployable_archive: dict[tuple[int, ...], dict] = {}
-    global_metrics_cache: dict[tuple[int, ...], dict] = {}
-    history: list[dict] = []
-
-    ref_vec = _get_reference_vectors(pop_size, 3, rng)
     tag = log_tag or "NSGA-III"
+    if state is None:
+        population = _init_population(
+            pop_size,
+            feature_infos,
+            rng,
+            seeded_chromosomes=seed_chromosomes,
+            seed_fraction=seed_fraction,
+            init_strategy=init_strategy,
+            stratum_fractions=stratum_fractions,
+            feature_probs=feature_probs,
+        )
+        objectives = np.full((pop_size, 3), np.inf)
+        metrics_cache: list[dict] = [{} for _ in range(pop_size)]
+        pareto_archive: list[np.ndarray] = []
+        hall_of_fame: dict[tuple[int, ...], np.ndarray] = {}
+        deployable_archive: dict[tuple[int, ...], dict] = {}
+        global_metrics_cache: dict[tuple[int, ...], dict] = {}
+        history: list[dict] = []
+        ref_vec = _get_reference_vectors(pop_size, 3, rng)
+        plateau_best_progress = -np.inf
+        plateau_streak = 0
+        mutation_rate = _stage_mutation_rate(stage_params)
+        weighted_activate_prob = _stage_weighted_activate_prob(stage_params)
+        generation_offset = 0
+    else:
+        population = state.population
+        objectives = state.objectives
+        metrics_cache = state.metrics_cache
+        pareto_archive = list(state.pareto_archive)
+        hall_of_fame = dict(state.hall_of_fame)
+        deployable_archive = dict(state.deployable_archive)
+        global_metrics_cache = dict(state.global_metrics_cache)
+        history = list(state.history)
+        ref_vec = state.ref_vec
+        if ref_vec is None:
+            ref_vec = _get_reference_vectors(pop_size, 3, rng)
+        plateau_best_progress = float(state.plateau_best_progress)
+        plateau_streak = int(state.plateau_streak)
+        mutation_rate = (
+            state.mutation_rate
+            if state.mutation_rate is not None
+            else _stage_mutation_rate(stage_params)
+        )
+        weighted_activate_prob = (
+            state.weighted_activate_prob
+            if state.weighted_activate_prob is not None
+            else _stage_weighted_activate_prob(stage_params)
+        )
+        generation_offset = int(state.generation_offset)
+        if seed_chromosomes is not None and seed_chromosomes.size > 0:
+            migrant_slots = min(
+                pop_size,
+                max(1, int(round(pop_size * float(seed_fraction or 0.0)))),
+                len(seed_chromosomes),
+            )
+            for i in range(migrant_slots):
+                population[i] = np.asarray(seed_chromosomes[i], dtype=np.int32).copy()
+                objectives[i] = np.full(3, np.inf)
+                metrics_cache[i] = {}
+
     logger.info(
         "%s: %d features, pop=%d, gen=%d, mutation=%.3f",
         tag, K, pop_size, n_generations, stage_params.mutation_rate,
     )
     gen_loop_start = time.monotonic()
-    plateau_best_progress = -np.inf
-    plateau_streak = 0
     if reset_plateau:
         plateau_best_progress = -np.inf
         plateau_streak = 0
-    mutation_rate = _stage_mutation_rate(stage_params)
-    weighted_activate_prob = _stage_weighted_activate_prob(stage_params)
 
+    hist_before_loop = len(history)
     for gen in range(n_generations):
         diversity_reference = _build_diversity_reference(
             hall_of_fame, pareto_archive,
@@ -1658,7 +1728,7 @@ def _run_nsga3(
             pareto_indices, metrics_cache)
         robust_stats = _pareto_robust_stats(pareto_indices, metrics_cache)
         history.append({
-            "generation": gen,
+            "generation": generation_offset + gen,
             "pareto_size": len(pareto_indices),
             "mean_f1": float(np.mean(pareto_obj[:, 0])) if len(pareto_obj) else 0.0,
             "mean_f2": float(np.mean(pareto_obj[:, 1])) if len(pareto_obj) else 0.0,
@@ -1968,6 +2038,27 @@ def _run_nsga3(
         )
         # #endregion
 
+    final_state = Phase2EvolutionState(
+        population=population,
+        objectives=objectives,
+        metrics_cache=metrics_cache,
+        pareto_archive=pareto_archive,
+        hall_of_fame=hall_of_fame,
+        deployable_archive=deployable_archive,
+        global_metrics_cache=global_metrics_cache,
+        history=history,
+        generation_offset=generation_offset + (len(history) - hist_before_loop),
+        plateau_best_progress=plateau_best_progress,
+        plateau_streak=plateau_streak,
+        ref_vec=ref_vec,
+        mutation_rate=mutation_rate,
+        weighted_activate_prob=weighted_activate_prob,
+    )
+    if not build_pool:
+        if return_state:
+            return [], history, final_state
+        return [], history
+
     metrics_by_chrom = _metrics_dict_from_population(population, metrics_cache)
     harvest_archive = _harvest_archive_chromosomes(
         deployable_archive, hall_of_fame, pareto_archive,
@@ -1982,7 +2073,93 @@ def _run_nsga3(
         val_engine=val_engine,
         direction=log_tag or "",
     )
+    if return_state:
+        return pareto_pool, history, final_state
     return pareto_pool, history
+
+
+def extract_deployable_migrants(
+    state: Phase2EvolutionState,
+    *,
+    top_k: int = 5,
+) -> list[dict]:
+    """Return elite deployable-preview entries suitable for guarded migration."""
+    if not state.deployable_archive:
+        return []
+    ranked = sorted(
+        state.deployable_archive.values(),
+        key=lambda entry: float(entry.get("rank_score", -np.inf)),
+        reverse=True,
+    )[: max(1, int(top_k))]
+    migrants: list[dict] = []
+    for entry in ranked:
+        chrom = entry.get("chromosome")
+        metrics = entry.get("metrics", {})
+        if chrom is None:
+            continue
+        migrants.append({
+            "chromosome": np.asarray(chrom, dtype=np.int32).tolist()
+            if not isinstance(chrom, list)
+            else chrom,
+            "objectives": {
+                "sortino_ratio": float(metrics.get("sortino_ratio", 0.0)),
+                "total_return_pct": float(metrics.get("total_return_pct", 0.0)),
+                "max_drawdown_pct": float(metrics.get("max_drawdown_pct", 0.0)),
+                "profit_factor": float(metrics.get("profit_factor", 1.0)),
+            },
+            "executed_trades": int(metrics.get("executed_trades", 0)),
+            "val_objectives": {
+                "total_return_pct": float(metrics.get("val_total_return_pct", 0.0)),
+                "profit_factor": float(metrics.get("val_profit_factor", 1.0)),
+                "max_drawdown_pct": float(metrics.get("val_max_drawdown_pct", 0.0)),
+            },
+            "val_executed_trades": int(metrics.get("val_executed_trades", 0)),
+            "migrant_rank_score": float(entry.get("rank_score", 0.0)),
+        })
+    return migrants
+
+
+def run_phase2_evolution_epoch(
+    feature_infos: list[dict],
+    engine,
+    pop_size: int,
+    n_generations: int,
+    rng: np.random.Generator,
+    state: Phase2EvolutionState | None = None,
+    seed_chromosomes: np.ndarray | None = None,
+    log_tag: str | None = None,
+    val_engine=None,
+    regime_row_fractions: np.ndarray | None = None,
+    val_regime_row_counts: np.ndarray | None = None,
+    feature_probs: np.ndarray | None = None,
+    init_strategy: str | None = None,
+    stratum_fractions: tuple[float, float, float] | None = None,
+    seed_fraction: float | None = None,
+    stage: StageLabel = None,
+) -> tuple[Phase2EvolutionState, list[dict]]:
+    """Evolve one island epoch and return updated resumable state."""
+    result = run_phase2_evolution(
+        feature_infos=feature_infos,
+        engine=engine,
+        pop_size=pop_size,
+        n_generations=n_generations,
+        rng=rng,
+        seed_chromosomes=seed_chromosomes,
+        log_tag=log_tag,
+        val_engine=val_engine,
+        regime_row_fractions=regime_row_fractions,
+        val_regime_row_counts=val_regime_row_counts,
+        feature_probs=feature_probs,
+        init_strategy=init_strategy,
+        stratum_fractions=stratum_fractions,
+        seed_fraction=seed_fraction,
+        stage=stage,
+        state=state,
+        build_pool=False,
+        return_state=True,
+    )
+    _, history, new_state = result
+    return new_state, history
 
 
 def run_phase2_evolution(
@@ -2002,12 +2179,18 @@ def run_phase2_evolution(
     seed_fraction: float | None = None,
     reset_plateau: bool = False,
     stage: StageLabel = None,
-) -> tuple[list[dict], list[dict]]:
-    """Run Phase 2 NSGA-III evolution. Returns (pareto_pool, history)."""
+    state: Phase2EvolutionState | None = None,
+    build_pool: bool = True,
+    return_state: bool = False,
+) -> tuple[list[dict], list[dict]] | tuple[list[dict], list[dict], Phase2EvolutionState]:
+    """Run Phase 2 NSGA-III evolution. Returns (pareto_pool, history) or state."""
     evo_kwargs = dict(
         feature_probs=feature_probs,
         init_strategy=init_strategy,
         stratum_fractions=stratum_fractions,
+        state=state,
+        build_pool=build_pool,
+        return_state=return_state,
     )
     if not _EVOX_AVAILABLE:
         logger.warning(
@@ -2017,6 +2200,19 @@ def run_phase2_evolution(
         fallback_tag = "NSGA-II (fallback)"
         if log_tag:
             fallback_tag = log_tag.replace("NSGA-III", "NSGA-II (fallback)")
+        if state is not None or return_state or not build_pool:
+            return _run_nsga3(
+                feature_infos, engine, pop_size, n_generations, rng,
+                seed_chromosomes=seed_chromosomes,
+                log_tag=fallback_tag,
+                val_engine=val_engine,
+                regime_row_fractions=regime_row_fractions,
+                val_regime_row_counts=val_regime_row_counts,
+                seed_fraction=seed_fraction,
+                reset_plateau=reset_plateau,
+                stage=stage,
+                **evo_kwargs,
+            )
         return _run_nsga2_fallback(
             feature_infos, engine, pop_size, n_generations, rng,
             seed_chromosomes=seed_chromosomes,
@@ -2027,7 +2223,9 @@ def run_phase2_evolution(
             seed_fraction=seed_fraction,
             reset_plateau=reset_plateau,
             stage=stage,
-            **evo_kwargs,
+            **{k: v for k, v in evo_kwargs.items() if k in (
+                "feature_probs", "init_strategy", "stratum_fractions",
+            )},
         )
 
     return _run_nsga3(

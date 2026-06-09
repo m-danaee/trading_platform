@@ -18,6 +18,10 @@ import pandas as pd
 
 from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.backtest.condition_cache import get_or_build_rule_mask
+from gpu_fuzzy_trader.backtest.symbol_conditions import (
+    get_normalized_symbol_array,
+    split_feature_and_symbol_conditions,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -207,25 +211,41 @@ def _apply_dynamic_rule(df: pd.DataFrame, condition: str) -> np.ndarray:
 def _compute_rule_signal_mask(
     df: pd.DataFrame,
     conditions: list[str],
+    rule_number: int = 1,
 ) -> np.ndarray:
-    """AND all conditions together → boolean mask of matching rows (no cache)."""
-    if not conditions:
-        raise ValueError("Rule must contain a non-empty 'conditions' list.")
+    """
+    Build one boolean signal mask (evaluator_v4 parity).
+
+    Feature conditions are AND-ed. Symbol conditions are OR-ed, then AND-ed
+    with the feature signal. Rules without symbol filters apply to all symbols.
+    """
+    feature_conditions, allowed_symbols = split_feature_and_symbol_conditions(
+        conditions=conditions,
+        rule_number=rule_number,
+    )
+
     signal = np.ones(len(df), dtype=bool)
-    for cond in conditions:
-        signal &= _apply_dynamic_rule(df, cond)
-    return signal
+
+    for condition in feature_conditions:
+        signal &= np.asarray(_apply_dynamic_rule(df, condition), dtype=bool)
+
+    if allowed_symbols:
+        normalized_symbols = get_normalized_symbol_array(df)
+        signal &= np.isin(normalized_symbols, allowed_symbols)
+
+    return signal.astype(bool, copy=False)
 
 
 def _build_rule_signal_mask(
     df: pd.DataFrame,
     conditions: list[str],
     mask_cache: dict[tuple[str, ...], np.ndarray] | None = None,
+    rule_number: int = 1,
 ) -> np.ndarray:
     """Cached wrapper around :func:`_compute_rule_signal_mask`."""
     if not conditions:
         raise ValueError("Rule must contain a non-empty 'conditions' list.")
-    return get_or_build_rule_mask(df, conditions, mask_cache)
+    return get_or_build_rule_mask(df, conditions, mask_cache, rule_number)
 
 
 def _build_entries_from_rule_set(
@@ -260,7 +280,9 @@ def _build_entries_from_rule_set(
             )
 
         conditions = rule_entry.get("conditions", [])
-        rule_signals = _build_rule_signal_mask(df, conditions, mask_cache)
+        rule_signals = _build_rule_signal_mask(
+            df, conditions, mask_cache, rule_number=rule_idx
+        )
 
         new_match_mask = rule_signals & (~assigned_mask)
         matched_indices = np.flatnonzero(new_match_mask)
