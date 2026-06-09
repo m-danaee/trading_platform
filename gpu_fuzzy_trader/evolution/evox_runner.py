@@ -54,6 +54,18 @@ class Phase2EvolutionState:
     ref_vec: np.ndarray | None = None
     mutation_rate: float | None = None
     weighted_activate_prob: float | None = None
+    stage: StageLabel = None
+
+
+def trim_evolution_state_memory(
+    state: Phase2EvolutionState,
+    *,
+    pop_size: int | None = None,
+) -> None:
+    """Drop bulky resumable state that is already persisted elsewhere."""
+    state.history.clear()
+    max_cache = max(400, 2 * int(pop_size or len(state.population)))
+    _trim_global_metrics_cache(state.global_metrics_cache, max_cache)
 
 
 # #region agent log
@@ -673,13 +685,26 @@ def _diversity_recovery_min_unique_ratio(
 def _should_inject_diversity_recovery(
     population_unique_ratio: float,
     stage_params: Phase2StageParams | None = None,
+    *,
+    pareto_size: int = 0,
+    plateau_streak: int = 0,
+    pop_size: int = 0,
 ) -> bool:
     if not bool(getattr(_cfg, "PHASE2_DIVERSITY_RECOVERY_ENABLED", True)):
         return False
-    return (
+    if (
         population_unique_ratio
         < _diversity_recovery_min_unique_ratio(stage_params)
-    )
+    ):
+        return True
+    collapse_threshold = max(2, int(pop_size) // 40)
+    if (
+        pareto_size > 0
+        and pareto_size <= collapse_threshold
+        and int(plateau_streak) >= 2
+    ):
+        return True
+    return False
 
 
 def _stage_mutation_rate(
@@ -938,6 +963,22 @@ def _store_global_metrics_cache(
     if val_metrics is not None:
         entry["_cached_val_metrics"] = _metrics_snapshot(val_metrics)
     global_metrics_cache[key] = entry
+    if _cfg.PHASE2_EVAL_GLOBAL_CACHE:
+        max_cache = max(
+            400, 4 * int(getattr(_cfg, "PHASE2_POPULATION_SIZE", 200)))
+        _trim_global_metrics_cache(global_metrics_cache, max_cache)
+
+
+def _trim_global_metrics_cache(
+    global_metrics_cache: dict[tuple[int, ...], dict],
+    max_size: int,
+) -> None:
+    """Bound run-wide eval cache size to limit RAM growth across long runs."""
+    overflow = len(global_metrics_cache) - int(max_size)
+    if overflow <= 0:
+        return
+    for key in list(global_metrics_cache.keys())[:overflow]:
+        global_metrics_cache.pop(key, None)
 
 
 def _load_global_metrics_cache(
@@ -1494,7 +1535,11 @@ def _run_nsga2_fallback(
 
         injected_positions: list[int] = []
         if _should_inject_diversity_recovery(
-            pop_unique_ratio, stage_params=stage_params,
+            pop_unique_ratio,
+            stage_params=stage_params,
+            pareto_size=len(pareto_indices),
+            plateau_streak=plateau_streak,
+            pop_size=pop_size,
         ):
             injected_positions = _inject_diversity_recovery(
                 population,
@@ -1593,6 +1638,7 @@ def _run_nsga3(
     state: Phase2EvolutionState | None = None,
     build_pool: bool = True,
     return_state: bool = False,
+    apply_seed_chromosomes: bool | None = None,
 ) -> tuple[list[dict], list[dict]] | tuple[list[dict], list[dict], Phase2EvolutionState]:
     """NSGA-III evolutionary loop for Phase 2 rule pool generation."""
     from gpu_fuzzy_trader.phases.phase2_rule_pool import (
@@ -1659,7 +1705,9 @@ def _run_nsga3(
             else _stage_weighted_activate_prob(stage_params)
         )
         generation_offset = int(state.generation_offset)
-        if seed_chromosomes is not None and seed_chromosomes.size > 0:
+        if apply_seed_chromosomes is None:
+            apply_seed_chromosomes = False
+        if seed_chromosomes is not None and seed_chromosomes.size > 0 and apply_seed_chromosomes:
             migrant_slots = min(
                 pop_size,
                 max(1, int(round(pop_size * float(seed_fraction or 0.0)))),
@@ -1842,7 +1890,11 @@ def _run_nsga3(
         if not is_last_gen:
             injected_positions: list[int] = []
             if _should_inject_diversity_recovery(
-                pop_unique_ratio, stage_params=stage_params,
+                pop_unique_ratio,
+                stage_params=stage_params,
+                pareto_size=len(pareto_indices),
+                plateau_streak=plateau_streak,
+                pop_size=pop_size,
             ):
                 injected_positions = _inject_diversity_recovery(
                     population,
@@ -2053,6 +2105,7 @@ def _run_nsga3(
         ref_vec=ref_vec,
         mutation_rate=mutation_rate,
         weighted_activate_prob=weighted_activate_prob,
+        stage=stage,
     )
     if not build_pool:
         if return_state:
@@ -2136,6 +2189,8 @@ def run_phase2_evolution_epoch(
     stratum_fractions: tuple[float, float, float] | None = None,
     seed_fraction: float | None = None,
     stage: StageLabel = None,
+    apply_seed_chromosomes: bool | None = None,
+    reset_plateau: bool = False,
 ) -> tuple[Phase2EvolutionState, list[dict]]:
     """Evolve one island epoch and return updated resumable state."""
     result = run_phase2_evolution(
@@ -2157,6 +2212,8 @@ def run_phase2_evolution_epoch(
         state=state,
         build_pool=False,
         return_state=True,
+        apply_seed_chromosomes=apply_seed_chromosomes,
+        reset_plateau=reset_plateau,
     )
     _, history, new_state = result
     return new_state, history
@@ -2182,6 +2239,7 @@ def run_phase2_evolution(
     state: Phase2EvolutionState | None = None,
     build_pool: bool = True,
     return_state: bool = False,
+    apply_seed_chromosomes: bool | None = None,
 ) -> tuple[list[dict], list[dict]] | tuple[list[dict], list[dict], Phase2EvolutionState]:
     """Run Phase 2 NSGA-III evolution. Returns (pareto_pool, history) or state."""
     evo_kwargs = dict(
@@ -2191,6 +2249,7 @@ def run_phase2_evolution(
         state=state,
         build_pool=build_pool,
         return_state=return_state,
+        apply_seed_chromosomes=apply_seed_chromosomes,
     )
     if not _EVOX_AVAILABLE:
         logger.warning(

@@ -1560,6 +1560,36 @@ def _pool_seed_chromosomes(
     return _stack_chromosome_rows(rows)
 
 
+def _deployable_archive_pool_entries(deployable_archive: dict) -> list[dict]:
+    """Convert deployable archive rows into pool-shaped entries for Stage B seeding."""
+    entries: list[dict] = []
+    for item in deployable_archive.values():
+        chrom = item.get("chromosome")
+        metrics = item.get("metrics", {})
+        if chrom is None or not metrics:
+            continue
+        chrom_list = (
+            chrom.tolist() if hasattr(chrom, "tolist") else list(chrom)
+        )
+        entries.append({
+            "chromosome": chrom_list,
+            "objectives": {
+                "total_return_pct": float(metrics.get("total_return_pct", 0.0)),
+                "max_drawdown_pct": float(metrics.get("max_drawdown_pct", 0.0)),
+                "profit_factor": float(metrics.get("profit_factor", 1.0)),
+                "sortino_ratio": float(metrics.get("sortino_ratio", 0.0)),
+            },
+            "val_objectives": {
+                "total_return_pct": float(metrics.get("val_total_return_pct", 0.0)),
+                "max_drawdown_pct": float(metrics.get("val_max_drawdown_pct", 0.0)),
+                "profit_factor": float(metrics.get("val_profit_factor", 1.0)),
+            },
+            "executed_trades": int(metrics.get("executed_trades", 0)),
+            "val_executed_trades": int(metrics.get("val_executed_trades", 0)),
+        })
+    return entries
+
+
 def _stage_b_seed_chromosomes(
     stage_a_pool: list[dict],
     base_seeds: np.ndarray | None,
@@ -1799,6 +1829,7 @@ class Rule_Pool_Generator:
         self._val_regime_row_counts: np.ndarray | None = None
         self._evolution_state = None
         self._island_history: list[dict] = []
+        self._island_generations_done = 0
 
         scoped_train_df = train_df
         scoped_val_df = val_df
@@ -1808,6 +1839,9 @@ class Rule_Pool_Generator:
             if val_df is not None:
                 scoped_val_df = _cfg.filter_df_to_symbol(
                     val_df, self.symbol_scope)
+
+        self._scoped_train_df = scoped_train_df
+        self._scoped_val_df = scoped_val_df
 
         # Sample training data to budget, then slim to backtest-only columns
         sample_seed = seed if seed is not None else _cfg.PHASE2_SEED
@@ -1824,7 +1858,6 @@ class Rule_Pool_Generator:
         self._train_regime_ids = train_regime_ids
         self._feature_names = feature_names
         self._cv_folds = cv_folds
-        self._scoped_val_df = scoped_val_df
         self._sample_seed = sample_seed
 
         # Build feature_modes dict for engine
@@ -1915,16 +1948,44 @@ class Rule_Pool_Generator:
         configure_phase2_gpu_runtime(self._engine, val_engine=self._val_engine)
         log_memory_rss(f"Phase2 [{self.direction}] engine init")
 
+    def _rebuild_train_df(self) -> None:
+        """Resample and slim training data after engines were parked."""
+        from gpu_fuzzy_trader.backtest.df_slim import slim_backtest_df
+
+        sampled = _sample_df(
+            self._scoped_train_df,
+            _cfg.PHASE1_SAMPLING_TOTAL,
+            random_state=self._sample_seed,
+        )
+        train_regime_ids, self._regime_row_fractions, self._n_regimes = (
+            _prepare_regime_context(sampled)
+        )
+        self._train_df = slim_backtest_df(sampled, self._feature_names)
+        self._train_regime_ids = train_regime_ids
+
     def _ensure_engines(self) -> None:
         """Rebuild engines after ``park_engines`` dropped GPU state."""
+        if self._train_df is None:
+            self._rebuild_train_df()
         if self._engine is not None:
             return
         self._build_engines()
 
     def park_engines(self) -> None:
-        """Release GPU engines between island scheduler epochs."""
+        """Release GPU engines and slim in-memory data between island epochs."""
         self._engine = None
         self._val_engine = None
+        self._train_df = None
+        self._train_regime_ids = None
+        if self._evolution_state is not None:
+            from gpu_fuzzy_trader.evolution.evox_runner import (
+                trim_evolution_state_memory,
+            )
+
+            trim_evolution_state_memory(
+                self._evolution_state,
+                pop_size=self.pop_size,
+            )
         from gpu_fuzzy_trader._memory import log_memory_rss, release_phase2_resources
 
         log_memory_rss(
@@ -2600,28 +2661,85 @@ class Rule_Pool_Generator:
             run_phase2_evolution_epoch,
         )
         from gpu_fuzzy_trader.phases.phase2_init import build_feature_sampling_probs
+        from gpu_fuzzy_trader.phases.phase2_stage import resolve_island_stage
 
-        epoch_gens = int(
+        requested_epoch_gens = int(
             n_generations if n_generations is not None
             else _cfg.PHASE2_ISLAND_EPOCH_GENERATIONS
         )
-        seed_entries = self._assemble_epoch_seed_entries()
-        dont_cares = _get_dont_cares(self.feature_infos)
-        migrant_fraction = float(_cfg.PHASE2_MIGRATION_SEED_FRACTION)
-        local_fraction = max(0.0, 1.0 - migrant_fraction)
-        local_cap = max(1, int(round(self.pop_size * local_fraction)))
-        migrant_cap = max(0, self.pop_size - local_cap)
-        local_seeds = seed_entries[:local_cap]
-        migrant_seeds = (
-            migrant_entries[:migrant_cap] if migrant_entries else []
+        stage_plan = resolve_island_stage(
+            self._island_generations_done,
+            self.n_generations,
         )
-        seed_chromosomes = _pool_seed_chromosomes(local_seeds + migrant_seeds, dont_cares)
+        if stage_plan.remaining_in_stage <= 0:
+            if self._evolution_state is None:
+                return []
+            return extract_deployable_migrants(self._evolution_state)
+
+        epoch_gens = requested_epoch_gens
+        if stage_plan.two_stage_active:
+            epoch_gens = min(requested_epoch_gens,
+                             stage_plan.remaining_in_stage)
+
+        dont_cares = _get_dont_cares(self.feature_infos)
+        first_epoch = self._evolution_state is None
+        entering_stage_b = stage_plan.entering_stage_b
+        apply_seeds = first_epoch or entering_stage_b or bool(migrant_entries)
+        reset_plateau = entering_stage_b
+
+        seed_chromosomes = None
+        seed_fraction = None
+        if entering_stage_b and self._evolution_state is not None:
+            stage_a_pool = _deployable_archive_pool_entries(
+                self._evolution_state.deployable_archive,
+            )
+            seed_chromosomes = _stage_b_seed_chromosomes(
+                stage_a_pool,
+                None,
+                dont_cares,
+                int(_cfg.PHASE2_STAGE_B_SEED_TOP_K),
+            )
+            seed_fraction = float(_cfg.PHASE2_STAGE_B_SEED_FRACTION)
+            logger.info(
+                "Phase 2 [%s%s]: entering Stage B (%d gen remaining, %d seeds)",
+                self.direction,
+                f"/{self.symbol_scope}" if self.symbol_scope else "",
+                stage_plan.remaining_in_stage,
+                0 if seed_chromosomes is None else len(seed_chromosomes),
+            )
+        elif apply_seeds:
+            migrant_fraction = float(_cfg.PHASE2_MIGRATION_SEED_FRACTION)
+            if migrant_entries:
+                migrant_cap = max(
+                    1,
+                    int(round(self.pop_size * migrant_fraction)),
+                )
+                migrant_seeds = migrant_entries[:migrant_cap]
+                seed_chromosomes = _pool_seed_chromosomes(
+                    migrant_seeds, dont_cares,
+                )
+                seed_fraction = migrant_fraction
+            elif first_epoch:
+                seed_entries = self._assemble_epoch_seed_entries()
+                local_fraction = max(0.0, 1.0 - migrant_fraction)
+                local_cap = max(1, int(round(self.pop_size * local_fraction)))
+                local_seeds = seed_entries[:local_cap]
+                seed_chromosomes = _pool_seed_chromosomes(
+                    local_seeds, dont_cares)
+                seed_fraction = (
+                    float(_cfg.PHASE2_STAGE_A_ARCHIVE_SEED_FRACTION)
+                    if stage_plan.two_stage_active
+                    else float(_cfg.PHASE2_ARCHIVE_SEED_FRACTION)
+                )
+
         rng = np.random.default_rng(self.seed)
         feature_probs = build_feature_sampling_probs(self.feature_infos)
         tag = f"Phase 2 [{self.direction}"
         if self.symbol_scope:
             tag += f"/{self.symbol_scope}"
         tag += "]"
+        if stage_plan.two_stage_active and stage_plan.stage is not None:
+            tag += f" Stage {stage_plan.stage}"
 
         self._evolution_state, epoch_history = run_phase2_evolution_epoch(
             feature_infos=self.feature_infos,
@@ -2638,9 +2756,16 @@ class Rule_Pool_Generator:
             feature_probs=feature_probs,
             init_strategy=_cfg.PHASE2_INIT_STRATEGY,
             stratum_fractions=_cfg.PHASE2_INIT_STRATUM_FRACTIONS,
-            seed_fraction=migrant_fraction if migrant_entries else _cfg.PHASE2_ARCHIVE_SEED_FRACTION,
+            seed_fraction=seed_fraction,
+            stage=stage_plan.stage if stage_plan.two_stage_active else None,
+            apply_seed_chromosomes=apply_seeds,
+            reset_plateau=reset_plateau,
         )
+        for entry in epoch_history:
+            if stage_plan.two_stage_active and stage_plan.stage is not None:
+                entry["stage"] = stage_plan.stage
         self._island_history.extend(epoch_history)
+        self._island_generations_done += epoch_gens
         return extract_deployable_migrants(self._evolution_state)
 
     def snapshot_migrants(self, top_k: int = 5) -> list[dict]:

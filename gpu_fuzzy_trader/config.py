@@ -498,12 +498,12 @@ PHASE1_SAMPLING_TOTAL = 701_000
 # Used directly when PHASE2_GPU_BATCH_SIZE_AUTO is False; otherwise VRAM/RAM-capped.
 #   Higher → faster throughput until OOM; 64–128 is fine on Colab T4 with headroom.
 #   Lower  → safer on small GPUs / 12 GiB RAM hosts, more kernel launches, slower.
-PHASE2_GPU_BATCH_SIZE = 64
+PHASE2_GPU_BATCH_SIZE = 198
 
 # PHASE2_GPU_BATCH_SIZE_AUTO — cap batch size by detected GPU VRAM and host RAM.
 #   True  → apply tiers in _gpu_runtime (12 GiB RAM → 32; T4 ≤16 GiB VRAM → 128).
 #   False → use PHASE2_GPU_BATCH_SIZE exactly (env PHASE2_GPU_BATCH_SIZE still wins).
-PHASE2_GPU_BATCH_SIZE_AUTO = True
+PHASE2_GPU_BATCH_SIZE_AUTO = False
 
 # PHASE2_SCAN_UNROLL — lax.scan unroll for equity simulation.
 #   Higher → fewer kernel launches, longer XLA compile, slightly more VRAM.
