@@ -1,14 +1,18 @@
 """Unit tests for Phase 2 stage-specific hyperparameter profiles."""
 
+import numpy as np
+
 from gpu_fuzzy_trader import config as _cfg
+from gpu_fuzzy_trader.evolution.evox_runner import (
+    _should_inject_diversity_recovery,
+    _should_viability_recovery,
+)
+from gpu_fuzzy_trader.phases.phase2_rule_pool import compute_phase2_objectives_from_metrics
 from gpu_fuzzy_trader.phases.phase2_stage import (
     island_stage_budgets,
     resolve_island_stage,
     resolve_phase2_stage_params,
 )
-from gpu_fuzzy_trader.phases.phase2_rule_pool import compute_phase2_objectives_from_metrics
-from gpu_fuzzy_trader.evolution.evox_runner import _should_inject_diversity_recovery
-import numpy as np
 
 
 class TestResolvePhase2StageParams:
@@ -36,6 +40,22 @@ class TestResolvePhase2StageParams:
         assert single.mutation_rate == _cfg.PHASE2_MUTATION_RATE
         assert single.diversity_penalty == _cfg.PHASE2_DIVERSITY_PENALTY
         assert single.seed_fraction == _cfg.PHASE2_ARCHIVE_SEED_FRACTION
+
+    def test_stage_a_floor_overrides(self):
+        stage_a = resolve_phase2_stage_params("A")
+        stage_b = resolve_phase2_stage_params("B")
+
+        assert stage_a.return_floor_pct == _cfg.PHASE2_STAGE_A_RETURN_FLOOR_PCT
+        assert stage_a.min_trade_support == _cfg.PHASE2_STAGE_A_MIN_TRADE_SUPPORT
+        assert stage_a.use_robust_return_obj is False
+        assert stage_a.soft_feasibility is True
+        assert stage_a.pool_require_positive_splits is False
+
+        assert stage_b.return_floor_pct == _cfg.PHASE2_RETURN_FLOOR_PCT
+        assert stage_b.min_trade_support == _cfg.MIN_TRADE_SUPPORT
+        assert stage_b.use_robust_return_obj == _cfg.PHASE2_USE_ROBUST_RETURN_OBJ
+        assert stage_b.soft_feasibility is False
+        assert stage_b.pool_require_positive_splits == _cfg.PHASE2_POOL_REQUIRE_POSITIVE_SPLITS
 
 
 class TestStageObjectivePenalties:
@@ -117,4 +137,38 @@ class TestParetoCollapseDiversityRecovery:
             pareto_size=1,
             plateau_streak=0,
             pop_size=200,
+        )
+
+
+class TestViabilityRecovery:
+    def test_triggers_when_valid_rules_low_despite_unique_population(self):
+        stage_a = resolve_phase2_stage_params("A")
+        assert _should_viability_recovery(
+            stage_a,
+            valid_count=2,
+            plateau_streak=2,
+        )
+        assert _should_inject_diversity_recovery(
+            1.0,
+            stage_params=stage_a,
+            pareto_size=2,
+            plateau_streak=2,
+            pop_size=200,
+            valid_count=2,
+        )
+
+    def test_does_not_trigger_in_stage_b(self):
+        stage_b = resolve_phase2_stage_params("B")
+        assert not _should_viability_recovery(
+            stage_b,
+            valid_count=2,
+            plateau_streak=2,
+        )
+
+    def test_requires_plateau_streak(self):
+        stage_a = resolve_phase2_stage_params("A")
+        assert not _should_viability_recovery(
+            stage_a,
+            valid_count=2,
+            plateau_streak=1,
         )

@@ -68,6 +68,9 @@ def log_generation(
     unique_chromosome_ratio: float | None = None,
     pop_unique_chromosome_ratio: float | None = None,
     cache_hit_rate: float | None = None,
+    deployable_count: int | None = None,
+    pop_viable_count: int | None = None,
+    plateau_streak: int | None = None,
     elapsed_s: float | None = None,
 ) -> None:
     """Emit a consistent INFO line for one evolutionary generation."""
@@ -95,6 +98,12 @@ def log_generation(
         msg += " pop_unique=%.2f" % pop_unique_chromosome_ratio
     if cache_hit_rate is not None:
         msg += " cache_hit_rate=%.2f" % cache_hit_rate
+    if deployable_count is not None:
+        msg += " deployable=%d" % deployable_count
+    if pop_viable_count is not None:
+        msg += " pop_viable=%d" % pop_viable_count
+    if plateau_streak is not None:
+        msg += " plateau_streak=%d" % plateau_streak
     if elapsed_s is not None:
         msg += " elapsed=%.1fs" % elapsed_s
     logger.info(msg)
@@ -150,6 +159,9 @@ def maybe_log_generation(
     unique_chromosome_ratio: float | None = None,
     pop_unique_chromosome_ratio: float | None = None,
     cache_hit_rate: float | None = None,
+    deployable_count: int | None = None,
+    pop_viable_count: int | None = None,
+    plateau_streak: int | None = None,
     loop_start: float | None = None,
     interval: int | None = None,
 ) -> None:
@@ -180,6 +192,9 @@ def maybe_log_generation(
         unique_chromosome_ratio=unique_chromosome_ratio,
         pop_unique_chromosome_ratio=pop_unique_chromosome_ratio,
         cache_hit_rate=cache_hit_rate,
+        deployable_count=deployable_count,
+        pop_viable_count=pop_viable_count,
+        plateau_streak=plateau_streak,
         elapsed_s=elapsed,
     )
 

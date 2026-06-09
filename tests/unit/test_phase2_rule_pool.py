@@ -1572,3 +1572,20 @@ class TestArchiveMetadata:
         assert annotated[0]["symbol_scope"] == "SYM_X"
         assert "robust_score" in annotated[0]
         assert annotated[0]["source_symbols"] == ["SYM_X", "SYM_Y"]
+
+
+class TestMinConditionsThree:
+    def test_config_allows_three_active_conditions(self):
+        assert _cfg.MIN_CONDITIONS == 3
+        assert _cfg.MAX_CONDITIONS == 4
+
+    def test_mutation_repair_preserves_three_condition_chromosome(self):
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import _mutate
+
+        fi = _make_feature_infos(["positive"] * 6)
+        dc = _get_dont_cares(fi)
+        rng = np.random.default_rng(7)
+        parent = _chromosome_with_min_active(n_features=6, dont_care=int(dc[0]))
+        child = _mutate(parent, fi, dc, rng, mutation_rate=0.5)
+        active = _count_active_conditions(child, dc)
+        assert _cfg.MIN_CONDITIONS <= active <= _cfg.MAX_CONDITIONS

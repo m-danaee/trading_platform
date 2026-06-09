@@ -112,7 +112,11 @@ def _prepare_regime_context(
     n_regimes = int(bundle.get("n_clusters", labels.nunique()))
     regime_ids = labels.reindex(sampled_df.index).fillna(
         0).astype(np.int32).values
-    fracs = regime_row_fractions(regime_ids, n_regimes)
+    from gpu_fuzzy_trader.phases.phase2_support import _compact_regime_labels
+
+    regime_ids, fracs, n_regimes = _compact_regime_labels(regime_ids, n_regimes)
+    if regime_ids is None:
+        return None, None, 0
     logger.info(
         "Phase 2 regime support: n_regimes=%d, row_counts=%s",
         n_regimes,
@@ -405,6 +409,14 @@ def compute_phase2_objectives_from_metrics(
     Shared by single-chromosome evaluation and EvoX batch assignment so penalty
     logic stays identical across code paths.
     """
+    from gpu_fuzzy_trader.phases.phase2_support import (
+        _raw_feasibility_violation_score,
+        feasibility_violation_score,
+        resolve_evolution_floors,
+        robust_return_pct,
+    )
+
+    floors = resolve_evolution_floors(stage_params)
     active = _count_active_conditions(chromosome, dont_cares)
 
     cond_penalty = 0.0
@@ -457,6 +469,7 @@ def compute_phase2_objectives_from_metrics(
             regime_row_fractions_arr,
             val_metrics=val_metrics,
             val_regime_row_counts=val_regime_row_counts,
+            min_trade_support=floors.min_trade_support,
         )
     )
     if (
@@ -472,7 +485,7 @@ def compute_phase2_objectives_from_metrics(
         metrics["regime_specialist"] = True
         metrics["dominant_regime"] = dominant_regime
 
-    if total_return < _cfg.PHASE2_RETURN_FLOOR_PCT:
+    if total_return < floors.return_floor_pct:
         support_penalty = max(support_penalty, _cfg.SUPPORT_PENALTY_MAX)
     if profit_factor < _cfg.PHASE2_PROFIT_FACTOR_FLOOR:
         support_penalty += (_cfg.PHASE2_PROFIT_FACTOR_FLOOR - profit_factor) * 5.0
@@ -487,7 +500,11 @@ def compute_phase2_objectives_from_metrics(
         )
 
         if not passes_symbol_island_robustness_gate(metrics, val_metrics):
-            support_penalty = max(support_penalty, _cfg.SUPPORT_PENALTY_MAX)
+            island_penalty = _cfg.SUPPORT_PENALTY_MAX
+            if floors.soft_feasibility:
+                support_penalty += island_penalty * 0.5
+            else:
+                support_penalty = max(support_penalty, island_penalty)
     support_penalty += val_floor_penalty
 
     dd_gate = getattr(_cfg, "PHASE2_MAX_DRAWDOWN_GATE", 20.0)
@@ -525,32 +542,37 @@ def compute_phase2_objectives_from_metrics(
         if min_hamming <= diversity_hamming_threshold:
             diversity_penalty = diversity_penalty_weight
 
-    from gpu_fuzzy_trader.phases.phase2_support import (
-        feasibility_violation_score,
-        robust_return_pct,
-    )
-
     f3_val = win_rate
     if _cfg.PHASE2_USE_TOTAL_RETURN_OBJ:
-        if getattr(_cfg, "PHASE2_USE_ROBUST_RETURN_OBJ", True) and val_metrics is not None:
+        if floors.use_robust_return_obj and val_metrics is not None:
             f3_val = robust_return_pct(metrics, val_metrics)
         else:
             f3_val = total_return
 
     infeasible_penalty = 0.0
-    if val_metrics is not None and _cfg.PHASE2_POOL_REQUIRE_POSITIVE_SPLITS:
-        violation = feasibility_violation_score(
-            metrics,
-            val_metrics,
-            cv_fold=str(_cfg.SPLIT_MODE).strip(
-            ).lower() == "purged_rolling_cv",
+    cv_fold = str(_cfg.SPLIT_MODE).strip().lower() == "purged_rolling_cv"
+    if val_metrics is not None:
+        raw_violation = _raw_feasibility_violation_score(
+            metrics, val_metrics, cv_fold=cv_fold,
         )
-        if violation > 0.0:
-            infeasible_penalty = (
-                float(_cfg.PHASE2_INFEASIBLE_OBJECTIVE_PENALTY)
-                + violation * float(_cfg.PHASE2_FEASIBILITY_VIOLATION_WEIGHT)
+        if raw_violation > 0.0:
+            metrics["feasibility_violation"] = raw_violation
+        if floors.soft_feasibility and raw_violation > 0.0:
+            support_penalty += (
+                raw_violation * float(_cfg.PHASE2_FEASIBILITY_VIOLATION_WEIGHT)
             )
-            metrics["feasibility_violation"] = violation
+        elif floors.pool_require_positive_splits:
+            violation = feasibility_violation_score(
+                metrics,
+                val_metrics,
+                cv_fold=cv_fold,
+                stage_params=stage_params,
+            )
+            if violation > 0.0:
+                infeasible_penalty = (
+                    float(_cfg.PHASE2_INFEASIBLE_OBJECTIVE_PENALTY)
+                    + violation * float(_cfg.PHASE2_FEASIBILITY_VIOLATION_WEIGHT)
+                )
 
     trade_penalty = 0.0
     trade_floor = (

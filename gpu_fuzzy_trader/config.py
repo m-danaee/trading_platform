@@ -124,7 +124,7 @@ PHASE2_ARCHIVE_PATHS = {
 # Symbol-specialist Phase 2: one island per direction × symbol.
 PHASE2_SYMBOL_SPECIALIST_ENABLED = True
 PHASE2_SYMBOL_UNIVERSE_MODE = "train_present"
-PHASE2_ISLAND_EPOCH_GENERATIONS = 20
+PHASE2_ISLAND_EPOCH_GENERATIONS = 27
 PHASE2_MIGRATION_EPOCH_INTERVAL = 3
 PHASE2_MIGRATION_SEED_FRACTION = 0.15
 PHASE2_SHARED_ARCHIVE_MIN_SYMBOLS = 3
@@ -570,7 +570,7 @@ PHASE2_CAPITAL_PCT = 30.0
 #   Lower MIN → broader rules, more trades, risk of weak patterns.
 #   Higher MAX → allow complex rules (if encoding supports variable count).
 #   Lower MAX → force simplicity; more generalization, less specificity.
-MIN_CONDITIONS = 4
+MIN_CONDITIONS = 3
 MAX_CONDITIONS = 4
 
 # PHASE2_ENCODING — chromosome memory layout during evolution.
@@ -909,6 +909,31 @@ PHASE2_STAGE_A_EARLY_STOP_MIN_GENERATION = 32
 
 # PHASE2_STAGE_A_ARCHIVE_SEED_FRACTION — warm-start fraction from prior pool in Stage A.
 PHASE2_STAGE_A_ARCHIVE_SEED_FRACTION = 0.20
+
+# --- Stage A evolution floor overrides (loose fitness gates; pool export stays strict) ---
+
+# PHASE2_STAGE_A_RETURN_FLOOR_PCT — min train return % during Stage A fitness only.
+PHASE2_STAGE_A_RETURN_FLOOR_PCT = 0.0
+
+# PHASE2_STAGE_A_MIN_TRADE_SUPPORT — trade-count target before support penalty vanishes in Stage A.
+PHASE2_STAGE_A_MIN_TRADE_SUPPORT = 30
+
+# PHASE2_STAGE_A_USE_ROBUST_RETURN_OBJ — Stage A f3 uses train return instead of min(train,val).
+PHASE2_STAGE_A_USE_ROBUST_RETURN_OBJ = False
+
+# PHASE2_STAGE_A_SOFT_FEASIBILITY — Stage A uses soft penalties instead of hard infeasible block.
+PHASE2_STAGE_A_SOFT_FEASIBILITY = True
+
+# --- Viability-aware diversity recovery (Stage A; complements uniqueness-based recovery) ---
+
+# PHASE2_VIABILITY_RECOVERY_ENABLED — inject deployable-archive seeds when valid_rules collapse.
+PHASE2_VIABILITY_RECOVERY_ENABLED = True
+
+# PHASE2_VIABILITY_RECOVERY_MIN_VALID — trigger when Pareto valid_rules falls below this.
+PHASE2_VIABILITY_RECOVERY_MIN_VALID = 5
+
+# PHASE2_VIABILITY_RECOVERY_DEPLOYABLE_MUTATE_FRACTION — share of injected slots from archive mutate.
+PHASE2_VIABILITY_RECOVERY_DEPLOYABLE_MUTATE_FRACTION = 0.5
 
 # --- Stage B hyperparameters (refinement: lower mutation, allow clustering) ---
 
@@ -1420,7 +1445,11 @@ def _apply_colab_gpu_defaults() -> None:
 _apply_colab_gpu_defaults()
 
 
+assert MIN_CONDITIONS <= MAX_CONDITIONS, (
+    f"MIN_CONDITIONS ({MIN_CONDITIONS}) must be <= MAX_CONDITIONS ({MAX_CONDITIONS})"
+)
 assert PHASE2_ISLAND_EPOCH_GENERATIONS >= 1
+assert 0.0 <= PHASE2_VIABILITY_RECOVERY_DEPLOYABLE_MUTATE_FRACTION <= 1.0
 assert PHASE2_MIGRATION_EPOCH_INTERVAL >= 1
 assert 0.0 < PHASE2_MIGRATION_SEED_FRACTION < 1.0
 assert PHASE2_SHARED_ARCHIVE_MIN_SYMBOLS >= 1

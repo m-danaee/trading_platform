@@ -618,6 +618,23 @@ def _should_plateau_early_stop_phase2(
     return streak >= patience
 
 
+def _should_viability_recovery(
+    stage_params: Phase2StageParams | None,
+    *,
+    valid_count: int = 0,
+    plateau_streak: int = 0,
+) -> bool:
+    """True when Stage A viability is critically low and search has plateaued."""
+    if not bool(getattr(_cfg, "PHASE2_VIABILITY_RECOVERY_ENABLED", True)):
+        return False
+    if stage_params is None or stage_params.stage != "A":
+        return False
+    return (
+        int(valid_count) < int(_cfg.PHASE2_VIABILITY_RECOVERY_MIN_VALID)
+        and int(plateau_streak) >= 2
+    )
+
+
 def _inject_diversity_recovery(
     population: np.ndarray,
     objectives: np.ndarray,
@@ -628,9 +645,11 @@ def _inject_diversity_recovery(
     *,
     feature_probs: np.ndarray | None = None,
     stage_params: Phase2StageParams | None = None,
+    deployable_archive: dict | None = None,
+    viability_recovery: bool = False,
 ) -> list[int]:
-    """Replace a fraction of the population with fresh random individuals."""
-    from gpu_fuzzy_trader.phases.phase2_rule_pool import _init_population
+    """Replace a fraction of the population with fresh or archive-mutated seeds."""
+    from gpu_fuzzy_trader.phases.phase2_rule_pool import _init_population, _mutate
 
     pop_size = len(population)
     if pop_size <= 0:
@@ -644,17 +663,65 @@ def _inject_diversity_recovery(
     )
     n_inject = max(1, int(round(pop_size * fraction)))
     positions = rng.choice(pop_size, size=n_inject, replace=False)
-    fresh = _init_population(
-        n_inject,
-        feature_infos,
-        rng,
-        init_strategy=_cfg.PHASE2_INIT_STRATEGY,
-        stratum_fractions=_cfg.PHASE2_INIT_STRATUM_FRACTIONS,
-        feature_probs=feature_probs,
-    )
+    mutation_rate = _stage_mutation_rate(stage_params, diversity_recovery=True)
+    weighted_activate_prob = _stage_weighted_activate_prob(stage_params)
+
+    seeds: list[np.ndarray] = []
+    if (
+        viability_recovery
+        and deployable_archive
+        and len(deployable_archive) > 0
+    ):
+        mutate_frac = float(
+            _cfg.PHASE2_VIABILITY_RECOVERY_DEPLOYABLE_MUTATE_FRACTION
+        )
+        n_mutate = max(0, int(round(n_inject * mutate_frac)))
+        n_fresh = n_inject - n_mutate
+        ranked = sorted(
+            deployable_archive.values(),
+            key=lambda entry: float(entry.get("rank_score", -np.inf)),
+            reverse=True,
+        )
+        archive_chroms = [entry["chromosome"] for entry in ranked]
+        for i in range(n_mutate):
+            parent = archive_chroms[i % len(archive_chroms)]
+            seeds.append(
+                _mutate(
+                    parent,
+                    feature_infos,
+                    dont_cares,
+                    rng,
+                    mutation_rate=mutation_rate,
+                    feature_probs=feature_probs,
+                    weighted_activate_prob=weighted_activate_prob,
+                )
+            )
+        if n_fresh > 0:
+            seeds.extend(
+                _init_population(
+                    n_fresh,
+                    feature_infos,
+                    rng,
+                    init_strategy=_cfg.PHASE2_INIT_STRATEGY,
+                    stratum_fractions=_cfg.PHASE2_INIT_STRATUM_FRACTIONS,
+                    feature_probs=feature_probs,
+                )
+            )
+    else:
+        seeds = list(
+            _init_population(
+                n_inject,
+                feature_infos,
+                rng,
+                init_strategy=_cfg.PHASE2_INIT_STRATEGY,
+                stratum_fractions=_cfg.PHASE2_INIT_STRATUM_FRACTIONS,
+                feature_probs=feature_probs,
+            )
+        )
+
     injected: list[int] = []
     for idx, pos in enumerate(positions):
-        population[int(pos)] = fresh[idx]
+        population[int(pos)] = seeds[idx]
         objectives[int(pos)] = np.inf
         metrics_cache[int(pos)] = {}
         injected.append(int(pos))
@@ -689,6 +756,7 @@ def _should_inject_diversity_recovery(
     pareto_size: int = 0,
     plateau_streak: int = 0,
     pop_size: int = 0,
+    valid_count: int = 0,
 ) -> bool:
     if not bool(getattr(_cfg, "PHASE2_DIVERSITY_RECOVERY_ENABLED", True)):
         return False
@@ -704,7 +772,34 @@ def _should_inject_diversity_recovery(
         and int(plateau_streak) >= 2
     ):
         return True
+    if _should_viability_recovery(
+        stage_params,
+        valid_count=valid_count,
+        plateau_streak=plateau_streak,
+    ):
+        return True
     return False
+
+
+def _count_pop_viable(
+    pop_size: int,
+    metrics_cache: list[dict],
+    *,
+    regime_row_fractions_arr: np.ndarray | None = None,
+) -> int:
+    """Population-wide count passing the pool trade floor."""
+    from gpu_fuzzy_trader.phases.phase2_support import passes_pool_trade_floor
+
+    return sum(
+        1
+        for i in range(pop_size)
+        if metrics_cache[i]
+        and passes_pool_trade_floor(
+            int(metrics_cache[i].get("executed_trades", 0)),
+            metrics_cache[i],
+            regime_row_fractions_arr=regime_row_fractions_arr,
+        )
+    )
 
 
 def _stage_mutation_rate(
@@ -1469,6 +1564,11 @@ def _run_nsga2_fallback(
                 regime_row_fractions_arr=regime_row_fractions,
             )
         )
+        pop_viable_count = _count_pop_viable(
+            pop_size,
+            metrics_cache,
+            regime_row_fractions_arr=regime_row_fractions,
+        )
         plateau_best_progress, plateau_streak = _update_max_return_plateau(
             plateau_metric, plateau_best_progress, plateau_streak,
         )
@@ -1481,6 +1581,9 @@ def _run_nsga2_fallback(
             unique_chromosome_ratio=float(
                 pareto_diag.get("unique_chromosome_ratio", 0.0)),
             pop_unique_chromosome_ratio=pop_unique_ratio,
+            deployable_count=deployable_count,
+            pop_viable_count=pop_viable_count,
+            plateau_streak=plateau_streak,
             loop_start=gen_loop_start,
         )
 
@@ -1534,12 +1637,18 @@ def _run_nsga2_fallback(
             break
 
         injected_positions: list[int] = []
+        viability_recovery = _should_viability_recovery(
+            stage_params,
+            valid_count=val_count,
+            plateau_streak=plateau_streak,
+        )
         if _should_inject_diversity_recovery(
             pop_unique_ratio,
             stage_params=stage_params,
             pareto_size=len(pareto_indices),
             plateau_streak=plateau_streak,
             pop_size=pop_size,
+            valid_count=val_count,
         ):
             injected_positions = _inject_diversity_recovery(
                 population,
@@ -1550,6 +1659,8 @@ def _run_nsga2_fallback(
                 rng,
                 feature_probs=feature_probs,
                 stage_params=stage_params,
+                deployable_archive=deployable_archive,
+                viability_recovery=viability_recovery,
             )
             _reevaluate_infinite_objectives(
                 population,
@@ -1811,6 +1922,11 @@ def _run_nsga3(
                 regime_row_fractions_arr=regime_row_fractions,
             )
         )
+        pop_viable_count = _count_pop_viable(
+            pop_size,
+            metrics_cache,
+            regime_row_fractions_arr=regime_row_fractions,
+        )
 
         # #region agent log
         from gpu_fuzzy_trader.phases.phase2_sparse_encoding import chromosome_key
@@ -1844,7 +1960,12 @@ def _run_nsga3(
                 "deployable_count": deployable_count,
                 "diversity_recovery_would_trigger": (
                     _should_inject_diversity_recovery(
-                        pop_unique_ratio, stage_params=stage_params,
+                        pop_unique_ratio,
+                        stage_params=stage_params,
+                        pareto_size=len(pareto_indices),
+                        plateau_streak=plateau_streak,
+                        pop_size=pop_size,
+                        valid_count=val_count,
                     )
                 ),
             },
@@ -1889,12 +2010,18 @@ def _run_nsga3(
         inject_stats = _empty_eval_stats()
         if not is_last_gen:
             injected_positions: list[int] = []
+            viability_recovery = _should_viability_recovery(
+                stage_params,
+                valid_count=val_count,
+                plateau_streak=plateau_streak,
+            )
             if _should_inject_diversity_recovery(
                 pop_unique_ratio,
                 stage_params=stage_params,
                 pareto_size=len(pareto_indices),
                 plateau_streak=plateau_streak,
                 pop_size=pop_size,
+                valid_count=val_count,
             ):
                 injected_positions = _inject_diversity_recovery(
                     population,
@@ -1905,6 +2032,8 @@ def _run_nsga3(
                     rng,
                     feature_probs=feature_probs,
                     stage_params=stage_params,
+                    deployable_archive=deployable_archive,
+                    viability_recovery=viability_recovery,
                 )
                 inject_stats = _reevaluate_infinite_objectives(
                     population,
@@ -2012,6 +2141,9 @@ def _run_nsga3(
                 pareto_diag.get("unique_chromosome_ratio", 0.0)),
             pop_unique_chromosome_ratio=pop_unique_ratio,
             cache_hit_rate=_eval_cache_hit_rate(gen_eval_stats),
+            deployable_count=deployable_count,
+            pop_viable_count=pop_viable_count,
+            plateau_streak=plateau_streak,
             loop_start=gen_loop_start,
         )
 

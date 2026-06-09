@@ -7,6 +7,8 @@ import pytest
 
 from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.phases.phase2_support import (
+    _compact_regime_labels,
+    _raw_feasibility_violation_score,
     compute_support_penalty_and_specialist,
     deployability_rank_score,
     feasibility_violation_score,
@@ -19,6 +21,7 @@ from gpu_fuzzy_trader.phases.phase2_support import (
     trade_support_penalty,
     val_regime_confirmation,
 )
+from gpu_fuzzy_trader.phases.phase2_stage import resolve_phase2_stage_params
 
 
 class TestPoolAdmissionGate:
@@ -206,6 +209,58 @@ class TestDeployabilityHelpers:
             "executed_trades": 50,
         }
         assert feasibility_violation_score(train, val) == 0.0
+
+    def test_stage_a_soft_feasibility_returns_zero_for_marginal_rule(self) -> None:
+        stage_a = resolve_phase2_stage_params("A")
+        train = {
+            "total_return_pct": 0.5,
+            "profit_factor": 0.9,
+            "executed_trades": _cfg.MIN_TRADE_POOL_FLOOR,
+        }
+        val = {
+            "total_return_pct": -0.5,
+            "profit_factor": 0.8,
+            "executed_trades": 50,
+        }
+        assert _raw_feasibility_violation_score(train, val) > 0.0
+        assert feasibility_violation_score(
+            train, val, stage_params=stage_a,
+        ) == 0.0
+
+    def test_stage_b_still_rejects_marginal_rule(self) -> None:
+        stage_b = resolve_phase2_stage_params("B")
+        train = {
+            "total_return_pct": 0.5,
+            "profit_factor": 0.9,
+            "executed_trades": _cfg.MIN_TRADE_POOL_FLOOR,
+        }
+        val = {
+            "total_return_pct": -0.5,
+            "profit_factor": 0.8,
+            "executed_trades": 50,
+        }
+        assert feasibility_violation_score(
+            train, val, stage_params=stage_b,
+        ) > 0.0
+
+
+class TestRegimeCompaction:
+    def test_drops_empty_regime_and_remaps_labels(self) -> None:
+        regime_ids = np.array([0, 0, 1, 1, 0, 1], dtype=np.int32)
+        compacted, fracs, n_regimes = _compact_regime_labels(regime_ids, 3)
+        assert n_regimes == 2
+        assert compacted is not None
+        assert fracs is not None
+        assert set(compacted.tolist()) == {0, 1}
+        assert fracs.shape == (2,)
+        assert pytest.approx(float(fracs.sum())) == 1.0
+
+    def test_disables_support_when_only_one_regime_remains(self) -> None:
+        regime_ids = np.array([0, 0, 0, 0, 0], dtype=np.int32)
+        compacted, fracs, n_regimes = _compact_regime_labels(regime_ids, 3)
+        assert compacted is None
+        assert fracs is None
+        assert n_regimes == 0
 
     def test_deployability_preview_requires_trade_floor(self) -> None:
         train = {

@@ -105,6 +105,20 @@ class TestLogGeneration:
         assert "pop_unique=0.05" in msg
         assert "cache_hit_rate=0.82" in msg
 
+    def test_emits_deployable_pop_viable_and_plateau_streak(self):
+        log = MagicMock(spec=logging.Logger)
+        log_generation(
+            log, "Phase 2 [long] NSGA-III",
+            19, 80, 12, 4.5,
+            deployable_count=3,
+            pop_viable_count=18,
+            plateau_streak=2,
+        )
+        msg = log.info.call_args[0][0]
+        assert "deployable=3" in msg
+        assert "pop_viable=18" in msg
+        assert "plateau_streak=2" in msg
+
 
 class TestMaybeLogGeneration:
     def test_skips_when_not_on_interval(self):

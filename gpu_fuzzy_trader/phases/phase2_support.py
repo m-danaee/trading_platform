@@ -9,13 +9,91 @@ the pool trade floor.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from gpu_fuzzy_trader import config as _cfg
 
+if TYPE_CHECKING:
+    from gpu_fuzzy_trader.phases.phase2_stage import Phase2StageParams
+
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class EvolutionFloors:
+    """Resolved evolution-time floors (pool admission gates remain strict)."""
+
+    return_floor_pct: float
+    min_trade_support: int
+    use_robust_return_obj: bool
+    soft_feasibility: bool
+    pool_require_positive_splits: bool
+
+
+def resolve_evolution_floors(
+    stage_params: Phase2StageParams | None = None,
+) -> EvolutionFloors:
+    """Return stage-aware fitness floors; defaults to global strict knobs."""
+    if stage_params is None:
+        return EvolutionFloors(
+            return_floor_pct=float(_cfg.PHASE2_RETURN_FLOOR_PCT),
+            min_trade_support=int(_cfg.MIN_TRADE_SUPPORT),
+            use_robust_return_obj=bool(_cfg.PHASE2_USE_ROBUST_RETURN_OBJ),
+            soft_feasibility=False,
+            pool_require_positive_splits=bool(
+                _cfg.PHASE2_POOL_REQUIRE_POSITIVE_SPLITS
+            ),
+        )
+    return EvolutionFloors(
+        return_floor_pct=float(stage_params.return_floor_pct),
+        min_trade_support=int(stage_params.min_trade_support),
+        use_robust_return_obj=bool(stage_params.use_robust_return_obj),
+        soft_feasibility=bool(stage_params.soft_feasibility),
+        pool_require_positive_splits=bool(
+            stage_params.pool_require_positive_splits
+        ),
+    )
+
+
+def _compact_regime_labels(
+    regime_ids: np.ndarray,
+    n_regimes: int,
+) -> tuple[np.ndarray | None, np.ndarray | None, int]:
+    """
+    Drop regimes with zero row count and remap surviving labels to 0..k-1.
+
+    When only one regime remains, regime support is disabled for this slice.
+    """
+    ids = np.asarray(regime_ids, dtype=np.int32)
+    counts = np.bincount(ids.astype(np.int64), minlength=n_regimes)
+    active = [i for i in range(n_regimes) if counts[i] > 0]
+    if len(active) == n_regimes:
+        return ids, regime_row_fractions(ids, n_regimes), n_regimes
+    if len(active) <= 1:
+        logger.warning(
+            "Phase 2 regime compaction: %d → %d active regimes; "
+            "disabling regime support for this slice",
+            n_regimes,
+            len(active),
+        )
+        return None, None, 0
+    dropped = [i for i in range(n_regimes) if counts[i] == 0]
+    remap = {old: new for new, old in enumerate(active)}
+    compacted = np.array(
+        [remap[int(r)] for r in ids],
+        dtype=np.int32,
+    )
+    k = len(active)
+    logger.warning(
+        "Phase 2 regime compaction: %d → %d active regimes (dropped empty: %s)",
+        n_regimes,
+        k,
+        dropped,
+    )
+    return compacted, regime_row_fractions(compacted, k), k
 
 
 def to_host_numpy(
@@ -50,6 +128,8 @@ def regime_row_fractions(regime_ids: np.ndarray, n_regimes: int) -> np.ndarray:
 def per_regime_trade_thresholds(
     regime_row_fractions_arr: np.ndarray,
     executed: int,
+    *,
+    min_trade_support: int | None = None,
 ) -> np.ndarray:
     """
     Minimum executed trades required in each regime for specialist status.
@@ -57,10 +137,14 @@ def per_regime_trade_thresholds(
     Scales with both the regime's row share and the rule's total trade count so
     a 60-trade specialist in a 90%% row-fraction regime is not asked for 270 trades.
     """
+    support_target = (
+        int(min_trade_support)
+        if min_trade_support is not None
+        else int(_cfg.MIN_TRADE_SUPPORT)
+    )
     frac = np.asarray(regime_row_fractions_arr, dtype=np.float64)
-    scale = max(executed, 0) / max(_cfg.MIN_TRADE_SUPPORT, 1)
-    raw = _cfg.MIN_TRADE_SUPPORT * frac * \
-        _cfg.PHASE2_REGIME_MIN_TRADE_FRACTION * scale
+    scale = max(executed, 0) / max(support_target, 1)
+    raw = support_target * frac * _cfg.PHASE2_REGIME_MIN_TRADE_FRACTION * scale
     thresholds = np.maximum(_cfg.MIN_TRADE_POOL_FLOOR,
                             np.round(raw)).astype(np.int64)
     return thresholds
@@ -72,6 +156,8 @@ def _is_regime_specialist(
     regime_win_counts: np.ndarray,
     regime_net_pnl: np.ndarray,
     regime_row_fractions_arr: np.ndarray,
+    *,
+    min_trade_support: int | None = None,
 ) -> tuple[bool, int]:
     """Return (is_specialist, dominant_regime_index)."""
     counts = np.asarray(regime_trade_counts, dtype=np.int64)
@@ -88,7 +174,10 @@ def _is_regime_specialist(
         return False, d
 
     thresholds = per_regime_trade_thresholds(
-        regime_row_fractions_arr, executed)
+        regime_row_fractions_arr,
+        executed,
+        min_trade_support=min_trade_support,
+    )
     if trades_d < thresholds[d]:
         return False, d
 
@@ -105,19 +194,29 @@ def _is_regime_specialist(
     return True, d
 
 
-def _static_support_penalty(executed: int) -> float:
+def _static_support_penalty(
+    executed: int,
+    *,
+    min_trade_support: int | None = None,
+) -> float:
     """Legacy graduated penalty (no regime context)."""
-    if executed >= _cfg.MIN_TRADE_SUPPORT:
+    support_target = (
+        int(min_trade_support)
+        if min_trade_support is not None
+        else int(_cfg.MIN_TRADE_SUPPORT)
+    )
+    if executed >= support_target:
         return 0.0
     if executed < _cfg.MIN_TRADE_POOL_FLOOR:
         return 2.0 * _cfg.SUPPORT_PENALTY_MAX
-    shortfall = (_cfg.MIN_TRADE_SUPPORT - executed) / _cfg.MIN_TRADE_SUPPORT
+    shortfall = (support_target - executed) / max(support_target, 1)
     return min(shortfall ** 2 * _cfg.SUPPORT_PENALTY_MAX, _cfg.SUPPORT_PENALTY_MAX)
 
 
 def trade_support_penalty(
     executed: int,
     *,
+    min_trade_support: int | None = None,
     regime_trade_counts: np.ndarray | None = None,
     regime_win_counts: np.ndarray | None = None,
     regime_net_pnl: np.ndarray | None = None,
@@ -132,7 +231,12 @@ def trade_support_penalty(
     is_regime_specialist : bool
     dominant_regime : int (-1 if N/A)
     """
-    if executed >= _cfg.MIN_TRADE_SUPPORT:
+    support_target = (
+        int(min_trade_support)
+        if min_trade_support is not None
+        else int(_cfg.MIN_TRADE_SUPPORT)
+    )
+    if executed >= support_target:
         return 0.0, False, -1
 
     use_regime = (
@@ -150,12 +254,17 @@ def trade_support_penalty(
         fracs = to_host_numpy(regime_row_fractions_arr, dtype=np.float64)
         if counts is not None and fracs is not None and wins is not None and pnl is not None:
             is_spec, dom = _is_regime_specialist(
-                executed, counts, wins, pnl, fracs,
+                executed,
+                counts,
+                wins,
+                pnl,
+                fracs,
+                min_trade_support=support_target,
             )
             if is_spec:
                 return 0.0, True, dom
 
-    pen = _static_support_penalty(executed)
+    pen = _static_support_penalty(executed, min_trade_support=support_target)
     return pen, False, -1
 
 
@@ -435,6 +544,7 @@ def compute_support_penalty_and_specialist(
     *,
     val_metrics: dict | None = None,
     val_regime_row_counts: np.ndarray | None = None,
+    min_trade_support: int | None = None,
 ) -> tuple[float, bool, int]:
     """
     Support penalty from train metrics, with optional val confirmation.
@@ -445,6 +555,7 @@ def compute_support_penalty_and_specialist(
     counts, wins, pnl = metrics_regime_arrays(metrics)
     penalty, is_spec, dom = trade_support_penalty(
         executed,
+        min_trade_support=min_trade_support,
         regime_trade_counts=counts,
         regime_win_counts=wins,
         regime_net_pnl=pnl,
@@ -487,17 +598,13 @@ def robust_return_pct(
     return min(train_ret, val_ret)
 
 
-def feasibility_violation_score(
+def _raw_feasibility_violation_score(
     train_metrics: dict,
     val_metrics: dict | None,
     *,
     cv_fold: bool = False,
 ) -> float:
-    """
-    Non-negative violation score; 0 means the rule meets deployability floors.
-
-    Used to penalize infeasible chromosomes during evolution.
-    """
+    """Compute violation score against pool admission floors (ignores stage soft mode)."""
     if not _cfg.PHASE2_POOL_REQUIRE_POSITIVE_SPLITS:
         return 0.0
 
@@ -532,6 +639,29 @@ def feasibility_violation_score(
         score += (pf_floor - val_pf) * 5.0
 
     return score
+
+
+def feasibility_violation_score(
+    train_metrics: dict,
+    val_metrics: dict | None,
+    *,
+    cv_fold: bool = False,
+    stage_params: Phase2StageParams | None = None,
+) -> float:
+    """
+    Non-negative violation score; 0 means the rule meets deployability floors.
+
+    Used to penalize infeasible chromosomes during evolution.
+    When Stage A soft feasibility is active, returns 0 (penalties applied elsewhere).
+    """
+    floors = resolve_evolution_floors(stage_params)
+    if floors.soft_feasibility:
+        return 0.0
+    if not floors.pool_require_positive_splits:
+        return 0.0
+    return _raw_feasibility_violation_score(
+        train_metrics, val_metrics, cv_fold=cv_fold,
+    )
 
 
 def passes_evolution_deployability_preview(
