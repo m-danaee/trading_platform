@@ -1098,6 +1098,12 @@ class TestSymbolSpecialistOrchestration:
                 self._migrants = migrant_entries or []
                 return []
 
+            def park_engines(self):
+                return None
+
+            def _ensure_engines(self):
+                return None
+
             def validate_migrants_on_target(self, migrants):
                 return migrants[:1], migrants[1:]
 

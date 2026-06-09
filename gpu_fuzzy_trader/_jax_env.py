@@ -24,7 +24,14 @@ def configure_jax_env() -> None:
     os.environ.setdefault("JAX_PLATFORMS", "cuda,cpu")
     # Default off: Phase 2 GPU ranking uses float32; T4 FP64 throughput is poor.
     os.environ.setdefault("JAX_ENABLE_X64", "False")
-    os.environ.setdefault("JAX_COMPILATION_CACHE_DIR", "/tmp/jax_cache")
+    if "JAX_COMPILATION_CACHE_DIR" not in os.environ:
+        if os.path.isdir("/content"):
+            cache_dir = "/content/jax_cache"
+            os.makedirs(cache_dir, exist_ok=True)
+            os.environ["JAX_COMPILATION_CACHE_DIR"] = cache_dir
+        else:
+            os.environ.setdefault(
+                "JAX_COMPILATION_CACHE_DIR", "/tmp/jax_cache")
     os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
     os.environ.setdefault("ABSL_MIN_LOGLEVEL", "3")
     logging.getLogger("jax._src.xla_bridge").setLevel(logging.WARNING)

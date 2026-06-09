@@ -495,15 +495,15 @@ PHASE1_SAMPLING_TOTAL = 701_000
 
 # PHASE2_GPU_BATCH_SIZE — chromosomes per JAX vmap chunk in simulate_rule_batch.
 # Peak VRAM scales ~linearly (rule matching is O(batch × rows × conditions)).
-# Used directly when PHASE2_GPU_BATCH_SIZE_AUTO is False; otherwise VRAM-capped.
-#   Higher → faster throughput until OOM; 128 is fine on Colab T4 when VRAM headroom.
-#   Lower  → safer on small GPUs, more kernel launches, slower.
-PHASE2_GPU_BATCH_SIZE = 198
+# Used directly when PHASE2_GPU_BATCH_SIZE_AUTO is False; otherwise VRAM/RAM-capped.
+#   Higher → faster throughput until OOM; 64–128 is fine on Colab T4 with headroom.
+#   Lower  → safer on small GPUs / 12 GiB RAM hosts, more kernel launches, slower.
+PHASE2_GPU_BATCH_SIZE = 64
 
-# PHASE2_GPU_BATCH_SIZE_AUTO — cap batch size by detected GPU VRAM at runtime.
-#   True  → apply VRAM tiers in _gpu_runtime (e.g. T4 ≤16 GiB → min(config, 64)).
+# PHASE2_GPU_BATCH_SIZE_AUTO — cap batch size by detected GPU VRAM and host RAM.
+#   True  → apply tiers in _gpu_runtime (12 GiB RAM → 32; T4 ≤16 GiB VRAM → 128).
 #   False → use PHASE2_GPU_BATCH_SIZE exactly (env PHASE2_GPU_BATCH_SIZE still wins).
-PHASE2_GPU_BATCH_SIZE_AUTO = False
+PHASE2_GPU_BATCH_SIZE_AUTO = True
 
 # PHASE2_SCAN_UNROLL — lax.scan unroll for equity simulation.
 #   Higher → fewer kernel launches, longer XLA compile, slightly more VRAM.
@@ -943,7 +943,17 @@ PHASE2_STAGE_B_PLATEAU_EARLY_STOP_MIN_GENERATION = 1
 PHASE2_STAGE_B_EARLY_STOP_MIN_GENERATION = 20
 
 # PHASE2_GPU_ENRICH_SYMBOL_METRICS — merge CPU per-symbol metrics after GPU batch eval.
+# Skipped automatically when symbol_scope is set (symbol-island mode).
 PHASE2_GPU_ENRICH_SYMBOL_METRICS = True
+
+
+def phase2_should_enrich_symbol_metrics(engine: object | None = None) -> bool:
+    """Return True when GPU batch eval should run a follow-up CPU enrichment pass."""
+    if not PHASE2_GPU_ENRICH_SYMBOL_METRICS:
+        return False
+    if engine is not None and getattr(engine, "_symbol_scope", None) is not None:
+        return False
+    return True
 
 
 # =============================================================================
@@ -1096,7 +1106,7 @@ PHASE3_MAX_CAPITAL_PCT_PER_RULE = 50.0
 
 # --- Engines ---
 
-PHASE3_USE_GPU = False
+PHASE3_USE_GPU = False  # overridden to True on Colab GPU via _apply_colab_gpu_defaults()
 PHASE3_USE_PARALLEL_BATCH = True
 
 # PHASE3_BATCH_WORKERS — parallel workers for team evaluation.
@@ -1381,6 +1391,35 @@ assert PHASE2_STAGE_A_MUTATION_RATE >= PHASE2_STAGE_B_MUTATION_RATE, (
 assert PHASE1_SIGN_CONSISTENCY_MIN_FOLDS <= PHASE1_STATIONARITY_FOLDS, (
     "sign-consistency cannot require more folds than stationarity uses"
 )
+
+
+def is_colab_runtime() -> bool:
+    """True when running on Google Colab (/content runtime)."""
+    return (
+        os.environ.get("COLAB_RELEASE_TAG") is not None
+        or os.path.isdir("/content")
+    )
+
+
+def _apply_colab_gpu_defaults() -> None:
+    """
+    Colab T4 optimizations for main.ipynb runs.
+
+    - Keep ``PHASE2_CV_FOLD_WORKERS=1`` — parallel fold threads spike peak
+      GPU/RAM and trigger Linux OOM kills (SIGKILL) on 12 GiB Colab hosts.
+    - Phase 3 uses GPUBacktestEngine (mask cache + batch eval path).
+    - VRAM auto batch sizing uses the T4-friendly 128 cap when enabled.
+    """
+    global PHASE3_USE_GPU, PHASE2_GPU_BATCH_SIZE_AUTO
+    if not is_colab_runtime():
+        return
+    PHASE3_USE_GPU = True
+    PHASE2_GPU_BATCH_SIZE_AUTO = True
+
+
+_apply_colab_gpu_defaults()
+
+
 assert PHASE2_ISLAND_EPOCH_GENERATIONS >= 1
 assert PHASE2_MIGRATION_EPOCH_INTERVAL >= 1
 assert 0.0 < PHASE2_MIGRATION_SEED_FRACTION < 1.0

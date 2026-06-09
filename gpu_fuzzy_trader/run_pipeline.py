@@ -1251,35 +1251,53 @@ class Pipeline_Orchestrator:
         epochs_per_island = max(1, (total_generations + epoch_gens - 1) // epoch_gens)
         total_epochs = epochs_per_island * max(len(work_units), 1)
 
+        skipped_units: set[tuple[str, str]] = set()
         for direction in ("long", "short"):
             if not phase1_result.get(direction):
                 continue
             for symbol in symbols:
-                if not force:
-                    existing = Rule_Pool_Generator.skip_if_valid(direction, symbol)
-                    if existing is not None:
-                        pools[direction][symbol] = existing
-                        continue
-                try:
-                    generators[(direction, symbol)] = Rule_Pool_Generator(
-                        train_df=train_df,
-                        feature_infos=phase1_result[direction],
-                        direction=direction,
-                        symbol_scope=symbol,
-                        val_df=val_df,
-                        seed=_cfg.PHASE2_SEED,
-                        cv_folds=getattr(self, "_cv_folds", None) or None,
-                    )
-                except ValueError as exc:
-                    logger.warning(
-                        "Phase 2 [%s/%s]: skipping island (%s)",
-                        direction, symbol, exc,
-                    )
-                    pools[direction][symbol] = []
+                if force:
+                    continue
+                existing = Rule_Pool_Generator.skip_if_valid(direction, symbol)
+                if existing is not None:
+                    pools[direction][symbol] = existing
+                    skipped_units.add((direction, symbol))
+
+        def _phase2_generator_key(direction: str, symbol: str) -> tuple[str, str]:
+            return direction, symbol
+
+        def _get_or_create_generator(
+            direction: str,
+            symbol: str,
+        ) -> Rule_Pool_Generator | None:
+            key = _phase2_generator_key(direction, symbol)
+            if key in generators:
+                return generators[key]
+            if key in skipped_units:
+                return None
+            try:
+                generators[key] = Rule_Pool_Generator(
+                    train_df=train_df,
+                    feature_infos=phase1_result[direction],
+                    direction=direction,
+                    symbol_scope=symbol,
+                    val_df=val_df,
+                    seed=_cfg.PHASE2_SEED,
+                    cv_folds=getattr(self, "_cv_folds", None) or None,
+                )
+            except ValueError as exc:
+                logger.warning(
+                    "Phase 2 [%s/%s]: skipping island (%s)",
+                    direction, symbol, exc,
+                )
+                pools[direction][symbol] = []
+                skipped_units.add(key)
+                return None
+            return generators[key]
 
         active_units = [
             unit for unit in work_units
-            if unit in generators
+            if unit not in skipped_units
         ]
         global_epoch = 0
         unit_index = 0
@@ -1296,8 +1314,18 @@ class Pipeline_Orchestrator:
             if completed[(direction, symbol)] >= epochs_per_island:
                 continue
 
-            generator = generators[(direction, symbol)]
-            inbound = pending_migrants.pop((direction, symbol), [])
+            active_key = _phase2_generator_key(direction, symbol)
+            for key, other in list(generators.items()):
+                if key != active_key:
+                    other.park_engines()
+
+            generator = _get_or_create_generator(direction, symbol)
+            if generator is None:
+                completed[active_key] += 1
+                global_epoch += 1
+                continue
+
+            inbound = pending_migrants.pop(active_key, [])
             if inbound:
                 accepted, rejected = generator.validate_migrants_on_target(inbound)
                 migration_log.append({
@@ -1312,7 +1340,8 @@ class Pipeline_Orchestrator:
                 migrant_entries = None
 
             generator.run_epoch(migrant_entries=migrant_entries)
-            completed[(direction, symbol)] += 1
+            generator.park_engines()
+            completed[active_key] += 1
             global_epoch += 1
 
             if global_epoch % int(_cfg.PHASE2_MIGRATION_EPOCH_INTERVAL) == 0:
@@ -1329,6 +1358,7 @@ class Pipeline_Orchestrator:
         }
         for (direction, symbol), generator in generators.items():
             try:
+                generator._ensure_engines()
                 pool = generator.finalize_island()
             except Exception as exc:
                 logger.error(

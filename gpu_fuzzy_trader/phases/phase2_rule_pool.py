@@ -1821,25 +1821,40 @@ class Rule_Pool_Generator:
             _prepare_regime_context(sampled)
         )
         self._train_df = slim_backtest_df(sampled, feature_names)
+        self._train_regime_ids = train_regime_ids
+        self._feature_names = feature_names
+        self._cv_folds = cv_folds
+        self._scoped_val_df = scoped_val_df
+        self._sample_seed = sample_seed
 
         # Build feature_modes dict for engine
         self._feature_modes = {fi["name"]: fi["mode"] for fi in feature_infos}
 
+        self._engine = None
         self._val_engine = None
         self._val_regime_row_counts = None
-        use_cv = (
-            cv_folds
-            and len(cv_folds) > 0
+        self._build_engines()
+
+    # ------------------------------------------------------------------
+    # Engine construction
+    # ------------------------------------------------------------------
+
+    def _uses_cv_engines(self) -> bool:
+        return bool(
+            self._cv_folds
+            and len(self._cv_folds) > 0
             and str(_cfg.SPLIT_MODE).strip().lower() == "purged_rolling_cv"
         )
 
-        if use_cv:
+    def _build_engines(self) -> None:
+        """Build train/val (or CV facade) backtest engines."""
+        if self._uses_cv_engines():
             from gpu_fuzzy_trader.phases.phase2_cv import build_cv_fold_engines
 
             cv_train, cv_val = build_cv_fold_engines(
-                cv_folds,
-                feature_infos,
-                direction,
+                self._cv_folds,
+                self.feature_infos,
+                self.direction,
                 seed=self.seed,
                 builder=self,
             )
@@ -1849,18 +1864,17 @@ class Rule_Pool_Generator:
                 self._val_regime_row_counts = getattr(
                     cv_val, "_regime_row_counts", None)
         else:
-            # Initialise backtest engine (GPU preferred, CPU fallback)
             self._engine = self._build_engine(
-                regime_ids=train_regime_ids,
+                regime_ids=self._train_regime_ids,
                 n_regimes=self._n_regimes,
             )
-
-            if scoped_val_df is not None and _cfg.PHASE2_JOINT_TRAIN_VAL:
+            self._val_engine = None
+            if self._scoped_val_df is not None and _cfg.PHASE2_JOINT_TRAIN_VAL:
                 try:
                     val_sampled = _sample_df(
-                        scoped_val_df,
+                        self._scoped_val_df,
                         _cfg.PHASE1_SAMPLING_TOTAL,
-                        random_state=sample_seed,
+                        random_state=self._sample_seed,
                     )
                     val_regime_ids, _val_fracs, val_n_regimes = (
                         _prepare_regime_context(val_sampled)
@@ -1870,7 +1884,7 @@ class Rule_Pool_Generator:
                             val_regime_ids.astype(np.int64),
                             minlength=val_n_regimes,
                         ).astype(np.int64)
-                    slim_val = slim_backtest_df(val_sampled, feature_names)
+                    slim_val = slim_backtest_df(val_sampled, self._feature_names)
                     self._val_engine = self._build_engine_for_df(
                         slim_val,
                         regime_ids=val_regime_ids,
@@ -1882,13 +1896,16 @@ class Rule_Pool_Generator:
                         )
                     logger.info(
                         "Phase 2 [%s]: joint train+val objective enabled "
-                        "(val_rows=%d)", direction, len(slim_val),
+                        "(val_rows=%d)",
+                        self.direction,
+                        len(slim_val),
                     )
                 except Exception as exc:
                     logger.warning(
                         "Phase 2 [%s]: failed to build val engine, "
                         "falling back to train-only objective: %s",
-                        direction, exc,
+                        self.direction,
+                        exc,
                     )
                     self._val_engine = None
 
@@ -1896,11 +1913,25 @@ class Rule_Pool_Generator:
         from gpu_fuzzy_trader._memory import log_memory_rss
 
         configure_phase2_gpu_runtime(self._engine, val_engine=self._val_engine)
-        log_memory_rss(f"Phase2 [{direction}] engine init")
+        log_memory_rss(f"Phase2 [{self.direction}] engine init")
 
-    # ------------------------------------------------------------------
-    # Engine construction
-    # ------------------------------------------------------------------
+    def _ensure_engines(self) -> None:
+        """Rebuild engines after ``park_engines`` dropped GPU state."""
+        if self._engine is not None:
+            return
+        self._build_engines()
+
+    def park_engines(self) -> None:
+        """Release GPU engines between island scheduler epochs."""
+        self._engine = None
+        self._val_engine = None
+        from gpu_fuzzy_trader._memory import log_memory_rss, release_phase2_resources
+
+        log_memory_rss(
+            f"Phase2 [{self.direction}]"
+            f"{f'/{self.symbol_scope}' if self.symbol_scope else ''} parked",
+        )
+        release_phase2_resources()
 
     def _build_engine(
         self,
@@ -2563,6 +2594,7 @@ class Rule_Pool_Generator:
         migrant_entries: list[dict] | None = None,
     ) -> list[dict]:
         """Evolve this island for one scheduler epoch."""
+        self._ensure_engines()
         from gpu_fuzzy_trader.evolution.evox_runner import (
             extract_deployable_migrants,
             run_phase2_evolution_epoch,
@@ -2623,6 +2655,7 @@ class Rule_Pool_Generator:
         from gpu_fuzzy_trader.evolution.evox_runner import run_phase2_evolution
         from gpu_fuzzy_trader.phases.phase2_init import build_feature_sampling_probs
 
+        self._ensure_engines()
         rng = np.random.default_rng(self.seed)
         feature_probs = build_feature_sampling_probs(self.feature_infos)
         tag = f"Phase 2 [{self.direction}"

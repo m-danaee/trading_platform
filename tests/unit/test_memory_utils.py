@@ -24,3 +24,16 @@ def test_log_memory_rss_with_env(monkeypatch):
 
 def test_release_phase2_resources():
     release_phase2_resources()
+
+
+def test_park_engines_clears_engine_handles(monkeypatch) -> None:
+    from gpu_fuzzy_trader.phases.phase2_rule_pool import Rule_Pool_Generator
+
+    gen = object.__new__(Rule_Pool_Generator)
+    gen.direction = "long"
+    gen.symbol_scope = "1"
+    gen._engine = object()
+    gen._val_engine = object()
+    gen.park_engines()
+    assert gen._engine is None
+    assert gen._val_engine is None

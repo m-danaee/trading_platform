@@ -1139,7 +1139,7 @@ class GPUBacktestEngine:
             regime_np,
             self._n_regimes,
         )
-        if bool(getattr(_cfg, "PHASE2_GPU_ENRICH_SYMBOL_METRICS", False)):
+        if _cfg.phase2_should_enrich_symbol_metrics(self):
             try:
                 cpu_metrics = self._lazy_cpu_engine.simulate_rule_batch(
                     chromosomes=chromosomes,
