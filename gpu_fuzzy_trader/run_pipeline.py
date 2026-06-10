@@ -219,7 +219,7 @@ def _log_pipeline_config() -> None:
     logger.info(
         "Pipeline config: SPLIT_MODE=%s CV_FOLDS=%d | PHASE1 top_k=%d | "
         "PHASE2 algo=%s pop=%d gen=%d joint_train_val=%s cv_workers=%d | "
-        "PHASE3 per-symbol greedy pool=%d | "
+        "PHASE3 per-symbol greedy | "
         "PHASE4 trials=%d wf_splits=%d sampler=%s n_jobs=%d%s",
         _cfg.SPLIT_MODE,
         _cfg.CV_N_FOLDS,
@@ -500,6 +500,15 @@ class Pipeline_Orchestrator:
                 # ------------------------------------------------------------------
                 # Phase 5: Out-of-Sample Evaluation (always runs)
                 # ------------------------------------------------------------------
+                # Free GPU memory before CPU-only Phase 5 to avoid OOM
+                try:
+                    import jax
+                    jax.clear_caches()
+                except Exception:
+                    pass
+                import gc
+                gc.collect()
+
                 phase5_result = self._run_phase5(
                     allowed_directions=phase5_directions)
                 results["phase5"] = phase5_result
