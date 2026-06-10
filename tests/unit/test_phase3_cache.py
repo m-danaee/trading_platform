@@ -13,11 +13,9 @@ from gpu_fuzzy_trader.phases.phase3_cache import (
     verify_mask_cache_parity,
 )
 from gpu_fuzzy_trader.phases.phase3_objectives import (
-    compute_phase3_objectives,
-    per_rule_min_symbol_trades_cached,
+    min_per_symbol_trades_from_metrics,
 )
 from gpu_fuzzy_trader.phases.phase3_rule_set import (
-    _per_rule_min_symbol_trades,
     _rule_set_to_engine_format,
 )
 
@@ -78,29 +76,3 @@ class TestPhase3EvalCache:
         assert cached["executed_trades"] == direct["executed_trades"]
         assert cached["sortino_ratio"] == pytest.approx(
             direct["sortino_ratio"], rel=1e-4, abs=1e-4)
-
-    def test_per_rule_gate_cache_matches_brute_force(self):
-        df = _make_df()
-        pool = _pool()
-        engine = CPUBacktestEngine(df, {}, "long")
-        cache = build_phase3_eval_cache(pool, df, df, engine)
-        team = _rule_set_to_engine_format(pool)
-        brute = _per_rule_min_symbol_trades(team, engine, cache=None)
-        cached = per_rule_min_symbol_trades_cached(
-            team, cache.per_rule_min_val_trades)
-        assert cached == brute
-
-    def test_objectives_use_cache_gate(self):
-        df = _make_df()
-        pool = _pool()
-        engine = CPUBacktestEngine(df, {}, "long")
-        cache = build_phase3_eval_cache(pool, df, df, engine)
-        team = _rule_set_to_engine_format(pool)
-        train_m = engine.simulate_rule_set_from_cache(team, cache, "train")
-        val_m = engine.simulate_rule_set_from_cache(team, cache, "val")
-        obj = compute_phase3_objectives(
-            train_m, val_m, team,
-            per_rule_min_val_trades=cache.per_rule_min_val_trades,
-        )
-        assert obj.shape == (3,)
-        assert np.all(np.isfinite(obj))

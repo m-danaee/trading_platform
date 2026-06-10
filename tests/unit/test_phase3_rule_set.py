@@ -6,7 +6,6 @@ Tests cover:
   - Duplicate rule detection (_has_duplicate_rules)
   - Symbol coverage counting (_count_symbols_with_trades)
   - Output dict building (_build_output_dict)
-  - Random rule set generation (_random_rule_set)
   - Rule set to engine format conversion (_rule_set_to_engine_format)
   - NSGA-II helpers (_dominates, _non_dominated_sort, _crowding_distance)
   - Rule_Set_Selector constructor validation
@@ -27,18 +26,20 @@ import pandas as pd
 import pytest
 
 from gpu_fuzzy_trader import config as _cfg
+from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+    _crowding_distance,
+    _dominates,
+    _non_dominated_sort,
+)
+from gpu_fuzzy_trader.phases.phase3_objectives import (
+    conditions_key as _conditions_key,
+    count_symbols_with_trades as _count_symbols_with_trades,
+    has_duplicate_rules as _has_duplicate_rules,
+)
 from gpu_fuzzy_trader.phases.phase3_rule_set import (
     Rule_Set_Selector,
     _build_output_dict,
-    _conditions_key,
-    _count_symbols_with_trades,
-    _crowding_distance,
-    _dominates,
-    _has_duplicate_rules,
-    _non_dominated_sort,
-    _random_rule_set,
     _rule_set_to_engine_format,
-    _symbol_consistency_penalty,
     _validate_rule_set_schema,
     _OUTPUT_PATHS,
 )
@@ -164,8 +165,9 @@ class TestValidateRuleSetSchema:
     def test_too_many_rules_raises(self):
         data = self._valid_data()
         rule = data["rules_set"][0].copy()
-        data["rules_set"] = [rule] * 6
-        with pytest.raises(ValueError, match="must have 2"):
+        max_rules = int(_cfg.PHASE3_GLOBAL_MAX_RULES)
+        data["rules_set"] = [rule] * (max_rules + 1)
+        with pytest.raises(ValueError, match=f"must have {_cfg.PHASE3_GLOBAL_MIN_RULES}"):
             _validate_rule_set_schema(data, "test.json")
 
     def test_rule_missing_conditions_raises(self):
@@ -275,32 +277,6 @@ class TestCountSymbolsWithTrades:
         assert _count_symbols_with_trades(metrics) == 0
 
 
-class TestSymbolConsistencyPenalty:
-    def _metrics(self, symbols: set[str]) -> dict:
-        return {
-            "per_symbol_metrics": {
-                s: {"trade_count": 1} for s in symbols
-            }
-        }
-
-    def test_full_overlap_zero_penalty(self):
-        syms = {"A", "B"}
-        pen = _symbol_consistency_penalty(
-            self._metrics(syms), self._metrics(syms))
-        assert pen == 0.0
-
-    def test_zero_overlap_max_penalty(self):
-        pen = _symbol_consistency_penalty(
-            self._metrics({"A", "B"}), self._metrics({"C", "D"}))
-        assert pen == _cfg.PHASE3_SYMBOL_CONSISTENCY_WEIGHT
-
-    def test_partial_overlap_between_extremes(self):
-        train = self._metrics({"A", "B"})
-        val = self._metrics({"B", "C"})
-        pen = _symbol_consistency_penalty(train, val)
-        assert 0.0 < pen < _cfg.PHASE3_SYMBOL_CONSISTENCY_WEIGHT
-
-
 # ---------------------------------------------------------------------------
 # Tests: _build_output_dict
 # ---------------------------------------------------------------------------
@@ -384,41 +360,6 @@ class TestRuleSetToEngineFormat:
 
 
 # ---------------------------------------------------------------------------
-# Tests: _random_rule_set
-# ---------------------------------------------------------------------------
-
-class TestRandomRuleSet:
-    def test_size_within_bounds(self):
-        pool = _make_pool(8)
-        rng = random.Random(42)
-        for _ in range(20):
-            rs = _random_rule_set(pool, rng, min_rules=2, max_rules=5)
-            assert 2 <= len(rs) <= 5
-
-    def test_no_duplicate_conditions(self):
-        pool = _make_pool(8)
-        rng = random.Random(42)
-        for _ in range(20):
-            rs = _random_rule_set(pool, rng, min_rules=2, max_rules=5)
-            assert not _has_duplicate_rules(rs)
-
-    def test_rules_come_from_pool(self):
-        pool = _make_pool(6)
-        pool_keys = {_conditions_key(r["conditions"]) for r in pool}
-        rng = random.Random(0)
-        for _ in range(10):
-            rs = _random_rule_set(pool, rng, min_rules=2, max_rules=4)
-            for rule in rs:
-                assert _conditions_key(rule["conditions"]) in pool_keys
-
-    def test_min_rules_respected_with_small_pool(self):
-        pool = _make_pool(2)
-        rng = random.Random(0)
-        rs = _random_rule_set(pool, rng, min_rules=2, max_rules=5)
-        assert len(rs) >= 2
-
-
-# ---------------------------------------------------------------------------
 # Tests: NSGA-II helpers
 # ---------------------------------------------------------------------------
 
@@ -493,52 +434,22 @@ class TestRuleSetSelectorInit:
         with pytest.raises(ValueError, match="pool must not be empty"):
             Rule_Set_Selector(df, df, [], "long")
 
-    def test_pool_too_small_raises(self):
-        df = _make_df()
-        pool = _make_pool(1)  # need at least PHASE3_MIN_RULES=2
-        with pytest.raises(ValueError, match="at least"):
-            Rule_Set_Selector(df, df, pool, "long")
-
     def test_valid_construction_long(self):
         pool = _make_pool(4)
         df = _make_df()
         sel = Rule_Set_Selector(
-            df, df, pool, "long", refine_pop_size=4, refine_generations=2
+            df, df, pool, "long"
         )
         assert sel.direction == "long"
-        assert sel.refine_pop_size == 4
-        assert sel.refine_generations == 2
 
     def test_valid_construction_short(self):
         pool = _make_pool(4)
         df = _make_df()
         sel = Rule_Set_Selector(
-            df, df, pool, "short", refine_pop_size=4, refine_generations=2
+            df, df, pool, "short"
         )
         assert sel.direction == "short"
 
-    def test_default_refine_pop_size_from_config(self):
-        pool = _make_pool(4)
-        df = _make_df()
-        sel = Rule_Set_Selector(df, df, pool, "long")
-        if len(pool) < _cfg.PHASE3_SMALL_POOL_THRESHOLD:
-            assert sel.refine_pop_size == _cfg.PHASE3_SMALL_POOL_POP
-        else:
-            assert sel.refine_pop_size == _cfg.PHASE3_REFINE_POP_SIZE
-
-    def test_default_refine_generations_from_config(self):
-        pool = _make_pool(4)
-        df = _make_df()
-        sel = Rule_Set_Selector(df, df, pool, "long")
-        if len(pool) < _cfg.PHASE3_SMALL_POOL_THRESHOLD:
-            assert sel.refine_generations == _cfg.PHASE3_SMALL_POOL_GEN
-        else:
-            assert sel.refine_generations == _cfg.PHASE3_REFINE_GENERATIONS
-
-
-# ---------------------------------------------------------------------------
-# Tests: Rule_Set_Selector.run() — integration (tiny pop/gen)
-# ---------------------------------------------------------------------------
 
 class TestRuleSetSelectorRun:
     """Integration tests using tiny population and generation counts."""
@@ -547,15 +458,11 @@ class TestRuleSetSelectorRun:
         self,
         direction: str = "long",
         n_pool: int = 6,
-        refine_pop_size: int = 6,
-        refine_generations: int = 3,
     ) -> Rule_Set_Selector:
         pool = _make_pool(n_pool)
         df = _make_df(n_rows=200, symbols=["SYM_A", "SYM_B"])
         return Rule_Set_Selector(
             df, df, pool, direction,
-            refine_pop_size=refine_pop_size,
-            refine_generations=refine_generations,
             seed=42,
         )
 
@@ -614,24 +521,6 @@ class TestRuleSetSelectorRun:
             )
         finally:
             m._OUTPUT_PATHS.update(original)
-
-    def test_greedy_eval_count(self, monkeypatch):
-        from gpu_fuzzy_trader.phases.phase3_greedy import greedy_rule_set_search
-
-        monkeypatch.setattr(_cfg, "PHASE3_GREEDY_STOP_ON_WORSEN", False)
-        pool = _make_pool(10)
-        df = _make_df(n_rows=200)
-        p3 = __import__(
-            "gpu_fuzzy_trader.phases.phase3_rule_set",
-            fromlist=["_build_phase3_engines"],
-        )
-        val_eng, train_eng, _, _, cache = p3._build_phase3_engines(
-            df, df, "long", pool)
-        _, n_evals = greedy_rule_set_search(
-            pool, val_eng, train_eng, 2, 5, use_batch=False, cache=cache,
-        )
-        # 10 singles + 9 pairs + 8 triples + 7 quads + 6 fives = 40
-        assert n_evals == 40
 
     def test_run_creates_output_file(self, tmp_path):
         import gpu_fuzzy_trader.phases.phase3_rule_set as m
@@ -889,24 +778,6 @@ class TestSkipIfValid:
             m._OUTPUT_PATHS.update(original)
 
 
-class TestSelectBestFromPareto:
-    def test_returns_none_when_all_candidates_infeasible(self, monkeypatch):
-        import gpu_fuzzy_trader.phases.phase3_rule_set as p3
-
-        def fake_eval(*args, **kwargs):
-            bad = {"total_return_pct": -1.0, "profit_factor": 0.9}
-            return np.array([1.0, 2.0, 3.0]), bad, bad
-
-        monkeypatch.setattr(p3, "_evaluate_rule_set", fake_eval)
-        result = p3._select_best_from_pareto(
-            [[{"conditions": ["[feat_0] IS Very High"],
-                "tp": 4, "sl": 2, "capital_pct": 50}]],
-            None,
-            None,
-        )
-        assert result is None
-
-
 class TestRejectedOutputSchema:
     def test_rejected_output_allows_empty_rules_set(self, tmp_path):
         from gpu_fuzzy_trader.phases.phase3_rule_set import (
@@ -920,47 +791,6 @@ class TestRejectedOutputSchema:
         _validate_rule_set_schema(data, path)
         assert data["selection_accepted"] is False
         assert data["rules_set"] == []
-
-
-class TestGreedyCvMetricOrder:
-    def test_cv_path_preserves_train_val_order(self):
-        from gpu_fuzzy_trader.phases.phase3_greedy import _evaluate_candidates_batch
-
-        class FakeEngine:
-            pass
-
-        class FakeCache:
-            per_rule_min_val_trades = None
-            val_masks = None
-            n_rows_val = 0
-
-        seen: list[tuple[float, float]] = []
-
-        def fake_eval(rule_set, val_engine, train_engine, cache=None, cv_fold_contexts=None, pool_size=None):
-            seen.append((10.0, 20.0))
-            return np.array([1.0, 2.0, 3.0]), {"total_return_pct": 10.0}, {"total_return_pct": 20.0}
-
-        import gpu_fuzzy_trader.phases.phase3_greedy as greedy_mod
-        helpers = greedy_mod._helpers()
-        original = helpers._evaluate_rule_set
-        helpers._evaluate_rule_set = fake_eval
-        try:
-            results = _evaluate_candidates_batch(
-                [[{"conditions": ["[feat_0] IS Very High"]}]],
-                FakeEngine(),
-                FakeEngine(),
-                use_batch=False,
-                cache=FakeCache(),
-                cv_fold_contexts=[
-                    (FakeEngine(), FakeEngine(), None, None, FakeCache())],
-            )
-        finally:
-            helpers._evaluate_rule_set = original
-
-        assert seen == [(10.0, 20.0)]
-        _, val_m, train_m = results[0]
-        assert float(train_m["total_return_pct"]) == 10.0
-        assert float(val_m["total_return_pct"]) == 20.0
 
 
 

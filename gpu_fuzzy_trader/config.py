@@ -1040,12 +1040,32 @@ PHASE2_MUTATION_WEIGHTED_ACTIVATE_PROB = 0.45
 
 # --- Team shape ---
 
-# PHASE3_MIN_RULES / MAX_RULES — team size for combined rule set.
-#   Higher MIN → need more rules before team is valid; stricter diversification.
-#   Higher MAX → larger teams, more capital overlap, richer interaction effects.
-#   Lower MIN → accept single-rule teams; less diversification.
-PHASE3_MIN_RULES = 2
-PHASE3_MAX_RULES = 3
+# PHASE3_PER_SYMBOL_MIN_RULES / MAX_RULES — per-symbol rule count.
+#   Higher MAX → more rules per symbol, richer coverage, more capital overlap.
+#   Lower MIN → allow symbols with no rules (0 = skip symbol if nothing works).
+PHASE3_PER_SYMBOL_MIN_RULES = 0
+PHASE3_PER_SYMBOL_MAX_RULES = 3
+
+# PHASE3_GLOBAL_MIN_RULES / MAX_RULES — total rules in the output JSON.
+#   Higher MIN → require at least this many rules across all symbols.
+#   Higher MAX → cap total rules (10 symbols × 3 max = 30).
+PHASE3_GLOBAL_MIN_RULES = 2
+PHASE3_GLOBAL_MAX_RULES = 30
+
+# PHASE3_PER_SYMBOL_GREEDY_TOP_K — top-K pool rules tested per greedy round.
+#   Higher → more thorough search per symbol, slower.
+#   Lower  → faster, may miss good combinations.
+PHASE3_PER_SYMBOL_GREEDY_TOP_K = 20
+
+# PHASE3_PER_SYMBOL_MIN_TRADES — min trades on symbol's val data for rule.
+#   Higher → reject rules with thin evidence on that symbol.
+#   Lower  → allow sparse rules through.
+PHASE3_PER_SYMBOL_MIN_TRADES = 5
+
+# PHASE3_PER_SYMBOL_MIN_RETURN — min val return % on symbol for rule.
+#   Higher → only profitable-on-symbol rules considered.
+#   Lower  → allow marginal rules through.
+PHASE3_PER_SYMBOL_MIN_RETURN = 0.0
 
 # PHASE3_MIN_SYMBOL_COVERAGE — symbols with ≥1 val trade required (of 10).
 #   Higher → team must fire across more symbols; rejects niche teams.
@@ -1278,7 +1298,8 @@ PHASE4_MAX_WORST_DRAWDOWN_PCT = 15.0
 # PHASE4_MIN_WORST_TRADES — min trades in worst WF window.
 #   Higher → demand statistical significance in every window; very strict.
 #   Lower  → thin windows can still produce feasible trials.
-PHASE4_MIN_WORST_TRADES = 15
+#   With per-symbol rules, each rule fires on fewer rows, so lower is needed.
+PHASE4_MIN_WORST_TRADES = 5
 
 # PHASE4_MIN_WORST_FOLD_RETURN_PCT — min return % in worst WF window.
 #   Higher → only consistently profitable windows pass; may zero feasible set.
@@ -1304,6 +1325,11 @@ PHASE5_VALIDATION_RETURN_GATE_PCT = 2.0
 #   Higher → stricter deployment filter on gross win/loss ratio.
 #   Lower  → strategies with thin edge pass deployment check.
 PHASE5_VALIDATION_PROFIT_FACTOR_GATE = 1.05
+
+# PHASE5_REMOVE_NEGATIVE_PNL_RULES — remove rules with negative PnL on test.
+#   True  → clean up losing rules after OOS evaluation.
+#   False → keep all rules regardless of test performance.
+PHASE5_REMOVE_NEGATIVE_PNL_RULES = True
 
 
 # =============================================================================

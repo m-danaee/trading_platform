@@ -3,19 +3,13 @@ Property-based tests for gpu_fuzzy_trader.phases.phase3_rule_set.Rule_Set_Select
 
 Property 21: Rule Set Size Bounds
   **Validates: Requirements 9.1, 12.8**
-  For any run of Rule_Set_Selector, the output rule set must have 2–5 rules.
-  PHASE3_MIN_RULES = 2, PHASE3_MAX_RULES = 5.
+  For any run of Rule_Set_Selector, the output rule set must have the correct
+  number of rules (global min–max from config).
 
 Property 22: Rule Set Uniqueness
   **Validates: Requirements 9.4**
   For any run of Rule_Set_Selector, no two rules in the output must have
   identical condition sets (order-independent).
-
-Property 29: Symbol Coverage Penalty Application
-  **Validates: Requirements 9.5, 15.4**
-  The coverage penalty must be applied when symbols_with_trades <
-  PHASE3_MIN_SYMBOL_COVERAGE.  When PHASE3_MIN_SYMBOL_COVERAGE = 0, a
-  zero-trade penalty must still be applied when no trades occur.
 """
 
 from __future__ import annotations
@@ -23,7 +17,6 @@ from __future__ import annotations
 import os
 import tempfile
 from typing import Any
-from unittest.mock import MagicMock
 
 import numpy as np
 import pandas as pd
@@ -31,10 +24,11 @@ from hypothesis import given, settings, HealthCheck
 from hypothesis import strategies as st
 
 from gpu_fuzzy_trader import config as _cfg
+from gpu_fuzzy_trader.phases.phase3_objectives import (
+    conditions_key as _conditions_key,
+)
 from gpu_fuzzy_trader.phases.phase3_rule_set import (
     Rule_Set_Selector,
-    _evaluate_rule_set,
-    _conditions_key,
 )
 
 
@@ -42,9 +36,9 @@ from gpu_fuzzy_trader.phases.phase3_rule_set import (
 # Constants
 # ---------------------------------------------------------------------------
 
-PHASE3_MIN_RULES = _cfg.PHASE3_MIN_RULES   # 2
-PHASE3_MAX_RULES = _cfg.PHASE3_MAX_RULES   # 5
-PHASE3_MIN_SYMBOL_COVERAGE = _cfg.PHASE3_MIN_SYMBOL_COVERAGE  # 7
+PHASE3_GLOBAL_MIN_RULES = _cfg.PHASE3_GLOBAL_MIN_RULES
+PHASE3_GLOBAL_MAX_RULES = _cfg.PHASE3_GLOBAL_MAX_RULES
+PHASE3_MIN_SYMBOL_COVERAGE = _cfg.PHASE3_MIN_SYMBOL_COVERAGE
 
 
 # ---------------------------------------------------------------------------
@@ -134,8 +128,8 @@ def selector_args(draw: st.DrawFn):
     """
     n_symbols = draw(st.integers(min_value=1, max_value=4))
     rows_per_sym = draw(st.integers(min_value=30, max_value=80))
-    pool_size = draw(st.integers(min_value=PHASE3_MIN_RULES,
-                     max_value=PHASE3_MAX_RULES + 3))
+    pool_size = draw(st.integers(min_value=PHASE3_GLOBAL_MIN_RULES,
+                     max_value=PHASE3_GLOBAL_MAX_RULES + 3))
     direction = draw(st.sampled_from(["long", "short"]))
     seed = draw(st.integers(min_value=0, max_value=2**31 - 1))
 
@@ -190,8 +184,6 @@ def test_property_21_rule_set_size_bounds(
                 val_df=val_df,
                 pool=pool,
                 direction=direction,
-                refine_pop_size=6,
-                refine_generations=3,
                 seed=0,
             )
             result = selector.run()
@@ -204,9 +196,9 @@ def test_property_21_rule_set_size_bounds(
                     f"Rejected selection should yield empty rules_set, got {n_rules}"
                 )
             else:
-                assert PHASE3_MIN_RULES <= n_rules <= PHASE3_MAX_RULES, (
-                    f"Rule set has {n_rules} rules; expected [{PHASE3_MIN_RULES}, "
-                    f"{PHASE3_MAX_RULES}]. direction={direction}, pool_size={len(pool)}"
+                assert PHASE3_GLOBAL_MIN_RULES <= n_rules <= PHASE3_GLOBAL_MAX_RULES, (
+                    f"Rule set has {n_rules} rules; expected [{PHASE3_GLOBAL_MIN_RULES}, "
+                    f"{PHASE3_GLOBAL_MAX_RULES}]. direction={direction}, pool_size={len(pool)}"
                 )
         finally:
             m._OUTPUT_PATHS.update(original_paths)
@@ -250,8 +242,6 @@ def test_property_22_rule_set_uniqueness(
                 val_df=val_df,
                 pool=pool,
                 direction=direction,
-                refine_pop_size=6,
-                refine_generations=3,
                 seed=0,
             )
             result = selector.run()
@@ -269,180 +259,3 @@ def test_property_22_rule_set_uniqueness(
                 seen.add(key)
         finally:
             m._OUTPUT_PATHS.update(original_paths)
-
-
-# ---------------------------------------------------------------------------
-# Property 29: Symbol Coverage Penalty Application
-# Validates: Requirements 9.5, 15.4
-# ---------------------------------------------------------------------------
-
-def _make_mock_engine(
-    total_return_pct: float = 5.0,
-    sortino_ratio: float = 5.0,
-    max_drawdown_pct: float = 2.0,
-    win_rate: float = 55.0,
-    executed_trades: int = 30,
-    per_symbol_metrics: dict | None = None,
-) -> MagicMock:
-    """
-    Build a mock CPUBacktestEngine whose simulate_rule_set returns the
-    given metrics dict.
-    """
-    engine = MagicMock()
-    engine.simulate_rule_set.return_value = {
-        "sortino_ratio": sortino_ratio,
-        "total_return_pct": total_return_pct,
-        "profit_factor": 1.2,
-        "max_drawdown_pct": max_drawdown_pct,
-        "win_rate": win_rate,
-        "executed_trades": executed_trades,
-        "per_symbol_metrics": per_symbol_metrics or {},
-    }
-    return engine
-
-
-@st.composite
-def coverage_penalty_scenario(draw: st.DrawFn):
-    """
-    Generate a scenario for testing coverage penalty application.
-
-    Varies:
-      - symbols_with_trades: 0 to PHASE3_MIN_SYMBOL_COVERAGE + 2
-      - total_symbols: PHASE3_MIN_SYMBOL_COVERAGE to PHASE3_MIN_SYMBOL_COVERAGE + 3
-      - executed_trades: 0 or positive
-    """
-    total_symbols = draw(
-        st.integers(
-            min_value=PHASE3_MIN_SYMBOL_COVERAGE,
-            max_value=PHASE3_MIN_SYMBOL_COVERAGE + 3,
-        )
-    )
-    symbols_with_trades = draw(st.integers(
-        min_value=0, max_value=total_symbols))
-    # When symbols_with_trades > 0, executed_trades must be > 0
-    if symbols_with_trades > 0:
-        executed_trades = draw(st.integers(min_value=1, max_value=100))
-    else:
-        executed_trades = 0
-
-    return total_symbols, symbols_with_trades, executed_trades
-
-
-@given(scenario=coverage_penalty_scenario())
-@settings(
-    max_examples=20,
-    suppress_health_check=[HealthCheck.too_slow,
-                           HealthCheck.function_scoped_fixture],
-)
-def test_property_29_symbol_coverage_penalty_application(
-    scenario: tuple[int, int, int],
-) -> None:
-    """
-    **Property 29: Symbol Coverage Penalty Application**
-    **Validates: Requirements 9.5, 15.4**
-
-    The coverage penalty must be applied when symbols_with_trades <
-    PHASE3_MIN_SYMBOL_COVERAGE.  When PHASE3_MIN_SYMBOL_COVERAGE = 0, a
-    zero-trade penalty must still be applied when no trades occur.
-
-    We test _evaluate_rule_set directly with mock engines to verify:
-
-    1. When symbols_with_trades < PHASE3_MIN_SYMBOL_COVERAGE, the objectives
-       include a positive coverage penalty proportional to the shortfall.
-
-    2. When executed_trades == 0, the objectives include a zero-trade penalty
-       regardless of the PHASE3_MIN_SYMBOL_COVERAGE setting.
-
-    3. When symbols_with_trades >= PHASE3_MIN_SYMBOL_COVERAGE AND
-       executed_trades > 0, no coverage or zero-trade penalty is applied.
-
-    The penalty is verified by comparing objectives against a baseline
-    (no-penalty) scenario with identical return/drawdown/win_rate values.
-    """
-    total_symbols, symbols_with_trades, executed_trades = scenario
-
-    # Build per_symbol_metrics: first `symbols_with_trades` symbols have trades
-    per_symbol_metrics: dict[str, dict] = {}
-    for i in range(total_symbols):
-        sym = f"SYM_{i}"
-        if i < symbols_with_trades:
-            per_symbol_metrics[sym] = {
-                "trade_count": 5, "win_rate": 50.0, "net_pnl": 10.0}
-        else:
-            per_symbol_metrics[sym] = {
-                "trade_count": 0, "win_rate": 0.0, "net_pnl": 0.0}
-
-    # A simple rule set (content doesn't matter — mock engine ignores it)
-    rule_set = [
-        {"conditions": ["[feat_0] IS Very High"],
-            "tp": 4.0, "sl": 2.0, "capital_pct": 50.0},
-        {"conditions": ["[feat_1] IS Low"], "tp": 4.0,
-            "sl": 2.0, "capital_pct": 50.0},
-    ]
-
-    # Val engine returns the scenario metrics
-    val_engine = _make_mock_engine(
-        total_return_pct=5.0,
-        max_drawdown_pct=2.0,
-        win_rate=55.0,
-        executed_trades=executed_trades,
-        per_symbol_metrics=per_symbol_metrics,
-    )
-
-    # Train engine returns a matching result (no overfitting penalty)
-    train_engine = _make_mock_engine(
-        total_return_pct=5.0,
-        max_drawdown_pct=2.0,
-        win_rate=55.0,
-        executed_trades=executed_trades,
-        per_symbol_metrics=per_symbol_metrics,
-    )
-
-    objectives, train_metrics, val_metrics = _evaluate_rule_set(
-        rule_set, val_engine, train_engine)
-
-    from gpu_fuzzy_trader.phases.phase3_objectives import compute_phase3_objectives
-
-    expected = compute_phase3_objectives(
-        train_metrics, val_metrics, rule_set)
-
-    expected_f1 = float(expected[0])
-    expected_f2 = float(expected[1])
-    expected_f3 = float(expected[2])
-
-    assert abs(objectives[0] - expected_f1) < 1e-9, (
-        f"f1 mismatch: got {objectives[0]:.6f}, expected {expected_f1:.6f}. "
-        f"symbols_with_trades={symbols_with_trades}, "
-        f"PHASE3_MIN_SYMBOL_COVERAGE={PHASE3_MIN_SYMBOL_COVERAGE}, "
-        f"executed_trades={executed_trades}"
-    )
-    assert abs(objectives[1] - expected_f2) < 1e-9, (
-        f"f2 mismatch: got {objectives[1]:.6f}, expected {expected_f2:.6f}."
-    )
-    assert abs(objectives[2] - expected_f3) < 1e-9, (
-        f"f3 mismatch: got {objectives[2]:.6f}, expected {expected_f3:.6f}."
-    )
-
-    # --- Specific assertions for penalty presence/absence ---
-    baseline_f1 = -min(
-        float(train_metrics.get("sortino_ratio", 5.0)),
-        float(val_metrics.get("sortino_ratio", 5.0)),
-    )
-
-    if symbols_with_trades < PHASE3_MIN_SYMBOL_COVERAGE:
-        assert objectives[0] > baseline_f1, (
-            f"Coverage penalty not reflected in f1: "
-            f"symbols_with_trades={symbols_with_trades} < "
-            f"PHASE3_MIN_SYMBOL_COVERAGE={PHASE3_MIN_SYMBOL_COVERAGE}"
-        )
-
-    if executed_trades == 0:
-        assert objectives[0] > baseline_f1, (
-            "Zero-trade penalty not reflected in f1 when executed_trades=0"
-        )
-
-    if symbols_with_trades >= PHASE3_MIN_SYMBOL_COVERAGE and executed_trades > 0:
-        assert abs(objectives[0] - baseline_f1) < 1e-6, (
-            f"Unexpected penalty when no penalty should apply: "
-            f"f1={objectives[0]:.6f}, expected {baseline_f1:.6f}"
-        )

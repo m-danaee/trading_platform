@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.output.writer import Output_Writer, ValidationError
 
 
@@ -135,30 +136,27 @@ class TestWriteHappyPath:
 
 
 # ---------------------------------------------------------------------------
-# Tests: write() — truncation of > 5 rules
+# Tests: write() — truncation of > global_max rules
 # ---------------------------------------------------------------------------
 
 class TestWriteTruncation:
-    def test_six_rules_truncated_to_five(self):
-        rule_set = _make_rule_set(n_rules=6)
+    def test_exceeds_max_truncated(self):
+        max_rules = int(_cfg.PHASE3_GLOBAL_MAX_RULES)
+        rule_set = _make_rule_set(n_rules=max_rules + 1)
         data = _write_and_reload(rule_set)
-        assert len(data["rules_set"]) == 5
+        assert len(data["rules_set"]) == max_rules
 
-    def test_ten_rules_truncated_to_five(self):
-        rule_set = _make_rule_set(n_rules=10)
-        data = _write_and_reload(rule_set)
-        assert len(data["rules_set"]) == 5
-
-    def test_truncation_keeps_first_five_rules(self):
-        """The first 5 rules (by order) should be kept."""
+    def test_truncation_keeps_first_max_rules(self):
+        max_rules = int(_cfg.PHASE3_GLOBAL_MAX_RULES)
+        n_rules = max_rules + 3
         rules = [
             _make_rule(tp=float(i), sl=1.0, capital_pct=10.0,
                        conditions=["[f] IS Bullish", "[g] IS Very High"])
-            for i in range(1, 8)
+            for i in range(1, n_rules + 1)
         ]
         rule_set = {"direction": "long", "rules_set": rules}
         data = _write_and_reload(rule_set)
-        assert len(data["rules_set"]) == 5
+        assert len(data["rules_set"]) == max_rules
         for i, r in enumerate(data["rules_set"], start=1):
             assert r["tp"] == float(i)
 

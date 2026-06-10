@@ -219,7 +219,7 @@ def _log_pipeline_config() -> None:
     logger.info(
         "Pipeline config: SPLIT_MODE=%s CV_FOLDS=%d | PHASE1 top_k=%d | "
         "PHASE2 algo=%s pop=%d gen=%d joint_train_val=%s cv_workers=%d | "
-        "PHASE3 refine pop=%d gen=%d parallel_batch=%s gpu=%s | "
+        "PHASE3 per-symbol greedy pool=%d | "
         "PHASE4 trials=%d wf_splits=%d sampler=%s n_jobs=%d%s",
         _cfg.SPLIT_MODE,
         _cfg.CV_N_FOLDS,
@@ -229,10 +229,6 @@ def _log_pipeline_config() -> None:
         _cfg.PHASE2_GENERATIONS,
         _cfg.PHASE2_JOINT_TRAIN_VAL,
         _cfg.PHASE2_CV_FOLD_WORKERS,
-        _cfg.PHASE3_REFINE_POP_SIZE,
-        _cfg.PHASE3_REFINE_GENERATIONS,
-        _cfg.PHASE3_USE_PARALLEL_BATCH,
-        _cfg.PHASE3_USE_GPU,
         _cfg.PHASE4_N_TRIALS,
         _cfg.PHASE4_WF_SPLITS,
         _cfg.PHASE4_SAMPLER,

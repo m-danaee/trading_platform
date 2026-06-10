@@ -175,6 +175,14 @@ class OOS_Evaluator:
                     test_return,
                 )
 
+            # 3b. Remove negative-PnL rules from the strategy
+            if _cfg.PHASE5_REMOVE_NEGATIVE_PNL_RULES:
+                test_trade_log = trade_logs_by_split.get("test")
+                if test_trade_log is not None and not test_trade_log.empty:
+                    strategy = self._remove_negative_pnl_rules(
+                        strategy, test_trade_log, direction
+                    )
+
             # 4. Save per-direction report
             self._save_report(test_metrics, direction)
 
@@ -490,6 +498,56 @@ class OOS_Evaluator:
         )
 
         return metrics, per_symbol_rows, trade_log
+
+    @staticmethod
+    def _remove_negative_pnl_rules(
+        strategy: dict,
+        trade_log: pd.DataFrame,
+        direction: str,
+    ) -> dict:
+        rules = strategy.get("rules_set", [])
+        if not rules or trade_log is None or trade_log.empty:
+            return strategy
+
+        kept: list[dict] = []
+        for rule_idx, rule in enumerate(rules, start=1):
+            rule_trades = trade_log[trade_log["Rule_Index"] == rule_idx]
+            if rule_trades.empty:
+                kept.append(rule)
+                continue
+            total_pnl = float(rule_trades["Net_PnL"].sum())
+            if total_pnl > 0:
+                kept.append(rule)
+
+        global_min = int(_cfg.PHASE3_GLOBAL_MIN_RULES)
+        if len(kept) < global_min:
+            logger.warning(
+                "Phase 5 [%s]: cannot remove negative-PnL rules: "
+                "would drop below minimum %d rules. Keeping all %d rules.",
+                direction, global_min, len(rules),
+            )
+            return strategy
+
+        removed = len(rules) - len(kept)
+        if removed > 0:
+            logger.info(
+                "Phase 5 [%s]: removed %d negative-PnL rules, kept %d",
+                direction, removed, len(kept),
+            )
+            strategy["rules_set"] = kept
+
+            # Re-write the cleaned strategy back to disk
+            output_path = _STRATEGY_PATHS[direction]
+            try:
+                with open(output_path, "w", encoding="utf-8") as fh:
+                    json.dump(strategy, fh, indent=2)
+            except OSError as exc:
+                logger.warning(
+                    "Phase 5 [%s]: failed to rewrite cleaned strategy: %s",
+                    direction, exc,
+                )
+
+        return strategy
 
     @staticmethod
     def _build_per_symbol_rows(

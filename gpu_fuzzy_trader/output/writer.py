@@ -41,6 +41,7 @@ import logging
 import re
 from pathlib import Path
 
+from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.backtest.symbol_conditions import (
     MAX_SYMBOL_FILTERS_PER_RULE,
     parse_symbol_condition,
@@ -254,17 +255,20 @@ def _validate_rule_set(rule_set: object) -> dict:
             f"'rules_set' must be a list, got {type(rules_list).__name__!r}."
         )
 
-    # Requirement 12.8: truncate to 5 if > 5
-    if len(rules_list) > 5:
+    # Requirement 12.8: truncate to max if > max
+    global_max = int(_cfg.PHASE3_GLOBAL_MAX_RULES)
+    if len(rules_list) > global_max:
         logger.warning(
-            "rules_set contains %d rules (max 5); truncating to first 5.", len(rules_list)
+            "rules_set contains %d rules (max %d); truncating to first %d.",
+            len(rules_list), global_max, global_max,
         )
-        rules_list = rules_list[:5]
+        rules_list = rules_list[:global_max]
 
-    # Requirement 12.8: must have 2–5 rules
-    if len(rules_list) < 2:
+    # Requirement 12.8: must have at least min rules
+    global_min = int(_cfg.PHASE3_GLOBAL_MIN_RULES)
+    if len(rules_list) < global_min:
         raise ValidationError(
-            f"'rules_set' must contain at least 2 rules, got {len(rules_list)}."
+            f"'rules_set' must contain at least {global_min} rules, got {len(rules_list)}."
         )
 
     # Validate each rule

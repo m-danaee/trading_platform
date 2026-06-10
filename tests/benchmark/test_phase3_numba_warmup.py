@@ -1,4 +1,4 @@
-"""Numba warm-up for Phase 3 NSGA-II (non-gating benchmark helper)."""
+"""Numba warm-up for NSGA-II (non-gating benchmark helper)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from gpu_fuzzy_trader.evolution.numba_ops import numba_enabled
-from gpu_fuzzy_trader.phases.phase3_rule_set import _non_dominated_sort
+from gpu_fuzzy_trader.phases.phase2_rule_pool import _non_dominated_sort
 
 
 @pytest.mark.benchmark
