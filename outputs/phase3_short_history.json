@@ -1,0 +1,35 @@
+{
+  "direction": "short",
+  "pareto_size": 1,
+  "selection_accepted": false,
+  "selection_rejection_reason": "all_pareto_candidates_infeasible",
+  "generations": [
+    {
+      "generation": 0,
+      "pareto_size": 2,
+      "mean_f1": 123.22010300067154,
+      "mean_f2": 123.65333333333334,
+      "mean_f3": 97.93333333333334,
+      "mean_train_return_pct": -0.30000000000001137,
+      "mean_val_return_pct": -0.30000000000001137
+    },
+    {
+      "generation": 1,
+      "pareto_size": 2,
+      "mean_f1": 123.22010300067154,
+      "mean_f2": 123.65333333333334,
+      "mean_f3": 97.93333333333334,
+      "mean_train_return_pct": -0.7500000000000118,
+      "mean_val_return_pct": -0.7500000000000118
+    },
+    {
+      "generation": 2,
+      "pareto_size": 1,
+      "mean_f1": 121.8867696673382,
+      "mean_f2": 122.07913755240567,
+      "mean_f3": 96.6,
+      "mean_train_return_pct": -0.30000000000001137,
+      "mean_val_return_pct": -0.30000000000001137
+    }
+  ]
+}

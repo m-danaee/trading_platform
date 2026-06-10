@@ -623,46 +623,6 @@ class Reporter:
         logger.info("Saved per-symbol CSV: %s", out_path)
         return out_path
 
-    def write_symbol_specialist_report(
-        self,
-        *,
-        direction: str,
-        symbol_pools: dict[str, list[dict]],
-        phase3_export: dict,
-        migration_log: list[dict] | None = None,
-        output_dir: str | None = None,
-    ) -> str:
-        """
-        Persist symbol-specialist assignments, skipped symbols, and migration stats.
-        """
-        import json
-
-        reports_dir = output_dir if output_dir is not None else _REPORTS_DIR
-        out_path = os.path.join(
-            reports_dir, f"symbol_specialist_{direction}.json",
-        )
-        self._ensure_dir(out_path)
-
-        per_symbol_counts = {
-            str(sym): len(pool or [])
-            for sym, pool in (symbol_pools or {}).items()
-        }
-        payload: dict[str, Any] = {
-            "direction": direction,
-            "symbol_pool_sizes": per_symbol_counts,
-            "skipped_symbols": list(phase3_export.get("skipped_symbols", [])),
-            "symbol_assignments": dict(
-                phase3_export.get("symbol_assignments", {}),
-            ),
-            "export_rule_count": len(phase3_export.get("rules_set", [])),
-            "selection_accepted": phase3_export.get("selection_accepted", True),
-            "migration_events": list(migration_log or []),
-        }
-        with open(out_path, "w", encoding="utf-8") as fh:
-            json.dump(payload, fh, indent=2)
-        logger.info("Saved symbol-specialist report: %s", out_path)
-        return os.path.abspath(out_path)
-
     def write_strategy_evaluation_table(
         self,
         metrics_by_split: dict,

@@ -715,56 +715,6 @@ def deployability_rank_score(
     return robust + fold_bonus + 0.1 * sortino - 0.05 * dd
 
 
-def passes_symbol_island_robustness_gate(
-    train_metrics: dict,
-    val_metrics: dict | None = None,
-) -> bool:
-    """
-    Per-symbol deployability gate for single-symbol islands.
-
-    Replaces cross-symbol median/profitable-symbol penalties when
-    ``PHASE2_SYMBOL_SPECIALIST_ENABLED`` scopes evolution to one symbol.
-    """
-    if not passes_pool_trade_floor(
-        int(train_metrics.get("executed_trades", 0)),
-        train_metrics,
-    ):
-        return False
-    if val_metrics is None:
-        return False
-    if int(val_metrics.get("executed_trades", 0)) < int(
-        _cfg.PHASE3_SYMBOL_RULE_MIN_VAL_TRADES
-    ):
-        return False
-    if int(train_metrics.get("executed_trades", 0)) < int(
-        _cfg.PHASE3_SYMBOL_RULE_MIN_TRAIN_TRADES
-    ):
-        return False
-    train_dd = float(train_metrics.get("max_drawdown_pct", 100.0))
-    val_dd = float(val_metrics.get("max_drawdown_pct", train_dd))
-    if train_dd > _cfg.PHASE2_MAX_DRAWDOWN_GATE:
-        return False
-    if val_dd > _cfg.PHASE2_MAX_DRAWDOWN_GATE:
-        return False
-    if float(train_metrics.get("total_return_pct", 0.0)) <= _cfg.PHASE2_POOL_TRAIN_RETURN_MIN_PCT:
-        return False
-    if float(val_metrics.get("total_return_pct", 0.0)) <= _cfg.PHASE2_POOL_VAL_RETURN_MIN_PCT:
-        return False
-    if float(train_metrics.get("profit_factor", 0.0)) < _cfg.PHASE2_PROFIT_FACTOR_FLOOR:
-        return False
-    if float(val_metrics.get("profit_factor", 0.0)) < _cfg.PHASE2_PROFIT_FACTOR_FLOOR:
-        return False
-    return True
-
-
-def passes_migrant_target_gate(
-    train_metrics: dict,
-    val_metrics: dict | None,
-) -> bool:
-    """Re-score a migrant candidate on the target symbol before seeding."""
-    return passes_symbol_island_robustness_gate(train_metrics, val_metrics)
-
-
 def compute_robust_score(
     train_metrics: dict,
     val_metrics: dict | None,

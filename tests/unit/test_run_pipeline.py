@@ -211,7 +211,7 @@ class TestPipelineOrchestratorRun:
 
     @pytest.fixture(autouse=True)
     def _legacy_phase2_mode(self, monkeypatch):
-        monkeypatch.setattr(_cfg, "PHASE2_SYMBOL_SPECIALIST_ENABLED", False)
+        pass
 
     def _make_orch(self, tmp_path) -> Pipeline_Orchestrator:
         orch = Pipeline_Orchestrator()
@@ -397,7 +397,7 @@ class TestPipelineOrchestratorRun:
 class TestLoadAndSplitDataCache:
     @pytest.fixture(autouse=True)
     def _legacy_phase2_mode(self, monkeypatch):
-        monkeypatch.setattr(_cfg, "PHASE2_SYMBOL_SPECIALIST_ENABLED", False)
+        pass
 
     def _make_orch(self, tmp_path) -> Pipeline_Orchestrator:
         orch = Pipeline_Orchestrator()
@@ -425,6 +425,7 @@ class TestLoadAndSplitDataCache:
         monkeypatch.setattr(_cfg, "TRAIN_70_PATH", str(train_path))
         monkeypatch.setattr(_cfg, "VALIDATION_30_PATH", str(val_path))
         monkeypatch.setattr(_cfg, "SPLIT_MODE", "holdout_70_30")
+        monkeypatch.setattr(_cfg, "DEBUG_SYMBOL_SCOPE_ENABLED", False)
 
         with patch("gpu_fuzzy_trader.run_pipeline.Data_Loader.load_dataset") as load_mock, \
                 patch("gpu_fuzzy_trader.run_pipeline.Data_Splitter.split_and_persist") as split_mock:
@@ -466,6 +467,7 @@ class TestLoadAndSplitDataCache:
         monkeypatch.setattr(_cfg, "TRAIN_70_PATH", str(train_path))
         monkeypatch.setattr(_cfg, "VALIDATION_30_PATH", str(val_path))
         monkeypatch.setattr(_cfg, "SPLIT_MODE", "holdout_70_30")
+        monkeypatch.setattr(_cfg, "DEBUG_SYMBOL_SCOPE_ENABLED", False)
 
         with patch("gpu_fuzzy_trader.run_pipeline.Data_Loader.load_dataset", return_value=train_df) as load_mock, \
                 patch("gpu_fuzzy_trader.run_pipeline.Data_Splitter.split_and_persist", return_value=(train_df, val_df, [])) as split_mock:
@@ -622,7 +624,7 @@ class TestPhase1SkipLogic:
 class TestPhase2SkipLogic:
     @pytest.fixture(autouse=True)
     def _legacy_phase2_mode(self, monkeypatch):
-        monkeypatch.setattr(_cfg, "PHASE2_SYMBOL_SPECIALIST_ENABLED", False)
+        pass
 
     def test_phase2_skipped_when_valid_pool_exists(self, tmp_path):
         """_run_phase2 should skip a direction when skip_if_valid returns a pool."""
@@ -1034,105 +1036,6 @@ class TestTemporaryOutputPaths:
         assert reporter_module._REPORTS_DIR == original_reporter_dir
 
 
-class TestSymbolSpecialistOrchestration:
-    def test_work_unit_expansion(self) -> None:
-        from gpu_fuzzy_trader.run_pipeline import _phase2_work_units
-
-        phase1 = {
-            "long": [{"name": "f", "mode": "positive", "score": 1.0}],
-            "short": [],
-        }
-        units = _phase2_work_units(["A", "B"], phase1)
-        assert units == [("long", "A"), ("long", "B")]
-
-    def test_nested_pool_empty_detection(self, monkeypatch) -> None:
-        from gpu_fuzzy_trader.run_pipeline import _phase2_result_has_rules
-
-        monkeypatch.setattr(_cfg, "PHASE2_SYMBOL_SPECIALIST_ENABLED", True)
-        assert _phase2_result_has_rules({"long": {"A": []}, "short": {}}) is False
-        assert _phase2_result_has_rules(
-            {"long": {"A": _make_pool(1)}, "short": {}}
-        ) is True
-
-    def test_symbol_pool_paths(self, tmp_path, monkeypatch) -> None:
-        monkeypatch.setattr(_cfg, "OUTPUTS_DIR", str(tmp_path / "out"))
-        path = _cfg.phase2_symbol_pool_path("long", "ETH", str(tmp_path / "out"))
-        assert path.endswith(os.path.join("phase2", "long", "ETH", "pool.json"))
-
-    def test_scheduler_round_robin_and_migration(self, tmp_path, monkeypatch) -> None:
-        monkeypatch.setattr(_cfg, "PHASE2_SYMBOL_SPECIALIST_ENABLED", True)
-        monkeypatch.setattr(_cfg, "PHASE2_GENERATIONS", 4)
-        monkeypatch.setattr(_cfg, "PHASE2_ISLAND_EPOCH_GENERATIONS", 2)
-        monkeypatch.setattr(_cfg, "PHASE2_MIGRATION_EPOCH_INTERVAL", 1)
-        monkeypatch.setattr(_cfg, "PHASE2_MIGRATION_SEED_FRACTION", 0.2)
-
-        orch = Pipeline_Orchestrator()
-        orch._log_path = str(tmp_path / "pipeline.log")
-        train_df = _make_df(symbols=["SYM_A", "SYM_B"])
-        phase1 = {
-            "long": [{"name": "feat_0", "mode": "positive", "score": 0.9}],
-            "short": [],
-        }
-        epoch_calls: list[tuple[str, str]] = []
-
-        class StubGenerator:
-            @staticmethod
-            def skip_if_valid(*_args, **_kwargs):
-                return None
-
-            @staticmethod
-            def collect_shared_archive_candidates(*_args, **_kwargs):
-                return []
-
-            @staticmethod
-            def save_archive(*_args, **_kwargs):
-                return []
-
-            def __init__(self, **kwargs):
-                self.direction = kwargs["direction"]
-                self.symbol_scope = kwargs["symbol_scope"]
-                self._migrants: list[dict] = []
-
-            def run_epoch(self, migrant_entries=None):
-                epoch_calls.append((self.direction, self.symbol_scope))
-                self._migrants = migrant_entries or []
-                return []
-
-            def park_engines(self):
-                return None
-
-            def _ensure_engines(self):
-                return None
-
-            def validate_migrants_on_target(self, migrants):
-                return migrants[:1], migrants[1:]
-
-            def snapshot_migrants(self, top_k=5):
-                return [{"chromosome": [0, 1, 2], "migrant_rank_score": 1.0}]
-
-            def finalize_island(self):
-                return _make_pool(1)
-
-            @staticmethod
-            def collect_shared_archive_candidates(*_args, **_kwargs):
-                return []
-
-        with patch(
-            "gpu_fuzzy_trader.run_pipeline.Rule_Pool_Generator",
-            StubGenerator,
-        ), patch(
-            "gpu_fuzzy_trader.run_pipeline._phase2_module.rebind_symbol_phase2_paths",
-        ):
-            result = orch._run_phase2_symbol_specialist(
-                train_df, phase1, force=True, val_df=_make_df(symbols=["SYM_A", "SYM_B"]),
-            )
-
-        assert "long" in result
-        assert set(result["long"]) == {"SYM_A", "SYM_B"}
-        assert len(epoch_calls) >= 4
-        assert len(getattr(orch, "_phase2_migration_log", [])) >= 1
-
-
 class TestDebugSymbolScope:
     def test_debug_symbol_scope_filters_one_symbol(self, monkeypatch) -> None:
         monkeypatch.setattr(_cfg, "DEBUG_SYMBOL_SCOPE_ENABLED", True)
@@ -1158,7 +1061,6 @@ class TestDebugSymbolScope:
         assert len(scoped_val) == 50
         assert set(orch._cv_folds[0].train_df["symbol"].unique()) == {"1"}
         assert set(orch._cv_folds[0].val_df["symbol"].unique()) == {"1"}
-        assert _cfg.enumerate_phase2_symbols(scoped_train) == ["1"]
 
     def test_debug_symbol_scope_filters_multiple_symbols(self, monkeypatch) -> None:
         monkeypatch.setattr(_cfg, "DEBUG_SYMBOL_SCOPE_ENABLED", True)
@@ -1173,7 +1075,6 @@ class TestDebugSymbolScope:
             train_df, val_df)
 
         assert set(scoped_train["symbol"].unique()) == {"1", "10"}
-        assert _cfg.enumerate_phase2_symbols(scoped_train) == ["1", "10"]
         assert len(scoped_train) == 132
         assert len(scoped_val) == 100
 
@@ -1187,8 +1088,6 @@ class TestDebugSymbolScope:
         orch = Pipeline_Orchestrator()
 
         scoped_train, _ = orch._apply_debug_symbol_scope(train_df, val_df)
-
-        assert _cfg.enumerate_phase2_symbols(scoped_train) == ["10", "20"]
 
     def test_debug_symbol_count_invalid_raises(self, monkeypatch) -> None:
         monkeypatch.setattr(_cfg, "DEBUG_SYMBOL_SCOPE_ENABLED", True)

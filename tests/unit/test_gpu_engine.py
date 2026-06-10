@@ -581,32 +581,6 @@ class TestSimulateRuleBatch:
         assert results[0].get("per_symbol_metrics") == per_sym
         assert fake_cpu.calls == 1
 
-    def test_skips_enrich_for_symbol_scope(
-        self, monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        from gpu_fuzzy_trader import config as cfg
-
-        monkeypatch.setattr(cfg, "PHASE2_GPU_ENRICH_SYMBOL_METRICS", True)
-        df = _make_df(n=20, label_max=106.0, label_min=99.0, label_close=104.0)
-        eng = _make_engine(df)
-        eng._symbol_scope = "1"
-
-        class FakeCpuEngine:
-            def __init__(self) -> None:
-                self.calls = 0
-
-            def simulate_rule_batch(self, chromosomes, tp, sl, capital_pct):
-                self.calls += 1
-                return [{"per_symbol_metrics": {"1": {"net_pnl": 1.0}}}]
-
-        fake_cpu = FakeCpuEngine()
-        eng._cpu_engine_ref = fake_cpu
-        chrom = np.array([[10, 2]], dtype=np.int32)
-        results = eng.simulate_rule_batch(
-            chrom, tp=4.0, sl=2.0, capital_pct=50.0)
-        assert fake_cpu.calls == 0
-        assert "per_symbol_metrics" not in results[0]
-
 
 # ---------------------------------------------------------------------------
 # Test: simulate_equity_sequential

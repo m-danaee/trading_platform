@@ -9,10 +9,6 @@
 - `gpu_fuzzy_trader/evolution/numba_ops.py` → Numba-accelerated NSGA helpers
 
 Phase 2 is the core search phase. It evolves a large, diverse pool of candidate fuzzy trading rules using multi-objective evolutionary optimization. The output is a Pareto-front pool of rules that trade off Sortino ratio, drawdown, and win rate — not a single "best" rule.
-
-When `PHASE2_SYMBOL_SPECIALIST_ENABLED` is true (default), Phase 2 runs as **direction × symbol islands** in a single-process round-robin scheduler:
-
-- Per-symbol artifacts: `outputs/phase2/{direction}/{symbol}/pool.json` and `history.json`
 - Local warm-start archives: `phase2_rule_archive/{direction}/{symbol}/archive.json`
 - Shared cross-symbol archive: `phase2_rule_archive/{direction}/shared_archive.json`
 - Guarded online migration between islands every `PHASE2_MIGRATION_EPOCH_INTERVAL` epochs
@@ -361,28 +357,6 @@ A chromosome is only included in the pool if `executed_trades ≥ MIN_TRADE_POOL
 | `PHASE2_NUMBA_ENABLED`                   | `True`                | Use Numba-JIT NSGA helpers. Disable only for debugging.                                                                         |
 
 ---
-
-## 10. Symbol-specialist mode (`PHASE2_SYMBOL_SPECIALIST_ENABLED`)
-
-When enabled (default), Phase 2 evolves **one island per direction × symbol** instead of a single pooled search across all symbols.
-
-### Scheduler (`run_pipeline._run_phase2_symbol_specialist`)
-
-- Round-robin epochs: each active island runs `PHASE2_ISLAND_EPOCH_GENERATIONS` generations per visit until `PHASE2_GENERATIONS` total work is distributed.
-- **Local archives:** `phase2_rule_archive/{long|short}/{symbol}/archive.json` warm-start each island.
-- **Shared archive:** `phase2_rule_archive/{long|short}/shared_archive.json` stores chromosomes that pass `PHASE2_SHARED_ARCHIVE_MIN_ROBUST_SCORE` on `PHASE2_SHARED_ARCHIVE_MIN_SYMBOLS` or more symbols.
-- **Migration:** every `PHASE2_MIGRATION_EPOCH_INTERVAL` epochs, deployable elites from island A are re-scored on island B via `passes_migrant_target_gate` before seeding (`PHASE2_MIGRATION_SEED_FRACTION` of the population).
-
-### Per-symbol outputs
-
-- `outputs/phase2/{direction}/{symbol}/pool.json` — island Pareto pool.
-- `outputs/phase2/{direction}/{symbol}/history.json` — per-epoch evolution history.
-
-### Objective change
-
-On symbol-scoped islands, cross-symbol median/profitable-symbol penalties are replaced by `passes_symbol_island_robustness_gate` (per-symbol train/val trade floors and drawdown gate).
-
-Key config: `PHASE2_ISLAND_EPOCH_GENERATIONS`, `PHASE2_MIGRATION_EPOCH_INTERVAL`, `PHASE2_MIGRATION_SEED_FRACTION`, `PHASE2_SHARED_ARCHIVE_MIN_SYMBOLS`, `PHASE2_SHARED_ARCHIVE_MIN_ROBUST_SCORE`.
 
 ---
 

@@ -31,7 +31,6 @@ def test_park_engines_clears_engine_handles(monkeypatch) -> None:
 
     gen = object.__new__(Rule_Pool_Generator)
     gen.direction = "long"
-    gen.symbol_scope = "1"
     gen._engine = object()
     gen._val_engine = object()
     gen.park_engines()

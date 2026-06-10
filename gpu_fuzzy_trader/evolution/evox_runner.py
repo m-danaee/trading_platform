@@ -1013,7 +1013,6 @@ def _assign_eval_result(
         compute_phase2_objectives_from_metrics,
     )
 
-    symbol_scope = getattr(engine, "_symbol_scope", None) if engine is not None else None
     obj, processed = compute_phase2_objectives_from_metrics(
         chromosome,
         dont_cares,
@@ -1024,7 +1023,6 @@ def _assign_eval_result(
         val_regime_row_counts=val_regime_row_counts,
         diversity_reference=diversity_reference,
         stage_params=stage_params,
-        symbol_scope=symbol_scope,
     )
     objectives[i] = obj
     metrics_cache[i] = processed
@@ -1060,9 +1058,9 @@ def _trim_global_metrics_cache(
     overflow = len(global_metrics_cache) - int(max_size)
     if overflow <= 0:
         return
-    import numpy as _trim_np
-    keys_to_remove = _trim_np.random.choice(
-        list(global_metrics_cache.keys()), size=overflow, replace=False,
+    import random as _trim_random
+    keys_to_remove = _trim_random.sample(
+        list(global_metrics_cache.keys()), k=overflow,
     )
     for key in keys_to_remove:
         global_metrics_cache.pop(key, None)

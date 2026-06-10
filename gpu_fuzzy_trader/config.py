@@ -121,17 +121,6 @@ PHASE2_ARCHIVE_PATHS = {
     "short": os.path.join(PHASE2_ARCHIVE_DIR, "phase2_short_archive.json"),
 }
 
-# Symbol-specialist Phase 2: one island per direction × symbol.
-PHASE2_SYMBOL_SPECIALIST_ENABLED = True
-PHASE2_SYMBOL_UNIVERSE_MODE = "train_present"
-PHASE2_ISLAND_EPOCH_GENERATIONS = 27
-PHASE2_MIGRATION_EPOCH_INTERVAL = 3
-PHASE2_MIGRATION_SEED_FRACTION = 0.15
-PHASE2_SHARED_ARCHIVE_MIN_SYMBOLS = 3
-PHASE2_SHARED_ARCHIVE_MIN_ROBUST_SCORE = 1.0
-PHASE3_SYMBOL_RULE_MIN_TRAIN_TRADES = 17
-PHASE3_SYMBOL_RULE_MIN_VAL_TRADES = 5
-
 # Debug: scope pipeline to N symbols starting at DEBUG_SYMBOL (sorted universe).
 DEBUG_SYMBOL_SCOPE_ENABLED = True
 DEBUG_SYMBOL = "1"
@@ -148,11 +137,6 @@ def filter_df_to_symbols(df: pd.DataFrame, symbols: list[str]) -> pd.DataFrame:
     if scoped.empty:
         raise ValueError(f"No rows for symbols {list(symbols)!r}")
     return scoped.reset_index(drop=True)
-
-
-def filter_df_to_symbol(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
-    """Return rows for a single symbol; raises if column missing or no rows."""
-    return filter_df_to_symbols(df, [symbol])
 
 
 def resolve_debug_symbols(train_df) -> list[str] | None:
@@ -192,77 +176,24 @@ def resolve_debug_symbols(train_df) -> list[str] | None:
     return available[start_idx:start_idx + count]
 
 
-def phase2_symbol_pool_path(
-    direction: str,
-    symbol: str,
-    outputs_dir: str | None = None,
-) -> str:
-    """Per-symbol Phase 2 pool under ``outputs/phase2/{direction}/{symbol}/``."""
-    root = outputs_dir or OUTPUTS_DIR
-    return os.path.join(root, "phase2", direction, symbol, "pool.json")
-
-
-def phase2_symbol_history_path(
-    direction: str,
-    symbol: str,
-    outputs_dir: str | None = None,
-) -> str:
-    """Per-symbol Phase 2 history JSON path."""
-    root = outputs_dir or OUTPUTS_DIR
-    return os.path.join(root, "phase2", direction, symbol, "history.json")
-
-
-def phase2_symbol_archive_path(direction: str, symbol: str) -> str:
-    """Persistent local symbol archive (cross-run warm start)."""
-    return os.path.join(PHASE2_ARCHIVE_DIR, direction, symbol, "archive.json")
-
-
-def phase2_shared_archive_path(direction: str) -> str:
-    """Direction-level shared archive of broadly robust rules."""
-    return os.path.join(PHASE2_ARCHIVE_DIR, direction, "shared_archive.json")
-
-
-def enumerate_phase2_symbols(train_df) -> list[str]:
-    """Return sorted symbol universe for symbol-specialist Phase 2."""
-    if PHASE2_SYMBOL_UNIVERSE_MODE != "train_present":
-        raise ValueError(
-            f"Unsupported PHASE2_SYMBOL_UNIVERSE_MODE: {PHASE2_SYMBOL_UNIVERSE_MODE!r}"
-        )
-    if train_df is None or getattr(train_df, "empty", True):
-        return []
-    if "symbol" not in train_df.columns:
-        return []
-    return sorted(train_df["symbol"].dropna().astype(str).unique().tolist())
-
-
 def phase2_pool_path(
     direction: str,
-    symbol: str | None = None,
     outputs_dir: str | None = None,
 ) -> str:
-    """Resolve Phase 2 pool path (symbol-scoped or legacy direction-level)."""
-    if PHASE2_SYMBOL_SPECIALIST_ENABLED and symbol is not None:
-        return phase2_symbol_pool_path(direction, symbol, outputs_dir)
-    if symbol is None:
-        if outputs_dir is None:
-            return PHASE2_POOL_PATHS[direction]
-        return os.path.join(outputs_dir, f"phase2_{direction}_pool.json")
-    return phase2_symbol_pool_path(direction, symbol, outputs_dir)
+    """Resolve Phase 2 pool path."""
+    if outputs_dir is None:
+        return PHASE2_POOL_PATHS[direction]
+    return os.path.join(outputs_dir, f"phase2_{direction}_pool.json")
 
 
 def phase2_history_path(
     direction: str,
-    symbol: str | None = None,
     outputs_dir: str | None = None,
 ) -> str:
-    """Resolve Phase 2 history path (symbol-scoped or legacy direction-level)."""
-    if PHASE2_SYMBOL_SPECIALIST_ENABLED and symbol is not None:
-        return phase2_symbol_history_path(direction, symbol, outputs_dir)
-    if symbol is None:
-        if outputs_dir is None:
-            return PHASE2_HISTORY_PATHS[direction]
-        return os.path.join(outputs_dir, f"phase2_{direction}_history.json")
-    return phase2_symbol_history_path(direction, symbol, outputs_dir)
+    """Resolve Phase 2 history path."""
+    if outputs_dir is None:
+        return PHASE2_HISTORY_PATHS[direction]
+    return os.path.join(outputs_dir, f"phase2_{direction}_history.json")
 
 
 # =============================================================================
@@ -571,7 +502,7 @@ PHASE2_CAPITAL_PCT = 30.0
 #   Higher MAX → allow complex rules (if encoding supports variable count).
 #   Lower MAX → force simplicity; more generalization, less specificity.
 MIN_CONDITIONS = 3
-MAX_CONDITIONS = 4
+MAX_CONDITIONS = 3
 
 # PHASE2_ENCODING — chromosome memory layout during evolution.
 #   "dense"        — length-K vector with per-feature dont_care (legacy).
@@ -968,15 +899,12 @@ PHASE2_STAGE_B_PLATEAU_EARLY_STOP_MIN_GENERATION = 1
 PHASE2_STAGE_B_EARLY_STOP_MIN_GENERATION = 20
 
 # PHASE2_GPU_ENRICH_SYMBOL_METRICS — merge CPU per-symbol metrics after GPU batch eval.
-# Skipped automatically when symbol_scope is set (symbol-island mode).
 PHASE2_GPU_ENRICH_SYMBOL_METRICS = True
 
 
 def phase2_should_enrich_symbol_metrics(engine: object | None = None) -> bool:
     """Return True when GPU batch eval should run a follow-up CPU enrichment pass."""
     if not PHASE2_GPU_ENRICH_SYMBOL_METRICS:
-        return False
-    if engine is not None and getattr(engine, "_symbol_scope", None) is not None:
         return False
     return True
 
@@ -1448,10 +1376,4 @@ _apply_colab_gpu_defaults()
 assert MIN_CONDITIONS <= MAX_CONDITIONS, (
     f"MIN_CONDITIONS ({MIN_CONDITIONS}) must be <= MAX_CONDITIONS ({MAX_CONDITIONS})"
 )
-assert PHASE2_ISLAND_EPOCH_GENERATIONS >= 1
 assert 0.0 <= PHASE2_VIABILITY_RECOVERY_DEPLOYABLE_MUTATE_FRACTION <= 1.0
-assert PHASE2_MIGRATION_EPOCH_INTERVAL >= 1
-assert 0.0 < PHASE2_MIGRATION_SEED_FRACTION < 1.0
-assert PHASE2_SHARED_ARCHIVE_MIN_SYMBOLS >= 1
-assert PHASE3_SYMBOL_RULE_MIN_TRAIN_TRADES >= 1
-assert PHASE3_SYMBOL_RULE_MIN_VAL_TRADES >= 1

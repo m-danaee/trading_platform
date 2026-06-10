@@ -248,23 +248,13 @@ def compute_phase3_objectives(
     val_masks_by_key: dict[frozenset, np.ndarray] | None = None,
     n_rows_val: int = 0,
     pool_size: int | None = None,
-    symbol_specialist: bool | None = None,
 ) -> np.ndarray:
     """
     Compute minimised objectives [f1, f2, f3] with all penalties applied.
 
     When ``PHASE3_USE_TRAIN_TARGET`` is True, objectives use train metrics;
     validation drives gate penalties only.
-
-    Cross-symbol coverage/consistency/robustness penalties are omitted when
-    ``symbol_specialist`` is True or the rule set already encodes per-symbol
-    filters (symbol-specialist export path).
     """
-    if symbol_specialist is None:
-        symbol_specialist = (
-            _cfg.PHASE2_SYMBOL_SPECIALIST_ENABLED
-            and rule_set_has_symbol_filters(rule_set)
-        )
 
     dup_penalty = 50.0 if has_duplicate_rules(rule_set) else 0.0
 
@@ -290,20 +280,19 @@ def compute_phase3_objectives(
     symbol_consistency_penalty_val = 0.0
     corr_penalty = 0.0
     symbol_robustness_penalty = 0.0
-    if not symbol_specialist:
-        val_symbols_with_trades = count_symbols_with_trades(val_metrics)
-        coverage_target = effective_symbol_coverage_target(pool_size)
-        if val_symbols_with_trades < coverage_target:
-            coverage_penalty = (
-                (coverage_target - val_symbols_with_trades) * 5.0
-            )
-        symbol_consistency_penalty_val = symbol_consistency_penalty(
-            train_metrics, val_metrics)
-        corr_penalty = train_val_corr_penalty(train_metrics, val_metrics)
-        symbol_robustness_penalty = (
-            _symbol_robustness_penalty(train_metrics)
-            + _symbol_robustness_penalty(val_metrics)
+    val_symbols_with_trades = count_symbols_with_trades(val_metrics)
+    coverage_target = effective_symbol_coverage_target(pool_size)
+    if val_symbols_with_trades < coverage_target:
+        coverage_penalty = (
+            (coverage_target - val_symbols_with_trades) * 5.0
         )
+    symbol_consistency_penalty_val = symbol_consistency_penalty(
+        train_metrics, val_metrics)
+    corr_penalty = train_val_corr_penalty(train_metrics, val_metrics)
+    symbol_robustness_penalty = (
+        _symbol_robustness_penalty(train_metrics)
+        + _symbol_robustness_penalty(val_metrics)
+    )
     incremental_penalty = _incremental_trade_penalty(
         rule_set,
         val_masks_by_key,

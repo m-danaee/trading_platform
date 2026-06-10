@@ -1,0 +1,35 @@
+{
+  "direction": "long",
+  "pareto_size": 1,
+  "selection_accepted": true,
+  "selection_rejection_reason": null,
+  "generations": [
+    {
+      "generation": 0,
+      "pareto_size": 1,
+      "mean_f1": 66.0,
+      "mean_f2": 71.0,
+      "mean_f3": -29.0,
+      "mean_train_return_pct": 1.7999999999999794,
+      "mean_val_return_pct": 1.7999999999999794
+    },
+    {
+      "generation": 1,
+      "pareto_size": 1,
+      "mean_f1": 66.0,
+      "mean_f2": 71.0,
+      "mean_f3": -29.0,
+      "mean_train_return_pct": 1.7999999999999794,
+      "mean_val_return_pct": 1.7999999999999794
+    },
+    {
+      "generation": 2,
+      "pareto_size": 1,
+      "mean_f1": 66.0,
+      "mean_f2": 71.0,
+      "mean_f3": -29.0,
+      "mean_train_return_pct": 1.7999999999999794,
+      "mean_val_return_pct": 1.7999999999999794
+    }
+  ]
+}

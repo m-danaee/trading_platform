@@ -1020,11 +1020,11 @@ class TestRulePoolGeneratorRun:
             assert seeds.shape == (2, max_slots(), 2)
             assert np.array_equal(
                 sparse_to_dense(seeds[0], dc),
-                np.array([0, 1, 2, 3], dtype=np.int32),
+                np.array([0, 1, 2, 5], dtype=np.int32),
             )
             assert np.array_equal(
                 sparse_to_dense(seeds[1], dc),
-                np.array([1, 2, 3, 4], dtype=np.int32),
+                np.array([1, 2, 3, 5], dtype=np.int32),
             )
             chromosomes = {tuple(entry["chromosome"]) for entry in result}
             assert (0, 1, 2, 3) in chromosomes
@@ -1511,51 +1511,6 @@ class TestTwoStageOrchestration:
             m._HISTORY_PATHS.update(original_hist)
 
 
-class TestSymbolScopedGenerator:
-    def test_filters_train_df_to_symbol(self) -> None:
-        fi = _make_feature_infos(["positive", "positive"])
-        df = _make_train_df(n_rows=200, n_features=2, symbols=["AAA", "BBB"])
-        gen = Rule_Pool_Generator(
-            df, fi, "long", pop_size=4, n_generations=1, seed=1, symbol_scope="AAA",
-        )
-        assert set(gen._train_df["symbol"].unique()) == {"AAA"}
-
-    def test_shared_archive_promotion_requires_min_symbols(self) -> None:
-        fi = _make_feature_infos(["positive"])
-        entry = {
-            "chromosome": [0],
-            "conditions": ["[feat_0] IS Very Low"],
-            "objectives": {
-                "total_return_pct": 3.0,
-                "profit_factor": 1.2,
-                "sortino_ratio": 1.0,
-                "max_drawdown_pct": 5.0,
-            },
-            "executed_trades": _cfg.PHASE3_SYMBOL_RULE_MIN_TRAIN_TRADES,
-            "val_objectives": {
-                "total_return_pct": 2.0,
-                "profit_factor": 1.1,
-                "max_drawdown_pct": 4.0,
-            },
-            "val_executed_trades": _cfg.PHASE3_SYMBOL_RULE_MIN_VAL_TRADES,
-        }
-        pools = {"S1": [dict(entry, symbol_scope="S1")]}
-        promoted = Rule_Pool_Generator.collect_shared_archive_candidates(
-            "long", fi, pools,
-        )
-        assert promoted == []
-        pools["S2"] = [dict(entry, symbol_scope="S2")]
-        pools["S3"] = [dict(entry, symbol_scope="S3")]
-        promoted = Rule_Pool_Generator.collect_shared_archive_candidates(
-            "long", fi, pools,
-        )
-        assert len(promoted) == 1
-        assert promoted[0].get("shared_archive") is True
-        assert len(promoted[0].get("source_symbols", [])) >= (
-            _cfg.PHASE2_SHARED_ARCHIVE_MIN_SYMBOLS
-        )
-
-
 class TestArchiveMetadata:
     def test_annotate_archive_entry_metadata(self) -> None:
         rules = [{
@@ -1567,11 +1522,9 @@ class TestArchiveMetadata:
             "val_executed_trades": 10,
         }]
         annotated = Rule_Pool_Generator._annotate_archive_entries(
-            rules, symbol_scope="SYM_X", source_symbols=["SYM_X", "SYM_Y"],
+            rules,
         )
-        assert annotated[0]["symbol_scope"] == "SYM_X"
         assert "robust_score" in annotated[0]
-        assert annotated[0]["source_symbols"] == ["SYM_X", "SYM_Y"]
 
 
 class TestMinConditionsThree:

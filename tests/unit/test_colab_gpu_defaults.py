@@ -13,14 +13,6 @@ def test_phase2_should_enrich_without_symbol_scope() -> None:
     )
 
 
-class _ScopedEngine:
-    _symbol_scope = "1"
-
-
-def test_phase2_should_skip_enrich_for_symbol_scope() -> None:
-    assert cfg.phase2_should_enrich_symbol_metrics(_ScopedEngine()) is False
-
-
 def test_colab_defaults_apply_when_content_exists(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
