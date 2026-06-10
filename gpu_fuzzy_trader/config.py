@@ -122,7 +122,7 @@ PHASE2_ARCHIVE_PATHS = {
 }
 
 # Debug: scope pipeline to N symbols starting at DEBUG_SYMBOL (sorted universe).
-DEBUG_SYMBOL_SCOPE_ENABLED = True
+DEBUG_SYMBOL_SCOPE_ENABLED = False
 DEBUG_SYMBOL = "1"
 DEBUG_SYMBOL_COUNT = 2
 
@@ -174,6 +174,53 @@ def resolve_debug_symbols(train_df) -> list[str] | None:
         )
     start_idx = available.index(start_symbol)
     return available[start_idx:start_idx + count]
+
+
+def _debug_symbol_universe_size() -> int | None:
+    """Active symbol count when debug scope is on; None for full-universe runs."""
+    if not DEBUG_SYMBOL_SCOPE_ENABLED:
+        return None
+    return max(1, int(DEBUG_SYMBOL_COUNT))
+
+
+def effective_min_profitable_symbols(symbol_count: int | None = None) -> int:
+    """Cap cross-symbol profitability gate to the active universe size.
+
+    With DEBUG_SYMBOL_COUNT=2 and PHASE2_MIN_PROFITABLE_SYMBOLS=5, evolution
+    always pays a shortfall penalty (impossible target) and long pools collapse.
+    """
+    target = int(PHASE2_MIN_PROFITABLE_SYMBOLS)
+    universe = symbol_count if symbol_count is not None else _debug_symbol_universe_size()
+    if universe is None:
+        return target
+    return min(target, max(1, int(universe)))
+
+
+def effective_phase3_per_symbol_min_trades() -> int:
+    """Per-symbol trade floor; scaled down for thin debug universes."""
+    base = int(PHASE3_PER_SYMBOL_MIN_TRADES)
+    universe = _debug_symbol_universe_size()
+    if universe is None:
+        return base
+    # Full run assumes ~10 symbols; scale floor with active symbol count.
+    scaled = int(round(base * universe / 10.0))
+    return max(15, scaled)
+
+
+def effective_phase3_per_symbol_min_return() -> float:
+    """Per-symbol return floor; relaxed in debug scope for sparse val slices."""
+    base = float(PHASE3_PER_SYMBOL_MIN_RETURN)
+    if _debug_symbol_universe_size() is None:
+        return base
+    return min(base, 2.5)
+
+
+def effective_phase3_val_return_floor_pct() -> float:
+    """Team fallback return floor; must sit below typical Phase 2 pool returns."""
+    base = float(PHASE3_VAL_RETURN_FLOOR_PCT)
+    if _debug_symbol_universe_size() is None:
+        return base
+    return min(base, 4.0)
 
 
 def phase2_pool_path(
@@ -1061,12 +1108,14 @@ PHASE3_PER_SYMBOL_GREEDY_TOP_K = 20
 # PHASE3_PER_SYMBOL_MIN_TRADES — min trades on symbol's val data for rule.
 #   Higher → reject rules with thin evidence on that symbol.
 #   Lower  → allow sparse rules through.
-PHASE3_PER_SYMBOL_MIN_TRADES = 50
+#   Debug scope scales via effective_phase3_per_symbol_min_trades().
+PHASE3_PER_SYMBOL_MIN_TRADES = 45
 
 # PHASE3_PER_SYMBOL_MIN_RETURN — min val return % on symbol for rule.
 #   Higher → only profitable-on-symbol rules considered.
 #   Lower  → allow marginal rules through.
-PHASE3_PER_SYMBOL_MIN_RETURN = 5.0
+#   Debug scope relaxes via effective_phase3_per_symbol_min_return().
+PHASE3_PER_SYMBOL_MIN_RETURN = 3.0
 
 # PHASE3_MAX_CAPITAL_PCT_PER_RULE — cap per rule before normalization.
 #   Higher → each rule can use more notional; higher overlap drawdown risk.
@@ -1084,7 +1133,9 @@ PHASE3_BATCH_WORKERS = min(32, os.cpu_count() or 4)
 
 # Return / PF floors for Phase 3 team admission (must align with Phase 2 quality).
 # Higher floors → fewer teams pass; lower → more teams, weaker OOS risk.
-PHASE3_VAL_RETURN_FLOOR_PCT = 8.0
+# 8% blocked long fallback when Phase 2 max return was ~8.3%; 5% is better aligned.
+# Debug scope relaxes via effective_phase3_val_return_floor_pct().
+PHASE3_VAL_RETURN_FLOOR_PCT = 5.0
 
 
 # =============================================================================

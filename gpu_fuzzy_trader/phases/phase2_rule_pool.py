@@ -285,7 +285,8 @@ def _symbol_robustness_penalty(metrics: dict) -> float:
     med = float(np.median(np.asarray(pnl_vec, dtype=np.float64)))
     if med < _cfg.PHASE2_SYMBOL_MEDIAN_RETURN_FLOOR_PCT:
         penalty += abs(_cfg.PHASE2_SYMBOL_MEDIAN_RETURN_FLOOR_PCT - med)
-    shortfall = max(0, _cfg.PHASE2_MIN_PROFITABLE_SYMBOLS - profitable)
+    min_profitable = _cfg.effective_min_profitable_symbols(len(pnl_vec))
+    shortfall = max(0, min_profitable - profitable)
     penalty += float(shortfall) * 2.0
     return penalty
 

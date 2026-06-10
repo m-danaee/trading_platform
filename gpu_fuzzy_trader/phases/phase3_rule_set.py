@@ -207,6 +207,36 @@ def _pool_rule_val_score(rule: dict) -> float:
     return min(val_ret, train_ret)
 
 
+def _try_global_pool_fallback(
+    pool: list[dict],
+    train_engine,
+    val_engine,
+    eval_cache: Phase3EvalCache | None,
+    direction: str,
+    global_min: int,
+) -> list[dict] | None:
+    """Pick top pool rules when per-symbol greedy finds too few."""
+    fallback = _best_rules_from_pool_fallback(pool, global_min)
+    engine_fmt = _rule_set_to_engine_format(fallback)
+    _train_m, val_m = _simulate_team(
+        engine_fmt, train_engine, val_engine, eval_cache,
+    )
+    val_floor = float(_cfg.effective_phase3_val_return_floor_pct())
+    if float(val_m.get("total_return_pct", -999.0)) > val_floor:
+        logger.info(
+            "Phase 3 [%s]: fallback produced %d global rules",
+            direction, len(fallback),
+        )
+        return fallback
+    logger.warning(
+        "Phase 3 [%s]: fallback failed val return floor (%.2f%% <= %.2f%%)",
+        direction,
+        float(val_m.get("total_return_pct", -999.0)),
+        val_floor,
+    )
+    return None
+
+
 def _best_rules_from_pool_fallback(
     pool: list[dict],
     n_rules: int,
@@ -276,8 +306,8 @@ def _per_symbol_greedy(
     pool: list[dict],
     direction: str,
 ) -> list[int]:
-    min_trades = int(_cfg.PHASE3_PER_SYMBOL_MIN_TRADES)
-    min_return = float(_cfg.PHASE3_PER_SYMBOL_MIN_RETURN)
+    min_trades = int(_cfg.effective_phase3_per_symbol_min_trades())
+    min_return = float(_cfg.effective_phase3_per_symbol_min_return())
     max_rules = int(_cfg.PHASE3_PER_SYMBOL_MAX_RULES)
     top_k = int(_cfg.PHASE3_PER_SYMBOL_GREEDY_TOP_K)
 
@@ -540,50 +570,55 @@ class Rule_Set_Selector:
                     self.direction, sym,
                 )
 
-        if not symbol_assignments:
-            logger.warning(
-                "Phase 3 [%s]: no rules selected for any symbol",
-                self.direction,
-            )
-            output_dict = _build_rejected_output_dict(
-                self.direction, "no_rules_selected_for_any_symbol")
-            self._persist_output(output_dict)
-            return output_dict
-
-        merged_rules = _merge_per_symbol_rules(symbol_assignments, enriched_pool)
-
         global_min = int(_cfg.PHASE3_GLOBAL_MIN_RULES)
         global_max = int(_cfg.PHASE3_GLOBAL_MAX_RULES)
 
-        if len(merged_rules) < global_min:
+        if not symbol_assignments:
             logger.warning(
-                "Phase 3 [%s]: only %d merged rules, need at least %d. "
-                "Trying fallback...",
-                self.direction, len(merged_rules), global_min,
+                "Phase 3 [%s]: no rules selected for any symbol; trying fallback",
+                self.direction,
             )
-            fallback = _best_rules_from_pool_fallback(
-                enriched_pool, global_min)
-            engine_fmt = _rule_set_to_engine_format(fallback)
-            train_m, val_m = _simulate_team(
-                engine_fmt, self._train_engine, self._val_engine, self._eval_cache,
+            merged_rules = _try_global_pool_fallback(
+                enriched_pool,
+                self._train_engine,
+                self._val_engine,
+                self._eval_cache,
+                self.direction,
+                global_min,
             )
-            if float(val_m.get("total_return_pct", -999.0)) > float(
-                _cfg.PHASE3_VAL_RETURN_FLOOR_PCT
-            ):
-                merged_rules = fallback
-                logger.info(
-                    "Phase 3 [%s]: fallback produced %d global rules",
-                    self.direction, len(merged_rules),
-                )
-            else:
-                logger.warning(
-                    "Phase 3 [%s]: fallback also failed — rejecting",
-                    self.direction,
-                )
+            if merged_rules is None:
                 output_dict = _build_rejected_output_dict(
-                    self.direction, "insufficient_rules_after_merge")
+                    self.direction, "no_rules_selected_for_any_symbol")
                 self._persist_output(output_dict)
                 return output_dict
+        else:
+            merged_rules = _merge_per_symbol_rules(
+                symbol_assignments, enriched_pool)
+
+            if len(merged_rules) < global_min:
+                logger.warning(
+                    "Phase 3 [%s]: only %d merged rules, need at least %d. "
+                    "Trying fallback...",
+                    self.direction, len(merged_rules), global_min,
+                )
+                fallback_rules = _try_global_pool_fallback(
+                    enriched_pool,
+                    self._train_engine,
+                    self._val_engine,
+                    self._eval_cache,
+                    self.direction,
+                    global_min,
+                )
+                if fallback_rules is None:
+                    logger.warning(
+                        "Phase 3 [%s]: fallback also failed — rejecting",
+                        self.direction,
+                    )
+                    output_dict = _build_rejected_output_dict(
+                        self.direction, "insufficient_rules_after_merge")
+                    self._persist_output(output_dict)
+                    return output_dict
+                merged_rules = fallback_rules
 
         if len(merged_rules) > global_max:
             logger.warning(

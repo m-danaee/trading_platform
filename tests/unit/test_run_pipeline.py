@@ -772,6 +772,31 @@ class TestPhase4SkipLogic:
             result = orch._run_phase4(train_df, val_df, phase3_result)
         assert result == {}
 
+    def test_phase4_skipped_when_phase3_has_empty_rules(self, tmp_path):
+        """_run_phase4 should skip without error when Phase 3 rejected all rules."""
+        orch = Pipeline_Orchestrator()
+        orch._log_path = str(tmp_path / "pipeline.log")
+        train_df = _make_df()
+        val_df = _make_df()
+        phase3_result = {
+            "long": {
+                "direction": "long",
+                "selection_accepted": False,
+                "rules_set": [],
+            },
+        }
+
+        with patch(
+            "gpu_fuzzy_trader.run_pipeline.WalkForwardRiskOptimizer.skip_if_valid",
+            return_value=None,
+        ), patch(
+            "gpu_fuzzy_trader.run_pipeline.WalkForwardRiskOptimizer.__init__",
+            side_effect=AssertionError(
+                "WalkForwardRiskOptimizer must not run"),
+        ):
+            result = orch._run_phase4(train_df, val_df, phase3_result)
+        assert result == {}
+
 
 # ---------------------------------------------------------------------------
 # Tests: Phase 5 always runs

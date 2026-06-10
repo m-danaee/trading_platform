@@ -1371,6 +1371,19 @@ class Pipeline_Orchestrator:
                 continue
 
             n_rules = len(rule_set.get("rules_set", []))
+            if n_rules == 0:
+                logger.warning(
+                    "Phase 4 [%s]: Phase 3 produced 0 rules; skipping direction.",
+                    direction,
+                )
+                _log_phase_entry(
+                    self._log_path, dir_phase_name, dir_start_ts, _now_iso(),
+                    time.monotonic() - dir_t0, skipped=True,
+                    result_summary={"rules": 0,
+                                    "reason": "empty_phase3_rules"},
+                )
+                continue
+
             logger.info(
                 "Running %s … (%d rules from Phase 3)",
                 dir_phase_name, n_rules,
