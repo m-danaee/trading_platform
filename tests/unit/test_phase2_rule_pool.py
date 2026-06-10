@@ -1328,6 +1328,7 @@ class TestRobustReturnObjective:
         monkeypatch.setattr(_cfg, "PHASE2_RETURN_FLOOR_PCT", -100.0)
         monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR", 0.0)
         monkeypatch.setattr(_cfg, "PHASE2_VAL_RETURN_FLOOR_PCT", -100.0)
+        monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
 
         dont_cares = np.full(4, 5, dtype=np.int32)
         chrom = np.array([0, 1, 2, 3], dtype=np.int32)
@@ -1530,7 +1531,7 @@ class TestArchiveMetadata:
 class TestMinConditionsThree:
     def test_config_allows_three_active_conditions(self):
         assert _cfg.MIN_CONDITIONS == 3
-        assert _cfg.MAX_CONDITIONS == 4
+        assert _cfg.MAX_CONDITIONS == 3
 
     def test_mutation_repair_preserves_three_condition_chromosome(self):
         from gpu_fuzzy_trader.phases.phase2_rule_pool import _mutate

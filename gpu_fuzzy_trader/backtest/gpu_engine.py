@@ -447,6 +447,8 @@ def _jax_simulate_equity_batch(
             jnp.minimum(mean_ret / downside_dev, sortino_cap),
             jnp.where(mean_ret > 0.0, sortino_cap, 0.0),
         )
+        sortino_threshold = _JXF(_cfg.PHASE2_SORTINO_MIN_TRADE_THRESHOLD)
+        sortino = sortino * jnp.minimum(1.0, n_trades / sortino_threshold)
 
         win_rate = jnp.where(
             n_trades > 0, wins.astype(_JXF) / n_trades * 100.0, 0.0)
@@ -653,6 +655,8 @@ def _jax_simulate_equity_batch_regime(
             jnp.minimum(mean_ret / downside_dev, sortino_cap),
             jnp.where(mean_ret > 0.0, sortino_cap, 0.0),
         )
+        sortino_threshold = _JXF(_cfg.PHASE2_SORTINO_MIN_TRADE_THRESHOLD)
+        sortino = sortino * jnp.minimum(1.0, n_trades / sortino_threshold)
 
         win_rate = jnp.where(
             n_trades > 0, wins.astype(_JXF) / n_trades * 100.0, 0.0)
@@ -1309,7 +1313,9 @@ class GPUBacktestEngine:
             "total_return_pct": (
                 float(final_equity) / initial_capital - 1.0) * 100.0,
             "sortino_ratio": _sortino_ratio_from_returns(
-                [float(p) / float(initial_capital) for p in net_pnls]),
+                [float(p) / float(initial_capital) for p in net_pnls],
+                scale_by_trades=True,
+            ),
             "max_drawdown_pct": float(max_dd),
             "win_rate": win_rate,
             "profit_factor": profit_factor,

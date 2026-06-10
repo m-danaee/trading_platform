@@ -324,12 +324,12 @@ PHASE1_DISPERSION_THRESHOLD = 0.95
 # PHASE1_TOP_K_FEATURES — shortlist size per direction (long / short).
 #   Higher → wider Phase 2 search space, slower evolution, more combinations.
 #   Lower  → faster search, risk of missing predictive features.
-PHASE1_TOP_K_FEATURES = 15
+PHASE1_TOP_K_FEATURES = 25
 
 # PHASE1_MAX_FEATURE_OVERLAP — max Jaccard overlap between long & short lists.
 #   Higher → more shared features across directions; smaller combined gene space.
 #   Lower  → more direction-specific lists; better asymmetry, less redundancy.
-PHASE1_MAX_FEATURE_OVERLAP = 0.65
+PHASE1_MAX_FEATURE_OVERLAP = 0.8
 
 # PHASE1_ASYMMETRIC_TARGET — separate MI targets for long vs short.
 #   True  → direction-specific feature rankings (recommended).
@@ -358,7 +358,7 @@ PHASE1_SIGN_CONSISTENCY_MIN_ABS_CORR: float = 0.02
 # PHASE1_STATIONARITY_FOLDS — chronological/regime chunks for stability tests.
 #   Higher → more robust stationarity check, fewer features pass.
 #   Lower  → faster, looser stationarity filter.
-PHASE1_STATIONARITY_FOLDS = 3
+PHASE1_STATIONARITY_FOLDS = 2
 
 # PHASE1_STATIONARITY_CV_MAX — max coefficient-of-variation across fold MI ranks.
 #   Higher → allow more rank instability; keep more features.
@@ -547,12 +547,16 @@ PHASE2_USE_TOTAL_RETURN_OBJ = True
 #   False → train return only; easier overfit to in-sample seasons.
 PHASE2_USE_ROBUST_RETURN_OBJ = True
 
+# PHASE2_SORTINO_MIN_TRADE_THRESHOLD — trade count below which Sortino is scaled down.
+#   Used in Approach 2 to penalize low-trade-count rules.
+PHASE2_SORTINO_MIN_TRADE_THRESHOLD = 100
+
 # --- Return / quality floors (evolution + pool filtering) ---
 
 # PHASE2_RETURN_FLOOR_PCT — min train return % to avoid feasibility penalty.
 #   Higher → only profitable-on-train rules stay feasible; emptier search.
 #   Lower  → more exploration; weak rules linger until other gates remove them.
-PHASE2_RETURN_FLOOR_PCT = 1.0
+PHASE2_RETURN_FLOOR_PCT = 0
 
 # PHASE2_VAL_RETURN_FLOOR_PCT — min validation return % for feasibility.
 #   Higher → stricter OOS alignment during evolution.
@@ -616,7 +620,7 @@ PHASE2_CV_PROFIT_FACTOR_FLOOR = 1.0
 # PHASE2_CV_MIN_VAL_TRADES — min validation trades per fold for admission.
 #   Higher → fold val metrics are statistically meaningful.
 #   Lower  → folds with few trades can still admit rules.
-PHASE2_CV_MIN_VAL_TRADES = 4
+PHASE2_CV_MIN_VAL_TRADES = 15
 
 # PHASE2_CV_POOL_TARGET_MIN — soft target pool size before rank fallback kicks in.
 #   Higher → pipeline tries harder to fill a large pool via looser rank admit.
@@ -830,10 +834,10 @@ PHASE2_STAGE_A_DIVERSITY_RECOVERY_INJECT_FRACTION = 0.35
 PHASE2_STAGE_A_DIVERSITY_RECOVERY_MUTATION_BOOST = 2.0
 
 # PHASE2_STAGE_A_PLATEAU_EARLY_STOP_PATIENCE — gens without progress before stop in A.
-PHASE2_STAGE_A_PLATEAU_EARLY_STOP_PATIENCE = 14
+PHASE2_STAGE_A_PLATEAU_EARLY_STOP_PATIENCE = 20
 
 # PHASE2_STAGE_A_PLATEAU_EARLY_STOP_MIN_GENERATION — earliest plateau stop gen in A.
-PHASE2_STAGE_A_PLATEAU_EARLY_STOP_MIN_GENERATION = 20
+PHASE2_STAGE_A_PLATEAU_EARLY_STOP_MIN_GENERATION = 30
 
 # PHASE2_STAGE_A_EARLY_STOP_MIN_GENERATION — earliest return-based early stop in A.
 PHASE2_STAGE_A_EARLY_STOP_MIN_GENERATION = 32
@@ -890,10 +894,10 @@ PHASE2_STAGE_B_DIVERSITY_RECOVERY_INJECT_FRACTION = 0.20
 PHASE2_STAGE_B_DIVERSITY_RECOVERY_MUTATION_BOOST = 1.4
 
 # PHASE2_STAGE_B_PLATEAU_EARLY_STOP_PATIENCE — shorter patience while polishing in B.
-PHASE2_STAGE_B_PLATEAU_EARLY_STOP_PATIENCE = 8
+PHASE2_STAGE_B_PLATEAU_EARLY_STOP_PATIENCE = 15
 
 # PHASE2_STAGE_B_PLATEAU_EARLY_STOP_MIN_GENERATION — earliest plateau stop gen in B.
-PHASE2_STAGE_B_PLATEAU_EARLY_STOP_MIN_GENERATION = 1
+PHASE2_STAGE_B_PLATEAU_EARLY_STOP_MIN_GENERATION = 15
 
 # PHASE2_STAGE_B_EARLY_STOP_MIN_GENERATION — earliest return-based early stop in B.
 PHASE2_STAGE_B_EARLY_STOP_MIN_GENERATION = 20
@@ -926,7 +930,7 @@ PHASE2_CV_FOLD_WORKERS = 1
 # PHASE2_POPULATION_SIZE — individuals per generation.
 #   Higher → better Pareto coverage, ~linear GPU cost per generation.
 #   Lower  → faster gens, risk of premature convergence.
-PHASE2_POPULATION_SIZE = 200
+PHASE2_POPULATION_SIZE = 300
 
 # PHASE2_GENERATIONS — total evolutionary generations (before early stop).
 #   Higher → more search budget; diminishing returns after plateau.
@@ -1040,10 +1044,7 @@ PHASE2_MUTATION_WEIGHTED_ACTIVATE_PROB = 0.45
 
 # --- Team shape ---
 
-# PHASE3_PER_SYMBOL_MIN_RULES / MAX_RULES — per-symbol rule count.
-#   Higher MAX → more rules per symbol, richer coverage, more capital overlap.
-#   Lower MIN → allow symbols with no rules (0 = skip symbol if nothing works).
-PHASE3_PER_SYMBOL_MIN_RULES = 0
+# PHASE3_PER_SYMBOL_MAX_RULES — maximum rules selected per symbol.
 PHASE3_PER_SYMBOL_MAX_RULES = 3
 
 # PHASE3_GLOBAL_MIN_RULES / MAX_RULES — total rules in the output JSON.
@@ -1060,17 +1061,12 @@ PHASE3_PER_SYMBOL_GREEDY_TOP_K = 20
 # PHASE3_PER_SYMBOL_MIN_TRADES — min trades on symbol's val data for rule.
 #   Higher → reject rules with thin evidence on that symbol.
 #   Lower  → allow sparse rules through.
-PHASE3_PER_SYMBOL_MIN_TRADES = 5
+PHASE3_PER_SYMBOL_MIN_TRADES = 50
 
 # PHASE3_PER_SYMBOL_MIN_RETURN — min val return % on symbol for rule.
 #   Higher → only profitable-on-symbol rules considered.
 #   Lower  → allow marginal rules through.
-PHASE3_PER_SYMBOL_MIN_RETURN = 0.0
-
-# PHASE3_MIN_SYMBOL_COVERAGE — symbols with ≥1 val trade required (of 10).
-#   Higher → team must fire across more symbols; rejects niche teams.
-#   Lower  → symbol-concentrated teams can pass.
-PHASE3_MIN_SYMBOL_COVERAGE = 7
+PHASE3_PER_SYMBOL_MIN_RETURN = 5.0
 
 # PHASE3_MAX_CAPITAL_PCT_PER_RULE — cap per rule before normalization.
 #   Higher → each rule can use more notional; higher overlap drawdown risk.
@@ -1080,132 +1076,15 @@ PHASE3_MAX_CAPITAL_PCT_PER_RULE = 50.0
 # --- Engines ---
 
 PHASE3_USE_GPU = False  # overridden to True on Colab GPU via _apply_colab_gpu_defaults()
-PHASE3_USE_PARALLEL_BATCH = True
 
 # PHASE3_BATCH_WORKERS — parallel workers for team evaluation.
 #   Higher → faster Phase 3 on many-core CPU; diminishing returns past ~32.
 #   Lower  → less CPU contention.
 PHASE3_BATCH_WORKERS = min(32, os.cpu_count() or 4)
 
-PHASE3_NUMBA_ENABLED = True
-
-# --- Refinement budget (NSGA-II on team composition) ---
-
-# PHASE3_REFINE_GENERATIONS — NSGA-II generations for team refinement.
-#   Higher → more team combinatorial search; slower Phase 3.
-#   Lower  → greedy result may not be polished by evolution.
-PHASE3_REFINE_GENERATIONS = 250
-
-# PHASE3_REFINE_POP_SIZE — population size during team refinement.
-#   Higher → explore more team compositions per generation.
-#   Lower  → faster refinement, may miss optimal team mixes.
-PHASE3_REFINE_POP_SIZE = 300
-
-# PHASE3_SMALL_POOL_THRESHOLD — pool size below which reduced budget applies.
-PHASE3_SMALL_POOL_POP = 100
-PHASE3_SMALL_POOL_GEN = 60
-PHASE3_SMALL_POOL_THRESHOLD = 20
-
-# PHASE3_MIN_PARETO_FRONT — minimum front size before accepting refinement result.
-#   Higher → insist on diverse team options; may fail on tiny pools.
-#   Lower  → accept thin fronts.
-PHASE3_MIN_PARETO_FRONT = 3
-
-# PHASE3_REFINE_EARLY_STOP_PARETO_ONE_GENS — stop if Pareto size == 1 this many gens.
-#   Higher → wait longer before declaring unique optimum.
-#   Lower  → stop quickly when single team dominates.
-PHASE3_REFINE_EARLY_STOP_PARETO_ONE_GENS = 15
-
-PHASE3_GREEDY_STOP_ON_WORSEN = True
-
-# PHASE3_GREEDY_WEIGHTS — (sortino, drawdown, win_rate) weights for greedy seed.
-#   Raise sortino weight → favor risk-adjusted return in greedy pass.
-#   Raise drawdown weight → favor lower DD teams early.
-PHASE3_GREEDY_WEIGHTS = (0.8, 0.6, 0.5)
-
-# --- Objectives & anti-overfit gates ---
-
-# PHASE3_USE_TRAIN_TARGET — fit teams primarily on train metrics.
-#   True  → faster but overfit risk; not recommended for production.
-#   False → val-aware objectives (recommended with CV).
-PHASE3_USE_TRAIN_TARGET = False
-
-# PHASE3_USE_MAXIMIN_SCORE — use worst-symbol metric as robustness term.
-#   True  → teams must not rely on one symbol for all PnL.
-#   False → average metrics dominate; weak symbols may hide in team score.
-PHASE3_USE_MAXIMIN_SCORE = True
-
-# PHASE3_SYMBOL_CONSISTENCY_WEIGHT — penalty when train/val symbol sets diverge.
-#   Higher → punish teams that trade different symbols in train vs val.
-#   Lower  → allow symbol shift between splits.
-PHASE3_SYMBOL_CONSISTENCY_WEIGHT = 10.0
-
-# PHASE3_TRAIN_VAL_CORR_WEIGHT — penalty for low per-symbol PnL correlation.
-#   Higher → demand similar symbol ranking train vs val.
-#   Lower  → allow reordering of symbol profitability OOS.
-PHASE3_TRAIN_VAL_CORR_WEIGHT = 8.0
-
-# PHASE3_VAL_GATE_PENALTY — base penalty when val gates fail.
-#   Higher → hard push toward val-feasible teams on objectives.
-#   Lower  → borderline val teams remain competitive longer.
-PHASE3_VAL_GATE_PENALTY = 10.0
-
-# PHASE3_VAL_SORTINO_RATIO_GATE — require val_sortino ≥ ratio × train_sortino.
-#   Higher → stricter val Sortino relative to train; anti-overfit.
-#   Lower  → allow val Sortino collapse vs train.
-PHASE3_VAL_SORTINO_RATIO_GATE = 0.5
-
-# PHASE3_VAL_DRAWDOWN_RATIO_GATE — require val_dd ≤ ratio × train_dd.
-#   Higher (e.g. 1.5) → allow val drawdown to exceed train more.
-#   Lower (e.g. 1.0) → val DD must not worsen vs train.
-PHASE3_VAL_DRAWDOWN_RATIO_GATE = 1.20
-
-# PHASE3_PER_RULE_MIN_VAL_TRADES_PER_SYMBOL — min val trades per rule per symbol.
-#   Higher → each rule must prove itself on every symbol in val.
-#   Lower  → sparse per-symbol val activity allowed.
-PHASE3_PER_RULE_MIN_VAL_TRADES_PER_SYMBOL = 5
-
 # Return / PF floors for Phase 3 team admission (must align with Phase 2 quality).
 # Higher floors → fewer teams pass; lower → more teams, weaker OOS risk.
-PHASE3_VAL_RETURN_FLOOR_PCT = 0.5
-PHASE3_VAL_PROFIT_FACTOR_FLOOR = 1.05
-PHASE3_TRAIN_RETURN_FLOOR_PCT = 1.0
-PHASE3_TRAIN_PROFIT_FACTOR_FLOOR = 1.05
-PHASE3_MIN_PROFITABLE_SYMBOLS = 5
-PHASE3_SYMBOL_MEDIAN_RETURN_FLOOR_PCT = 0.0
-
-# PHASE3_TRAIN_VAL_GAP_MAX_PCT / VAL_TRAIN_GAP_MAX_PCT — allowed return gap %.
-#   Higher → tolerate larger train/val divergence (more teams, more overfit risk).
-#   Lower  → strict alignment; may empty Pareto on 2-fold CV.
-PHASE3_TRAIN_VAL_GAP_MAX_PCT = 8.0
-PHASE3_VAL_TRAIN_GAP_MAX_PCT = 8.0
-
-# PHASE3_GAP_PENALTY_WEIGHT — multiplier on excess gap beyond allowed max.
-#   Higher → large gaps heavily penalized on all objectives.
-#   Lower  → gaps matter less in team ranking.
-PHASE3_GAP_PENALTY_WEIGHT = 6.0
-
-# --- Rule-team orthogonality (incremental value of adding a rule) ---
-
-# PHASE3_MIN_INCREMENTAL_TRADES — min new val trades when adding a rule to team.
-#   Higher → each rule must add meaningful new signal coverage.
-#   Lower  → redundant rules can slip into teams.
-PHASE3_MIN_INCREMENTAL_TRADES = 45
-
-# PHASE3_INCREMENTAL_GATE_PENALTY — penalty when incremental trades below min.
-#   Higher → strong penalty for redundant rules.
-#   Lower  → teams may stack similar rules.
-PHASE3_INCREMENTAL_GATE_PENALTY = 60.0
-
-# PHASE3_JACCARD_PENALTY_WEIGHT — penalty for overlapping entry masks between rules.
-#   Higher → force orthogonal entry timing across team members.
-#   Lower  → allow correlated rules in same team.
-PHASE3_JACCARD_PENALTY_WEIGHT = 35.0
-
-# PHASE3_JACCARD_SIMILARITY_GATE — hard reject if Jaccard similarity exceeds this.
-#   Higher → allow more overlap between rules.
-#   Lower  → strict de-duplication of signal timing.
-PHASE3_JACCARD_SIMILARITY_GATE = 0.75
+PHASE3_VAL_RETURN_FLOOR_PCT = 8.0
 
 
 # =============================================================================
@@ -1299,7 +1178,7 @@ PHASE4_MAX_WORST_DRAWDOWN_PCT = 15.0
 #   Higher → demand statistical significance in every window; very strict.
 #   Lower  → thin windows can still produce feasible trials.
 #   With per-symbol rules, each rule fires on fewer rows, so lower is needed.
-PHASE4_MIN_WORST_TRADES = 5
+PHASE4_MIN_WORST_TRADES = 20
 
 # PHASE4_MIN_WORST_FOLD_RETURN_PCT — min return % in worst WF window.
 #   Higher → only consistently profitable windows pass; may zero feasible set.

@@ -501,8 +501,8 @@ class TestRuleSetSelectorRun:
             if result.get("selection_accepted") is False:
                 assert n == 0
             else:
-                assert _cfg.PHASE3_MIN_RULES <= n <= _cfg.PHASE3_MAX_RULES, (
-                    f"Expected {_cfg.PHASE3_MIN_RULES}–{_cfg.PHASE3_MAX_RULES} rules, got {n}"
+                assert _cfg.PHASE3_GLOBAL_MIN_RULES <= n <= _cfg.PHASE3_GLOBAL_MAX_RULES, (
+                    f"Expected {_cfg.PHASE3_GLOBAL_MIN_RULES}–{_cfg.PHASE3_GLOBAL_MAX_RULES} rules, got {n}"
                 )
         finally:
             m._OUTPUT_PATHS.update(original)

@@ -91,10 +91,12 @@ def _safe_profit_factor(gross_wins: float, gross_losses: float) -> float:
 def _sortino_ratio_from_returns(
     trade_returns: list[float] | np.ndarray,
     target_return: float = 0.0,
+    scale_by_trades: bool = False,
 ) -> float:
     """Compute a non-annualized Sortino Ratio from per-trade returns."""
     returns = np.asarray(trade_returns, dtype=np.float64)
-    if returns.size == 0:
+    n_trades = returns.size
+    if n_trades == 0:
         return 0.0
 
     excess_returns = returns - float(target_return)
@@ -105,9 +107,17 @@ def _sortino_ratio_from_returns(
     from gpu_fuzzy_trader import config as _cfg
 
     if downside_deviation <= 0.0:
-        return _cfg.SORTINO_CAP if mean_excess_return > 0.0 else 0.0
+        base_sortino = _cfg.SORTINO_CAP if mean_excess_return > 0.0 else 0.0
+    else:
+        base_sortino = min(mean_excess_return / downside_deviation, _cfg.SORTINO_CAP)
 
-    return min(mean_excess_return / downside_deviation, _cfg.SORTINO_CAP)
+    if scale_by_trades and hasattr(_cfg, "PHASE2_SORTINO_MIN_TRADE_THRESHOLD"):
+        threshold = float(_cfg.PHASE2_SORTINO_MIN_TRADE_THRESHOLD)
+        if threshold > 0:
+            scale_factor = min(1.0, float(n_trades) / threshold)
+            return base_sortino * scale_factor
+
+    return base_sortino
 
 
 def _parse_condition(condition: str) -> tuple[str, str]:
@@ -921,7 +931,7 @@ class CPUBacktestEngine:
 
         # --- Summary metrics ---
         total_return_pct = (equity / initial_capital - 1.0) * 100.0
-        sortino_ratio = _sortino_ratio_from_returns(trade_returns)
+        sortino_ratio = _sortino_ratio_from_returns(trade_returns, scale_by_trades=True)
         win_rate = (
             (stats["wins"] / executed_trades) *
             100.0 if executed_trades > 0 else 0.0

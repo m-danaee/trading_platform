@@ -38,7 +38,6 @@ from gpu_fuzzy_trader.phases.phase3_rule_set import (
 
 PHASE3_GLOBAL_MIN_RULES = _cfg.PHASE3_GLOBAL_MIN_RULES
 PHASE3_GLOBAL_MAX_RULES = _cfg.PHASE3_GLOBAL_MAX_RULES
-PHASE3_MIN_SYMBOL_COVERAGE = _cfg.PHASE3_MIN_SYMBOL_COVERAGE
 
 
 # ---------------------------------------------------------------------------
@@ -123,7 +122,7 @@ def selector_args(draw: st.DrawFn):
     Varies:
       - Number of symbols (1–4)
       - Rows per symbol (30–80)
-      - Pool size (PHASE3_MIN_RULES to PHASE3_MAX_RULES + 3)
+      - Pool size (PHASE3_GLOBAL_MIN_RULES to PHASE3_GLOBAL_MAX_RULES + 3)
       - Direction
     """
     n_symbols = draw(st.integers(min_value=1, max_value=4))
@@ -164,8 +163,8 @@ def test_property_21_rule_set_size_bounds(
     **Validates: Requirements 9.1, 12.8**
 
     For any run of Rule_Set_Selector (with varying datasets, pool sizes, and
-    directions), the output rule set must contain between PHASE3_MIN_RULES (2)
-    and PHASE3_MAX_RULES (5) rules, inclusive.
+    directions), the output rule set must contain between PHASE3_GLOBAL_MIN_RULES
+    and PHASE3_GLOBAL_MAX_RULES rules, inclusive.
 
     This validates both the NSGA-II search constraint and the output schema
     constraint enforced by the Output_Writer (Requirement 12.8).

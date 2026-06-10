@@ -256,19 +256,19 @@ def _validate_rule_set(rule_set: object) -> dict:
         )
 
     # Requirement 12.8: truncate to max if > max
-    global_max = int(_cfg.PHASE3_GLOBAL_MAX_RULES)
-    if len(rules_list) > global_max:
+    schema_max = 5
+    if len(rules_list) > schema_max:
         logger.warning(
             "rules_set contains %d rules (max %d); truncating to first %d.",
-            len(rules_list), global_max, global_max,
+            len(rules_list), schema_max, schema_max,
         )
-        rules_list = rules_list[:global_max]
+        rules_list = rules_list[:schema_max]
 
     # Requirement 12.8: must have at least min rules
-    global_min = int(_cfg.PHASE3_GLOBAL_MIN_RULES)
-    if len(rules_list) < global_min:
+    schema_min = 2
+    if len(rules_list) < schema_min:
         raise ValidationError(
-            f"'rules_set' must contain at least {global_min} rules, got {len(rules_list)}."
+            f"'rules_set' must contain at least {schema_min} rules, got {len(rules_list)}."
         )
 
     # Validate each rule

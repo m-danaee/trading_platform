@@ -14,8 +14,6 @@ from gpu_fuzzy_trader import config as _cfg
 LOW_RAM_PROFILE: dict[str, Any] = {
     "PHASE2_POPULATION_SIZE": 100,
     "PHASE2_GENERATIONS": 50,
-    "PHASE3_REFINE_POP_SIZE": 48,
-    "PHASE3_REFINE_GENERATIONS": 25,
     "PHASE1_SAMPLING_TOTAL": 150_000,
     "PHASE4_N_TRIALS": 40,
     "PHASE2_USE_GPU": False,
@@ -89,44 +87,8 @@ def suggest_trial_params(trial: optuna.Trial, profile: str) -> dict[str, Any]:
     )
 
     # --- Phase 3: team selection & anti-overfit ---
-    params["PHASE3_VAL_SORTINO_RATIO_GATE"] = trial.suggest_float(
-        "PHASE3_VAL_SORTINO_RATIO_GATE", 0.35, 0.65,
-    )
-    params["PHASE3_VAL_DRAWDOWN_RATIO_GATE"] = trial.suggest_float(
-        "PHASE3_VAL_DRAWDOWN_RATIO_GATE", 1.0, 1.25,
-    )
     params["PHASE3_VAL_RETURN_FLOOR_PCT"] = trial.suggest_float(
-        "PHASE3_VAL_RETURN_FLOOR_PCT", 0.0, 2.0,
-    )
-    params["PHASE3_VAL_PROFIT_FACTOR_FLOOR"] = trial.suggest_float(
-        "PHASE3_VAL_PROFIT_FACTOR_FLOOR", 1.0, 1.15,
-    )
-    params["PHASE3_MIN_PROFITABLE_SYMBOLS"] = trial.suggest_int(
-        "PHASE3_MIN_PROFITABLE_SYMBOLS", 5, 8,
-    )
-    params["PHASE3_MIN_SYMBOL_COVERAGE"] = trial.suggest_int(
-        "PHASE3_MIN_SYMBOL_COVERAGE", 6, 9,
-    )
-    params["PHASE3_SYMBOL_CONSISTENCY_WEIGHT"] = trial.suggest_float(
-        "PHASE3_SYMBOL_CONSISTENCY_WEIGHT", 5.0, 15.0,
-    )
-    params["PHASE3_JACCARD_SIMILARITY_GATE"] = trial.suggest_float(
-        "PHASE3_JACCARD_SIMILARITY_GATE", 0.65, 0.85,
-    )
-    params["PHASE3_VAL_TRAIN_GAP_MAX_PCT"] = trial.suggest_float(
-        "PHASE3_VAL_TRAIN_GAP_MAX_PCT", 5.0, 20.0,
-    )
-    params["PHASE3_TRAIN_VAL_GAP_MAX_PCT"] = trial.suggest_float(
-        "PHASE3_TRAIN_VAL_GAP_MAX_PCT", 8.0, 25.0,
-    )
-    params["PHASE3_GAP_PENALTY_WEIGHT"] = trial.suggest_float(
-        "PHASE3_GAP_PENALTY_WEIGHT", 2.0, 8.0,
-    )
-    params["PHASE3_VAL_GATE_PENALTY"] = trial.suggest_float(
-        "PHASE3_VAL_GATE_PENALTY", 5.0, 15.0,
-    )
-    params["PHASE3_MIN_INCREMENTAL_TRADES"] = trial.suggest_int(
-        "PHASE3_MIN_INCREMENTAL_TRADES", 40, 80,
+        "PHASE3_VAL_RETURN_FLOOR_PCT", 2.0, 15.0,
     )
 
     # --- Phase 4: walk-forward feasibility ---
