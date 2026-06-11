@@ -340,9 +340,9 @@ def _per_symbol_greedy(
 ) -> list[int]:
     """Greedy rule selection for a single symbol.
 
-    *train_symbol_df* is forwarded to ``_score_pool_rule_on_symbol`` so that
-    each candidate rule is scored with ``min(train, val)`` and the gap gate
-    is applied before entering the greedy rounds.
+    All three greedy rounds use ``min(train_return, val_return)`` as the
+    combo score when *train_symbol_df* is provided, preventing val-only
+    overfit at the combination level (not just the per-rule level).
     """
     min_trades = int(_cfg.effective_phase3_per_symbol_min_trades())
     min_return = float(_cfg.effective_phase3_per_symbol_min_return())
@@ -371,22 +371,39 @@ def _per_symbol_greedy(
     if max_rules <= 1:
         return selected
 
-    # Round 2: test top-K extensions
+    def _robust_combo_return(combo_indices: list[int]) -> float:
+        """Evaluate a combination with min(train, val) return."""
+        combo_fmt = _rule_set_to_engine_format([pool[i] for i in combo_indices])
+        # val leg
+        val_engine = CPUBacktestEngine(
+            symbol_df, {}, direction, fee_pct=_cfg.FEE_PCT,
+        )
+        try:
+            val_m = val_engine.simulate_rule_set(combo_fmt)
+            v_ret = float(val_m.get("total_return_pct", -999.0))
+        except Exception:
+            v_ret = -999.0
+        # train leg (when available)
+        if train_symbol_df is not None and len(train_symbol_df) > 0:
+            train_engine = CPUBacktestEngine(
+                train_symbol_df, {}, direction, fee_pct=_cfg.FEE_PCT,
+            )
+            try:
+                train_m = train_engine.simulate_rule_set(combo_fmt)
+                t_ret = float(train_m.get("total_return_pct", -999.0))
+            except Exception:
+                t_ret = -999.0
+            return min(t_ret, v_ret)
+        return v_ret
+
+    # Round 2: test top-K extensions using min(train, val) for combo return
     candidates = [s for s in scored if s[0] not in selected][:top_k]
     if candidates:
         best_combo = selected[:]
         best_combo_ret = best_ret
         for cand_idx, cand_ret, _ in candidates:
             combo = selected + [cand_idx]
-            combo_fmt = _rule_set_to_engine_format([pool[i] for i in combo])
-            engine = CPUBacktestEngine(
-                symbol_df, {}, direction, fee_pct=_cfg.FEE_PCT,
-            )
-            try:
-                metrics = engine.simulate_rule_set(combo_fmt)
-                combo_ret = float(metrics.get("total_return_pct", -999.0))
-            except Exception:
-                combo_ret = -999.0
+            combo_ret = _robust_combo_return(combo)
             if combo_ret > best_combo_ret:
                 best_combo = combo[:]
                 best_combo_ret = combo_ret
@@ -395,22 +412,14 @@ def _per_symbol_greedy(
     if max_rules <= 2 or len(selected) < 2:
         return selected
 
-    # Round 3: test top-K extensions on best_2
+    # Round 3: test top-K extensions on best_2 using min(train, val)
     candidates = [s for s in scored if s[0] not in selected][:top_k]
     if candidates:
         best_combo = selected[:]
         best_combo_ret = best_combo_ret
         for cand_idx, cand_ret, _ in candidates:
             combo = selected + [cand_idx]
-            combo_fmt = _rule_set_to_engine_format([pool[i] for i in combo])
-            engine = CPUBacktestEngine(
-                symbol_df, {}, direction, fee_pct=_cfg.FEE_PCT,
-            )
-            try:
-                metrics = engine.simulate_rule_set(combo_fmt)
-                combo_ret = float(metrics.get("total_return_pct", -999.0))
-            except Exception:
-                combo_ret = -999.0
+            combo_ret = _robust_combo_return(combo)
             if combo_ret > best_combo_ret:
                 best_combo = combo[:]
                 best_combo_ret = combo_ret

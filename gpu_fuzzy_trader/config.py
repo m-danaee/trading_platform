@@ -281,7 +281,7 @@ SPLIT_MODE = "purged_rolling_cv"
 #   Higher → stricter season coverage, slower eval, pool gates need more folds.
 #   Lower  → faster runs, less robust to regime change (2 is debug-friendly).
 # Coupled: PHASE2_CV_POOL_MIN_FOLDS_PASS auto-scales via _CV_POOL_MIN_FOLDS_PASS.
-CV_N_FOLDS = 2
+CV_N_FOLDS = 3
 
 # CV_EMBARGO_BARS — gap between train end and val start (label-horizon purge).
 #   Higher → less leakage, shorter effective train per fold.

@@ -1,33 +1,7 @@
 {
   "direction": "long",
-  "risk_optimized": true,
-  "deployment_accepted": true,
-  "validation_gate": {
-    "return_pct": 5.860823371049695,
-    "profit_factor": 1.2285769220152751,
-    "required_return_pct": 2.0,
-    "required_profit_factor": 1.05
-  },
-  "rules_set": [
-    {
-      "conditions": [
-        "[rsi_centered_14] IS Extreme Bullish",
-        "[up_close_ratio_5] IS Very Low",
-        "[inside_bar_compression] IS High"
-      ],
-      "tp": 2.0,
-      "sl": 1.0,
-      "capital_pct": 30.0
-    },
-    {
-      "conditions": [
-        "[dmi_balance_14] IS Strong Bullish",
-        "[lower_wick_to_tr] IS Low",
-        "[inside_bar_compression] IS Low"
-      ],
-      "tp": 2.5,
-      "sl": 1.5,
-      "capital_pct": 30.0
-    }
-  ]
+  "risk_optimized": false,
+  "selection_accepted": false,
+  "selection_rejection_reason": "no_rules_selected_for_any_symbol",
+  "rules_set": []
 }
