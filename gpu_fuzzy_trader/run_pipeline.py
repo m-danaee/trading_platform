@@ -1187,6 +1187,11 @@ class Pipeline_Orchestrator:
             )
             pools[direction] = pool
 
+            # Release JAX compilation cache and GC between directions to
+            # avoid host RAM exhaustion when the next direction recompiles.
+            from gpu_fuzzy_trader._memory import release_phase2_resources
+            release_phase2_resources()
+
         # Log overall Phase 2 timing
         elapsed = time.monotonic() - t0
         _log_phase_entry(

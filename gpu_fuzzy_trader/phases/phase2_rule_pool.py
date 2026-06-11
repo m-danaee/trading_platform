@@ -2159,6 +2159,20 @@ class Rule_Pool_Generator:
                     stage_b_seeds.shape[0],
                     stage_b_top_k,
                 )
+
+            # --- RAM/VRAM cleanup before Stage B XLA recompile ---
+            # Stage B triggers a new JAX kernel compile which spikes host RAM.
+            # Clearing JAX caches and running GC here prevents Colab SIGKILL.
+            import gc as _gc
+            _gc.collect()
+            try:
+                import jax as _jax
+                _jax.clear_caches()
+            except Exception:
+                pass
+            _gc.collect()
+            logger.info("Phase 2 [%s]: Stage A memory released — starting Stage B", self.direction)
+
             new_pool_b, history_b = run_phase2_evolution(
                 n_generations=stage_b_gens,
                 log_tag=f"{progress_tag} Stage B",

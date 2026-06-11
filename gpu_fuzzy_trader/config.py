@@ -567,7 +567,7 @@ PHASE2_ENCODING = "sparse_slots"
 # MIN_TRADE_SUPPORT — target executed trades before support penalty vanishes.
 #   Higher → penalize low-frequency rules harder; pool favors robust sample size.
 #   Lower  → allow rare-pattern rules; noisier Sortino/return estimates.
-MIN_TRADE_SUPPORT = 60
+MIN_TRADE_SUPPORT = 50
 
 # SUPPORT_PENALTY_MAX — cap on quadratic support shortfall penalty.
 #   Higher → stronger push away from under-supported rules on all objectives.
@@ -598,7 +598,7 @@ PHASE2_USE_ROBUST_RETURN_OBJ = True
 
 # PHASE2_SORTINO_MIN_TRADE_THRESHOLD — trade count below which Sortino is scaled down.
 #   Used in Approach 2 to penalize low-trade-count rules.
-PHASE2_SORTINO_MIN_TRADE_THRESHOLD = 100
+PHASE2_SORTINO_MIN_TRADE_THRESHOLD = 50
 
 # --- Return / quality floors (evolution + pool filtering) ---
 
@@ -656,7 +656,7 @@ PHASE2_CV_MERGED_GATE_HARD = True
 # PHASE2_CV_MIN_TRADE_POOL_FLOOR — per-fold hard trade floor (lower than global).
 #   Higher → each fold must show more trades; rejects seasonal one-offs.
 #   Lower  → thin seasonal rules can pass a fold.
-PHASE2_CV_MIN_TRADE_POOL_FLOOR = 7
+PHASE2_CV_MIN_TRADE_POOL_FLOOR = 15
 
 PHASE2_CV_POOL_TRAIN_RETURN_MIN_PCT = 0.0
 PHASE2_CV_POOL_VAL_RETURN_MIN_PCT = 0.0
@@ -1111,7 +1111,7 @@ PHASE3_PER_SYMBOL_GREEDY_TOP_K = 20
 #   Higher → reject rules with thin evidence on that symbol.
 #   Lower  → allow sparse rules through.
 #   Debug scope scales via effective_phase3_per_symbol_min_trades().
-PHASE3_PER_SYMBOL_MIN_TRADES = 45
+PHASE3_PER_SYMBOL_MIN_TRADES = 50
 
 # PHASE3_PER_SYMBOL_MIN_RETURN — min val return % on symbol for rule.
 #   Higher → only profitable-on-symbol rules considered.
