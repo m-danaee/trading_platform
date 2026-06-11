@@ -1,0 +1,172 @@
+{
+  "direction": "short",
+  "risk_optimized": true,
+  "deployment_accepted": true,
+  "validation_gate": {
+    "return_pct": 146.40969199941725,
+    "profit_factor": 1.4011113158047903,
+    "required_return_pct": 2.0,
+    "required_profit_factor": 1.05
+  },
+  "rules_set": [
+    {
+      "conditions": [
+        "[rsi_centered_14] IS Extreme Bearish",
+        "[efficiency_ratio_20] IS Very High",
+        "[absret_ema_ratio_20_100] IS Very High",
+        "symbol is 1",
+        "symbol is 2"
+      ],
+      "tp": 4.0,
+      "sl": 1.5,
+      "capital_pct": 7.142857142857142
+    },
+    {
+      "conditions": [
+        "[lower_wick_to_tr] IS Low",
+        "[sign_flip_rate_20] IS Medium",
+        "[vol_over_median20] IS Low",
+        "symbol is 1",
+        "symbol is 8"
+      ],
+      "tp": 3.5,
+      "sl": 1.0,
+      "capital_pct": 7.142857142857142
+    },
+    {
+      "conditions": [
+        "[range_compression_20_100] IS Very High",
+        "[downside_semivol_20] IS Very High",
+        "[rsi_centered_14] IS Extreme Bearish",
+        "symbol is 3",
+        "symbol is 6"
+      ],
+      "tp": 2.5,
+      "sl": 2.0,
+      "capital_pct": 7.142857142857142
+    },
+    {
+      "conditions": [
+        "[range_compression_20_100] IS Very High",
+        "[dmi_balance_14] IS Extreme Bearish",
+        "[absret_ema_ratio_20_100] IS Very High",
+        "symbol is 5",
+        "symbol is 6"
+      ],
+      "tp": 4.0,
+      "sl": 1.0,
+      "capital_pct": 7.142857142857142
+    },
+    {
+      "conditions": [
+        "[dmi_balance_14] IS Extreme Bearish",
+        "[absret_ema_ratio_20_100] IS Very High",
+        "[body_to_tr] IS Very Low",
+        "symbol is 7",
+        "symbol is 8"
+      ],
+      "tp": 3.5,
+      "sl": 1.5,
+      "capital_pct": 7.142857142857142
+    },
+    {
+      "conditions": [
+        "[dmi_balance_14] IS Extreme Bearish",
+        "[cand_up_down_vol_ratio_20] IS Very Low",
+        "[efficiency_ratio_20] IS Very High",
+        "symbol is 1"
+      ],
+      "tp": 3.0,
+      "sl": 1.0,
+      "capital_pct": 7.142857142857142
+    },
+    {
+      "conditions": [
+        "[vol_over_ema20] IS Medium",
+        "[cand_up_down_vol_ratio_20] IS Very Low",
+        "[tr_to_atr_14] IS Very High",
+        "symbol is 10"
+      ],
+      "tp": 2.5,
+      "sl": 2.0,
+      "capital_pct": 7.142857142857142
+    },
+    {
+      "conditions": [
+        "[downside_semivol_20] IS Very High",
+        "[atr_ratio_14_63] IS Very High",
+        "[body_to_tr] IS Very Low",
+        "symbol is 2"
+      ],
+      "tp": 4.0,
+      "sl": 2.0,
+      "capital_pct": 7.142857142857142
+    },
+    {
+      "conditions": [
+        "[drawdown_from_peak_60] IS Very High",
+        "[vol_ratio_20_100] IS Very High",
+        "[tr_to_atr_14] IS Very High",
+        "symbol is 4"
+      ],
+      "tp": 2.5,
+      "sl": 1.0,
+      "capital_pct": 7.142857142857142
+    },
+    {
+      "conditions": [
+        "[dmi_balance_14] IS Extreme Bearish",
+        "[return_skew_30] IS Extreme Bearish",
+        "[vol_regime_pct_120] IS Very High",
+        "symbol is 5"
+      ],
+      "tp": 2.0,
+      "sl": 1.0,
+      "capital_pct": 7.142857142857142
+    },
+    {
+      "conditions": [
+        "[range_compression_20_100] IS Very High",
+        "[dmi_balance_14] IS Extreme Bearish",
+        "[atr_ratio_14_63] IS Very High",
+        "symbol is 6"
+      ],
+      "tp": 3.0,
+      "sl": 1.0,
+      "capital_pct": 7.142857142857142
+    },
+    {
+      "conditions": [
+        "[roc_10] IS Extreme Bearish",
+        "[rsi_centered_14] IS Extreme Bearish",
+        "[vol_ratio_20_100] IS Very High",
+        "symbol is 7"
+      ],
+      "tp": 2.0,
+      "sl": 1.0,
+      "capital_pct": 7.142857142857142
+    },
+    {
+      "conditions": [
+        "[downside_semivol_20] IS Very High",
+        "[vol_ratio_20_100] IS Very High",
+        "[vol_over_median20] IS Very High",
+        "symbol is 7"
+      ],
+      "tp": 2.5,
+      "sl": 2.0,
+      "capital_pct": 7.142857142857142
+    },
+    {
+      "conditions": [
+        "[drawdown_from_peak_60] IS Very High",
+        "[cand_up_down_vol_ratio_20] IS Very Low",
+        "[close_location_value] IS Medium",
+        "symbol is 8"
+      ],
+      "tp": 3.0,
+      "sl": 2.0,
+      "capital_pct": 7.142857142857142
+    }
+  ]
+}

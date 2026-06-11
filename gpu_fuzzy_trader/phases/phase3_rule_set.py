@@ -285,19 +285,50 @@ def _score_pool_rule_on_symbol(
     rule: dict,
     symbol_df: pd.DataFrame,
     direction: str,
+    train_symbol_df: pd.DataFrame | None = None,
 ) -> dict:
-    engine = CPUBacktestEngine(
+    """Score a pool rule on a single symbol.
+
+    If *train_symbol_df* is provided the score is ``min(train_return,
+    val_return)``, preventing rules that are lucky only on validation from
+    bubbling to the top.  Rules where ``val_return - train_return`` exceeds
+    ``PHASE3_MAX_TRAIN_VAL_GAP_PCT`` are hard-rejected (return -999).
+    """
+    fmt = _rule_set_to_engine_format([rule])
+
+    # --- val metrics ---
+    val_engine = CPUBacktestEngine(
         symbol_df, {}, direction, fee_pct=_cfg.FEE_PCT,
     )
-    fmt = _rule_set_to_engine_format([rule])
     try:
-        metrics = engine.simulate_rule_set(fmt)
+        val_metrics = val_engine.simulate_rule_set(fmt)
     except Exception:
         return {"return_pct": -999.0, "trades": 0}
-    return {
-        "return_pct": float(metrics.get("total_return_pct", -999.0)),
-        "trades": int(metrics.get("executed_trades", 0)),
-    }
+    val_return = float(val_metrics.get("total_return_pct", -999.0))
+    val_trades = int(val_metrics.get("executed_trades", 0))
+
+    # --- train metrics (when available) ---
+    if train_symbol_df is not None and len(train_symbol_df) > 0:
+        train_engine = CPUBacktestEngine(
+            train_symbol_df, {}, direction, fee_pct=_cfg.FEE_PCT,
+        )
+        try:
+            train_metrics = train_engine.simulate_rule_set(fmt)
+        except Exception:
+            train_metrics = {}
+        train_return = float(train_metrics.get("total_return_pct", -999.0))
+
+        # Hard-reject rules where validation far exceeds train (overfit signal)
+        max_gap = float(getattr(_cfg, "PHASE3_MAX_TRAIN_VAL_GAP_PCT", 40.0))
+        if val_return - train_return > max_gap:
+            return {"return_pct": -999.0, "trades": val_trades}
+
+        # Use min(train, val) as the robust score
+        robust_return = min(train_return, val_return)
+        return {"return_pct": robust_return, "trades": val_trades}
+
+    # Fallback: val-only (when no train data available)
+    return {"return_pct": val_return, "trades": val_trades}
 
 
 def _per_symbol_greedy(
@@ -305,7 +336,14 @@ def _per_symbol_greedy(
     symbol_df: pd.DataFrame,
     pool: list[dict],
     direction: str,
+    train_symbol_df: pd.DataFrame | None = None,
 ) -> list[int]:
+    """Greedy rule selection for a single symbol.
+
+    *train_symbol_df* is forwarded to ``_score_pool_rule_on_symbol`` so that
+    each candidate rule is scored with ``min(train, val)`` and the gap gate
+    is applied before entering the greedy rounds.
+    """
     min_trades = int(_cfg.effective_phase3_per_symbol_min_trades())
     min_return = float(_cfg.effective_phase3_per_symbol_min_return())
     max_rules = int(_cfg.PHASE3_PER_SYMBOL_MAX_RULES)
@@ -313,7 +351,9 @@ def _per_symbol_greedy(
 
     scored: list[tuple[int, float, int]] = []
     for idx, rule in enumerate(pool):
-        result = _score_pool_rule_on_symbol(rule, symbol_df, direction)
+        result = _score_pool_rule_on_symbol(
+            rule, symbol_df, direction, train_symbol_df=train_symbol_df
+        )
         if result["trades"] >= min_trades and result["return_pct"] >= min_return:
             scored.append((idx, result["return_pct"], result["trades"]))
 
@@ -522,6 +562,13 @@ class Rule_Set_Selector:
             sym_mask = val_df["symbol"].astype(str) == sym
             self._symbol_dfs[sym] = val_df[sym_mask].reset_index(drop=True)
 
+        # Pre-filter train_df per symbol (used for robust min(train,val) scoring)
+        self._train_symbol_dfs: dict[str, pd.DataFrame] = {}
+        if "symbol" in train_df.columns:
+            for sym in self._symbols:
+                sym_mask = train_df["symbol"].astype(str) == sym
+                self._train_symbol_dfs[sym] = train_df[sym_mask].reset_index(drop=True)
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -544,6 +591,13 @@ class Rule_Set_Selector:
             for entry in self.pool
         ]
 
+        max_gap = float(getattr(_cfg, "PHASE3_MAX_TRAIN_VAL_GAP_PCT", 40.0))
+        logger.info(
+            "Phase 3 [%s]: robust scoring enabled — "
+            "objective=min(train,val), gap_reject_threshold=%.1f%%",
+            self.direction, max_gap,
+        )
+
         symbol_assignments: dict[str, list[int]] = {}
         for sym in self._symbols:
             sym_df = self._symbol_dfs.get(sym)
@@ -552,11 +606,14 @@ class Rule_Set_Selector:
                              self.direction, sym)
                 continue
 
+            train_sym_df = self._train_symbol_dfs.get(sym)
+
             selected = _per_symbol_greedy(
                 symbol=sym,
                 symbol_df=sym_df,
                 pool=enriched_pool,
                 direction=self.direction,
+                train_symbol_df=train_sym_df,
             )
             if selected:
                 symbol_assignments[sym] = selected

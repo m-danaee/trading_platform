@@ -339,7 +339,9 @@ MAX_HOLD_CANDLES = 288
 # MAX_TOTAL_EXPOSURE_PCT — cap on sum of concurrent rule capital allocations.
 #   Higher → more overlapping exposure, higher drawdown potential.
 #   Lower  → forces capital to be spread thinner across simultaneous signals.
-MAX_TOTAL_EXPOSURE_PCT = 100.0
+#   150% chosen because rules have distinct conditions + symbol filters and
+#   rarely all fire simultaneously; normalization still bounds worst-case exposure.
+MAX_TOTAL_EXPOSURE_PCT = 150.0
 
 # MIN_POSITION_NOTIONAL — skip trades below this dollar size.
 #   Higher → filters dust trades; may reduce trade count on small capital.
@@ -1092,7 +1094,7 @@ PHASE2_MUTATION_WEIGHTED_ACTIVATE_PROB = 0.45
 # --- Team shape ---
 
 # PHASE3_PER_SYMBOL_MAX_RULES — maximum rules selected per symbol.
-PHASE3_PER_SYMBOL_MAX_RULES = 3
+PHASE3_PER_SYMBOL_MAX_RULES = 2
 
 # PHASE3_GLOBAL_MIN_RULES / MAX_RULES — total rules in the output JSON.
 #   Higher MIN → require at least this many rules across all symbols.
@@ -1121,6 +1123,15 @@ PHASE3_PER_SYMBOL_MIN_RETURN = 3.0
 #   Higher → each rule can use more notional; higher overlap drawdown risk.
 #   Lower  → thinner per-rule sizing; may under-use signals.
 PHASE3_MAX_CAPITAL_PCT_PER_RULE = 50.0
+
+# PHASE3_MAX_TRAIN_VAL_GAP_PCT — max allowed gap between val return and train
+# return for a rule to pass Phase 3 per-symbol scoring.
+#   If val_return - train_return > this threshold the rule is hard-rejected
+#   as an overfit signal (scored -999 so it never enters the greedy team).
+#   Higher → more lenient; only extreme gaps rejected.
+#   Lower  → stricter; tighter alignment between train and val required.
+#   Set to a large number (e.g. 999) to disable the gap gate entirely.
+PHASE3_MAX_TRAIN_VAL_GAP_PCT = 20.0
 
 # --- Engines ---
 
@@ -1166,7 +1177,10 @@ PHASE4_MIN_TP_SL_RATIO = 1.2
 # PHASE4_CAPITAL_PCT_MIN/MAX — per-rule capital allocation search range.
 #   Higher MAX → optimizer can concentrate more capital per signal.
 #   Lower MAX → forced diversification across rules.
-PHASE4_CAPITAL_PCT_MIN = 30.0
+#   Setting MIN == MAX locks capital to a fixed value (old behaviour was 30/30).
+#   Widening the range lets Optuna discover the best allocation; the
+#   PHASE4_HARD_CAP_NORMALIZE step then scales the total to ≤150%.
+PHASE4_CAPITAL_PCT_MIN = 10.0
 PHASE4_CAPITAL_PCT_MAX = 30.0
 
 # PHASE4_TP_STEP / SL_STEP / CAPITAL_STEP — Optuna discretization granularity.
