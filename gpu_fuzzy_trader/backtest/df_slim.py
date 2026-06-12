@@ -12,8 +12,8 @@ from gpu_fuzzy_trader.config import LABEL_COLUMNS, META_COLUMNS
 
 
 def downcast_numeric_df(df: pd.DataFrame) -> pd.DataFrame:
-    """Downcast label and feature columns to float32; symbol to category."""
-    out = df.copy()
+    """Downcast label and feature columns to float32; symbol to category (inplace)."""
+    out = df
     for col in LABEL_COLUMNS:
         if col in out.columns and pd.api.types.is_numeric_dtype(out[col]):
             out[col] = out[col].astype("float32")

@@ -158,64 +158,52 @@ def _apply_dynamic_rule(df: pd.DataFrame, condition: str) -> np.ndarray:
         )
 
     s = df[feature_name]
-
-    if value_name == "Active (1)":
-        return np.asarray(s == 1, dtype=bool)
-    if value_name == "Inactive (0)":
-        return np.asarray(s == 0, dtype=bool)
-    if value_name in ("Positive", "Positive (1)"):
-        return np.asarray(s == 1, dtype=bool)
-    if value_name in ("Neutral", "Neutral (0)"):
-        return np.asarray(s == 0, dtype=bool)
-    if value_name in ("Negative", "Negative (-1)"):
-        return np.asarray(s == -1, dtype=bool)
-
-    if value_name in ("Strong Negative", "Strong Negative (e.g. Big Down Gap)"):
-        return np.asarray(s <= -0.25, dtype=bool)
-    if value_name == "Weak Negative":
-        return np.asarray((s > -0.25) & (s <= -1e-5), dtype=bool)
-    if value_name in ("Exactly Zero", "Exactly Zero (No Gap)"):
-        return np.asarray((s > -1e-5) & (s <= 1e-5), dtype=bool)
-    if value_name == "Weak Positive":
-        return np.asarray((s > 1e-5) & (s <= 0.25), dtype=bool)
-    if value_name in ("Strong Positive", "Strong Positive (e.g. Big Up Gap)"):
-        return np.asarray(s > 0.25, dtype=bool)
-
-    if value_name == "Very Low":
-        return np.asarray(s <= 0.2, dtype=bool)
-    if value_name == "Low":
-        return np.asarray((s > 0.2) & (s <= 0.4), dtype=bool)
-    if value_name == "Medium":
-        return np.asarray((s > 0.4) & (s <= 0.6), dtype=bool)
-    if value_name == "High":
-        return np.asarray((s > 0.6) & (s <= 0.8), dtype=bool)
-    if value_name == "Very High":
-        return np.asarray(s > 0.8, dtype=bool)
-
-    if value_name == "Extreme Bearish":
-        return np.asarray(s <= -0.8, dtype=bool)
-    if value_name == "Strong Bearish":
-        return np.asarray((s > -0.8) & (s <= -0.6), dtype=bool)
-    if value_name == "Bearish":
-        return np.asarray((s > -0.6) & (s <= -0.4), dtype=bool)
-    if value_name == "Weak Bearish":
-        return np.asarray((s > -0.4) & (s <= -0.2), dtype=bool)
-    if value_name == "Neutral Negative":
-        return np.asarray((s > -0.2) & (s <= 0.0), dtype=bool)
-    if value_name == "Neutral Positive":
-        return np.asarray((s > 0.0) & (s <= 0.2), dtype=bool)
-    if value_name == "Weak Bullish":
-        return np.asarray((s > 0.2) & (s <= 0.4), dtype=bool)
-    if value_name == "Bullish":
-        return np.asarray((s > 0.4) & (s <= 0.6), dtype=bool)
-    if value_name == "Strong Bullish":
-        return np.asarray((s > 0.6) & (s <= 0.8), dtype=bool)
-    if value_name == "Extreme Bullish":
-        return np.asarray(s > 0.8, dtype=bool)
+    mask_fn = _VALUE_MAP.get(value_name)
+    if mask_fn is not None:
+        return mask_fn(s)
 
     raise ValueError(
         f"Rule value {value_name!r} is not recognized for feature {feature_name!r}."
     )
+
+
+def _build_value_map() -> dict:
+    s_eq_0 = lambda s: np.asarray(s == 0, dtype=bool)
+    s_eq_1 = lambda s: np.asarray(s == 1, dtype=bool)
+    s_eq_neg1 = lambda s: np.asarray(s == -1, dtype=bool)
+    return {
+        "Active (1)": s_eq_1,
+        "Inactive (0)": s_eq_0,
+        "Positive": s_eq_1, "Positive (1)": s_eq_1,
+        "Neutral": s_eq_0, "Neutral (0)": s_eq_0,
+        "Negative": s_eq_neg1, "Negative (-1)": s_eq_neg1,
+        "Strong Negative": lambda s: np.asarray(s <= -0.25, dtype=bool),
+        "Strong Negative (e.g. Big Down Gap)": lambda s: np.asarray(s <= -0.25, dtype=bool),
+        "Weak Negative": lambda s: np.asarray((s > -0.25) & (s <= -1e-5), dtype=bool),
+        "Exactly Zero": lambda s: np.asarray((s > -1e-5) & (s <= 1e-5), dtype=bool),
+        "Exactly Zero (No Gap)": lambda s: np.asarray((s > -1e-5) & (s <= 1e-5), dtype=bool),
+        "Weak Positive": lambda s: np.asarray((s > 1e-5) & (s <= 0.25), dtype=bool),
+        "Strong Positive": lambda s: np.asarray(s > 0.25, dtype=bool),
+        "Strong Positive (e.g. Big Up Gap)": lambda s: np.asarray(s > 0.25, dtype=bool),
+        "Very Low": lambda s: np.asarray(s <= 0.2, dtype=bool),
+        "Low": lambda s: np.asarray((s > 0.2) & (s <= 0.4), dtype=bool),
+        "Medium": lambda s: np.asarray((s > 0.4) & (s <= 0.6), dtype=bool),
+        "High": lambda s: np.asarray((s > 0.6) & (s <= 0.8), dtype=bool),
+        "Very High": lambda s: np.asarray(s > 0.8, dtype=bool),
+        "Extreme Bearish": lambda s: np.asarray(s <= -0.8, dtype=bool),
+        "Strong Bearish": lambda s: np.asarray((s > -0.8) & (s <= -0.6), dtype=bool),
+        "Bearish": lambda s: np.asarray((s > -0.6) & (s <= -0.4), dtype=bool),
+        "Weak Bearish": lambda s: np.asarray((s > -0.4) & (s <= -0.2), dtype=bool),
+        "Neutral Negative": lambda s: np.asarray((s > -0.2) & (s <= 0.0), dtype=bool),
+        "Neutral Positive": lambda s: np.asarray((s > 0.0) & (s <= 0.2), dtype=bool),
+        "Weak Bullish": lambda s: np.asarray((s > 0.2) & (s <= 0.4), dtype=bool),
+        "Bullish": lambda s: np.asarray((s > 0.4) & (s <= 0.6), dtype=bool),
+        "Strong Bullish": lambda s: np.asarray((s > 0.6) & (s <= 0.8), dtype=bool),
+        "Extreme Bullish": lambda s: np.asarray(s > 0.8, dtype=bool),
+    }
+
+
+_VALUE_MAP = _build_value_map()
 
 
 def _compute_rule_signal_mask(
@@ -234,16 +222,21 @@ def _compute_rule_signal_mask(
         rule_number=rule_number,
     )
 
-    signal = np.ones(len(df), dtype=bool)
-
-    for condition in feature_conditions:
-        signal &= np.asarray(_apply_dynamic_rule(df, condition), dtype=bool)
+    masks = [np.asarray(_apply_dynamic_rule(df, cond), dtype=bool)
+             for cond in feature_conditions]
 
     if allowed_symbols:
         normalized_symbols = get_normalized_symbol_array(df)
-        signal &= np.isin(normalized_symbols, allowed_symbols)
+        masks.append(np.isin(normalized_symbols, allowed_symbols))
 
-    return signal.astype(bool, copy=False)
+    if not masks:
+        return np.ones(len(df), dtype=bool)
+
+    if len(masks) == 1:
+        return masks[0].astype(bool, copy=False)
+
+    stacked = np.stack(masks, axis=0)
+    return np.all(stacked, axis=0)
 
 
 def _build_rule_signal_mask(
@@ -301,16 +294,11 @@ def _build_entries_from_rule_set(
 
         assigned_mask[matched_indices] = True
 
-        for idx in matched_indices:
-            entries.append(
-                {
-                    "idx": int(idx),
-                    "rule_index": int(rule_idx),
-                    "tp": tp,
-                    "sl": sl,
-                    "capital_pct": capital_pct,
-                }
-            )
+        entries.extend(
+            {"idx": int(idx), "rule_index": int(rule_idx),
+             "tp": tp, "sl": sl, "capital_pct": capital_pct}
+            for idx in matched_indices.tolist()
+        )
 
     entries.sort(key=lambda x: x["idx"])
     return entries
@@ -385,11 +373,11 @@ class CPUBacktestEngine:
                 f"Bad rows: {bad}"
             )
 
-        self.entry_price = entry
-        self.max_ret = (df["label_max_288"].values - entry) / entry * 100.0
-        self.min_ret = (df["label_min_288"].values - entry) / entry * 100.0
-        self.close_ret = (df["label_close_288"].values - entry) / entry * 100.0
-        self.max_before_min = df["label_max_before_min"].values
+        self.entry_price = entry.astype(np.float32)
+        self.max_ret = ((df["label_max_288"].values - entry) / entry * 100.0).astype(np.float32)
+        self.min_ret = ((df["label_min_288"].values - entry) / entry * 100.0).astype(np.float32)
+        self.close_ret = ((df["label_close_288"].values - entry) / entry * 100.0).astype(np.float32)
+        self.max_before_min = df["label_max_before_min"].values.astype(np.int32)
 
         if "symbol" in df.columns:
             self.symbols = df["symbol"].astype(str).values
@@ -397,9 +385,9 @@ class CPUBacktestEngine:
             self.symbols = np.array(["UNKNOWN"] * len(df))
 
         if "_symbol_bar_index" in df.columns:
-            self.symbol_bar_index = df["_symbol_bar_index"].values.astype(int)
+            self.symbol_bar_index = df["_symbol_bar_index"].values.astype(np.int32)
         else:
-            self.symbol_bar_index = np.arange(len(df))
+            self.symbol_bar_index = np.arange(len(df), dtype=np.int32)
 
         if "datetime" in df.columns:
             self.datetimes = df["datetime"].values
@@ -413,6 +401,19 @@ class CPUBacktestEngine:
             self.max_hold_candles,
         )
         self._condition_mask_cache: dict[tuple[str, ...], np.ndarray] = {}
+        self._trade_outcomes_cache: dict[tuple, np.ndarray] = {}
+
+    def _get_trade_outcomes(self, tp: float, sl: float) -> np.ndarray:
+        """Precompute (N,) price return % for all rows given fixed TP/SL."""
+        cache_key = (tp, sl, self.trade_direction)
+        if cache_key not in self._trade_outcomes_cache:
+            n = len(self.max_ret)
+            out = np.empty(n, dtype=np.float32)
+            for i in range(n):
+                pct, _ = self._build_trade_outcome_single(i, tp, sl)
+                out[i] = pct
+            self._trade_outcomes_cache[cache_key] = out
+        return self._trade_outcomes_cache[cache_key]
 
     def _build_trade_outcome_single(
         self, idx: int, tp: float, sl: float
@@ -810,9 +811,10 @@ class CPUBacktestEngine:
                 skipped_min_notional_count += 1
                 continue
 
-            price_return_pct, exit_reason = self._build_trade_outcome_single(
-                idx, tp, sl
-            )
+            price_return_pct = self._get_trade_outcomes(tp, sl)[idx]
+            exit_reason = None
+            if return_logs:
+                _, exit_reason = self._build_trade_outcome_single(idx, tp, sl)
             price_return_rate = price_return_pct / 100.0
 
             gross_pnl = position_notional * price_return_rate
@@ -1010,7 +1012,7 @@ class CPUBacktestEngine:
         sl: float,
         capital_pct: float,
     ) -> list[dict]:
-        """Evaluate a batch of rule chromosomes on CPU."""
+        """Evaluate a batch of rule chromosomes on CPU (vectorized signals)."""
         chromosomes = np.asarray(chromosomes, dtype=np.int32)
         from gpu_fuzzy_trader.phases.phase2_sparse_encoding import (
             compute_rule_signals_numpy,
@@ -1036,37 +1038,51 @@ class CPUBacktestEngine:
                 dtype=np.int32
             )
 
+        price_returns_all = self._get_trade_outcomes(tp, sl)
         results = []
-        for b in range(B):
+
+        chunk_size = 256
+        for b_start in range(0, B, chunk_size):
+            b_end = min(b_start + chunk_size, B)
+            chunk_chroms = chromosomes[b_start:b_end]
+            bc = b_end - b_start
+
             if sparse_batch:
-                signals = compute_rule_signals_numpy(
-                    self._data_matrix, chromosomes[b],
-                )
+                all_signals = []
+                for bi in range(bc):
+                    all_signals.append(compute_rule_signals_numpy(
+                        self._data_matrix, chunk_chroms[bi]))
+            elif K > 0 and self._data_matrix.shape[1] > 0:
+                dont_cares_row = self._dont_cares.reshape(1, 1, -1)
+                data_3d = self._data_matrix.reshape(1, self._data_matrix.shape[0], -1)
+                chroms_3d = chunk_chroms.reshape(bc, 1, K)
+                active = chroms_3d != dont_cares_row
+                match = data_3d == chroms_3d
+                effective = np.where(active, match, True)
+                all_signals = np.all(effective, axis=-1)
             else:
-                chromosome = chromosomes[b]
-                active_mask = chromosome != self._dont_cares
-                condition_match = self._data_matrix == chromosome[None, :]
-                effective_match = np.where(
-                    active_mask[None, :], condition_match, True)
-                signals = np.all(effective_match, axis=-1)
-            
-            matched_indices = np.flatnonzero(signals)
-            entries = [
-                {
-                    "idx": int(idx),
-                    "rule_index": 1,
-                    "tp": tp,
-                    "sl": sl,
-                    "capital_pct": capital_pct,
-                }
-                for idx in matched_indices
-            ]
-            metrics = self._simulate_rule_set_entries(
-                entries,
-                return_logs=False,
-                initial_capital=self.initial_capital,
-            )
-            metrics["raw_signal_count"] = len(matched_indices)
-            metrics["skipped_min_notional_count"] = metrics.get("skipped_min_notional_count", 0)
-            results.append(metrics)
+                all_signals = np.zeros((bc, len(self.df)), dtype=bool)
+
+            signal_counts = all_signals.sum(axis=1) if all_signals.ndim == 2 else np.array([s.sum() for s in all_signals])
+            for bi in range(bc):
+                signals = all_signals[bi]
+                matched_indices = np.flatnonzero(signals)
+                entries = [
+                    {
+                        "idx": int(idx),
+                        "rule_index": 1,
+                        "tp": tp,
+                        "sl": sl,
+                        "capital_pct": capital_pct,
+                    }
+                    for idx in matched_indices
+                ]
+                metrics = self._simulate_rule_set_entries(
+                    entries,
+                    return_logs=False,
+                    initial_capital=self.initial_capital,
+                )
+                metrics["raw_signal_count"] = len(matched_indices)
+                metrics["skipped_min_notional_count"] = metrics.get("skipped_min_notional_count", 0)
+                results.append(metrics)
         return results

@@ -218,20 +218,24 @@ def _try_global_pool_fallback(
     """Pick top pool rules when per-symbol greedy finds too few."""
     fallback = _best_rules_from_pool_fallback(pool, global_min)
     engine_fmt = _rule_set_to_engine_format(fallback)
-    _train_m, val_m = _simulate_team(
+    train_m, val_m = _simulate_team(
         engine_fmt, train_engine, val_engine, eval_cache,
     )
     val_floor = float(_cfg.effective_phase3_val_return_floor_pct())
-    if float(val_m.get("total_return_pct", -999.0)) > val_floor:
+    robust_ret = min(
+        float(train_m.get("total_return_pct", -999.0)),
+        float(val_m.get("total_return_pct", -999.0)),
+    )
+    if robust_ret > val_floor:
         logger.info(
-            "Phase 3 [%s]: fallback produced %d global rules",
-            direction, len(fallback),
+            "Phase 3 [%s]: fallback produced %d global rules (min(train,val)=%.2f%%)",
+            direction, len(fallback), robust_ret,
         )
         return fallback
     logger.warning(
-        "Phase 3 [%s]: fallback failed val return floor (%.2f%% <= %.2f%%)",
+        "Phase 3 [%s]: fallback failed robust return floor (min(train,val)=%.2f%% <= %.2f%%)",
         direction,
-        float(val_m.get("total_return_pct", -999.0)),
+        robust_ret,
         val_floor,
     )
     return None
@@ -251,15 +255,6 @@ def _best_rules_from_pool_fallback(
         seen.add(key)
         out.append(rule)
         if len(out) >= n_rules:
-            break
-    while len(out) < n_rules and len(out) < len(pool):
-        for rule in pool:
-            key = _conditions_key(rule.get("conditions", []))
-            if key not in seen:
-                out.append(rule)
-                seen.add(key)
-                break
-        else:
             break
     return out
 
@@ -286,6 +281,8 @@ def _score_pool_rule_on_symbol(
     symbol_df: pd.DataFrame,
     direction: str,
     train_symbol_df: pd.DataFrame | None = None,
+    val_engine: object | None = None,
+    train_engine: object | None = None,
 ) -> dict:
     """Score a pool rule on a single symbol.
 
@@ -297,11 +294,14 @@ def _score_pool_rule_on_symbol(
     fmt = _rule_set_to_engine_format([rule])
 
     # --- val metrics ---
-    val_engine = CPUBacktestEngine(
-        symbol_df, {}, direction, fee_pct=_cfg.FEE_PCT,
-    )
+    if val_engine is not None:
+        engine = val_engine
+    else:
+        engine = CPUBacktestEngine(
+            symbol_df, {}, direction, fee_pct=_cfg.FEE_PCT,
+        )
     try:
-        val_metrics = val_engine.simulate_rule_set(fmt)
+        val_metrics = engine.simulate_rule_set(fmt)
     except Exception:
         return {"return_pct": -999.0, "trades": 0}
     val_return = float(val_metrics.get("total_return_pct", -999.0))
@@ -309,25 +309,25 @@ def _score_pool_rule_on_symbol(
 
     # --- train metrics (when available) ---
     if train_symbol_df is not None and len(train_symbol_df) > 0:
-        train_engine = CPUBacktestEngine(
-            train_symbol_df, {}, direction, fee_pct=_cfg.FEE_PCT,
-        )
+        if train_engine is not None:
+            t_engine = train_engine
+        else:
+            t_engine = CPUBacktestEngine(
+                train_symbol_df, {}, direction, fee_pct=_cfg.FEE_PCT,
+            )
         try:
-            train_metrics = train_engine.simulate_rule_set(fmt)
+            train_metrics = t_engine.simulate_rule_set(fmt)
         except Exception:
             train_metrics = {}
         train_return = float(train_metrics.get("total_return_pct", -999.0))
 
-        # Hard-reject rules where validation far exceeds train (overfit signal)
         max_gap = float(getattr(_cfg, "PHASE3_MAX_TRAIN_VAL_GAP_PCT", 40.0))
         if val_return - train_return > max_gap:
             return {"return_pct": -999.0, "trades": val_trades}
 
-        # Use min(train, val) as the robust score
         robust_return = min(train_return, val_return)
         return {"return_pct": robust_return, "trades": val_trades}
 
-    # Fallback: val-only (when no train data available)
     return {"return_pct": val_return, "trades": val_trades}
 
 
@@ -349,10 +349,22 @@ def _per_symbol_greedy(
     max_rules = int(_cfg.PHASE3_PER_SYMBOL_MAX_RULES)
     top_k = int(_cfg.PHASE3_PER_SYMBOL_GREEDY_TOP_K)
 
+    val_engine = CPUBacktestEngine(
+        symbol_df, {}, direction, fee_pct=_cfg.FEE_PCT,
+    )
+    train_engine = None
+    if train_symbol_df is not None and len(train_symbol_df) > 0:
+        train_engine = CPUBacktestEngine(
+            train_symbol_df, {}, direction, fee_pct=_cfg.FEE_PCT,
+        )
+
     scored: list[tuple[int, float, int]] = []
     for idx, rule in enumerate(pool):
         result = _score_pool_rule_on_symbol(
-            rule, symbol_df, direction, train_symbol_df=train_symbol_df
+            rule, symbol_df, direction,
+            train_symbol_df=train_symbol_df,
+            val_engine=val_engine,
+            train_engine=train_engine,
         )
         if result["trades"] >= min_trades and result["return_pct"] >= min_return:
             scored.append((idx, result["return_pct"], result["trades"]))
@@ -397,10 +409,10 @@ def _per_symbol_greedy(
         return v_ret
 
     # Round 2: test top-K extensions using min(train, val) for combo return
+    best_combo_ret = best_ret
     candidates = [s for s in scored if s[0] not in selected][:top_k]
     if candidates:
         best_combo = selected[:]
-        best_combo_ret = best_ret
         for cand_idx, cand_ret, _ in candidates:
             combo = selected + [cand_idx]
             combo_ret = _robust_combo_return(combo)

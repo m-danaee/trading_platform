@@ -236,13 +236,13 @@ class TestSelectParetoTrial:
 class TestNormalizeCapitalPct:
     def test_scales_when_over_limit(self):
         rules = [
-            {"capital_pct": 30.0},
-            {"capital_pct": 30.0},
-            {"capital_pct": 50.0},
+            {"capital_pct": 60.0},
+            {"capital_pct": 60.0},
+            {"capital_pct": 60.0},
         ]
         out = _normalize_capital_pct(rules)
         total = sum(r["capital_pct"] for r in out)
-        assert total == pytest.approx(100.0, rel=1e-6)
+        assert total == pytest.approx(150.0, rel=1e-6)
 
     def test_unchanged_when_under_limit(self):
         rules = [{"capital_pct": 20.0}, {"capital_pct": 30.0}]

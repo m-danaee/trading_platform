@@ -253,14 +253,6 @@ class Phase4WalkForwardEvaluator:
         return worst_return, worst_drawdown, worst_turnover, worst_pf
 
 
-def _evaluate_params_worst_case(
-    wf_eval: Phase4WalkForwardEvaluator,
-    candidate_rule_set: list[dict],
-) -> tuple[float, float, float, float]:
-    """Delegate to a pre-built walk-forward evaluator."""
-    return wf_eval.evaluate_worst_case(candidate_rule_set)
-
-
 def _normalize_capital_pct(rules_set: list[dict]) -> list[dict]:
     """Scale capital_pct so sum <= MAX_TOTAL_EXPOSURE_PCT when enabled."""
     if not _cfg.PHASE4_HARD_CAP_NORMALIZE or not rules_set:
@@ -327,7 +319,21 @@ def _select_pareto_trial(study: Any, max_worst_dd_pct: float) -> Any:
                 candidates.append(t)
 
         if candidates:
-            selected = max(candidates, key=lambda t: t.values[0])
+            best = None
+            best_score = float("-inf")
+            for t in candidates:
+                ret_score = t.values[0]
+                dd_score = -t.values[1]
+                turnover_score = t.values[2]
+                composite = (
+                    ret_score * float(_cfg.PHASE4_WORST_RETURN_WEIGHT)
+                    + dd_score * float(_cfg.PHASE4_WORST_DRAWDOWN_WEIGHT)
+                    + turnover_score * float(_cfg.PHASE4_WORST_TURNOVER_WEIGHT)
+                )
+                if composite > best_score:
+                    best_score = composite
+                    best = t
+            selected = best
             logger.info(
                 "Phase 4: selected trial #%d using Feasibility Stage %d/3 "
                 "(gates: return>=%.1f%%, pf>=%.2f, dd<=%.1f%%, trades>=%d)",
@@ -574,7 +580,7 @@ class WalkForwardRiskOptimizer:
 
             candidate_rule_set = _build_candidate_rule_set(rules, params_list)
             worst_return, worst_drawdown, worst_turnover, worst_pf = (
-                _evaluate_params_worst_case(wf_eval, candidate_rule_set)
+                wf_eval.evaluate_worst_case(candidate_rule_set)
             )
             fold_penalty = 0.0
             if worst_return < float(_cfg.PHASE4_MIN_WORST_FOLD_RETURN_PCT):

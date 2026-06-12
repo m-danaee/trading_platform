@@ -1048,7 +1048,7 @@ def _store_global_metrics_cache(
     global_metrics_cache[key] = entry
     if _cfg.PHASE2_EVAL_GLOBAL_CACHE:
         max_cache = max(
-            200, 2 * int(getattr(_cfg, "PHASE2_POPULATION_SIZE", 200)))
+            200, int(getattr(_cfg, "PHASE2_POPULATION_SIZE", 200)))
         _trim_global_metrics_cache(global_metrics_cache, max_cache)
 
 

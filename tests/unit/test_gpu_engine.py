@@ -340,7 +340,7 @@ class TestGPUBacktestEngineInit:
 
     def test_feature_order_follows_feature_modes(self):
         """Chromosome positions must follow feature_modes insertion order."""
-        df = _make_df(n=10, feature_val=0.9)
+        df = _make_df(n=20, feature_val=0.9)
         df = df[
             [
                 "symbol", "datetime", "_symbol_bar_index",
@@ -447,7 +447,7 @@ class TestSimulateRuleBatch:
 
     def test_all_match_executes_trades(self):
         """Chromosome matching all rows should execute trades."""
-        df = _make_df(n=10, feature_val=0.9)
+        df = _make_df(n=20, feature_val=0.9)
         eng = _make_engine(df)
         # feat_signed=0.9 → bin 8; feat_binary=1 → bin 1
         # Use dont_care for both to match everything

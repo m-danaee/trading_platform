@@ -373,7 +373,7 @@ PHASE1_DISPERSION_THRESHOLD = 0.95
 # PHASE1_TOP_K_FEATURES — shortlist size per direction (long / short).
 #   Higher → wider Phase 2 search space, slower evolution, more combinations.
 #   Lower  → faster search, risk of missing predictive features.
-PHASE1_TOP_K_FEATURES = 25
+PHASE1_TOP_K_FEATURES = 30
 
 # PHASE1_MAX_FEATURE_OVERLAP — max Jaccard overlap between long & short lists.
 #   Higher → more shared features across directions; smaller combined gene space.
@@ -471,7 +471,7 @@ PHASE1_REGIME_MODEL_PATH = os.path.join(
 # Peak GPU RAM scales ~linearly with this value (largest VRAM lever).
 #   Higher → more statistical power, slower, OOM risk on small GPUs.
 #   Lower  → faster, less RAM; trade/support floors may need proportional cut.
-PHASE1_SAMPLING_TOTAL = 701_000
+PHASE1_SAMPLING_TOTAL = 600_000
 
 # PHASE2_GPU_BATCH_SIZE — chromosomes per JAX vmap chunk in simulate_rule_batch.
 # Peak VRAM scales ~linearly (rule matching is O(batch × rows × conditions)).
@@ -483,7 +483,7 @@ PHASE2_GPU_BATCH_SIZE = 198
 # PHASE2_GPU_BATCH_SIZE_AUTO — cap batch size by detected GPU VRAM and host RAM.
 #   True  → apply tiers in _gpu_runtime (12 GiB RAM → 32; T4 ≤16 GiB VRAM → 128).
 #   False → use PHASE2_GPU_BATCH_SIZE exactly (env PHASE2_GPU_BATCH_SIZE still wins).
-PHASE2_GPU_BATCH_SIZE_AUTO = False
+PHASE2_GPU_BATCH_SIZE_AUTO = True
 
 # PHASE2_SCAN_UNROLL — lax.scan unroll for equity simulation.
 #   Higher → fewer kernel launches, longer XLA compile, slightly more VRAM.
@@ -567,7 +567,7 @@ PHASE2_ENCODING = "sparse_slots"
 # MIN_TRADE_SUPPORT — target executed trades before support penalty vanishes.
 #   Higher → penalize low-frequency rules harder; pool favors robust sample size.
 #   Lower  → allow rare-pattern rules; noisier Sortino/return estimates.
-MIN_TRADE_SUPPORT = 50
+MIN_TRADE_SUPPORT = 45
 
 # SUPPORT_PENALTY_MAX — cap on quadratic support shortfall penalty.
 #   Higher → stronger push away from under-supported rules on all objectives.
@@ -625,12 +625,12 @@ PHASE2_SYMBOL_MEDIAN_RETURN_FLOOR_PCT = -0.5
 # PHASE2_MIN_PROFITABLE_SYMBOLS — min count of symbols with positive PnL.
 #   Higher → demand broad cross-symbol edge; stricter for 10-symbol universe.
 #   Lower  → allow niche symbol specialists.
-PHASE2_MIN_PROFITABLE_SYMBOLS = 5
+PHASE2_MIN_PROFITABLE_SYMBOLS = 4
 
 # PHASE2_MAX_DRAWDOWN_GATE — hard DD % cap; above this all objectives penalized.
 #   Lower  → Pareto front pushed toward low-drawdown rules; may cut high return.
 #   Higher → allow aggressive rules with large equity swings.
-PHASE2_MAX_DRAWDOWN_GATE = 20.0
+PHASE2_MAX_DRAWDOWN_GATE = 25.0
 
 # PHASE2_POOL_REQUIRE_POSITIVE_SPLITS — require non-negative train & val returns.
 #   True  → infeasible penalty on negative-split rules during evolution.
@@ -674,12 +674,12 @@ PHASE2_CV_MIN_VAL_TRADES = 15
 # PHASE2_CV_POOL_TARGET_MIN — soft target pool size before rank fallback kicks in.
 #   Higher → pipeline tries harder to fill a large pool via looser rank admit.
 #   Lower  → satisfied with smaller pool; less rank fallback pressure.
-PHASE2_CV_POOL_TARGET_MIN = 40
+PHASE2_CV_POOL_TARGET_MIN = 50
 
 # PHASE2_CV_POOL_RANK_ADMIT_TOP_K — max rules admitted via rank fallback.
 #   Higher → larger pool when strict gates are too tight.
 #   Lower  → smaller pool; Phase 3 has fewer combinations to search.
-PHASE2_CV_POOL_RANK_ADMIT_TOP_K = 80
+PHASE2_CV_POOL_RANK_ADMIT_TOP_K = 100
 
 # PHASE2_CV_RANK_MIN_FOLDS_PASS — looser fold pass for rank fallback (≤ pool gate).
 PHASE2_CV_RANK_MIN_FOLDS_PASS = _CV_RANK_MIN_FOLDS_PASS
@@ -697,7 +697,7 @@ PHASE2_REQUIRE_LAST_FOLD_POSITIVE: bool = False
 # SORTINO_CAP — maximum saturated Sortino after tanh compression.
 #   Higher → more differentiation among top Sortino rules on f1.
 #   Lower  → flatter f1 landscape; diversity across other objectives easier.
-SORTINO_CAP = 5.0
+SORTINO_CAP = 7.0
 
 # SORTINO_SCALE — divisor inside tanh(raw_sortino / scale); controls saturation.
 #   Higher → less compression; extreme Sortino values still differentiate f1.
@@ -842,12 +842,12 @@ PHASE2_TWO_STAGE_ENABLED = True
 # PHASE2_STAGE_A_GENERATIONS — Stage A (exploration) generation budget.
 #   Higher → more diverse initial Pareto before val-focused Stage B.
 #   Lower  → quicker handoff; Stage B may miss good regions.
-PHASE2_STAGE_A_GENERATIONS = 80
+PHASE2_STAGE_A_GENERATIONS = 85
 
 # PHASE2_STAGE_B_GENERATIONS — Stage B (refinement) generation budget.
 #   Higher → more val-robust polishing; total time = A + B gens.
 #   Lower  → less refinement after exploration.
-PHASE2_STAGE_B_GENERATIONS = 40
+PHASE2_STAGE_B_GENERATIONS = 45
 
 # PHASE2_STAGE_B_SEED_TOP_K — elites from Stage A seeded into Stage B.
 #   Higher → broader refinement starting set; slower Stage B per gen.
@@ -985,7 +985,7 @@ PHASE2_POPULATION_SIZE = 300
 # PHASE2_GENERATIONS — total evolutionary generations (before early stop).
 #   Higher → more search budget; diminishing returns after plateau.
 #   Lower  → faster runs; may under-explore gene space.
-PHASE2_GENERATIONS = 80
+PHASE2_GENERATIONS = 130
 
 PHASE2_ALGORITHM = "NSGA3"
 
@@ -1081,7 +1081,7 @@ PHASE2_INIT_UNIFORM_MIX = 0.05
 # PHASE2_MUTATION_RATE — per-gene mutation probability.
 #   Higher → more exploration, noisier convergence, better escape local optima.
 #   Lower  → finer local search, risk of premature convergence.
-PHASE2_MUTATION_RATE = 0.20
+PHASE2_MUTATION_RATE = 0.22
 
 # PHASE2_MUTATION_WEIGHTED_ACTIVATE_PROB — bias mutations toward activating genes.
 #   Higher → mutations tend to add conditions rather than dont_care.
@@ -1107,7 +1107,7 @@ PHASE3_GLOBAL_MAX_RULES = 30
 # PHASE3_PER_SYMBOL_GREEDY_TOP_K — top-K pool rules tested per greedy round.
 #   Higher → more thorough search per symbol, slower.
 #   Lower  → faster, may miss good combinations.
-PHASE3_PER_SYMBOL_GREEDY_TOP_K = 20
+PHASE3_PER_SYMBOL_GREEDY_TOP_K = 25
 
 # PHASE3_PER_SYMBOL_MIN_TRADES — min trades on symbol's val data for rule.
 #   Higher → reject rules with thin evidence on that symbol.
@@ -1163,7 +1163,7 @@ PHASE3_VAL_RETURN_FLOOR_PCT = 5.0
 #   Wider MAX → allow larger targets; fewer hits, bigger winners per trade.
 #   Narrower → optimizer stuck with modest TP; may miss trend captures.
 PHASE4_TP_MIN = 2.0
-PHASE4_TP_MAX = 4.0
+PHASE4_TP_MAX = 5.0
 
 # PHASE4_SL_MIN/MAX — stop-loss search range (%).
 #   Wider MAX → wider stops, lower stop-out rate, larger loss per loser.
@@ -1197,9 +1197,10 @@ PHASE4_CAPITAL_STEP = 5.0
 # PHASE4_N_TRIALS — number of Optuna trials per direction.
 #   Higher → better risk param fit, slower Phase 4.
 #   Lower  → may miss optimal TP/SL; fast but coarse.
-PHASE4_N_TRIALS = 200
+PHASE4_N_TRIALS = 250
 
-PHASE4_SAMPLER = "tpe"  # "tpe" | "nsga2"
+# "tpe" | "nsga2" (NSGA-II recommended for multi-objective)
+PHASE4_SAMPLER = "nsga2"
 PHASE4_SEED: int = get_seed()
 
 # PHASE4_N_JOBS — parallel Optuna workers.

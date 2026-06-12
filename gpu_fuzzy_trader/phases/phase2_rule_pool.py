@@ -174,17 +174,6 @@ def _resolve_history_path(direction: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# EvoX optional import
-# ---------------------------------------------------------------------------
-
-try:
-    from evox.core import Algorithm as EvoxAlgorithm  # type: ignore
-    _EVOX_AVAILABLE = True
-except ImportError:
-    EvoxAlgorithm = None  # type: ignore[misc, assignment]
-    _EVOX_AVAILABLE = False
-
-# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -259,9 +248,6 @@ def _pareto_sortino_stats(
         "mean_raw_train_return_pct": float(np.mean(train_returns)),
         "mean_val_return_pct": float(np.mean(val_returns)) if val_returns else 0.0,
     }
-
-
-_pareto_return_stats = _pareto_sortino_stats
 
 
 def _symbol_robustness_penalty(metrics: dict) -> float:
@@ -605,7 +591,7 @@ def _evaluate_chromosome(
         )
         metrics = metrics_list[0]
     except Exception as exc:
-        logger.debug("simulate_rule_batch failed: %s", exc)
+        logger.warning("simulate_rule_batch failed for chromosome %s: %s", key_suffix, exc)
         metrics = {
             "sortino_ratio": 0.0,
             "total_return_pct": 0.0,
@@ -625,7 +611,7 @@ def _evaluate_chromosome(
             )
             val_metrics = val_list[0]
         except Exception as exc:
-            logger.debug("val simulate_rule_batch failed: %s", exc)
+            logger.warning("val simulate_rule_batch failed for chromosome %s: %s", key_suffix, exc)
             val_metrics = None
 
     if regime_row_fractions_arr is None:
@@ -1690,59 +1676,6 @@ def _validate_archive_payload(
                 )
 
 
-# ---------------------------------------------------------------------------
-# EvoX-compatible optimizer (optional)
-# ---------------------------------------------------------------------------
-
-if _EVOX_AVAILABLE:
-    class FuzzyRuleOptimizer(EvoxAlgorithm):  # type: ignore[misc]
-        """
-        EvoX-compatible multi-objective optimizer for fuzzy rule evolution.
-
-        Wraps the NSGA-II fallback as an EvoX Algorithm for interface
-        compatibility. When EvoX is available, this class can be used
-        directly with EvoX workflows.
-        """
-
-        def __init__(
-            self,
-            feature_infos: list[dict],
-            engine,
-            pop_size: int = _cfg.PHASE2_POPULATION_SIZE,
-            n_generations: int = _cfg.PHASE2_GENERATIONS,
-            seed: int | None = None,
-        ):
-            self.feature_infos = feature_infos
-            self.engine = engine
-            self.pop_size = pop_size
-            self.n_generations = n_generations
-            self.seed = seed
-            self._rng = np.random.default_rng(seed)
-            self._population: Optional[np.ndarray] = None
-            self._objectives: Optional[np.ndarray] = None
-
-        def setup(self, key=None):
-            """Initialise population with dont_care sparsity."""
-            self._population = _init_population(
-                self.pop_size, self.feature_infos, self._rng
-            )
-            dont_cares = _get_dont_cares(self.feature_infos)
-            self._objectives = np.full((self.pop_size, 3), np.inf)
-            self._dont_cares = dont_cares
-            return self
-
-        def step(self, state=None):
-            """Run one generation step."""
-            if self._population is None:
-                self.setup()
-            # Evaluate
-            for i in range(self.pop_size):
-                if np.any(np.isinf(self._objectives[i])):
-                    obj, _ = _evaluate_chromosome(
-                        self._population[i], self._dont_cares, self.engine, []
-                    )
-                    self._objectives[i] = obj
-            return self
 
 # ---------------------------------------------------------------------------
 # Rule_Pool_Generator
@@ -1831,6 +1764,14 @@ class Rule_Pool_Generator:
         self._val_regime_row_counts = None
         self._build_engines()
 
+        # Keep slimmed copy for park/unpark cycles, free the full DataFrames
+        self._cached_slim_train = self._train_df
+        self._cached_slim_train_regime = train_regime_ids
+        self._cached_slim_train_regime_frac = self._regime_row_fractions
+        self._cached_slim_train_n_regimes = self._n_regimes
+        self._scoped_train_df = None
+        self._scoped_val_df = None
+
     # ------------------------------------------------------------------
     # Engine construction
     # ------------------------------------------------------------------
@@ -1911,20 +1852,14 @@ class Rule_Pool_Generator:
         configure_phase2_gpu_runtime(self._engine, val_engine=self._val_engine)
         log_memory_rss(f"Phase2 [{self.direction}] engine init")
 
-    def _rebuild_train_df(self) -> None:
-        """Resample and slim training data after engines were parked."""
-        from gpu_fuzzy_trader.backtest.df_slim import slim_backtest_df
+        self._scoped_val_df = None
 
-        sampled = _sample_df(
-            self._scoped_train_df,
-            _cfg.PHASE1_SAMPLING_TOTAL,
-            random_state=self._sample_seed,
-        )
-        train_regime_ids, self._regime_row_fractions, self._n_regimes = (
-            _prepare_regime_context(sampled)
-        )
-        self._train_df = slim_backtest_df(sampled, self._feature_names)
-        self._train_regime_ids = train_regime_ids
+    def _rebuild_train_df(self) -> None:
+        """Restore slimmed training data from cache (no re-sampling needed)."""
+        self._train_df = self._cached_slim_train
+        self._train_regime_ids = self._cached_slim_train_regime
+        self._regime_row_fractions = self._cached_slim_train_regime_frac
+        self._n_regimes = self._cached_slim_train_n_regimes
 
     def _ensure_engines(self) -> None:
         """Rebuild engines after ``park_engines`` dropped GPU state."""

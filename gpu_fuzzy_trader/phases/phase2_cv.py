@@ -285,6 +285,9 @@ def build_cv_fold_engines(
         train_engines.append(_FoldBacktestEngine(train_eng))
         val_engines.append(_FoldBacktestEngine(val_eng))
 
+        import gc
+        gc.collect()
+
     logger.info(
         "Phase 2 [%s]: purged CV engines built (%d folds, embargo=%d bars)",
         direction,

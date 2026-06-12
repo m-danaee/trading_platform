@@ -165,6 +165,26 @@ class OOS_Evaluator:
                 if split in metrics_by_split
             }
 
+            # 3b. Remove negative-PnL rules from the strategy (before reports)
+            cleaned = False
+            if _cfg.PHASE5_REMOVE_NEGATIVE_PNL_RULES:
+                test_trade_log = trade_logs_by_split.get("test")
+                if test_trade_log is not None and not test_trade_log.empty:
+                    strategy, cleaned = self._remove_negative_pnl_rules(
+                        strategy, test_trade_log, direction
+                    )
+
+            # Re-evaluate test split after cleanup so reports use correct metrics
+            if cleaned:
+                test_metrics2, per_symbol_rows2, trade_log2 = self._evaluate_strategy(
+                    datasets_by_split["test"], strategy, direction
+                )
+                metrics_by_split["test"] = test_metrics2
+                trade_logs_by_split["test"] = trade_log2
+                all_per_symbol = [
+                    r for r in all_per_symbol if r.get("dataset") != "test"
+                ] + per_symbol_rows2
+
             test_metrics = metrics_by_split.get("test", {})
             test_return = float(test_metrics.get("total_return_pct", 0.0))
             if test_return < -5.0:
@@ -174,14 +194,6 @@ class OOS_Evaluator:
                     direction,
                     test_return,
                 )
-
-            # 3b. Remove negative-PnL rules from the strategy
-            if _cfg.PHASE5_REMOVE_NEGATIVE_PNL_RULES:
-                test_trade_log = trade_logs_by_split.get("test")
-                if test_trade_log is not None and not test_trade_log.empty:
-                    strategy = self._remove_negative_pnl_rules(
-                        strategy, test_trade_log, direction
-                    )
 
             # 4. Save per-direction report
             self._save_report(test_metrics, direction)
@@ -504,10 +516,10 @@ class OOS_Evaluator:
         strategy: dict,
         trade_log: pd.DataFrame,
         direction: str,
-    ) -> dict:
+    ) -> tuple[dict, bool]:
         rules = strategy.get("rules_set", [])
         if not rules or trade_log is None or trade_log.empty:
-            return strategy
+            return strategy, False
 
         kept: list[dict] = []
         for rule_idx, rule in enumerate(rules, start=1):
@@ -526,7 +538,7 @@ class OOS_Evaluator:
                 "would drop below minimum %d rules. Keeping all %d rules.",
                 direction, global_min, len(rules),
             )
-            return strategy
+            return strategy, False
 
         removed = len(rules) - len(kept)
         if removed > 0:
@@ -546,8 +558,9 @@ class OOS_Evaluator:
                     "Phase 5 [%s]: failed to rewrite cleaned strategy: %s",
                     direction, exc,
                 )
+            return strategy, True
 
-        return strategy
+        return strategy, False
 
     @staticmethod
     def _build_per_symbol_rows(
