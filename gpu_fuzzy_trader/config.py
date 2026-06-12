@@ -275,7 +275,7 @@ TAIL_DROP_ROWS = 288
 #                         Stricter generalization; ~K× slower Phase 2/3.
 #   "holdout_70_30"     — single 70/30 per symbol; fast but easier to overfit
 #                         one validation season (risky for short direction).
-SPLIT_MODE = "purged_rolling_cv"
+SPLIT_MODE = "holdout_70_30"
 
 # CV_N_FOLDS — number of purged rolling validation windows per symbol.
 #   Higher → stricter season coverage, slower eval, pool gates need more folds.
