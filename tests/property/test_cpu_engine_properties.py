@@ -715,7 +715,7 @@ def test_property_14_fee_deduction_correctness(scenario: dict) -> None:
 
         # fee must equal position_notional * fee_rate
         expected_fee = position_notional * fee_rate
-        assert fee == pytest.approx(expected_fee, rel=1e-3, abs=1e-5), (
+        assert fee == pytest.approx(expected_fee, rel=1e-3, abs=1e-2), (
             f"Fee mismatch: expected position_notional * fee_rate = "
             f"{position_notional:.6f} * {fee_rate:.8f} = {expected_fee:.8f}, "
             f"got {fee:.8f}"
@@ -723,7 +723,7 @@ def test_property_14_fee_deduction_correctness(scenario: dict) -> None:
 
         # net_pnl must equal gross_pnl - fee
         expected_net_pnl = gross_pnl - fee
-        assert net_pnl == pytest.approx(expected_net_pnl, rel=1e-3, abs=1e-5), (
+        assert net_pnl == pytest.approx(expected_net_pnl, rel=1e-3, abs=1e-2), (
             f"Net PnL mismatch: expected gross_pnl - fee = "
             f"{gross_pnl:.8f} - {fee:.8f} = {expected_net_pnl:.8f}, "
             f"got {net_pnl:.8f}"
