@@ -486,10 +486,14 @@ def compute_phase2_objectives_from_metrics(
         else float(_cfg.PHASE2_DIVERSITY_PENALTY)
     )
     if diversity_refs:
-        min_hamming = min(_hamming_distance(chromosome, pf)
-                          for pf in diversity_refs)
-        if min_hamming <= diversity_hamming_threshold:
-            diversity_penalty = diversity_penalty_weight
+        # Avoid self-penalization: exclude exact chromosome matches (Hamming distance == 0)
+        # because an elite chromosome in the population should not penalize itself.
+        hammings = [_hamming_distance(chromosome, pf) for pf in diversity_refs]
+        other_hammings = [h for h in hammings if h > 0]
+        if other_hammings:
+            min_hamming = min(other_hammings)
+            if min_hamming <= diversity_hamming_threshold:
+                diversity_penalty = diversity_penalty_weight
 
     f3_val = win_rate
     if _cfg.PHASE2_USE_TOTAL_RETURN_OBJ:

@@ -212,7 +212,7 @@ def _compute_rule_signal_mask(
     rule_number: int = 1,
 ) -> np.ndarray:
     """
-    Build one boolean signal mask (evaluator_v4 parity).
+    Build one boolean signal mask (evaluator_v5 parity).
 
     Feature conditions are AND-ed. Symbol conditions are OR-ed, then AND-ed
     with the feature signal. Rules without symbol filters apply to all symbols.
@@ -251,21 +251,127 @@ def _build_rule_signal_mask(
     return get_or_build_rule_mask(df, conditions, mask_cache, rule_number)
 
 
+def compute_entry_time_priority(
+    datetimes: np.ndarray,
+    n_rows: int | None = None,
+) -> np.ndarray:
+    """Map each row to a timestamp priority code (evaluator_v5 parity)."""
+    if n_rows is None:
+        n_rows = len(datetimes)
+    entry_time_priority = pd.factorize(pd.Series(datetimes), sort=False)[0]
+    missing_time_mask = entry_time_priority < 0
+    if np.any(missing_time_mask):
+        max_code = int(entry_time_priority.max()) if len(
+            entry_time_priority) else -1
+        entry_time_priority[missing_time_mask] = (
+            max_code + 1 + np.arange(int(np.sum(missing_time_mask)))
+        )
+    return entry_time_priority.astype(np.int64, copy=False)
+
+
+def _rule_symbols_for_allocation(
+    rule_entry: dict,
+    conditions: list[str],
+    rule_idx: int,
+) -> list[str]:
+    symbols = rule_entry.get("symbols")
+    if symbols:
+        return list(symbols)
+    _, allowed_symbols = split_feature_and_symbol_conditions(
+        conditions=conditions,
+        rule_number=rule_idx,
+    )
+    return allowed_symbols
+
+
+def _sort_entries_by_allocation_priority(entries: list[dict]) -> None:
+    """Sort entries for v5 capital allocation (timestamp, rule, symbol, row)."""
+    entries.sort(
+        key=lambda x: (
+            x["entry_priority"],
+            x["rule_index"],
+            x["symbol_priority"],
+            x["idx"],
+        )
+    )
+
+
+def _append_allocated_entries(
+    entries: list[dict],
+    matched_indices: np.ndarray,
+    *,
+    rule_idx: int,
+    tp: float,
+    sl: float,
+    capital_pct: float,
+    row_priority: np.ndarray,
+    rule_symbols: list[str],
+    normalized_symbols: np.ndarray | None,
+) -> None:
+    symbol_priority_map = {sym: pos for pos, sym in enumerate(rule_symbols)}
+    default_symbol_priority = len(symbol_priority_map)
+
+    for idx in matched_indices:
+        if normalized_symbols is not None and symbol_priority_map:
+            symbol_priority = symbol_priority_map.get(
+                normalized_symbols[idx],
+                default_symbol_priority,
+            )
+        else:
+            symbol_priority = 0
+
+        entries.append(
+            {
+                "idx": int(idx),
+                "entry_priority": int(row_priority[idx]),
+                "rule_index": int(rule_idx),
+                "symbol_priority": int(symbol_priority),
+                "tp": tp,
+                "sl": sl,
+                "capital_pct": capital_pct,
+            }
+        )
+
+
 def _build_entries_from_rule_set(
     df: pd.DataFrame,
     rule_set: list[dict],
     mask_cache: dict[tuple[str, ...], np.ndarray] | None = None,
+    row_priority: np.ndarray | None = None,
+    normalized_symbols: np.ndarray | None = None,
 ) -> list[dict]:
     """
     Priority-based rule assignment: first matching rule wins per row.
 
-    Mirrors evaluator_v3.ipynb's build_rule_set_entries() with signal_mask path.
-    Returns a list of entry dicts sorted by row index.
+    Mirrors evaluator_v5.ipynb build_rule_set_entries() with signal_mask path.
+    Simultaneous cross-symbol signals are ordered by JSON rule order, not dataset
+    symbol sort order.
     """
     if not rule_set:
         return []
 
     n_rows = len(df)
+    if row_priority is None:
+        if "datetime" in df.columns:
+            row_priority = compute_entry_time_priority(
+                df["datetime"].values, n_rows)
+        else:
+            row_priority = np.arange(n_rows, dtype=np.int64)
+    else:
+        row_priority = np.asarray(row_priority)
+        if len(row_priority) != n_rows:
+            raise ValueError(
+                "row_priority length does not match dataset length.")
+
+    if normalized_symbols is not None:
+        normalized_symbols = np.asarray(normalized_symbols, dtype=object)
+        if len(normalized_symbols) != n_rows:
+            raise ValueError(
+                "normalized_symbols length does not match dataset length."
+            )
+    elif _rules_need_normalized_symbols(rule_set):
+        normalized_symbols = get_normalized_symbol_array(df)
+
     assigned_mask = np.zeros(n_rows, dtype=bool)
     entries: list[dict] = []
 
@@ -293,15 +399,39 @@ def _build_entries_from_rule_set(
             continue
 
         assigned_mask[matched_indices] = True
-
-        entries.extend(
-            {"idx": int(idx), "rule_index": int(rule_idx),
-             "tp": tp, "sl": sl, "capital_pct": capital_pct}
-            for idx in matched_indices.tolist()
+        rule_symbols = _rule_symbols_for_allocation(
+            rule_entry, conditions, rule_idx
+        )
+        _append_allocated_entries(
+            entries,
+            matched_indices,
+            rule_idx=rule_idx,
+            tp=tp,
+            sl=sl,
+            capital_pct=capital_pct,
+            row_priority=row_priority,
+            rule_symbols=rule_symbols,
+            normalized_symbols=normalized_symbols,
         )
 
-    entries.sort(key=lambda x: x["idx"])
+    _sort_entries_by_allocation_priority(entries)
     return entries
+
+
+def _rules_need_normalized_symbols(rule_set: list[dict]) -> bool:
+    for rule_entry in rule_set:
+        if not isinstance(rule_entry, dict):
+            continue
+        if rule_entry.get("symbols"):
+            return True
+        conditions = rule_entry.get("conditions", [])
+        _, allowed_symbols = split_feature_and_symbol_conditions(
+            conditions=conditions,
+            rule_number=1,
+        )
+        if allowed_symbols:
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -391,8 +521,12 @@ class CPUBacktestEngine:
 
         if "datetime" in df.columns:
             self.datetimes = df["datetime"].values
+            self.entry_time_priority = compute_entry_time_priority(
+                self.datetimes, len(df)
+            )
         else:
             self.datetimes = np.arange(len(df))
+            self.entry_time_priority = np.arange(len(df), dtype=np.int64)
 
         self.release_index = precompute_release_indices(
             self.symbols,
@@ -604,8 +738,16 @@ class CPUBacktestEngine:
 
         Used by Phase 4 RL env to avoid per-step DataFrame/engine allocation.
         """
+        normalized_symbols = None
+        if _rules_need_normalized_symbols(rule_set):
+            normalized_symbols = get_normalized_symbol_array(self.df)
+
         entries = _build_entries_from_rule_set(
-            self.df, rule_set, self._condition_mask_cache,
+            self.df,
+            rule_set,
+            self._condition_mask_cache,
+            row_priority=self.entry_time_priority,
+            normalized_symbols=normalized_symbols,
         )
         entries = [
             e for e in entries
@@ -644,8 +786,16 @@ class CPUBacktestEngine:
         tuple[dict, pd.DataFrame]
             If return_logs=True, also returns the trade log DataFrame.
         """
+        normalized_symbols = None
+        if _rules_need_normalized_symbols(rule_set):
+            normalized_symbols = get_normalized_symbol_array(self.df)
+
         entries = _build_entries_from_rule_set(
-            self.df, rule_set, self._condition_mask_cache,
+            self.df,
+            rule_set,
+            self._condition_mask_cache,
+            row_priority=self.entry_time_priority,
+            normalized_symbols=normalized_symbols,
         )
         return self._simulate_rule_set_entries(
             entries, return_logs=return_logs, initial_capital=self.initial_capital

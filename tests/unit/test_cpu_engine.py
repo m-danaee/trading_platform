@@ -356,12 +356,121 @@ class TestBuildEntriesFromRuleSet:
         assert rule_indices[2] == 2
         assert rule_indices[3] == 2
 
-    def test_entries_sorted_by_row_index(self):
+    def test_entries_sorted_by_allocation_priority(self):
         df = _make_df(5, feature_val=0.9)
         rule_set = [{"conditions": ["[feat_a] IS Very High"], "tp": 2.0, "sl": 1.0, "capital_pct": 50.0}]
         entries = _build_entries_from_rule_set(df, rule_set)
-        indices = [e["idx"] for e in entries]
-        assert indices == sorted(indices)
+        priorities = [
+            (e["entry_priority"], e["rule_index"], e["symbol_priority"], e["idx"])
+            for e in entries
+        ]
+        assert priorities == sorted(priorities)
+
+    def test_same_timestamp_orders_by_json_rule_index_not_row_index(self):
+        """v5: earlier JSON rule wins over lower dataset row index at same time."""
+        shared_dt = pd.Timestamp("2024-01-01 10:00:00")
+        df = pd.DataFrame({
+            "symbol": ["1", "10"],
+            "datetime": [shared_dt, shared_dt],
+            "_symbol_bar_index": [0, 0],
+            "label_open_next": [100.0, 100.0],
+            "label_max_288": [105.0, 105.0],
+            "label_min_288": [97.0, 97.0],
+            "label_close_288": [102.0, 102.0],
+            "label_max_before_min": [1, 1],
+            "feat_a": [0.9, 0.9],
+        })
+        rule_set = [
+            {
+                "conditions": ["symbol is 10", "[feat_a] IS Very High"],
+                "tp": 2.0,
+                "sl": 1.0,
+                "capital_pct": 50.0,
+            },
+            {
+                "conditions": ["symbol is 1", "[feat_a] IS Very High"],
+                "tp": 2.0,
+                "sl": 1.0,
+                "capital_pct": 50.0,
+            },
+        ]
+        entries = _build_entries_from_rule_set(df, rule_set)
+        assert len(entries) == 2
+        assert entries[0]["rule_index"] == 1
+        assert entries[0]["idx"] == 1
+        assert entries[1]["rule_index"] == 2
+        assert entries[1]["idx"] == 0
+
+    def test_symbol_priority_within_multi_symbol_rule(self):
+        shared_dt = pd.Timestamp("2024-01-01 10:00:00")
+        df = pd.DataFrame({
+            "symbol": ["2", "1"],
+            "datetime": [shared_dt, shared_dt],
+            "_symbol_bar_index": [0, 0],
+            "label_open_next": [100.0, 100.0],
+            "label_max_288": [105.0, 105.0],
+            "label_min_288": [97.0, 97.0],
+            "label_close_288": [102.0, 102.0],
+            "label_max_before_min": [1, 1],
+            "feat_a": [0.9, 0.9],
+        })
+        rule_set = [
+            {
+                "conditions": ["symbol is 2,1", "[feat_a] IS Very High"],
+                "tp": 2.0,
+                "sl": 1.0,
+                "capital_pct": 50.0,
+            },
+        ]
+        entries = _build_entries_from_rule_set(df, rule_set)
+        assert len(entries) == 2
+        assert entries[0]["idx"] == 0
+        assert entries[0]["symbol_priority"] == 0
+        assert entries[1]["idx"] == 1
+        assert entries[1]["symbol_priority"] == 1
+
+    def test_rule_order_wins_capital_when_exposure_capped(self):
+        shared_dt = pd.Timestamp("2024-01-01 10:00:00")
+        df = pd.DataFrame({
+            "symbol": ["1", "10"],
+            "datetime": [shared_dt, shared_dt],
+            "_symbol_bar_index": [0, 0],
+            "label_open_next": [100.0, 100.0],
+            "label_max_288": [105.0, 105.0],
+            "label_min_288": [97.0, 97.0],
+            "label_close_288": [102.0, 102.0],
+            "label_max_before_min": [1, 1],
+            "feat_a": [0.9, 0.9],
+        })
+        rule_set = [
+            {
+                "conditions": ["symbol is 10", "[feat_a] IS Very High"],
+                "tp": 2.0,
+                "sl": 1.0,
+                "capital_pct": 50.0,
+            },
+            {
+                "conditions": ["symbol is 1", "[feat_a] IS Very High"],
+                "tp": 2.0,
+                "sl": 1.0,
+                "capital_pct": 50.0,
+            },
+        ]
+        engine = CPUBacktestEngine(
+            df,
+            {},
+            "long",
+            initial_capital=1000.0,
+            max_total_exposure_pct=50.0,
+        )
+        metrics, trade_log = engine.simulate_rule_set(
+            rule_set, return_logs=True)
+        assert metrics["executed_trades"] == 1
+        assert metrics["skipped_min_notional_count"] == 1
+        assert len(trade_log) == 1
+        assert str(trade_log.iloc[0]["Symbol"]) == "10"
+        assert float(
+            trade_log.iloc[0]["Position_Notional"]) == pytest.approx(500.0)
 
     def test_no_matching_rows_returns_empty(self):
         df = _make_df(3, feature_val=0.5)  # Medium, not Very High

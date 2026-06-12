@@ -1,6 +1,6 @@
 # GPU-Fuzzy Trading Pipeline
 
-A ground-up, GPU-accelerated fuzzy rule mining pipeline that discovers, optimizes, and evaluates trading strategies across 10 symbols. The system mines interpretable fuzzy rules from a discretized feature dataset, refines risk parameters via walk-forward Optuna search, and produces two JSON strategy files (`long.json` and `short.json`) compatible with `evaluator_v4.ipynb` (symbol filters + feature conditions).
+A ground-up, GPU-accelerated fuzzy rule mining pipeline that discovers, optimizes, and evaluates trading strategies across 10 symbols. The system mines interpretable fuzzy rules from a discretized feature dataset, refines risk parameters via walk-forward Optuna search, and produces two JSON strategy files (`long.json` and `short.json`) compatible with `evaluator_v5.ipynb` (symbol filters + feature conditions).
 
 ---
 

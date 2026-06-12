@@ -13,7 +13,7 @@ Phase 2 is the core search phase. It evolves a large, diverse pool of candidate 
 - Shared cross-symbol archive: `phase2_rule_archive/{direction}/shared_archive.json`
 - Guarded online migration between islands every `PHASE2_MIGRATION_EPOCH_INTERVAL` epochs
 
-Final flat `long.json` / `short.json` exports are assembled in Phase 3 with `symbol is X` filters (see `evaluator_v4.ipynb` for runtime semantics). Do not modify `evaluator_v4.ipynb`; it is the behavioral contract.
+Final flat `long.json` / `short.json` exports are assembled in Phase 3 with `symbol is X` filters (see `evaluator_v5.ipynb` for runtime semantics). Do not modify `evaluator_v5.ipynb`; it is the behavioral contract.
 
 ---
 

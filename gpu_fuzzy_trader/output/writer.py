@@ -31,7 +31,7 @@ Constraints (Requirements 12.1–12.9):
   - If all three of tp/sl/capital_pct are zero → reject rule (log ERROR, raise ValidationError)
   - conditions must be a non-empty list of strings: feature conditions match
     [feature_name] IS Fuzzy Value Name; optional symbol filters match
-    symbol is X or [symbol] IS X (evaluator_v4 parity)
+    symbol is X or [symbol] IS X (evaluator_v5 parity)
 """
 
 from __future__ import annotations

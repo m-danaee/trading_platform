@@ -39,7 +39,9 @@ from gpu_fuzzy_trader.phases.phase3_objectives import (
 from gpu_fuzzy_trader.phases.phase3_rule_set import (
     Rule_Set_Selector,
     _build_output_dict,
+    _merge_per_symbol_rules,
     _rule_set_to_engine_format,
+    _sort_merged_rules_by_score,
     _validate_rule_set_schema,
     _OUTPUT_PATHS,
 )
@@ -776,6 +778,45 @@ class TestSkipIfValid:
             assert result is None
         finally:
             m._OUTPUT_PATHS.update(original)
+
+
+class TestMergedRuleOrdering:
+    def test_sort_merged_rules_by_score_puts_best_rule_first(self, monkeypatch):
+        import gpu_fuzzy_trader.phases.phase3_rule_set as phase3_module
+
+        pool = [
+            {
+                "conditions": ["[feat_0] IS Very High"],
+                "tp": 4.0,
+                "sl": 2.0,
+                "capital_pct": 50.0,
+            },
+            {
+                "conditions": ["[feat_1] IS Very High"],
+                "tp": 4.0,
+                "sl": 2.0,
+                "capital_pct": 50.0,
+            },
+        ]
+        symbol_assignments = {"SYM_A": [0], "SYM_B": [1]}
+        merged = _merge_per_symbol_rules(symbol_assignments, pool)
+        assert len(merged) == 2
+        assert all("_pool_idx" in rule for rule in merged)
+
+        def _fake_score(rule, train_engine, val_engine):
+            if rule["conditions"][0].startswith("[feat_0]"):
+                return 12.0
+            return 3.0
+
+        monkeypatch.setattr(
+            phase3_module, "_score_merged_rule_on_splits", _fake_score
+        )
+
+        ordered = _sort_merged_rules_by_score(merged, object(), object())
+        assert ordered[0]["conditions"] == pool[0]["conditions"] + \
+            ["symbol is SYM_A"]
+        assert ordered[1]["conditions"] == pool[1]["conditions"] + \
+            ["symbol is SYM_B"]
 
 
 class TestRejectedOutputSchema:

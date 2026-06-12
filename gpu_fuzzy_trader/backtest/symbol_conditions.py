@@ -1,5 +1,5 @@
 """
-symbol_conditions.py — Symbol filter parsing (evaluator_v4 parity).
+symbol_conditions.py — Symbol filter parsing (evaluator_v5 parity).
 
 Feature conditions are AND-ed. Symbol conditions within one rule are OR-ed,
 then AND-ed with the feature mask. Rules without symbol filters apply to all

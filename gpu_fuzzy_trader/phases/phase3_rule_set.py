@@ -9,7 +9,7 @@ merged into a single output rule with "symbol is X" conditions.
 
 Output:
     outputs/long.json  and  outputs/short.json
-    (evaluator_v4.ipynb compatible format with "symbol is X" conditions)
+    (evaluator_v5.ipynb compatible format with "symbol is X" conditions)
 
 Skip logic:
     If both files exist and pass schema validation → skip Phase 3.
@@ -456,11 +456,53 @@ def _merge_per_symbol_rules(
         rule = dict(pool[pool_idx])
         sym_conditions = [f"symbol is {sym}" for sym in sorted(symbols)]
         rule["conditions"] = list(rule.get("conditions", [])) + sym_conditions
+        rule["_pool_idx"] = int(pool_idx)
         merged.append(rule)
 
-    merged.sort(key=lambda r: -len([c for c in r.get("conditions", [])
-                                    if c.lower().startswith("symbol is")]))
     return merged
+
+
+def _score_merged_rule_on_splits(
+    rule: dict,
+    train_engine: object,
+    val_engine: object,
+) -> float:
+    """Robust min(train, val) return for ordering rules_set under v5 allocation."""
+    fmt = _rule_set_to_engine_format([rule])
+    try:
+        val_metrics = val_engine.simulate_rule_set(fmt)
+        val_return = float(val_metrics.get("total_return_pct", -999.0))
+    except Exception:
+        return -999.0
+
+    try:
+        train_metrics = train_engine.simulate_rule_set(fmt)
+        train_return = float(train_metrics.get("total_return_pct", -999.0))
+    except Exception:
+        train_return = -999.0
+
+    max_gap = float(getattr(_cfg, "PHASE3_MAX_TRAIN_VAL_GAP_PCT", 40.0))
+    if val_return - train_return > max_gap:
+        return -999.0
+    return min(train_return, val_return)
+
+
+def _sort_merged_rules_by_score(
+    merged_rules: list[dict],
+    train_engine: object,
+    val_engine: object,
+) -> list[dict]:
+    """
+    Order rules_set so stronger rules appear first in JSON (v5 capital priority).
+    """
+    scored: list[tuple[float, int, dict]] = []
+    for rule in merged_rules:
+        pool_idx = int(rule.pop("_pool_idx", 0))
+        score = _score_merged_rule_on_splits(rule, train_engine, val_engine)
+        scored.append((score, pool_idx, rule))
+
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    return [rule for _, _, rule in scored]
 
 
 # ---------------------------------------------------------------------------
@@ -670,8 +712,11 @@ class Rule_Set_Selector:
                 self._persist_output(output_dict)
                 return output_dict
         else:
-            merged_rules = _merge_per_symbol_rules(
-                symbol_assignments, enriched_pool)
+            merged_rules = _sort_merged_rules_by_score(
+                _merge_per_symbol_rules(symbol_assignments, enriched_pool),
+                self._train_engine,
+                self._val_engine,
+            )
 
             if len(merged_rules) < global_min:
                 logger.warning(

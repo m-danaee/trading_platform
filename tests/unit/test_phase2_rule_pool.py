@@ -1313,6 +1313,61 @@ class TestEvaluateChromosome:
                 if hasattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ"):
                     delattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ")
 
+    def test_evaluate_chromosome_diversity_penalty_avoids_self_penalization(self):
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import _evaluate_chromosome
+        
+        orig_penalty = _cfg.PHASE2_DIVERSITY_PENALTY
+        orig_hamming = _cfg.PHASE2_DIVERSITY_HAMMING_THRESHOLD
+        orig_floor = _cfg.MIN_TRADE_SUPPORT
+        
+        try:
+            _cfg.PHASE2_DIVERSITY_PENALTY = 10.0
+            _cfg.PHASE2_DIVERSITY_HAMMING_THRESHOLD = 4
+            _cfg.MIN_TRADE_SUPPORT = 5
+            
+            chromosome = np.array([1, 2, 3, 4, 5], dtype=np.int32)
+            dont_cares = np.ones(5, dtype=np.int32) * 5
+            
+            class MockEngine:
+                def simulate_rule_batch(self, chromosomes, **kwargs):
+                    return [{
+                        "executed_trades": 100,
+                        "total_return_pct": 15.0,
+                        "sortino_ratio": 0.5,
+                        "max_drawdown_pct": 2.0,
+                        "win_rate": 50.0,
+                        "profit_factor": 1.0,
+                    }]
+            
+            engine = MockEngine()
+            
+            # Case 1: pareto_front contains exact same chromosome -> should NOT penalize it
+            objectives_self, _ = _evaluate_chromosome(
+                chromosome, dont_cares, engine, [chromosome]
+            )
+            
+            # Case 2: pareto_front contains a different chromosome that is within Hamming distance of 4
+            # (diff by 1 gene -> Hamming dist = 1)
+            similar_chrom = np.array([1, 2, 3, 4, 9], dtype=np.int32)
+            objectives_similar, _ = _evaluate_chromosome(
+                chromosome, dont_cares, engine, [similar_chrom]
+            )
+            
+            # objectives[2] is -f3_val + penalties
+            # f3_val is total_return = 15.0 since PHASE2_USE_TOTAL_RETURN_OBJ is True.
+            # cond_penalty is 10.0 because chromosome has 4 active conditions while MAX_CONDITIONS is 3.
+            # Without diversity penalty: -15.0 + 10.0 = -5.0
+            # With diversity penalty: -15.0 + 10.0 + 10.0 = 5.0
+            assert np.isclose(objectives_self[2], -5.0)
+            assert np.isclose(objectives_similar[2], 5.0)
+            
+        finally:
+            _cfg.PHASE2_DIVERSITY_PENALTY = orig_penalty
+            _cfg.PHASE2_DIVERSITY_HAMMING_THRESHOLD = orig_hamming
+            _cfg.MIN_TRADE_SUPPORT = orig_floor
+
+
+
 
 class TestRobustReturnObjective:
     def test_f3_uses_min_train_val_return(self, monkeypatch):
