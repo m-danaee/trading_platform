@@ -62,7 +62,8 @@ class TestStageObjectivePenalties:
     def test_stage_a_applies_stronger_diversity_penalty(self):
         chromosome = np.array([0, 1, 2], dtype=np.int32)
         dont_cares = np.array([3, 3, 3], dtype=np.int32)
-        ref = chromosome.copy()
+        # Near-duplicate reference (Hamming=1); identical refs are excluded from crowding penalty.
+        ref = np.array([0, 1, 0], dtype=np.int32)
         metrics = {
             "sortino_ratio": 2.0,
             "total_return_pct": 5.0,

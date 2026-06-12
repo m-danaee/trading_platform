@@ -382,12 +382,13 @@ class TestEvalOptimizations:
         obj_no_archive = objectives[0].copy()
 
         objectives[0] = np.inf
+        near_duplicate = np.array([0, 0], dtype=np.int32)
         _evaluate_population_indices(
             pop,
             [0],
             dont_cares,
             engine,
-            [pop[0].copy()],
+            [near_duplicate],
             objectives,
             metrics_cache,
             global_metrics_cache=global_cache,

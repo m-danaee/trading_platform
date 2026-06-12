@@ -37,6 +37,7 @@ import numpy as np
 import pandas as pd
 
 from gpu_fuzzy_trader import config as _cfg
+from gpu_fuzzy_trader.backtest.df_slim import slim_backtest_df
 from gpu_fuzzy_trader.features.encoder import decode_chromosome, get_dont_care
 from gpu_fuzzy_trader.phases.phase2_sparse_encoding import (
     chromosome_key,
@@ -1749,7 +1750,6 @@ class Rule_Pool_Generator:
             self._scoped_train_df, _cfg.PHASE1_SAMPLING_TOTAL, random_state=sample_seed,
         )
         feature_names = [fi["name"] for fi in feature_infos]
-        from gpu_fuzzy_trader.backtest.df_slim import slim_backtest_df
 
         train_regime_ids, self._regime_row_fractions, self._n_regimes = (
             _prepare_regime_context(sampled)
