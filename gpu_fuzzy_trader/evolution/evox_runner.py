@@ -64,7 +64,9 @@ def trim_evolution_state_memory(
 ) -> None:
     """Drop bulky resumable state that is already persisted elsewhere."""
     state.history.clear()
-    max_cache = max(400, 2 * int(pop_size or len(state.population)))
+    # Keep only 1x pop_size entries in the global cache after each direction
+    # to free RAM before the next direction starts (Colab 12 GiB guard).
+    max_cache = max(200, int(pop_size or len(state.population)))
     _trim_global_metrics_cache(state.global_metrics_cache, max_cache)
 
 
@@ -206,7 +208,7 @@ def _update_hall_of_fame(
     population: np.ndarray,
     pareto_indices: list[int],
     *,
-    max_entries: int = 500,
+    max_entries: int = 300,
 ) -> None:
     """Accumulate unique Pareto chromosomes discovered across generations."""
     from gpu_fuzzy_trader.phases.phase2_sparse_encoding import chromosome_key
@@ -1046,7 +1048,7 @@ def _store_global_metrics_cache(
     global_metrics_cache[key] = entry
     if _cfg.PHASE2_EVAL_GLOBAL_CACHE:
         max_cache = max(
-            400, 4 * int(getattr(_cfg, "PHASE2_POPULATION_SIZE", 200)))
+            200, 2 * int(getattr(_cfg, "PHASE2_POPULATION_SIZE", 200)))
         _trim_global_metrics_cache(global_metrics_cache, max_cache)
 
 
@@ -1994,6 +1996,12 @@ def _run_nsga3(
         plateau_best_progress, plateau_streak = _update_max_return_plateau(
             plateau_metric, plateau_best_progress, plateau_streak,
         )
+
+        # Periodically reclaim stale Python objects (metric dicts, offspring
+        # arrays) to reduce peak RSS on memory-constrained hosts (Colab 12 GiB).
+        if gen % 10 == 0 and gen > 0:
+            import gc as _gc
+            _gc.collect()
 
         is_last_gen = gen == n_generations - 1
         off_stats = _empty_eval_stats()
