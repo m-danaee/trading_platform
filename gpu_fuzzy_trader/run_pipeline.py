@@ -51,6 +51,7 @@ import sys
 import os
 import logging
 import json
+import numpy as np
 
 from gpu_fuzzy_trader._jax_env import configure_jax_env
 
@@ -237,6 +238,31 @@ def _log_pipeline_config() -> None:
     )
 
 
+class _NumpyJSONEncoder(json.JSONEncoder):
+    """JSON encoder that converts NumPy/JAX scalar and array types to native Python types."""
+
+    def default(self, obj: Any) -> Any:
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        try:
+            import jax
+            if isinstance(obj, jax.Array):
+                return obj.tolist()
+        except (ImportError, TypeError):
+            pass
+        try:
+            import jax.numpy as jnp
+            if isinstance(obj, jnp.ndarray):
+                return obj.tolist()
+        except ImportError:
+            pass
+        return super().default(obj)
+
+
 def _log_phase_entry(
     log_path: str,
     phase_name: str,
@@ -278,7 +304,7 @@ def _log_phase_entry(
 
     os.makedirs(os.path.dirname(log_path) or ".", exist_ok=True)
     with open(log_path, "a", encoding="utf-8") as fh:
-        fh.write(json.dumps(entry) + "\n")
+        fh.write(json.dumps(entry, cls=_NumpyJSONEncoder) + "\n")
 
     status = "SKIPPED" if skipped else "COMPLETED"
     logger.info(
