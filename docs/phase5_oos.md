@@ -101,7 +101,7 @@ For each symbol, the report includes:
 - `win_rate`: Win rate on this symbol
 - `net_pnl`: Net profit/loss on this symbol
 
-This breakdown is saved to `outputs/reports/test_per_symbol_performance.csv` and is essential for diagnosing whether the strategy works uniformly across the portfolio or is driven by one or two symbols.
+This breakdown is saved to `outputs/reports/test_long_per_symbol_performance.csv` and `outputs/reports/test_short_per_symbol_performance.csv` and is essential for diagnosing whether the strategy works uniformly across the portfolio or is driven by one or two symbols.
 
 ---
 
@@ -174,16 +174,17 @@ Phase 5 has no dedicated config parameters. It uses:
 |---|---|
 | `outputs/reports/test_long_report.json` | Summary metrics for the long strategy on test data |
 | `outputs/reports/test_short_report.json` | Summary metrics for the short strategy on test data |
-| `outputs/reports/test_per_symbol_performance.csv` | Per-symbol metrics for both directions |
+| `outputs/reports/test_long_per_symbol_performance.csv` | Per-symbol metrics (long) |
+| `outputs/reports/test_short_per_symbol_performance.csv` | Per-symbol metrics (short) |
 | `outputs/reports/test_long_equity.png` | Equity curve on test data (long) |
 | `outputs/reports/test_short_equity.png` | Equity curve on test data (short) |
 | `outputs/reports/strategy_evaluation_long.csv` | Cross-split comparison table (long) |
 | `outputs/reports/strategy_evaluation_short.csv` | Cross-split comparison table (short) |
 | `outputs/reports/per_rule_breakdown_long.png` | Per-rule contribution (long) |
 | `outputs/reports/per_rule_breakdown_short.png` | Per-rule contribution (short) |
-| `outputs/reports/distribution_equity_long.png` | Return distribution + equity curve (long) |
-| `outputs/reports/distribution_equity_short.png` | Return distribution + equity curve (short) |
+| `outputs/reports/distribution_equity_{split}_long.png` | Return distribution + equity curve (long) |
+| `outputs/reports/distribution_equity_{split}_short.png` | Return distribution + equity curve (short) |
 | `outputs/reports/spearman_correlation_long.csv` | Feature-outcome Spearman correlations (long) |
 | `outputs/reports/spearman_correlation_short.csv` | Feature-outcome Spearman correlations (short) |
-| `outputs/reports/feature_stratified_long.csv` | Performance by feature value (long) |
-| `outputs/reports/feature_stratified_short.csv` | Performance by feature value (short) |
+| `outputs/reports/feature_stratified_{split}_long.csv` | Performance by feature value (long) |
+| `outputs/reports/feature_stratified_{split}_short.csv` | Performance by feature value (short) |

@@ -261,7 +261,7 @@ Das-Dennis style reference vectors are generated using EvoX's `uniform_sampling`
 
 At default settings, Phase 2 performs approximately 2 × 400 × 100 = 80,000 chromosome evaluations per direction (before early stop). Each evaluation is a full GPU backtest simulation.
 
-**Compute cost:** With the GPU engine (JAX), evaluations are batched via `simulate_rule_batch`. The batch path uses a **simplified equity model** for fast ranking during search; Phases 3–5 and `evaluator_v3.ipynb` use the CPU engine for ground-truth metrics.
+**Compute cost:** With the GPU engine (JAX), evaluations are batched via `simulate_rule_batch`. The batch path uses a **simplified equity model** for fast ranking during search; Phases 3–5 and `evaluator_v5.ipynb` use the CPU engine for ground-truth metrics.
 
 **GPU performance knobs:**
 

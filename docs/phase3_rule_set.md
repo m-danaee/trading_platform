@@ -266,6 +266,6 @@ See **`gpu_fuzzy_trader/config.py`** (Phase 3 section) for current defaults and 
 
 ## 10. Outputs
 
-- `outputs/long.json` / `outputs/short.json` — Strategy files in `evaluator_v3.ipynb` format. At this stage, TP/SL/capital_pct are still the Phase 2 static values. Phase 4 will update them.
+- `outputs/long.json` / `outputs/short.json` — Strategy files in `evaluator_v5.ipynb` format. At this stage, TP/SL/capital_pct are still the Phase 2 static values. Phase 4 will update them.
 - `outputs/reports/train_long_equity.png` / `outputs/reports/validation_long_equity.png` — Equity curves on training and validation splits.
-- `outputs/reports/train_per_symbol_performance.csv` / `outputs/reports/validation_per_symbol_performance.csv` — Per-symbol metrics.
+- `outputs/reports/train_{long,short}_per_symbol_performance.csv` / `outputs/reports/validation_{long,short}_per_symbol_performance.csv` — Per-symbol metrics.

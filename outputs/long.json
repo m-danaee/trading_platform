@@ -1,0 +1,36 @@
+{
+  "direction": "long",
+  "risk_optimized": true,
+  "deployment_accepted": true,
+  "validation_gate": {
+    "return_pct": 14.91757583618164,
+    "profit_factor": 1.731031894683838,
+    "required_return_pct": 2.0,
+    "required_profit_factor": 1.05
+  },
+  "rules_set": [
+    {
+      "conditions": [
+        "[amihud_illiquidity_20] IS Very High",
+        "[open_gap_atr_14] IS Weak Negative",
+        "[vol_regime_pct_120] IS Very Low",
+        "symbol is 9"
+      ],
+      "tp": 3.0,
+      "sl": 1.0,
+      "capital_pct": 10.0
+    },
+    {
+      "conditions": [
+        "[downside_semivol_20] IS Very High",
+        "[log_range_over_vol_100] IS Very Low",
+        "[vol_ratio_20_100] IS Low",
+        "symbol is 1",
+        "symbol is 5"
+      ],
+      "tp": 2.0,
+      "sl": 1.0,
+      "capital_pct": 30.0
+    }
+  ]
+}

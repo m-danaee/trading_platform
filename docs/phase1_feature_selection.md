@@ -19,7 +19,7 @@ The `PHASE1_ASYMMETRIC_TARGET` flag (default: `True`) enforces this separation b
 
 Before scoring, every feature column is classified into one of six discrete modes. This classification is done on the **training split only** to prevent test-set leakage.
 
-### Detection algorithm (exact match to `evaluator_v3.ipynb`)
+### Detection algorithm (exact match to `evaluator_v5.ipynb`)
 
 ```python
 unique_vals = series.dropna().unique()
@@ -37,7 +37,7 @@ if series.min() < 0:
 return "sparse_positive" if zero_ratio > 0.3 else "positive"
 ```
 
-**Critical detail:** `zero_ratio` is computed on the full series including zeros, not just non-NaN values. This matches `evaluator_v3.ipynb` exactly and affects which features are classified as `sparse_*`.
+**Critical detail:** `zero_ratio` is computed on the full series including zeros, not just non-NaN values. This matches `evaluator_v5.ipynb` exactly and affects which features are classified as `sparse_*`.
 
 ### Mode → gene space mapping
 

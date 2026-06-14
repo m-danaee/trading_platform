@@ -113,7 +113,7 @@ After changing `SPLIT_MODE` or CV parameters, delete `data/train_75.parquet`, `d
 
 ## 3. Backtest Engine — `CPUBacktestEngine` (`gpu_fuzzy_trader/backtest/cpu_engine.py`)
 
-This is the canonical reference implementation. It exactly mirrors `evaluator_v3.ipynb`'s `CapitalManagedTradeSimulator`. All optimization scores during Phases 2, 3, and 4 must match the final evaluation scores in Phase 5, so this engine is the single source of truth for trade simulation semantics.
+This is the canonical reference implementation. It exactly mirrors `evaluator_v5.ipynb`'s `CapitalManagedTradeSimulator`. All optimization scores during Phases 2, 3, and 4 must match the final evaluation scores in Phase 5, so this engine is the single source of truth for trade simulation semantics.
 
 ### Rule matching — `_apply_dynamic_rule`
 
@@ -132,7 +132,7 @@ Each condition string `"[feature_name] IS Fuzzy Value Name"` is evaluated using 
 | `Active (1)` | `s == 1` |
 | `Inactive (0)` | `s == 0` |
 
-This is mode-independent: the same threshold logic applies regardless of how the feature was classified in Phase 1. This matches `evaluator_v3.ipynb` exactly.
+This is mode-independent: the same threshold logic applies regardless of how the feature was classified in Phase 1. This matches `evaluator_v5.ipynb` exactly.
 
 ### Priority-based rule assignment — `_build_entries_from_rule_set`
 
@@ -230,7 +230,7 @@ Simulation stops and marks `account_ruined = True` when `equity ≤ 0`. All subs
 
 ### Backtest constants
 
-These must match `evaluator_v3.ipynb` exactly. Changing them will cause optimization scores to diverge from final evaluation scores.
+These must match `evaluator_v5.ipynb` exactly. Changing them will cause optimization scores to diverge from final evaluation scores.
 
 | Parameter | Default | Effect |
 |---|---|---|
