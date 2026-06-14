@@ -893,6 +893,40 @@ class TestRulePoolGeneratorRun:
             m._POOL_PATHS.update(original_pool)
             m._HISTORY_PATHS.update(original_hist)
 
+    def test_holdout_mode_builds_val_engine_for_admission(
+        self, tmp_path, monkeypatch,
+    ):
+        """In holdout_70_30 mode, val engine must be built for pool admission
+        even when PHASE2_JOINT_TRAIN_VAL is False (regression: deployable=0)."""
+        import gpu_fuzzy_trader.phases.phase2_rule_pool as m
+        original_pool = m._POOL_PATHS.copy()
+        original_hist = m._HISTORY_PATHS.copy()
+        m._POOL_PATHS["long"] = str(tmp_path / "phase2_long_pool.json")
+        m._HISTORY_PATHS["long"] = str(tmp_path / "phase2_long_history.json")
+        monkeypatch.setattr(_cfg, "SPLIT_MODE", "holdout_70_30")
+        monkeypatch.setattr(_cfg, "PHASE2_JOINT_TRAIN_VAL", False)
+        monkeypatch.setattr(_cfg, "PHASE2_USE_GPU", False)
+        try:
+            fi = _make_feature_infos(
+                ["positive", "positive", "positive", "positive"])
+            df = _make_train_df(n_rows=400, n_features=4, symbols=["A", "B"])
+            train_df = df.iloc[:300].reset_index(drop=True)
+            val_df = df.iloc[300:].reset_index(drop=True)
+            gen = Rule_Pool_Generator(
+                train_df, fi, "long",
+                pop_size=6,
+                n_generations=2,
+                seed=42,
+                val_df=val_df,
+            )
+            assert gen._val_engine is not None, (
+                "val engine must be built in holdout_70_30 mode for pool "
+                "admission, even when PHASE2_JOINT_TRAIN_VAL=False"
+            )
+        finally:
+            m._POOL_PATHS.update(original_pool)
+            m._HISTORY_PATHS.update(original_hist)
+
     def test_run_uses_pool_seeds(self, tmp_path):
         import gpu_fuzzy_trader.phases.phase2_rule_pool as m
         original_pool = m._POOL_PATHS.copy()

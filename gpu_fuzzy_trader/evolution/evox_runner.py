@@ -1172,7 +1172,7 @@ def _evaluate_population_indices(
         )
 
         val_metrics_list = None
-        if val_engine is not None:
+        if val_engine is not None and _cfg.PHASE2_JOINT_TRAIN_VAL:
             try:
                 val_metrics_list = val_engine.simulate_rule_batch(
                     chromosomes=unique_chroms,

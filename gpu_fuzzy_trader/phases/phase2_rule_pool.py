@@ -606,7 +606,7 @@ def _evaluate_chromosome(
         }
 
     val_metrics: dict | None = None
-    if val_engine is not None:
+    if val_engine is not None and _cfg.PHASE2_JOINT_TRAIN_VAL:
         try:
             val_list = val_engine.simulate_rule_batch(
                 chromosomes=_chromosome_batch(chromosome),
@@ -1810,7 +1810,7 @@ class Rule_Pool_Generator:
                 n_regimes=self._n_regimes,
             )
             self._val_engine = None
-            if self._scoped_val_df is not None and _cfg.PHASE2_JOINT_TRAIN_VAL:
+            if self._scoped_val_df is not None:
                 try:
                     val_sampled = _sample_df(
                         self._scoped_val_df,
@@ -1835,16 +1835,24 @@ class Rule_Pool_Generator:
                         self._val_engine._regime_row_counts = (
                             self._val_regime_row_counts
                         )
-                    logger.info(
-                        "Phase 2 [%s]: joint train+val objective enabled "
-                        "(val_rows=%d)",
-                        self.direction,
-                        len(slim_val),
-                    )
+                    if _cfg.PHASE2_JOINT_TRAIN_VAL:
+                        logger.info(
+                            "Phase 2 [%s]: joint train+val fitness enabled "
+                            "(val_rows=%d)",
+                            self.direction,
+                            len(slim_val),
+                        )
+                    else:
+                        logger.info(
+                            "Phase 2 [%s]: val engine built for pool admission "
+                            "only (joint_train_val=False; val_rows=%d)",
+                            self.direction,
+                            len(slim_val),
+                        )
                 except Exception as exc:
                     logger.warning(
                         "Phase 2 [%s]: failed to build val engine, "
-                        "falling back to train-only objective: %s",
+                        "falling back to train-only admission: %s",
                         self.direction,
                         exc,
                     )
@@ -2052,6 +2060,11 @@ class Rule_Pool_Generator:
             and self.pop_size == _cfg.PHASE2_POPULATION_SIZE
         )
 
+        # The val engine is built for both pool admission and (optionally) joint
+        # train+val fitness. The evolution loop will skip per-chromosome val
+        # simulation when PHASE2_JOINT_TRAIN_VAL is False, but the pool builder
+        # still receives the val engine so elite chromosomes can be evaluated
+        # for admission.
         evo_kwargs = dict(
             feature_infos=self.feature_infos,
             engine=self._engine,
