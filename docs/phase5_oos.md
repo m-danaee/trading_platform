@@ -165,6 +165,8 @@ Phase 5 has no dedicated config parameters. It uses:
 - `TEST_CSV_PATH` — path to the test CSV
 - `REPORTS_DIR` — output directory for reports
 - All backtest constants from Phase 0 (`INITIAL_CAPITAL`, `FEE_PCT`, etc.)
+- Evaluator Health properties (`EVAL_HEALTH_MAX_SKIPPED_RATIO`, etc.) which track skipped/executed signal health (Task 4)
+- `WRITE_EVALUATOR_CLEAN` to toggle stripped output creation (Task 9)
 
 ---
 
@@ -174,6 +176,8 @@ Phase 5 has no dedicated config parameters. It uses:
 |---|---|
 | `outputs/reports/test_long_report.json` | Summary metrics for the long strategy on test data |
 | `outputs/reports/test_short_report.json` | Summary metrics for the short strategy on test data |
+| `outputs/evaluator_clean/long_evaluator_clean.json` | Stripped JSON with only `direction` and `rules_set` (Task 9) |
+| `outputs/evaluator_clean/short_evaluator_clean.json` | Stripped JSON with only `direction` and `rules_set` (Task 9) |
 | `outputs/reports/test_long_per_symbol_performance.csv` | Per-symbol metrics (long) |
 | `outputs/reports/test_short_per_symbol_performance.csv` | Per-symbol metrics (short) |
 | `outputs/reports/test_long_equity.png` | Equity curve on test data (long) |

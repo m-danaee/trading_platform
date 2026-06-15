@@ -105,7 +105,7 @@ When the pipeline passes `cv_folds` into `Rule_Pool_Generator`:
 
 **Effect:** A rule that shines in only one season but fails in another gets a poor f1.
 
-**Pool admission (CV):** `evaluate_purged_cv_pool_admission()` checks each fold with `passes_pool_admission_cv_fold` (lower trade/return floors). A rule enters the pool when at least `PHASE2_CV_POOL_MIN_FOLDS_PASS` folds pass (default 2 of 3). **Fold majority is the hard deployability gate.** Merged worst-case train/val metrics from the CV facades are stored for ranking and conservatism; they do **not** reject an otherwise fold-admitted rule unless `PHASE2_CV_MERGED_GATE_HARD = True`. Pool JSON stores `cv_folds_passing` / `cv_folds_total` so post-merge filters use the same fold criterion (merged metrics alone can be negative while 2/3 folds pass).
+**Pool admission (CV):** `evaluate_purged_cv_pool_admission()` checks each fold against relaxed thresholds (`PHASE2_CV_MIN_WORST_RETURN = -8.0`, `PHASE2_CV_MIN_WORST_PF = 0.80`, `PHASE2_CV_MAX_WORST_DD = 18.0`). A rule enters the pool when at least `PHASE2_CV_POOL_MIN_FOLDS_PASS` folds pass. The maximum pool size is capped by `PHASE2_KEEP_TOP_RULES` (default: 140 rules). **Fold majority is the hard deployability gate.** Merged worst-case train/val metrics from the CV facades are stored for ranking and conservatism; they do **not** reject an otherwise fold-admitted rule unless `PHASE2_CV_MERGED_GATE_HARD = True`. Pool JSON stores `cv_folds_passing` / `cv_folds_total` so post-merge filters use the same fold criterion (merged metrics alone can be negative while 2/3 folds pass).
 
 When `SPLIT_MODE == "holdout_75_25"`, behaviour is unchanged: one train engine (sampled full `train_75`) and one optional val engine (`validation_25`).
 
@@ -198,10 +198,10 @@ backtests.
 Default strategy (`PHASE2_INIT_STRATEGY = "stratified_sparse"`):
 
 1. `PHASE2_ARCHIVE_SEED_FRACTION = 0.25` of slots are filled from the cross-run archive.
-2. Each remaining individual picks `k` uniformly in `[MIN_CONDITIONS, MAX_CONDITIONS]`, starts with all genes at `dont_care`, then activates exactly `k` genes via one of three strata (fractions from `PHASE2_INIT_STRATUM_FRACTIONS`, default 67% / 33%):
+2. If `PHASE2_REGIME_STRATUM_ENABLED = True`, `PHASE2_REGIME_STRATUM_FRAC` (default 25%) of the non-archive chromosomes are anchored on a regime-related feature (e.g. volatility or trend features matched via `PHASE2_REGIME_FEATURE_KEYWORDS`). Their first active gene is guaranteed to be a regime feature, with the remaining active genes sampled uniformly.
+3. The rest of the non-archive population is split into:
    - **Elite:** feature indices sampled without replacement using softmax Phase 1 scores (`PHASE2_INIT_SOFTMAX_TEMP`, with `PHASE2_INIT_UNIFORM_MIX` floor).
    - **Explorer:** uniform feature sampling.
-   - **Regime specialist (disabled in regression mode):** this stratum is deactivated because regime features are not directly selected. The regime share automatically falls back to elites.
 
 Legacy mode (`init_strategy="legacy"`) keeps independent per-gene `dont_care_prob` sampling for tests.
 

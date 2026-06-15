@@ -58,7 +58,10 @@ score = w1 × primary_sortino − w2 × primary_dd + w3 × primary_wr − penalt
 
 **Effect of `PHASE3_GREEDY_WEIGHTS`:** The first weight (Sortino) dominates by default. Increasing the second weight (drawdown) will favor lower-drawdown strategies. Increasing the third weight (win rate) will favor higher win-rate strategies.
 
----
+### Multi-symbol combinations (Task 6)
+
+During the greedy rule merging step, the pipeline explores explicit multi-symbol combinations for each pool rule. Instead of selecting just single-symbol variants (`symbol is X`), it evaluates 2- and 3-symbol combinations (`symbol is X, Y`, etc.) based on the rule's performance across symbols. 
+When `SYMBOL_SPECIALIZATION_USE_COMBINATIONS = True`, up to `SYMBOL_SPECIALIZATION_MAX_SYMBOLS_PER_RULE` (default 3) symbols are combined per variant. This dramatically expands the search space, allowing rules that underperform on a single symbol to be salvaged if cross-symbol diversification improves their Sortino and drawdown profile.
 
 ## 3. Stage 2 — NSGA-II Refinement (`_run_nsga2_combinatorial`)
 

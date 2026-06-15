@@ -58,86 +58,56 @@ A single validation evaluation can be lucky or unlucky. Phase 4 uses the **worst
 
 ---
 
-## 3. Optuna Multi-Objective Search
+## 3. Deterministic Risk Grid Search
 
-Phase 4 uses [Optuna](https://optuna.org/) for hyperparameter optimization.
-
-### Objectives (two, both optimized simultaneously)
-
-```
-maximize: worst_sortino = min(sortino across K windows) − overalloc_penalty
-minimize: worst_drawdown = max(drawdown across K windows) + overalloc_penalty
-```
-
-The worst-case Sortino and worst-case drawdown across all K windows are the two objectives. This is a bi-objective problem, and Optuna's multi-objective sampler finds the Pareto front.
+Phase 4 uses a deterministic round-robin grid search for risk optimization. This replaces the legacy Optuna evolutionary search to ensure stability and exhaustively explore a wider aggressive parameter space.
 
 ### Search space (quantized)
 
-Each rule's parameters are sampled from quantized ranges:
+Each rule's parameters are enumerated against the configured grid:
 
-| Parameter     | Range          | Step | Config keys                       |
-| ------------- | -------------- | ---- | --------------------------------- |
-| `tp`          | [4.0%, 6.0%]   | 0.5% | `PHASE4_TP_MIN/MAX/STEP`          |
-| `sl`          | [2.0%, 3.0%]   | 0.5% | `PHASE4_SL_MIN/MAX/STEP`          |
-| `capital_pct` | [10.0%, 50.0%] | 5.0% | `PHASE4_CAPITAL_PCT_MIN/MAX/STEP` |
+| Parameter     | Range         | Config keys                       |
+| ------------- | ------------- | --------------------------------- |
+| `tp`          | Up to 10.0%   | `PHASE4_GRID_TP_VALUES`           |
+| `sl`          | Up to 3.0%    | `PHASE4_GRID_SL_VALUES`           |
+| `capital_pct` | Up to 50.0%   | `PHASE4_GRID_CAPITAL_VALUES`      |
 
-The quantization (step sizes) reduces the search space and prevents the optimizer from finding spurious precision. For example, TP has `(6.0 − 4.0) / 0.5 + 1 = 5` possible values.
+By default, the grid covers a very aggressive space compared to earlier versions. 
 
-**Effect of search space bounds:**
+### Algorithm
 
-- `PHASE4_TP_MIN/MAX`: Narrowing the TP range focuses the search. If you know from Phase 2 that rules work best with TP around 3%, you could narrow to [2.5%, 3.5%].
-- `PHASE4_SL_MIN/MAX`: A tighter SL range (e.g., [1.0%, 1.5%]) forces more conservative stops.
-- `PHASE4_CAPITAL_PCT_MIN/MAX`: Lowering the maximum (e.g., to 30%) limits position sizing, reducing both upside and downside.
+1. **Initial Score:** The strategy is evaluated with default values to establish a baseline score using `_score_metrics` (a composite of return, drawdown, and profit factor).
+2. **Round-Robin Passes:** For `PHASE4_GRID_PASSES` rounds (default 2), the search iterates through each rule:
+   - Every combination of `(tp, sl, capital_pct)` is temporarily applied.
+   - The strategy is re-evaluated across the walk-forward windows.
+   - **Constraints:** The combination is skipped if `sum(capital_pct) > PHASE4_GRID_MAX_TOTAL_CAPITAL` (default 95.0%) or if the rule fails the `gate_positive_good` test (which demands PF ≥ 1.0 and positive returns on both train and val).
+   - **Improvement:** If the new combination improves the overall score by at least `PHASE4_GRID_MIN_IMPROVEMENT` (default 0.02), it is accepted.
+3. **Completion:** Returns the rules with optimized parameters and updated metrics.
 
-### Sampler — `PHASE4_SAMPLER`
-
-| Value               | Algorithm                        | Behavior                                                                                                                                |
-| ------------------- | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `"nsga2"` (default) | NSGA-II                          | Multi-objective evolutionary search. Maintains a Pareto front of trials. Good for exploring the trade-off between Sortino and drawdown. |
-| `"tpe"`             | Tree-structured Parzen Estimator | Bayesian optimization. Faster convergence but less diversity on the Pareto front.                                                       |
-
-**Effect of `PHASE4_N_TRIALS`:** The total number of Optuna trials. At 1000 trials with 2 rules, each trial evaluates 2 walk-forward windows = 2000 backtest simulations. Increasing this improves the quality of the Pareto front but increases compute time linearly.
+**Why deterministic grid search?** Optuna's stochastic nature sometimes gets stuck in local minima and can be inconsistent across runs, especially with a narrow parameter bounds. The grid search evaluates every point of the parameter space aggressively but prunes infeasible paths early.
 
 ---
 
-## 4. Trial Selection — `_select_pareto_trial`
+## 4. Constraint Gates
 
-After optimization, the best trial is selected from the Pareto front:
+Phase 4 heavily relies on two constraints to ensure out-of-sample health:
 
-1. Filter Pareto front trials by `worst_drawdown ≤ PHASE4_MAX_WORST_DRAWDOWN_PCT` (default: 15.0%).
-2. Among filtered trials, pick the one with the highest `worst_sortino`.
-3. If no trials pass the drawdown filter, fall back to: pick the trial with the minimum drawdown, then highest Sortino among ties.
-
-**Effect of `PHASE4_MAX_WORST_DRAWDOWN_PCT`:** This is the primary risk constraint. Increasing it (e.g., to 25%) allows more aggressive strategies. Decreasing it (e.g., to 10%) enforces stricter drawdown control but may result in very conservative capital allocation.
+- `gate_positive_good`: Enforces that each rule maintains a Profit Factor ≥ 1.0 and strictly positive returns across the in-sample period.
+- `PHASE4_GRID_MAX_TOTAL_CAPITAL`: An explicit ceiling on total leverage during the search (unlike the legacy mode which required a post-optimization normalization step).
 
 ---
 
-## 5. Capital Normalization — `_normalize_capital_pct`
+## 5. Optuna Fallback (Legacy)
 
-When `PHASE4_HARD_CAP_NORMALIZE = True` (default), after selecting the best trial, the capital allocations are scaled so their sum does not exceed `MAX_TOTAL_EXPOSURE_PCT` (100%):
-
-```python
-if total_cap > MAX_TOTAL_EXPOSURE_PCT:
-    scale = MAX_TOTAL_EXPOSURE_PCT / total_cap
-    for rule in rules_set:
-        rule["capital_pct"] *= scale
-```
-
-This is a post-processing step that ensures the strategy never over-allocates, regardless of what the optimizer found.
-
-**Effect of `PHASE4_HARD_CAP_NORMALIZE`:** Setting to `False` allows the optimizer's raw capital allocations to be used, which may exceed 100% total. This is only appropriate if you intend to use leverage.
+The Optuna NSGA-II/TPE search remains available for debugging or specific experiments by setting `PHASE4_GRID_ENABLED = False`. In legacy mode:
+- Parameters are sampled continuously within `PHASE4_TP_MIN/MAX`, etc.
+- A Pareto front is generated for `worst_sortino` vs `worst_drawdown`.
+- The best trial is selected via `PHASE4_MAX_WORST_DRAWDOWN_PCT`.
+- Total capital is scaled down via `PHASE4_HARD_CAP_NORMALIZE` post-optimization.
 
 ---
 
-## 6. Parallel Optimization — `PHASE4_N_JOBS`
-
-`PHASE4_N_JOBS = 1` (default). Setting this to a higher value runs multiple Optuna trials in parallel. Each trial creates its own `CPUBacktestEngine` instances (one per walk-forward window), so there are no shared state issues.
-
-**Warning:** With `PHASE4_N_JOBS > 1` and `PHASE4_SAMPLER = "nsga2"`, Optuna's NSGA-II sampler may not benefit from parallelism as much as TPE, because NSGA-II needs to see the results of previous trials to guide the next generation. TPE is generally more parallelism-friendly.
-
----
-
-## 7. Skip Logic
+## 6. Skip Logic
 
 Phase 4 is skipped if `outputs/{direction}.json` already exists, has `risk_optimized: true`, and all TP/SL/capital_pct values are within the configured bounds. This allows re-running Phase 5 without re-running Phase 4.
 

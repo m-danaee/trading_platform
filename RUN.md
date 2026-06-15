@@ -236,7 +236,7 @@ Confirm CPU mode in the log line `Tuning runtime: JAX_PLATFORMS=cpu ... trial PH
 1. Copy **generalization knobs** from `tuning_studies/low_ram/best_config.json` → `params` or `merged_config` into `gpu_fuzzy_trader/config.py` (gates, CV floors, pop/gen, etc.).
 2. On Colab, **keep** `PHASE2_USE_GPU=True` (default) and do **not** copy tuning-only CPU caps (`PHASE2_USE_GPU=False`, small pop caps) unless you want a slow run.
 3. Run `main.ipynb` or `python -m gpu_fuzzy_trader.run_pipeline` and confirm: `Phase 2 using GPUBacktestEngine (backend: gpu)`.
-4. Final acceptance: **`evaluator_v3.ipynb`** (same backtest contract as Phase 5). CPU trial scores may differ slightly from GPU Phase 2.
+4. Final acceptance: **`evaluator_v5.ipynb`** (same backtest contract as Phase 5). CPU trial scores may differ slightly from GPU Phase 2.
 
 Outputs under `tuning_studies/low_ram/`:
 
@@ -295,18 +295,18 @@ After a full run, expect artifacts under `outputs/`:
 | `outputs/reports/test_*`                               | 5 (metrics, equity plots, CSVs) |
 | `outputs/pipeline.log`                                 | All phases (JSON lines)         |
 
-Strategy files `outputs/long.json` and `outputs/short.json` are compatible with **`evaluator_v3.ipynb`** at the repo root.
+Strategy files `outputs/long.json` and `outputs/short.json` are compatible with **`evaluator_v5.ipynb`** at the repo root.
 
 ---
 
 ## Evaluate with the notebook
 
 1. Run the pipeline (or copy existing `outputs/long.json` and `outputs/short.json`).
-2. Open `evaluator_v3.ipynb` in Jupyter.
+2. Open `evaluator_v5.ipynb` in Jupyter.
 3. Point the notebook at the generated strategy JSON and `data/test.csv` (or `data/train.csv` for in-sample checks).
 
 ```bash
-jupyter notebook evaluator_v3.ipynb
+jupyter notebook evaluator_v5.ipynb
 ```
 
 ---

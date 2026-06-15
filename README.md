@@ -34,7 +34,7 @@ This project is a **rule-mining trading system**, not a conventional predictive 
 - Fine-tune risk parameters (TP, SL, capital allocation) using a deep RL agent.
 - Evaluate the final strategy on a held-out test set.
 
-The strongest design choices are the **symbol-aware chronological split**, **mode-aware feature selection**, **explicit fuzzy rule encoding**, and a **backtest engine that exactly mirrors `evaluator_v3.ipynb`** so optimization scores match final evaluation scores.
+The strongest design choices are the **symbol-aware chronological split**, **mode-aware feature selection**, **explicit fuzzy rule encoding**, and a **backtest engine that exactly mirrors `evaluator_v5.ipynb`** so optimization scores match final evaluation scores.
 
 ---
 
@@ -56,7 +56,7 @@ gpu_fuzzy_trader/
 │   └── encoder.py               # Encoder: gene → fuzzy value name, condition string formatting
 │
 ├── backtest/
-│   ├── cpu_engine.py            # CPUBacktestEngine: exact evaluator_v3.ipynb semantics
+│   ├── cpu_engine.py            # CPUBacktestEngine: exact evaluator_v5.ipynb semantics
 │   └── gpu_engine.py            # GPUBacktestEngine: JAX-accelerated, numerically equivalent
 │
 ├── evolution/
@@ -337,7 +337,7 @@ Per-symbol chronological 75/25 split. Uses `floor(N × 0.75)` for the split poin
 
 ### `gpu_fuzzy_trader/features/detector.py` — `Feature_Detector`
 
-Classifies each feature column into one of six modes using the exact logic from `evaluator_v3.ipynb`. `zero_ratio` is computed on the full series including zeros.
+Classifies each feature column into one of six modes using the exact logic from `evaluator_v5.ipynb`. `zero_ratio` is computed on the full series including zeros.
 
 ### `gpu_fuzzy_trader/features/encoder.py` — `Encoder`
 
@@ -349,7 +349,7 @@ Direction-specific feature scoring. Produces `selected_features_long.json` and `
 
 ### `gpu_fuzzy_trader/backtest/cpu_engine.py` — `CPUBacktestEngine`
 
-The canonical reference implementation. Exactly mirrors `evaluator_v3.ipynb`'s `CapitalManagedTradeSimulator`. All other engines must produce numerically equivalent results. Supports `return_logs=True` for detailed trade log DataFrames.
+The canonical reference implementation. Exactly mirrors `evaluator_v5.ipynb`'s `CapitalManagedTradeSimulator`. All other engines must produce numerically equivalent results. Supports `return_logs=True` for detailed trade log DataFrames.
 
 ### `gpu_fuzzy_trader/backtest/gpu_engine.py` — `GPUBacktestEngine`
 
@@ -435,7 +435,7 @@ phase2_rule_archive/                      # Persistent across runs (project root
 
 ## 8. Strategy Format
 
-The final output files (`long.json` and `short.json`) are fully compatible with `evaluator_v3.ipynb`:
+The final output files (`long.json` and `short.json`) are fully compatible with `evaluator_v5.ipynb`:
 
 ```json
 {
@@ -478,7 +478,7 @@ The final output files (`long.json` and `short.json`) are fully compatible with 
 
 ## 9. Backtest Engine Semantics
 
-The `CPUBacktestEngine` exactly mirrors `evaluator_v3.ipynb`'s `CapitalManagedTradeSimulator`. This alignment is critical — optimization scores during Phases 2 and 3 must match the final evaluation scores.
+The `CPUBacktestEngine` exactly mirrors `evaluator_v5.ipynb`'s `CapitalManagedTradeSimulator`. This alignment is critical — optimization scores during Phases 2 and 3 must match the final evaluation scores.
 
 ### Priority-Based Rule Assignment
 
@@ -583,7 +583,7 @@ A gene equal to `dont_care` means that condition is inactive (the feature is not
 
 ### Condition String Format
 
-All conditions follow the exact format recognized by `evaluator_v3.ipynb`'s `apply_dynamic_rule`:
+All conditions follow the exact format recognized by `evaluator_v5.ipynb`'s `apply_dynamic_rule`:
 
 ```
 [feature_name] IS Fuzzy Value Name
@@ -827,7 +827,7 @@ The train/validation split is per-symbol chronological (75/25). The last 288 row
 
 ### Evaluator Parity
 
-The internal `CPUBacktestEngine` exactly mirrors `evaluator_v3.ipynb`'s `CapitalManagedTradeSimulator` semantics. This means optimization scores during Phases 2 and 3 are directly comparable to final evaluation scores.
+The internal `CPUBacktestEngine` exactly mirrors `evaluator_v5.ipynb`'s `CapitalManagedTradeSimulator` semantics. This means optimization scores during Phases 2 and 3 are directly comparable to final evaluation scores.
 
 ### GPU-First with Transparent Fallback
 
@@ -867,7 +867,18 @@ This package (`gpu_fuzzy_trader`) is a complete ground-up rewrite of the previou
 | Risk optimization | Static TP/SL             | RL agent with Elbow Method stopping                  |
 | Test coverage     | Limited                  | 713 tests, 29 property-based properties              |
 | Config            | Mixed flags + config     | Single `config.py`, no runtime flags                 |
-| Evaluator parity  | Approximate              | Exact mirror of `evaluator_v3.ipynb`                 |
+| Evaluator parity  | Approximate              | Exact mirror of `evaluator_v5.ipynb`                 |
 | Skip logic        | Basic                    | Validation helpers remain; default CLI forces rerun  |
 
-The output format (`long.json` / `short.json`) is identical between both implementations and fully compatible with `evaluator_v3.ipynb`.
+The output format (`long.json` / `short.json`) is identical between both implementations and fully compatible with `evaluator_v5.ipynb`.
+
+## Recent changes
+
+- **Monthly validation** (`validation/`): 30-day rolling window scoring, purged CV folds, monthly penalty (≥60% profitable months, positive equity slope) — Tasks 1-2
+- **Positive-good gate** (`gate_positive_good`): PF ≥ 1.0 on both train+val, positive returns both legs, NaN-safe — Task 3
+- **Evaluator health penalty** (`evaluator_health_penalty`): penalizes skipped signals, max positions, low exec ratio — Task 4
+- **Expanded Phase 2 pool**: relaxed per-fold thresholds (-8% return, 0.80 PF, 18% DD), 140-rule cap — Task 5
+- **Multi-symbol combinations**: 1-, 2-, 3-symbol variants per pool rule — Task 6
+- **Deterministic risk grid search** (Phase 4): TP up to 10%, SL up to 3%, capital up to 50%, 2 passes — Task 7
+- **Regime-keyword stratum init** (Phase 2): 25% of chromosomes anchored on vol/trend features — Task 8
+- **Evaluator-clean writer**: stripped `{direction, rules_set}` JSON files written to `outputs/evaluator_clean/` — Task 9
