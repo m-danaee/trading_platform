@@ -1,0 +1,8 @@
+{
+  "task": "Task 1 — Add validation/monthly_windows.py and validation/rolling_cv.py",
+  "verdict": "APPROVED",
+  "issues": [],
+  "summary": "All 8 acceptance criteria pass. The diff touches exactly the 4 expected files (config.py added 17 MONTHLY_* keys, validation/__init__.py, monthly_windows.py, rolling_cv.py). No out-of-scope changes to evaluator_v5.ipynb, Phase 2/3/4/5 code, or any other module. Imports all point at my codebase (gpu_fuzzy_trader.backtest.cpu_engine, gpu_fuzzy_trader.backtest.df_slim, gpu_fuzzy_trader.config) — no references to friend_project or rb_evaluator. monthly_penalty(MonthlyWindowSummary(windows=0, ...)) returns exactly 100.0. evaluate_rule_set_monthly returns (MonthlyWindowSummary, list[dict]) with windows matching actual window count. build_purged_rolling_folds correctly uses getattr(_cfg, ...) fallback pattern for PURGED_CV_* config keys (which don't actually exist in config.py — the adaptor correctly handled this spec mismatch with safe defaults: 4, 288, 0.45, 5000). All 17 MONTHLY_* config keys are present and accessible. No new third-party dependencies. The adaptation from the friend's code is clean and correct — key differences (getattr fallbacks, richer docstrings, explicit type hints, _valid_start_bar/_valid_end_bar set on fold engines) are all improvements or necessary safety adaptations, not regressions.",
+  "checked_at": "2026-06-15",
+  "commit": "776fe2d"
+}

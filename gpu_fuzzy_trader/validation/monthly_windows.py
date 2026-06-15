@@ -18,6 +18,7 @@ monthly_penalty
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from typing import Iterable
 
 import numpy as np
@@ -26,6 +27,8 @@ import pandas as pd
 from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
 from gpu_fuzzy_trader.backtest.df_slim import slim_backtest_df
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -93,17 +96,24 @@ def build_monthly_windows(
     if len(df) == 0:
         return []
 
+    if "datetime" not in df.columns:
+        raise ValueError("DataFrame must contain a 'datetime' column")
+
     window_days = int(
-        window_days or getattr(_cfg, "MONTHLY_WINDOW_DAYS", 30)
+        window_days if window_days is not None
+        else getattr(_cfg, "MONTHLY_WINDOW_DAYS", 30)
     )
     stride_days = int(
-        stride_days or getattr(_cfg, "MONTHLY_WINDOW_STRIDE_DAYS", window_days)
+        stride_days if stride_days is not None
+        else getattr(_cfg, "MONTHLY_WINDOW_STRIDE_DAYS", window_days)
     )
     min_rows = int(
-        min_rows or getattr(_cfg, "MONTHLY_WINDOW_MIN_ROWS", 2500)
+        min_rows if min_rows is not None
+        else getattr(_cfg, "MONTHLY_WINDOW_MIN_ROWS", 2500)
     )
     max_windows = int(
-        max_windows or getattr(_cfg, "MONTHLY_WINDOW_MAX_WINDOWS", 24)
+        max_windows if max_windows is not None
+        else getattr(_cfg, "MONTHLY_WINDOW_MAX_WINDOWS", 24)
     )
 
     work = df.copy()
@@ -182,7 +192,7 @@ def summarize_monthly_metrics(metrics: Iterable[dict]) -> MonthlyWindowSummary:
         [float(m.get("max_drawdown_pct", 100.0)) for m in rows], dtype=float
     )
     trades = np.asarray(
-        [int(m.get("executed_trades", 0)) for m in rows], dtype=float
+        [int(m.get("executed_trades", 0)) for m in rows], dtype=np.int64
     )
 
     # Recency-weighted return: later windows get higher weight.
@@ -279,7 +289,8 @@ def evaluate_rule_set_monthly(
             )
             eng = CPUBacktestEngine(slim, {}, direction)
             metrics.append(eng.simulate_rule_set(rule_set))
-        except Exception:
+        except Exception as exc:
+            logger.debug("monthly window simulation failed: %s", exc)
             metrics.append(
                 {
                     "total_return_pct": -100.0,
