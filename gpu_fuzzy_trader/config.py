@@ -1267,6 +1267,56 @@ PHASE3_EVAL_HEALTH_WEIGHT = 1.0
 PHASE3_GATE_EXECUTION_HEALTH = True
 
 
+# --- Multi-symbol combinations in Phase 3 symbol specialization (Task 6) -----
+# These control how ``_build_symbol_specialized_variants`` generates 1-, 2-,
+# and 3-symbol variants of each pool-chosen rule.  When ``USE_COMBINATIONS``
+# is True, rules may contain multiple ``symbol is X`` conditions (e.g.
+# ``symbol is 1, symbol is 5``), expanding the search to cross-symbol
+# diversification.  The friend's defaults are used (from rb_governor.py).
+
+# SYMBOL_SPECIALIZATION_USE_COMBINATIONS — when True, also try 2- and 3-symbol
+#   combinations of the top single-symbol variants per rule.  When False, only
+#   single-symbol variants are produced (legacy behaviour).
+#   Higher → richer symbol combinations, broader search, slower evaluation.
+#   Lower  → only single-symbol specialisation (original Phase 3 behaviour).
+SYMBOL_SPECIALIZATION_USE_COMBINATIONS = True
+
+# SYMBOL_SPECIALIZATION_MAX_SYMBOLS_PER_RULE — maximum number of symbols in a
+#   single rule's ``symbol is X`` conditions (1 = single only, 2 = 1+2 combos,
+#   3 = 1+2+3 combos).
+#   Higher → more symbols per rule, potential overfitting to specific baskets.
+#   Lower  → simpler rules, easier to interpret.
+SYMBOL_SPECIALIZATION_MAX_SYMBOLS_PER_RULE = 3
+
+# SYMBOL_SPECIALIZATION_TOP_SINGLE_SYMBOLS — number of top-ranked single-symbol
+#   variants used as the seed set for generating 2- and 3-symbol combinations.
+#   Higher → more 2/3-symbol candidates, slower evaluation.
+#   Lower  → fewer candidates, faster but may miss good cross-symbol combos.
+SYMBOL_SPECIALIZATION_TOP_SINGLE_SYMBOLS = 5
+
+# SYMBOL_SPECIALIZATION_MAX_VARIANTS_PER_RULE — maximum number of scored variants
+#   returned per pool rule, sorted by score descending.  Only the best variant
+#   is used in the final rule set.
+#   Higher → more candidates retained (only the best is used, but more combos
+#   are scored for tie-breaking).
+SYMBOL_SPECIALIZATION_MAX_VARIANTS_PER_RULE = 10
+
+# SYMBOL_SPECIALIZATION_MIN_TRAIN_TRADES — minimum executed trades on the train
+#   split for a variant to be considered (passed to ``gate_positive_good``).
+#   Note: the friend uses 10 (lower than the Phase 3 default of 25) to avoid
+#   filtering out valid multi-symbol rules too aggressively.
+#   Higher → stricter train-trade filter, fewer variants.
+#   Lower  → more variants survive the gating step.
+SYMBOL_SPECIALIZATION_MIN_TRAIN_TRADES = 10
+
+# SYMBOL_SPECIALIZATION_MIN_VAL_TRADES — minimum executed trades on the validation
+#   split for a variant to be considered (passed to ``gate_positive_good``).
+#   Note: the friend uses 6 (lower than the Phase 3 default of 15).
+#   Higher → stricter val-trade filter.
+#   Lower  → more variants survive the gating step.
+SYMBOL_SPECIALIZATION_MIN_VAL_TRADES = 6
+
+
 # =============================================================================
 # Phase 4 — Walk-forward risk optimization (TP / SL / capital)
 # =============================================================================
