@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import time
 from typing import Optional
@@ -46,6 +47,81 @@ from gpu_fuzzy_trader.validation.monthly_windows import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Positive-good gate (pure function, importable from other modules)
+# ---------------------------------------------------------------------------
+
+
+def gate_positive_good(
+    train_metrics: dict,
+    val_metrics: dict,
+    *,
+    min_train_return: float = 0.0,
+    min_val_return: float = 0.0,
+    min_train_pf: float = 1.0,
+    min_val_pf: float = 1.0,
+    min_train_trades: int = 25,
+    min_val_trades: int = 15,
+) -> bool:
+    """Return ``True`` iff the rule is positive on both train and val.
+
+    A rule passes this gate when *all* of the following hold:
+
+    * ``total_return_pct > min_train_return`` on train **and** on val
+    * ``profit_factor >= min_train_pf`` on train **and** ``>= min_val_pf`` on val
+    * ``executed_trades >= min_train_trades`` on train **and** ``>= min_val_trades`` on val
+
+    Missing or absent keys (``total_return_pct``, ``profit_factor``,
+    ``executed_trades``) are treated as hard failures and return ``False``.
+
+    This is a **pure function** — no side effects, no engine calls, no IO.
+    """
+    def _safe_get(m: dict, key: str, default: float = 0.0) -> float:
+        """Read a metric, returning *default* for missing, None, NaN, or Inf values."""
+        val = m.get(key)
+        if val is None:
+            return float(default)
+        try:
+            f = float(val)
+            return f if math.isfinite(f) else float(default)
+        except (TypeError, ValueError):
+            return float(default)
+
+    def _safe_get_int(m: dict, key: str, default: int = 0) -> int:
+        """Read an integer metric, returning *default* for missing, None, NaN, or Inf values."""
+        f = _safe_get(m, key, default=float(default))
+        return int(f) if math.isfinite(f) else int(default)
+
+    # --- train checks ---
+    train_ret = _safe_get(train_metrics, "total_return_pct")
+    if train_ret <= min_train_return:
+        return False
+
+    train_pf = _safe_get(train_metrics, "profit_factor")
+    if train_pf < min_train_pf:
+        return False
+
+    train_trades = _safe_get_int(train_metrics, "executed_trades")
+    if train_trades < min_train_trades:
+        return False
+
+    # --- val checks ---
+    val_ret = _safe_get(val_metrics, "total_return_pct")
+    if val_ret <= min_val_return:
+        return False
+
+    val_pf = _safe_get(val_metrics, "profit_factor")
+    if val_pf < min_val_pf:
+        return False
+
+    val_trades = _safe_get_int(val_metrics, "executed_trades")
+    if val_trades < min_val_trades:
+        return False
+
+    return True
+
 
 # ---------------------------------------------------------------------------
 # Output paths
@@ -226,6 +302,31 @@ def _try_global_pool_fallback(
     train_m, val_m = _simulate_team(
         engine_fmt, train_engine, val_engine, eval_cache,
     )
+
+    # Positive-good gate on the fallback team (Task 3).
+    if bool(getattr(_cfg, "PHASE3_REQUIRE_POSITIVE_GOOD", True)):
+        if not gate_positive_good(
+            train_m,
+            val_m,
+            min_train_return=float(
+                getattr(_cfg, "PHASE3_MIN_TRAIN_RETURN", 0.0)),
+            min_val_return=float(
+                getattr(_cfg, "PHASE3_MIN_VAL_RETURN", 0.0)),
+            min_train_pf=float(
+                getattr(_cfg, "PHASE3_MIN_TRAIN_PF", 1.0)),
+            min_val_pf=float(
+                getattr(_cfg, "PHASE3_MIN_VAL_PF", 1.0)),
+            min_train_trades=int(
+                getattr(_cfg, "PHASE3_MIN_TRAIN_TRADES", 25)),
+            min_val_trades=int(
+                getattr(_cfg, "PHASE3_MIN_VAL_TRADES", 15)),
+        ):
+            logger.warning(
+                "Phase 3 [%s]: fallback failed positive-good gate",
+                direction,
+            )
+            return None
+
     val_floor = float(_cfg.effective_phase3_val_return_floor_pct())
     robust_ret = min(
         float(train_m.get("total_return_pct", -999.0)),
@@ -326,6 +427,26 @@ def _score_pool_rule_on_symbol(
             train_metrics = {}
         train_return = float(train_metrics.get("total_return_pct", -999.0))
 
+        # Positive-good gate (Task 3 — additional floor on top of gap check).
+        if bool(getattr(_cfg, "PHASE3_REQUIRE_POSITIVE_GOOD", True)):
+            if not gate_positive_good(
+                train_metrics,
+                val_metrics,
+                min_train_return=float(
+                    getattr(_cfg, "PHASE3_MIN_TRAIN_RETURN", 0.0)),
+                min_val_return=float(
+                    getattr(_cfg, "PHASE3_MIN_VAL_RETURN", 0.0)),
+                min_train_pf=float(
+                    getattr(_cfg, "PHASE3_MIN_TRAIN_PF", 1.0)),
+                min_val_pf=float(
+                    getattr(_cfg, "PHASE3_MIN_VAL_PF", 1.0)),
+                min_train_trades=int(
+                    getattr(_cfg, "PHASE3_MIN_TRAIN_TRADES", 25)),
+                min_val_trades=int(
+                    getattr(_cfg, "PHASE3_MIN_VAL_TRADES", 15)),
+            ):
+                return {"return_pct": -999.0, "trades": val_trades}
+
         max_gap = float(getattr(_cfg, "PHASE3_MAX_TRAIN_VAL_GAP_PCT", 40.0))
         if val_return - train_return > max_gap:
             return {"return_pct": -999.0, "trades": val_trades}
@@ -421,6 +542,27 @@ def _per_symbol_greedy(
                 t_ret = float(train_m.get("total_return_pct", -999.0))
             except Exception:
                 t_ret = -999.0
+
+            # Positive-good gate on combo (Task 3).
+            if bool(getattr(_cfg, "PHASE3_REQUIRE_POSITIVE_GOOD", True)):
+                if not gate_positive_good(
+                    train_m,
+                    val_m,
+                    min_train_return=float(
+                        getattr(_cfg, "PHASE3_MIN_TRAIN_RETURN", 0.0)),
+                    min_val_return=float(
+                        getattr(_cfg, "PHASE3_MIN_VAL_RETURN", 0.0)),
+                    min_train_pf=float(
+                        getattr(_cfg, "PHASE3_MIN_TRAIN_PF", 1.0)),
+                    min_val_pf=float(
+                        getattr(_cfg, "PHASE3_MIN_VAL_PF", 1.0)),
+                    min_train_trades=int(
+                        getattr(_cfg, "PHASE3_MIN_TRAIN_TRADES", 25)),
+                    min_val_trades=int(
+                        getattr(_cfg, "PHASE3_MIN_VAL_TRADES", 15)),
+                ):
+                    return -999.0
+
             base_ret = min(t_ret, v_ret)
         else:
             base_ret = v_ret
@@ -520,6 +662,26 @@ def _score_merged_rule_on_splits(
         train_return = float(train_metrics.get("total_return_pct", -999.0))
     except Exception:
         train_return = -999.0
+
+    # Positive-good gate on merged rule (Task 3).
+    if bool(getattr(_cfg, "PHASE3_REQUIRE_POSITIVE_GOOD", True)):
+        if not gate_positive_good(
+            train_metrics,
+            val_metrics,
+            min_train_return=float(
+                getattr(_cfg, "PHASE3_MIN_TRAIN_RETURN", 0.0)),
+            min_val_return=float(
+                getattr(_cfg, "PHASE3_MIN_VAL_RETURN", 0.0)),
+            min_train_pf=float(
+                getattr(_cfg, "PHASE3_MIN_TRAIN_PF", 1.0)),
+            min_val_pf=float(
+                getattr(_cfg, "PHASE3_MIN_VAL_PF", 1.0)),
+            min_train_trades=int(
+                getattr(_cfg, "PHASE3_MIN_TRAIN_TRADES", 25)),
+            min_val_trades=int(
+                getattr(_cfg, "PHASE3_MIN_VAL_TRADES", 15)),
+        ):
+            return -999.0
 
     max_gap = float(getattr(_cfg, "PHASE3_MAX_TRAIN_VAL_GAP_PCT", 40.0))
     if val_return - train_return > max_gap:

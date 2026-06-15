@@ -361,6 +361,30 @@ def _passes_pool_admission_impl(
         if not val_regime_confirmation(dom, val_metrics):
             return False
 
+    # Optional stricter positive-good gate (default OFF; enabled in Task 5).
+    if bool(getattr(_cfg, "PHASE2_STRICT_POSITIVE_GOOD", False)):
+        # Lazy import to avoid circular dependency (phase3_rule_set is a sibling).
+        from gpu_fuzzy_trader.phases.phase3_rule_set import (
+            gate_positive_good as _gate_positive_good,
+        )
+        if not _gate_positive_good(
+            train_metrics,
+            val_metrics,
+            min_train_return=float(
+                getattr(_cfg, "PHASE3_MIN_TRAIN_RETURN", 0.0)),
+            min_val_return=float(
+                getattr(_cfg, "PHASE3_MIN_VAL_RETURN", 0.0)),
+            min_train_pf=float(
+                getattr(_cfg, "PHASE3_MIN_TRAIN_PF", 1.0)),
+            min_val_pf=float(
+                getattr(_cfg, "PHASE3_MIN_VAL_PF", 1.0)),
+            min_train_trades=int(
+                getattr(_cfg, "PHASE3_MIN_TRAIN_TRADES", 25)),
+            min_val_trades=int(
+                getattr(_cfg, "PHASE3_MIN_VAL_TRADES", 15)),
+        ):
+            return False
+
     return True
 
 
