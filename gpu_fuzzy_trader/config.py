@@ -1260,6 +1260,33 @@ PHASE4_MIN_WORST_FOLD_PF = 1.0
 
 
 # =============================================================================
+# Monthly windows validation (used in Phase 3/4 scoring)
+# =============================================================================
+
+# MONTHLY_VALIDATION_ENABLED — toggle monthly rolling-window validation.
+#   True  → rule sets are penalised if they fail monthly windows gates.
+#   False → monthly penalty is skipped (legacy behaviour).
+MONTHLY_VALIDATION_ENABLED = True
+
+MONTHLY_WINDOW_DAYS = 30
+MONTHLY_WINDOW_STRIDE_DAYS = 30
+MONTHLY_WINDOW_MIN_ROWS = 2500
+MONTHLY_WINDOW_MAX_WINDOWS = 24
+MONTHLY_RECENCY_WEIGHT = 2.2
+MONTHLY_MIN_TRADES = 20
+MONTHLY_MIN_PROFITABLE_RATIO = 0.60
+MONTHLY_WORST_RETURN_FLOOR = -1.5
+MONTHLY_WORST_PF_FLOOR = 0.85
+MONTHLY_MAX_DD = 8.0
+MONTHLY_WORST_RETURN_WEIGHT = 1.2
+MONTHLY_WORST_PF_WEIGHT = 8.0
+MONTHLY_DD_WEIGHT = 0.7
+MONTHLY_PROFITABLE_RATIO_WEIGHT = 15.0
+MONTHLY_TREND_WEIGHT = 2.0
+MONTHLY_LATEST_WEIGHT = 0.6
+
+
+# =============================================================================
 # Phase 5 — Out-of-sample evaluation (test.csv only; never used in Phases 1–4)
 # =============================================================================
 
