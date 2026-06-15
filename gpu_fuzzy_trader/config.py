@@ -1463,6 +1463,35 @@ PHASE4_MONTHLY_EVAL_EVERY_TRIAL = True
 
 
 # =============================================================================
+# Phase 4 — Deterministic risk grid search (Task 7)
+# =============================================================================
+
+# PHASE4_GRID_ENABLED — use deterministic grid search instead of Optuna.
+#   True  → ``_optimize_risk_grid`` replaces the Optuna walk-forward.
+#   False → fall back to Optuna (legacy ``optimize`` path).
+PHASE4_GRID_ENABLED = True
+
+# PHASE4_GRID_TP_VALUES — TP values (%) to enumerate (10 values).
+PHASE4_GRID_TP_VALUES = (1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 8.0, 10.0)
+
+# PHASE4_GRID_SL_VALUES — SL values (%) to enumerate (6 values).
+PHASE4_GRID_SL_VALUES = (1.0, 1.2, 1.5, 2.0, 2.5, 3.0)
+
+# PHASE4_GRID_CAPITAL_VALUES — capital_pct values (%) to enumerate (9 values).
+PHASE4_GRID_CAPITAL_VALUES = (5.0, 7.5, 10.0, 12.5, 15.0, 20.0, 25.0, 35.0, 50.0)
+
+# PHASE4_GRID_MAX_TOTAL_CAPITAL — hard cap on sum(capital_pct) across all rules.
+#   Combinations that push the total above this cap are skipped.
+PHASE4_GRID_MAX_TOTAL_CAPITAL = 95.0
+
+# PHASE4_GRID_PASSES — number of round-robin passes through all rules.
+PHASE4_GRID_PASSES = 2
+
+# PHASE4_GRID_MIN_IMPROVEMENT — minimum score improvement to accept a new combo.
+PHASE4_GRID_MIN_IMPROVEMENT = 0.02
+
+
+# =============================================================================
 # Phase 5 — Out-of-sample evaluation (test.csv only; never used in Phases 1–4)
 # =============================================================================
 
