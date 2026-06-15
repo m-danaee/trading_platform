@@ -1,0 +1,34 @@
+{
+  "task": "Task 1 — Add validation/monthly_windows.py and validation/rolling_cv.py",
+  "verdict": "REQUEST_CHANGES",
+  "findings": [
+    {
+      "severity": "medium",
+      "finding": "`build_monthly_windows` uses Python's `or` operator for default fallbacks (`window_days or getattr(...)`, `min_rows or getattr(...)`, etc.), which incorrectly overrides intentional zero values. For example, passing `min_rows=0` is silently replaced with the config default 2500, making it impossible to disable the min-rows filter. This contrasts with `rolling_cv.py` which correctly uses `is not None` checks.",
+      "fix": "Replace the `or` pattern with `if param is not None else` in `build_monthly_windows`, matching the style already used in `build_purged_rolling_folds`. Specifically, change lines 84–95 of `monthly_windows.py` from `window_days or getattr(...)` to `window_days if window_days is not None else getattr(...)` (and the same for `stride_days`, `min_rows`, `max_windows`)."
+    },
+    {
+      "severity": "medium",
+      "finding": "`_datetime_series` returns `pd.Series(np.arange(len(df)))` when `datetime` is missing, producing integer values. But `build_monthly_windows` later performs `cur + pd.Timedelta(days=...)` on these integers, causing a `TypeError: unsupported operand type(s) for +: 'numpy.int64' and 'Timedelta'`. The defensive fallback path is broken.",
+      "fix": "Either: (a) document that `datetime` is required and raise a `ValueError('DataFrame must contain a datetime column')` early in `build_monthly_windows` when `datetime` is absent, or (b) implement proper integer-based windowing in the fallback (using `cur += window_days` with integer offsets). Option (a) is simpler and consistent with the task spec which states the DataFrame must contain `datetime`."
+    },
+    {
+      "severity": "low",
+      "finding": "`monthly_windows.py` has no module-level logger, while `rolling_cv.py` defines `logger = logging.getLogger(__name__)` and uses it. The task spec calls for 'module-level logger' consistency.",
+      "fix": "Add `import logging` and `logger = logging.getLogger(__name__)` to `monthly_windows.py`. Consider logging a debug message when `evaluate_rule_set_monthly` catches exceptions on a per-window basis (currently silent except for the fallback metrics dict)."
+    },
+    {
+      "severity": "low",
+      "finding": "No unit tests were added for the ~750 lines of new code. The implementer ran inline smoke tests, and all 8 acceptance criteria pass, but there is no persistent test coverage for edge cases (empty df, missing datetime, zero-window summary, NaN handling, etc.).",
+      "fix": "Add a minimal `tests/unit/test_monthly_windows.py` covering: (1) empty df returns [], (2) `monthly_penalty` returns 100.0 for zero windows, (3) `summarize_monthly_metrics` on empty iterable, (4) single-window summary has correct shape. This is ~20 lines of test code and can be smoke-tested without running the full test suite."
+    },
+    {
+      "severity": "low",
+      "finding": "`summarize_monthly_metrics` creates the `trades` array with `dtype=float` from `int` values: `np.asarray([int(m.get(...))], dtype=float)`. This is harmless but wasteful — the floats are immediately cast through `int(np.min(trades))`.",
+      "fix": "Use `dtype=int` or omit the dtype argument to let NumPy infer it. This is a minor cleanup; no behavioral change."
+    }
+  ],
+  "summary": "All 8 explicit acceptance criteria pass: imports work, config keys are present, backward compatibility is maintained, no friend-project or rb_evaluator imports leak, and synthetic smoke tests produce correct shapes. Two medium-severity issues were found: (1) the `or` fallback pattern overrides intentional zero values (unlike rolling_cv.py's correct `is not None` pattern), and (2) the `_datetime_series` fallback to integer indices is incompatible with `pd.Timedelta` arithmetic, causing a TypeError when `datetime` is missing. Three low-severity findings cover missing logger, missing unit tests, and a minor dtype inconsistency. None of the findings are critical — the code is functionally correct for the expected call path (DataFrames always have `datetime`, and callers pass explicit positive values). The code is well-structured, has thorough docstrings, proper type hints, and follows PEP 8.",
+  "checked_at": "2026-06-15",
+  "commit": "776fe2d"
+}
