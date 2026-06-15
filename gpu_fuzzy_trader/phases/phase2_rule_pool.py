@@ -1355,6 +1355,42 @@ def _build_pool_from_archive(
                 pool_entry["regime_trade_counts"] = list(metrics["regime_trade_counts"])
             pool.append(pool_entry)
 
+    # --- Cap pool size to PHASE2_KEEP_TOP_RULES (Task 5) ---
+    keep_top = int(getattr(_cfg, "PHASE2_KEEP_TOP_RULES", 140))
+    if len(pool) > keep_top:
+        from gpu_fuzzy_trader.phases.phase2_support import deployability_rank_score
+
+        def _rank_key(entry: dict) -> float:
+            train_m = {
+                "total_return_pct": float(entry.get("objectives", {}).get("total_return_pct", 0.0)),
+                "profit_factor": float(entry.get("objectives", {}).get("profit_factor", 1.0)),
+                "executed_trades": int(entry.get("executed_trades", 0)),
+                "sortino_ratio": float(entry.get("objectives", {}).get("sortino_ratio", 0.0)),
+                "max_drawdown_pct": float(entry.get("objectives", {}).get("max_drawdown_pct", 0.0)),
+            }
+            val_obj = entry.get("val_objectives")
+            val_m = None
+            if isinstance(val_obj, dict):
+                val_m = {
+                    "total_return_pct": float(val_obj.get("total_return_pct", 0.0)),
+                    "profit_factor": float(val_obj.get("profit_factor", 1.0)),
+                    "executed_trades": int(entry.get("val_executed_trades", 0)),
+                    "sortino_ratio": float(val_obj.get("sortino_ratio", 0.0)),
+                    "max_drawdown_pct": float(val_obj.get("max_drawdown_pct", 0.0)),
+                }
+            return deployability_rank_score(
+                train_m,
+                val_m,
+                folds_passing=int(entry.get("cv_folds_passing", 0)),
+            )
+
+        pool.sort(key=_rank_key, reverse=True)
+        pool = pool[:keep_top]
+        logger.info(
+            "Phase 2 [%s] pool capped to %d rules (sorted by deployability_rank_score)",
+            direction, keep_top,
+        )
+
     return pool
 
 

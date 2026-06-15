@@ -276,14 +276,18 @@ def _pool_admission_floors(
     *,
     cv_fold: bool,
 ) -> tuple[int, float, float, float, int]:
-    """Return (train_trade_floor, train_ret_min, val_ret_min, pf_floor, min_val_trades)."""
+    """Return (train_trade_floor, train_ret_min, val_ret_min, pf_floor, min_val_trades).
+
+    In per-fold (cv_fold=True) mode the floors are relaxed using the new
+    ``PHASE2_CV_MIN_WORST_*`` thresholds so the pool grows larger.
+    """
     if cv_fold and _split_mode_is_purged_cv():
         return (
             int(_cfg.PHASE2_CV_MIN_TRADE_POOL_FLOOR),
             float(_cfg.PHASE2_CV_POOL_TRAIN_RETURN_MIN_PCT),
-            float(_cfg.PHASE2_CV_POOL_VAL_RETURN_MIN_PCT),
-            float(_cfg.PHASE2_CV_PROFIT_FACTOR_FLOOR),
-            int(_cfg.PHASE2_CV_MIN_VAL_TRADES),
+            float(getattr(_cfg, "PHASE2_CV_MIN_WORST_RETURN", -8.0)),  # relaxed val return floor
+            float(getattr(_cfg, "PHASE2_CV_MIN_WORST_PF", 0.80)),      # relaxed PF floor
+            int(getattr(_cfg, "PHASE2_CV_MIN_FOLD_TRADES", 10)),        # relaxed min val trades
         )
     return (
         int(_cfg.MIN_TRADE_POOL_FLOOR),
@@ -317,6 +321,13 @@ def _passes_pool_admission_impl(
         return False
     if train_pf < pf_floor:
         return False
+
+    # Per-fold drawdown gate (Task 5: relaxed pool admission).
+    if cv_fold and _split_mode_is_purged_cv():
+        max_worst_dd = float(getattr(_cfg, "PHASE2_CV_MAX_WORST_DD", 18.0))
+        train_dd = float(train_metrics.get("max_drawdown_pct", 0.0))
+        if train_dd > max_worst_dd:
+            return False
 
     # Regime Profitability Gate
     if _cfg.PHASE2_REGIME_PROFITABILITY_GATE:
@@ -353,6 +364,13 @@ def _passes_pool_admission_impl(
         return False
     if val_pf < pf_floor:
         return False
+
+    # Per-fold val drawdown gate (Task 5).
+    if cv_fold and _split_mode_is_purged_cv():
+        max_worst_dd = float(getattr(_cfg, "PHASE2_CV_MAX_WORST_DD", 18.0))
+        val_dd = float(val_metrics.get("max_drawdown_pct", 0.0))
+        if val_dd > max_worst_dd:
+            return False
 
     if _cfg.PHASE2_REGIME_REQUIRE_VAL_CONFIRMATION and train_metrics.get(
         "regime_specialist"

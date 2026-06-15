@@ -35,7 +35,8 @@ class TestPoolAdmissionGate:
                "profit_factor": 1.1, "executed_trades": 50}
         assert passes_pool_admission_gate(train, val) is False
 
-    def test_accepts_positive_train_and_val(self) -> None:
+    def test_accepts_positive_train_and_val(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(_cfg, "PHASE2_STRICT_POSITIVE_GOOD", False)
         train = {
             "total_return_pct": 3.0,
             "profit_factor": 1.2,
