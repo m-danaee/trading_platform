@@ -1,0 +1,32 @@
+{
+  "task_id": "task-9",
+  "title": "Add evaluator_clean writer",
+  "status": "DONE",
+  "commit": "12cb66f",
+  "branch": "feature/task-9-evaluator-clean-writer",
+  "files_changed": [
+    "gpu_fuzzy_trader/config.py",
+    "gpu_fuzzy_trader/output/writer.py",
+    "tests/unit/test_evaluator_clean_writer.py"
+  ],
+  "description": "Added WRITE_EVALUATOR_CLEAN config key (default True), write_evaluator_clean() standalone function, and wired it into Output_Writer.write() so that the main write also produces output/evaluator_clean/{direction}_evaluator_clean.json with only direction and rules_set (extra metadata stripped).",
+  "acceptance_criteria": {
+    "config_key_present": true,
+    "import_works": true,
+    "standalone_writes_stripped": true,
+    "parent_dirs_created": true,
+    "wired_into_Output_Writer_write": true,
+    "unit_tests_passing": 9,
+    "existing_tests_unchanged": true
+  },
+  "notes_for_reviewer": [
+    "The write_evaluator_clean function is placed in output/writer.py alongside the existing Output_Writer class.",
+    "Output_Writer.write() calls write_evaluator_clean() after the main write, gated by getattr(_cfg, 'WRITE_EVALUATOR_CLEAN', True).",
+    "The clean file is written to <parent>/evaluator_clean/<direction>_evaluator_clean.json (e.g., outputs/evaluator_clean/long_evaluator_clean.json).",
+    "The standalone function uses strategy['direction'] and strategy['rules_set'] directly (not validated) so it works with any dict that has those keys.",
+    "Config key WRITE_EVALUATOR_CLEAN = True is added near OUTPUTS_DIR in the Phase 0 section.",
+    "9 unit tests pass: 6 standalone + 3 wiring tests, including coverage for the config flag set to False.",
+    "All 50 existing output_writer tests and 3 property tests continue to pass.",
+    "Phase files are NOT modified in this task — the wiring happens through Output_Writer.write. Phase writes that use json.dump directly will need a separate follow-up if clean files are desired from those paths."
+  ]
+}

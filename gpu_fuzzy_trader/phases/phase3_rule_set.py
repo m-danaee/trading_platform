@@ -29,6 +29,10 @@ import numpy as np
 import pandas as pd
 
 from gpu_fuzzy_trader import config as _cfg
+from gpu_fuzzy_trader.output.writer import (
+    _maybe_write_evaluator_clean,
+    write_evaluator_clean,
+)
 from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
 from gpu_fuzzy_trader.phases.phase3_cache import (
     Phase3EvalCache,
@@ -1290,6 +1294,7 @@ class Rule_Set_Selector:
         output_path = _OUTPUT_PATHS[self.direction]
         with open(output_path, "w", encoding="utf-8") as fh:
             json.dump(output_dict, fh, indent=2)
+        _maybe_write_evaluator_clean(output_dict, output_path, self.direction)
         n_rules = len(output_dict.get("rules_set", []))
         logger.info(
             "Phase 3 [%s]: %d rules saved to %s",

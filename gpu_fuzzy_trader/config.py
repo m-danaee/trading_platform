@@ -103,6 +103,12 @@ OUTPUTS_DIR = "outputs"
 RUN_LOG_PATH = os.path.join(OUTPUTS_DIR, "run.log")
 REPORTS_DIR = "outputs/reports"
 
+# Evaluator-clean writer (Task 9).
+# When True, Output_Writer.write also writes a stripped file containing only
+# direction and rules_set (defensive: protects against stricter evaluators
+# that reject unknown top-level keys).
+WRITE_EVALUATOR_CLEAN = True
+
 # Per-run Phase 2 artifacts (rewritten under --output).
 PHASE2_POOL_DIR = OUTPUTS_DIR
 PHASE2_POOL_PATHS = {

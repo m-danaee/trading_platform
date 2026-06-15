@@ -39,7 +39,12 @@ from gpu_fuzzy_trader.backtest.df_slim import downcast_numeric_df
 from gpu_fuzzy_trader.data.loader import Data_Loader
 from gpu_fuzzy_trader.data.splitter import Data_Splitter
 from gpu_fuzzy_trader.features.selector import Feature_Selector
-from gpu_fuzzy_trader.output.writer import Output_Writer, ValidationError
+from gpu_fuzzy_trader.output.writer import (
+    Output_Writer,
+    ValidationError,
+    _maybe_write_evaluator_clean,
+    write_evaluator_clean,
+)
 from gpu_fuzzy_trader.reporting.reporter import Reporter
 
 logger = logging.getLogger(__name__)
@@ -553,6 +558,7 @@ class OOS_Evaluator:
             try:
                 with open(output_path, "w", encoding="utf-8") as fh:
                     json.dump(strategy, fh, indent=2)
+                _maybe_write_evaluator_clean(strategy, output_path, direction)
             except OSError as exc:
                 logger.warning(
                     "Phase 5 [%s]: failed to rewrite cleaned strategy: %s",
