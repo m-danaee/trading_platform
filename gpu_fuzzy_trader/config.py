@@ -1097,6 +1097,18 @@ PHASE2_INIT_STRATEGY = "stratified_sparse"
 #   Shift toward second → more archive-biased / structured seeds.
 PHASE2_INIT_STRATUM_FRACTIONS = (0.67, 0.33)
 
+# Phase 2 regime keyword stratum initialization (complements the bar-level regime label).
+# When enabled, 25% of non-seeded chromosomes are forced to have their first active gene
+# be a regime/volatility/trend feature (vol, atr, bb_width, compression, adx, dmi, etc.).
+# This is a feature-space proxy for regime-aware rules and is complementary to the
+# per-bar regime label from regime_cluster.py.
+PHASE2_REGIME_STRATUM_ENABLED = True
+PHASE2_REGIME_STRATUM_FRAC = 0.25
+PHASE2_REGIME_FEATURE_KEYWORDS = (
+    "vol", "atr", "bb_width", "compression", "range", "trend", "regime",
+    "breakout", "drawdown", "channel", "adx", "dmi", "semivol",
+)
+
 # PHASE2_INIT_SOFTMAX_TEMP — temperature for weighted feature activation in init.
 #   Higher → more uniform random feature picks.
 #   Lower  → strongly favor high-MI features in initial conditions.
