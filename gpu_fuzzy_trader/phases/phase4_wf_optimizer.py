@@ -26,6 +26,10 @@ import pandas as pd
 
 from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
+from gpu_fuzzy_trader.output.writer import (
+    _maybe_write_evaluator_clean,
+    write_evaluator_clean,
+)
 from gpu_fuzzy_trader.reporting.reporter import Reporter
 from gpu_fuzzy_trader.validation.monthly_windows import (
     build_monthly_windows,
@@ -710,6 +714,7 @@ class WalkForwardRiskOptimizer:
         output_path = _OUTPUT_PATHS[self.direction]
         with open(output_path, "w", encoding="utf-8") as fh:
             json.dump(output_dict, fh, indent=2)
+        _maybe_write_evaluator_clean(output_dict, output_path, self.direction)
 
         try:
             Reporter().plot_phase4_pareto(study.trials, None, self.direction)
@@ -970,6 +975,7 @@ class WalkForwardRiskOptimizer:
         output_path = _OUTPUT_PATHS[self.direction]
         with open(output_path, "w", encoding="utf-8") as fh:
             json.dump(output_dict, fh, indent=2)
+        _maybe_write_evaluator_clean(output_dict, output_path, self.direction)
 
         logger.info(
             "Phase 4 [%s]: selected trial #%d (worst_return=%.4f%%, "
@@ -1108,6 +1114,7 @@ class WalkForwardRiskOptimizer:
         output_path = _OUTPUT_PATHS[self.direction]
         with open(output_path, "w", encoding="utf-8") as fh:
             json.dump(output_dict, fh, indent=2)
+        _maybe_write_evaluator_clean(output_dict, output_path, self.direction)
 
         logger.info(
             "Phase 4 grid [%s]: score=%.2f val_ret=%.2f%% val_pf=%.3f "

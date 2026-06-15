@@ -325,6 +325,36 @@ def write_evaluator_clean(strategy: dict, output_path: str | Path) -> None:
     )
 
 
+def _maybe_write_evaluator_clean(
+    strategy: dict, main_path: str | Path, direction: str
+) -> None:
+    """
+    Write a stripped strategy file if ``WRITE_EVALUATOR_CLEAN`` is ``True``.
+
+    This is a convenience helper for production pipeline code that writes
+    strategy files via direct ``json.dump`` (Phases 3/4/5) rather than
+    through ``Output_Writer.write``.
+
+    Parameters
+    ----------
+    strategy : dict
+        The full strategy dict (must contain ``direction`` and ``rules_set``).
+    main_path : str or Path
+        The path of the main strategy file that was just written. The clean
+        file is placed next to it in an ``evaluator_clean/`` subdirectory.
+    direction : str
+        ``"long"`` or ``"short"`` — used to name the clean file.
+    """
+    if not bool(getattr(_cfg, "WRITE_EVALUATOR_CLEAN", True)):
+        return
+    main_path = Path(main_path)
+    clean_path = main_path.parent / "evaluator_clean" / f"{direction}_evaluator_clean.json"
+    try:
+        write_evaluator_clean(strategy, clean_path)
+    except Exception as exc:
+        logger.debug("evaluator_clean write failed for %s: %s", direction, exc)
+
+
 # ---------------------------------------------------------------------------
 # Output_Writer
 # ---------------------------------------------------------------------------
