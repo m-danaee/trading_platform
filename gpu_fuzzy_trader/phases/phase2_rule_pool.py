@@ -763,10 +763,12 @@ def _init_population(
     ``"legacy"`` uses independent per-gene *dont_care_prob* sampling.
     """
     from gpu_fuzzy_trader.phases.phase2_init import (
+        assign_three_strata_to_indices,
         assign_strata_to_indices,
         build_feature_sampling_probs,
         pick_active_count,
         repair_active_count,
+        sample_regime_stratum_chromosome,
         sample_sparse_chromosome,
     )
 
@@ -890,14 +892,45 @@ def _init_population(
         feature_probs = build_feature_sampling_probs(feature_infos)
 
     fresh_indices = np.where(~seeded_mask)[0]
-    strata = assign_strata_to_indices(
-        fresh_indices,
-        stratum_fractions,
-        rng,
+
+    # Determine whether the 3-stratum (elite / explorer / regime) init is active.
+    _regime_enabled = bool(
+        getattr(_cfg, "PHASE2_REGIME_STRATUM_ENABLED", True)
     )
+
+    if _regime_enabled:
+        # Build 3-tuple fractions from the 2-tuple config plus the regime frac.
+        elite_f, explorer_f = stratum_fractions
+        total_2 = elite_f + explorer_f
+        regime_frac = float(getattr(_cfg, "PHASE2_REGIME_STRATUM_FRAC", 0.25))
+        if total_2 > 0:
+            elite_f3 = elite_f / total_2 * (1.0 - regime_frac)
+            explorer_f3 = explorer_f / total_2 * (1.0 - regime_frac)
+        else:
+            elite_f3, explorer_f3 = 0.40, 0.35
+        three_fractions = (elite_f3, explorer_f3, regime_frac)
+        strata: list[str] = assign_three_strata_to_indices(
+            fresh_indices, three_fractions, rng,
+        )
+    else:
+        strata = assign_strata_to_indices(
+            fresh_indices,
+            stratum_fractions,
+            rng,
+        )
+
     for row_idx, stratum in zip(fresh_indices, strata):
         k_active = pick_active_count(rng)
-        if use_sparse_slots():
+        if stratum == "regime":
+            # Build a regime-anchored chromosome.
+            dense_chrom = sample_regime_stratum_chromosome(
+                rng, feature_infos, dont_cares, k_active, feature_probs,
+            )
+            if use_sparse_slots():
+                population[row_idx] = dense_to_sparse(dense_chrom, dont_cares)
+            else:
+                population[row_idx] = dense_chrom
+        elif use_sparse_slots():
             from gpu_fuzzy_trader.phases.phase2_sparse_encoding import (
                 sample_sparse_slots_chromosome,
             )
