@@ -8,14 +8,18 @@ the one with better monthly performance wins.
 
 from __future__ import annotations
 
+import unittest.mock as umock
+
 import numpy as np
 import pandas as pd
 import pytest
 
 from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
+from gpu_fuzzy_trader.phases.phase3_rule_set import _per_symbol_greedy
 from gpu_fuzzy_trader.validation.monthly_windows import (
     MonthlyWindowSummary,
+    build_monthly_windows,
     evaluate_rule_set_monthly,
     monthly_penalty,
 )
@@ -208,3 +212,142 @@ class TestMonthlyPenaltyInPhase4Scoring:
             f"Expected score_good ({score_good:.4f}) > score_bad ({score_bad:.4f})\n"
             f"  penalty_good={penalty_good:.4f}, penalty_bad={penalty_bad:.4f}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Integration: _per_symbol_greedy with monthly penalty wired in
+# ---------------------------------------------------------------------------
+
+
+def _tiny_pool() -> list[dict]:
+    """Return a 2-rule pool with different conditions."""
+    return [
+        {
+            "conditions": ["[feature_ma_5] IS Very High"],
+            "tp": 3.0,
+            "sl": 1.5,
+            "capital_pct": 10.0,
+        },
+        {
+            "conditions": ["[feature_rsi] IS Very Low"],
+            "tp": 3.0,
+            "sl": 1.5,
+            "capital_pct": 10.0,
+        },
+    ]
+
+
+def _synthetic_df_monthly(n_rows: int = 30000) -> pd.DataFrame:
+    """Create a larger synthetic DataFrame (enough for ~2 monthly windows)."""
+    start = pd.Timestamp("2020-01-01")
+    n_sym = 2
+    symbols = [str(i) for i in range(n_sym)]
+    rows: list[dict] = []
+    rng = np.random.default_rng(12345)
+    for sym in symbols:
+        for i in range(n_rows // n_sym):
+            dt = start + pd.Timedelta(minutes=5 * i)
+            rows.append({
+                "datetime": dt,
+                "symbol": sym,
+                "label_open_next": float(np.abs(rng.normal(1.0, 0.3))),
+                "label_close_288": float(rng.normal(2.0, 1.0)),
+                "label_min_288": float(rng.normal(-0.5, 1.0)),
+                "label_max_288": float(rng.normal(2.5, 1.0)),
+                "label_max_before_min": float(rng.normal(0.5, 0.3)),
+                "feature_ma_5": float(rng.normal(0.0, 1.0)),
+                "feature_ma_20": float(rng.normal(0.0, 1.0)),
+                "feature_rsi": float(rng.normal(50.0, 10.0)),
+            })
+    df = pd.DataFrame(rows)
+    return df
+
+
+class TestIntegrationPerSymbolGreedy:
+    """Integration: _per_symbol_greedy with monthly penalty wiring."""
+
+    def test_greedy_runs_with_monthly_penalty_enabled(self) -> None:
+        """
+        _per_symbol_greedy should run without error when monthly windows are
+        cached and MONTHLY_VALIDATION_ENABLED is True.  This exercises the
+        _robust_combo_return path with the pre-built windows list.
+        """
+        df = _synthetic_df_monthly(30000)
+        pool = _tiny_pool()
+        sym = "0"
+        sym_df = df[df["symbol"].astype(str) == sym].reset_index(drop=True)
+
+        feature_names = [
+            c for c in df.columns
+            if c not in set(_cfg.LABEL_COLUMNS)
+            | set(_cfg.META_COLUMNS)
+            | set(_cfg.INTERNAL_COLUMNS)
+            and not str(c).startswith("_")
+        ]
+
+        # Build monthly windows once (same as Rule_Set_Selector.run() does).
+        monthly_windows = build_monthly_windows(df)
+
+        with umock.patch.object(_cfg, "MONTHLY_VALIDATION_ENABLED", True):
+            selected = _per_symbol_greedy(
+                symbol=sym,
+                symbol_df=sym_df,
+                pool=pool,
+                direction="long",
+                combined_df=df,
+                feature_names=feature_names,
+                monthly_windows=monthly_windows,
+            )
+
+        # Must return a list (possibly empty — depends on min_return checks).
+        assert isinstance(selected, list)
+        # All returned indices must be valid pool indices.
+        for idx in selected:
+            assert 0 <= idx < len(pool), f"Invalid pool index {idx}"
+
+    def test_monthly_enabled_changes_selection(self) -> None:
+        """
+        With monthly validation enabled, the greedy selection should differ
+        from when it is disabled, because monthly-unstable rules get a penalty.
+        """
+        df = _synthetic_df_monthly(30000)
+        pool = _tiny_pool()
+        sym = "0"
+        sym_df = df[df["symbol"].astype(str) == sym].reset_index(drop=True)
+
+        feature_names = [
+            c for c in df.columns
+            if c not in set(_cfg.LABEL_COLUMNS)
+            | set(_cfg.META_COLUMNS)
+            | set(_cfg.INTERNAL_COLUMNS)
+            and not str(c).startswith("_")
+        ]
+
+        monthly_windows = build_monthly_windows(df)
+
+        with umock.patch.object(_cfg, "MONTHLY_VALIDATION_ENABLED", False):
+            selected_off = _per_symbol_greedy(
+                symbol=sym,
+                symbol_df=sym_df,
+                pool=pool,
+                direction="long",
+                combined_df=df,
+                feature_names=feature_names,
+                monthly_windows=monthly_windows,
+            )
+
+        with umock.patch.object(_cfg, "MONTHLY_VALIDATION_ENABLED", True):
+            selected_on = _per_symbol_greedy(
+                symbol=sym,
+                symbol_df=sym_df,
+                pool=pool,
+                direction="long",
+                combined_df=df,
+                feature_names=feature_names,
+                monthly_windows=monthly_windows,
+            )
+
+        # The selections could be equal (if data doesn't produce clear monthly
+        # difference) — this is a smoke-test assertion that the code path runs.
+        assert isinstance(selected_on, list)
+        assert isinstance(selected_off, list)

@@ -40,7 +40,7 @@ from gpu_fuzzy_trader.phases.phase3_objectives import (
 )
 from gpu_fuzzy_trader.reporting.reporter import Reporter
 from gpu_fuzzy_trader.validation.monthly_windows import (
-    MonthlyWindowSummary,
+    build_monthly_windows,
     evaluate_rule_set_monthly,
     monthly_penalty,
 )
@@ -344,6 +344,7 @@ def _per_symbol_greedy(
     train_symbol_df: pd.DataFrame | None = None,
     combined_df: pd.DataFrame | None = None,
     feature_names: list[str] | None = None,
+    monthly_windows: list[pd.DataFrame] | None = None,
 ) -> list[int]:
     """Greedy rule selection for a single symbol.
 
@@ -351,9 +352,11 @@ def _per_symbol_greedy(
     combo score when *train_symbol_df* is provided, preventing val-only
     overfit at the combination level (not just the per-rule level).
 
-    When *combined_df* is provided and ``MONTHLY_VALIDATION_ENABLED`` is True,
-    a monthly-window penalty is subtracted from the combo score so that
-    rule-sets with poor monthly performance score lower.
+    When *combined_df* or *monthly_windows* is provided and
+    ``MONTHLY_VALIDATION_ENABLED`` is True, a monthly-window penalty is
+    subtracted from the combo score so that rule-sets with poor monthly
+    performance score lower.  Pre-built *monthly_windows* avoids O(N²) deep
+    copies inside the greedy loop.
     """
     min_trades = int(_cfg.effective_phase3_per_symbol_min_trades())
     min_return = float(_cfg.effective_phase3_per_symbol_min_return())
@@ -423,11 +426,12 @@ def _per_symbol_greedy(
             base_ret = v_ret
 
         # Monthly-window penalty (applied on the full combined dataset).
-        if monthly_enabled and combined_df is not None:
+        if monthly_enabled and (combined_df is not None or monthly_windows is not None):
             try:
                 monthly_summary, _ = evaluate_rule_set_monthly(
                     combined_df, combo_fmt, direction,
                     feature_names=feature_names,
+                    windows=monthly_windows,
                 )
                 if monthly_summary.windows <= 0:
                     monthly_pen = float(getattr(
@@ -437,7 +441,8 @@ def _per_symbol_greedy(
                         monthly_penalty(monthly_summary)
                         * float(getattr(_cfg, "PHASE3_MONTHLY_PENALTY_WEIGHT", 1.0))
                     )
-            except Exception:
+            except Exception as exc:
+                logger.debug("monthly eval failed for combo, using fallback: %s", exc)
                 monthly_pen = float(getattr(
                     _cfg, "PHASE3_MONTHLY_FALLBACK_PENALTY", 5.0))
             return base_ret - monthly_pen
@@ -699,6 +704,7 @@ class Rule_Set_Selector:
         # Build combined_df and feature_names once for monthly-window validation.
         combined_df: pd.DataFrame | None = None
         feature_names: list[str] | None = None
+        monthly_windows: list[pd.DataFrame] | None = None
         if bool(getattr(_cfg, "MONTHLY_VALIDATION_ENABLED", False)):
             combined_df = pd.concat(
                 [self._full_train_df, self._full_val_df], ignore_index=True)
@@ -709,6 +715,9 @@ class Rule_Set_Selector:
                 | set(_cfg.INTERNAL_COLUMNS)
                 and not str(c).startswith("_")
             ]
+            # Build monthly windows once and cache them — avoids O(N²) deep copies
+            # inside the inner greedy loop (_robust_combo_return).
+            monthly_windows = build_monthly_windows(combined_df)
 
         symbol_assignments: dict[str, list[int]] = {}
         for sym in self._symbols:
@@ -728,6 +737,7 @@ class Rule_Set_Selector:
                 train_symbol_df=train_sym_df,
                 combined_df=combined_df,
                 feature_names=feature_names,
+                monthly_windows=monthly_windows,
             )
             if selected:
                 symbol_assignments[sym] = selected

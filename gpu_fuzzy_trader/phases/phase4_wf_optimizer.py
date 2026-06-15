@@ -28,6 +28,7 @@ from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
 from gpu_fuzzy_trader.reporting.reporter import Reporter
 from gpu_fuzzy_trader.validation.monthly_windows import (
+    build_monthly_windows,
     evaluate_rule_set_monthly,
     monthly_penalty,
 )
@@ -556,10 +557,19 @@ class WalkForwardRiskOptimizer:
             )
 
         # Pre-compute combined_df and feature_names for monthly-window validation.
+        # NOTE: Phase 4 uses self.val_df only (not train+val) because the
+        # WalkForwardRiskOptimizer constructor does not receive train_df.
+        # The risk optimizer evaluates on val_splits / walk-forward windows,
+        # so the monthly view over the full validation period is consistent
+        # with the friend's internal_score.py (line 80) which also uses the
+        # validation-only monthly view for Phase 4 scoring.  Phase 3 uses
+        # the full train+val combined_df for monthly penalty, which is a
+        # stricter gate — this intentional divergence is documented.
         _monthly_combined: pd.DataFrame | None = None
         _monthly_feature_names: list[str] | None = None
+        _monthly_windows: list[pd.DataFrame] | None = None
         if bool(getattr(_cfg, "MONTHLY_VALIDATION_ENABLED", False)):
-            _monthly_combined = self.val_df.copy()
+            _monthly_combined = self.val_df
             _monthly_feature_names = [
                 c for c in _monthly_combined.columns
                 if c not in set(_cfg.LABEL_COLUMNS)
@@ -567,6 +577,8 @@ class WalkForwardRiskOptimizer:
                 | set(_cfg.INTERNAL_COLUMNS)
                 and not str(c).startswith("_")
             ]
+            # Pre-build monthly windows once and reuse across trials.
+            _monthly_windows = build_monthly_windows(_monthly_combined)
 
         def objective(trial: "optuna.Trial") -> tuple[float, float, float]:
             params_list: list[dict] = []
@@ -623,14 +635,16 @@ class WalkForwardRiskOptimizer:
                         candidate_rule_set,
                         self.direction,
                         feature_names=_monthly_feature_names,
+                        windows=_monthly_windows,
                     )
                     if monthly_summary.windows > 0:
                         monthly_penalty_value = (
                             monthly_penalty(monthly_summary)
                             * float(getattr(_cfg, "PHASE4_MONTHLY_SCORE_WEIGHT", 0.70))
                         )
-                except Exception:
-                    pass  # skip monthly penalty on failure
+                except Exception as exc:
+                    logger.debug("monthly eval failed for trial %d: %s",
+                                 trial.number if hasattr(trial, 'number') else '?', exc)
 
             score_return = (
                 (worst_return - fold_penalty - monthly_penalty_value)
