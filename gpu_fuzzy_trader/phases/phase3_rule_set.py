@@ -64,6 +64,7 @@ def gate_positive_good(
     min_val_pf: float = 1.0,
     min_train_trades: int = 25,
     min_val_trades: int = 15,
+    require_execution_health: bool = False,
 ) -> bool:
     """Return ``True`` iff the rule is positive on both train and val.
 
@@ -72,9 +73,12 @@ def gate_positive_good(
     * ``total_return_pct > min_train_return`` on train **and** on val
     * ``profit_factor >= min_train_pf`` on train **and** ``>= min_val_pf`` on val
     * ``executed_trades >= min_train_trades`` on train **and** ``>= min_val_trades`` on val
+    * If ``require_execution_health=True``, ``execution_ok(train_metrics)`` **and**
+      ``execution_ok(val_metrics)`` must also pass (evaluator skip-rate gate).
 
     Missing or absent keys (``total_return_pct``, ``profit_factor``,
-    ``executed_trades``) are treated as hard failures and return ``False``.
+    ``executed_trades``, ``raw_signal_count`` when execution-health is on)
+    are treated as hard failures and return ``False``.
 
     This is a **pure function** — no side effects, no engine calls, no IO.
     """
@@ -119,6 +123,15 @@ def gate_positive_good(
     val_trades = _safe_get_int(val_metrics, "executed_trades")
     if val_trades < min_val_trades:
         return False
+
+    # --- Optional evaluator execution-health gate (Task 4) ---
+    if require_execution_health:
+        from gpu_fuzzy_trader.scoring.evaluator_health import execution_ok
+
+        if not execution_ok(train_metrics):
+            return False
+        if not execution_ok(val_metrics):
+            return False
 
     return True
 
@@ -320,6 +333,8 @@ def _try_global_pool_fallback(
                 getattr(_cfg, "PHASE3_MIN_TRAIN_TRADES", 25)),
             min_val_trades=int(
                 getattr(_cfg, "PHASE3_MIN_VAL_TRADES", 15)),
+            require_execution_health=bool(
+                getattr(_cfg, "PHASE3_GATE_EXECUTION_HEALTH", True)),
         ):
             logger.warning(
                 "Phase 3 [%s]: fallback failed positive-good gate",
@@ -444,6 +459,8 @@ def _score_pool_rule_on_symbol(
                     getattr(_cfg, "PHASE3_MIN_TRAIN_TRADES", 25)),
                 min_val_trades=int(
                     getattr(_cfg, "PHASE3_MIN_VAL_TRADES", 15)),
+                require_execution_health=bool(
+                    getattr(_cfg, "PHASE3_GATE_EXECUTION_HEALTH", True)),
             ):
                 return {"return_pct": -999.0, "trades": val_trades}
 
@@ -560,12 +577,31 @@ def _per_symbol_greedy(
                         getattr(_cfg, "PHASE3_MIN_TRAIN_TRADES", 25)),
                     min_val_trades=int(
                         getattr(_cfg, "PHASE3_MIN_VAL_TRADES", 15)),
+                    require_execution_health=bool(
+                        getattr(_cfg, "PHASE3_GATE_EXECUTION_HEALTH", True)),
                 ):
                     return -999.0
 
             base_ret = min(t_ret, v_ret)
         else:
             base_ret = v_ret
+
+        # Evaluator-failure-mode penalty (Task 4).
+        eval_health_weight = float(
+            getattr(_cfg, "PHASE3_EVAL_HEALTH_WEIGHT", 1.0))
+        if eval_health_weight > 0.0 and train_symbol_df is not None and len(train_symbol_df) > 0:
+            from gpu_fuzzy_trader.scoring.evaluator_health import (
+                evaluator_health_penalty,
+            )
+
+            try:
+                train_penalty = evaluator_health_penalty(
+                    train_m, role="train")
+                val_penalty = evaluator_health_penalty(val_m, role="valid")
+                base_ret -= (train_penalty + val_penalty) * eval_health_weight
+            except Exception as exc:
+                logger.debug(
+                    "evaluator_health_penalty failed for combo: %s", exc)
 
         # Monthly-window penalty (applied on the full combined dataset).
         if monthly_enabled and (combined_df is not None or monthly_windows is not None):
@@ -680,6 +716,8 @@ def _score_merged_rule_on_splits(
                 getattr(_cfg, "PHASE3_MIN_TRAIN_TRADES", 25)),
             min_val_trades=int(
                 getattr(_cfg, "PHASE3_MIN_VAL_TRADES", 15)),
+            require_execution_health=bool(
+                getattr(_cfg, "PHASE3_GATE_EXECUTION_HEALTH", True)),
         ):
             return -999.0
 
