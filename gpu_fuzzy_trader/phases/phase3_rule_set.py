@@ -137,6 +137,236 @@ def gate_positive_good(
 
 
 # ---------------------------------------------------------------------------
+# Symbol condition helpers (multi-symbol combinations, Task 6)
+# ---------------------------------------------------------------------------
+
+
+def _is_symbol_condition(condition: str) -> bool:
+    """Return ``True`` if *condition* is a ``symbol is X`` filter."""
+    text = str(condition).strip().lower()
+    return text.startswith("symbol is ") or text.startswith("[symbol] is ")
+
+
+def _strip_symbol_conditions(conditions: list[str]) -> list[str]:
+    """Return *conditions* without any ``symbol is X`` entries."""
+    return [str(c) for c in conditions if not _is_symbol_condition(str(c))]
+
+
+def _build_symbol_specialized_variants(
+    rule: dict,
+    train_engine: object,
+    val_engine: object,
+    symbols: list[str],
+) -> list[dict]:
+    """Build top-K 1-, 2-, and 3-symbol variants of *rule*, scored and filtered.
+
+    For each single-symbol combination of the *rule* on *symbols*, evaluate
+    on train+val.  Keep those passing ``gate_positive_good`` with
+    ``SYMBOL_SPECIALIZATION_MIN_TRAIN_TRADES`` /
+    ``SYMBOL_SPECIALIZATION_MIN_VAL_TRADES``, and rank by
+    ``min(train_return, val_return)``.
+
+    When ``SYMBOL_SPECIALIZATION_USE_COMBINATIONS=True``, also generate all
+    2- and 3-symbol combinations of the top-``TOP_SINGLE_SYMBOLS`` symbols
+    and score them similarly.
+
+    Returns at most ``MAX_VARIANTS_PER_RULE`` variants, sorted descending by
+    score.  Each variant has the *rule*'s original conditions (without any
+    previous symbol filters) plus the new ``symbol is X`` conditions.
+
+    Parameters
+    ----------
+    rule : dict
+        Pool rule dict with ``conditions``, ``tp``, ``sl``, ``capital_pct``.
+    train_engine : object
+        Engine with ``simulate_rule_set`` method (train split).
+    val_engine : object
+        Engine with ``simulate_rule_set`` method (validation split).
+    symbols : list[str]
+        All available symbol labels in the universe.
+
+    Returns
+    -------
+    list[dict]
+        Up to ``MAX_VARIANTS_PER_RULE`` variants, each a full rule dict with
+        ``conditions``, ``tp``, ``sl``, ``capital_pct``.
+    """
+    use_combinations = bool(
+        getattr(_cfg, "SYMBOL_SPECIALIZATION_USE_COMBINATIONS", True))
+    max_symbols = max(
+        1, int(getattr(_cfg, "SYMBOL_SPECIALIZATION_MAX_SYMBOLS_PER_RULE", 3)))
+    top_single = max(
+        1, int(getattr(_cfg, "SYMBOL_SPECIALIZATION_TOP_SINGLE_SYMBOLS", 5)))
+    max_variants = max(
+        1, int(getattr(_cfg, "SYMBOL_SPECIALIZATION_MAX_VARIANTS_PER_RULE", 10)))
+    min_train_trades = int(
+        getattr(_cfg, "SYMBOL_SPECIALIZATION_MIN_TRAIN_TRADES", 10))
+    min_val_trades = int(
+        getattr(_cfg, "SYMBOL_SPECIALIZATION_MIN_VAL_TRADES", 6))
+
+    # --- Early-exit cases ---
+
+    # If the rule already has a symbol condition, return as-is (no re-specialization).
+    if any(_is_symbol_condition(str(c)) for c in rule.get("conditions", [])):
+        return [dict(rule)]
+
+    # Base conditions without any existing symbol filters (belt-and-suspenders:
+    # if we hit this condition above, base_conditions will be the same).
+    base_conditions = _strip_symbol_conditions(
+        list(rule.get("conditions", [])))
+
+    if not symbols:
+        return [dict(rule)]
+
+    # When combinations are disabled, only single-symbol variants are generated.
+    # This is equivalent to the legacy Phase 3 behaviour.
+    if not use_combinations:
+        max_symbols = 1
+
+    # ---- 1. Score single-symbol variants ----
+    scored_singles: list[tuple[float, str]] = []
+    for sym in symbols:
+        variant = dict(rule)
+        variant["conditions"] = base_conditions + [f"symbol is {sym}"]
+        fmt = _rule_set_to_engine_format([variant])
+        try:
+            train_m = train_engine.simulate_rule_set(fmt)
+            val_m = val_engine.simulate_rule_set(fmt)
+        except Exception:
+            continue
+
+        if not gate_positive_good(
+            train_m, val_m,
+            min_train_trades=min_train_trades,
+            min_val_trades=min_val_trades,
+        ):
+            continue
+
+        score = min(
+            float(train_m.get("total_return_pct", 0.0)),
+            float(val_m.get("total_return_pct", 0.0)),
+        )
+        scored_singles.append((score, sym))
+
+    scored_singles.sort(key=lambda x: x[0], reverse=True)
+    top_syms = [sym for _, sym in scored_singles[:top_single]]
+
+    # ---- 2. Build candidate symbol sets ----
+    candidate_sets: list[tuple[str, ...]] = [(sym,) for sym in top_syms]
+
+    if use_combinations and len(top_syms) >= 2:
+        from itertools import combinations
+
+        for k in range(2, min(max_symbols, len(top_syms)) + 1):
+            for combo in combinations(top_syms, k):
+                candidate_sets.append(tuple(combo))
+
+    if not candidate_sets:
+        # Fallback: return a single variant with one symbol or the original rule.
+        if top_syms:
+            variant = dict(rule)
+            variant["conditions"] = base_conditions + [
+                f"symbol is {top_syms[0]}"]
+            return [variant]
+        return [dict(rule)]
+
+    # ---- 3. Score all candidates, gate-filter, sort, keep top-K ----
+    scored_variants: list[tuple[float, dict]] = []
+    seen_sets: set[tuple[str, ...]] = set()
+
+    for sym_set in candidate_sets:
+        # Deduplicate while preserving order.
+        sym_set = tuple(dict.fromkeys(str(s) for s in sym_set))
+        if not sym_set or sym_set in seen_sets:
+            continue
+        seen_sets.add(sym_set)
+
+        variant = dict(rule)
+        variant["conditions"] = (
+            base_conditions + [f"symbol is {s}" for s in sym_set]
+        )
+        fmt = _rule_set_to_engine_format([variant])
+        try:
+            train_m = train_engine.simulate_rule_set(fmt)
+            val_m = val_engine.simulate_rule_set(fmt)
+        except Exception:
+            continue
+
+        if not gate_positive_good(
+            train_m, val_m,
+            min_train_trades=min_train_trades,
+            min_val_trades=min_val_trades,
+        ):
+            continue
+
+        score = min(
+            float(train_m.get("total_return_pct", 0.0)),
+            float(val_m.get("total_return_pct", 0.0)),
+        )
+        scored_variants.append((score, variant))
+
+    scored_variants.sort(key=lambda x: x[0], reverse=True)
+    return [v for _, v in scored_variants[:max_variants]]
+
+
+def _build_multi_symbol_merged_rules(
+    symbol_assignments: dict[str, list[int]],
+    pool: list[dict],
+    train_engine: object,
+    val_engine: object,
+    symbols: list[str],
+) -> list[dict]:
+    """Build merged rules using multi-symbol combinations.
+
+    For each unique pool rule selected by at least one symbol, call
+    ``_build_symbol_specialized_variants`` to find the best symbol
+    combination.  The best variant replaces the naive "append all symbols"
+    merge.
+
+    Parameters
+    ----------
+    symbol_assignments : dict[str, list[int]]
+        Mapping of symbol -> list of pool rule indices selected for that symbol.
+    pool : list[dict]
+        The enriched pool of candidate rules.
+    train_engine : object
+        Engine for train-split simulation.
+    val_engine : object
+        Engine for validation-split simulation.
+    symbols : list[str]
+        Full symbol universe.
+
+    Returns
+    -------
+    list[dict]
+        Merged rules ready for sorting and final output.
+    """
+    selected_indices: set[int] = set()
+    for indices in symbol_assignments.values():
+        for idx in indices:
+            selected_indices.add(idx)
+
+    merged: list[dict] = []
+    for pool_idx in sorted(selected_indices):
+        rule = dict(pool[pool_idx])
+        rule["_pool_idx"] = int(pool_idx)
+
+        variants = _build_symbol_specialized_variants(
+            rule, train_engine, val_engine, symbols,
+        )
+        if variants:
+            # variants are sorted by score descending; pick the best.
+            best = variants[0]
+            best["_pool_idx"] = int(pool_idx)
+            merged.append(best)
+        else:
+            # Fallback: keep the original rule without any symbol filter.
+            merged.append(rule)
+
+    return merged
+
+
+# ---------------------------------------------------------------------------
 # Output paths
 # ---------------------------------------------------------------------------
 
@@ -973,8 +1203,24 @@ class Rule_Set_Selector:
                 self._persist_output(output_dict)
                 return output_dict
         else:
+            # Build merged rules with multi-symbol combinations when enabled
+            # (Task 6).  The new path calls ``_build_symbol_specialized_variants``
+            # per pool rule to find the best 1-, 2-, or 3-symbol combination
+            # instead of blindly appending all symbols that selected the rule.
+            use_symbol_specialization = bool(
+                getattr(_cfg, "SYMBOL_SPECIALIZATION_USE_COMBINATIONS", True))
+            if use_symbol_specialization:
+                merged_rules = _build_multi_symbol_merged_rules(
+                    symbol_assignments, enriched_pool,
+                    self._train_engine, self._val_engine,
+                    self._symbols,
+                )
+            else:
+                merged_rules = _merge_per_symbol_rules(
+                    symbol_assignments, enriched_pool)
+
             merged_rules = _sort_merged_rules_by_score(
-                _merge_per_symbol_rules(symbol_assignments, enriched_pool),
+                merged_rules,
                 self._train_engine,
                 self._val_engine,
             )
