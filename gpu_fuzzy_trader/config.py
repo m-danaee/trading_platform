@@ -1150,6 +1150,54 @@ PHASE3_BATCH_WORKERS = min(32, os.cpu_count() or 4)
 # Debug scope relaxes via effective_phase3_val_return_floor_pct().
 PHASE3_VAL_RETURN_FLOOR_PCT = 5.0
 
+# --- Positive-good gate (is_positive_good style) ---------------------------------
+
+# PHASE3_REQUIRE_POSITIVE_GOOD — require rule to be positive on both train and val
+# with PF >= 1.0, min trades, and returns above the configured floors.
+# When True, ``gate_positive_good()`` is called in per-symbol greedy scoring;
+# rules that fail are hard-rejected (return -999).  The existing
+# ``PHASE3_MAX_TRAIN_VAL_GAP_PCT`` gate runs in addition, not instead.
+#   True  → reject rules that are not profitable on both splits (default).
+#   False → skip this gate (legacy behaviour).
+PHASE3_REQUIRE_POSITIVE_GOOD = True
+
+# PHASE3_MIN_TRAIN_RETURN — minimum train return % for ``gate_positive_good``.
+#   Higher → only strongly profitable-on-train rules pass the gate.
+#   Lower  → any positive return counts (0.0 = strictly > 0).
+PHASE3_MIN_TRAIN_RETURN = 0.0
+
+# PHASE3_MIN_VAL_RETURN — minimum validation return % for ``gate_positive_good``.
+#   Higher → only strongly profitable-on-val rules pass.
+#   Lower  → any positive return counts (0.0 = strictly > 0).
+PHASE3_MIN_VAL_RETURN = 0.0
+
+# PHASE3_MIN_TRAIN_PF — minimum train profit factor for ``gate_positive_good``.
+#   Higher → require strong gross-win / gross-loss ratio on train.
+#   Lower  → allow marginal train PF (1.0 = break-even before fees).
+PHASE3_MIN_TRAIN_PF = 1.0
+
+# PHASE3_MIN_VAL_PF — minimum validation profit factor for ``gate_positive_good``.
+#   Higher → require strong gross-win / gross-loss ratio on val.
+#   Lower  → allow marginal val PF (1.0 = break-even before fees).
+PHASE3_MIN_VAL_PF = 1.0
+
+# PHASE3_MIN_TRAIN_TRADES — minimum executed trades on train for gate.
+#   Higher → reject thin train-sample rules.
+#   Lower  → allow sparse train evidence (must still pass pool floors).
+PHASE3_MIN_TRAIN_TRADES = 25
+
+# PHASE3_MIN_VAL_TRADES — minimum executed trades on validation for gate.
+#   Higher → reject thin val-sample rules.
+#   Lower  → allow sparse val evidence.
+PHASE3_MIN_VAL_TRADES = 15
+
+# PHASE2_STRICT_POSITIVE_GOOD — when True, applies ``gate_positive_good`` in
+# Phase 2 pool admission (``_passes_pool_admission_impl``).  Default OFF to
+# avoid breaking the existing pool; turned ON in Task 5.
+#   True  → pool entries must also pass the positive-good gate.
+#   False → pool admission uses its own floors (legacy, unchanged).
+PHASE2_STRICT_POSITIVE_GOOD = False
+
 
 # =============================================================================
 # Phase 4 — Walk-forward risk optimization (TP / SL / capital)
