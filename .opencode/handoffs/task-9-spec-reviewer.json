@@ -1,0 +1,7 @@
+{
+  "task": "task-9",
+  "verdict": "APPROVED",
+  "issues": [],
+  "summary": "The production-pipeline gap flagged in the previous review is fully fixed. The new `_maybe_write_evaluator_clean()` helper in `output/writer.py` is gated by `WRITE_EVALUATOR_CLEAN` (default True) and wrapped in a non-fatal try/except. All 5 direct `json.dump` call sites across Phase 3 (`_persist_output`), Phase 4 (`_write_non_optimized_output`, `train`, `optimize_risk_grid`), and Phase 5 (`_remove_negative_pnl_rules`) now call `_maybe_write_evaluator_clean` immediately after the main write. The `Output_Writer.write` wire-in (from the original implementation) is preserved unchanged. 13 unit tests pass, including 4 new tests for the `_maybe_write_evaluator_clean` helper covering flag=true, flag=false, parent-dir creation, and missing-key graceful handling. No changes to `evaluator_v5.ipynb` or the GPU engine. All acceptance criteria from the task spec are met.",
+  "notes": []
+}

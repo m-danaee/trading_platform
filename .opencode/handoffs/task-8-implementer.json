@@ -1,0 +1,33 @@
+{
+  "task_id": "task-8",
+  "status": "DONE",
+  "commit": "54cc971",
+  "branch": "feature/task-8-regime-keyword-stratum",
+  "base_branch": "main",
+  "files_changed": [
+    "gpu_fuzzy_trader/config.py",
+    "gpu_fuzzy_trader/phases/phase2_init.py",
+    "gpu_fuzzy_trader/phases/phase2_rule_pool.py",
+    "tests/unit/test_regime_keyword_stratum.py"
+  ],
+  "acceptance_criteria_verification": {
+    "config_keys": "4 new keys (PHASE2_REGIME_STRATUM_ENABLED, PHASE2_REGIME_STRATUM_FRAC, PHASE2_REGIME_FEATURE_KEYWORDS) added and accessible via getattr",
+    "stratum_literal_extended": "Stratum type is now Literal[\"elite\", \"explorer\", \"regime\"]",
+    "regime_feature_indices": "importable, returns correct indices for regime-keyword-matched features",
+    "assign_three_strata_to_indices": "importable, returns correct fractions of elite/explorer/regime",
+    "sample_regime_stratum_chromosome": "importable, first active gene is always a regime feature when regime indices exist",
+    "wire_in_init_population": "when PHASE2_REGIME_STRATUM_ENABLED=True, 3-stratum assignment used; regime rows get regime-anchored chromosomes",
+    "backward_compat": "when PHASE2_REGIME_STRATUM_ENABLED=False, original 2-stratum behavior preserved",
+    "new_tests": "19 tests in tests/unit/test_regime_keyword_stratum.py — all pass",
+    "existing_tests": "test_phase2_init.py (8), test_phase2_rule_pool.py (89), test_phase2_stage.py (11), test_phase2_sparse_encoding.py (5), test_evox_runner.py (21) — all pass"
+  },
+  "notes_for_reviewer": [
+    "Implementation follows the friend's pattern from friend_project/gpu_fuzzy_trader/phases/phase2_rule_pool.py lines 286-345",
+    "sample_regime_stratum_chromosome works on dense encoding; for sparse slots the result is converted via dense_to_sparse",
+    "When no regime features are found (empty keyword list or no match), sample_regime_stratum_chromosome falls back to explorer-stratum behavior",
+    "assign_three_strata_to_indices is a NEW function; the original assign_strata_to_indices is untouched for backward compatibility",
+    "The 3-stratum fractions are derived from the existing 2-tuple (0.67, 0.33) config plus PHASE2_REGIME_STRATUM_FRAC=0.25: elite scales by 0.75, explorer scales by 0.75, regime gets the remaining 25%",
+    "All 4 config keys use getattr() with defaults matching the task spec",
+    "No changes to evaluator_v5.ipynb, GPU engine, or JSON output contract"
+  ]
+}

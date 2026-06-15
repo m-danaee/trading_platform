@@ -1,0 +1,22 @@
+{
+  "task": "task-8",
+  "verdict": "APPROVED",
+  "findings": [
+    {
+      "severity": "low",
+      "finding": "Type hint for `feature_probs` in `sample_regime_stratum_chromosome` is `np.ndarray` (non-optional) but the function body checks `if feature_probs is not None`. Not a runtime bug (always called with an ndarray from `_init_population`), but a minor annotation inconsistency.",
+      "fix": "Consider changing the type hint to `np.ndarray | None` or removing the None check if it's truly unreachable."
+    },
+    {
+      "severity": "low",
+      "finding": "Substring matching with keyword `'range'` could theoretically match pathological feature names containing the substring (e.g., `'strange_value'`). Practically zero risk in a trading feature set.",
+      "fix": "Could add word-boundary checks (e.g., `re.search(r'\\brange\\b', name)`) but not necessary given the existing feature naming conventions."
+    },
+    {
+      "severity": "low",
+      "finding": "No unit test for edge-case `PHASE2_REGIME_STRATUM_FRAC` values of 0.0 (no-op) or 1.0 (all-regime). The mechanism is verified for 0.25 and 0.50, so this is low priority.",
+      "fix": "Add parametric tests for boundary fractions if desired."
+    }
+  ],
+  "summary": "Implementation is correct, robust, and matches the task spec exactly. All 19 new tests pass, all 135 existing tests pass (no regressions). Only 4 files changed, all within scope. The `Stratum` literal extension is a strict superset preserving backward compatibility. The `_regime_feature_indices` helper correctly performs case-insensitive substring matching and handles edge cases (empty input, missing keys, no match). The `assign_three_strata_to_indices` function correctly distributes fractions with rounding correction. `sample_regime_stratum_chromosome` always anchors the first active gene on a regime feature with proper fallback when none exist. The wire-in into `_init_population` correctly routes regime-stratum rows. Three minor/low findings noted (type hint inconsistency, theoretical substring overmatch, missing boundary fraction tests) — none affect correctness or stability."
+}

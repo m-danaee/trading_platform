@@ -1,32 +1,34 @@
 {
   "task_id": "task-9",
-  "title": "Add evaluator_clean writer",
+  "title": "Add evaluator_clean writer — fix phase 3/4/5 wire-in gap",
   "status": "DONE",
-  "commit": "12cb66f",
+  "commit": "HEAD",
   "branch": "feature/task-9-evaluator-clean-writer",
   "files_changed": [
-    "gpu_fuzzy_trader/config.py",
     "gpu_fuzzy_trader/output/writer.py",
+    "gpu_fuzzy_trader/phases/phase3_rule_set.py",
+    "gpu_fuzzy_trader/phases/phase4_wf_optimizer.py",
+    "gpu_fuzzy_trader/phases/phase5_oos.py",
     "tests/unit/test_evaluator_clean_writer.py"
   ],
-  "description": "Added WRITE_EVALUATOR_CLEAN config key (default True), write_evaluator_clean() standalone function, and wired it into Output_Writer.write() so that the main write also produces output/evaluator_clean/{direction}_evaluator_clean.json with only direction and rules_set (extra metadata stripped).",
+  "description": "Fixed the production pipeline gap: the production Phase 3/4/5 code writes strategy files via direct json.dump (not through Output_Writer.write), so the evaluator_clean files were never created during a real pipeline run. Added _maybe_write_evaluator_clean() helper in writer.py and wired it into all 5 json.dump call sites across the three phase files.",
   "acceptance_criteria": {
-    "config_key_present": true,
-    "import_works": true,
-    "standalone_writes_stripped": true,
-    "parent_dirs_created": true,
-    "wired_into_Output_Writer_write": true,
-    "unit_tests_passing": 9,
-    "existing_tests_unchanged": true
+    "_maybe_write_evaluator_clean_exists": true,
+    "phase3_call_site_wired": true,
+    "phase4_optimize_risk_call_site_wired": true,
+    "phase4_train_call_site_wired": true,
+    "phase4_optimize_risk_grid_call_site_wired": true,
+    "phase5_remove_negative_pnl_call_site_wired": true,
+    "unit_tests_passing": 13,
+    "existing_tests_unchanged": 50
   },
   "notes_for_reviewer": [
-    "The write_evaluator_clean function is placed in output/writer.py alongside the existing Output_Writer class.",
-    "Output_Writer.write() calls write_evaluator_clean() after the main write, gated by getattr(_cfg, 'WRITE_EVALUATOR_CLEAN', True).",
-    "The clean file is written to <parent>/evaluator_clean/<direction>_evaluator_clean.json (e.g., outputs/evaluator_clean/long_evaluator_clean.json).",
-    "The standalone function uses strategy['direction'] and strategy['rules_set'] directly (not validated) so it works with any dict that has those keys.",
-    "Config key WRITE_EVALUATOR_CLEAN = True is added near OUTPUTS_DIR in the Phase 0 section.",
-    "9 unit tests pass: 6 standalone + 3 wiring tests, including coverage for the config flag set to False.",
-    "All 50 existing output_writer tests and 3 property tests continue to pass.",
-    "Phase files are NOT modified in this task — the wiring happens through Output_Writer.write. Phase writes that use json.dump directly will need a separate follow-up if clean files are desired from those paths."
+    "Added _maybe_write_evaluator_clean(strategy, main_path, direction) in output/writer.py alongside write_evaluator_clean.",
+    "The helper is gated by bool(getattr(_cfg, 'WRITE_EVALUATOR_CLEAN', True)) and wraps write_evaluator_clean in a try/except that logs at DEBUG level (non-fatal).",
+    "Wired into: phase3_rule_set._persist_output, phase4_wf_optimizer.optimize_risk, phase4_wf_optimizer.train, phase4_wf_optimizer.optimize_risk_grid, phase5_oos._remove_negative_pnl_rules.",
+    "Each phase file imports _maybe_write_evaluator_clean and write_evaluator_clean from gpu_fuzzy_trader.output.writer.",
+    "4 new tests for _maybe_write_evaluator_clean: flag=true writes, flag=false skips, parent dir creation, missing keys handled gracefully.",
+    "All 63 tests pass (50 original output_writer + 9 evaluator_clean + 4 new).",
+    "The existing Output_Writer.write wire-in is preserved (still valid for callers who use the class-based path)."
   ]
 }

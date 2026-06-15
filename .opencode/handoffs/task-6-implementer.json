@@ -1,0 +1,48 @@
+{
+  "task": 6,
+  "title": "Add multi-symbol combinations in Phase 3 symbol specialization",
+  "status": "DONE",
+  "commit": "585dc39",
+  "branch": "feature/task-6-multi-symbol-combinations",
+  "files_changed": [
+    "gpu_fuzzy_trader/config.py",
+    "gpu_fuzzy_trader/phases/phase3_rule_set.py",
+    "tests/unit/test_multi_symbol_combinations.py"
+  ],
+  "summary": "Added multi-symbol combinations support in Phase 3 rule selection. "
+    "Six new SYMBOL_SPECIALIZATION_* config keys control the behaviour. "
+    "Added _build_symbol_specialized_variants() which generates 1-, 2-, and 3-symbol "
+    "variants for each pool rule, scores them via the existing gate_positive_good "
+    "filter and min(train,val) return scoring, and returns the top-K variants. "
+    "Added _build_multi_symbol_merged_rules() which wires this into the per-symbol "
+    "greedy result-merging step, replacing the naive 'append all symbols' merge "
+    "when SYMBOL_SPECIALIZATION_USE_COMBINATIONS=True. "
+    "The old _merge_per_symbol_rules() is preserved as a fallback. "
+    "24 new unit tests in test_multi_symbol_combinations.py cover all acceptance criteria.",
+  "tests_run": [
+    "tests/unit/test_multi_symbol_combinations.py: 24 passed",
+    "tests/unit/test_phase3_rule_set.py: 65 passed, 1 skipped (no regression)",
+    "tests/unit/test_positive_good_gate.py: all passed (no regression)",
+    "tests/unit/test_config_additions.py: all passed (no regression)",
+    "tests/unit/test_monthly_wired_into_scoring.py: all passed (no regression)"
+  ],
+  "acceptance_criteria_verified": [
+    "All 6 SYMBOL_SPECIALIZATION_* config keys present and accessible via getattr(_cfg, ...)",
+    "_build_symbol_specialized_variants returns list of dicts with symbol is X conditions",
+    "USE_COMBINATIONS=False returns only single-symbol variants",
+    "USE_COMBINATIONS=True returns mix of 1-, 2-, and 3-symbol variants sorted by score",
+    "All variants pass gate_positive_good with configured min_train/min_val trades",
+    "New function wired into per-symbol greedy result-merging step via _build_multi_symbol_merged_rules",
+    "New unit test file has >= 24 test cases covering all required scenarios",
+    "Existing tests all pass (no regression)"
+  ],
+  "notes_for_reviewer": [
+    "The _build_symbol_specialized_variants function uses getattr(_cfg, 'KEY', default) pattern per project conventions.",
+    "gate_positive_good is called inside _build_symbol_specialized_variants for variant filtering; "
+    "it is also called again in _score_merged_rule_on_splits during sorting. This double-gate is idempotent.",
+    "When all variants fail the gate, the function returns a fallback variant (same behaviour as the friend's _ensure_symbol_filtered_rule).",
+    "The old _merge_per_symbol_rules function is preserved and used when SYMBOL_SPECIALIZATION_USE_COMBINATIONS=False.",
+    "No changes to evaluator_v5.ipynb, GPU engine, or JSON output contract.",
+    "No new third-party dependencies added."
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "status": "DONE",
+  "commit": "9271bc7",
+  "branch": "feature/task-4-evaluator-health-penalty",
+  "files_changed": [
+    "gpu_fuzzy_trader/scoring/__init__.py",
+    "gpu_fuzzy_trader/scoring/evaluator_health.py",
+    "gpu_fuzzy_trader/config.py",
+    "gpu_fuzzy_trader/phases/phase3_rule_set.py",
+    "gpu_fuzzy_trader/phases/phase4_wf_optimizer.py",
+    "tests/unit/test_evaluator_health.py"
+  ],
+  "tests_run": [
+    "tests/unit/test_evaluator_health.py: 24 passed",
+    "tests/unit/test_positive_good_gate.py: 23 passed",
+    "tests/unit/test_monthly_wired_into_scoring.py: passed",
+    "tests/unit/test_config_additions.py: passed",
+    "tests/unit/test_cpu_engine.py: 95 passed",
+    "tests/unit/ (full suite): 1076 passed, 1 skipped"
+  ],
+  "ac": {
+    "1_simulate_rule_set_has_7_new_fields": "Already present in _simulate_rule_set_entries return dict (verified); no changes needed to cpu_engine.py",
+    "2_import_works": "`from gpu_fuzzy_trader.scoring.evaluator_health import evaluator_health_penalty, execution_ok` works",
+    "3_penalty_high_skip": "`evaluator_health_penalty({'raw_signal_count':100,'executed_trades':50,'skipped_min_notional_count':50})` returns 1300.0 (> 0)",
+    "4_penalty_zero_20pct_skip": "`evaluator_health_penalty({'raw_signal_count':100,'executed_trades':80,'skipped_min_notional_count':20})` returns 0.0",
+    "5_execution_ok_true": "`execution_ok(...)` returns True when skip ratio ≤ 0.20 and exec ratio ≥ 0.60",
+    "6_execution_ok_false": "`execution_ok(...)` returns False when skip ratio > 0.20",
+    "7_phase3_score_subtracts_penalty": "Penalty wired into _robust_combo_return via evaluator_health_penalty(train) + evaluator_health_penalty(val) × PHASE3_EVAL_HEALTH_WEIGHT",
+    "8_phase4_trial_subtracts_penalty": "Penalty wired into Phase 4 Optuna objective via evaluator_health_penalty(val_metrics) × PHASE3_EVAL_HEALTH_WEIGHT",
+    "9_gate_wired": "gate_positive_good calls execution_ok when require_execution_health=True (all 4 call sites in phase3_rule_set.py pass config flag PHASE3_GATE_EXECUTION_HEALTH)",
+    "10_new_unit_test_8_cases": "tests/unit/test_evaluator_health.py has 24 test cases (≥ 8)",
+    "11_existing_tests_pass": "All 1076 existing unit tests pass",
+    "12_no_changes_to_ipynb_or_gpu": "evaluator_v5.ipynb and GPU engine untouched"
+  },
+  "notes_for_reviewer": [
+    "cpu_engine.py `_simulate_rule_set_entries` already exposes all 7 fields (raw_signal_count, executed_trades, skipped_min_notional_count, max_simultaneous_positions, max_total_open_exposure, loss_count, time_closed_count, account_ruined). No changes needed there.",
+    "gate_positive_good got a new keyword argument `require_execution_health=False` (default) for backward compat with existing tests. All 4 internal call sites pass the config flag PHASE3_GATE_EXECUTION_HEALTH (default True).",
+    "Phase 4 evaluator health penalty requires one extra backtest per trial on the full val_df. This is O(1) per trial and mirrors how monthly penalty is computed.",
+    "8 new config keys added with EVAL_HEALTH_ prefix (to avoid collision with friend's RB_ prefix): EVAL_HEALTH_MAX_SKIPPED_RATIO, EVAL_HEALTH_MIN_EXECUTED_RATIO, EVAL_HEALTH_SKIPPED_WEIGHT, EVAL_HEALTH_EXECUTED_WEIGHT, EVAL_HEALTH_MAX_SIMULTANEOUS_POSITIONS, EVAL_HEALTH_MAX_POSITIONS_WEIGHT, PHASE3_EVAL_HEALTH_WEIGHT, PHASE3_GATE_EXECUTION_HEALTH.",
+    "No changes to GPU engine, evaluator_v5.ipynb, or existing JSON output contract."
+  ]
+}

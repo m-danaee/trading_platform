@@ -1,0 +1,30 @@
+{
+  "task": 5,
+  "title": "Expand Phase 2 pool admission",
+  "verdict": "APPROVED",
+  "findings": [
+    {
+      "severity": "medium",
+      "finding": "Missing pool cap test in _build_pool_from_archive. The test file docstring mentions the pool cap but no test verifies the sort-by-deployability_rank_score-and-slice behavior, nor the no-op path when len(pool) < PHASE2_KEEP_TOP_RULES.",
+      "fix": "Add a test that constructs synthetic pool entries with known deployability_rank_score ordering, calls _build_pool_from_archive with PHASE2_KEEP_TOP_RULES=3, and asserts only the top-3 remain ordered by score descending. Also test with a pool smaller than the cap to verify no-op."
+    },
+    {
+      "severity": "low",
+      "finding": "_raw_feasibility_violation_score does not check drawdown. The new per-fold DD gate in _passes_pool_admission_impl is not mirrored in _raw_feasibility_violation_score, so passes_evolution_deployability_preview can return True for rules with high DD that would later fail pool admission.",
+      "fix": "Add DD checks to _raw_feasibility_violation_score when cv_fold=True and _split_mode_is_purged_cv(), consistent with the admission function. Non-blocking; evolution preview is documented as lightweight."
+    },
+    {
+      "severity": "low",
+      "finding": "No train-side DD rejection test. test_phase2_pool_admission.py only tests val-side DD rejection.",
+      "fix": "Add a test case where train DD exceeds PHASE2_CV_MAX_WORST_DD (e.g., 25%) but val DD is within bounds (e.g., 8%)."
+    },
+    {
+      "severity": "low",
+      "finding": "Positive-good gate rejection not tested. test_positive_good_does_not_crash_on_valid_rule only verifies the gate doesn't crash; no test verifies actual rejection when a rule passes relaxed CV thresholds but fails gate_positive_good (e.g., train_pf=0.85 < 1.0).",
+      "fix": "Add a test where relaxed CV thresholds pass (val_ret=-5%, DD=10%) but train_pf=0.85 < PHASE3_MIN_TRAIN_PF=1.0 → assert False."
+    }
+  ],
+  "summary": "All 6 acceptance criteria met. Implementation correctly relaxes CV per-fold pool admission thresholds (val return >= -8%, PF >= 0.80, DD <= 18%, trades >= 10) while keeping the holdout path strict. Pool capped at PHASE2_KEEP_TOP_RULES=140 sorted by deployability_rank_score. PHASE2_STRICT_POSITIVE_GOOD=True gate runs as secondary check after relaxed CV thresholds. All 31 relevant tests pass (10 new + 21 patched). Two existing test files patched minimally (1 line each) to disable positive-good for legacy-format tests. Four non-blocking findings flagged for test coverage improvements.",
+  "tests_passed": 31,
+  "tests_total": 31
+}

@@ -1,0 +1,27 @@
+{
+  "task": "Task 4 — Evaluator-failure-mode awareness",
+  "verdict": "APPROVED",
+  "findings": [
+    {
+      "severity": "low",
+      "finding": "Unused imports in test file: `from unittest.mock import MagicMock, patch` in `tests/unit/test_evaluator_health.py` line 15. Neither `MagicMock` nor `patch` is used anywhere in the file.",
+      "fix": "Remove the unused import line."
+    },
+    {
+      "severity": "low",
+      "finding": "Import inside hot loop: both `phase3_rule_set.py:_robust_combo_return` and `phase4_wf_optimizer.py:objective` import `evaluator_health_penalty` from `gpu_fuzzy_trader.scoring.evaluator_health` inside the function body, rather than at module level. While Python caches imports, this is a code smell and adds a tiny per-call overhead (~0.5 µs per import lookup).",
+      "fix": "Move the import to module level: `from gpu_fuzzy_trader.scoring.evaluator_health import evaluator_health_penalty` at the top of both files."
+    },
+    {
+      "severity": "low",
+      "finding": "`evaluator_health_penalty` and `execution_ok` do not guard against `metrics=None`. Calling `evaluator_health_penalty(None)` raises `AttributeError` because `_safe_int` calls `metrics.get(key)`. In practice this never happens because `simulate_rule_set` always returns a dict, but a defensive `if metrics is None: return 0.0` would be more robust.",
+      "fix": "Add `if metrics is None: return 0.0` at the top of `evaluator_health_penalty` and `if metrics is None: return False` at the top of `execution_ok`."
+    },
+    {
+      "severity": "low",
+      "finding": "No automated regression test verifying that `CPUBacktestEngine.simulate_rule_set` actually returns the 7 health-related fields in its output dict (spec AC #1). The implementer verified manually and the fields are indeed present (confirmed by reading `cpu_engine.py` lines 1133-1143), but there is no test that instantiates an engine and asserts the keys exist/non-zero. An accidental refactor of the return dict could silently drop these fields.",
+      "fix": "Add a test in `test_evaluator_health.py` that creates a `CPUBacktestEngine` with a small DataFrame, runs `simulate_rule_set`, and asserts all 7 keys (`raw_signal_count`, `executed_trades`, `skipped_min_notional_count`, `max_simultaneous_positions`, `max_total_open_exposure`, `loss_count`, `time_closed_count`, `account_ruined`) exist in the returned dict."
+    }
+  ],
+  "summary": "Implementation is correct and well-structured. Penalty math matches the friend's `_evaluator_health_penalty` from `rb_governor.py`: skip-ratio penalty `(skip_ratio - 0.20) * 3500`, exec-ratio penalty `(0.60 - exec_ratio) * 2500`, and max-position penalty `(max_pos - 10) * 120`. Role multipliers (1.5x for test on skip/exec, 1.2x for test on positions) are correct. `execution_ok` correctly returns False when `raw_signal_count == 0` or missing. `gate_positive_good` backward compatibility is preserved via the new `require_execution_health=False` default kwarg — all 23 existing Task 3 tests pass without modification. All 4 wire-in points (Phase 3 `_robust_combo_return`, Phase 3 gate call sites × 4, Phase 4 Optuna objective) are correctly connected. Config keys use `EVAL_HEALTH_` prefix to avoid collision with the friend's `RB_` prefix. The new `evaluator_health.py` module is pure functions with no I/O, side effects, or engine calls. All 24 new tests pass. 4 low-severity findings noted for code style, defensive programming, and test completeness."
+}

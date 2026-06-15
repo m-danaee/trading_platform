@@ -1,0 +1,6 @@
+{
+  "task": 6,
+  "verdict": "APPROVED",
+  "issues": [],
+  "summary": "All 10 acceptance criteria are met. All 6 SYMBOL_SPECIALIZATION_* config keys are present and correctly defaulted (friend's defaults ported faithfully). _build_symbol_specialized_variants is importable and correctly gates variants through gate_positive_good with configured min-trade thresholds. When USE_COMBINATIONS=False, only single-symbol variants are returned. When True, 1-, 2-, and 3-symbol combinations are generated, scored by min(train_return, val_return), and sorted descending. The wire-in at Rule_Set_Selector.run() correctly delegates to _build_multi_symbol_merged_rules (new path) when USE_COMBINATIONS=True and falls back to _merge_per_symbol_rules (legacy path) when False. The original _merge_per_symbol_rules is preserved. 24 new unit tests pass (covering accept-criteria 4+, config accessibility, importability, and backward compat). Existing test_phase3_rule_set.py passes 65/65 + 1 skipped (no regression). No changes to evaluator_v5.ipynb, GPU engine, or JSON output contract."
+}

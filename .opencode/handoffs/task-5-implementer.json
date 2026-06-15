@@ -1,0 +1,41 @@
+{
+  "task": 5,
+  "title": "Expand Phase 2 pool admission",
+  "status": "DONE",
+  "commit": "4124be1",
+  "branch": "feature/task-5-expand-phase2-pool",
+  "files_changed": [
+    "gpu_fuzzy_trader/config.py",
+    "gpu_fuzzy_trader/phases/phase2_support.py",
+    "gpu_fuzzy_trader/phases/phase2_rule_pool.py",
+    "tests/unit/test_phase2_pool_admission.py",
+    "tests/unit/test_phase2_support.py",
+    "tests/unit/test_phase2_cv_admission.py"
+  ],
+  "acceptance_criteria": {
+    "1_config_keys": "All 6 new keys (PHASE2_CV_MIN_WORST_RETURN=-8.0, PHASE2_CV_MIN_WORST_PF=0.80, PHASE2_CV_MAX_WORST_DD=18.0, PHASE2_CV_MIN_FOLD_TRADES=10, PHASE2_KEEP_TOP_RULES=140, PHASE2_STRICT_POSITIVE_GOOD=True) present and accessible.",
+    "2_pool_admission_impl": "_passes_pool_admission_impl uses new relaxed CV_* thresholds for cv_fold=True (val_ret_min=-8.0, pf_floor=0.80, min_val_trades=10, max_drawdown gate=18%). Non-CV path unchanged.",
+    "3_pool_cap": "_build_pool_from_archive caps pool at PHASE2_KEEP_TOP_RULES=140, sorted by deployability_rank_score descending.",
+    "4_unit_tests": "New test file tests/unit/test_phase2_pool_admission.py with 10 tests covering relaxed thresholds, positive-good gate, holdout unchanged, config presence.",
+    "5_existing_tests": "All 201+ existing related tests pass (phase2_support, phase2_cv_admission, phase2_cv, phase2_rule_pool, positive_good_gate, config_additions, evox_runner, etc.).",
+    "6_no_changes": "No changes to evaluator_v5.ipynb, GPU engine, or JSON output contract."
+  },
+  "tests_run": [
+    "pytest tests/unit/test_phase2_pool_admission.py -v → 10 passed",
+    "pytest tests/unit/test_phase2_support.py -v → 21 passed",
+    "pytest tests/unit/test_phase2_cv_admission.py -v → 6 passed",
+    "pytest tests/unit/test_phase2_cv.py -v → 4 passed",
+    "pytest tests/unit/test_phase2_rule_pool.py -v → 89 passed",
+    "pytest tests/unit/test_positive_good_gate.py -v → 10 passed",
+    "pytest tests/unit/test_evox_runner.py -v → 21 passed",
+    "pytest tests/unit/test_config_additions.py -v → 4 passed",
+    "pytest tests/unit/test_phase3_rule_set.py -v → 69 passed, 1 skipped"
+  ],
+  "notes_for_reviewer": [
+    "PHASE2_STRICT_POSITIVE_GOOD flipped to True as required; existing tests that use basic admission gate with sub-Phase3 trade counts were patched to set PHASE2_STRICT_POSITIVE_GOOD=False (test_phase2_support.py, test_phase2_cv_admission.py).",
+    "The per-fold drawdown gate (PHASE2_CV_MAX_WORST_DD=18.0) is applied to both train and val metrics within the cv_fold=True path.",
+    "The pool capping in _build_pool_from_archive uses a local import of deployability_rank_score to avoid circular imports.",
+    "Integration test (acceptance criterion #5) is OPTIONAL per task spec; not run due to RAM constraints.",
+    "All 6 new config keys use the friend's getattr(..., default) pattern with fallback defaults matching the expected values."
+  ]
+}

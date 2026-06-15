@@ -1,0 +1,6 @@
+{
+  "task": "task-7-risk-grid-search",
+  "verdict": "APPROVED",
+  "issues": [],
+  "summary": "All 11 acceptance criteria are satisfied. The 7 new PHASE4_GRID_* config keys are present and accessible with the friend's defaults. _optimize_risk_grid is importable, returns the correct 5-tuple shape, performs round-robin grid search over TP×SL×capital (10×6×9=540 combos), respects max_total_capital=95%, applies gate_positive_good per trial, runs 2 passes, and stops early when no improvement found. The WalkForwardRiskOptimizer.optimize_risk_grid public method is wired into run_pipeline.py behind the PHASE4_GRID_ENABLED=True flag with Optuna fallback. 11 new unit tests cover all 4+ required spec cases (improvement, no-improvement, capital cap, gate filtering) plus shape, passes, evaluate_ruleset, and method delegation. All 34 existing phase4 tests pass unchanged. No out-of-scope modifications to evaluator_v5.ipynb, GPU engine, or backtest code. JSON output preserves required shape with direction/risk_optimized/rules_set. Observation: optimize_risk_grid method uses self.val_df for both train_engine and val_engine, meaning train/val evaluation runs on identical data — not a spec violation but may limit generalization; consider using a split in a future task."
+}
