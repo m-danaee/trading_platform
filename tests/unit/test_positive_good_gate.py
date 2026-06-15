@@ -170,6 +170,40 @@ class TestGatePositiveGoodPure:
         val = _m(return_pct=3.0, pf=1.0, trades=20)
         assert gate_positive_good(train, val) is True
 
+    def test_empty_dicts_return_false(self) -> None:
+        """Both dicts empty → False (defaults below thresholds)."""
+        assert gate_positive_good({}, {}) is False
+
+    def test_nan_metrics_return_false(self) -> None:
+        """NaN metrics on either side → False."""
+        nan_metrics = {
+            "total_return_pct": float("nan"),
+            "profit_factor": 1.5,
+            "executed_trades": 30,
+        }
+        finite_metrics = {
+            "total_return_pct": 5.0,
+            "profit_factor": 1.5,
+            "executed_trades": 30,
+        }
+        assert gate_positive_good(nan_metrics, finite_metrics) is False
+        assert gate_positive_good(finite_metrics, nan_metrics) is False
+
+    def test_inf_metrics_return_false(self) -> None:
+        """Inf metrics on either side → False."""
+        inf_metrics = {
+            "total_return_pct": float("inf"),
+            "profit_factor": 1.5,
+            "executed_trades": 30,
+        }
+        finite_metrics = {
+            "total_return_pct": 5.0,
+            "profit_factor": 1.5,
+            "executed_trades": 30,
+        }
+        assert gate_positive_good(inf_metrics, finite_metrics) is False
+        assert gate_positive_good(finite_metrics, inf_metrics) is False
+
 
 # ===================================================================
 # Integration — gate wired into _score_pool_rule_on_symbol

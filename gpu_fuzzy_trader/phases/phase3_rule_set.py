@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import time
 from typing import Optional
@@ -78,13 +79,20 @@ def gate_positive_good(
     This is a **pure function** — no side effects, no engine calls, no IO.
     """
     def _safe_get(m: dict, key: str, default: float = 0.0) -> float:
+        """Read a metric, returning *default* for missing, None, NaN, or Inf values."""
         val = m.get(key)
         if val is None:
             return float(default)
         try:
-            return float(val)
+            f = float(val)
+            return f if math.isfinite(f) else float(default)
         except (TypeError, ValueError):
             return float(default)
+
+    def _safe_get_int(m: dict, key: str, default: int = 0) -> int:
+        """Read an integer metric, returning *default* for missing, None, NaN, or Inf values."""
+        f = _safe_get(m, key, default=float(default))
+        return int(f) if math.isfinite(f) else int(default)
 
     # --- train checks ---
     train_ret = _safe_get(train_metrics, "total_return_pct")
@@ -95,7 +103,7 @@ def gate_positive_good(
     if train_pf < min_train_pf:
         return False
 
-    train_trades = int(_safe_get(train_metrics, "executed_trades"))
+    train_trades = _safe_get_int(train_metrics, "executed_trades")
     if train_trades < min_train_trades:
         return False
 
@@ -108,7 +116,7 @@ def gate_positive_good(
     if val_pf < min_val_pf:
         return False
 
-    val_trades = int(_safe_get(val_metrics, "executed_trades"))
+    val_trades = _safe_get_int(val_metrics, "executed_trades")
     if val_trades < min_val_trades:
         return False
 
