@@ -221,7 +221,7 @@ def _log_pipeline_config() -> None:
         "Pipeline config: SPLIT_MODE=%s CV_FOLDS=%d | PHASE1 top_k=%d | "
         "PHASE2 algo=%s pop=%d gen=%d joint_train_val=%s cv_workers=%d | "
         "PHASE3 per-symbol greedy | "
-        "PHASE4 trials=%d wf_splits=%d sampler=%s n_jobs=%d%s",
+        "PHASE4 method=%s trials=%d wf_splits=%d sampler=%s n_jobs=%d%s",
         _cfg.SPLIT_MODE,
         _cfg.CV_N_FOLDS,
         _cfg.PHASE1_TOP_K_FEATURES,
@@ -230,6 +230,7 @@ def _log_pipeline_config() -> None:
         _cfg.PHASE2_GENERATIONS,
         _cfg.PHASE2_JOINT_TRAIN_VAL,
         _cfg.PHASE2_CV_FOLD_WORKERS,
+        "grid" if getattr(_cfg, "PHASE4_GRID_ENABLED", True) else "optuna",
         _cfg.PHASE4_N_TRIALS,
         _cfg.PHASE4_WF_SPLITS,
         _cfg.PHASE4_SAMPLER,
@@ -1415,18 +1416,24 @@ class Pipeline_Orchestrator:
                 )
                 continue
 
+            use_grid = bool(getattr(_cfg, "PHASE4_GRID_ENABLED", True))
             logger.info(
-                "Running %s … (%d rules from Phase 3)",
+                "Running %s … (%d rules from Phase 3, method=%s)",
                 dir_phase_name, n_rules,
+                "grid" if use_grid else "optuna",
             )
             try:
                 optimizer = WalkForwardRiskOptimizer(
                     val_df=val_df,
+                    train_df=train_df,
                     rule_set=rule_set,
                     direction=direction,
                     cv_folds=getattr(self, "_cv_folds", None) or None,
                 )
-                result = optimizer.train()
+                if use_grid:
+                    result = optimizer.optimize_risk_grid()
+                else:
+                    result = optimizer.train()
             except Exception as exc:
                 logger.error(
                     "Phase 4 [%s] failed: %s", direction, exc, exc_info=True

@@ -352,6 +352,218 @@ def _select_pareto_trial(study: Any, max_worst_dd_pct: float) -> Any:
     )
 
 
+def _score_metrics(train_m: dict, valid_m: dict) -> float:
+    """Composite score for grid search (return / DD / PF weighted).
+
+    This is a simplified port of the friend's ``_score_metrics`` from
+    ``rb_governor.py``.  It emphasises validation return-to-drawdown ratio,
+    profit factor, and penalises negative returns.
+    """
+    train_ret = float(train_m.get("total_return_pct", 0.0))
+    train_dd = float(train_m.get("max_drawdown_pct", 100.0))
+    train_pf = float(train_m.get("profit_factor", 0.0))
+    train_wr = float(train_m.get("win_rate", 0.0))
+
+    valid_ret = float(valid_m.get("total_return_pct", 0.0))
+    valid_dd = float(valid_m.get("max_drawdown_pct", 100.0))
+    valid_pf = float(valid_m.get("profit_factor", 0.0))
+    valid_wr = float(valid_m.get("win_rate", 0.0))
+
+    dd_floor = 0.50
+    train_ratio = train_ret / max(train_dd, dd_floor)
+    valid_ratio = valid_ret / max(valid_dd, dd_floor)
+
+    def _pf_term(pf: float, cap: float = 5.0) -> float:
+        return min(pf, cap)
+
+    score = (
+        120.0 * valid_ratio
+        + 45.0 * train_ratio
+        + 4.5 * valid_ret
+        + 1.2 * train_ret
+        + 14.0 * _pf_term(valid_pf)
+        + 5.0 * _pf_term(train_pf)
+        + 0.06 * valid_wr
+        + 0.025 * train_wr
+        - 0.25 * valid_dd
+        - 0.08 * train_dd
+    )
+
+    # Penalise negative returns and low PF heavily
+    if train_ret <= 0.0:
+        score -= 500.0 + abs(train_ret) * 20.0
+    if valid_ret <= 0.0:
+        score -= 1000.0 + abs(valid_ret) * 30.0
+    if train_pf < 1.0:
+        score -= (1.0 - train_pf) * 60.0
+    if valid_pf < 1.0:
+        score -= (1.0 - valid_pf) * 120.0
+
+    return float(score)
+
+
+def _evaluate_ruleset(
+    train_engine: CPUBacktestEngine,
+    val_engine: CPUBacktestEngine,
+    rules: list[dict],
+) -> tuple[dict, dict, float]:
+    """Evaluate a full rule set on train and val, returning metrics + score."""
+    train_m = train_engine.simulate_rule_set(rules)
+    val_m = val_engine.simulate_rule_set(rules)
+    score = _score_metrics(train_m, val_m)
+    return train_m, val_m, score
+
+
+def _optimize_risk_grid(
+    rules: list[dict],
+    train_engine: CPUBacktestEngine,
+    val_engine: CPUBacktestEngine,
+    *,
+    min_improvement: float = 0.02,
+) -> tuple[list[dict], dict, dict, float, list[dict]]:
+    """Per-rule round-robin grid search over TP, SL, capital_pct.
+
+    For each rule, every (TP, SL, capital_pct) combination from the configured
+    grid is tested.  Combinations that violate ``sum(capital_pct) <=
+    PHASE4_GRID_MAX_TOTAL_CAPITAL`` or fail ``gate_positive_good`` are skipped.
+    Two passes of round-robin per-rule tuning are performed.
+
+    Parameters
+    ----------
+    rules : list[dict]
+        Input rule set with ``tp``, ``sl``, ``capital_pct``.
+    train_engine : CPUBacktestEngine
+        Engine for training split evaluation.
+    val_engine : CPUBacktestEngine
+        Engine for validation split evaluation.
+    min_improvement : float
+        Minimum score improvement to accept a new combination (default 0.02).
+
+    Returns
+    -------
+    tuple[list[dict], dict, dict, float, list[dict]]
+        (optimized_rules, train_metrics, val_metrics, score, history)
+    """
+    from gpu_fuzzy_trader.phases.phase3_rule_set import gate_positive_good
+
+    best_rules = [dict(r) for r in rules]
+
+    # Initial evaluation
+    cur_train, cur_val, cur_score = _evaluate_ruleset(
+        train_engine, val_engine, best_rules)
+
+    hist: list[dict] = [{
+        "pass": 0,
+        "rule_index": -1,
+        "score": cur_score,
+        "train_return_pct": float(cur_train.get("total_return_pct", 0.0)),
+        "valid_return_pct": float(cur_val.get("total_return_pct", 0.0)),
+        "train_pf": float(cur_train.get("profit_factor", 0.0)),
+        "valid_pf": float(cur_val.get("profit_factor", 0.0)),
+    }]
+
+    tp_grid = tuple(float(x) for x in getattr(
+        _cfg, "PHASE4_GRID_TP_VALUES",
+        (1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 8.0, 10.0)))
+    sl_grid = tuple(float(x) for x in getattr(
+        _cfg, "PHASE4_GRID_SL_VALUES",
+        (1.0, 1.2, 1.5, 2.0, 2.5, 3.0)))
+    cap_grid = tuple(float(x) for x in getattr(
+        _cfg, "PHASE4_GRID_CAPITAL_VALUES",
+        (5.0, 7.5, 10.0, 12.5, 15.0, 20.0, 25.0, 35.0, 50.0)))
+    max_total_cap = float(getattr(_cfg, "PHASE4_GRID_MAX_TOTAL_CAPITAL", 95.0))
+    passes = int(getattr(_cfg, "PHASE4_GRID_PASSES", 2))
+
+    n_rules = len(best_rules)
+    total_trials = n_rules * passes * len(tp_grid) * len(sl_grid) * len(cap_grid)
+    trial_count = 0
+    _best_score_sofar = cur_score
+
+    for p in range(1, passes + 1):
+        improved = False
+        for idx in range(n_rules):
+            local_best: tuple[float, list[dict], dict, dict] | None = None
+            for tp in tp_grid:
+                for sl in sl_grid:
+                    for cap in cap_grid:
+                        trial_count += 1
+
+                        # --- progress report every 100 combos ---
+                        if trial_count % 100 == 0:
+                            logger.info(
+                                "Phase 4 grid progress: trial %d/%d "
+                                "(pass=%d, rule=%d/%d), best_score=%.2f",
+                                trial_count, total_trials,
+                                p, idx + 1, n_rules, _best_score_sofar,
+                            )
+
+                        trial = [dict(r) for r in best_rules]
+                        trial[idx]["tp"] = tp
+                        trial[idx]["sl"] = sl
+                        trial[idx]["capital_pct"] = cap
+
+                        # Skip if total capital exceeds the cap
+                        total_cap = sum(
+                            float(r.get("capital_pct", 0.0)) for r in trial)
+                        if total_cap > max_total_cap:
+                            continue
+
+                        try:
+                            train_m, val_m, score = _evaluate_ruleset(
+                                train_engine, val_engine, trial)
+                        except (ValueError, KeyError, TypeError) as exc:
+                            logger.debug(
+                                "grid trial failed (tp=%.2f, sl=%.2f, cap=%.2f): %s",
+                                tp, sl, cap, exc)
+                            continue
+
+                        # Must pass gate_positive_good
+                        if not gate_positive_good(train_m, val_m):
+                            continue
+
+                        if local_best is None or score > local_best[0]:
+                            local_best = (score, trial, train_m, val_m)
+                            if score > _best_score_sofar:
+                                _best_score_sofar = score
+
+            if local_best is not None and local_best[0] > cur_score + min_improvement:
+                cur_score, best_rules, cur_train, cur_val = local_best
+                improved = True
+                hist.append({
+                    "pass": p,
+                    "rule_index": idx + 1,
+                    "score": cur_score,
+                    "train_return_pct": float(cur_train.get("total_return_pct", 0.0)),
+                    "valid_return_pct": float(cur_val.get("total_return_pct", 0.0)),
+                    "train_pf": float(cur_train.get("profit_factor", 0.0)),
+                    "valid_pf": float(cur_val.get("profit_factor", 0.0)),
+                    "train_dd": float(cur_train.get("max_drawdown_pct", 0.0)),
+                    "valid_dd": float(cur_val.get("max_drawdown_pct", 0.0)),
+                    "tp": best_rules[idx]["tp"],
+                    "sl": best_rules[idx]["sl"],
+                    "capital_pct": best_rules[idx]["capital_pct"],
+                })
+                logger.info(
+                    "Phase 4 grid [%s]: improve pass=%d rule=%d score=%.2f "
+                    "train=%.2f%% val=%.2f%%",
+                    getattr(train_engine, "direction", "?"),
+                    p, idx + 1, cur_score,
+                    float(cur_train.get("total_return_pct", 0.0)),
+                    float(cur_val.get("total_return_pct", 0.0)),
+                )
+
+        if not improved:
+            logger.info(
+                "Phase 4 grid: no improvement in pass %d; stopping early.",
+                p)
+            break
+
+    # Final evaluation with optimized rules
+    final_train, final_val, final_score = _evaluate_ruleset(
+        train_engine, val_engine, best_rules)
+    return best_rules, final_train, final_val, final_score, hist
+
+
 def _load_rule_set(path: str) -> Optional[dict]:
     """Load and return rule set JSON, or None if missing/invalid."""
     if not os.path.exists(path):
@@ -419,6 +631,10 @@ class WalkForwardRiskOptimizer:
     cv_folds : list | None
         Purged rolling CV folds; when set, WF optimization uses every fold's val
         block instead of only *val_df*.
+    train_df : pd.DataFrame | None
+        Training split dataframe for grid-search train engine (separate from
+        ``val_df``).  When ``None`` (backward compat), the grid search falls
+        back to ``val_df`` for both train and val engines.
     n_trials : int | None
         Override ``PHASE4_N_TRIALS`` (useful for testing).
     n_splits : int | None
@@ -433,6 +649,7 @@ class WalkForwardRiskOptimizer:
         rule_set: dict,
         direction: str,
         cv_folds: list[Any] | None = None,
+        train_df: pd.DataFrame | None = None,
         n_trials: int | None = None,
         n_splits: int | None = None,
         seed: int | None = None,
@@ -448,6 +665,7 @@ class WalkForwardRiskOptimizer:
                 "rule_set must contain at least one rule in 'rules_set'")
 
         self.val_df = val_df
+        self.train_df = train_df
         self.rule_set = rule_set
         self.direction = direction
         self.cv_folds = cv_folds or []
@@ -774,6 +992,128 @@ class WalkForwardRiskOptimizer:
             logger.warning(
                 "Reporter.plot_phase4_pareto failed (non-fatal): %s", exc
             )
+
+        return output_dict
+
+    def optimize_risk_grid(self) -> dict:
+        """
+        Run deterministic grid search for TP/SL/capital instead of Optuna.
+
+        Uses ``_optimize_risk_grid`` internally and writes the optimized
+        rule set to ``outputs/{direction}.json``.  The existing
+        ``train()`` (Optuna) path is preserved behind the
+        ``PHASE4_GRID_ENABLED`` flag.
+
+        Returns
+        -------
+        dict
+            Optimized rule set (evaluator-compatible format).
+        """
+        rules = self.rule_set.get("rules_set", [])
+        if not rules:
+            raise ValueError(
+                "Phase 4 grid: empty rules_set; nothing to optimize")
+
+        # Use separate train/val dataframes when train_df is provided (Task 7 code review).
+        # This restores the purpose of gate_positive_good, which checks that rules
+        # perform well on BOTH train and validation data.
+        # When train_df is None (backward compat), fall back to val_df only.
+        _train_df = self.train_df if self.train_df is not None else self.val_df
+        train_engine = CPUBacktestEngine(
+            _train_df, {}, self.direction)
+        val_engine = CPUBacktestEngine(
+            self.val_df, {}, self.direction)
+
+        min_improvement = float(
+            getattr(_cfg, "PHASE4_GRID_MIN_IMPROVEMENT", 0.02))
+
+        # Log grid dimensions for progress visibility
+        tp_grid = tuple(float(x) for x in getattr(
+            _cfg, "PHASE4_GRID_TP_VALUES",
+            (1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 8.0, 10.0)))
+        sl_grid = tuple(float(x) for x in getattr(
+            _cfg, "PHASE4_GRID_SL_VALUES",
+            (1.0, 1.2, 1.5, 2.0, 2.5, 3.0)))
+        cap_grid = tuple(float(x) for x in getattr(
+            _cfg, "PHASE4_GRID_CAPITAL_VALUES",
+            (5.0, 7.5, 10.0, 12.5, 15.0, 20.0, 25.0, 35.0, 50.0)))
+        max_total_cap = float(getattr(_cfg, "PHASE4_GRID_MAX_TOTAL_CAPITAL", 95.0))
+        passes = int(getattr(_cfg, "PHASE4_GRID_PASSES", 2))
+
+        total_combos = len(tp_grid) * len(sl_grid) * len(cap_grid)
+        n_rules = len(rules)
+        n_backtests_per_trial = 2  # train + val
+        expected_trials = total_combos * n_rules * passes * n_backtests_per_trial
+
+        logger.info(
+            "Phase 4 grid [%s]: grid_size=%d (tp=%d × sl=%d × capital=%d), "
+            "rules=%d, passes=%d, expected_backtests≈%d, "
+            "min_improvement=%.2f, max_total_capital=%.1f%%",
+            self.direction, total_combos, len(tp_grid), len(sl_grid), len(cap_grid),
+            n_rules, passes, expected_trials, min_improvement, max_total_cap,
+        )
+
+        optimized_rules, train_metrics, val_metrics, score, history = (
+            _optimize_risk_grid(
+                rules,
+                train_engine,
+                val_engine,
+                min_improvement=min_improvement,
+            )
+        )
+
+        logger.info(
+            "Phase 4 grid [%s]: score=%.2f train_ret=%.2f%% "
+            "val_ret=%.2f%% rules=%d passes_seen=%d",
+            self.direction,
+            score,
+            float(train_metrics.get("total_return_pct", 0.0)),
+            float(val_metrics.get("total_return_pct", 0.0)),
+            len(optimized_rules),
+            len([h for h in history if h.get("pass", 0) > 0]),
+        )
+
+        # Normalize capital pct
+        optimized_rules = _normalize_capital_pct(optimized_rules)
+        cap = float(_cfg.PHASE3_MAX_CAPITAL_PCT_PER_RULE)
+        for rule in optimized_rules:
+            rule["capital_pct"] = min(
+                float(rule.get("capital_pct", 0.0)), cap)
+        optimized_rules = _normalize_capital_pct(optimized_rules)
+
+        val_metrics_final = val_engine.simulate_rule_set(optimized_rules)
+        val_ret = float(val_metrics_final.get("total_return_pct", 0.0))
+        val_pf = float(val_metrics_final.get("profit_factor", 0.0))
+        ret_gate = float(_cfg.PHASE5_VALIDATION_RETURN_GATE_PCT)
+        pf_gate = float(_cfg.PHASE5_VALIDATION_PROFIT_FACTOR_GATE)
+        deployable = (
+            val_ret >= (ret_gate - 1e-9)
+            and val_pf >= (pf_gate - 1e-9)
+        )
+
+        output_dict = {
+            "direction": self.direction,
+            "risk_optimized": bool(deployable),
+            "deployment_accepted": bool(deployable),
+            "validation_gate": {
+                "return_pct": val_ret,
+                "profit_factor": val_pf,
+                "required_return_pct": ret_gate,
+                "required_profit_factor": pf_gate,
+            },
+            "rules_set": optimized_rules,
+        }
+
+        os.makedirs(_cfg.OUTPUTS_DIR, exist_ok=True)
+        output_path = _OUTPUT_PATHS[self.direction]
+        with open(output_path, "w", encoding="utf-8") as fh:
+            json.dump(output_dict, fh, indent=2)
+
+        logger.info(
+            "Phase 4 grid [%s]: score=%.2f val_ret=%.2f%% val_pf=%.3f "
+            "deployable=%s -> %s",
+            self.direction, score, val_ret, val_pf, deployable, output_path,
+        )
 
         return output_dict
 
