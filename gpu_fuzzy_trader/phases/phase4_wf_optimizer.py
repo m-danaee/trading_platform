@@ -27,6 +27,10 @@ import pandas as pd
 from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
 from gpu_fuzzy_trader.reporting.reporter import Reporter
+from gpu_fuzzy_trader.validation.monthly_windows import (
+    evaluate_rule_set_monthly,
+    monthly_penalty,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -551,6 +555,19 @@ class WalkForwardRiskOptimizer:
                 n_jobs,
             )
 
+        # Pre-compute combined_df and feature_names for monthly-window validation.
+        _monthly_combined: pd.DataFrame | None = None
+        _monthly_feature_names: list[str] | None = None
+        if bool(getattr(_cfg, "MONTHLY_VALIDATION_ENABLED", False)):
+            _monthly_combined = self.val_df.copy()
+            _monthly_feature_names = [
+                c for c in _monthly_combined.columns
+                if c not in set(_cfg.LABEL_COLUMNS)
+                | set(_cfg.META_COLUMNS)
+                | set(_cfg.INTERNAL_COLUMNS)
+                and not str(c).startswith("_")
+            ]
+
         def objective(trial: "optuna.Trial") -> tuple[float, float, float]:
             params_list: list[dict] = []
             for i in range(n_rules):
@@ -593,8 +610,30 @@ class WalkForwardRiskOptimizer:
             trial.set_user_attr("worst_return", worst_return)
             trial.set_user_attr("worst_drawdown", worst_drawdown)
             trial.set_user_attr("worst_trades", worst_turnover)
+
+            # Monthly-window penalty.
+            monthly_penalty_value = 0.0
+            if (
+                _monthly_combined is not None
+                and bool(getattr(_cfg, "PHASE4_MONTHLY_EVAL_EVERY_TRIAL", True))
+            ):
+                try:
+                    monthly_summary, _ = evaluate_rule_set_monthly(
+                        _monthly_combined,
+                        candidate_rule_set,
+                        self.direction,
+                        feature_names=_monthly_feature_names,
+                    )
+                    if monthly_summary.windows > 0:
+                        monthly_penalty_value = (
+                            monthly_penalty(monthly_summary)
+                            * float(getattr(_cfg, "PHASE4_MONTHLY_SCORE_WEIGHT", 0.70))
+                        )
+                except Exception:
+                    pass  # skip monthly penalty on failure
+
             score_return = (
-                (worst_return - fold_penalty)
+                (worst_return - fold_penalty - monthly_penalty_value)
                 * float(_cfg.PHASE4_WORST_RETURN_WEIGHT)
             )
             score_dd = worst_drawdown * float(_cfg.PHASE4_WORST_DRAWDOWN_WEIGHT)
