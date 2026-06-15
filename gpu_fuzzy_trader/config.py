@@ -1199,6 +1199,43 @@ PHASE3_MIN_VAL_TRADES = 15
 PHASE2_STRICT_POSITIVE_GOOD = False
 
 
+# --- Evaluator health penalty (Task 4) ---------------------------------------
+
+# EVAL_HEALTH_MAX_SKIPPED_RATIO — max (skipped / raw) before skip penalty kicks in.
+#   Higher → tolerate more evaluator-filtered signals.
+#   Lower  → penalise strategies whose signals are mostly below MIN_POSITION_NOTIONAL.
+EVAL_HEALTH_MAX_SKIPPED_RATIO = 0.20
+
+# EVAL_HEALTH_MIN_EXECUTED_RATIO — min (executed / raw) to avoid exec penalty.
+#   Higher → require most raw signals to actually open as trades.
+#   Lower  → tolerate moderate skip rates without penalty.
+EVAL_HEALTH_MIN_EXECUTED_RATIO = 0.60
+
+# EVAL_HEALTH_SKIPPED_WEIGHT — penalty multiplier for exceeding max skip ratio.
+#   Higher → larger penalty per % of excess skipped signals.
+EVAL_HEALTH_SKIPPED_WEIGHT = 3500.0
+
+# EVAL_HEALTH_EXECUTED_WEIGHT — penalty multiplier for falling below min exec ratio.
+#   Higher → larger penalty per % of missing executed trades.
+EVAL_HEALTH_EXECUTED_WEIGHT = 2500.0
+
+# EVAL_HEALTH_MAX_SIMULTANEOUS_POSITIONS — max concurrent positions before penalty.
+EVAL_HEALTH_MAX_SIMULTANEOUS_POSITIONS = 10
+
+# EVAL_HEALTH_MAX_POSITIONS_WEIGHT — penalty multiplier per excess concurrent position.
+EVAL_HEALTH_MAX_POSITIONS_WEIGHT = 120.0
+
+# PHASE3_EVAL_HEALTH_WEIGHT — multiplier on evaluator_health_penalty in Phase 3 scoring.
+#   1.0 → full penalty applied; 0.0 → no penalty (legacy).
+PHASE3_EVAL_HEALTH_WEIGHT = 1.0
+
+# PHASE3_GATE_EXECUTION_HEALTH — when True, ``gate_positive_good`` also requires
+# that both train and val pass ``execution_ok()``.
+#   True  → reject rule sets with excessive skip rates at the gate level.
+#   False → skip this extra gate (legacy behaviour).
+PHASE3_GATE_EXECUTION_HEALTH = True
+
+
 # =============================================================================
 # Phase 4 — Walk-forward risk optimization (TP / SL / capital)
 # =============================================================================

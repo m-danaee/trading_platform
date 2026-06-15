@@ -623,6 +623,28 @@ class WalkForwardRiskOptimizer:
             trial.set_user_attr("worst_drawdown", worst_drawdown)
             trial.set_user_attr("worst_trades", worst_turnover)
 
+            # Evaluator-failure-mode penalty (Task 4).
+            eval_health_penalty_value = 0.0
+            eval_health_weight = float(
+                getattr(_cfg, "PHASE3_EVAL_HEALTH_WEIGHT", 1.0))
+            if eval_health_weight > 0.0:
+                try:
+                    from gpu_fuzzy_trader.scoring.evaluator_health import (
+                        evaluator_health_penalty,
+                    )
+
+                    val_engine = CPUBacktestEngine(
+                        self.val_df, {}, self.direction)
+                    val_metrics = val_engine.simulate_rule_set(
+                        candidate_rule_set)
+                    eval_health_penalty_value = (
+                        evaluator_health_penalty(val_metrics, role="valid")
+                        * eval_health_weight
+                    )
+                except Exception as exc:
+                    logger.debug(
+                        "evaluator_health_penalty failed for trial: %s", exc)
+
             # Monthly-window penalty.
             monthly_penalty_value = 0.0
             if (
@@ -647,7 +669,7 @@ class WalkForwardRiskOptimizer:
                                  trial.number if hasattr(trial, 'number') else '?', exc)
 
             score_return = (
-                (worst_return - fold_penalty - monthly_penalty_value)
+                (worst_return - fold_penalty - monthly_penalty_value - eval_health_penalty_value)
                 * float(_cfg.PHASE4_WORST_RETURN_WEIGHT)
             )
             score_dd = worst_drawdown * float(_cfg.PHASE4_WORST_DRAWDOWN_WEIGHT)
