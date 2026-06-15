@@ -684,6 +684,37 @@ PHASE2_CV_POOL_RANK_ADMIT_TOP_K = 100
 # PHASE2_CV_RANK_MIN_FOLDS_PASS — looser fold pass for rank fallback (≤ pool gate).
 PHASE2_CV_RANK_MIN_FOLDS_PASS = _CV_RANK_MIN_FOLDS_PASS
 
+# --- Phase 2 relaxed pool-admission thresholds (Task 5) -----------------------
+# These relaxed thresholds replace the stricter per-fold return/PF/trade floors
+# so that the Phase 2 pool grows from ~5–8 rules to ~140 candidate rules.
+# They mirror the friend's ``PHASE2_CV_MIN_WORST_*`` values.
+
+# PHASE2_CV_MIN_WORST_RETURN — worst per-fold val return % to admit a rule.
+#   Higher → stricter; only folds with better-than-this return pass.
+#   Lower  → relaxed; folds can lose up to -8% and still admit the rule.
+PHASE2_CV_MIN_WORST_RETURN = -8.0
+
+# PHASE2_CV_MIN_WORST_PF — worst per-fold profit factor to admit a rule.
+#   Higher → stricter; requires profitable folds.
+#   Lower  → relaxed; folds with PF ≥ 0.80 pass.
+PHASE2_CV_MIN_WORST_PF = 0.80
+
+# PHASE2_CV_MAX_WORST_DD — max per-fold drawdown % to admit a rule.
+#   Higher → more tolerant of drawdown within a fold.
+#   Lower  → stricter; folds with DD > 18% cause rejection.
+PHASE2_CV_MAX_WORST_DD = 18.0
+
+# PHASE2_CV_MIN_FOLD_TRADES — min executed trades per fold for admission.
+#   Higher → stricter; each fold needs more trades.
+#   Lower  → relaxed; folds with ≥ 10 trades pass.
+PHASE2_CV_MIN_FOLD_TRADES = 10
+
+# PHASE2_KEEP_TOP_RULES — max rules kept in the final Phase 2 pool after
+# admission filtering, sorted by deployability_rank_score descending.
+#   Higher → larger pool for Phase 3 greedy selection.
+#   Lower  → smaller pool; faster Phase 3, fewer combinations.
+PHASE2_KEEP_TOP_RULES = 140
+
 # PHASE2_REQUIRE_LAST_FOLD_POSITIVE — last CV fold val return must be > 0.
 #   True  → emphasize most recent season; can shrink pool sharply.
 #   False → last fold can be weak if earlier folds pass (recommended with CV=2).
@@ -1196,7 +1227,7 @@ PHASE3_MIN_VAL_TRADES = 15
 # avoid breaking the existing pool; turned ON in Task 5.
 #   True  → pool entries must also pass the positive-good gate.
 #   False → pool admission uses its own floors (legacy, unchanged).
-PHASE2_STRICT_POSITIVE_GOOD = False
+PHASE2_STRICT_POSITIVE_GOOD = True
 
 
 # --- Evaluator health penalty (Task 4) ---------------------------------------

@@ -43,6 +43,7 @@ class _MockFoldEngine:
 class TestCvFoldAdmission:
     def test_cv_fold_uses_lower_trade_floor(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(_cfg, "SPLIT_MODE", "purged_rolling_cv")
+        monkeypatch.setattr(_cfg, "PHASE2_STRICT_POSITIVE_GOOD", False)
         train = _metrics(1.0, 1.1, _cfg.PHASE2_CV_MIN_TRADE_POOL_FLOOR)
         val = _metrics(0.5, 1.05, _cfg.PHASE2_CV_MIN_VAL_TRADES)
         assert passes_pool_admission_cv_fold(train, val) is True
