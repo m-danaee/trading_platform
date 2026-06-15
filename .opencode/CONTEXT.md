@@ -148,8 +148,18 @@ The current run already has that shape — we must preserve it.
 ## Active orchestration state
 
 - base_branch: `main`
-- current_task: starting Task 1 (validation/monthly_windows + rolling_cv)
-- active_branch: `feature/task-1-monthly-validation` (will be created by implementer)
+- current_task: Task 6 DONE; checkpoint for user review/merge before Task 7
+- active_branch: `feature/task-6-multi-symbol-combinations` (1 commit on top of main)
 - dispatch_mode: one implementer at a time, then spec-reviewer, then code-reviewer
-- user_chose: option (a) — implement all 10 tasks
+- user_chose: option (a) — implement all 10 tasks; branch policy = reviewable in isolation; checkpoint per task
 - handoff_dir: `.opencode/handoffs/`
+
+## Task ledger
+| # | Title | Status | Branch | Commit | Merged? |
+|---|---|---|---|---|---|
+| 1 | Add `validation/monthly_windows.py` + `rolling_cv.py` | DONE / APPROVED | `feature/task-1-monthly-validation` | `f930104` | **YES** (`9957cc1` on `main`) |
+| 2 | Wire `monthly_penalty` into Phase 3/4 scoring | DONE / APPROVED | `feature/task-2-monthly-penalty-scoring` | `ca028ba` | **YES** (`9b49fba` on `main`) |
+| 3 | Add `_is_positive_good`-style gate | DONE / APPROVED | `feature/task-3-positive-good-gate` | `f96addd` | **YES** (`eb502a1` on `main`) |
+| 4 | Evaluator-failure-mode awareness | DONE / APPROVED | `feature/task-4-evaluator-health-penalty` | `9271bc7` | **YES** (`eb37ee5` on `main`) |
+| 5 | Expand Phase 2 pool admission | DONE / APPROVED | `feature/task-5-expand-phase2-pool` | `d01c8d7` | **YES** (`f5a44ea` on `main`) |
+| 6 | Multi-symbol combinations in Phase 3 | DONE / APPROVED | `feature/task-6-multi-symbol-combinations` | `585dc39` | **pending user merge** |

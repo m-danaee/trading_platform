@@ -475,6 +475,9 @@ def _optimize_risk_grid(
     passes = int(getattr(_cfg, "PHASE4_GRID_PASSES", 2))
 
     n_rules = len(best_rules)
+    total_trials = n_rules * passes * len(tp_grid) * len(sl_grid) * len(cap_grid)
+    trial_count = 0
+    _best_score_sofar = cur_score
 
     for p in range(1, passes + 1):
         improved = False
@@ -483,6 +486,17 @@ def _optimize_risk_grid(
             for tp in tp_grid:
                 for sl in sl_grid:
                     for cap in cap_grid:
+                        trial_count += 1
+
+                        # --- progress report every 100 combos ---
+                        if trial_count % 100 == 0:
+                            logger.info(
+                                "Phase 4 grid progress: trial %d/%d "
+                                "(pass=%d, rule=%d/%d), best_score=%.2f",
+                                trial_count, total_trials,
+                                p, idx + 1, n_rules, _best_score_sofar,
+                            )
+
                         trial = [dict(r) for r in best_rules]
                         trial[idx]["tp"] = tp
                         trial[idx]["sl"] = sl
@@ -497,7 +511,10 @@ def _optimize_risk_grid(
                         try:
                             train_m, val_m, score = _evaluate_ruleset(
                                 train_engine, val_engine, trial)
-                        except Exception:
+                        except (ValueError, KeyError, TypeError) as exc:
+                            logger.debug(
+                                "grid trial failed (tp=%.2f, sl=%.2f, cap=%.2f): %s",
+                                tp, sl, cap, exc)
                             continue
 
                         # Must pass gate_positive_good
@@ -506,6 +523,8 @@ def _optimize_risk_grid(
 
                         if local_best is None or score > local_best[0]:
                             local_best = (score, trial, train_m, val_m)
+                            if score > _best_score_sofar:
+                                _best_score_sofar = score
 
             if local_best is not None and local_best[0] > cur_score + min_improvement:
                 cur_score, best_rules, cur_train, cur_val = local_best
@@ -612,6 +631,10 @@ class WalkForwardRiskOptimizer:
     cv_folds : list | None
         Purged rolling CV folds; when set, WF optimization uses every fold's val
         block instead of only *val_df*.
+    train_df : pd.DataFrame | None
+        Training split dataframe for grid-search train engine (separate from
+        ``val_df``).  When ``None`` (backward compat), the grid search falls
+        back to ``val_df`` for both train and val engines.
     n_trials : int | None
         Override ``PHASE4_N_TRIALS`` (useful for testing).
     n_splits : int | None
@@ -626,6 +649,7 @@ class WalkForwardRiskOptimizer:
         rule_set: dict,
         direction: str,
         cv_folds: list[Any] | None = None,
+        train_df: pd.DataFrame | None = None,
         n_trials: int | None = None,
         n_splits: int | None = None,
         seed: int | None = None,
@@ -641,6 +665,7 @@ class WalkForwardRiskOptimizer:
                 "rule_set must contain at least one rule in 'rules_set'")
 
         self.val_df = val_df
+        self.train_df = train_df
         self.rule_set = rule_set
         self.direction = direction
         self.cv_folds = cv_folds or []
@@ -989,13 +1014,44 @@ class WalkForwardRiskOptimizer:
             raise ValueError(
                 "Phase 4 grid: empty rules_set; nothing to optimize")
 
+        # Use separate train/val dataframes when train_df is provided (Task 7 code review).
+        # This restores the purpose of gate_positive_good, which checks that rules
+        # perform well on BOTH train and validation data.
+        # When train_df is None (backward compat), fall back to val_df only.
+        _train_df = self.train_df if self.train_df is not None else self.val_df
         train_engine = CPUBacktestEngine(
-            self.val_df, {}, self.direction)
+            _train_df, {}, self.direction)
         val_engine = CPUBacktestEngine(
             self.val_df, {}, self.direction)
 
         min_improvement = float(
             getattr(_cfg, "PHASE4_GRID_MIN_IMPROVEMENT", 0.02))
+
+        # Log grid dimensions for progress visibility
+        tp_grid = tuple(float(x) for x in getattr(
+            _cfg, "PHASE4_GRID_TP_VALUES",
+            (1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 8.0, 10.0)))
+        sl_grid = tuple(float(x) for x in getattr(
+            _cfg, "PHASE4_GRID_SL_VALUES",
+            (1.0, 1.2, 1.5, 2.0, 2.5, 3.0)))
+        cap_grid = tuple(float(x) for x in getattr(
+            _cfg, "PHASE4_GRID_CAPITAL_VALUES",
+            (5.0, 7.5, 10.0, 12.5, 15.0, 20.0, 25.0, 35.0, 50.0)))
+        max_total_cap = float(getattr(_cfg, "PHASE4_GRID_MAX_TOTAL_CAPITAL", 95.0))
+        passes = int(getattr(_cfg, "PHASE4_GRID_PASSES", 2))
+
+        total_combos = len(tp_grid) * len(sl_grid) * len(cap_grid)
+        n_rules = len(rules)
+        n_backtests_per_trial = 2  # train + val
+        expected_trials = total_combos * n_rules * passes * n_backtests_per_trial
+
+        logger.info(
+            "Phase 4 grid [%s]: grid_size=%d (tp=%d × sl=%d × capital=%d), "
+            "rules=%d, passes=%d, expected_backtests≈%d, "
+            "min_improvement=%.2f, max_total_capital=%.1f%%",
+            self.direction, total_combos, len(tp_grid), len(sl_grid), len(cap_grid),
+            n_rules, passes, expected_trials, min_improvement, max_total_cap,
+        )
 
         optimized_rules, train_metrics, val_metrics, score, history = (
             _optimize_risk_grid(

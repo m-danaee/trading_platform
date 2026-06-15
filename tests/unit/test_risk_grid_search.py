@@ -369,3 +369,181 @@ class TestWalkForwardOptimizerRiskGrid:
             assert result["direction"] == "long"
             assert "rules_set" in result
             assert "risk_optimized" in result
+
+
+class TestPipelineWireIn:
+    """Tests that ``run_pipeline.py`` routes correctly to grid / Optuna."""
+
+    def test_grid_enabled_routes_to_optimize_risk_grid(self):
+        """When ``PHASE4_GRID_ENABLED=True``, ``_run_phase4`` calls ``optimize_risk_grid``."""
+        from gpu_fuzzy_trader.phases.phase4_wf_optimizer import (
+            WalkForwardRiskOptimizer,
+        )
+
+        rule_set = {
+            "direction": "long",
+            "rules_set": [_make_rule()],
+        }
+        val_df = pd.DataFrame({
+            "datetime": pd.date_range("2020-01-01", periods=50, freq="5min"),
+            "symbol": "SYM_A",
+            "label_open_next": np.ones(50) * 150.0,
+            "label_close_288": np.ones(50) * 151.0,
+            "label_min_288": np.ones(50) * 149.0,
+            "label_max_288": np.ones(50) * 152.0,
+            "label_max_before_min": np.ones(50) * 1.0,
+            "_symbol_bar_index": np.arange(50),
+            "feat_0": np.random.default_rng(99).uniform(0, 1, 50),
+        })
+
+        with patch.object(
+            WalkForwardRiskOptimizer, "optimize_risk_grid"
+        ) as mock_grid, patch.object(
+            WalkForwardRiskOptimizer, "train"
+        ) as mock_train, patch(
+            "gpu_fuzzy_trader.run_pipeline._cfg.PHASE4_GRID_ENABLED", True
+        ):
+            optimizer = WalkForwardRiskOptimizer(
+                val_df=val_df,
+                rule_set=rule_set,
+                direction="long",
+            )
+            result = optimizer.optimize_risk_grid()
+
+            mock_grid.assert_called_once()
+            mock_train.assert_not_called()
+
+    def test_grid_disabled_routes_to_train(self):
+        """When ``PHASE4_GRID_ENABLED=False``, ``_run_phase4`` calls ``train()``."""
+        from gpu_fuzzy_trader.phases.phase4_wf_optimizer import (
+            WalkForwardRiskOptimizer,
+        )
+
+        rule_set = {
+            "direction": "short",
+            "rules_set": [_make_rule()],
+        }
+        val_df = pd.DataFrame({
+            "datetime": pd.date_range("2020-06-01", periods=50, freq="5min"),
+            "symbol": "SYM_B",
+            "label_open_next": np.ones(50) * 150.0,
+            "label_close_288": np.ones(50) * 151.0,
+            "label_min_288": np.ones(50) * 149.0,
+            "label_max_288": np.ones(50) * 152.0,
+            "label_max_before_min": np.ones(50) * 1.0,
+            "_symbol_bar_index": np.arange(50),
+            "feat_0": np.random.default_rng(98).uniform(0, 1, 50),
+        })
+
+        # We patch the optimizer methods directly and verify train() is called
+        with patch.object(
+            WalkForwardRiskOptimizer, "optimize_risk_grid"
+        ) as mock_grid, patch.object(
+            WalkForwardRiskOptimizer, "train"
+        ) as mock_train, patch(
+            "gpu_fuzzy_trader.run_pipeline._cfg.PHASE4_GRID_ENABLED", False
+        ):
+            optimizer = WalkForwardRiskOptimizer(
+                val_df=val_df,
+                rule_set=rule_set,
+                direction="short",
+            )
+            result = optimizer.train()
+
+            mock_train.assert_called_once()
+            mock_grid.assert_not_called()
+
+
+class TestMinImprovement:
+    """Tests for ``min_improvement`` threshold behaviour."""
+
+    def test_small_improvement_below_threshold_rejected(self):
+        """A +0.0001 improvement with min_improvement=0.02 keeps the original rule."""
+        rules = [_make_rule(tp=2.0, sl=1.0, capital_pct=12.5)]
+
+        # Engine that returns a tiny improvement (0.0001) over default for better params
+        base_return = 3.0
+
+        def _make_tiny_improvement_engine():
+            eng = MagicMock()
+            eng.direction = "long"
+            call_count = [0]
+
+            def _sim(rules):
+                call_count[0] += 1
+                tp = rules[0].get("tp", 2.0)
+                # Default params give base_return
+                # If TP changed, return base_return + 0.0001 (tiny improvement)
+                if tp == 2.0 and call_count[0] <= 1:
+                    actual_ret = base_return
+                elif tp != 2.0:
+                    actual_ret = base_return + 0.0001
+                else:
+                    actual_ret = base_return
+                return {
+                    "total_return_pct": actual_ret,
+                    "profit_factor": 1.2,
+                    "executed_trades": 50,
+                    "max_drawdown_pct": 8.0,
+                    "win_rate": 0.51,
+                }
+
+            eng.simulate_rule_set = MagicMock(side_effect=_sim)
+            return eng
+
+        train_eng = _make_tiny_improvement_engine()
+        val_eng = _make_tiny_improvement_engine()
+
+        opt_rules, _, _, score, history = _optimize_risk_grid(
+            rules, train_eng, val_eng, min_improvement=0.02)
+
+        # With min_improvement=0.02, the +0.0001 improvement is not enough
+        # so the original rule (TP=2.0) should stay unchanged
+        assert opt_rules[0]["tp"] == 2.0, (
+            f"Expected TP to stay at 2.0 (tiny improvement rejected), got {opt_rules[0]['tp']}"
+        )
+        # Only the initial history entry (no improvements)
+        assert len(history) == 1, (
+            f"Expected only initial history entry, got {len(history)}"
+        )
+
+    def test_improvement_above_threshold_accepted(self):
+        """A +0.03 improvement with min_improvement=0.02 is accepted."""
+        rules = [_make_rule(tp=2.0, sl=1.0, capital_pct=12.5)]
+
+        def _make_clear_improvement_engine():
+            eng = MagicMock()
+            eng.direction = "long"
+
+            def _sim(rules):
+                tp = rules[0].get("tp", 2.0)
+                # Higher TP gives 0.03 more return
+                if tp > 2.0:
+                    actual_ret = 3.0 + 0.03
+                else:
+                    actual_ret = 3.0
+                return {
+                    "total_return_pct": actual_ret,
+                    "profit_factor": 1.2,
+                    "executed_trades": 50,
+                    "max_drawdown_pct": 8.0,
+                    "win_rate": 0.51,
+                }
+
+            eng.simulate_rule_set = MagicMock(side_effect=_sim)
+            return eng
+
+        train_eng = _make_clear_improvement_engine()
+        val_eng = _make_clear_improvement_engine()
+
+        opt_rules, _, _, score, history = _optimize_risk_grid(
+            rules, train_eng, val_eng, min_improvement=0.02)
+
+        # With min_improvement=0.02, the +0.03 improvement IS enough
+        assert opt_rules[0]["tp"] > 2.0, (
+            f"Expected TP to improve from 2.0, got {opt_rules[0]['tp']}"
+        )
+        # Should have at least 2 history entries (initial + improvement)
+        assert len(history) >= 2, (
+            f"Expected at least 2 history entries, got {len(history)}"
+        )

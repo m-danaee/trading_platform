@@ -1425,6 +1425,7 @@ class Pipeline_Orchestrator:
             try:
                 optimizer = WalkForwardRiskOptimizer(
                     val_df=val_df,
+                    train_df=train_df,
                     rule_set=rule_set,
                     direction=direction,
                     cv_folds=getattr(self, "_cv_folds", None) or None,
