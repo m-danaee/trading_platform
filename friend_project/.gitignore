@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.venv/
+outputs/
+logs/
+pools/
+phase2_rule_archive/
+*.zip
