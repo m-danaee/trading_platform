@@ -39,6 +39,11 @@ from gpu_fuzzy_trader.phases.phase3_objectives import (
     symbols_with_trades as _symbols_with_trades,
 )
 from gpu_fuzzy_trader.reporting.reporter import Reporter
+from gpu_fuzzy_trader.validation.monthly_windows import (
+    build_monthly_windows,
+    evaluate_rule_set_monthly,
+    monthly_penalty,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -337,12 +342,21 @@ def _per_symbol_greedy(
     pool: list[dict],
     direction: str,
     train_symbol_df: pd.DataFrame | None = None,
+    combined_df: pd.DataFrame | None = None,
+    feature_names: list[str] | None = None,
+    monthly_windows: list[pd.DataFrame] | None = None,
 ) -> list[int]:
     """Greedy rule selection for a single symbol.
 
     All three greedy rounds use ``min(train_return, val_return)`` as the
     combo score when *train_symbol_df* is provided, preventing val-only
     overfit at the combination level (not just the per-rule level).
+
+    When *combined_df* or *monthly_windows* is provided and
+    ``MONTHLY_VALIDATION_ENABLED`` is True, a monthly-window penalty is
+    subtracted from the combo score so that rule-sets with poor monthly
+    performance score lower.  Pre-built *monthly_windows* avoids O(N²) deep
+    copies inside the greedy loop.
     """
     min_trades = int(_cfg.effective_phase3_per_symbol_min_trades())
     min_return = float(_cfg.effective_phase3_per_symbol_min_return())
@@ -357,6 +371,8 @@ def _per_symbol_greedy(
         train_engine = CPUBacktestEngine(
             train_symbol_df, {}, direction, fee_pct=_cfg.FEE_PCT,
         )
+
+    monthly_enabled = bool(getattr(_cfg, "MONTHLY_VALIDATION_ENABLED", False))
 
     scored: list[tuple[int, float, int]] = []
     for idx, rule in enumerate(pool):
@@ -384,29 +400,53 @@ def _per_symbol_greedy(
         return selected
 
     def _robust_combo_return(combo_indices: list[int]) -> float:
-        """Evaluate a combination with min(train, val) return."""
+        """Evaluate a combination with min(train, val) return and monthly penalty."""
         combo_fmt = _rule_set_to_engine_format([pool[i] for i in combo_indices])
         # val leg
-        val_engine = CPUBacktestEngine(
+        val_engine_local = CPUBacktestEngine(
             symbol_df, {}, direction, fee_pct=_cfg.FEE_PCT,
         )
         try:
-            val_m = val_engine.simulate_rule_set(combo_fmt)
+            val_m = val_engine_local.simulate_rule_set(combo_fmt)
             v_ret = float(val_m.get("total_return_pct", -999.0))
         except Exception:
             v_ret = -999.0
         # train leg (when available)
         if train_symbol_df is not None and len(train_symbol_df) > 0:
-            train_engine = CPUBacktestEngine(
+            train_engine_local = CPUBacktestEngine(
                 train_symbol_df, {}, direction, fee_pct=_cfg.FEE_PCT,
             )
             try:
-                train_m = train_engine.simulate_rule_set(combo_fmt)
+                train_m = train_engine_local.simulate_rule_set(combo_fmt)
                 t_ret = float(train_m.get("total_return_pct", -999.0))
             except Exception:
                 t_ret = -999.0
-            return min(t_ret, v_ret)
-        return v_ret
+            base_ret = min(t_ret, v_ret)
+        else:
+            base_ret = v_ret
+
+        # Monthly-window penalty (applied on the full combined dataset).
+        if monthly_enabled and (combined_df is not None or monthly_windows is not None):
+            try:
+                monthly_summary, _ = evaluate_rule_set_monthly(
+                    combined_df, combo_fmt, direction,
+                    feature_names=feature_names,
+                    windows=monthly_windows,
+                )
+                if monthly_summary.windows <= 0:
+                    monthly_pen = float(getattr(
+                        _cfg, "PHASE3_MONTHLY_FALLBACK_PENALTY", 5.0))
+                else:
+                    monthly_pen = (
+                        monthly_penalty(monthly_summary)
+                        * float(getattr(_cfg, "PHASE3_MONTHLY_PENALTY_WEIGHT", 1.0))
+                    )
+            except Exception as exc:
+                logger.debug("monthly eval failed for combo, using fallback: %s", exc)
+                monthly_pen = float(getattr(
+                    _cfg, "PHASE3_MONTHLY_FALLBACK_PENALTY", 5.0))
+            return base_ret - monthly_pen
+        return base_ret
 
     # Round 2: test top-K extensions using min(train, val) for combo return
     best_combo_ret = best_ret
@@ -661,6 +701,24 @@ class Rule_Set_Selector:
             self.direction, max_gap,
         )
 
+        # Build combined_df and feature_names once for monthly-window validation.
+        combined_df: pd.DataFrame | None = None
+        feature_names: list[str] | None = None
+        monthly_windows: list[pd.DataFrame] | None = None
+        if bool(getattr(_cfg, "MONTHLY_VALIDATION_ENABLED", False)):
+            combined_df = pd.concat(
+                [self._full_train_df, self._full_val_df], ignore_index=True)
+            feature_names = [
+                c for c in combined_df.columns
+                if c not in set(_cfg.LABEL_COLUMNS)
+                | set(_cfg.META_COLUMNS)
+                | set(_cfg.INTERNAL_COLUMNS)
+                and not str(c).startswith("_")
+            ]
+            # Build monthly windows once and cache them — avoids O(N²) deep copies
+            # inside the inner greedy loop (_robust_combo_return).
+            monthly_windows = build_monthly_windows(combined_df)
+
         symbol_assignments: dict[str, list[int]] = {}
         for sym in self._symbols:
             sym_df = self._symbol_dfs.get(sym)
@@ -677,6 +735,9 @@ class Rule_Set_Selector:
                 pool=enriched_pool,
                 direction=self.direction,
                 train_symbol_df=train_sym_df,
+                combined_df=combined_df,
+                feature_names=feature_names,
+                monthly_windows=monthly_windows,
             )
             if selected:
                 symbol_assignments[sym] = selected

@@ -1,0 +1,37 @@
+{
+  "task": "task-2",
+  "verdict": "REQUEST_CHANGES",
+  "findings": [
+    {
+      "severity": "high",
+      "finding": "Performance: evaluate_rule_set_monthly is called inside the inner greedy loop (_robust_combo_return) up to 50× per symbol (2 rounds × top_k=25). Each call invokes build_monthly_windows which does a full df.copy() of the combined_df (~700k rows × 30+ columns ≈ 168 MB). With 5 symbols, this means up to 250 full-dataframe copies and 250 × 24 = 6,000 backtest engine simulations inside Phase 3's per-symbol greedy loop alone. On a 12.7 GiB machine this creates substantial temporary memory churn and runtime latency.",
+      "fix": "Cache the output of build_monthly_windows(combined_df) once in Rule_Set_Selector.run() — the monthly windows are data-dependent, not rule-set-dependent. Pass the pre-built windows list to _per_symbol_greedy and into _robust_combo_return. Then evaluate_rule_set_monthly can accept an optional precomputed windows list to avoid the redundant df.copy() and window construction per candidate. Alternatively, drop the df.copy() inside build_monthly_windows (the caller passes combined_df which is not mutated downstream) and instead work on a view with .loc slicing."
+    },
+    {
+      "severity": "medium",
+      "finding": "Silently swallowed exceptions: exceptions from evaluate_rule_set_monthly in _robust_combo_return (phase3) and the Optuna objective (phase4) are caught and silently ignored. If monthly evaluation consistently fails (e.g., due to schema mismatch, OOM, or missing columns), the operator will never know and the fallback penalty (5.0) or zero penalty will be silently applied, defeating the robustness gate.",
+      "fix": "Add logger.debug or logger.warning with the exception message in both catch blocks. Example: `logger.debug('monthly evaluation failed for combo, using fallback: %s', exc)` in Phase 3, and `logger.debug('monthly evaluation skipped in trial: %s', exc)` in Phase 4."
+    },
+    {
+      "severity": "medium",
+      "finding": "Unused import: MonthlyWindowSummary is imported in phase3_rule_set.py line 43 but never referenced in the file body. This is dead code and triggers lint warnings.",
+      "fix": "Remove 'MonthlyWindowSummary' from the import statement on line 42-46 of phase3_rule_set.py, keeping only evaluate_rule_set_monthly and monthly_penalty."
+    },
+    {
+      "severity": "medium",
+      "finding": "Inconsistent data scope between Phase 3 and Phase 4: Phase 3 computes monthly penalty on combined_df (train + val), while Phase 4 computes it on self.val_df only (validation). The friend's reference code uses the full dataset for Phase 4 monthly evaluation. This mismatch means Phase 4's monthly penalty is less strict — it only checks robustness on the validation period, missing train-period monthly degradation.",
+      "fix": "Either (a) add train_df to the WalkForwardRiskOptimizer constructor so _monthly_combined can be train+val, or (b) document this intentional divergence and accept it as an architectural constraint. If (b), add a comment in phase4_wf_optimizer.py explaining why val_df-only is used."
+    },
+    {
+      "severity": "low",
+      "finding": "Unnecessary DataFrame copy in Phase 4: _monthly_combined = self.val_df.copy() creates an extra copy of val_df. build_monthly_windows already copies the DataFrame internally. This wastes ~50-70 MB of RAM during Phase 4 initialization.",
+      "fix": "Change to _monthly_combined = self.val_df (without .copy()) since build_monthly_windows does its own copy internally."
+    },
+    {
+      "severity": "low",
+      "finding": "Test gap: The Phase 3 unit test does not exercise the actual wiring through _robust_combo_return or Rule_Set_Selector.run(). It tests the math (monthly_penalty subtracted from val_return) using evaluate_rule_set_monthly directly. A future regression in the _robust_combo_return closure (e.g., wrong sign, wrong config key) would not be caught by this test.",
+      "fix": "Add a small integration test that calls _per_symbol_greedy with a tiny pool (2 rules) and MONTHLY_VALIDATION_ENABLED mocked True, verifying that the returned selected indices differ when monthly validation is enabled vs disabled for rule-sets with different monthly profiles. This is non-blocking but recommended for the next iteration."
+    }
+  ],
+  "summary": "3/6 acceptance criteria are fully met: config keys exist and are accessible (5), unit tests exist and pass (6), no changes to evaluator_v5.ipynb (7). Criteria 1-4 are partially met: Phase 3 wiring is correct but has a significant performance issue (uncached monthly windows in inner loop), Phase 4 wiring is correct but uses val_df-only scope instead of the full train+val like Phase 3, the unit test proves penalty differentiation but doesn't exercise the actual _robust_combo_return integration path, and all imports pass. The core correctness — subtracting a non-negative monthly_penalty from the base score — is correct in both phases. The sign convention follows the spec (higher score = better, penalty subtracted). MUST-FIX: cache monthly windows to avoid O(N_candidates × N_symbols) df.copy() inside the greedy loop. SHOULD-FIX: log swallowed exceptions, remove unused import, and document the Phase 3/4 data-scope asymmetry."
+}

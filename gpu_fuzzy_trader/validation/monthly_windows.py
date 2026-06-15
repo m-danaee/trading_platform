@@ -257,6 +257,7 @@ def evaluate_rule_set_monthly(
     rule_set: list[dict],
     direction: str,
     feature_names: list[str] | None = None,
+    windows: list[pd.DataFrame] | None = None,
 ) -> tuple[MonthlyWindowSummary, list[dict]]:
     """Evaluate a rule set on chronological monthly windows.
 
@@ -272,13 +273,18 @@ def evaluate_rule_set_monthly(
         ``"long"`` or ``"short"``.
     feature_names:
         Optional column whitelist for ``slim_backtest_df``.
+    windows:
+        Optional pre-built monthly windows from ``build_monthly_windows``.
+        When provided, *df* is ignored (the caller must still pass a non-None
+        *df* for API compatibility but it will not be sliced again).
 
     Returns
     -------
     tuple[MonthlyWindowSummary, list[dict]]
         Summary plus the raw per-window metrics list.
     """
-    windows = build_monthly_windows(df)
+    if windows is None:
+        windows = build_monthly_windows(df)
     metrics: list[dict] = []
     for part in windows:
         try:

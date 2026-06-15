@@ -1285,6 +1285,16 @@ MONTHLY_PROFITABLE_RATIO_WEIGHT = 15.0
 MONTHLY_TREND_WEIGHT = 2.0
 MONTHLY_LATEST_WEIGHT = 0.6
 
+# PHASE3_MONTHLY_PENALTY_WEIGHT — multiplier on monthly_penalty() in Phase 3 scoring.
+PHASE3_MONTHLY_PENALTY_WEIGHT = 1.0
+# PHASE3_MONTHLY_FALLBACK_PENALTY — fallback penalty when monthly windows == 0.
+PHASE3_MONTHLY_FALLBACK_PENALTY = 5.0
+# PHASE4_MONTHLY_SCORE_WEIGHT — multiplier on monthly_penalty() in Phase 4 trial objective.
+PHASE4_MONTHLY_SCORE_WEIGHT = 0.70
+# PHASE4_MONTHLY_EVAL_EVERY_TRIAL — compute fresh monthly summary every trial (True)
+# or only on a subset (not yet implemented — kept for future tuning).
+PHASE4_MONTHLY_EVAL_EVERY_TRIAL = True
+
 
 # =============================================================================
 # Phase 5 — Out-of-sample evaluation (test.csv only; never used in Phases 1–4)
