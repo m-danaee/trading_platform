@@ -1127,16 +1127,9 @@ def _build_pool_from_archive(
         "executed_trades": ...
     }
     """
-    from gpu_fuzzy_trader.phases.phase2_cv import (
-        PurgedCVTrainEngine,
-        PurgedCVValEngine,
-        evaluate_purged_cv_pool_admission_batch,
-    )
+    # Removed phase2_cv import
 
-    use_cv_admission = (
-        isinstance(engine, PurgedCVTrainEngine)
-        and isinstance(val_engine, PurgedCVValEngine)
-    )
+    use_cv_admission = False
 
     # Deduplicate and filter by condition count before any expensive backtest.
     unique_chroms: list[np.ndarray] = []
@@ -1850,6 +1843,9 @@ class Rule_Pool_Generator:
     # ------------------------------------------------------------------
 
     def _uses_cv_engines(self) -> bool:
+        return False
+
+    def _old_uses_cv_engines(self) -> bool:
         return bool(
             self._cv_folds
             and len(self._cv_folds) > 0

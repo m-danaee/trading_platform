@@ -1,21 +1,7 @@
 {
   "direction": "long",
   "risk_optimized": false,
-  "deployment_accepted": false,
-  "validation_gate": {
-    "return_pct": 0.6999731063842773,
-    "profit_factor": 99.0,
-    "required_return_pct": 2.0,
-    "required_profit_factor": 1.05
-  },
-  "rules_set": [
-    {
-      "conditions": [
-        "[feat_0] IS Very High"
-      ],
-      "tp": 2.0,
-      "sl": 1.0,
-      "capital_pct": 12.5
-    }
-  ]
+  "selection_accepted": false,
+  "selection_rejection_reason": "no_rules_selected_for_any_symbol",
+  "rules_set": []
 }

@@ -1378,19 +1378,8 @@ PHASE4_CAPITAL_STEP = 5.0
 
 # --- Optuna budget ---
 
-# PHASE4_N_TRIALS — number of Optuna trials per direction.
-#   Higher → better risk param fit, slower Phase 4.
-#   Lower  → may miss optimal TP/SL; fast but coarse.
-PHASE4_N_TRIALS = 250
 
-# "tpe" | "nsga2" (NSGA-II recommended for multi-objective)
-PHASE4_SAMPLER = "nsga2"
-PHASE4_SEED: int = get_seed()
 
-# PHASE4_N_JOBS — parallel Optuna workers.
-#   Higher → faster on multi-core; trials are independent.
-#   Lower  → sequential; reproducible ordering easier.
-PHASE4_N_JOBS = 1
 
 # PHASE4_HARD_CAP_NORMALIZE — scale capital so sum ≤ MAX_TOTAL_EXPOSURE_PCT.
 #   True  → realistic portfolio cap; required for live-like exposure.
@@ -1484,10 +1473,6 @@ PHASE4_MONTHLY_EVAL_EVERY_TRIAL = True
 # Phase 4 — Deterministic risk grid search (Task 7)
 # =============================================================================
 
-# PHASE4_GRID_ENABLED — use deterministic grid search instead of Optuna.
-#   True  → ``_optimize_risk_grid`` replaces the Optuna walk-forward.
-#   False → fall back to Optuna (legacy ``optimize`` path).
-PHASE4_GRID_ENABLED = True
 
 # PHASE4_GRID_TP_VALUES — TP values (%) to enumerate (10 values).
 PHASE4_GRID_TP_VALUES = (1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 8.0, 10.0)

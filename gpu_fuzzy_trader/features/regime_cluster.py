@@ -132,7 +132,12 @@ def _compute_rolling_regimes_for_symbol(
             ss_tot = np.sum((y - np.mean(y)) ** 2)
             ss_res = np.sum((y - y_pred) ** 2)
             r2 = 1.0 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
-            fast_slopes.append(slope)
+            
+            # Normalize slope as a percentage of price so thresholds like 0.0016 (0.16% per day) work universally
+            mean_y = np.mean(y)
+            norm_slope = slope / mean_y if mean_y != 0 else 0.0
+            
+            fast_slopes.append(norm_slope)
             fast_r2_values.append(r2)
             
         # Slow regression
@@ -147,7 +152,12 @@ def _compute_rolling_regimes_for_symbol(
             ss_tot = np.sum((y - np.mean(y)) ** 2)
             ss_res = np.sum((y - y_pred) ** 2)
             r2 = 1.0 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
-            slow_slopes.append(slope)
+            
+            # Normalize slow slope as a percentage of price
+            mean_y = np.mean(y)
+            norm_slope = slope / mean_y if mean_y != 0 else 0.0
+            
+            slow_slopes.append(norm_slope)
             slow_r2_values.append(r2)
             
     fast_slopes = np.array(fast_slopes)

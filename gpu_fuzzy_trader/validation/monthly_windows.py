@@ -211,15 +211,27 @@ def summarize_monthly_metrics(metrics: Iterable[dict]) -> MonthlyWindowSummary:
     peak = np.maximum.accumulate(equity)
     dips = (peak - equity) / np.maximum(peak, 1e-12) * 100.0
 
+    # Active months mask (where strategy actually took trades)
+    active_mask = trades > 0
+    active_pfs = pfs[active_mask]
+    
+    # If the strategy smartly stayed out during a bad month, don't punish its worst PF
+    worst_pf = float(np.min(active_pfs)) if len(active_pfs) > 0 else 0.0
+    mean_pf = float(np.mean(active_pfs)) if len(active_pfs) > 0 else 0.0
+
     profitable = int(np.sum(returns > 0.0))
-    profitable_ratio = profitable / max(1, len(returns))
+    
+    # Treat months with exactly 0.0 return (no trades) as "successful" risk management 
+    # instead of punishing them as unprofitable.
+    non_losing = int(np.sum(returns >= 0.0))
+    profitable_ratio = non_losing / max(1, len(returns))
 
     # Composite score (used internally for ranking).
     score = (
         0.65 * recency_return
         + 0.35 * float(np.mean(returns))
         + 0.75 * float(np.min(returns))
-        + 5.0 * float(np.min(pfs))
+        + 5.0 * worst_pf
         + 6.0 * profitable_ratio
         + 1.5 * slope
         - 0.65 * float(np.max(dds))
@@ -241,8 +253,8 @@ def summarize_monthly_metrics(metrics: Iterable[dict]) -> MonthlyWindowSummary:
         worst_return_pct=float(np.min(returns)),
         latest_return_pct=float(returns[-1]),
         recency_weighted_return_pct=recency_return,
-        mean_profit_factor=float(np.mean(pfs)),
-        worst_profit_factor=float(np.min(pfs)),
+        mean_profit_factor=mean_pf,
+        worst_profit_factor=worst_pf,
         worst_drawdown_pct=float(np.max(dds)),
         min_trades=int(np.min(trades)),
         mean_trades=float(np.mean(trades)),

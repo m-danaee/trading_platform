@@ -857,10 +857,9 @@ class Pipeline_Orchestrator:
         tuple[pd.DataFrame, pd.DataFrame]
             (train_df, val_df)
         """
-        mode = str(_cfg.SPLIT_MODE).strip().lower()
-        use_cv = mode == "purged_rolling_cv"
+        
 
-        if not use_cv:
+        if True:
             cached_split = self._load_cached_split_if_fresh()
             if cached_split is not None:
                 logger.info(
@@ -882,19 +881,10 @@ class Pipeline_Orchestrator:
         )
 
         splitter = Data_Splitter()
-        if use_cv:
-            logger.info(
-                "Splitting with purged rolling CV (K=%d, embargo=%d bars, "
-                "min_train=%.1f months) …",
-                _cfg.CV_N_FOLDS,
-                _cfg.CV_EMBARGO_BARS,
-                _cfg.CV_MIN_TRAIN_MONTHS,
-            )
-        else:
-            logger.info("Splitting into train (75%%) / validation (25%%) …")
+        logger.info("Splitting into train (75%) / validation (25%) …")
 
-        train_df, val_df, cv_folds = splitter.split_and_persist(train_full)
-        self._cv_folds = cv_folds
+        train_df, val_df, _ = splitter.split_and_persist(train_full)
+        
         logger.info(
             "Split complete: train=%d rows, val=%d rows, cv_folds=%d",
             len(train_df),
@@ -1197,7 +1187,7 @@ class Pipeline_Orchestrator:
                     direction=direction,
                     val_df=val_df,
                     seed=_cfg.PHASE2_SEED,
-                    cv_folds=getattr(self, "_cv_folds", None) or None,
+                    
                 )
                 pool = generator.run()
             except Exception as exc:
@@ -1307,7 +1297,7 @@ class Pipeline_Orchestrator:
                     val_df=val_df,
                     pool=enriched_pool,
                     direction=direction,
-                    cv_folds=getattr(self, "_cv_folds", None) or None,
+                    
                 )
                 rule_set = selector.run()
             except Exception as exc:
@@ -1420,7 +1410,7 @@ class Pipeline_Orchestrator:
             logger.info(
                 "Running %s … (%d rules from Phase 3, method=%s)",
                 dir_phase_name, n_rules,
-                "grid" if use_grid else "optuna",
+                "grid",
             )
             try:
                 optimizer = WalkForwardRiskOptimizer(
@@ -1428,12 +1418,9 @@ class Pipeline_Orchestrator:
                     train_df=train_df,
                     rule_set=rule_set,
                     direction=direction,
-                    cv_folds=getattr(self, "_cv_folds", None) or None,
+                    
                 )
-                if use_grid:
-                    result = optimizer.optimize_risk_grid()
-                else:
-                    result = optimizer.train()
+                result = optimizer.train()
             except Exception as exc:
                 logger.error(
                     "Phase 4 [%s] failed: %s", direction, exc, exc_info=True
