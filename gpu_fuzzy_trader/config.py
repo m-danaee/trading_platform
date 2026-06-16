@@ -595,7 +595,7 @@ PHASE2_SUPPORT_PENALTY_WEIGHT_F3 = 0.5  # return / win-rate objective
 # PHASE2_USE_TOTAL_RETURN_OBJ — f3 uses return instead of win rate.
 #   True  → optimize deployable return; aligns with PnL goals.
 #   False → optimize win rate; may favor many small wins over net PnL.
-PHASE2_USE_TOTAL_RETURN_OBJ = True
+PHASE2_USE_TOTAL_RETURN_OBJ = False
 
 # PHASE2_USE_ROBUST_RETURN_OBJ — f3 uses min(train_return, val_return).
 #   True  → penalizes train-only return spikes (recommended with val/CV).
