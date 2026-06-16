@@ -319,7 +319,6 @@ class TestRegimeCompaction:
                     "max_drawdown_pct": 5.0},
                 {"total_return_pct": 3.0, "sortino_ratio": 1.5,
                     "max_drawdown_pct": 4.0},
-                folds_passing=2,
             )
             assert high > low
         finally:
