@@ -221,22 +221,17 @@ def _log_pipeline_config() -> None:
         "Pipeline config: SPLIT_MODE=%s CV_FOLDS=%d | PHASE1 top_k=%d | "
         "PHASE2 algo=%s pop=%d gen=%d joint_train_val=%s cv_workers=%d | "
         "PHASE3 per-symbol greedy | "
-        "PHASE4 method=%s trials=%d wf_splits=%d sampler=%s n_jobs=%d%s",
-        _cfg.SPLIT_MODE,
-        _cfg.CV_N_FOLDS,
-        _cfg.PHASE1_TOP_K_FEATURES,
-        _cfg.PHASE2_ALGORITHM,
-        _cfg.PHASE2_POPULATION_SIZE,
-        _cfg.PHASE2_GENERATIONS,
-        _cfg.PHASE2_JOINT_TRAIN_VAL,
-        _cfg.PHASE2_CV_FOLD_WORKERS,
-        "grid" if getattr(_cfg, "PHASE4_GRID_ENABLED", True) else "optuna",
-        _cfg.PHASE4_N_TRIALS,
-        _cfg.PHASE4_WF_SPLITS,
-        _cfg.PHASE4_SAMPLER,
-        _cfg.PHASE4_N_JOBS,
-        debug_suffix,
-    )
+        "PHASE4 grid_search=True | %s",
+            _cfg.SPLIT_MODE,
+            _cfg.CV_N_FOLDS if hasattr(_cfg, "CV_N_FOLDS") else 0,
+            _cfg.PHASE1_TOP_K_FEATURES,
+            _cfg.PHASE2_ALGORITHM,
+            _cfg.PHASE2_POPULATION_SIZE,
+            _cfg.PHASE2_GENERATIONS,
+            _cfg.PHASE2_JOINT_TRAIN_VAL,
+            getattr(_cfg, "PHASE2_CV_FOLD_WORKERS", 0),
+            debug_suffix,
+        )
 
 
 class _NumpyJSONEncoder(json.JSONEncoder):
@@ -886,10 +881,9 @@ class Pipeline_Orchestrator:
         train_df, val_df, _ = splitter.split_and_persist(train_full)
         
         logger.info(
-            "Split complete: train=%d rows, val=%d rows, cv_folds=%d",
+            "Split complete: train=%d rows, val=%d rows",
             len(train_df),
             len(val_df),
-            len(cv_folds),
         )
         return self._apply_debug_symbol_scope(train_df, val_df)
 
