@@ -784,6 +784,15 @@ PHASE2_DIVERSITY_HAMMING_THRESHOLD = 3
 #   Lower  → convergence to similar high performers allowed.
 PHASE2_DIVERSITY_PENALTY = 8.0
 
+# PHASE2_PHENOTYPE_SORTINO_STEP — Sortino bucket width for behavioral diversity.
+PHASE2_PHENOTYPE_SORTINO_STEP = 0.5
+
+# PHASE2_PHENOTYPE_DD_STEP — drawdown % bucket width for behavioral diversity.
+PHASE2_PHENOTYPE_DD_STEP = 5.0
+
+# PHASE2_PHENOTYPE_F3_STEP — f3-axis bucket width (win rate % or return %).
+PHASE2_PHENOTYPE_F3_STEP = 10.0
+
 # PHASE2_EARLY_STOP_ENABLED — stop evolution on poor mean/median return trend.
 #   True  → save generations when search is clearly failing.
 #   False → always run full PHASE2_GENERATIONS budget.

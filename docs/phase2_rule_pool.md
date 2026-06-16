@@ -54,16 +54,16 @@ f2 = max_drawdown_pct (minimize drawdown)
 f3 = −return_target   (maximize return or win rate)
 ```
 
-When `PHASE2_USE_TOTAL_RETURN_OBJ = True` (default), f3 uses total return instead of win rate. With `PHASE2_USE_ROBUST_RETURN_OBJ = True` (default) and validation metrics available, f3 uses **robust return**:
+When `PHASE2_USE_TOTAL_RETURN_OBJ = True`, f3 uses total return instead of win rate (production default: `False` → win rate). With `PHASE2_USE_ROBUST_RETURN_OBJ = True` and `PHASE2_JOINT_TRAIN_VAL = True`, f3 uses **robust return**:
 
 ```python
 robust_return = min(train_total_return_pct, val_total_return_pct)
 f3 = −robust_return
 ```
 
-This aligns evolution with deployable rules that hold up out-of-sample, not train-only return spikes.
+When `PHASE2_JOINT_TRAIN_VAL = True` and win-rate mode is active, f3 uses `min(train_win_rate, val_win_rate)` (with val trade floor). f2 uses `max(train_dd, val_dd)` under the same flag.
 
-**Feasibility penalty:** When `PHASE2_POOL_REQUIRE_POSITIVE_SPLITS` is enabled, chromosomes that fail merged train/val admission floors receive a large `PHASE2_INFEASIBLE_OBJECTIVE_PENALTY` plus a weighted `feasibility_violation_score`, pushing infeasible rules below feasible ones on all objectives.
+**Feasibility:** Violations against pool admission floors add a graduated term to `support_penalty` (`feasibility_violation × PHASE2_FEASIBILITY_VIOLATION_WEIGHT`). Hard `infeasible_penalty` on objectives is not used — deployability is enforced at pool harvest.
 
 All three objectives have penalties added before the evolutionary algorithm sees them. The penalties are described in Section 4.
 
@@ -171,9 +171,12 @@ The per-regime threshold scales with both the regime's row fraction and the rule
 
 ### Diversity penalty — `PHASE2_DIVERSITY_HAMMING_THRESHOLD` / `PHASE2_DIVERSITY_PENALTY`
 
-If a chromosome's Hamming distance to the nearest Pareto-front member is ≤ `PHASE2_DIVERSITY_HAMMING_THRESHOLD` (default: 3), it receives a `PHASE2_DIVERSITY_PENALTY` (default: 6.0) on all objectives.
+Crowding uses **Hamming distance OR phenotype bucket** match (whichever triggers, same weight on f1/f3):
 
-**Why?** Without this, the Pareto front tends to cluster around a few high-performing chromosomes with minor variations. The diversity penalty encourages the search to explore different regions of the chromosome space.
+- **Genotype:** Hamming distance to Pareto / hall-of-fame refs ≤ threshold.
+- **Phenotype:** Same `(sortino_bucket, dd_bucket, f3_bucket)` as another ref (buckets from objective metrics; steps `PHASE2_PHENOTYPE_*_STEP`).
+
+**Why?** Hamming alone allows different encodings with identical backtest behavior to crowd the front. Phenotype buckets spread rules that trade differently.
 
 **Effect of `PHASE2_DIVERSITY_HAMMING_THRESHOLD`:** Increasing this enforces more diversity (chromosomes must differ in more gene positions to avoid the penalty). Decreasing it allows more similar chromosomes.
 

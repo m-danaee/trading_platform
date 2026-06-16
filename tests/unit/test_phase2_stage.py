@@ -47,7 +47,7 @@ class TestResolvePhase2StageParams:
 
         assert stage_a.return_floor_pct == _cfg.PHASE2_STAGE_A_RETURN_FLOOR_PCT
         assert stage_a.min_trade_support == _cfg.PHASE2_STAGE_A_MIN_TRADE_SUPPORT
-        assert stage_a.use_robust_return_obj is False
+        assert stage_a.use_robust_return_obj == _cfg.PHASE2_STAGE_A_USE_ROBUST_RETURN_OBJ
         assert stage_a.soft_feasibility is True
         assert stage_a.pool_require_positive_splits is False
 

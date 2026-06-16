@@ -1353,11 +1353,14 @@ class TestEvaluateChromosome:
         orig_penalty = _cfg.PHASE2_DIVERSITY_PENALTY
         orig_hamming = _cfg.PHASE2_DIVERSITY_HAMMING_THRESHOLD
         orig_floor = _cfg.MIN_TRADE_SUPPORT
+        has_ret_obj = hasattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ")
+        orig_ret_obj = getattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ", False)
         
         try:
             _cfg.PHASE2_DIVERSITY_PENALTY = 10.0
             _cfg.PHASE2_DIVERSITY_HAMMING_THRESHOLD = 4
             _cfg.MIN_TRADE_SUPPORT = 5
+            _cfg.PHASE2_USE_TOTAL_RETURN_OBJ = True
             
             chromosome = np.array([1, 2, 3, 4, 5], dtype=np.int32)
             dont_cares = np.ones(5, dtype=np.int32) * 5
@@ -1399,6 +1402,8 @@ class TestEvaluateChromosome:
             _cfg.PHASE2_DIVERSITY_PENALTY = orig_penalty
             _cfg.PHASE2_DIVERSITY_HAMMING_THRESHOLD = orig_hamming
             _cfg.MIN_TRADE_SUPPORT = orig_floor
+            if has_ret_obj:
+                _cfg.PHASE2_USE_TOTAL_RETURN_OBJ = orig_ret_obj
 
 
 
@@ -1409,6 +1414,7 @@ class TestRobustReturnObjective:
             compute_phase2_objectives_from_metrics,
         )
 
+        monkeypatch.setattr(_cfg, "PHASE2_JOINT_TRAIN_VAL", True)
         monkeypatch.setattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ", True)
         monkeypatch.setattr(_cfg, "PHASE2_USE_ROBUST_RETURN_OBJ", True)
         monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", False)
@@ -1442,6 +1448,161 @@ class TestRobustReturnObjective:
         )
         assert np.isclose(objectives[2], -3.0)
         assert out_metrics["robust_return_pct"] == pytest.approx(3.0)
+
+
+class TestPhenotypeDiversityPenalty:
+    def test_phenotype_penalty_same_bucket_different_genes(self, monkeypatch):
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+            _phenotype_bucket_key,
+            _saturating_sortino,
+            compute_phase2_objectives_from_metrics,
+        )
+
+        monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", False)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 1)
+        monkeypatch.setattr(_cfg, "PHASE2_DIVERSITY_PENALTY", 10.0)
+        monkeypatch.setattr(_cfg, "PHASE2_DIVERSITY_HAMMING_THRESHOLD", 0)
+        monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
+
+        dont_cares = np.full(5, 5, dtype=np.int32)
+        chrom = np.array([1, 2, 3, 4, 5], dtype=np.int32)
+        ref_chrom = np.array([9, 8, 7, 6, 5], dtype=np.int32)
+        metrics = {
+            "executed_trades": 100,
+            "total_return_pct": 10.0,
+            "sortino_ratio": 2.0,
+            "max_drawdown_pct": 8.0,
+            "win_rate": 50.0,
+            "profit_factor": 1.2,
+        }
+        sortino_sat = _saturating_sortino(2.0)
+        bucket = _phenotype_bucket_key(sortino_sat, 8.0, 50.0)
+        ref_metrics = {"phenotype_bucket": bucket}
+
+        from gpu_fuzzy_trader.phases.phase2_sparse_encoding import chromosome_key
+
+        obj_no_pen, _ = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, metrics, [], diversity_metrics_by_key={},
+        )
+        obj_pen, _ = compute_phase2_objectives_from_metrics(
+            chrom,
+            dont_cares,
+            metrics,
+            [ref_chrom],
+            diversity_metrics_by_key={chromosome_key(ref_chrom): ref_metrics},
+        )
+        assert obj_pen[0] > obj_no_pen[0]
+        assert obj_pen[2] > obj_no_pen[2]
+
+
+class TestInfeasiblePenaltyRemoved:
+    def test_feasibility_violation_adds_support_not_infeasible_flat(self, monkeypatch):
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+            compute_phase2_objectives_from_metrics,
+        )
+
+        monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", True)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 1)
+        monkeypatch.setattr(_cfg, "PHASE2_RETURN_FLOOR_PCT", 0.0)
+        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR", 1.0)
+        monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
+
+        dont_cares = np.full(4, 5, dtype=np.int32)
+        chrom = np.array([0, 1, 2, 3], dtype=np.int32)
+        metrics = {
+            "executed_trades": 100,
+            "total_return_pct": 5.0,
+            "sortino_ratio": 1.0,
+            "max_drawdown_pct": 2.0,
+            "win_rate": 50.0,
+            "profit_factor": 1.2,
+        }
+        val_metrics = {
+            "executed_trades": 50,
+            "total_return_pct": -2.0,
+            "sortino_ratio": 0.5,
+            "max_drawdown_pct": 1.0,
+            "win_rate": 40.0,
+            "profit_factor": 0.9,
+        }
+        objectives, out = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, metrics, [], val_metrics=val_metrics,
+        )
+        assert out.get("feasibility_violation", 0.0) > 0.0
+        assert objectives[0] < 100.0
+
+
+class TestJointValF2F3:
+    def test_f2_uses_max_train_val_dd_when_joint(self, monkeypatch):
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+            compute_phase2_objectives_from_metrics,
+        )
+
+        monkeypatch.setattr(_cfg, "PHASE2_JOINT_TRAIN_VAL", True)
+        monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", False)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 1)
+        monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
+
+        dont_cares = np.full(4, 5, dtype=np.int32)
+        chrom = np.array([0, 1, 2, 3], dtype=np.int32)
+        metrics = {
+            "executed_trades": 100,
+            "total_return_pct": 5.0,
+            "sortino_ratio": 1.0,
+            "max_drawdown_pct": 5.0,
+            "win_rate": 50.0,
+            "profit_factor": 1.2,
+        }
+        val_metrics = {
+            "executed_trades": 50,
+            "total_return_pct": 4.0,
+            "sortino_ratio": 0.8,
+            "max_drawdown_pct": 12.0,
+            "win_rate": 45.0,
+            "profit_factor": 1.1,
+        }
+        objectives, _ = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, metrics, [], val_metrics=val_metrics,
+        )
+        assert np.isclose(objectives[1], 12.0)
+
+    def test_f3_joint_win_rate_when_not_return_mode(self, monkeypatch):
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+            compute_phase2_objectives_from_metrics,
+        )
+
+        monkeypatch.setattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ", False)
+        monkeypatch.setattr(_cfg, "PHASE2_JOINT_TRAIN_VAL", True)
+        monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", False)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 1)
+        monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
+
+        dont_cares = np.full(4, 5, dtype=np.int32)
+        chrom = np.array([0, 1, 2, 3], dtype=np.int32)
+        metrics = {
+            "executed_trades": 100,
+            "total_return_pct": 5.0,
+            "sortino_ratio": 1.0,
+            "max_drawdown_pct": 2.0,
+            "win_rate": 55.0,
+            "profit_factor": 1.2,
+        }
+        val_metrics = {
+            "executed_trades": 50,
+            "total_return_pct": 4.0,
+            "sortino_ratio": 0.8,
+            "max_drawdown_pct": 1.0,
+            "win_rate": 40.0,
+            "profit_factor": 1.1,
+        }
+        objectives, _ = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, metrics, [], val_metrics=val_metrics,
+        )
+        assert np.isclose(objectives[2], -40.0)
 
 
 class TestTwoStageOrchestration:

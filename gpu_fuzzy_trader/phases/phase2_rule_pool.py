@@ -18,7 +18,7 @@ Three objectives (all minimised):
 
 Penalties:
     support_penalty        — if executed_trades < MIN_TRADE_SUPPORT
-    diversity_penalty      — Hamming distance in chromosome space
+    diversity_penalty      — Hamming + phenotype bucket crowding (f1/f3)
     condition_count_penalty — active conditions outside [MIN_CONDITIONS, MAX_CONDITIONS]
 
 Static risk parameters during Phase 2:
@@ -217,6 +217,65 @@ def _hamming_distance(a: np.ndarray, b: np.ndarray) -> int:
     return int(np.sum(a != b))
 
 
+def _phenotype_bucket_key(
+    sortino_for_obj: float,
+    dd_for_obj: float,
+    f3_val: float,
+) -> tuple[int, int, int]:
+    """Discretise objective-relevant metrics for behavioral diversity."""
+    sortino_step = float(getattr(_cfg, "PHASE2_PHENOTYPE_SORTINO_STEP", 0.5))
+    dd_step = float(getattr(_cfg, "PHASE2_PHENOTYPE_DD_STEP", 5.0))
+    f3_step = float(getattr(_cfg, "PHASE2_PHENOTYPE_F3_STEP", 10.0))
+    sortino_step = max(sortino_step, 1e-9)
+    dd_step = max(dd_step, 1e-9)
+    f3_step = max(f3_step, 1e-9)
+    return (
+        int(sortino_for_obj / sortino_step),
+        int(dd_for_obj / dd_step),
+        int(f3_val / f3_step),
+    )
+
+
+def _diversity_penalty_blended(
+    chromosome: np.ndarray,
+    diversity_refs: list[np.ndarray],
+    *,
+    sortino_for_obj: float,
+    dd_for_obj: float,
+    f3_val: float,
+    hamming_threshold: int,
+    penalty_weight: float,
+    diversity_metrics_by_key: dict[tuple[int, ...], dict] | None,
+) -> float:
+    """Hamming OR phenotype-bucket crowding penalty (same weight on both)."""
+    from gpu_fuzzy_trader.phases.phase2_sparse_encoding import chromosome_key
+
+    hamming_penalty = 0.0
+    if diversity_refs:
+        hammings = [_hamming_distance(chromosome, pf) for pf in diversity_refs]
+        other_hammings = [h for h in hammings if h > 0]
+        if other_hammings:
+            min_hamming = min(other_hammings)
+            if min_hamming <= hamming_threshold:
+                hamming_penalty = penalty_weight
+
+    phenotype_penalty = 0.0
+    if diversity_refs and diversity_metrics_by_key:
+        my_bucket = _phenotype_bucket_key(sortino_for_obj, dd_for_obj, f3_val)
+        for pf in diversity_refs:
+            if _hamming_distance(chromosome, pf) == 0:
+                continue
+            ref_row = diversity_metrics_by_key.get(chromosome_key(pf))
+            if not ref_row:
+                continue
+            ref_bucket = ref_row.get("phenotype_bucket")
+            if ref_bucket is not None and tuple(ref_bucket) == my_bucket:
+                phenotype_penalty = penalty_weight
+                break
+
+    return max(hamming_penalty, phenotype_penalty)
+
+
 def _pareto_sortino_stats(
     pareto_indices: list[int],
     metrics_cache: list[dict],
@@ -363,6 +422,7 @@ def compute_phase2_objectives_from_metrics(
     regime_row_fractions_arr: np.ndarray | None = None,
     val_regime_row_counts: np.ndarray | None = None,
     diversity_reference: list[np.ndarray] | None = None,
+    diversity_metrics_by_key: dict[tuple[int, ...], dict] | None = None,
     stage_params=None,
 ) -> tuple[np.ndarray, dict]:
     """
@@ -373,7 +433,6 @@ def compute_phase2_objectives_from_metrics(
     """
     from gpu_fuzzy_trader.phases.phase2_support import (
         _raw_feasibility_violation_score,
-        feasibility_violation_score,
         resolve_evolution_floors,
         robust_return_pct,
     )
@@ -393,6 +452,7 @@ def compute_phase2_objectives_from_metrics(
     profit_factor = float(metrics.get("profit_factor", 0.0))
     sortino_train = _saturating_sortino(raw_sortino)
     max_dd = float(metrics.get("max_drawdown_pct", 100.0))
+    dd_for_obj = max_dd
     win_rate = float(metrics.get("win_rate", 0.0))
     executed = int(metrics.get("executed_trades", 0))
 
@@ -414,6 +474,8 @@ def compute_phase2_objectives_from_metrics(
         metrics["val_max_drawdown_pct"] = float(
             val_metrics.get("max_drawdown_pct", 0.0))
         if _cfg.PHASE2_JOINT_TRAIN_VAL:
+            val_max_dd = float(val_metrics.get("max_drawdown_pct", 0.0))
+            dd_for_obj = max(max_dd, val_max_dd)
             if val_executed < val_trade_floor:
                 sortino_for_obj = min(sortino_train, 0.0)
             else:
@@ -459,9 +521,26 @@ def compute_phase2_objectives_from_metrics(
 
     dd_gate = getattr(_cfg, "PHASE2_MAX_DRAWDOWN_GATE", 20.0)
     drawdown_gate_penalty = 0.0
-    if max_dd > dd_gate:
-        excess = max_dd - dd_gate
+    if dd_for_obj > dd_gate:
+        excess = dd_for_obj - dd_gate
         drawdown_gate_penalty = excess * 2.0
+
+    f3_val = win_rate
+    if val_metrics is not None and _cfg.PHASE2_JOINT_TRAIN_VAL:
+        val_wr = float(val_metrics.get("win_rate", 0.0))
+        if int(val_metrics.get("executed_trades", 0)) < val_trade_floor:
+            f3_val = min(win_rate, 0.0)
+        else:
+            f3_val = min(win_rate, val_wr)
+    if _cfg.PHASE2_USE_TOTAL_RETURN_OBJ:
+        joint_return = (
+            bool(_cfg.PHASE2_JOINT_TRAIN_VAL)
+            and floors.use_robust_return_obj
+            and val_metrics is not None
+        )
+        f3_val = robust_return_pct(
+            metrics, val_metrics, joint=joint_return,
+        )
 
     diversity_penalty = 0.0
     diversity_refs = list(pareto_front)
@@ -486,24 +565,17 @@ def compute_phase2_objectives_from_metrics(
         if stage_params is not None
         else float(_cfg.PHASE2_DIVERSITY_PENALTY)
     )
-    if diversity_refs:
-        # Avoid self-penalization: exclude exact chromosome matches (Hamming distance == 0)
-        # because an elite chromosome in the population should not penalize itself.
-        hammings = [_hamming_distance(chromosome, pf) for pf in diversity_refs]
-        other_hammings = [h for h in hammings if h > 0]
-        if other_hammings:
-            min_hamming = min(other_hammings)
-            if min_hamming <= diversity_hamming_threshold:
-                diversity_penalty = diversity_penalty_weight
+    diversity_penalty = _diversity_penalty_blended(
+        chromosome,
+        diversity_refs,
+        sortino_for_obj=sortino_for_obj,
+        dd_for_obj=dd_for_obj,
+        f3_val=f3_val,
+        hamming_threshold=diversity_hamming_threshold,
+        penalty_weight=diversity_penalty_weight,
+        diversity_metrics_by_key=diversity_metrics_by_key,
+    )
 
-    f3_val = win_rate
-    if _cfg.PHASE2_USE_TOTAL_RETURN_OBJ:
-        if floors.use_robust_return_obj and val_metrics is not None:
-            f3_val = robust_return_pct(metrics, val_metrics)
-        else:
-            f3_val = total_return
-
-    infeasible_penalty = 0.0
     cv_fold = str(_cfg.SPLIT_MODE).strip().lower() == "purged_rolling_cv"
     if val_metrics is not None:
         raw_violation = _raw_feasibility_violation_score(
@@ -511,22 +583,9 @@ def compute_phase2_objectives_from_metrics(
         )
         if raw_violation > 0.0:
             metrics["feasibility_violation"] = raw_violation
-        if floors.soft_feasibility and raw_violation > 0.0:
             support_penalty += (
                 raw_violation * float(_cfg.PHASE2_FEASIBILITY_VIOLATION_WEIGHT)
             )
-        elif floors.pool_require_positive_splits:
-            violation = feasibility_violation_score(
-                metrics,
-                val_metrics,
-                cv_fold=cv_fold,
-                stage_params=stage_params,
-            )
-            if violation > 0.0:
-                infeasible_penalty = (
-                    float(_cfg.PHASE2_INFEASIBLE_OBJECTIVE_PENALTY)
-                    + violation * float(_cfg.PHASE2_FEASIBILITY_VIOLATION_WEIGHT)
-                )
 
     trade_penalty = 0.0
     trade_floor = (
@@ -535,19 +594,22 @@ def compute_phase2_objectives_from_metrics(
         else _cfg.MIN_TRADE_POOL_FLOOR
     )
     if executed < trade_floor:
-        max_dd = 100.0
+        dd_for_obj = 100.0
         sortino_for_obj = 0.0
         f3_val = 0.0
         trade_penalty = 50.0
+
+    metrics["phenotype_bucket"] = _phenotype_bucket_key(
+        sortino_for_obj, dd_for_obj, f3_val,
+    )
 
     f1 = (
         -sortino_for_obj
         + (_cfg.PHASE2_SUPPORT_PENALTY_WEIGHT_F1 * support_penalty)
         + diversity_penalty
-        + infeasible_penalty
     )
     f2 = (
-        max_dd
+        dd_for_obj
         + (_cfg.PHASE2_SUPPORT_PENALTY_WEIGHT_F2 * support_penalty)
         + drawdown_gate_penalty
         + trade_penalty
@@ -561,7 +623,12 @@ def compute_phase2_objectives_from_metrics(
     )
 
     if val_metrics is not None:
-        metrics["robust_return_pct"] = robust_return_pct(metrics, val_metrics)
+        joint_ret = bool(_cfg.PHASE2_JOINT_TRAIN_VAL) and bool(
+            _cfg.PHASE2_USE_ROBUST_RETURN_OBJ,
+        )
+        metrics["robust_return_pct"] = robust_return_pct(
+            metrics, val_metrics, joint=joint_ret,
+        )
 
     objectives = np.array([f1, f2, f3], dtype=np.float64)
     return objectives, metrics
@@ -576,6 +643,7 @@ def _evaluate_chromosome(
     regime_row_fractions_arr: np.ndarray | None = None,
     val_regime_row_counts: np.ndarray | None = None,
     diversity_reference: list[np.ndarray] | None = None,
+    diversity_metrics_by_key: dict[tuple[int, ...], dict] | None = None,
     stage_params=None,
 ) -> tuple[np.ndarray, dict]:
     """
@@ -606,7 +674,7 @@ def _evaluate_chromosome(
         }
 
     val_metrics: dict | None = None
-    if val_engine is not None and _cfg.PHASE2_JOINT_TRAIN_VAL:
+    if val_engine is not None:
         try:
             val_list = val_engine.simulate_rule_batch(
                 chromosomes=_chromosome_batch(chromosome),
@@ -634,6 +702,7 @@ def _evaluate_chromosome(
         regime_row_fractions_arr=regime_row_fractions_arr,
         val_regime_row_counts=val_regime_row_counts,
         diversity_reference=diversity_reference,
+        diversity_metrics_by_key=diversity_metrics_by_key,
         stage_params=stage_params,
     )
 

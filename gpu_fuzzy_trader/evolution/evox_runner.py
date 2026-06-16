@@ -1007,6 +1007,7 @@ def _assign_eval_result(
     regime_row_fractions: np.ndarray | None,
     val_regime_row_counts: np.ndarray | None,
     diversity_reference: list[np.ndarray] | None = None,
+    diversity_metrics_by_key: dict[tuple[int, ...], dict] | None = None,
     stage_params: Phase2StageParams | None = None,
     engine=None,
 ) -> None:
@@ -1024,6 +1025,7 @@ def _assign_eval_result(
         regime_row_fractions_arr=regime_row_fractions,
         val_regime_row_counts=val_regime_row_counts,
         diversity_reference=diversity_reference,
+        diversity_metrics_by_key=diversity_metrics_by_key,
         stage_params=stage_params,
     )
     objectives[i] = obj
@@ -1090,6 +1092,7 @@ def _evaluate_population_indices(
     val_regime_row_counts: np.ndarray | None = None,
     global_metrics_cache: dict[tuple[int, ...], dict] | None = None,
     diversity_reference: list[np.ndarray] | None = None,
+    diversity_metrics_by_key: dict[tuple[int, ...], dict] | None = None,
     stage_params: Phase2StageParams | None = None,
 ) -> dict[str, int]:
     """Evaluate unevaluated individuals, preferring batch simulate_rule_batch."""
@@ -1130,6 +1133,7 @@ def _evaluate_population_indices(
                     regime_row_fractions,
                     val_regime_row_counts,
                     diversity_reference=diversity_reference,
+                    diversity_metrics_by_key=diversity_metrics_by_key,
                     stage_params=stage_params,
                     engine=engine,
                 )
@@ -1172,7 +1176,7 @@ def _evaluate_population_indices(
         )
 
         val_metrics_list = None
-        if val_engine is not None and _cfg.PHASE2_JOINT_TRAIN_VAL:
+        if val_engine is not None:
             try:
                 val_metrics_list = val_engine.simulate_rule_batch(
                     chromosomes=unique_chroms,
@@ -1215,6 +1219,7 @@ def _evaluate_population_indices(
                 regime_row_fractions,
                 val_regime_row_counts,
                 diversity_reference=diversity_reference,
+                diversity_metrics_by_key=diversity_metrics_by_key,
                 stage_params=stage_params,
                 engine=engine,
             )
@@ -1235,6 +1240,7 @@ def _evaluate_population_indices(
                 regime_row_fractions_arr=regime_row_fractions,
                 val_regime_row_counts=val_regime_row_counts,
                 diversity_reference=diversity_reference,
+                diversity_metrics_by_key=diversity_metrics_by_key,
                 stage_params=stage_params,
             )
             objectives[i] = obj
@@ -1281,6 +1287,7 @@ def _reevaluate_infinite_objectives(
     val_regime_row_counts: np.ndarray | None = None,
     global_metrics_cache: dict[tuple[int, ...], dict] | None = None,
     diversity_reference: list[np.ndarray] | None = None,
+    diversity_metrics_by_key: dict[tuple[int, ...], dict] | None = None,
     stage_params: Phase2StageParams | None = None,
 ) -> dict[str, int]:
     """Evaluate any individuals still marked with inf objectives."""
@@ -1306,6 +1313,7 @@ def _reevaluate_infinite_objectives(
         val_regime_row_counts=val_regime_row_counts,
         global_metrics_cache=global_metrics_cache,
         diversity_reference=diversity_reference,
+        diversity_metrics_by_key=diversity_metrics_by_key,
         stage_params=stage_params,
     )
 
@@ -1835,6 +1843,7 @@ def _run_nsga3(
         diversity_reference = _build_diversity_reference(
             hall_of_fame, pareto_archive,
         )
+        diversity_metrics_by_key = global_metrics_cache
         parent_stats = _evaluate_population_indices(
             population,
             list(range(pop_size)),
@@ -1848,6 +1857,7 @@ def _run_nsga3(
             val_regime_row_counts=val_regime_row_counts,
             global_metrics_cache=global_metrics_cache,
             diversity_reference=diversity_reference,
+            diversity_metrics_by_key=diversity_metrics_by_key,
             stage_params=stage_params,
         )
 
@@ -2046,6 +2056,7 @@ def _run_nsga3(
                     val_regime_row_counts=val_regime_row_counts,
                     global_metrics_cache=global_metrics_cache,
                     diversity_reference=diversity_reference,
+                    diversity_metrics_by_key=diversity_metrics_by_key,
                     stage_params=stage_params,
                 )
                 # #region agent log
@@ -2095,6 +2106,7 @@ def _run_nsga3(
                 val_regime_row_counts=val_regime_row_counts,
                 global_metrics_cache=global_metrics_cache,
                 diversity_reference=diversity_reference,
+                diversity_metrics_by_key=diversity_metrics_by_key,
                 stage_params=stage_params,
             )
             # #region agent log

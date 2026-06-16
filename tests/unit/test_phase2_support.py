@@ -311,13 +311,38 @@ class TestRegimeCompaction:
         assert passes_evolution_deployability_preview(train, val) is False
 
     def test_deployability_rank_prefers_higher_robust_return(self) -> None:
-        low = deployability_rank_score(
-            {"total_return_pct": 1.0, "sortino_ratio": 1.0, "max_drawdown_pct": 5.0},
-            {"total_return_pct": 0.5, "sortino_ratio": 0.5, "max_drawdown_pct": 4.0},
-        )
-        high = deployability_rank_score(
-            {"total_return_pct": 4.0, "sortino_ratio": 2.0, "max_drawdown_pct": 5.0},
-            {"total_return_pct": 3.0, "sortino_ratio": 1.5, "max_drawdown_pct": 4.0},
-            folds_passing=2,
-        )
-        assert high > low
+        orig_use_ret = _cfg.PHASE2_USE_TOTAL_RETURN_OBJ
+        try:
+            _cfg.PHASE2_USE_TOTAL_RETURN_OBJ = True
+            low = deployability_rank_score(
+                {"total_return_pct": 1.0, "sortino_ratio": 1.0,
+                    "max_drawdown_pct": 5.0},
+                {"total_return_pct": 0.5, "sortino_ratio": 0.5,
+                    "max_drawdown_pct": 4.0},
+            )
+            high = deployability_rank_score(
+                {"total_return_pct": 4.0, "sortino_ratio": 2.0,
+                    "max_drawdown_pct": 5.0},
+                {"total_return_pct": 3.0, "sortino_ratio": 1.5,
+                    "max_drawdown_pct": 4.0},
+                folds_passing=2,
+            )
+            assert high > low
+        finally:
+            _cfg.PHASE2_USE_TOTAL_RETURN_OBJ = orig_use_ret
+
+    def test_deployability_rank_prefers_higher_win_rate_when_wr_mode(self) -> None:
+        orig_use_ret = _cfg.PHASE2_USE_TOTAL_RETURN_OBJ
+        try:
+            _cfg.PHASE2_USE_TOTAL_RETURN_OBJ = False
+            low = deployability_rank_score(
+                {"win_rate": 40.0, "sortino_ratio": 1.0, "max_drawdown_pct": 5.0},
+                {"win_rate": 35.0, "sortino_ratio": 0.5, "max_drawdown_pct": 4.0},
+            )
+            high = deployability_rank_score(
+                {"win_rate": 60.0, "sortino_ratio": 2.0, "max_drawdown_pct": 5.0},
+                {"win_rate": 55.0, "sortino_ratio": 1.5, "max_drawdown_pct": 4.0},
+            )
+            assert high > low
+        finally:
+            _cfg.PHASE2_USE_TOTAL_RETURN_OBJ = orig_use_ret

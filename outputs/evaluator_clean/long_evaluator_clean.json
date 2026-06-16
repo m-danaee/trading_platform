@@ -1,4 +1,25 @@
 {
   "direction": "long",
-  "rules_set": []
+  "rules_set": [
+    {
+      "tp": 2.0,
+      "sl": 1.0,
+      "capital_pct": 50.0,
+      "conditions": [
+        "[roc_10] IS Extreme Bullish",
+        "[rsi_centered_14] IS Weak Bearish",
+        "[vol_over_ema20] IS Very High"
+      ]
+    },
+    {
+      "tp": 5.0,
+      "sl": 1.0,
+      "capital_pct": 35.0,
+      "conditions": [
+        "[dmi_balance_14] IS Strong Bullish",
+        "[body_signed_to_tr] IS Neutral Positive",
+        "[vol_ratio_20_100] IS Very High"
+      ]
+    }
+  ]
 }

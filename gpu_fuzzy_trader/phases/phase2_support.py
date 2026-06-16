@@ -632,16 +632,48 @@ def is_cv_deployable(folds_passing: int, total_folds: int | None = None) -> bool
     return int(folds_passing) >= cv_min_folds_to_pass(total)
 
 
+def _joint_primary_metric(
+    train_val: float,
+    val_val: float | None,
+    *,
+    joint: bool,
+) -> float:
+    """Train-only or conservative min(train, val) for ranking / objectives."""
+    if not joint or val_val is None:
+        return float(train_val)
+    return float(min(train_val, val_val))
+
+
 def robust_return_pct(
     train_metrics: dict,
     val_metrics: dict | None,
+    *,
+    joint: bool | None = None,
 ) -> float:
     """Conservative return used for objectives, plateau, and archive ranking."""
     train_ret = float(train_metrics.get("total_return_pct", 0.0))
     if val_metrics is None:
         return train_ret
     val_ret = float(val_metrics.get("total_return_pct", 0.0))
-    return min(train_ret, val_ret)
+    if joint is None:
+        joint = bool(_cfg.PHASE2_JOINT_TRAIN_VAL)
+    return _joint_primary_metric(train_ret, val_ret, joint=joint)
+
+
+def robust_win_rate_pct(
+    train_metrics: dict,
+    val_metrics: dict | None,
+    *,
+    joint: bool | None = None,
+) -> float:
+    """Conservative win rate for ranking when f3 uses win rate."""
+    train_wr = float(train_metrics.get("win_rate", 0.0))
+    if val_metrics is None:
+        return train_wr
+    val_wr = float(val_metrics.get("win_rate", 0.0))
+    if joint is None:
+        joint = bool(_cfg.PHASE2_JOINT_TRAIN_VAL)
+    return _joint_primary_metric(train_wr, val_wr, joint=joint)
 
 
 def _raw_feasibility_violation_score(
@@ -741,24 +773,45 @@ def deployability_rank_score(
 ) -> float:
     """
     Higher is better. Used to rank deployable archive entries and Stage B seeds.
+
+    Primary term mirrors f3: win rate when ``PHASE2_USE_TOTAL_RETURN_OBJ`` is
+    False, else robust return. Sortino / drawdown respect ``PHASE2_JOINT_TRAIN_VAL``.
     """
-    robust = robust_return_pct(train_metrics, val_metrics)
+    joint = bool(_cfg.PHASE2_JOINT_TRAIN_VAL)
     fold_bonus = float(folds_passing) * 0.5
-    sortino = float(
-        train_metrics.get("sortino_ratio", train_metrics.get(
-            "total_return_pct", 0.0))
+
+    train_sortino = float(
+        train_metrics.get(
+            "sortino_ratio", train_metrics.get("total_return_pct", 0.0),
+        )
     )
+    val_sortino = None
     if val_metrics is not None:
         val_sortino = float(
             val_metrics.get(
                 "sortino_ratio", val_metrics.get("total_return_pct", 0.0),
             )
         )
-        sortino = min(sortino, val_sortino)
-    dd = float(train_metrics.get("max_drawdown_pct", 100.0))
+    sortino = _joint_primary_metric(train_sortino, val_sortino, joint=joint)
+
+    train_dd = float(train_metrics.get("max_drawdown_pct", 100.0))
+    val_dd = None
     if val_metrics is not None:
-        dd = max(dd, float(val_metrics.get("max_drawdown_pct", dd)))
-    return robust + fold_bonus + 0.1 * sortino - 0.05 * dd
+        val_dd = float(val_metrics.get("max_drawdown_pct", train_dd))
+    if joint and val_dd is not None:
+        dd = max(train_dd, val_dd)
+    else:
+        dd = train_dd
+
+    if bool(_cfg.PHASE2_USE_TOTAL_RETURN_OBJ):
+        use_robust = bool(_cfg.PHASE2_USE_ROBUST_RETURN_OBJ)
+        primary = robust_return_pct(
+            train_metrics, val_metrics, joint=joint and use_robust,
+        )
+    else:
+        primary = robust_win_rate_pct(train_metrics, val_metrics, joint=joint)
+
+    return primary + fold_bonus + 0.1 * sortino - 0.05 * dd
 
 
 def compute_robust_score(

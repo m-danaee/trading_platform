@@ -1,7 +1,31 @@
 {
   "direction": "short",
-  "risk_optimized": false,
-  "selection_accepted": false,
-  "selection_rejection_reason": "no_rules_selected_for_any_symbol",
-  "rules_set": []
+  "rules_set": [
+    {
+      "tp": 2.0,
+      "sl": 1.0,
+      "capital_pct": 21.42857142857143,
+      "conditions": [
+        "[dmi_balance_14] IS Extreme Bearish",
+        "[channel_pos_20] IS Very High",
+        "[body_signed_to_tr] IS Extreme Bullish",
+        "symbol is 1",
+        "symbol is 10",
+        "symbol is 2"
+      ]
+    },
+    {
+      "tp": 2.0,
+      "sl": 1.0,
+      "capital_pct": 21.42857142857143,
+      "conditions": [
+        "[roc_10] IS Extreme Bullish",
+        "[up_close_ratio_5] IS Medium",
+        "[macd_hist_atr] IS Extreme Bearish",
+        "symbol is 3",
+        "symbol is 10",
+        "symbol is 1"
+      ]
+    }
+  ]
 }
