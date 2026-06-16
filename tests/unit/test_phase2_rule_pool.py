@@ -903,7 +903,6 @@ class TestRulePoolGeneratorRun:
         original_hist = m._HISTORY_PATHS.copy()
         m._POOL_PATHS["long"] = str(tmp_path / "phase2_long_pool.json")
         m._HISTORY_PATHS["long"] = str(tmp_path / "phase2_long_history.json")
-        monkeypatch.setattr(_cfg, "SPLIT_MODE", "holdout_70_30")
         monkeypatch.setattr(_cfg, "PHASE2_JOINT_TRAIN_VAL", False)
         monkeypatch.setattr(_cfg, "PHASE2_USE_GPU", False)
         try:

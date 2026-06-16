@@ -509,11 +509,6 @@ def _should_early_stop_phase2(
 ) -> bool:
     if not _cfg.PHASE2_EARLY_STOP_ENABLED:
         return False
-    if (
-        str(_cfg.SPLIT_MODE).strip().lower() == "purged_rolling_cv"
-        and bool(_cfg.PHASE2_EARLY_STOP_DISABLED_IN_CV)
-    ):
-        return False
     min_gen = (
         int(stage_params.early_stop_min_generation)
         if stage_params is not None
@@ -527,10 +522,6 @@ def _should_early_stop_phase2(
     if valid_count >= min_valid:
         return False
     return True
-
-
-def _split_mode_is_purged_cv() -> bool:
-    return str(_cfg.SPLIT_MODE).strip().lower() == "purged_rolling_cv"
 
 
 def _empty_eval_stats() -> dict[str, int]:
@@ -576,11 +567,6 @@ def _should_plateau_early_stop_phase2(
     stage_params: Phase2StageParams | None = None,
 ) -> bool:
     if not _cfg.PHASE2_PLATEAU_EARLY_STOP_ENABLED:
-        return False
-    if (
-        _split_mode_is_purged_cv()
-        and bool(_cfg.PHASE2_PLATEAU_EARLY_STOP_DISABLED_IN_CV)
-    ):
         return False
     min_gen = (
         int(stage_params.plateau_early_stop_min_generation)
@@ -1934,11 +1920,7 @@ def _run_nsga3(
         from gpu_fuzzy_trader.phases.phase2_sparse_encoding import chromosome_key
 
         pop_keys = {chromosome_key(population[i]) for i in range(pop_size)}
-        trade_floor = (
-            int(_cfg.PHASE2_CV_MIN_TRADE_POOL_FLOOR)
-            if _split_mode_is_purged_cv()
-            else int(_cfg.MIN_TRADE_POOL_FLOOR)
-        )
+        trade_floor = int(_cfg.MIN_TRADE_POOL_FLOOR)
         n_below_trade_floor = sum(
             1
             for i in range(pop_size)

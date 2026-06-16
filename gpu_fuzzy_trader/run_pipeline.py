@@ -218,18 +218,15 @@ def _log_pipeline_config() -> None:
             f"count={_cfg.DEBUG_SYMBOL_COUNT}"
         )
     logger.info(
-        "Pipeline config: SPLIT_MODE=%s CV_FOLDS=%d | PHASE1 top_k=%d | "
-        "PHASE2 algo=%s pop=%d gen=%d joint_train_val=%s cv_workers=%d | "
+        "Pipeline config: PHASE1 top_k=%d | "
+        "PHASE2 algo=%s pop=%d gen=%d joint_train_val=%s | "
         "PHASE3 per-symbol greedy | "
         "PHASE4 grid_search=True | %s",
-            _cfg.SPLIT_MODE,
-            _cfg.CV_N_FOLDS if hasattr(_cfg, "CV_N_FOLDS") else 0,
             _cfg.PHASE1_TOP_K_FEATURES,
             _cfg.PHASE2_ALGORITHM,
             _cfg.PHASE2_POPULATION_SIZE,
             _cfg.PHASE2_GENERATIONS,
             _cfg.PHASE2_JOINT_TRAIN_VAL,
-            getattr(_cfg, "PHASE2_CV_FOLD_WORKERS", 0),
             debug_suffix,
         )
 
@@ -422,7 +419,6 @@ class Pipeline_Orchestrator:
     """
 
     def __init__(self, output_dir: str | None = None) -> None:
-        self._cv_folds: list = []
         self._output_dir = _resolve_output_root(output_dir)
         self._log_path = os.path.join(self._output_dir, "pipeline.log")
 
@@ -483,7 +479,6 @@ class Pipeline_Orchestrator:
                 results["phase1"] = phase1_result
                 train_df, val_df = self._prune_splits_after_phase1(
                     train_df, val_df, phase1_result)
-                self._prune_cv_folds_after_phase1(phase1_result)
 
                 # ------------------------------------------------------------------
                 # Phase 2: Rule Pool Generation
@@ -600,7 +595,6 @@ class Pipeline_Orchestrator:
                 results["phase1"] = phase1_result
                 train_df, val_df = self._prune_splits_after_phase1(
                     train_df, val_df, phase1_result)
-                self._prune_cv_folds_after_phase1(phase1_result)
 
                 phase2_result = self._run_phase2(
                     train_df, phase1_result, force=force, val_df=val_df)
@@ -684,7 +678,6 @@ class Pipeline_Orchestrator:
                 phase1_result = self._load_phase1_outputs()
                 train_df, val_df = self._prune_splits_after_phase1(
                     train_df, val_df, phase1_result)
-                self._prune_cv_folds_after_phase1(phase1_result)
                 results["phase2"] = self._run_phase2(
                     train_df, phase1_result, force=True, val_df=val_df)
 
@@ -845,14 +838,11 @@ class Pipeline_Orchestrator:
         """
         Load train.csv and split into train/validation DataFrames.
 
-        Sets ``self._cv_folds`` when ``SPLIT_MODE`` is ``purged_rolling_cv``.
-
         Returns
         -------
         tuple[pd.DataFrame, pd.DataFrame]
             (train_df, val_df)
         """
-        
 
         if True:
             cached_split = self._load_cached_split_if_fresh()
@@ -862,7 +852,6 @@ class Pipeline_Orchestrator:
                     _cfg.TRAIN_70_PATH,
                     _cfg.VALIDATION_30_PATH,
                 )
-                self._cv_folds = []
                 return self._apply_debug_symbol_scope(*cached_split)
 
         logger.info("Loading training data from %s …", _cfg.TRAIN_CSV_PATH)
@@ -878,7 +867,7 @@ class Pipeline_Orchestrator:
         splitter = Data_Splitter()
         logger.info("Splitting into train (75%) / validation (25%) …")
 
-        train_df, val_df, _ = splitter.split_and_persist(train_full)
+        train_df, val_df = splitter.split_and_persist(train_full)
         
         logger.info(
             "Split complete: train=%d rows, val=%d rows",
@@ -892,33 +881,21 @@ class Pipeline_Orchestrator:
         train_df: pd.DataFrame,
         val_df: pd.DataFrame,
     ) -> tuple[pd.DataFrame, pd.DataFrame]:
-        """Filter train/val/CV folds to first N symbols when debug scope is enabled."""
-        from gpu_fuzzy_trader.data.cv_folds import PurgedFold
-
+        """Filter train/val to first N symbols when debug scope is enabled."""
         symbols = _cfg.resolve_debug_symbols(train_df)
         if symbols is None:
             return train_df, val_df
 
         scoped_train = _cfg.filter_df_to_symbols(train_df, symbols)
         scoped_val = _cfg.filter_df_to_symbols(val_df, symbols)
-        if self._cv_folds:
-            self._cv_folds = [
-                PurgedFold(
-                    fold_index=fold.fold_index,
-                    train_df=_cfg.filter_df_to_symbols(fold.train_df, symbols),
-                    val_df=_cfg.filter_df_to_symbols(fold.val_df, symbols),
-                )
-                for fold in self._cv_folds
-            ]
 
         logger.info(
             "DEBUG SYMBOL SCOPE: enabled, count=%d symbols=%s, "
-            "train=%d val=%d folds=%d",
+            "train=%d val=%d",
             len(symbols),
             symbols,
             len(scoped_train),
             len(scoped_val),
-            len(self._cv_folds),
         )
         return scoped_train, scoped_val
 
@@ -1003,46 +980,6 @@ class Pipeline_Orchestrator:
             train_df, None, phase1_result,
         )
         return pruned_train
-
-    def _prune_cv_folds_after_phase1(
-        self,
-        phase1_result: dict[str, list[dict]],
-    ) -> None:
-        """Drop unused feature columns from cached CV folds after Phase 1."""
-        if not self._cv_folds:
-            return
-
-        from gpu_fuzzy_trader.backtest.df_slim import prune_train_columns
-        from gpu_fuzzy_trader.data.cv_folds import PurgedFold
-        from gpu_fuzzy_trader._memory import log_memory_rss
-
-        names = Pipeline_Orchestrator._phase1_keep_feature_names(phase1_result)
-        if not names:
-            return
-
-        before_train_cols = len(self._cv_folds[0].train_df.columns)
-        before_val_cols = len(self._cv_folds[0].val_df.columns)
-
-        for idx, fold in enumerate(self._cv_folds):
-            pruned_train = prune_train_columns(fold.train_df, names)
-            pruned_val = prune_train_columns(fold.val_df, names)
-            self._cv_folds[idx] = PurgedFold(
-                fold_index=fold.fold_index,
-                train_df=pruned_train,
-                val_df=pruned_val,
-            )
-
-        after_train_cols = len(self._cv_folds[0].train_df.columns)
-        after_val_cols = len(self._cv_folds[0].val_df.columns)
-        logger.info(
-            "Pruned CV fold columns after Phase 1: folds=%d train=%d→%d val=%d→%d",
-            len(self._cv_folds),
-            before_train_cols,
-            after_train_cols,
-            before_val_cols,
-            after_val_cols,
-        )
-        log_memory_rss("after Phase 1 CV prune")
 
     # ------------------------------------------------------------------
     # Phase 1

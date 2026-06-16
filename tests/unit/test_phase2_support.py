@@ -12,7 +12,6 @@ from gpu_fuzzy_trader.phases.phase2_support import (
     compute_support_penalty_and_specialist,
     deployability_rank_score,
     feasibility_violation_score,
-    is_cv_deployable,
     passes_evolution_deployability_preview,
     passes_pool_admission_gate,
     passes_pool_entry_admission,
@@ -227,11 +226,6 @@ class TestDeployabilityHelpers:
         val = {"total_return_pct": 2.0}
         assert robust_return_pct(train, val) == pytest.approx(2.0)
 
-    def test_is_cv_deployable_majority(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(_cfg, "PHASE2_CV_POOL_MIN_FOLDS_PASS", 2)
-        assert is_cv_deployable(2, 3) is True
-        assert is_cv_deployable(1, 3) is False
-
     def test_feasibility_violation_zero_when_metrics_ok(self) -> None:
         train = {
             "total_return_pct": 2.0,
@@ -325,7 +319,6 @@ class TestRegimeCompaction:
                     "max_drawdown_pct": 5.0},
                 {"total_return_pct": 3.0, "sortino_ratio": 1.5,
                     "max_drawdown_pct": 4.0},
-                folds_passing=2,
             )
             assert high > low
         finally:

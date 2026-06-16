@@ -1,0 +1,38 @@
+{
+  "branch": "feature/task-11-remove-purged-cv",
+  "base_branch": "main",
+  "commits": ["34d060a", "9f09ae8", "562897c", "ce587f1"],
+  "latest_commit": "ce587f1",
+  "summary": "Completely removed the purged CV feature (purged_rolling_cv / PurgedFold / PHASE2_CV_* / cv_folds) from the project. Deleted 3 standalone files, stripped purged CV from 11 source files, fixed 7 test files (including post-review), updated 6 doc files (including post-review), fixed main.ipynb, and updated .opencode/CONTEXT.md. Post-spec-review fix: removed is_cv_deployable import from test_phase2_support.py and stale 'cv_folds is empty' prefix in phase0_shared.md. Post-code-review fix: removed folds_passing=2 kwarg from test_phase2_support.py (the kwarg was removed from deployability_rank_score as part of the CV removal).",
+  "files_deleted": [
+    "gpu_fuzzy_trader/data/cv_folds.py",
+    "gpu_fuzzy_trader/validation/rolling_cv.py",
+    "tests/unit/test_phase2_pool_admission.py"
+  ],
+  "verification": {
+    "grep_purged_zero": true,
+    "grep_cv_folds_zero": true,
+    "grep_phase2_cv_zero": true,
+    "grep_split_mode_zero": true,
+    "grep_is_cv_deployable_zero": true,
+    "files_deleted_correct": true,
+    "friend_project_untouched": true,
+    "evaluator_v5_untouched": true,
+    "ast_splitter_ok": true,
+    "ast_config_ok": true,
+    "ast_run_pipeline_ok": true,
+    "ast_phase2_support_ok": true,
+    "ast_phase2_rule_pool_ok": true,
+    "import_splitter_ok": true,
+    "import_run_pipeline_ok": true,
+    "import_phase2_support_ok": true,
+    "import_phase2_rule_pool_ok": true,
+    "import_phase4_wf_optimizer_ok": true,
+    "import_phase5_oos_ok": true,
+    "test_data_splitter_passes": true,
+    "test_run_pipeline_passes": true,
+    "test_evox_runner_passes": true,
+    "test_phase2_support_passes": true,
+    "test_colab_gpu_defaults_passes": true
+  }
+}

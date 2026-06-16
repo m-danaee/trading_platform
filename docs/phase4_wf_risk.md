@@ -6,7 +6,7 @@ Phase 4 fine-tunes the risk parameters (TP, SL, and capital allocation) for each
 
 Defaults (see `config.py`): `PHASE4_N_TRIALS = 200`, `PHASE4_WF_SPLITS = 2`, `PHASE4_SAMPLER = "tpe"`, quantized TP/SL steps of `0.5`.
 
-**Important:** Phase 4 walk-forward runs on **`validation_25.parquet` only** — not on all purged CV folds from Phases 2–3. When `SPLIT_MODE == "purged_rolling_cv"`, that file is the **last CV fold's** validation block (most recent in-sample period before `test.csv`).
+**Important:** Phase 4 walk-forward runs on **`validation_25.parquet` only**.
 
 ---
 
@@ -41,14 +41,9 @@ For example, with K=2 and a symbol with 1000 validation rows:
 
 With `PHASE4_INCLUDE_TAIL_HOLDOUT = True`, an extra window uses the last `PHASE4_TAIL_HOLDOUT_FRACTION` (25%) of each symbol's validation rows.
 
-### Relationship to Phase 2/3 purged CV
+*Note:* Walk-forward splits are independent of the Phase 2 split. The walk-forward runs only on the persisted `validation_25` block.
 
-| Layer | What is split | Purpose |
-|---|---|---|
-| Phases 2–3 (`purged_rolling_cv`) | Full `train.csv` into K folds | Rule discovery must work in every season |
-| Phase 4 (`PHASE4_WF_SPLITS`) | `validation_25` only | Risk tuning on recent in-sample OOS |
-
-**Recommendation:** If short still fails on `test.csv` after purged CV in P2/P3, increase `PHASE4_WF_SPLITS` (e.g. 4–6) so risk params are stressed on more validation sub-windows.
+**Recommendation:** If short still fails on `test.csv`, increase `PHASE4_WF_SPLITS` (e.g. 4–6) so risk params are stressed on more validation sub-windows.
 
 ### Why walk-forward?
 
