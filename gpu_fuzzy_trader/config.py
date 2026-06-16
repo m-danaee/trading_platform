@@ -125,7 +125,7 @@ PHASE2_ARCHIVE_PATHS = {
 }
 
 # Debug: scope pipeline to N symbols starting at DEBUG_SYMBOL (sorted universe).
-DEBUG_SYMBOL_SCOPE_ENABLED = True
+DEBUG_SYMBOL_SCOPE_ENABLED = False
 DEBUG_SYMBOL = "1"
 DEBUG_SYMBOL_COUNT = 4
 
