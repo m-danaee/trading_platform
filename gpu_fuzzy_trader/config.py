@@ -303,7 +303,7 @@ MAX_HOLD_CANDLES = 288
 #   Lower  → forces capital to be spread thinner across simultaneous signals.
 #   150% chosen because rules have distinct conditions + symbol filters and
 #   rarely all fire simultaneously; normalization still bounds worst-case exposure.
-MAX_TOTAL_EXPOSURE_PCT = 150.0
+MAX_TOTAL_EXPOSURE_PCT = 100.0
 
 # MIN_POSITION_NOTIONAL — skip trades below this dollar size.
 #   Higher → filters dust trades; may reduce trade count on small capital.
