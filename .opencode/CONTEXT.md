@@ -148,11 +148,29 @@ The current run already has that shape — we must preserve it.
 ## Active orchestration state
 
 - base_branch: `main`
-- current_task: Task 9 DONE + merged. Task 10 proposed; awaiting user approval.
-- active_branch: none (clean main after `1c3e15f Fix some tests`)
+- current_task: Task 11 proposed (remove purged CV feature); awaiting user approval
+- previous: Task 10 DONE / merged (`82d7604` on `main`)
+- active_branch: none (clean main after `82d7604`)
 - dispatch_mode: one implementer at a time, then spec-reviewer, then code-reviewer
 - user_chose: option (a) — implement all 10 tasks; branch policy = reviewable in isolation; checkpoint per task
 - handoff_dir: `.opencode/handoffs/`
+
+## Task 11 — Remove purged CV feature completely
+
+User request: "I'm remove purged CV feature from my project make sure
+it completely remove and not exists leftovers and everything work fine!"
+
+### Why this is safe to do
+
+- Default `SPLIT_MODE = "holdout_70_30"` since the friend-project
+  comparison work. The `purged_rolling_cv` branch is dead code
+  in production; only exercised by dedicated unit tests.
+- `friend_project/` is a separate committed reference project; we
+  will NOT touch it.
+
+### Scope (10 source files + 3 test files + 5 doc files)
+
+Full details in `.opencode/plans/PLAN.md` and `.opencode/tasks/task-11.md`.
 
 ## User-reported issues (Jun 16) — diagnosis & fix plan (Task 10)
 
@@ -229,6 +247,7 @@ JSON files and skipped OOS evaluation.
 | 8 | Regime-keyword stratum init | DONE / APPROVED | `feature/task-8-regime-keyword-stratum` | `54cc971` | **YES** (`67c7270` on `main`) |
 | 9 | Evaluator-clean writer | DONE / APPROVED | `feature/task-9-evaluator-clean-writer` | `f63a8d8` | **YES** (`1c3e15f` on `main`) |
 | 10 | Fix empty rules + Date-based equity plot | **DONE / APPROVED** (4 nits) | `feature/task-10-fix-empty-rules-and-date-equity` | `b8509a7` (impl) + `886cfcf` (review) | **YES** (`82d7604` on `main`) |
+| 11 | Remove purged CV feature completely | **PROPOSED** (awaiting user approval) | `feature/task-11-remove-purged-cv` | — | — |
 
 ## Task 10 — Final notes for the user
 
