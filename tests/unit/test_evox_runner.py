@@ -177,13 +177,11 @@ class TestRunPhase2EvolutionFallback:
 
 
 def test_low_trade_drawdown_penalty():
-    # Set CV fold mode trade floor to 25
-    orig_mode = _cfg.SPLIT_MODE
-    orig_floor = _cfg.PHASE2_CV_MIN_TRADE_POOL_FLOOR
+    # Set trade floor to 25
+    orig_floor = _cfg.MIN_TRADE_POOL_FLOOR
     orig_support = _cfg.MIN_TRADE_SUPPORT
     try:
-        _cfg.SPLIT_MODE = "purged_rolling_cv"
-        _cfg.PHASE2_CV_MIN_TRADE_POOL_FLOOR = 25
+        _cfg.MIN_TRADE_POOL_FLOOR = 25
         _cfg.MIN_TRADE_SUPPORT = 5
         
         # population of 1 candidate with valid active count (no cond penalty)
@@ -207,8 +205,7 @@ def test_low_trade_drawdown_penalty():
         assert objectives[0, 1] >= 150.0
         assert objectives[0, 2] >= 50.0
     finally:
-        _cfg.SPLIT_MODE = orig_mode
-        _cfg.PHASE2_CV_MIN_TRADE_POOL_FLOOR = orig_floor
+        _cfg.MIN_TRADE_POOL_FLOOR = orig_floor
         _cfg.MIN_TRADE_SUPPORT = orig_support
 
 
@@ -421,8 +418,6 @@ class TestPlateauEarlyStop:
             _cfg, "PHASE2_PLATEAU_EARLY_STOP_MIN_GENERATION", 5)
         monkeypatch.setattr(_cfg, "PHASE2_PLATEAU_EARLY_STOP_PATIENCE", 3)
         monkeypatch.setattr(
-            _cfg, "PHASE2_PLATEAU_EARLY_STOP_DISABLED_IN_CV", False)
-        monkeypatch.setattr(
             _cfg, "PHASE2_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO", True)
         monkeypatch.setattr(
             _cfg, "PHASE2_PLATEAU_BLOCK_WHEN_DIVERSITY_LOW", True)
@@ -491,7 +486,6 @@ class TestDeployableArchive:
         monkeypatch.setattr(_cfg, "PHASE2_DEPLOYABLE_ARCHIVE_MAX_SIZE", 10)
         monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", True)
         monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 10)
-        monkeypatch.setattr(_cfg, "PHASE2_CV_MIN_TRADE_POOL_FLOOR", 10)
 
         archive: dict = {}
         pop = np.array([[0, 1], [0, 1]], dtype=np.int32)

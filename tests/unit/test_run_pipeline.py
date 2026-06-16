@@ -30,7 +30,6 @@ from gpu_fuzzy_trader.phases import phase3_rule_set as phase3_module
 from gpu_fuzzy_trader.phases import phase4_wf_optimizer as phase4_module
 from gpu_fuzzy_trader.phases import phase5_oos as phase5_module
 from gpu_fuzzy_trader.reporting import reporter as reporter_module
-from gpu_fuzzy_trader.data.cv_folds import PurgedFold
 from gpu_fuzzy_trader.run_pipeline import Pipeline_Orchestrator, _log_phase_entry
 
 
@@ -424,7 +423,6 @@ class TestLoadAndSplitDataCache:
         monkeypatch.setattr(_cfg, "TRAIN_CSV_PATH", str(csv_path))
         monkeypatch.setattr(_cfg, "TRAIN_70_PATH", str(train_path))
         monkeypatch.setattr(_cfg, "VALIDATION_30_PATH", str(val_path))
-        monkeypatch.setattr(_cfg, "SPLIT_MODE", "holdout_70_30")
         monkeypatch.setattr(_cfg, "DEBUG_SYMBOL_SCOPE_ENABLED", False)
 
         with patch("gpu_fuzzy_trader.run_pipeline.Data_Loader.load_dataset") as load_mock, \
@@ -466,11 +464,10 @@ class TestLoadAndSplitDataCache:
         monkeypatch.setattr(_cfg, "TRAIN_CSV_PATH", str(csv_path))
         monkeypatch.setattr(_cfg, "TRAIN_70_PATH", str(train_path))
         monkeypatch.setattr(_cfg, "VALIDATION_30_PATH", str(val_path))
-        monkeypatch.setattr(_cfg, "SPLIT_MODE", "holdout_70_30")
         monkeypatch.setattr(_cfg, "DEBUG_SYMBOL_SCOPE_ENABLED", False)
 
         with patch("gpu_fuzzy_trader.run_pipeline.Data_Loader.load_dataset", return_value=train_df) as load_mock, \
-                patch("gpu_fuzzy_trader.run_pipeline.Data_Splitter.split_and_persist", return_value=(train_df, val_df, [])) as split_mock:
+                patch("gpu_fuzzy_trader.run_pipeline.Data_Splitter.split_and_persist", return_value=(train_df, val_df)) as split_mock:
             orch = Pipeline_Orchestrator()
             train_out, val_out = orch._load_and_split_data()
 
@@ -653,43 +650,6 @@ class TestPhase2SkipLogic:
             result = orch._run_phase2(train_df, phase1_result)
         assert result["long"] == []
         assert result["short"] == []
-
-
-class TestPruneCvFoldsAfterPhase1:
-    def test_prunes_cached_cv_fold_columns(self):
-        orch = Pipeline_Orchestrator()
-        train_fold = _make_df(n_rows=200)
-        val_fold = _make_df(n_rows=80)
-        orch._cv_folds = [
-            PurgedFold(fold_index=0, train_df=train_fold, val_df=val_fold),
-        ]
-        phase1_result = {
-            "long": [{"name": "feat_0", "mode": "positive", "score": 1.0}],
-            "short": [],
-        }
-
-        orch._prune_cv_folds_after_phase1(phase1_result)
-
-        pruned_train_cols = set(orch._cv_folds[0].train_df.columns)
-        pruned_val_cols = set(orch._cv_folds[0].val_df.columns)
-        assert "feat_0" in pruned_train_cols
-        assert "feat_1" not in pruned_train_cols
-        assert "feat_2" not in pruned_train_cols
-        assert pruned_train_cols == pruned_val_cols
-
-    def test_noop_when_phase1_has_no_features(self):
-        orch = Pipeline_Orchestrator()
-        train_fold = _make_df(n_rows=200)
-        val_fold = _make_df(n_rows=80)
-        orch._cv_folds = [
-            PurgedFold(fold_index=0, train_df=train_fold, val_df=val_fold),
-        ]
-        before_cols = tuple(orch._cv_folds[0].train_df.columns)
-
-        orch._prune_cv_folds_after_phase1({"long": [], "short": []})
-
-        after_cols = tuple(orch._cv_folds[0].train_df.columns)
-        assert after_cols == before_cols
 
 
 # ---------------------------------------------------------------------------
@@ -1069,13 +1029,7 @@ class TestDebugSymbolScope:
 
         train_df = _make_df(n_rows=200, symbols=["1", "10"])
         val_df = _make_df(n_rows=100, symbols=["1", "10"])
-        fold = PurgedFold(
-            fold_index=0,
-            train_df=train_df.copy(),
-            val_df=val_df.copy(),
-        )
         orch = Pipeline_Orchestrator()
-        orch._cv_folds = [fold]
 
         scoped_train, scoped_val = orch._apply_debug_symbol_scope(
             train_df, val_df)
@@ -1084,8 +1038,6 @@ class TestDebugSymbolScope:
         assert set(scoped_val["symbol"].unique()) == {"1"}
         assert len(scoped_train) == 100
         assert len(scoped_val) == 50
-        assert set(orch._cv_folds[0].train_df["symbol"].unique()) == {"1"}
-        assert set(orch._cv_folds[0].val_df["symbol"].unique()) == {"1"}
 
     def test_debug_symbol_scope_filters_multiple_symbols(self, monkeypatch) -> None:
         monkeypatch.setattr(_cfg, "DEBUG_SYMBOL_SCOPE_ENABLED", True)
@@ -1143,13 +1095,7 @@ class TestDebugSymbolScope:
 
         train_df = _make_df(n_rows=200, symbols=["1", "10"])
         val_df = _make_df(n_rows=100, symbols=["1", "10"])
-        fold = PurgedFold(
-            fold_index=0,
-            train_df=train_df.copy(),
-            val_df=val_df.copy(),
-        )
         orch = Pipeline_Orchestrator()
-        orch._cv_folds = [fold]
 
         scoped_train, scoped_val = orch._apply_debug_symbol_scope(
             train_df, val_df)
@@ -1157,4 +1103,3 @@ class TestDebugSymbolScope:
         assert len(scoped_train) == len(train_df)
         assert len(scoped_val) == len(val_df)
         assert set(scoped_train["symbol"].unique()) == {"1", "10"}
-        assert len(orch._cv_folds[0].train_df) == len(train_df)

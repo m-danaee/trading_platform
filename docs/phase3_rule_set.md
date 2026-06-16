@@ -14,7 +14,7 @@ Phase 3 takes the pool of individual rules from Phase 2 and selects the best **c
 
 **Input:** A pool of N rules (typically 50–500 from Phase 2).
 **Output:** An ordered list of 2–3 rules (the strategy).
-**Evaluation:** The combined strategy is backtested with `CPUBacktestEngine` on train and validation data. When `SPLIT_MODE == "purged_rolling_cv"`, each candidate is scored on **all CV folds** and the **worst fold** drives the objectives (see Section 5).
+**Evaluation:** The combined strategy is backtested with `CPUBacktestEngine` on train and validation data.
 
 The search space is all ordered combinations of `PHASE3_MIN_RULES` to `PHASE3_MAX_RULES` rules from the pool, with no duplicate rules. For a pool of 100 rules and 2–3 rule sets, this is approximately:
 
@@ -50,7 +50,7 @@ score = w1 × primary_sortino − w2 × primary_dd + w3 × primary_wr − penalt
 
 `PHASE3_GREEDY_WEIGHTS = (1.0, 0.7, 0.5)` (config): weights for Sortino, drawdown, and win rate.
 
-**When `PHASE3_USE_TRAIN_TARGET = True` (default):** `primary_*` metrics come from the **training split**. Validation is used for gate penalties (Section 4). Recommended with purged CV so objectives are not tuned directly on a single lucky val quarter.
+**When `PHASE3_USE_TRAIN_TARGET = True` (default):** `primary_*` metrics come from the **training split**. Validation is used for gate penalties (Section 4).
 
 **When `PHASE3_USE_TRAIN_TARGET = False`:** `primary_*` metrics come from validation. Risks overfitting to the persisted `validation_25` block — avoid for short unless experimenting.
 
@@ -206,24 +206,9 @@ if min_per_rule_val_trades < PHASE3_PER_RULE_MIN_VAL_TRADES_PER_SYMBOL:
 
 ---
 
-## 5. Purged CV evaluation (`SPLIT_MODE == "purged_rolling_cv"`)
-
-`Rule_Set_Selector` receives `cv_folds` from the pipeline and builds one `Phase3EvalCache` + engine pair per fold.
-
-For each candidate rule set, `_evaluate_rule_set(..., cv_fold_contexts=...)`:
-
-1. Simulates the team on every fold's train and val engines.
-2. Computes `compute_phase3_objectives` per fold.
-3. Keeps the fold with the **worst** total objective (highest `f1 + f2 + f3` among folds, since objectives are minimized).
-4. Returns **conservative merged** train/val metrics (min return/PF/WR, max DD) for reporting and maximin selection.
-
-Greedy and NSGA-II paths disable JAX/parallel batch when CV is active (per-fold evaluation loop).
-
-Mask-based penalties (Jaccard, incremental trades) use the **last fold's** cache — the same block persisted as `validation_25`.
-
 ---
 
-## 6. Phase3EvalCache — Signal Mask Precomputation
+## 5. Phase3EvalCache — Signal Mask Precomputation
 
 `build_phase3_eval_cache` precomputes boolean signal masks for every rule in the pool on both the training and validation DataFrames. This avoids recomputing `_apply_dynamic_rule` for every rule in every candidate evaluation.
 
@@ -233,9 +218,9 @@ The cache also stores `per_rule_min_val_trades`: the minimum per-symbol trade co
 
 ---
 
-## 7. Parallel Batch Evaluation
+## 6. Parallel Batch Evaluation
 
-When `PHASE3_USE_PARALLEL_BATCH = True` (default) and **not** using purged CV, multiple rule set candidates are evaluated in parallel using `CPUBacktestEngine.simulate_rule_set_batch`:
+When `PHASE3_USE_PARALLEL_BATCH = True` (default), multiple rule set candidates are evaluated in parallel using `CPUBacktestEngine.simulate_rule_set_batch`:
 
 - If the cache is available: uses `ThreadPoolExecutor` (thread-safe, no pickling overhead).
 - Without cache: uses `ProcessPoolExecutor` (separate processes to bypass the GIL).
@@ -246,13 +231,13 @@ When `PHASE3_USE_PARALLEL_BATCH = True` (default) and **not** using purged CV, m
 
 ---
 
-## 8. Best Selection from Pareto Front — `_select_best_from_pareto`
+## 7. Best Selection from Pareto Front — `_select_best_from_pareto`
 
-After refinement, the Pareto front contains multiple non-dominated rule sets. Selection uses `_maximin_selection_score` (min of train/val returns with profitability floors), with tie-breakers on train/val gap, symbol consistency, and Jaccard overlap. Under purged CV, each candidate is re-evaluated across all folds before scoring.
+After refinement, the Pareto front contains multiple non-dominated rule sets. Selection uses `_maximin_selection_score` (min of train/val returns with profitability floors), with tie-breakers on train/val gap, symbol consistency, and Jaccard overlap.
 
 ---
 
-## 9. Configuration Reference
+## 8. Configuration Reference
 
 See **`gpu_fuzzy_trader/config.py`** (Phase 3 section) for current defaults and tuning notes. Key knobs:
 
@@ -263,11 +248,10 @@ See **`gpu_fuzzy_trader/config.py`** (Phase 3 section) for current defaults and 
 | `PHASE3_VAL_*_GATE_*` | Anti-overfit penalties |
 | `PHASE3_*_GAP_*` | Penalise val >> train or train >> val |
 | `PHASE3_MIN_INCREMENTAL_TRADES` / `PHASE3_JACCARD_*` | Rule-team orthogonality |
-| `SPLIT_MODE` | Enables multi-fold evaluation when `purged_rolling_cv` |
 
 ---
 
-## 10. Outputs
+## 9. Outputs
 
 - `outputs/long.json` / `outputs/short.json` — Strategy files in `evaluator_v5.ipynb` format. At this stage, TP/SL/capital_pct are still the Phase 2 static values. Phase 4 will update them.
 - `outputs/reports/train_long_equity.png` / `outputs/reports/validation_long_equity.png` — Equity curves on training and validation splits.

@@ -1162,7 +1162,6 @@ class Rule_Set_Selector:
         pool: list[dict],
         direction: str,
         seed: int = 42,
-        cv_folds: list | None = None,
     ) -> None:
         if direction not in ("long", "short"):
             raise ValueError(

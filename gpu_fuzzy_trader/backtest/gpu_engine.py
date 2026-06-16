@@ -68,8 +68,6 @@ except ImportError as _jax_err:
 
 def _phase2_trade_floor() -> int:
     """Minimum executed trades required for a rule to avoid hard trade penalty."""
-    if str(_cfg.SPLIT_MODE).strip().lower() == "purged_rolling_cv":
-        return int(_cfg.PHASE2_CV_MIN_TRADE_POOL_FLOOR)
     return int(_cfg.MIN_TRADE_POOL_FLOOR)
 
 

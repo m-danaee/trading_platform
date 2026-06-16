@@ -3,7 +3,6 @@
 **Modules:**
 
 - `gpu_fuzzy_trader/phases/phase2_rule_pool.py` → `Rule_Pool_Generator` (orchestration, persistence, archive)
-- `gpu_fuzzy_trader/phases/phase2_cv.py` → purged CV engine facades (`PurgedCVTrainEngine`, `PurgedCVValEngine`)
 - `gpu_fuzzy_trader/evolution/evox_runner.py` → `run_phase2_evolution` (NSGA-III/II loop)
 - `gpu_fuzzy_trader/phases/phase2_support.py` → regime-aware support penalties
 - `gpu_fuzzy_trader/evolution/numba_ops.py` → Numba-accelerated NSGA helpers
@@ -94,20 +93,6 @@ sortino_for_obj = min(saturated_train_sortino, saturated_val_sortino)
 This means a rule must perform well on **both** the training and validation sides to achieve a good f1 score. Rules that overfit to training (high train Sortino, low val Sortino) are penalized.
 
 If the validation engine is unavailable or val trades are below `MIN_TRADE_POOL_FLOOR // 4`, the val Sortino is treated as 0 and `sortino_for_obj = min(train_sortino, 0.0)`.
-
-### Purged rolling CV (`SPLIT_MODE == "purged_rolling_cv"`)
-
-When the pipeline passes `cv_folds` into `Rule_Pool_Generator`:
-
-1. `build_cv_fold_engines()` builds one train + one val engine per fold (each subsampled to `PHASE1_SAMPLING_TOTAL`).
-2. `PurgedCVTrainEngine` / `PurgedCVValEngine` wrap the fold engines and expose `simulate_rule_batch()` that merges metrics with a **worst-case** rule across folds (min return/Sortino/PF, max drawdown).
-3. Joint fitness uses `min(train_sortino_fold, val_sortino_fold)` **per fold**, then the facade's worst-case merge across folds.
-
-**Effect:** A rule that shines in only one season but fails in another gets a poor f1.
-
-**Pool admission (CV):** `evaluate_purged_cv_pool_admission()` checks each fold against relaxed thresholds (`PHASE2_CV_MIN_WORST_RETURN = -8.0`, `PHASE2_CV_MIN_WORST_PF = 0.80`, `PHASE2_CV_MAX_WORST_DD = 18.0`). A rule enters the pool when at least `PHASE2_CV_POOL_MIN_FOLDS_PASS` folds pass. The maximum pool size is capped by `PHASE2_KEEP_TOP_RULES` (default: 140 rules). **Fold majority is the hard deployability gate.** Merged worst-case train/val metrics from the CV facades are stored for ranking and conservatism; they do **not** reject an otherwise fold-admitted rule unless `PHASE2_CV_MERGED_GATE_HARD = True`. Pool JSON stores `cv_folds_passing` / `cv_folds_total` so post-merge filters use the same fold criterion (merged metrics alone can be negative while 2/3 folds pass).
-
-When `SPLIT_MODE == "holdout_75_25"`, behaviour is unchanged: one train engine (sampled full `train_75`) and one optional val engine (`validation_25`).
 
 ---
 
@@ -288,7 +273,7 @@ rows_per_sym = max(1, total_rows // n_sym)
 
 The subset is re-drawn on each run, so repeated runs can explore different slices of the data while keeping the per-symbol balance.
 
-**Effect of `PHASE1_SAMPLING_TOTAL`:** This is the primary GPU memory knob. Increasing it improves the statistical reliability of fitness evaluations but increases VRAM usage roughly linearly. On an 8 GiB GPU (RTX 4050), use `350_000` if OOM occurs with purged CV + joint val. On Colab T4 (~16 GiB), `701_000` is the current default.
+**Effect of `PHASE1_SAMPLING_TOTAL`:** This is the primary GPU memory knob. Increasing it improves the statistical reliability of fitness evaluations but increases VRAM usage roughly linearly. On an 8 GiB GPU (RTX 4050), use `350_000` if OOM occurs. On Colab T4 (~16 GiB), `701_000` is the current default.
 
 **JAX install:** Use default PyPI with matching plugin versions (`jaxlib==0.10.1`). Colab T4: `pip install -U "jax[cuda12]==0.10.1"`. Local WSL (CUDA 13 / RTX 4050): `pip install -r requirements-gpu.txt`. Mismatched `jax-cuda*_plugin` / `jaxlib` versions disable the CUDA plugin and slow Phase 2.
 

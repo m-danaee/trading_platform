@@ -181,7 +181,6 @@ def log_gpu_runtime_config() -> None:
         getattr(_cfg, "PHASE2_GPU_USE_FP32", True),
         getattr(_cfg, "PHASE2_GPU_DATA_INT8", True),
         cache_dir or "disabled",
-        int(getattr(_cfg, "PHASE2_CV_FOLD_WORKERS", 1)),
     )
 
 

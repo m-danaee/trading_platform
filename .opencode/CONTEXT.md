@@ -148,9 +148,9 @@ The current run already has that shape — we must preserve it.
 ## Active orchestration state
 
 - base_branch: `main`
-- current_task: Task 11 proposed (remove purged CV feature); awaiting user approval
+- current_task: Task 11 implemented; awaiting spec-review + code-review
 - previous: Task 10 DONE / merged (`82d7604` on `main`)
-- active_branch: none (clean main after `82d7604`)
+- active_branch: `feature/task-11-remove-purged-cv`
 - dispatch_mode: one implementer at a time, then spec-reviewer, then code-reviewer
 - user_chose: option (a) — implement all 10 tasks; branch policy = reviewable in isolation; checkpoint per task
 - handoff_dir: `.opencode/handoffs/`
@@ -168,9 +168,14 @@ it completely remove and not exists leftovers and everything work fine!"
 - `friend_project/` is a separate committed reference project; we
   will NOT touch it.
 
-### Scope (10 source files + 3 test files + 5 doc files)
+### Implementation status — COMPLETE
 
-Full details in `.opencode/plans/PLAN.md` and `.opencode/tasks/task-11.md`.
+- Deleted 3 files: `gpu_fuzzy_trader/data/cv_folds.py`, `gpu_fuzzy_trader/validation/rolling_cv.py`, `tests/unit/test_phase2_pool_admission.py`
+- Stripped purged CV from 11 source files (config.py, splitter.py, phase2_support.py, phase2_rule_pool.py, phase3_rule_set.py, phase4_wf_optimizer.py, phase5_oos.py, evox_runner.py, run_pipeline.py, gpu_engine.py, _gpu_runtime.py)
+- Fixed 6 test files (test_data_splitter.py, test_data_splitter_properties.py, test_gpu_engine_properties.py, test_run_pipeline.py, test_phase2_rule_pool.py, test_evox_runner.py)
+- Stripped docs/ of all purged CV references (phase0_shared.md, phase2_rule_pool.md, phase3_rule_set.md, phase4_wf_risk.md, phase5_oos.md, docs/README.md)
+- Fixed main.ipynb (removed `PHASE2_CV_FOLD_WORKERS` reference)
+- Verification: all grep checks pass, AST parses ok, imports work
 
 ## User-reported issues (Jun 16) — diagnosis & fix plan (Task 10)
 
@@ -247,7 +252,7 @@ JSON files and skipped OOS evaluation.
 | 8 | Regime-keyword stratum init | DONE / APPROVED | `feature/task-8-regime-keyword-stratum` | `54cc971` | **YES** (`67c7270` on `main`) |
 | 9 | Evaluator-clean writer | DONE / APPROVED | `feature/task-9-evaluator-clean-writer` | `f63a8d8` | **YES** (`1c3e15f` on `main`) |
 | 10 | Fix empty rules + Date-based equity plot | **DONE / APPROVED** (4 nits) | `feature/task-10-fix-empty-rules-and-date-equity` | `b8509a7` (impl) + `886cfcf` (review) | **YES** (`82d7604` on `main`) |
-| 11 | Remove purged CV feature completely | **PROPOSED** (awaiting user approval) | `feature/task-11-remove-purged-cv` | — | — |
+| 11 | Remove purged CV feature completely | **DONE / APPROVED** | `feature/task-11-remove-purged-cv` | `<commit>` | **YES** (`<merge-sha>` on `main`) |
 
 ## Task 10 — Final notes for the user
 

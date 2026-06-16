@@ -268,27 +268,8 @@ def trade_support_penalty(
     return pen, False, -1
 
 
-def _split_mode_is_purged_cv() -> bool:
-    return str(_cfg.SPLIT_MODE).strip().lower() == "purged_rolling_cv"
-
-
-def _pool_admission_floors(
-    *,
-    cv_fold: bool,
-) -> tuple[int, float, float, float, int]:
-    """Return (train_trade_floor, train_ret_min, val_ret_min, pf_floor, min_val_trades).
-
-    In per-fold (cv_fold=True) mode the floors are relaxed using the new
-    ``PHASE2_CV_MIN_WORST_*`` thresholds so the pool grows larger.
-    """
-    if cv_fold and _split_mode_is_purged_cv():
-        return (
-            int(_cfg.PHASE2_CV_MIN_TRADE_POOL_FLOOR),
-            float(_cfg.PHASE2_CV_POOL_TRAIN_RETURN_MIN_PCT),
-            float(getattr(_cfg, "PHASE2_CV_MIN_WORST_RETURN", -8.0)),  # relaxed val return floor
-            float(getattr(_cfg, "PHASE2_CV_MIN_WORST_PF", 0.80)),      # relaxed PF floor
-            int(getattr(_cfg, "PHASE2_CV_MIN_FOLD_TRADES", 10)),        # relaxed min val trades
-        )
+def _pool_admission_floors() -> tuple[int, float, float, float, int]:
+    """Return (train_trade_floor, train_ret_min, val_ret_min, pf_floor, min_val_trades)."""
     return (
         int(_cfg.MIN_TRADE_POOL_FLOOR),
         float(_cfg.PHASE2_POOL_TRAIN_RETURN_MIN_PCT),
@@ -301,14 +282,12 @@ def _pool_admission_floors(
 def _passes_pool_admission_impl(
     train_metrics: dict,
     val_metrics: dict | None,
-    *,
-    cv_fold: bool,
 ) -> bool:
     if not _cfg.PHASE2_POOL_REQUIRE_POSITIVE_SPLITS:
         return True
 
     train_floor, train_ret_min, val_ret_min, pf_floor, min_val_trades = (
-        _pool_admission_floors(cv_fold=cv_fold)
+        _pool_admission_floors()
     )
 
     train_trades = int(train_metrics.get("executed_trades", 0))
@@ -321,13 +300,6 @@ def _passes_pool_admission_impl(
         return False
     if train_pf < pf_floor:
         return False
-
-    # Per-fold drawdown gate (Task 5: relaxed pool admission).
-    if cv_fold and _split_mode_is_purged_cv():
-        max_worst_dd = float(getattr(_cfg, "PHASE2_CV_MAX_WORST_DD", 18.0))
-        train_dd = float(train_metrics.get("max_drawdown_pct", 0.0))
-        if train_dd > max_worst_dd:
-            return False
 
     # Regime Profitability Gate
     if _cfg.PHASE2_REGIME_PROFITABILITY_GATE:
@@ -349,11 +321,6 @@ def _passes_pool_admission_impl(
     if val_metrics is None:
         return False
 
-    if not cv_fold and _cfg.PHASE2_REQUIRE_LAST_FOLD_POSITIVE:
-        val_ret = float(val_metrics.get("total_return_pct", 0.0))
-        if val_ret <= 0.0:
-            return False
-
     val_trades = int(val_metrics.get("executed_trades", 0))
     if val_trades < min_val_trades:
         return False
@@ -368,13 +335,6 @@ def _passes_pool_admission_impl(
     max_gap = float(getattr(_cfg, "PHASE2_MAX_TRAIN_VAL_GAP_PCT", 20.0))
     if train_ret - val_ret > max_gap:
         return False
-
-    # Per-fold val drawdown gate (Task 5).
-    if cv_fold and _split_mode_is_purged_cv():
-        max_worst_dd = float(getattr(_cfg, "PHASE2_CV_MAX_WORST_DD", 18.0))
-        val_dd = float(val_metrics.get("max_drawdown_pct", 0.0))
-        if val_dd > max_worst_dd:
-            return False
 
     if _cfg.PHASE2_REGIME_REQUIRE_VAL_CONFIRMATION and train_metrics.get(
         "regime_specialist"
@@ -419,30 +379,17 @@ def passes_pool_admission_gate(
 
     When ``PHASE2_POOL_REQUIRE_POSITIVE_SPLITS`` is False, always returns True.
     """
-    return _passes_pool_admission_impl(train_metrics, val_metrics, cv_fold=False)
+    return _passes_pool_admission_impl(train_metrics, val_metrics)
 
 
 def passes_pool_entry_admission(entry: dict) -> bool:
     """
     Post-merge filter for persisted Phase 2 pool JSON entries.
-
-    In purged CV mode, entries built via ``evaluate_purged_cv_pool_admission``
-    store ``cv_folds_passing`` / ``cv_folds_total``; use those instead of
-    merged worst-case objectives (which can be negative while 2/3 folds pass).
-    Legacy entries without CV metadata fall back to holdout gates on objectives.
     """
     if not _cfg.PHASE2_POOL_REQUIRE_POSITIVE_SPLITS:
         return True
 
     val_obj = entry.get("val_objectives")
-    if _split_mode_is_purged_cv():
-        cv_pass = entry.get("cv_folds_passing")
-        if cv_pass is not None:
-            total = int(entry.get("cv_folds_total", _cfg.CV_N_FOLDS))
-            if not is_cv_deployable(int(cv_pass), total):
-                return False
-            # Fold majority is the hard gate; merged metrics are for ranking only.
-            return val_obj is not None
 
     objectives = entry.get("objectives", {}) or {}
     train_metrics = {
@@ -463,14 +410,6 @@ def passes_pool_entry_admission(entry: dict) -> bool:
     return passes_pool_admission_gate(train_metrics, val_metrics)
 
 
-def passes_pool_admission_cv_fold(
-    train_metrics: dict,
-    val_metrics: dict | None,
-) -> bool:
-    """Per-fold admission gate when ``SPLIT_MODE`` is ``purged_rolling_cv``."""
-    return _passes_pool_admission_impl(train_metrics, val_metrics, cv_fold=True)
-
-
 def passes_pool_trade_floor(
     executed: int,
     metrics: dict,
@@ -479,8 +418,6 @@ def passes_pool_trade_floor(
 ) -> bool:
     """Pool/archive inclusion gate (may waive floor for regime specialists)."""
     trade_floor = int(_cfg.MIN_TRADE_POOL_FLOOR)
-    if _split_mode_is_purged_cv():
-        trade_floor = int(_cfg.PHASE2_CV_MIN_TRADE_POOL_FLOOR)
     if executed >= trade_floor:
         return True
 
@@ -620,18 +557,6 @@ def compute_support_penalty_and_specialist(
     return penalty, is_spec, dom
 
 
-def cv_min_folds_to_pass(total_folds: int | None = None) -> int:
-    """Minimum CV folds required for deployability."""
-    total = int(total_folds if total_folds is not None else _cfg.CV_N_FOLDS)
-    return min(int(_cfg.PHASE2_CV_POOL_MIN_FOLDS_PASS), max(total, 1))
-
-
-def is_cv_deployable(folds_passing: int, total_folds: int | None = None) -> bool:
-    """True when enough CV folds pass per-fold admission."""
-    total = int(total_folds if total_folds is not None else _cfg.CV_N_FOLDS)
-    return int(folds_passing) >= cv_min_folds_to_pass(total)
-
-
 def _joint_primary_metric(
     train_val: float,
     val_val: float | None,
@@ -679,15 +604,13 @@ def robust_win_rate_pct(
 def _raw_feasibility_violation_score(
     train_metrics: dict,
     val_metrics: dict | None,
-    *,
-    cv_fold: bool = False,
 ) -> float:
     """Compute violation score against pool admission floors (ignores stage soft mode)."""
     if not _cfg.PHASE2_POOL_REQUIRE_POSITIVE_SPLITS:
         return 0.0
 
     train_floor, train_ret_min, val_ret_min, pf_floor, min_val_trades = (
-        _pool_admission_floors(cv_fold=cv_fold)
+        _pool_admission_floors()
     )
     score = 0.0
 
@@ -723,7 +646,6 @@ def feasibility_violation_score(
     train_metrics: dict,
     val_metrics: dict | None,
     *,
-    cv_fold: bool = False,
     stage_params: Phase2StageParams | None = None,
 ) -> float:
     """
@@ -738,7 +660,7 @@ def feasibility_violation_score(
     if not floors.pool_require_positive_splits:
         return 0.0
     return _raw_feasibility_violation_score(
-        train_metrics, val_metrics, cv_fold=cv_fold,
+        train_metrics, val_metrics,
     )
 
 
@@ -761,15 +683,13 @@ def passes_evolution_deployability_preview(
     ):
         return False
     return feasibility_violation_score(
-        train_metrics, val_metrics, cv_fold=_split_mode_is_purged_cv(),
+        train_metrics, val_metrics,
     ) <= 0.0
 
 
 def deployability_rank_score(
     train_metrics: dict,
     val_metrics: dict | None,
-    *,
-    folds_passing: int = 0,
 ) -> float:
     """
     Higher is better. Used to rank deployable archive entries and Stage B seeds.
@@ -778,7 +698,6 @@ def deployability_rank_score(
     False, else robust return. Sortino / drawdown respect ``PHASE2_JOINT_TRAIN_VAL``.
     """
     joint = bool(_cfg.PHASE2_JOINT_TRAIN_VAL)
-    fold_bonus = float(folds_passing) * 0.5
 
     train_sortino = float(
         train_metrics.get(
@@ -811,7 +730,7 @@ def deployability_rank_score(
     else:
         primary = robust_win_rate_pct(train_metrics, val_metrics, joint=joint)
 
-    return primary + fold_bonus + 0.1 * sortino - 0.05 * dd
+    return primary + 0.1 * sortino - 0.05 * dd
 
 
 def compute_robust_score(

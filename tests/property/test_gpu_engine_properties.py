@@ -194,7 +194,7 @@ def parity_scenario_strategy(draw: st.DrawFn) -> dict:
     The binary feature 'feat_binary' is always 1, so the chromosome [1]
     and the CPU condition "[feat_binary] IS Active (1)" match identical rows.
     """
-    min_rows = max(7, int(_cfg.PHASE2_CV_MIN_TRADE_POOL_FLOOR))
+    min_rows = max(7, int(_cfg.MIN_TRADE_POOL_FLOOR))
     n_rows = draw(st.integers(min_value=min_rows, max_value=40))
     tp = draw(st.floats(min_value=0.5, max_value=8.0,
               allow_nan=False, allow_infinity=False))

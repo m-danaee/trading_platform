@@ -16,13 +16,11 @@ Detailed behaviour and formulas: docs/phase0_shared.md … docs/phase5_oos.md
 
 Tuning cheat-sheet (symptom → knob)
 -----------------------------------
-  Short OOS / overfitting          SPLIT_MODE, CV_N_FOLDS, PHASE3_* gates,
-                                   PHASE2_JOINT_TRAIN_VAL, PHASE2_CV_* gates
+  Short OOS / overfitting          PHASE3_* gates, PHASE2_JOINT_TRAIN_VAL
   GPU OOM                          PHASE1_SAMPLING_TOTAL ↓, PHASE2_GPU_BATCH_SIZE ↓,
-                                   PHASE2_SCAN_UNROLL ↓, PHASE2_CV_FOLD_WORKERS = 1
-  Phase 2 too slow                 PHASE2_GENERATIONS ↓, CV_N_FOLDS ↓, PHASE2_USE_GPU
-  Empty Phase 2 pool               MIN_TRADE_SUPPORT ↓, PHASE2_*_FLOOR ↓,
-                                   PHASE2_CV_POOL_MIN_FOLDS_PASS ↓
+                                   PHASE2_SCAN_UNROLL ↓
+  Phase 2 too slow                 PHASE2_GENERATIONS ↓, PHASE2_USE_GPU
+  Empty Phase 2 pool               MIN_TRADE_SUPPORT ↓, PHASE2_*_FLOOR ↓
   Too many weak / noisy rules      MIN_TRADE_SUPPORT ↑, MIN_CONDITIONS ↑,
                                    PHASE2_*_FLOOR ↑, PHASE2_MAX_DRAWDOWN_GATE ↓
   Phase 3 finds no teams           PHASE3_*_FLOOR ↓, PHASE3_MIN_RULES ↓
@@ -97,7 +95,6 @@ TEST_CSV_PATH = _env_str(
 # Cached splits from train.csv (Phases 2–5). Rebuilt when train.csv is newer.
 TRAIN_70_PATH = "data/train_70.parquet"
 VALIDATION_30_PATH = "data/validation_30.parquet"
-CV_FOLDS_MANIFEST_PATH = "data/cv_folds_manifest.json"
 
 OUTPUTS_DIR = "outputs"
 RUN_LOG_PATH = os.path.join(OUTPUTS_DIR, "run.log")
@@ -265,7 +262,7 @@ META_COLUMNS = ["datetime", "symbol"]
 INTERNAL_COLUMNS = ("_symbol_bar_index",)
 
 # TAIL_DROP_ROWS — bars dropped per symbol at dataset tail (label horizon).
-# Must equal MAX_HOLD_CANDLES and CV_EMBARGO_BARS (288 = 24 h at 5-min bars).
+# Must equal MAX_HOLD_CANDLES (288 = 24 h at 5-min bars).
 #   Higher → more rows removed, safer labels, less training data.
 #   Lower  → more rows kept, risk of NaN / lookahead leakage at symbol tails.
 TAIL_DROP_ROWS = 288
@@ -275,47 +272,6 @@ TAIL_DROP_ROWS = 288
 # Phase 0 — Train / validation split (Phases 2–3)
 # =============================================================================
 # Phases 4–5 always use persisted train_70 + validation_30 (see splitter.py).
-
-# SPLIT_MODE
-#   "purged_rolling_cv" — K expanding-window folds, embargo, worst-fold scoring.
-#                         Stricter generalization; ~K× slower Phase 2/3.
-#   "holdout_70_30"     — single 70/30 per symbol; fast but easier to overfit
-#                         one validation season (risky for short direction).
-SPLIT_MODE = "holdout_70_30"
-
-# CV_N_FOLDS — number of purged rolling validation windows per symbol.
-#   Higher → stricter season coverage, slower eval, pool gates need more folds.
-#   Lower  → faster runs, less robust to regime change (2 is debug-friendly).
-# Coupled: PHASE2_CV_POOL_MIN_FOLDS_PASS auto-scales via _CV_POOL_MIN_FOLDS_PASS.
-CV_N_FOLDS = 3
-
-# CV_EMBARGO_BARS — gap between train end and val start (label-horizon purge).
-#   Higher → less leakage, shorter effective train per fold.
-#   Lower  → more train rows, risk of label overlap across split boundary.
-CV_EMBARGO_BARS = TAIL_DROP_ROWS
-
-# CV_BARS_PER_DAY — bars per calendar day (288 for 5-minute data).
-# Used only for fold sizing / month calculations; wrong value mis-sizes folds.
-CV_BARS_PER_DAY = 288
-
-# CV_MIN_TRAIN_MONTHS — minimum train history before first val window.
-#   Higher → folds start later, more stable train stats, fewer usable folds.
-#   Lower  → more folds on short histories, noisier train estimates.
-CV_MIN_TRAIN_MONTHS = 2.0
-
-# True majority for pool admission: even K requires K/2+1; odd K uses ceil(K/2).
-
-
-def _cv_pool_min_folds_pass(n_folds: int) -> int:
-    if n_folds <= 1:
-        return 1
-    if n_folds % 2 == 0:
-        return n_folds // 2 + 1
-    return n_folds // 2 + 1
-
-
-_CV_POOL_MIN_FOLDS_PASS = _cv_pool_min_folds_pass(CV_N_FOLDS)
-_CV_RANK_MIN_FOLDS_PASS = max(1, _CV_POOL_MIN_FOLDS_PASS - 1)
 
 
 # =============================================================================
@@ -651,86 +607,11 @@ PHASE2_POOL_VAL_RETURN_MIN_PCT = 0.0
 #   Lower  → stricter alignment between train and val required.
 PHASE2_MAX_TRAIN_VAL_GAP_PCT = 20.0
 
-# --- Purged CV pool admission (per-fold gates) ---
-
-# PHASE2_CV_POOL_MIN_FOLDS_PASS — folds that must pass per-fold checks.
-# Auto-coupled to CV_N_FOLDS (~50%). Do not set to CV_N_FOLDS unless you want
-# 100% fold pass (often starves Phase 3).
-#   Higher → stricter deployability across seasons; smaller pool.
-#   Lower  → rules can enter pool with fewer good seasons.
-PHASE2_CV_POOL_MIN_FOLDS_PASS = _CV_POOL_MIN_FOLDS_PASS
-
-# PHASE2_CV_MERGED_GATE_HARD — merged worst-case metrics also hard-reject.
-#   True  → double gate (fold pass AND merged metrics); very strict pool.
-#   False → fold majority is the hard gate; merged metrics rank only.
-PHASE2_CV_MERGED_GATE_HARD = True
-
-# PHASE2_CV_MIN_TRADE_POOL_FLOOR — per-fold hard trade floor (lower than global).
-#   Higher → each fold must show more trades; rejects seasonal one-offs.
-#   Lower  → thin seasonal rules can pass a fold.
-PHASE2_CV_MIN_TRADE_POOL_FLOOR = 15
-
-PHASE2_CV_POOL_TRAIN_RETURN_MIN_PCT = 0.0
-PHASE2_CV_POOL_VAL_RETURN_MIN_PCT = 0.0
-
-# PHASE2_CV_PROFIT_FACTOR_FLOOR — per-fold minimum PF for pool admission.
-#   Higher → stricter per-season profitability.
-#   Lower  → marginal PF allowed in some folds.
-PHASE2_CV_PROFIT_FACTOR_FLOOR = 1.0
-
-# PHASE2_CV_MIN_VAL_TRADES — min validation trades per fold for admission.
-#   Higher → fold val metrics are statistically meaningful.
-#   Lower  → folds with few trades can still admit rules.
-PHASE2_CV_MIN_VAL_TRADES = 15
-
-# PHASE2_CV_POOL_TARGET_MIN — soft target pool size before rank fallback kicks in.
-#   Higher → pipeline tries harder to fill a large pool via looser rank admit.
-#   Lower  → satisfied with smaller pool; less rank fallback pressure.
-PHASE2_CV_POOL_TARGET_MIN = 50
-
-# PHASE2_CV_POOL_RANK_ADMIT_TOP_K — max rules admitted via rank fallback.
-#   Higher → larger pool when strict gates are too tight.
-#   Lower  → smaller pool; Phase 3 has fewer combinations to search.
-PHASE2_CV_POOL_RANK_ADMIT_TOP_K = 100
-
-# PHASE2_CV_RANK_MIN_FOLDS_PASS — looser fold pass for rank fallback (≤ pool gate).
-PHASE2_CV_RANK_MIN_FOLDS_PASS = _CV_RANK_MIN_FOLDS_PASS
-
-# --- Phase 2 relaxed pool-admission thresholds (Task 5) -----------------------
-# These relaxed thresholds replace the stricter per-fold return/PF/trade floors
-# so that the Phase 2 pool grows from ~5–8 rules to ~140 candidate rules.
-# They mirror the friend's ``PHASE2_CV_MIN_WORST_*`` values.
-
-# PHASE2_CV_MIN_WORST_RETURN — worst per-fold val return % to admit a rule.
-#   Higher → stricter; only folds with better-than-this return pass.
-#   Lower  → relaxed; folds can lose up to -8% and still admit the rule.
-PHASE2_CV_MIN_WORST_RETURN = -8.0
-
-# PHASE2_CV_MIN_WORST_PF — worst per-fold profit factor to admit a rule.
-#   Higher → stricter; requires profitable folds.
-#   Lower  → relaxed; folds with PF ≥ 0.80 pass.
-PHASE2_CV_MIN_WORST_PF = 0.80
-
-# PHASE2_CV_MAX_WORST_DD — max per-fold drawdown % to admit a rule.
-#   Higher → more tolerant of drawdown within a fold.
-#   Lower  → stricter; folds with DD > 18% cause rejection.
-PHASE2_CV_MAX_WORST_DD = 18.0
-
-# PHASE2_CV_MIN_FOLD_TRADES — min executed trades per fold for admission.
-#   Higher → stricter; each fold needs more trades.
-#   Lower  → relaxed; folds with ≥ 10 trades pass.
-PHASE2_CV_MIN_FOLD_TRADES = 10
-
 # PHASE2_KEEP_TOP_RULES — max rules kept in the final Phase 2 pool after
 # admission filtering, sorted by deployability_rank_score descending.
 #   Higher → larger pool for Phase 3 greedy selection.
 #   Lower  → smaller pool; faster Phase 3, fewer combinations.
 PHASE2_KEEP_TOP_RULES = 140
-
-# PHASE2_REQUIRE_LAST_FOLD_POSITIVE — last CV fold val return must be > 0.
-#   True  → emphasize most recent season; can shrink pool sharply.
-#   False → last fold can be weak if earlier folds pass (recommended with CV=2).
-PHASE2_REQUIRE_LAST_FOLD_POSITIVE: bool = False
 
 
 # =============================================================================
@@ -818,11 +699,6 @@ PHASE2_EARLY_STOP_USE_MEDIAN_RETURN = True
 #   Lower  → stop even with tiny front.
 PHASE2_EARLY_STOP_MIN_VALID_RULES = 5
 
-# PHASE2_EARLY_STOP_DISABLED_IN_CV — disable return early-stop in purged CV mode.
-#   True  → always run full gens under CV (slower).
-#   False → early stop active under CV (default).
-PHASE2_EARLY_STOP_DISABLED_IN_CV = False
-
 # --- Plateau early stop (no improvement in best return) ---
 
 PHASE2_PLATEAU_EARLY_STOP_ENABLED = True
@@ -841,8 +717,6 @@ PHASE2_PLATEAU_EARLY_STOP_PATIENCE = 12
 #   Higher → need larger gains to count as progress.
 #   Lower  → tiny improvements reset plateau counter.
 PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT = 0.02
-
-PHASE2_PLATEAU_EARLY_STOP_DISABLED_IN_CV = False
 
 # PHASE2_PLATEAU_USE_ROBUST_RETURN — track min(train,val) return for plateau.
 #   True  → plateau reflects deployable return, not train-only spikes.
@@ -1016,18 +890,7 @@ def phase2_should_enrich_symbol_metrics(engine: object | None = None) -> bool:
 
 
 # =============================================================================
-# Phase 2 — Parallel CV fold evaluation
-# =============================================================================
-
-# PHASE2_CV_FOLD_WORKERS — threads evaluating CV folds simultaneously.
-#   0 → auto (= CV_N_FOLDS).  1 → sequential (safest on single GPU).
-#   Higher → faster on multi-GPU hosts; on one GPU can increase peak VRAM.
-PHASE2_CV_FOLD_WORKERS = 1
-
-
-# =============================================================================
 # Phase 2 — NSGA-III search budget & archive
-# =============================================================================
 
 # PHASE2_POPULATION_SIZE — individuals per generation.
 #   Higher → better Pareto coverage, ~linear GPU cost per generation.
@@ -1362,7 +1225,6 @@ SYMBOL_SPECIALIZATION_MIN_VAL_TRADES = 6
 # Phase 4 — Walk-forward risk optimization (TP / SL / capital)
 # =============================================================================
 # Rule conditions are frozen; only risk params are optimized via Optuna.
-# With purged_rolling_cv, WF windows use every fold's val block.
 
 # --- Search space bounds ---
 
@@ -1537,20 +1399,9 @@ PHASE5_REMOVE_NEGATIVE_PNL_RULES = True
 
 
 # =============================================================================
-# Cross-parameter sanity (import-time; catches CV / fold-gate drift)
+# Cross-parameter sanity (import-time)
 # =============================================================================
 
-assert CV_N_FOLDS >= 1, f"CV_N_FOLDS must be >= 1, got {CV_N_FOLDS}"
-assert 1 <= PHASE2_CV_POOL_MIN_FOLDS_PASS <= CV_N_FOLDS, (
-    "PHASE2_CV_POOL_MIN_FOLDS_PASS must be in [1, CV_N_FOLDS]; "
-    f"got {PHASE2_CV_POOL_MIN_FOLDS_PASS} with CV_N_FOLDS={CV_N_FOLDS}"
-)
-assert 1 <= PHASE2_CV_RANK_MIN_FOLDS_PASS <= CV_N_FOLDS, (
-    "PHASE2_CV_RANK_MIN_FOLDS_PASS must be in [1, CV_N_FOLDS]"
-)
-assert PHASE2_CV_RANK_MIN_FOLDS_PASS <= PHASE2_CV_POOL_MIN_FOLDS_PASS, (
-    "rank fallback must be looser than or equal to strict pool gate"
-)
 assert PHASE2_PLATEAU_EARLY_STOP_MIN_GENERATION <= PHASE2_STAGE_A_GENERATIONS, (
     "plateau min gen should not exceed Stage A budget"
 )
@@ -1588,8 +1439,6 @@ def _apply_colab_gpu_defaults() -> None:
     """
     Colab T4 optimizations for main.ipynb runs.
 
-    - Keep ``PHASE2_CV_FOLD_WORKERS=1`` — parallel fold threads spike peak
-      GPU/RAM and trigger Linux OOM kills (SIGKILL) on 12 GiB Colab hosts.
     - Phase 3 uses GPUBacktestEngine (mask cache + batch eval path).
     - VRAM auto batch sizing uses the T4-friendly 128 cap when enabled.
     """

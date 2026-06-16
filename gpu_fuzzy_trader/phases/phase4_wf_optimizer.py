@@ -2,10 +2,7 @@
 phase4_wf_optimizer.py — WalkForwardRiskOptimizer (Phase 4)
 
 Fine-tunes TP, SL, and capital_pct for each rule in the selected rule set using
-Optuna multi-objective walk-forward optimization.
-
-When purged rolling CV folds are available, walk-forward windows are built on
-every fold's validation block (not only validation_25). Rule conditions are
+Optuna multi-objective walk-forward optimization. Rule conditions are
 frozen from Phase 3. Each trial is scored on the worst return, drawdown, and
 turnover across all windows.
 
@@ -149,46 +146,6 @@ def build_phase4_walk_forward_splits(
     return splits
 
 
-def _walk_forward_splits_for_val_block(
-    val_df: pd.DataFrame,
-    k: int,
-) -> list[pd.DataFrame]:
-    """
-    WF windows for one validation block; fall back to the whole block if too short.
-    """
-    if len(val_df) == 0:
-        return []
-    try:
-        return build_phase4_walk_forward_splits(val_df, k)
-    except ValueError:
-        return [val_df.copy()]
-
-
-def build_phase4_multi_cv_fold_splits(
-    cv_folds: list[Any],
-    k: int,
-) -> list[pd.DataFrame]:
-    """
-    Walk-forward windows from each CV fold's validation block.
-
-    Aggregates windows across all folds so inactive rules in one regime (e.g. high
-    illiquidity on the last fold) still contribute to Optuna scoring.
-    """
-    all_splits: list[pd.DataFrame] = []
-    for fold in cv_folds:
-        val_df = getattr(fold, "val_df", None)
-        if val_df is None and isinstance(fold, dict):
-            val_df = fold.get("val_df")
-        if val_df is None or len(val_df) == 0:
-            continue
-        all_splits.extend(_walk_forward_splits_for_val_block(val_df, k))
-    if not all_splits:
-        raise ValueError(
-            "cv_folds produced no walk-forward windows for Phase 4"
-        )
-    return all_splits
-
-
 def _build_candidate_rule_set(
     rules: list[dict],
     params_list: list[dict],
@@ -219,12 +176,8 @@ class Phase4WalkForwardEvaluator:
         val_df: pd.DataFrame,
         direction: str,
         k: int,
-        cv_folds: list[Any] | None = None,
     ) -> None:
-        if cv_folds:
-            splits = build_phase4_multi_cv_fold_splits(cv_folds, k)
-        else:
-            splits = build_phase4_walk_forward_splits(val_df, k)
+        splits = build_phase4_walk_forward_splits(val_df, k)
         self._engines = [
             CPUBacktestEngine(split_df, {}, direction)
             for split_df in splits
@@ -552,9 +505,6 @@ class WalkForwardRiskOptimizer:
         Rule set dict from Phase 3 (evaluator_v3.ipynb format).
     direction : str
         ``"long"`` or ``"short"``.
-    cv_folds : list | None
-        Purged rolling CV folds; when set, WF optimization uses every fold's val
-        block instead of only *val_df*.
     train_df : pd.DataFrame | None
         Training split dataframe for grid-search train engine (separate from
         ``val_df``).  When ``None`` (backward compat), the grid search falls
@@ -572,7 +522,6 @@ class WalkForwardRiskOptimizer:
         val_df: pd.DataFrame,
         rule_set: dict,
         direction: str,
-        cv_folds: list[Any] | None = None,
         train_df: pd.DataFrame | None = None,
         n_trials: int | None = None,
         n_splits: int | None = None,
@@ -592,7 +541,6 @@ class WalkForwardRiskOptimizer:
         self.train_df = train_df
         self.rule_set = rule_set
         self.direction = direction
-        self.cv_folds = cv_folds or []
         self.n_trials = 1
         self.n_splits = n_splits if n_splits is not None else _cfg.PHASE4_WF_SPLITS
         self.seed = seed if seed is not None else 42
