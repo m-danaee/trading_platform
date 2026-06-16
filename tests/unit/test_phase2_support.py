@@ -12,7 +12,6 @@ from gpu_fuzzy_trader.phases.phase2_support import (
     compute_support_penalty_and_specialist,
     deployability_rank_score,
     feasibility_violation_score,
-    is_cv_deployable,
     passes_evolution_deployability_preview,
     passes_pool_admission_gate,
     passes_pool_entry_admission,

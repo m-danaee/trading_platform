@@ -64,7 +64,7 @@ The split is `holdout_70_30` per symbol (70% train, 30% validation).
 1. `split_point = floor(N × 0.75)`.
 2. Rows `[0, split_point)` → train; `[split_point, N)` → validation.
 
-`cv_folds` is empty; Phases 2–3 use one train engine and one val engine.
+Phases 2–3 use one train engine and one val engine.
 
 ### Why per-symbol?
 
