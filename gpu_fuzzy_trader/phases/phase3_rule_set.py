@@ -601,19 +601,22 @@ def _try_lean_fallback(
     direction: str,
     global_min: int = 2,
 ) -> list[dict] | None:
-    """Pick top-*global_min* pool rules with no gates — the most lenient path.
+    """Pick top-*global_min* pool rules — relaxed but with val_floor sanity check.
 
     This is a deliberate relaxation for when both the per-symbol greedy
     selection **and** the strict ``_try_global_pool_fallback`` have failed.
-    It picks the top-*global_min* rules by ``_pool_rule_val_score``
+    It applies only the ``val_floor`` (from
+    ``effective_phase3_val_return_floor_pct``) as a sanity check, then picks
+    the top-*global_min* surviving rules by ``_pool_rule_val_score``
     (``min(train_ret, val_ret)``) **without** calling:
 
     * ``gate_positive_good`` (PF ≥ 1.0 / min-trades gate)
     * ``_simulate_team`` (full-team backtest)
-    * ``val_floor`` check (return floor)
 
     Why this is OK
     --------------
+    * The ``val_floor`` sanity check (default 2.5%) prevents clearly
+      negative-return teams from leaking through.
     * Phase 4 risk optimization and Phase 5 evaluator scoring will still
       filter out truly broken rules.
     * The pool itself has already passed Phase 2's quality filters (CV,
@@ -634,7 +637,8 @@ def _try_lean_fallback(
     -------
     list[dict] | None
         Top-*global_min* rules sorted by ``_pool_rule_val_score`` descending,
-        or ``None`` if the pool is too small (``len(pool) < global_min``).
+        or ``None`` if fewer than ``global_min`` rules survive the
+        ``val_floor`` filter.
     """
     n_rules = max(1, int(global_min))
 
@@ -646,18 +650,42 @@ def _try_lean_fallback(
         )
         return None
 
+    val_floor = float(_cfg.effective_phase3_val_return_floor_pct())
+
+    # Filter by val_floor (sanity check from config)
+    above_floor = [
+        r for r in pool
+        if _pool_rule_val_score(r) > val_floor
+    ]
+
+    if len(above_floor) < n_rules:
+        logger.warning(
+            "Phase 3 [%s]: _try_lean_fallback — only %d rule(s) above "
+            "val_floor=%.2f%%, need at least %d.  Cannot pick lean fallback.",
+            direction, len(above_floor), val_floor, n_rules,
+        )
+        return None
+
     logger.warning(
         "Phase 3 [%s]: _try_lean_fallback — applying relaxed fallback. "
         "Per-symbol greedy and _try_global_pool_fallback both failed; "
-        "picking top-%d pool rules by min(train_ret, val_ret) without "
-        "positive-good gate, team backtest, or val_floor check. "
-        "Phase 4 risk optimization and Phase 5 evaluator will still "
-        "filter out weak rules.",
-        direction, n_rules,
+        "picking top-%d pool rules by min(train_ret, val_ret) with "
+        "val_floor=%.2f%% sanity check (positive-good gate, team backtest "
+        "NOT applied).  Phase 4 risk optimization and Phase 5 evaluator "
+        "will still filter out weak rules.",
+        direction, n_rules, val_floor,
     )
 
-    ranked = sorted(pool, key=_pool_rule_val_score, reverse=True)
-    return ranked[:n_rules]
+    ranked = sorted(above_floor, key=_pool_rule_val_score, reverse=True)
+    selected = ranked[:n_rules]
+    logger.warning(
+        "Phase 3 [%s]: lean fallback — returning top %d rules "
+        "(min(train,val)=%.2f%%, val_floor=%.2f%%).",
+        direction, len(selected),
+        min(_pool_rule_val_score(r) for r in selected),
+        val_floor,
+    )
+    return selected
 
 
 def _best_rules_from_pool_fallback(

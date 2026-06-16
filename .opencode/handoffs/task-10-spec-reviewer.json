@@ -1,0 +1,17 @@
+{
+  "task_id": "task-10",
+  "verdict": "REQUEST_CHANGES",
+  "findings": [
+    {
+      "severity": "high",
+      "finding": "10.2: `_try_lean_fallback` does NOT apply `val_floor` check as specified. The spec says 'Apply only the `val_floor` (from `effective_phase3_val_return_floor_pct`) as a sanity check' and 'Return the 2-rule list (or None if `min(train, val) <= val_floor`)'. The implementation explicitly skips val_floor entirely — the docstring states 'without calling: val_floor check (return floor)' and the code has no val_floor filtering. The function returns top-N rules by score with only a pool-size check, no return-floor sanity check.",
+      "fix": "Add val_floor filtering to `_try_lean_fallback`: compute `val_floor = float(_cfg.effective_phase3_val_return_floor_pct())`, filter out rules where `_pool_rule_val_score(r) <= val_floor`, and return None if fewer than `global_min` rules survive the filter. This matches the spec's 'Apply only the val_floor as a sanity check' requirement."
+    },
+    {
+      "severity": "high",
+      "finding": "10.2: Test file `test_phase3_lean_fallback.py` does NOT test the val_floor behavior. The spec says the test should verify 'returns 2 rules when called and None when the team return is below the floor'. No test case checks that `_try_lean_fallback` returns None when pool rules have min(train,val) below val_floor. The word 'val_floor' or 'floor' does not appear anywhere in the test file.",
+      "fix": "Add a test case that mocks `effective_phase3_val_return_floor_pct` to return a value higher than all rules' `_pool_rule_val_score`, and asserts `_try_lean_fallback` returns None. Also add a test that mixes rules above and below the floor and verifies only above-floor rules are returned."
+    }
+  ],
+  "summary": "Task 10 implementation is mostly spec-compliant: config thresholds (10.1), date-based equity plot (10.3), evaluator_clean README (10.4), test files (10.5), and scope/branch discipline are all correct. However, 10.2 has a clear spec deviation: `_try_lean_fallback` was specified to apply `val_floor` as a sanity check (returning None if min(train,val) <= val_floor), but the implementation explicitly skips this check. The corresponding test is also missing. Two changes needed to reach full spec compliance."
+}

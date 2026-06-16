@@ -121,8 +121,8 @@ class TestTryLeanFallback:
     def test_warning_logged_at_warning_level(self, caplog):
         """A WARNING is logged explaining the relaxation."""
         pool = [
-            _make_pool_rule(["a"], train_ret=5.0, val_ret=5.0),
-            _make_pool_rule(["b"], train_ret=4.0, val_ret=4.0),
+            _make_pool_rule(["a"], train_ret=10.0, val_ret=10.0),
+            _make_pool_rule(["b"], train_ret=8.0, val_ret=8.0),
         ]
         with caplog.at_level(logging.WARNING, logger="gpu_fuzzy_trader.phases.phase3_rule_set"):
             result = _try_lean_fallback(pool, "long", global_min=2)
@@ -147,8 +147,8 @@ class TestTryLeanFallback:
     def test_pool_with_exactly_2_rules(self):
         """With exactly 2 rules, returns both."""
         pool = [
-            _make_pool_rule(["x"], train_ret=3.0, val_ret=3.0),
-            _make_pool_rule(["y"], train_ret=2.0, val_ret=2.0),
+            _make_pool_rule(["x"], train_ret=8.0, val_ret=8.0),
+            _make_pool_rule(["y"], train_ret=6.0, val_ret=6.0),
         ]
         result = _try_lean_fallback(pool, "long", global_min=2)
         assert result is not None
@@ -156,3 +156,29 @@ class TestTryLeanFallback:
         # Both should be returned
         conditions = {str(r["conditions"][0]) for r in result}
         assert conditions == {"x", "y"}
+
+    def test_returns_none_when_all_below_floor(self, monkeypatch):
+        """When all pool rules have min(train,val) below val_floor, returns None."""
+        from gpu_fuzzy_trader import config as _cfg
+        pool = [
+            _make_pool_rule(["a"], train_ret=1.0, val_ret=1.0),   # score = 1.0
+            _make_pool_rule(["b"], train_ret=0.5, val_ret=0.5),   # score = 0.5
+        ]
+        monkeypatch.setattr(_cfg, "effective_phase3_val_return_floor_pct", lambda: 5.0)
+
+        result = _try_lean_fallback(pool, "long", global_min=2)
+        assert result is None
+
+    def test_filters_mixed_above_below_floor(self, monkeypatch):
+        """When some rules are above val_floor and some below, returns None if
+        too few survive the floor filter."""
+        from gpu_fuzzy_trader import config as _cfg
+        pool = [
+            _make_pool_rule(["a"], train_ret=10.0, val_ret=10.0),  # score = 10.0 (above)
+            _make_pool_rule(["b"], train_ret=1.0, val_ret=1.0),    # score = 1.0 (below)
+        ]
+        monkeypatch.setattr(_cfg, "effective_phase3_val_return_floor_pct", lambda: 5.0)
+
+        result = _try_lean_fallback(pool, "long", global_min=2)
+        # Only 1 rule above floor, but global_min=2, so returns None
+        assert result is None
