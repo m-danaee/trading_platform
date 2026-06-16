@@ -148,9 +148,9 @@ The current run already has that shape — we must preserve it.
 ## Active orchestration state
 
 - base_branch: `main`
-- current_task: Task 11 implemented; awaiting spec-review + code-review
+- current_task: Task 11 DONE / merged (`1b8e002` on `main`)
 - previous: Task 10 DONE / merged (`82d7604` on `main`)
-- active_branch: `feature/task-11-remove-purged-cv`
+- active_branch: none (clean main after `1b8e002`)
 - dispatch_mode: one implementer at a time, then spec-reviewer, then code-reviewer
 - user_chose: option (a) — implement all 10 tasks; branch policy = reviewable in isolation; checkpoint per task
 - handoff_dir: `.opencode/handoffs/`
@@ -252,7 +252,7 @@ JSON files and skipped OOS evaluation.
 | 8 | Regime-keyword stratum init | DONE / APPROVED | `feature/task-8-regime-keyword-stratum` | `54cc971` | **YES** (`67c7270` on `main`) |
 | 9 | Evaluator-clean writer | DONE / APPROVED | `feature/task-9-evaluator-clean-writer` | `f63a8d8` | **YES** (`1c3e15f` on `main`) |
 | 10 | Fix empty rules + Date-based equity plot | **DONE / APPROVED** (4 nits) | `feature/task-10-fix-empty-rules-and-date-equity` | `b8509a7` (impl) + `886cfcf` (review) | **YES** (`82d7604` on `main`) |
-| 11 | Remove purged CV feature completely | **DONE / APPROVED** | `feature/task-11-remove-purged-cv` | `<commit>` | **YES** (`<merge-sha>` on `main`) |
+| 11 | Remove purged CV feature completely | **DONE / APPROVED** | `feature/task-11-remove-purged-cv` | `34d060a` (impl) + `ce587f1` (review fix) | **YES** (`1b8e002` on `main`) |
 
 ## Task 10 — Final notes for the user
 
