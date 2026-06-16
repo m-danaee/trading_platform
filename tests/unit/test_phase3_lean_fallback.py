@@ -182,3 +182,32 @@ class TestTryLeanFallback:
         result = _try_lean_fallback(pool, "long", global_min=2)
         # Only 1 rule above floor, but global_min=2, so returns None
         assert result is None
+
+    def test_returns_none_when_rules_are_overfit(self, monkeypatch):
+        """Overfit rules (train>>val) are rejected even when above val_floor."""
+        from gpu_fuzzy_trader import config as _cfg
+
+        monkeypatch.setattr(
+            _cfg, "effective_phase3_val_return_floor_pct", lambda: 4.0)
+        monkeypatch.setattr(_cfg, "PHASE3_MAX_TRAIN_VAL_GAP_PCT", 20.0)
+        pool = [
+            _make_pool_rule(["a"], train_ret=90.0, val_ret=5.0),
+            _make_pool_rule(["b"], train_ret=80.0, val_ret=6.0),
+        ]
+        result = _try_lean_fallback(pool, "short", global_min=2)
+        assert result is None
+
+    def test_returns_balanced_rules_when_gap_ok(self, monkeypatch):
+        """Balanced rules within gap pass lean fallback."""
+        from gpu_fuzzy_trader import config as _cfg
+
+        monkeypatch.setattr(
+            _cfg, "effective_phase3_val_return_floor_pct", lambda: 4.0)
+        monkeypatch.setattr(_cfg, "PHASE3_MAX_TRAIN_VAL_GAP_PCT", 20.0)
+        pool = [
+            _make_pool_rule(["a"], train_ret=10.0, val_ret=8.0),
+            _make_pool_rule(["b"], train_ret=9.0, val_ret=7.0),
+        ]
+        result = _try_lean_fallback(pool, "short", global_min=2)
+        assert result is not None
+        assert len(result) == 2

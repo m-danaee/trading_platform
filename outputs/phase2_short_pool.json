@@ -1,60 +1,114 @@
 [
   {
     "chromosome": [
+      4,
+      5,
+      10,
+      10,
+      10,
+      5,
+      5,
       5,
       5,
       10,
       5,
       5,
+      5,
+      5,
+      5,
+      5,
+      2,
+      2,
       10,
-      5,
-      5,
-      1,
-      5,
-      5,
-      0,
-      5,
-      5,
-      5,
-      10,
-      10,
-      5,
-      5,
-      2
+      10
     ],
     "conditions": [
-      "[channel_pos_20] IS Low",
-      "[cand_up_down_vol_ratio_20] IS Very Low",
-      "[ret_vol_corr_30] IS Bearish"
+      "[amihud_illiquidity_20] IS Very High",
+      "[rsi_hidden_div_flag] IS Positive (1)",
+      "[vol_regime_pct_120] IS Medium"
     ],
     "objectives": {
-      "sortino_ratio": 0.4959929585456848,
-      "total_return_pct": 20.249128341674805,
-      "profit_factor": 1.742082118988037,
-      "max_drawdown_pct": 2.502413511276245,
-      "win_rate": 53.5031852722168
+      "sortino_ratio": 0.3296925723552704,
+      "total_return_pct": 24.085163116455078,
+      "profit_factor": 1.5877208709716797,
+      "max_drawdown_pct": 5.414708137512207,
+      "win_rate": 53.73831558227539
     },
-    "executed_trades": 157,
+    "executed_trades": 214,
     "val_objectives": {
-      "sortino_ratio": 0.014552254229784012,
-      "total_return_pct": 1.1063694953918457,
-      "profit_factor": 1.015332579612732,
-      "max_drawdown_pct": 11.283759117126465,
-      "win_rate": 40.88397979736328
+      "sortino_ratio": 0.03099018521606922,
+      "total_return_pct": 2.7329444885253906,
+      "profit_factor": 1.1079028844833374,
+      "max_drawdown_pct": 11.57174015045166,
+      "win_rate": 43.83116912841797
     },
-    "val_executed_trades": 362,
+    "val_executed_trades": 308,
     "regime_trade_counts": [
-      65,
-      60,
+      35,
+      147,
       32
     ]
   },
   {
     "chromosome": [
       5,
-      4,
+      5,
+      10,
+      10,
       10,
       4,
+      3,
+      5,
+      5,
+      10,
+      5,
+      5,
+      5,
+      5,
+      5,
+      5,
+      3,
+      0,
+      10,
+      10
+    ],
+    "conditions": [
+      "[log_range_over_vol_100] IS Very High",
+      "[open_gap_atr_14] IS Weak Positive",
+      "[vol_regime_pct_120] IS Very Low"
+    ],
+    "objectives": {
+      "sortino_ratio": 0.5251733660697937,
+      "total_return_pct": 46.5015869140625,
+      "profit_factor": 1.7008618116378784,
+      "max_drawdown_pct": 7.122641563415527,
+      "win_rate": 52.71318054199219
+    },
+    "executed_trades": 258,
+    "val_objectives": {
+      "sortino_ratio": 0.0592581108212471,
+      "total_return_pct": 1.8743634223937988,
+      "profit_factor": 1.0907440185546875,
+      "max_drawdown_pct": 10.90993881225586,
+      "win_rate": 42.105262756347656
+    },
+    "val_executed_trades": 76,
+    "regime_trade_counts": [
+      32,
+      71,
+      155
+    ]
+  },
+  {
+    "chromosome": [
+      5,
+      4,
+      10,
+      10,
+      10,
+      1,
+      1,
+      5,
       5,
       10,
       5,
@@ -63,251 +117,100 @@
       5,
       5,
       5,
-      5,
-      5,
+      3,
       5,
       10,
-      10,
-      5,
-      5,
-      5
+      10
     ],
     "conditions": [
       "[range_compression_20_100] IS Very High",
-      "[drawdown_from_peak_60] IS Very High",
-      "[ret_vol_corr_30] IS Neutral Positive"
+      "[log_range_over_vol_100] IS Low",
+      "[open_gap_atr_14] IS Weak Negative"
     ],
     "objectives": {
-      "sortino_ratio": 0.4474535286426544,
-      "total_return_pct": 42.611385345458984,
-      "profit_factor": 1.6451078653335571,
-      "max_drawdown_pct": 4.235289096832275,
-      "win_rate": 52.321983337402344
+      "sortino_ratio": 0.27833446860313416,
+      "total_return_pct": 54.42595672607422,
+      "profit_factor": 1.3531430959701538,
+      "max_drawdown_pct": 8.208756446838379,
+      "win_rate": 47.79735565185547
     },
-    "executed_trades": 323,
+    "executed_trades": 454,
     "val_objectives": {
-      "sortino_ratio": 0.11700694262981415,
-      "total_return_pct": 10.467302322387695,
-      "profit_factor": 1.1552386283874512,
-      "max_drawdown_pct": 9.580934524536133,
-      "win_rate": 43.46504592895508
+      "sortino_ratio": 0.16216829419136047,
+      "total_return_pct": 8.083141326904297,
+      "profit_factor": 1.2367807626724243,
+      "max_drawdown_pct": 8.911619186401367,
+      "win_rate": 45.76271057128906
     },
-    "val_executed_trades": 329,
+    "val_executed_trades": 118,
     "regime_trade_counts": [
-      92,
-      143,
-      88
+      68,
+      190,
+      196
     ]
   },
   {
     "chromosome": [
       5,
-      5,
+      4,
+      10,
+      10,
       10,
       5,
       5,
+      5,
+      5,
       10,
-      5,
-      5,
-      5,
-      3,
       5,
       5,
       5,
       5,
       4,
-      10,
-      10,
-      5,
-      2,
-      10
-    ],
-    "conditions": [
-      "[lower_wick_to_tr] IS High",
-      "[inside_bar_compression] IS Very High",
-      "[efficiency_ratio_20] IS Medium"
-    ],
-    "objectives": {
-      "sortino_ratio": 0.3166659474372864,
-      "total_return_pct": 8.707761764526367,
-      "profit_factor": 1.5676889419555664,
-      "max_drawdown_pct": 1.9664076566696167,
-      "win_rate": 53.24675369262695
-    },
-    "executed_trades": 77,
-    "val_objectives": {
-      "sortino_ratio": 0.2510277330875397,
-      "total_return_pct": 4.472076892852783,
-      "profit_factor": 2.3312480449676514,
-      "max_drawdown_pct": 3.4282102584838867,
-      "win_rate": 61.29032516479492
-    },
-    "val_executed_trades": 31,
-    "regime_trade_counts": [
-      34,
-      19,
-      24
-    ]
-  },
-  {
-    "chromosome": [
-      5,
-      5,
-      10,
-      5,
-      5,
-      1,
       5,
       2,
       5,
-      5,
-      5,
-      5,
-      5,
-      5,
-      5,
-      5,
       10,
-      5,
-      5,
       10
     ],
     "conditions": [
-      "[rsi_centered_14] IS Strong Bearish",
-      "[upper_wick_to_tr] IS Medium",
-      "[percent_b_20] IS Neutral Positive"
+      "[range_compression_20_100] IS Very High",
+      "[atr_ratio_14_63] IS Very High",
+      "[rsi_hidden_div_flag] IS Positive (1)"
     ],
     "objectives": {
-      "sortino_ratio": 0.32558396458625793,
-      "total_return_pct": 8.865463256835938,
-      "profit_factor": 1.4534249305725098,
-      "max_drawdown_pct": 2.6748533248901367,
-      "win_rate": 49.999996185302734
+      "sortino_ratio": 0.3577689826488495,
+      "total_return_pct": 58.02115249633789,
+      "profit_factor": 1.4815151691436768,
+      "max_drawdown_pct": 7.528968811035156,
+      "win_rate": 51.6728630065918
     },
-    "executed_trades": 82,
+    "executed_trades": 538,
     "val_objectives": {
-      "sortino_ratio": 0.34138450026512146,
-      "total_return_pct": 5.182778835296631,
-      "profit_factor": 1.6798313856124878,
-      "max_drawdown_pct": 1.5412901639938354,
-      "win_rate": 53.84615707397461
+      "sortino_ratio": 0.013191032223403454,
+      "total_return_pct": 1.0994672775268555,
+      "profit_factor": 1.0376347303390503,
+      "max_drawdown_pct": 12.478922843933105,
+      "win_rate": 41.47058868408203
     },
-    "val_executed_trades": 39,
+    "val_executed_trades": 340,
     "regime_trade_counts": [
-      39,
-      24,
-      19
+      88,
+      233,
+      217
     ]
   },
   {
     "chromosome": [
       5,
       5,
+      6,
       10,
-      5,
-      5,
-      0,
-      5,
-      5,
-      3,
-      5,
-      5,
-      5,
-      5,
-      5,
-      5,
-      10,
-      10,
-      5,
-      5,
-      0
-    ],
-    "conditions": [
-      "[rsi_centered_14] IS Extreme Bearish",
-      "[channel_pos_20] IS High",
-      "[ret_vol_corr_30] IS Extreme Bearish"
-    ],
-    "objectives": {
-      "sortino_ratio": 0.6701458096504211,
-      "total_return_pct": 18.238079071044922,
-      "profit_factor": 1.9595266580581665,
-      "max_drawdown_pct": 3.7183451652526855,
-      "win_rate": 56.4705924987793
-    },
-    "executed_trades": 85,
-    "val_objectives": {
-      "sortino_ratio": 0.5235893726348877,
-      "total_return_pct": 7.226204872131348,
-      "profit_factor": 2.8836045265197754,
-      "max_drawdown_pct": 1.4348106384277344,
-      "win_rate": 66.66667175292969
-    },
-    "val_executed_trades": 27,
-    "regime_trade_counts": [
-      29,
-      41,
-      15
-    ]
-  },
-  {
-    "chromosome": [
-      5,
-      5,
-      5,
-      5,
-      5,
       7,
       5,
       5,
       5,
       5,
-      5,
-      5,
-      5,
-      5,
-      1,
       10,
-      10,
-      5,
-      5,
-      10
-    ],
-    "conditions": [
-      "[dmi_balance_14] IS Neutral Positive",
-      "[rsi_centered_14] IS Bullish",
-      "[inside_bar_compression] IS Low"
-    ],
-    "objectives": {
-      "sortino_ratio": 0.4520640969276428,
-      "total_return_pct": 9.009385108947754,
-      "profit_factor": 1.7687069177627563,
-      "max_drawdown_pct": 2.144491672515869,
-      "win_rate": 55.93220520019531
-    },
-    "executed_trades": 59,
-    "val_objectives": {
-      "sortino_ratio": 0.1772328019142151,
-      "total_return_pct": 2.9274940490722656,
-      "profit_factor": 1.3860750198364258,
-      "max_drawdown_pct": 1.7870895862579346,
-      "win_rate": 50.0
-    },
-    "val_executed_trades": 26,
-    "regime_trade_counts": [
-      24,
-      17,
-      18
-    ]
-  },
-  {
-    "chromosome": [
-      5,
-      5,
-      10,
-      5,
-      5,
-      10,
-      5,
       5,
       5,
       5,
@@ -315,138 +218,85 @@
       5,
       5,
       3,
-      0,
-      10,
-      10,
-      5,
-      2,
-      10
-    ],
-    "conditions": [
-      "[vol_regime_pct_120] IS High",
-      "[inside_bar_compression] IS Very Low",
-      "[efficiency_ratio_20] IS Medium"
-    ],
-    "objectives": {
-      "sortino_ratio": 0.17295525968074799,
-      "total_return_pct": 23.343074798583984,
-      "profit_factor": 1.23044753074646,
-      "max_drawdown_pct": 6.769559383392334,
-      "win_rate": 46.21849060058594
-    },
-    "executed_trades": 476,
-    "val_objectives": {
-      "sortino_ratio": 0.02169102616608143,
-      "total_return_pct": 1.6723871231079102,
-      "profit_factor": 1.023414969444275,
-      "max_drawdown_pct": 8.099638938903809,
-      "win_rate": 40.60606384277344
-    },
-    "val_executed_trades": 330,
-    "regime_trade_counts": [
-      208,
-      164,
-      104
-    ]
-  },
-  {
-    "chromosome": [
-      5,
-      5,
-      10,
-      5,
-      5,
-      10,
-      5,
-      5,
-      5,
-      5,
-      5,
-      5,
-      5,
-      5,
-      4,
-      10,
-      3,
-      5,
-      1,
-      10
-    ],
-    "conditions": [
-      "[inside_bar_compression] IS Very High",
-      "[body_signed_to_tr] IS Weak Bearish",
-      "[efficiency_ratio_20] IS Low"
-    ],
-    "objectives": {
-      "sortino_ratio": 0.4356987178325653,
-      "total_return_pct": 5.914103984832764,
-      "profit_factor": 1.6490943431854248,
-      "max_drawdown_pct": 2.1406564712524414,
-      "win_rate": 56.25
-    },
-    "executed_trades": 32,
-    "val_objectives": {
-      "sortino_ratio": 0.031003501266241074,
-      "total_return_pct": 0.5860567092895508,
-      "profit_factor": 1.061436414718628,
-      "max_drawdown_pct": 2.1479651927948,
-      "win_rate": 47.05882263183594
-    },
-    "val_executed_trades": 17,
-    "regime_trade_counts": [
-      10,
-      11,
-      11
-    ]
-  },
-  {
-    "chromosome": [
-      5,
-      2,
-      10,
-      5,
       5,
       6,
+      10
+    ],
+    "conditions": [
+      "[dmi_balance_14] IS Weak Bullish",
+      "[rsi_centered_14] IS Bullish",
+      "[macd_hist_atr] IS Weak Bullish"
+    ],
+    "objectives": {
+      "sortino_ratio": 0.4323241710662842,
+      "total_return_pct": 26.12268829345703,
+      "profit_factor": 1.533482551574707,
+      "max_drawdown_pct": 3.5495057106018066,
+      "win_rate": 51.38121795654297
+    },
+    "executed_trades": 181,
+    "val_objectives": {
+      "sortino_ratio": 0.08364517986774445,
+      "total_return_pct": 1.8929123878479004,
+      "profit_factor": 1.0855361223220825,
+      "max_drawdown_pct": 3.548529624938965,
+      "win_rate": 42.25352096557617
+    },
+    "val_executed_trades": 71,
+    "regime_trade_counts": [
+      28,
+      88,
+      65
+    ]
+  },
+  {
+    "chromosome": [
+      0,
       5,
-      5,
-      5,
-      5,
-      5,
-      5,
+      10,
+      10,
+      10,
+      1,
       5,
       5,
       5,
       10,
+      5,
+      5,
+      5,
+      5,
+      5,
+      5,
       3,
-      5,
-      5,
+      3,
+      10,
       10
     ],
     "conditions": [
-      "[range_compression_20_100] IS Medium",
-      "[rsi_centered_14] IS Weak Bullish",
-      "[body_signed_to_tr] IS Weak Bearish"
+      "[amihud_illiquidity_20] IS Very Low",
+      "[log_range_over_vol_100] IS Low",
+      "[vol_regime_pct_120] IS High"
     ],
     "objectives": {
-      "sortino_ratio": 0.16219568252563477,
-      "total_return_pct": 12.563300132751465,
-      "profit_factor": 1.152235746383667,
-      "max_drawdown_pct": 3.870485305786133,
-      "win_rate": 44.63519287109375
+      "sortino_ratio": 0.24036644399166107,
+      "total_return_pct": 94.83663940429688,
+      "profit_factor": 1.3054869174957275,
+      "max_drawdown_pct": 12.265380859375,
+      "win_rate": 46.27906799316406
     },
-    "executed_trades": 233,
+    "executed_trades": 860,
     "val_objectives": {
-      "sortino_ratio": 0.16946156322956085,
-      "total_return_pct": 2.0759105682373047,
-      "profit_factor": 1.403123140335083,
-      "max_drawdown_pct": 1.7804092168807983,
-      "win_rate": 46.66667175292969
+      "sortino_ratio": 0.13719356060028076,
+      "total_return_pct": 3.9965152740478516,
+      "profit_factor": 1.1845194101333618,
+      "max_drawdown_pct": 6.29647970199585,
+      "win_rate": 44.61538314819336
     },
-    "val_executed_trades": 30,
+    "val_executed_trades": 65,
     "regime_trade_counts": [
-      94,
-      81,
-      58
+      111,
+      345,
+      404
     ]
   }
 ]

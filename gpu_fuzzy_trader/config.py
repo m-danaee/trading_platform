@@ -645,6 +645,12 @@ PHASE2_POOL_REQUIRE_POSITIVE_SPLITS = True
 PHASE2_POOL_TRAIN_RETURN_MIN_PCT = 0.0
 PHASE2_POOL_VAL_RETURN_MIN_PCT = 0.0
 
+# PHASE2_MAX_TRAIN_VAL_GAP_PCT — reject pool admission when train return exceeds
+# val return by more than this threshold (classic overfit signal).
+#   Higher → more lenient; only extreme train>>val gaps rejected.
+#   Lower  → stricter alignment between train and val required.
+PHASE2_MAX_TRAIN_VAL_GAP_PCT = 20.0
+
 # --- Purged CV pool admission (per-fold gates) ---
 
 # PHASE2_CV_POOL_MIN_FOLDS_PASS — folds that must pass per-fold checks.
@@ -744,7 +750,7 @@ SORTINO_SCALE = 5.0
 # PHASE2_JOINT_TRAIN_VAL — fitness uses min(train, val) Sortino/return where applicable.
 #   True  → slower (eval val every gen) but aligned with deployment; less overfit.
 #   False → train-only fitness; faster but val-blind during evolution.
-PHASE2_JOINT_TRAIN_VAL = False
+PHASE2_JOINT_TRAIN_VAL = True
 
 # --- Recency weighting (train bars in last fraction count more) ---
 
@@ -941,7 +947,7 @@ PHASE2_STAGE_A_RETURN_FLOOR_PCT = 0.0
 PHASE2_STAGE_A_MIN_TRADE_SUPPORT = 30
 
 # PHASE2_STAGE_A_USE_ROBUST_RETURN_OBJ — Stage A f3 uses train return instead of min(train,val).
-PHASE2_STAGE_A_USE_ROBUST_RETURN_OBJ = False
+PHASE2_STAGE_A_USE_ROBUST_RETURN_OBJ = True
 
 # PHASE2_STAGE_A_SOFT_FEASIBILITY — Stage A uses soft penalties instead of hard infeasible block.
 PHASE2_STAGE_A_SOFT_FEASIBILITY = True
@@ -1183,9 +1189,9 @@ PHASE3_PER_SYMBOL_MIN_RETURN = 1.5
 #   Lower  → thinner per-rule sizing; may under-use signals.
 PHASE3_MAX_CAPITAL_PCT_PER_RULE = 50.0
 
-# PHASE3_MAX_TRAIN_VAL_GAP_PCT — max allowed gap between val return and train
+# PHASE3_MAX_TRAIN_VAL_GAP_PCT — max allowed gap between train return and val
 # return for a rule to pass Phase 3 per-symbol scoring.
-#   If val_return - train_return > this threshold the rule is hard-rejected
+#   If train_return - val_return > this threshold the rule is hard-rejected
 #   as an overfit signal (scored -999 so it never enters the greedy team).
 #   Higher → more lenient; only extreme gaps rejected.
 #   Lower  → stricter; tighter alignment between train and val required.

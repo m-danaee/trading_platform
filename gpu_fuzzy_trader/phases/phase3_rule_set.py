@@ -535,6 +535,16 @@ def _pool_rule_val_score(rule: dict) -> float:
     return min(val_ret, train_ret)
 
 
+def _pool_rule_passes_gap_gate(rule: dict) -> bool:
+    """Return False when stored train/val returns show classic overfit (train >> val)."""
+    val_obj = rule.get("val_objectives") or rule.get("objectives") or {}
+    train_obj = rule.get("objectives") or {}
+    val_ret = float(val_obj.get("total_return_pct", 0.0))
+    train_ret = float(train_obj.get("total_return_pct", 0.0))
+    max_gap = float(getattr(_cfg, "PHASE3_MAX_TRAIN_VAL_GAP_PCT", 40.0))
+    return train_ret - val_ret <= max_gap
+
+
 def _try_global_pool_fallback(
     pool: list[dict],
     train_engine,
@@ -652,16 +662,17 @@ def _try_lean_fallback(
 
     val_floor = float(_cfg.effective_phase3_val_return_floor_pct())
 
-    # Filter by val_floor (sanity check from config)
+    # Filter by val_floor and train-val gap (overfit rejection).
     above_floor = [
         r for r in pool
-        if _pool_rule_val_score(r) > val_floor
+        if _pool_rule_val_score(r) > val_floor and _pool_rule_passes_gap_gate(r)
     ]
 
     if len(above_floor) < n_rules:
         logger.warning(
             "Phase 3 [%s]: _try_lean_fallback — only %d rule(s) above "
-            "val_floor=%.2f%%, need at least %d.  Cannot pick lean fallback.",
+            "val_floor=%.2f%% and within train-val gap, need at least %d.  "
+            "Cannot pick lean fallback.",
             direction, len(above_floor), val_floor, n_rules,
         )
         return None
@@ -735,7 +746,7 @@ def _score_pool_rule_on_symbol(
 
     If *train_symbol_df* is provided the score is ``min(train_return,
     val_return)``, preventing rules that are lucky only on validation from
-    bubbling to the top.  Rules where ``val_return - train_return`` exceeds
+    bubbling to the top.  Rules where ``train_return - val_return`` exceeds
     ``PHASE3_MAX_TRAIN_VAL_GAP_PCT`` are hard-rejected (return -999).
     """
     fmt = _rule_set_to_engine_format([rule])
@@ -791,7 +802,7 @@ def _score_pool_rule_on_symbol(
                 return {"return_pct": -999.0, "trades": val_trades}
 
         max_gap = float(getattr(_cfg, "PHASE3_MAX_TRAIN_VAL_GAP_PCT", 40.0))
-        if val_return - train_return > max_gap:
+        if train_return - val_return > max_gap:
             return {"return_pct": -999.0, "trades": val_trades}
 
         robust_return = min(train_return, val_return)
@@ -1048,7 +1059,7 @@ def _score_merged_rule_on_splits(
             return -999.0
 
     max_gap = float(getattr(_cfg, "PHASE3_MAX_TRAIN_VAL_GAP_PCT", 40.0))
-    if val_return - train_return > max_gap:
+    if train_return - val_return > max_gap:
         return -999.0
     return min(train_return, val_return)
 

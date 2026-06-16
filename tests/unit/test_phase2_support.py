@@ -70,6 +70,40 @@ class TestPoolAdmissionGate:
         }
         assert passes_pool_admission_gate(train, None) is False
 
+    def test_rejects_excessive_train_val_gap(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(_cfg, "PHASE2_STRICT_POSITIVE_GOOD", False)
+        monkeypatch.setattr(_cfg, "PHASE2_MAX_TRAIN_VAL_GAP_PCT", 20.0)
+        train = {
+            "total_return_pct": 25.0,
+            "profit_factor": 1.2,
+            "executed_trades": _cfg.MIN_TRADE_POOL_FLOOR,
+        }
+        val = {
+            "total_return_pct": 3.0,
+            "profit_factor": 1.1,
+            "executed_trades": 50,
+        }
+        assert passes_pool_admission_gate(train, val) is False
+
+    def test_accepts_within_train_val_gap(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(_cfg, "PHASE2_STRICT_POSITIVE_GOOD", False)
+        monkeypatch.setattr(_cfg, "PHASE2_MAX_TRAIN_VAL_GAP_PCT", 20.0)
+        train = {
+            "total_return_pct": 10.0,
+            "profit_factor": 1.2,
+            "executed_trades": _cfg.MIN_TRADE_POOL_FLOOR,
+        }
+        val = {
+            "total_return_pct": 8.0,
+            "profit_factor": 1.1,
+            "executed_trades": 50,
+        }
+        assert passes_pool_admission_gate(train, val) is True
+
 
 class TestTradeSupportPenaltyStatic:
     def test_at_threshold_zero_penalty(self) -> None:

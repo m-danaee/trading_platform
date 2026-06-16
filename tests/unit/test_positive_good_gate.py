@@ -320,19 +320,75 @@ class TestImportable:
 
 
 class TestExistingGatePreserved:
-    """The existing gap-reject gate still works alongside the new one."""
+    """The train-val gap gate rejects classic overfit (train >> val)."""
 
-    def test_gap_gate_still_rejects(self) -> None:
-        """A rule with val >> train return is rejected by gap even if positive-good passes."""
+    def test_gap_gate_rejects_overfit_train_much_higher_than_val(self) -> None:
+        """train=30%, val=5% with gap=20% → rejected (-999)."""
         from gpu_fuzzy_trader.phases.phase3_rule_set import _score_pool_rule_on_symbol
 
-        with patch.object(_cfg, "PHASE3_MAX_TRAIN_VAL_GAP_PCT", 5.0):
-            df = _make_big_df(3000)
-            sym_df = df[df["symbol"] == "1"].reset_index(drop=True)
-            rule = {"conditions": ["[feature_ma] IS Very High"]}
+        train_engine = MagicMock()
+        val_engine = MagicMock()
+        train_engine.simulate_rule_set.return_value = _m(30.0)
+        val_engine.simulate_rule_set.return_value = _m(5.0)
 
-            result = _score_pool_rule_on_symbol(
-                rule, sym_df, "long",
-                train_symbol_df=sym_df,
-            )
-            assert isinstance(result, dict)
+        df = _make_big_df(3000)
+        sym_df = df[df["symbol"] == "1"].reset_index(drop=True)
+        rule = {"conditions": ["[feature_ma] IS Very High"]}
+
+        with patch.object(_cfg, "PHASE3_MAX_TRAIN_VAL_GAP_PCT", 20.0):
+            with patch(
+                "gpu_fuzzy_trader.phases.phase3_rule_set.gate_positive_good",
+                return_value=True,
+            ):
+                result = _score_pool_rule_on_symbol(
+                    rule, sym_df, "long",
+                    train_symbol_df=sym_df,
+                    train_engine=train_engine,
+                    val_engine=val_engine,
+                )
+        assert result["return_pct"] == -999.0
+
+    def test_gap_gate_accepts_aligned_train_val(self) -> None:
+        """train=8%, val=6% with gap=20% → min(train,val)=6%."""
+        from gpu_fuzzy_trader.phases.phase3_rule_set import _score_pool_rule_on_symbol
+
+        train_engine = MagicMock()
+        val_engine = MagicMock()
+        train_engine.simulate_rule_set.return_value = _m(8.0)
+        val_engine.simulate_rule_set.return_value = _m(6.0)
+
+        df = _make_big_df(3000)
+        sym_df = df[df["symbol"] == "1"].reset_index(drop=True)
+        rule = {"conditions": ["[feature_ma] IS Very High"]}
+
+        with patch.object(_cfg, "PHASE3_MAX_TRAIN_VAL_GAP_PCT", 20.0):
+            with patch(
+                "gpu_fuzzy_trader.phases.phase3_rule_set.gate_positive_good",
+                return_value=True,
+            ):
+                result = _score_pool_rule_on_symbol(
+                    rule, sym_df, "long",
+                    train_symbol_df=sym_df,
+                    train_engine=train_engine,
+                    val_engine=val_engine,
+                )
+        assert result["return_pct"] == 6.0
+
+    def test_score_merged_rule_rejects_overfit_gap(self) -> None:
+        """``_score_merged_rule_on_splits`` rejects train>>val overfit."""
+        from gpu_fuzzy_trader.phases.phase3_rule_set import _score_merged_rule_on_splits
+
+        train_engine = MagicMock()
+        val_engine = MagicMock()
+        train_engine.simulate_rule_set.return_value = _m(30.0)
+        val_engine.simulate_rule_set.return_value = _m(5.0)
+
+        with patch.object(_cfg, "PHASE3_MAX_TRAIN_VAL_GAP_PCT", 20.0):
+            with patch(
+                "gpu_fuzzy_trader.phases.phase3_rule_set.gate_positive_good",
+                return_value=True,
+            ):
+                score = _score_merged_rule_on_splits(
+                    {"conditions": []}, train_engine, val_engine,
+                )
+        assert score == -999.0

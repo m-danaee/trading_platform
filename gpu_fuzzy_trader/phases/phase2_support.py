@@ -365,6 +365,10 @@ def _passes_pool_admission_impl(
     if val_pf < pf_floor:
         return False
 
+    max_gap = float(getattr(_cfg, "PHASE2_MAX_TRAIN_VAL_GAP_PCT", 20.0))
+    if train_ret - val_ret > max_gap:
+        return False
+
     # Per-fold val drawdown gate (Task 5).
     if cv_fold and _split_mode_is_purged_cv():
         max_worst_dd = float(getattr(_cfg, "PHASE2_CV_MAX_WORST_DD", 18.0))
