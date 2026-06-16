@@ -596,6 +596,70 @@ def _try_global_pool_fallback(
     return None
 
 
+def _try_lean_fallback(
+    pool: list[dict],
+    direction: str,
+    global_min: int = 2,
+) -> list[dict] | None:
+    """Pick top-*global_min* pool rules with no gates — the most lenient path.
+
+    This is a deliberate relaxation for when both the per-symbol greedy
+    selection **and** the strict ``_try_global_pool_fallback`` have failed.
+    It picks the top-*global_min* rules by ``_pool_rule_val_score``
+    (``min(train_ret, val_ret)``) **without** calling:
+
+    * ``gate_positive_good`` (PF ≥ 1.0 / min-trades gate)
+    * ``_simulate_team`` (full-team backtest)
+    * ``val_floor`` check (return floor)
+
+    Why this is OK
+    --------------
+    * Phase 4 risk optimization and Phase 5 evaluator scoring will still
+      filter out truly broken rules.
+    * The pool itself has already passed Phase 2's quality filters (CV,
+      spec consistency, etc.).
+    * Even a 2-rule team with mediocre PF gives the hidden-test pipeline
+      *something* to grade instead of skipping OOS entirely.
+
+    Parameters
+    ----------
+    pool : list[dict]
+        Phase 2 pool (enriched with tp/sl/capital_pct defaults).
+    direction : str
+        ``"long"`` or ``"short"`` — used only for logging.
+    global_min : int
+        Minimum number of rules to return.  Default 2.
+
+    Returns
+    -------
+    list[dict] | None
+        Top-*global_min* rules sorted by ``_pool_rule_val_score`` descending,
+        or ``None`` if the pool is too small (``len(pool) < global_min``).
+    """
+    n_rules = max(1, int(global_min))
+
+    if len(pool) < n_rules:
+        logger.warning(
+            "Phase 3 [%s]: _try_lean_fallback — pool has %d rule(s), "
+            "need at least %d.  Cannot pick lean fallback.",
+            direction, len(pool), n_rules,
+        )
+        return None
+
+    logger.warning(
+        "Phase 3 [%s]: _try_lean_fallback — applying relaxed fallback. "
+        "Per-symbol greedy and _try_global_pool_fallback both failed; "
+        "picking top-%d pool rules by min(train_ret, val_ret) without "
+        "positive-good gate, team backtest, or val_floor check. "
+        "Phase 4 risk optimization and Phase 5 evaluator will still "
+        "filter out weak rules.",
+        direction, n_rules,
+    )
+
+    ranked = sorted(pool, key=_pool_rule_val_score, reverse=True)
+    return ranked[:n_rules]
+
+
 def _best_rules_from_pool_fallback(
     pool: list[dict],
     n_rules: int,
@@ -1202,6 +1266,11 @@ class Rule_Set_Selector:
                 global_min,
             )
             if merged_rules is None:
+                # Lean fallback (Task 10.2) — most lenient path, skips gates.
+                merged_rules = _try_lean_fallback(
+                    enriched_pool, self.direction, global_min,
+                )
+            if merged_rules is None:
                 output_dict = _build_rejected_output_dict(
                     self.direction, "no_rules_selected_for_any_symbol")
                 self._persist_output(output_dict)
@@ -1243,6 +1312,11 @@ class Rule_Set_Selector:
                     self.direction,
                     global_min,
                 )
+                if fallback_rules is None:
+                    # Lean fallback (Task 10.2) — most lenient path, skips gates.
+                    fallback_rules = _try_lean_fallback(
+                        enriched_pool, self.direction, global_min,
+                    )
                 if fallback_rules is None:
                     logger.warning(
                         "Phase 3 [%s]: fallback also failed — rejecting",
