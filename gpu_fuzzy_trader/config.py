@@ -128,9 +128,9 @@ PHASE2_ARCHIVE_PATHS = {
 }
 
 # Debug: scope pipeline to N symbols starting at DEBUG_SYMBOL (sorted universe).
-DEBUG_SYMBOL_SCOPE_ENABLED = False
+DEBUG_SYMBOL_SCOPE_ENABLED = True
 DEBUG_SYMBOL = "1"
-DEBUG_SYMBOL_COUNT = 2
+DEBUG_SYMBOL_COUNT = 4
 
 
 def filter_df_to_symbols(df: pd.DataFrame, symbols: list[str]) -> pd.DataFrame:
@@ -1387,8 +1387,6 @@ PHASE4_CAPITAL_STEP = 5.0
 # --- Optuna budget ---
 
 
-
-
 # PHASE4_HARD_CAP_NORMALIZE — scale capital so sum ≤ MAX_TOTAL_EXPOSURE_PCT.
 #   True  → realistic portfolio cap; required for live-like exposure.
 #   False  → raw trial capital may exceed 100% total exposure.
@@ -1489,7 +1487,8 @@ PHASE4_GRID_TP_VALUES = (1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 8.0, 10.0)
 PHASE4_GRID_SL_VALUES = (1.0, 1.2, 1.5, 2.0, 2.5, 3.0)
 
 # PHASE4_GRID_CAPITAL_VALUES — capital_pct values (%) to enumerate (9 values).
-PHASE4_GRID_CAPITAL_VALUES = (5.0, 7.5, 10.0, 12.5, 15.0, 20.0, 25.0, 35.0, 50.0)
+PHASE4_GRID_CAPITAL_VALUES = (
+    5.0, 7.5, 10.0, 12.5, 15.0, 20.0, 25.0, 35.0, 50.0)
 
 # PHASE4_GRID_MAX_TOTAL_CAPITAL — hard cap on sum(capital_pct) across all rules.
 #   Combinations that push the total above this cap are skipped.
