@@ -1,8 +1,8 @@
 {
   "branch": "feature/task-11-remove-purged-cv",
   "base_branch": "main",
-  "commit": "34d060a",
-  "summary": "Completely removed the purged CV feature (purged_rolling_cv / PurgedFold / PHASE2_CV_* / cv_folds) from the project. Deleted 3 standalone files, stripped purged CV from 11 source files, fixed 6 test files, updated 6 doc files, fixed main.ipynb, and updated .opencode/CONTEXT.md.",
+  "commit": "9f09ae8",
+  "summary": "Completely removed the purged CV feature (purged_rolling_cv / PurgedFold / PHASE2_CV_* / cv_folds) from the project. Deleted 3 standalone files, stripped purged CV from 11 source files, fixed 7 test files (including post-review), updated 6 doc files (including post-review), fixed main.ipynb, and updated .opencode/CONTEXT.md.",
   "files_deleted": [
     "gpu_fuzzy_trader/data/cv_folds.py",
     "gpu_fuzzy_trader/validation/rolling_cv.py",
@@ -41,12 +41,14 @@
     "grep_purged_zero": true,
     "grep_cv_folds_zero": true,
     "grep_phase2_cv_zero": true,
+    "grep_is_cv_deployable_zero": true,
     "grep_ipynb_zero": true,
     "ast_splitter_ok": true,
     "ast_config_ok": true,
     "ast_run_pipeline_ok": true,
     "ast_phase2_support_ok": true,
     "ast_phase2_rule_pool_ok": true,
+    "ast_test_phase2_support_ok": true,
     "import_splitter_ok": true,
     "import_run_pipeline_ok": true,
     "import_phase2_support_ok": true
@@ -54,7 +56,7 @@
   "remaining_concerns": [
     "friend_project/ was not touched (per constraint)",
     "evaluator_v5.ipynb was not modified (per user instruction)",
-    "A syntax error in phase2_rule_pool.py (broken try/except indentation) was found and fixed during verification",
+    "A syntax error in phase2_rule_pool.py (broken try/except indentation) was found and fixed during initial implementation",
     "Unrelated changes (AGENTS.md, README.md, outputs/, phase2_rule_archive/) were intentionally not staged"
   ]
 }
