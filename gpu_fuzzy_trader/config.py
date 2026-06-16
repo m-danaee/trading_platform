@@ -1162,13 +1162,21 @@ PHASE3_PER_SYMBOL_GREEDY_TOP_K = 25
 #   Higher → reject rules with thin evidence on that symbol.
 #   Lower  → allow sparse rules through.
 #   Debug scope scales via effective_phase3_per_symbol_min_trades().
-PHASE3_PER_SYMBOL_MIN_TRADES = 50
+#   Lowered from 50→15 on 2026-06-16 because the current 4-9 rule pool
+#   cannot reach 50 trades per symbol (∼6 val trades/symbol on average).
+#   15 aligns with SYMBOL_SPECIALIZATION_MIN_VAL_TRADES=6 (Task 6) while
+#   still requiring more-than-minimal evidence on each symbol.
+PHASE3_PER_SYMBOL_MIN_TRADES = 15
 
 # PHASE3_PER_SYMBOL_MIN_RETURN — min val return % on symbol for rule.
 #   Higher → only profitable-on-symbol rules considered.
 #   Lower  → allow marginal rules through.
 #   Debug scope relaxes via effective_phase3_per_symbol_min_return().
-PHASE3_PER_SYMBOL_MIN_RETURN = 3.0
+#   Lowered from 3.0→1.5 on 2026-06-16 because the 4-9 rule pool has
+#   only ∼2-4% max returns per symbol; 3.0 was rejecting everything.
+#   1.5 still requires modest profitability while allowing Phase 4 risk
+#   optimization to improve the final team's return.
+PHASE3_PER_SYMBOL_MIN_RETURN = 1.5
 
 # PHASE3_MAX_CAPITAL_PCT_PER_RULE — cap per rule before normalization.
 #   Higher → each rule can use more notional; higher overlap drawdown risk.
