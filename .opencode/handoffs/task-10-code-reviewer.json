@@ -1,0 +1,31 @@
+{
+  "task_id": "task-10",
+  "verdict": "APPROVED",
+  "findings": [
+    {
+      "severity": "nit",
+      "finding": "Docstring in `_try_lean_fallback` says `The val_floor sanity check (default 2.5%)` but the actual default from `effective_phase3_val_return_floor_pct()` is 5.0% (or 4.0% in debug-scope mode via `_debug_symbol_universe_size`). The function uses the live config value, so the wrong default in the docstring could mislead future maintainers.",
+      "fix": "Update the docstring in `gpu_fuzzy_trader/phases/phase3_rule_set.py:618` to either remove the parenthetical default or replace `(default 2.5%)` with `(default 5.0% in production, 4.0% under DEBUG_SYMBOL_SCOPE_ENABLED)`. No code change required.",
+      "status": "OPEN"
+    },
+    {
+      "severity": "nit",
+      "finding": "In `plot_equity_curve` (reporter.py:540-541), `equity = trade_log['Equity_After'].values` is computed unconditionally before the `if has_entry_time:` check, but is then reassigned inside the `if` branch. The first extraction is therefore wasted in the date-axis path (per AGENTS.md 'remove additional wasted parts from old implementation').",
+      "fix": "Move the `equity = trade_log['Equity_After'].values` line into the `else` branch so it is only computed for the trade-number fallback path. Minor cleanup; behavior is unchanged.",
+      "status": "OPEN"
+    },
+    {
+      "severity": "nit",
+      "finding": "Test coverage for `plot_equity_curve` is missing a few realistic edge cases: (a) `Entry_Time` as a string column (not datetime) — would crash on `mdates.DateFormatter`; (b) timezone-aware `Entry_Time`; (c) unsorted `Entry_Time` from interleaved symbols (the implementation sorts, but no test asserts the equity line is chronological); (d) a trade log where some `Entry_Time` are NaN and others valid (the `.notna().any()` check would treat it as date-axis, but `sort_values` would interleave NaN at the end). The spec said 'small, fast tests only', so these are nice-to-haves.",
+      "fix": "Optional: add 2-3 more tests in `tests/unit/test_reporter_equity_date_axis.py` covering unsorted Entry_Time (assert order changes) and mixed-NaN Entry_Time. Lower priority than the docstring fix.",
+      "status": "OPEN"
+    },
+    {
+      "severity": "nit",
+      "finding": "`_try_lean_fallback` does not deduplicate pool rules by `conditions` key, unlike its sibling `_best_rules_from_pool_fallback` (line 695) which uses a `seen: set[frozenset]` dedup. In practice pool rules are unique by conditions (Phase 2 dedups), so this is safe today but is a subtle inconsistency between the two fallbacks.",
+      "fix": "Optional: mirror the dedup pattern from `_best_rules_from_pool_fallback` for symmetry. Low priority — current Phase 2 invariants already guarantee uniqueness.",
+      "status": "OPEN"
+    }
+  ],
+  "summary": "Code quality is solid: 19 new tests pass (9 for _try_lean_fallback, 10 for plot_equity_curve), imports are clean, the two wiring sites in Rule_Set_Selector.run are correctly chained (global fallback -> lean fallback -> reject), the config threshold comments are dated and well-justified, and the README accurately describes the evaluator_clean folder. Security review found no eval/exec, no path-traversal, no SQL/shell-injection vectors. The four findings are all low/nit (docstring default, minor wasted-code cleanup, optional additional test cases, optional dedup symmetry) and do not block merge."
+}

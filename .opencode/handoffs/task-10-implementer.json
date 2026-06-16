@@ -1,0 +1,49 @@
+{
+  "task_id": "task-10",
+  "title": "Fix empty rules + Date-based equity plot",
+  "status": "DONE",
+  "branch": "feature/task-10-fix-empty-rules-and-date-equity",
+  "commit": "b8509a7aa44ba98f619d0ebbaac2eefb960bf0ec",
+  "files_changed": [
+    "gpu_fuzzy_trader/config.py",
+    "gpu_fuzzy_trader/phases/phase3_rule_set.py",
+    "gpu_fuzzy_trader/reporting/reporter.py",
+    "outputs/evaluator_clean/README.md",
+    "tests/unit/test_reporter_equity_date_axis.py",
+    "tests/unit/test_phase3_lean_fallback.py",
+    ".opencode/CONTEXT.md"
+  ],
+  "description": "Lowered per-symbol thresholds (PHASE3_PER_SYMBOL_MIN_TRADES 50→15, PHASE3_PER_SYMBOL_MIN_RETURN 3.0→1.5) to prevent empty rule rejection on small pools. Added _try_lean_fallback function to Phase 3 — the most lenient fallback path that picks top-2 pool rules by min(train_ret, val_ret) with a val_floor sanity check (from effective_phase3_val_return_floor_pct), without gate_positive_good or team backtest. Used when both per-symbol greedy and _try_global_pool_fallback fail. Updated plot_equity_curve to use Entry_Time as date-based x-axis with mdates.DateFormatter when available, falling back to Trade # when missing or all-NaN. Added outputs/evaluator_clean/README.md documenting the folder's purpose. Created 2 new test files (17 total tests) covering the date-axis behavior and lean fallback logic. **Spec-review fix: added val_floor filtering to _try_lean_fallback (was incorrectly omitted in initial implementation).**",
+  "acceptance_criteria": {
+    "ac1_outputs_have_ge2_rules": true,
+    "ac2_rules_pass_gate_or_lean_fallback": true,
+    "ac3_evaluator_clean_present": true,
+    "ac4_equity_plots_show_date": true,
+    "ac5_readme_exists": true,
+    "ac6_new_unit_tests_pass": true,
+    "ac7_no_new_files_outside_scope": true,
+    "ac8_all_commits_on_feature_branch": true
+  },
+  "tests_added": [
+    "tests/unit/test_reporter_equity_date_axis.py",
+    "tests/unit/test_phase3_lean_fallback.py"
+  ],
+  "verification": {
+    "config_parses": "cd /home/danaee/trading_platform && .venv/bin/python -c \"import ast; ast.parse(open('gpu_fuzzy_trader/config.py').read()); print('OK')\"",
+    "import_lean_fallback": "cd /home/danaee/trading_platform && .venv/bin/python -c \"from gpu_fuzzy_trader.phases.phase3_rule_set import _try_lean_fallback; print('OK')\"",
+    "import_reporter": "cd /home/danaee/trading_platform && .venv/bin/python -c \"from gpu_fuzzy_trader.reporting.reporter import Reporter; print('OK')\"",
+    "tests_pass": "cd /home/danaee/trading_platform && .venv/bin/python -m pytest tests/unit/test_phase3_lean_fallback.py -v  # 9 passed (7 original + 2 new val_floor tests)",
+    "diff_scope": "git diff main...HEAD --stat  # 8 files changed, 649 insertions(+), 8 deletions(-)"
+  },
+  "spec_review_fixes": [
+    "Fix 1 — _try_lean_fallback: Added val_floor filtering. The function now computes val_floor = float(_cfg.effective_phase3_val_return_floor_pct()), filters the pool to keep only rules where _pool_rule_val_score(r) > val_floor, and returns None if fewer than global_min rules survive. Updated docstring, log messages, and removed the erroneous 'without val_floor check' language.",
+    "Fix 2 — test_phase3_lean_fallback.py: Added 2 new test cases: test_returns_none_when_all_below_floor (all scores below floor → None) and test_filters_mixed_above_below_floor (mixed pool, too few above floor → None). Also updated 2 existing tests (test_warning_logged_at_warning_level, test_pool_with_exactly_2_rules) to use scores above the default val_floor of 5.0%."
+  ],
+  "notes_for_reviewer": [
+    "_try_lean_fallback now applies val_floor as a sanity check (returns None if min(train,val) <= val_floor) before selecting top-N rules. This matches the 10.2 spec: 'Apply only the val_floor as a sanity check'.",
+    "The val_floor filter uses strict > comparison (not >=) to match the spec's 'min(train, val) <= val_floor → return None' semantics.",
+    "Existing tests were updated to use train_ret/val_ret values above the 5.0% default floor so they continue passing.",
+    "Phase 4 risk optimization and Phase 5 evaluator still filter weak rules after the lean fallback."
+  ],
+  "open_questions": []
+}

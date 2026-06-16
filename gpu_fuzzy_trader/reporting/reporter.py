@@ -24,6 +24,7 @@ import os
 from typing import Any, List
 
 import matplotlib
+import matplotlib.dates as mdates
 # Non-interactive backend — must be set before importing pyplot
 matplotlib.use("Agg")
 
@@ -538,9 +539,27 @@ class Reporter:
             return out_path
 
         equity = trade_log["Equity_After"].values
-        trade_indices = range(len(equity))
 
-        ax.plot(trade_indices, equity, color="tab:blue", linewidth=1.2)
+        # Check if Entry_Time is available for date-based x-axis (Task 10.3).
+        has_entry_time = (
+            "Entry_Time" in trade_log.columns
+            and trade_log["Entry_Time"].notna().any()
+        )
+
+        if has_entry_time:
+            # Sort by Entry_Time so the equity curve is chronological.
+            plot_df = trade_log.sort_values("Entry_Time").reset_index(drop=True)
+            equity = plot_df["Equity_After"].values
+            x_dates = plot_df["Entry_Time"]
+            ax.plot(x_dates, equity, color="tab:blue", linewidth=1.2)
+            ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
+            ax.set_xlabel("Date")
+            fig.autofmt_xdate()
+        else:
+            trade_indices = range(len(equity))
+            ax.plot(trade_indices, equity, color="tab:blue", linewidth=1.2)
+            ax.set_xlabel("Trade #")
+
         ax.axhline(
             y=_cfg.INITIAL_CAPITAL,
             color="gray",
@@ -550,7 +569,6 @@ class Reporter:
         )
 
         ax.set_title(f"Equity Curve — {split} / {direction}")
-        ax.set_xlabel("Trade #")
         ax.set_ylabel("Equity")
         ax.legend()
         ax.grid(True, alpha=0.3)

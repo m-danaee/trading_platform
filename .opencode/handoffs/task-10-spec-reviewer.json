@@ -1,0 +1,22 @@
+{
+  "task_id": "task-10",
+  "verdict": "APPROVED",
+  "findings": [
+    {
+      "severity": "info",
+      "finding": "10.2 fix: `_try_lean_fallback` now computes `val_floor = float(_cfg.effective_phase3_val_return_floor_pct())` and filters pool rules to only those where `_pool_rule_val_score(r) > val_floor`. Returns `None` if fewer than `global_min` rules survive. This matches the spec's 'Apply only the val_floor as a sanity check' and 'Return the 2-rule list (or None if min(train, val) <= val_floor)' requirements.",
+      "status": "RESOLVED"
+    },
+    {
+      "severity": "info",
+      "finding": "10.5 fix: Test file `test_phase3_lean_fallback.py` now includes 2 new val_floor tests: `test_returns_none_when_all_below_floor` (all rules below floor → None) and `test_filters_mixed_above_below_floor` (mixed rules, too few above floor → None). Both use `monkeypatch.setattr` to mock the floor to 5.0%. Two existing tests were also updated to use scores above the default val_floor so they pass. All 9 tests pass.",
+      "status": "RESOLVED"
+    },
+    {
+      "severity": "info",
+      "finding": "Docstring updated: now says 'relaxed but with val_floor sanity check' (not 'without val_floor check'). The 'without calling' list no longer includes val_floor. Returns section says 'None if fewer than global_min rules survive the val_floor filter'.",
+      "status": "RESOLVED"
+    }
+  ],
+  "summary": "Both flagged spec deviations from the previous review (missing val_floor check in _try_lean_fallback and missing val_floor tests) are now fixed. The implementation matches the 10.2 spec exactly, and all 9 tests pass. Task 10 is spec-compliant and ready to merge."
+}
