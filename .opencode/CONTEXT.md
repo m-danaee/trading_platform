@@ -228,4 +228,34 @@ JSON files and skipped OOS evaluation.
 | 7 | Risk-optimization grid search | DONE / APPROVED | `feature/task-7-risk-grid-search` | `bc528b0` | **YES** (`5da5ecc` on `main`) |
 | 8 | Regime-keyword stratum init | DONE / APPROVED | `feature/task-8-regime-keyword-stratum` | `54cc971` | **YES** (`67c7270` on `main`) |
 | 9 | Evaluator-clean writer | DONE / APPROVED | `feature/task-9-evaluator-clean-writer` | `f63a8d8` | **YES** (`1c3e15f` on `main`) |
-| 10 | Fix empty rules + Date-based equity plot | **DONE** | `feature/task-10-fix-empty-rules-and-date-equity` | `558ecc2` | — |
+| 10 | Fix empty rules + Date-based equity plot | **DONE / APPROVED** (4 nits) | `feature/task-10-fix-empty-rules-and-date-equity` | `b8509a7` (impl) + `886cfcf` (review) | **pending user merge** |
+
+## Task 10 — Final notes for the user
+
+### 7 commits on `feature/task-10-fix-empty-rules-and-date-equity`
+1. `e7afac6` — 10.1 lower per-symbol thresholds
+2. `7ca1c9a` — 10.2 add `_try_lean_fallback`
+3. `e2add8c` — 10.3 date-based x-axis
+4. `558ecc2` — 10.4 README + 10.5 tests
+5. `6f56328` — context ledger + implementer handoff
+6. `b8509a7` — spec-review fix (val_floor in `_try_lean_fallback`)
+7. `886cfcf` — code-reviewer handoff
+
+### Code-reviewer nits (NOT blocking, optional follow-up)
+1. **nit** — `_try_lean_fallback` docstring says "default 2.5%" but the actual default from `effective_phase3_val_return_floor_pct()` is 5.0%. Update the docstring.
+2. **nit** — In `plot_equity_curve`, `equity = trade_log["Equity_After"].values` is computed unconditionally but reassigned in the date-axis branch. Move extraction into the `else` branch (wasted code).
+3. **nit** — Optional: add tests for unsorted `Entry_Time` (assert chronological order after sort), timezone-aware `Entry_Time`, and mixed-NaN `Entry_Time`.
+4. **nit** — Optional: mirror the `_best_rules_from_pool_fallback` dedup pattern in `_try_lean_fallback` (Phase 2 already dedups, so it's symmetric-only).
+
+The user can address these in a follow-up branch or merge now and address later.
+
+### Next steps for the user
+1. Review the diff: `git diff main...feature/task-10-fix-empty-rules-and-date-equity`
+2. Re-run the pipeline (full run is ~2 hours due to Phase 2; quick smoke run via tests is ~5s)
+3. Verify the 5 acceptance criteria from `task-10.md`:
+   - `outputs/long.json` and `outputs/short.json` have `len(rules_set) >= 2`
+   - `outputs/evaluator_clean/{long,short}_evaluator_clean.json` both present
+   - `outputs/reports/*_equity.png` show Date on x-axis
+   - `outputs/evaluator_clean/README.md` exists
+   - 19 new unit tests pass
+4. Merge to main: `git checkout main && git merge --no-ff feature/task-10-fix-empty-rules-and-date-equity`
