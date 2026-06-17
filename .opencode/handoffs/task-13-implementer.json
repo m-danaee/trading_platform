@@ -1,0 +1,29 @@
+{
+  "branch": "feature/task-13-phase2-monthly-admission",
+  "base_branch": "main",
+  "commit": "06adc19",
+  "summary": "Added a hard monthly-window shadow-test gate to Phase 2 pool admission. Three new config flags (PHASE2_MONTHLY_ADMISSION_ENABLED, _MIN_PROFITABLE_RATIO, _MIN_MONTHS) were added to config.py with rationale comments. A helper function _evaluate_rule_on_window (wrapping CPUBacktestEngine.simulate_rule_set) was added to phase2_rule_pool.py. A post-filter block was inserted into Rule_Pool_Generator.run() after the existing pool-admission filter and before pool saving: it builds monthly windows from the slimmed train DataFrame, evaluates each pool rule on each window, and keeps only rules whose profitable_ratio >= 0.5. The gate logs pre/post counts, median profitable_ratio, and p10. Graceful degradation is implemented: if the gate would empty the pool, a warning is logged and the original pool is kept. A unit test file (test_phase2_monthly_admission.py) with 5 tests covers: filtering by profitability, disabled-flag preservation, min-months skip, graceful degradation, and boundary (exact 0.5 ratio). All 121 existing+new unit tests pass.",
+  "verification": {
+    "ast_parse_config": "PASS",
+    "ast_parse_phase2": "PASS",
+    "pool_import": "PASS",
+    "monthly_windows_import": "PASS",
+    "test_phase2_monthly_admission": "PASS (5 passed in 1.82s)",
+    "test_existing_phase2": "PASS (116 passed in 70.97s)"
+  },
+  "files_changed": [
+    "gpu_fuzzy_trader/config.py",
+    "gpu_fuzzy_trader/phases/phase2_rule_pool.py",
+    "tests/unit/test_phase2_monthly_admission.py"
+  ],
+  "notes_for_reviewer": [
+    "The helper function _evaluate_rule_on_window is placed in phase2_rule_pool.py (not validation/monthly_windows.py) because it is tightly coupled to the pool entry format (conditions key) and Phase 2 config constants (PHASE2_TP, PHASE2_SL, PHASE2_CAPITAL_PCT).",
+    "The build_monthly_windows call uses self._train_df (the slimmed, sampled train DataFrame) which preserves the 'datetime' meta column needed by the window builder.",
+    "The import for build_monthly_windows is lazy (inside the if-block) to avoid potential circular imports at module load time.",
+    "The gate gracefully degrades: if all rules are filtered out, the original pool is kept and a warning is logged. The original pool is always list(pool) — i.e., a shallow copy — so no aliasing issues.",
+    "The gate logs median and p10 profitable_ratio at INFO level, labeled with the direction.",
+    "The unit test uses _DeterministicEvaluator (monkeypatch) to return canned returns per rule per window, avoiding any real backtest engine dependency.",
+    "The test file's _run_gate helper accesses _evaluate_rule_on_window through the module attribute (import gpu_fuzzy_trader.phases.phase2_rule_pool as _p2rp) to ensure monkeypatch.setattr works correctly.",
+    "Only 3 files changed; no refactoring of unrelated code. The PNG changes in outputs/reports/ are test artifacts from existing unit tests and were not staged."
+  ]
+}
