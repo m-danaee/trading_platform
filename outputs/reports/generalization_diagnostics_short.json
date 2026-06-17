@@ -2,47 +2,47 @@
   "direction": "short",
   "split_metrics": {
     "train": {
-      "total_return_pct": 18.483007431030273,
-      "profit_factor": 1.159226655960083,
-      "win_rate": 44.645941278065635,
-      "max_drawdown_pct": 8.900850296020508,
-      "executed_trades": 1158
+      "total_return_pct": 24.229812622070312,
+      "profit_factor": 1.2174845933914185,
+      "win_rate": 45.60702875399361,
+      "max_drawdown_pct": 7.334146022796631,
+      "executed_trades": 1252
     },
     "validation": {
-      "total_return_pct": 28.95166778564453,
-      "profit_factor": 1.812411904335022,
-      "win_rate": 54.54545454545454,
-      "max_drawdown_pct": 1.8660863637924194,
-      "executed_trades": 418
+      "total_return_pct": 26.6970157623291,
+      "profit_factor": 1.8103286027908325,
+      "win_rate": 54.81651376146789,
+      "max_drawdown_pct": 1.7137751579284668,
+      "executed_trades": 436
     },
     "test": {
-      "total_return_pct": -2.5580644607543945,
-      "profit_factor": 0.9591996073722839,
-      "win_rate": 39.524517087667164,
-      "max_drawdown_pct": 5.79435920715332,
-      "executed_trades": 673
+      "total_return_pct": -7.427626609802246,
+      "profit_factor": 0.8960360884666443,
+      "win_rate": 37.780269058295964,
+      "max_drawdown_pct": 10.310369491577148,
+      "executed_trades": 892
     }
   },
   "split_shift": {
-    "train_to_validation_delta_pct": 10.468660354614258,
-    "validation_to_test_delta_pct": -31.509732246398926,
-    "train_to_test_delta_pct": -21.041071891784668,
+    "train_to_validation_delta_pct": 2.467203140258789,
+    "validation_to_test_delta_pct": -34.12464237213135,
+    "train_to_test_delta_pct": -31.65743923187256,
     "train_to_test_sign_flip": true
   },
   "symbol_concentration": {
     "train": {
-      "hhi_abs_pnl": 0.37416635404904025,
-      "top_symbol_share_abs_pnl": 0.5228884159224129,
+      "hhi_abs_pnl": 0.29713742425679945,
+      "top_symbol_share_abs_pnl": 0.3920900027564279,
       "top_symbol": "8"
     },
     "validation": {
-      "hhi_abs_pnl": 0.21074516724631762,
-      "top_symbol_share_abs_pnl": 0.2589542857294195,
+      "hhi_abs_pnl": 0.20883639634587975,
+      "top_symbol_share_abs_pnl": 0.263609978722304,
       "top_symbol": "1"
     },
     "test": {
-      "hhi_abs_pnl": 0.2533503950111062,
-      "top_symbol_share_abs_pnl": 0.2771233159684863,
+      "hhi_abs_pnl": 0.5533493808256,
+      "top_symbol_share_abs_pnl": 0.7262099757721027,
       "top_symbol": "1"
     }
   },

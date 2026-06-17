@@ -1,0 +1,19 @@
+direction,symbol,val_trades,val_return_pct,train_val_gap_pct,n_rules_selected,top_rule_condition_signature
+long,1,17,1.9712,2.9696,1,[dmi_balance_14] IS Neutral Negative;[efficiency_ratio_20] IS High;[ret_vol_corr_30] IS Extreme Bullish
+long,10,23,0.5549,1.6321,1,[dmi_balance_14] IS Strong Bearish;[bb_width_rel_20] IS Very High;[ret_vol_corr_30] IS Strong Bullish
+long,2,21,2.3261,1.8665,1,[downside_semivol_20] IS Very High;[dmi_balance_14] IS Weak Bearish;[ret_vol_corr_30] IS Strong Bullish
+long,3,45,2.3526,1.6435,1,[amihud_illiquidity_20] IS Very High;[roc_10] IS Bearish;[ret_vol_corr_30] IS Bullish
+long,4,19,2.7136,0.0,1,[bb_width_rel_20] IS Very High;[rsi_centered_14] IS Neutral Positive;[mom_stoch_rsi_14_14_3] IS Low
+long,6,16,1.5798,0.0,1,[dmi_balance_14] IS Neutral Negative;[efficiency_ratio_20] IS High;[ret_vol_corr_30] IS Extreme Bullish
+long,7,31,2.7715,0.0,1,[amihud_illiquidity_20] IS Very High;[dmi_balance_14] IS Weak Bullish;[ret_vol_corr_30] IS Neutral Negative
+long,8,20,1.4932,0.0,1,[downside_semivol_20] IS Very High;[dmi_balance_14] IS Weak Bearish;[ret_vol_corr_30] IS Strong Bullish
+long,9,42,5.8563,0.0,1,[amihud_illiquidity_20] IS Very High;[open_gap_atr_14] IS Weak Positive;[rsi_centered_14] IS Neutral Positive
+short,1,62,9.7571,0.0,1,[bb_width_rel_20] IS High;[log_range_over_vol_100] IS Medium;[vol_over_median20] IS Very Low
+short,10,63,5.3501,3.6387,1,[amihud_illiquidity_20] IS Low;[downside_semivol_20] IS Very High;[band_bb_percB_20_2] IS Strong Bearish
+short,2,38,7.7793,0.0,1,[amihud_illiquidity_20] IS High;[downside_semivol_20] IS Very High;[band_bb_percB_20_2] IS Neutral Positive
+short,3,46,3.1381,4.3541,1,[drawdown_from_peak_60] IS High;[channel_pos_20] IS Very High;[volume_percentile_60] IS Very High
+short,4,65,0.8201,0.3768,1,[amihud_illiquidity_20] IS Very High;[open_gap_atr_14] IS Weak Negative;[cand_up_down_vol_ratio_20] IS Low
+short,5,57,9.1323,0.0,1,[open_gap_atr_14] IS Weak Negative;[cand_up_down_vol_ratio_20] IS Very Low;[band_bb_percB_20_2] IS Bearish
+short,6,73,5.0164,0.0,1,[bb_width_rel_20] IS Very High;[lower_wick_to_tr] IS Low;[vol_over_median20] IS Medium
+short,7,33,4.3793,2.3951,1,[open_gap_atr_14] IS Weak Negative;[cand_up_down_vol_ratio_20] IS Very Low;[band_bb_percB_20_2] IS Bearish
+short,8,66,10.7488,3.1636,1,[bb_width_rel_20] IS Very High;[close_location_value] IS Very Low;[band_bb_percB_20_2] IS Bearish
