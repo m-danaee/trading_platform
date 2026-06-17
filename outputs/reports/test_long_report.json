@@ -1,62 +1,32 @@
 {
   "direction": "long",
-  "total_return_pct": "-17.779552",
-  "max_drawdown_pct": "18.124157",
-  "win_rate": 32.48587570621469,
-  "profit_factor": "0.8138862",
-  "executed_trades": 354,
+  "total_return_pct": "-1.017195",
+  "max_drawdown_pct": "3.597502",
+  "win_rate": 41.55844155844156,
+  "profit_factor": "0.93633854",
+  "executed_trades": 154,
   "account_status": "survived",
-  "final_equity": "822.20447",
+  "final_equity": "989.82806",
   "per_symbol_metrics": {
-    "1": {
-      "trade_count": 27,
-      "win_rate": 29.629629629629626,
-      "net_pnl": -11.465066909790039
-    },
-    "10": {
-      "trade_count": 33,
-      "win_rate": 21.21212121212121,
-      "net_pnl": -53.38841247558594
-    },
-    "2": {
-      "trade_count": 28,
-      "win_rate": 50.0,
-      "net_pnl": 39.571693420410156
-    },
     "3": {
-      "trade_count": 50,
-      "win_rate": 32.0,
-      "net_pnl": -35.14011001586914
+      "trade_count": 39,
+      "win_rate": 41.02564102564102,
+      "net_pnl": -8.925873756408691
     },
     "4": {
-      "trade_count": 43,
-      "win_rate": 27.906976744186046,
-      "net_pnl": -32.956993103027344
-    },
-    "5": {
-      "trade_count": 39,
-      "win_rate": 25.64102564102564,
-      "net_pnl": -43.88628387451172
-    },
-    "6": {
-      "trade_count": 31,
-      "win_rate": 19.35483870967742,
-      "net_pnl": -73.38325500488281
-    },
-    "7": {
-      "trade_count": 25,
+      "trade_count": 35,
       "win_rate": 40.0,
-      "net_pnl": -14.338054656982422
+      "net_pnl": -2.684868335723877
     },
     "8": {
-      "trade_count": 29,
-      "win_rate": 27.586206896551722,
-      "net_pnl": 14.040632247924805
+      "trade_count": 37,
+      "win_rate": 54.054054054054056,
+      "net_pnl": 26.17334747314453
     },
     "9": {
-      "trade_count": 49,
-      "win_rate": 48.97959183673469,
-      "net_pnl": 33.15086364746094
+      "trade_count": 43,
+      "win_rate": 32.55813953488372,
+      "net_pnl": -24.735023498535156
     }
   }
 }

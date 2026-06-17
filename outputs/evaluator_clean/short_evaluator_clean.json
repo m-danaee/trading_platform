@@ -4,27 +4,26 @@
     {
       "tp": 2.0,
       "sl": 1.0,
-      "capital_pct": 21.42857142857143,
+      "capital_pct": 14.285714285714285,
       "conditions": [
-        "[dmi_balance_14] IS Extreme Bearish",
-        "[channel_pos_20] IS Very High",
-        "[body_signed_to_tr] IS Extreme Bullish",
-        "symbol is 1",
-        "symbol is 10",
-        "symbol is 2"
+        "[open_gap_atr_14] IS Weak Negative",
+        "[cand_up_down_vol_ratio_20] IS Very Low",
+        "[band_bb_percB_20_2] IS Bearish",
+        "symbol is 5",
+        "symbol is 2",
+        "symbol is 1"
       ]
     },
     {
       "tp": 2.0,
       "sl": 1.0,
-      "capital_pct": 21.42857142857143,
+      "capital_pct": 14.285714285714285,
       "conditions": [
-        "[roc_10] IS Extreme Bullish",
-        "[up_close_ratio_5] IS Medium",
-        "[macd_hist_atr] IS Extreme Bearish",
-        "symbol is 3",
-        "symbol is 10",
-        "symbol is 1"
+        "[bb_width_rel_20] IS Very High",
+        "[lower_wick_to_tr] IS Low",
+        "[vol_over_median20] IS Medium",
+        "symbol is 6",
+        "symbol is 5"
       ]
     }
   ]

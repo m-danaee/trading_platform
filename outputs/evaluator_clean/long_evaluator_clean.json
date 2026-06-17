@@ -4,21 +4,25 @@
     {
       "tp": 2.0,
       "sl": 1.0,
-      "capital_pct": 50.0,
+      "capital_pct": 16.666666666666668,
       "conditions": [
-        "[roc_10] IS Extreme Bullish",
-        "[rsi_centered_14] IS Weak Bearish",
-        "[vol_over_ema20] IS Very High"
+        "[bb_width_rel_20] IS Very High",
+        "[rsi_centered_14] IS Neutral Positive",
+        "[mom_stoch_rsi_14_14_3] IS Low",
+        "symbol is 4"
       ]
     },
     {
-      "tp": 5.0,
+      "tp": 2.0,
       "sl": 1.0,
-      "capital_pct": 35.0,
+      "capital_pct": 16.666666666666668,
       "conditions": [
-        "[dmi_balance_14] IS Strong Bullish",
-        "[body_signed_to_tr] IS Neutral Positive",
-        "[vol_ratio_20_100] IS Very High"
+        "[amihud_illiquidity_20] IS Very High",
+        "[roc_10] IS Bearish",
+        "[ret_vol_corr_30] IS Bullish",
+        "symbol is 9",
+        "symbol is 3",
+        "symbol is 8"
       ]
     }
   ]
