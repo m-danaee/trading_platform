@@ -148,14 +148,15 @@ The current run already has that shape — we must preserve it.
 ## Active orchestration state
 
 - base_branch: `main` @ `ffe4f34` (new plan committed)
-- current_task: **Task 12 — Lower per-symbol Phase 3 thresholds + diagnostic CSV** — IMPLEMENTER DISPATCHED
+- current_task: **Task 12 — Lower per-symbol Phase 3 thresholds + diagnostic CSV** — IMPLEMENT + SPEC + CODE REVIEW DONE
 - previous: Task 11 DONE / merged (`1b8e002` on `main`)
-- active_branch: `feature/task-12-lower-phase3-thresholds` (created from `main@ffe4f34`)
+- active_branch: `feature/task-12-lower-phase3-thresholds` @ `df70cc3` (code review APPROVED with 6 non-blocking nits)
 - dispatch_mode: one implementer at a time, then spec-reviewer, then code-reviewer
 - execution_mode: **checkpoint** (user explicitly said "continue task N" semantics; do not auto-continue past a completed task)
 - branch_policy: **isolated** (each task on `feature/task-N-*`; merge to `main` after spec+code review)
 - handoff_dir: `.opencode/handoffs/`
 - task_file: `.opencode/tasks/task-12.md`
+- awaiting_user: **merge decision** — see "Next steps for user" below
 
 ## New plan — Tasks 12-15: Diagnostic-first path for test-set generalization
 
