@@ -1,376 +1,625 @@
-# Plan — Task 11: Remove purged CV feature completely
+# Plan — Task 12..15: Diagnostic-first path for test-set generalization
 
 ## Goal
 
-Completely remove the "purged CV" (`purged_rolling_cv` / `PurgedFold` /
-`PHASE2_CV_*` / `cv_folds`) feature from the project — **zero leftovers**
-in source, tests, docs, or comments — and keep the `holdout_70_30`
-path (current default) working unchanged.
+Improve out-of-sample (OOS) generalization of the trading pipeline — the
+current run produces `LONG = -1.0%` and `SHORT = -2.6%` on test despite
+`+19.5%` / `+18.5%` on train and `+20.6%` / `+29.0%` on validation —
+through a **diagnostic-first, low-risk** sequence of interventions,
+with explicit skip criteria between them. The full per-symbol Phase 2
+refactor proposed in the brainstorming session is **deferred** to
+Task 15, and only attempted if Tasks 12–14 fail to close the gap.
 
-## Background
+## Background (from brainstorming + data review)
 
-The purged rolling cross-validation feature was a parallel evaluation
-path for Phases 2–4 that was added in earlier tasks. The project's
-default `SPLIT_MODE` has been `"holdout_70_30"` for some time, so the
-entire purged CV code path is **dead code in production** (gated by
-`SPLIT_MODE == "purged_rolling_cv"` and only exercised by dedicated
-unit tests). The user wants it gone to simplify the codebase and
-remove the maintenance burden of two parallel evaluation paths.
+The current pipeline fails on test (Sept 2024 → Feb 2025, 5-month OOS
+window) for these reasons, in order of evidence strength:
 
-Reference baseline (from `gpu_fuzzy_trader/config.py` line 284):
+1. **Phase 3 per-symbol selection has 6/10 symbols with no rules on
+   test.** `PHASE3_PER_SYMBOL_MIN_TRADES = 15` and
+   `PHASE3_PER_SYMBOL_MIN_RETURN = 1.5%` may be too strict for the
+   7k-row per-symbol validation windows. The pipeline currently
+   silently drops these symbols, and the surviving rules are biased
+   toward whichever symbol happened to win on validation.
+2. **Phase 2 pool admission is fit on min(train, val) only**, with
+   no concept of "stable across time". A rule that does well on the
+   last 3 months of train but fails on the first 3 months is
+   indistinguishable from a robust rule.
+3. **Phase 4 risk params are global per rule**, not per-(rule,
+   symbol). A rule whose TP/SL fits symbol 9 on val may be wrong
+   for symbol 8.
+4. (Hypothesis, will be measured) **The regime shift between train
+   (Jan 2024 – Jun 2024) and test (Sep 2024 – Feb 2025) is large
+   enough** that no amount of model sophistication trained on the
+   available window will close the gap; the user has to accept this
+   or add external data. Task 12's first iteration will tell us.
 
-```python
-SPLIT_MODE = "holdout_70_30"
-```
+The previous `friend_project/` comparison work already added:
+- `monthly_windows.py` (Task 1, merged)
+- `monthly_penalty` wired into Phase 3/4 (Task 2, merged)
+- `_is_positive_good`-style gate (Task 3, merged)
+- Evaluator health penalty (Task 4, merged)
+- Expanded Phase 2 pool admission (Task 5, merged)
+- Multi-symbol combinations in Phase 3 (Task 6, merged)
+- Risk-optimization grid search (Task 7, merged)
+- Regime-keyword stratum init (Task 8, merged)
+- Evaluator-clean writer (Task 9, merged)
+- `_try_lean_fallback` (Task 10, merged)
+- Purged CV removed (Task 11, merged)
 
-## Current scope (pre-removal inventory)
+The `monthly_penalty` is already integrated but is a *soft*
+penalty. There is no **hard pool-admission gate** based on
+monthly-window profitability ratio, and there is no per-symbol
+risk-param search in Phase 4.
 
-| File | Purged CV references | Action |
+## Current scope (per-phase intervention)
+
+| Phase | Current behaviour | Where to intervene |
 |---|---|---|
-| `gpu_fuzzy_trader/data/cv_folds.py` | Whole file (PurgedFold, build_purged_rolling_folds, primary_holdout_from_folds) | **Delete file**; keep `holdout_70_30_split` (move to `splitter.py`) |
-| `gpu_fuzzy_trader/validation/rolling_cv.py` | Whole file (duplicate of cv_folds.py) | **Delete file** |
-| `gpu_fuzzy_trader/data/splitter.py` | PurgedFold imports, `cv_folds` param, purged branch, `_persist_cv_manifest`, `load_cv_folds_from_manifest`, `build_cv_folds` | Strip; keep only the `holdout_70_30` branch |
-| `gpu_fuzzy_trader/config.py` | CV_N_FOLDS, CV_EMBARGO_BARS, CV_BARS_PER_DAY, CV_MIN_TRAIN_MONTHS, CV_FOLDS_MANIFEST_PATH, PHASE2_CV_* (15+), PHASE2_CV_FOLD_WORKERS, PHASE2_EARLY_STOP_DISABLED_IN_CV, PHASE2_PLATEAU_EARLY_STOP_DISABLED_IN_CV, `_cv_pool_min_folds_pass()`, `_CV_POOL_MIN_FOLDS_PASS`, `_CV_RANK_MIN_FOLDS_PASS`; SPLIT_MODE comment block, assert statements | Strip all |
-| `gpu_fuzzy_trader/phases/phase2_rule_pool.py` | `_val_trade_floor_for_objectives`, `cv_fold` local, `_uses_cv_engines()`, `_build_engines()` cv branch, `use_cv_admission` block, `evaluate_purged_cv_pool_admission_batch` reference | Strip; fix signatures |
-| `gpu_fuzzy_trader/phases/phase2_support.py` | `_split_mode_is_purged_cv()`, `_pool_admission_floors` cv_fold branch, `_passes_pool_admission_impl` cv_fold param, `passes_pool_admission_cv_fold()` (whole fn), `passes_pool_entry_admission` cv_fold branch, `passes_pool_trade_floor` cv_fold branch | Strip |
-| `gpu_fuzzy_trader/phases/phase3_rule_set.py` | `cv_folds` parameter on `Rule_Set_Selector.__init__` | Remove param; keep signature clean |
-| `gpu_fuzzy_trader/phases/phase4_wf_optimizer.py` | `cv_folds` param, `build_phase4_multi_cv_fold_splits` (whole fn), `_walk_forward_splits_for_val_block`, `Phase4WalkForwardEvaluator` cv_folds branch | Strip |
-| `gpu_fuzzy_trader/phases/phase5_oos.py` | `_cv_folds = splitter.split_and_persist(train_full)` (3-tuple destructure) | Use 2-tuple |
-| `gpu_fuzzy_trader/evolution/evox_runner.py` | `_split_mode_is_purged_cv()`, all `if SPLIT_MODE == "purged_rolling_cv"` branches | Strip |
-| `gpu_fuzzy_trader/run_pipeline.py` | `self._cv_folds: list`, `_prune_cv_folds_after_phase1`, `_apply_debug_symbol_scope` cv-folds block, `_load_and_split_data` cv-folds set | Strip; `_apply_debug_symbol_scope` only filters train/val |
-| `gpu_fuzzy_trader/backtest/gpu_engine.py` | `_phase2_trade_floor()` SPLIT_MODE branch | Use `MIN_TRADE_POOL_FLOOR` only |
-| `tests/unit/test_phase2_pool_admission.py` | Tests for `passes_pool_admission_cv_fold` and per-fold relaxed thresholds | **Delete file**; functionality subsumed by the holdout path |
-| `tests/unit/test_run_pipeline.py` | `PurgedFold` imports, `TestPruneCvFoldsAfterPhase1`, `TestDebugSymbolScope` cv-folds checks | Strip purged tests; keep `TestDebugSymbolScope` (it still works without cv-folds plumbing) |
-| `tests/unit/test_evox_runner.py` | One test sets `SPLIT_MODE = "purged_rolling_cv"` | Strip that test |
-| `docs/phase0_shared.md`, `docs/phase2_rule_pool.md`, `docs/phase3_rule_set.md`, `docs/phase4_wf_risk.md`, `docs/phase5_oos.md`, `docs/README.md` | ~30 mentions of purged CV | Strip from docs |
-| `.opencode/CONTEXT.md` | Notes about purged CV mode | Update task ledger to add task 11 |
+| Phase 1 (feature selection) | Sign-consistency + MI + redundancy + stationarity | No change |
+| Phase 2 (rule pool) | NSGA-III on min(train, val) with cross-symbol robustness penalty | **Task 13**: add post-evolution monthly-window pool-admission gate |
+| Phase 3 (rule set) | Per-symbol greedy with `MIN_TRADES=15, MIN_RETURN=1.5%` | **Task 12**: lower per-symbol thresholds; preserve positive-good gate |
+| Phase 4 (risk) | Global grid per rule on TP/SL/capital | **Task 14**: optional per-symbol risk tuning |
+| Phase 5 (OOS) | CPU backtest on test | No code change; only used to measure improvement |
 
-## Acceptance criteria
+## Skip / proceed decision rules
 
-1. **No `purged` references in code/tests/docs (except the friend
-   project)** — `grep -rn "purged\|PurgedFold" gpu_fuzzy_trader tests docs
-   --include="*.py" --include="*.ipynb" --include="*.md"` returns ZERO
-   matches.
-2. **No `cv_folds` instance state or imports remain** —
-   `grep -rn "_cv_folds\|cv_folds:" gpu_fuzzy_trader tests` returns
-   ZERO matches.
-3. **No `PHASE2_CV_*` config keys remain** —
-   `grep -n "PHASE2_CV\|PURGED_CV" gpu_fuzzy_trader/config.py` returns
-   ZERO matches.
-4. **Files removed**:
-   - `gpu_fuzzy_trader/data/cv_folds.py` (deleted)
-   - `gpu_fuzzy_trader/validation/rolling_cv.py` (deleted)
-   - `tests/unit/test_phase2_pool_admission.py` (deleted)
-5. **The `holdout_70_30` path still works**:
-   - `python -c "from gpu_fuzzy_trader.data.splitter import Data_Splitter; print(Data_Splitter)"` works
-   - `python -c "import gpu_fuzzy_trader.run_pipeline as m; print(m.Pipeline_Orchestrator)"` works
-   - `python -c "import gpu_fuzzy_trader.phases.phase2_support; print('ok')"` works
-   - The 4 small unit tests we can safely run pass (one each from
-     `test_data_splitter`, `test_run_pipeline`,
-     `test_phase2_support`, `test_reporter`).
-6. **`SPLIT_MODE` constant is removed** (no longer a configurable
-   option — the project only has one path). All `str(_cfg.SPLIT_MODE)`
-   references throughout the code are removed.
-7. **No dead imports, no dead functions, no dead branches** left
-   behind (per AGENTS.md: "remove additional wasted parts").
-8. **Friend project is untouched** — `friend_project/` is committed
-   code and is the reference project; the user did not ask to touch
-   it.
+Each task has an **explicit skip criterion**. If the skip criterion
+is met, that task's branch is closed and the next task is attempted.
+If a task is closed, its results (improvement vs. regression) MUST
+be recorded in `outputs/reports/gen_diag_iterN.csv` so the user
+can see what was tried.
 
-## Tasks
+- **After Task 12**: if the test PnL on either direction improves
+  by ≥3pp **AND** the number of symbols with rules on test
+  increases to ≥7/10, proceed to Task 13. Otherwise, treat Task 12
+  as inconclusive; record results and proceed to Task 13 anyway
+  (the per-symbol threshold change is harmless).
+- **After Task 13**: if the test PnL on either direction improves
+  by ≥3pp vs. Task 12, proceed to Task 14. Otherwise close the
+  branch; record results.
+- **After Task 14**: if test PnL improves by ≥3pp vs. Task 13,
+  stop. Otherwise consider Task 15 (the full per-symbol refactor).
+- **Task 15 is the last resort** — it is the user's original idea
+  and carries the highest run-time cost (≈10× Phase 2 cost). It is
+  not started unless Tasks 12-14 collectively fail to bring test
+  PnL above −3% per direction.
 
-### Task 11 — Remove purged CV (one branch, one implementer)
+## Acceptance criteria (overall)
+
+1. The final `outputs/long.json` and `outputs/short.json` each have
+   `len(rules_set) >= 2`.
+2. `outputs/reports/test_{long,short}_per_symbol_performance.csv`
+   shows **at least 6 distinct symbols** (out of 10) with non-empty
+   rows in the test split, AND at least one symbol with positive net
+   PnL per direction.
+3. Test `total_return_pct` improves by **at least 3 percentage
+   points** per direction vs. the current baseline
+   (`LONG=-1.0%, SHORT=-2.6%`). This is the primary success metric.
+4. Train+validation `total_return_pct` does **not regress by more
+   than 5pp** per direction (we still want the in-sample behaviour
+   to be healthy).
+5. `evaluator_v5.ipynb` is not modified.
+6. The pipeline is reproducible: a fresh `git clone` + the documented
+   commands produce the same outputs.
+
+## Baseline numbers to beat
+
+| Direction | Train | Val | Test | Top test symbol | # symbols on test |
+|---|---|---|---|---|---|
+| Long | +19.5% | +20.6% | **−1.0%** | 8 (+26.2) | 4/10 |
+| Short | +18.5% | +29.0% | **−2.6%** | 2 (+15.9) | 4/10 |
+
+These are the target numbers to beat; the success criterion is
+"both directions test PnL improves by ≥3pp".
+
+---
+
+## Task 12 — Lower per-symbol Phase 3 thresholds + add diagnostic reporting
 
 **Priority: high**
+**Risk: very low** (one numeric change + one diagnostic flag)
+**Runtime cost: ~75s (Phase 3 re-run only)**
 
-**Branch**: `feature/task-11-remove-purged-cv`
+### Why this is the right first step
 
-**Steps** for the implementer (in order):
+6 out of 10 symbols have no rules on test. The most likely
+explanation is that the per-symbol thresholds
+(`PHASE3_PER_SYMBOL_MIN_TRADES = 15`,
+`PHASE3_PER_SYMBOL_MIN_RETURN = 1.5%`) are too strict for the 7k-row
+per-symbol validation windows. With ~10x fewer rows than the
+cross-symbol pool, a per-symbol min-trades of 15 is approximately
+equivalent to the pool-level min-trades of 150, which is
+unreasonably high.
+
+### Files
+
+- `gpu_fuzzy_trader/config.py` (lower the two constants, add a
+  `PHASE3_DIAGNOSTIC_REPORT_ENABLED` flag)
+- `gpu_fuzzy_trader/phases/phase3_rule_set.py` (no logic change
+  unless thresholds are referenced; only logging)
+- `outputs/reports/gen_diag_iter12.csv` (new — see below)
+
+### Implementation steps (for the implementer)
 
 1. **Create the feature branch from `main`**:
    ```bash
    git checkout main && git pull
-   git checkout -b feature/task-11-remove-purged-cv
+   git checkout -b feature/task-12-lower-phase3-thresholds
    ```
 
-2. **Delete the standalone purged CV modules**:
-   - `git rm gpu_fuzzy_trader/data/cv_folds.py`
-   - `git rm gpu_fuzzy_trader/validation/rolling_cv.py`
-   - `git rm tests/unit/test_phase2_pool_admission.py`
+2. **In `gpu_fuzzy_trader/config.py`**:
+   - Lower `PHASE3_PER_SYMBOL_MIN_TRADES` from `15` to `8`.
+   - Lower `PHASE3_PER_SYMBOL_MIN_RETURN` from `1.5` to `0.5`.
+   - Add `PHASE3_DIAGNOSTIC_REPORT_ENABLED = True`.
+   - Add a brief comment explaining why these numbers (one sentence
+     each) — see `effective_phase3_per_symbol_min_trades` for the
+     debug-scope pattern to mimic.
 
-3. **Strip `gpu_fuzzy_trader/config.py`**:
-   - Remove `CV_FOLDS_MANIFEST_PATH`.
-   - Remove `CV_N_FOLDS`, `CV_EMBARGO_BARS`, `CV_BARS_PER_DAY`,
-     `CV_MIN_TRAIN_MONTHS` and their comment blocks.
-   - Remove `_cv_pool_min_folds_pass()`, `_CV_POOL_MIN_FOLDS_PASS`,
-     `_CV_RANK_MIN_FOLDS_PASS`.
-   - Remove the entire "Purged CV pool admission" section
-     (PHASE2_CV_POOL_MIN_FOLDS_PASS, PHASE2_CV_MERGED_GATE_HARD,
-     PHASE2_CV_MIN_TRADE_POOL_FLOOR, PHASE2_CV_POOL_TRAIN_RETURN_MIN_PCT,
-     PHASE2_CV_POOL_VAL_RETURN_MIN_PCT, PHASE2_CV_PROFIT_FACTOR_FLOOR,
-     PHASE2_CV_MIN_VAL_TRADES, PHASE2_CV_POOL_TARGET_MIN,
-     PHASE2_CV_POOL_RANK_ADMIT_TOP_K, PHASE2_CV_RANK_MIN_FOLDS_PASS).
-   - Remove the "Phase 2 relaxed pool-admission thresholds (Task 5)"
-     PHASE2_CV_MIN_WORST_RETURN, PHASE2_CV_MIN_WORST_PF,
-     PHASE2_CV_MAX_WORST_DD, PHASE2_CV_MIN_FOLD_TRADES block (or the
-     whole section if it only exists for purged CV).
-   - Remove `PHASE2_CV_FOLD_WORKERS`.
-   - Remove `PHASE2_EARLY_STOP_DISABLED_IN_CV`.
-   - Remove `PHASE2_PLATEAU_EARLY_STOP_DISABLED_IN_CV`.
-   - Remove the SPLIT_MODE constant and the comment block above it.
-   - Remove the tuning cheat-sheet rows that mention CV_N_FOLDS /
-     PHASE2_CV_* / SPLIT_MODE.
-   - Remove the `assert CV_N_FOLDS ...`, `assert 1 <= PHASE2_CV_*`
-     asserts at the bottom.
-   - Update the docstring at the top if it mentions SPLIT_MODE / CV.
+3. **In `gpu_fuzzy_trader/phases/phase3_rule_set.py`**:
+   - In the `Rule_Set_Selector.run()` loop, after each
+     `_per_symbol_greedy` call, accumulate a
+     `dict[sym, dict[trades, return_pct, n_selected, gap_pct]]` in
+     `self._diag_per_symbol`.
+   - After Phase 3 completes, if
+     `_cfg.PHASE3_DIAGNOSTIC_REPORT_ENABLED`, write
+     `outputs/reports/gen_diag_iter12.csv` with columns:
+     `direction, symbol, val_trades, val_return_pct, train_val_gap_pct,
+     n_rules_selected, top_rule_condition_signature`.
+   - The CSV is a **diagnostic artifact** for the user; it is not
+     consumed by downstream phases.
 
-4. **Strip `gpu_fuzzy_trader/data/splitter.py`**:
-   - Move `holdout_70_30_split` (from `cv_folds.py`) into this file
-     (it was already imported from cv_folds; inline it).
-   - Remove the `PurgedFold` import.
-   - Remove the `build_purged_rolling_folds` import.
-   - Remove the `primary_holdout_from_folds` import.
-   - Change `split_and_persist` to return `tuple[pd.DataFrame, pd.DataFrame]`
-     (drop the third element).
-   - Remove the `purged_rolling_cv` mode branch from `split_and_persist`.
-   - Remove `build_cv_folds` method.
-   - Remove `load_cv_folds_from_manifest` static method.
-   - Remove `_persist_cv_manifest` static method.
-   - Remove module-level `build_cv_folds` function.
-   - Update the class docstring to drop the purged CV mention.
-   - Update the split_and_persist docstring to drop the cv_folds
-     note.
+4. **In `tests/unit/test_phase3_rule_set.py`** (or a new
+   `test_phase3_threshold_diagnostic.py`):
+   - Add a unit test that:
+     - Constructs a small pool (5 rules) and a small train+val
+       split.
+     - Runs `Rule_Set_Selector.run()` and asserts that the
+       diagnostic CSV is written and contains one row per symbol
+       that has at least 1 rule in val.
+     - Asserts that with `MIN_TRADES=8, MIN_RETURN=0.5`, a rule
+       with `8` trades and `0.5%` val return is selected for a
+       symbol, but a rule with `7` trades or `0.4%` return is
+       not.
 
-5. **Strip `gpu_fuzzy_trader/phases/phase2_rule_pool.py`**:
-   - Remove the `from gpu_fuzzy_trader.data.cv_folds import
-     PurgedFold` style imports (if any survive).
-   - Replace `_val_trade_floor_for_objectives()` with a plain
-     `min(int(_cfg.MIN_TRADE_POOL_FLOOR) // 4, 10)` call.
-   - Remove the `cv_fold = str(_cfg.SPLIT_MODE).strip().lower() ==
-     "purged_rolling_cv"` lines and always pass `cv_fold=False`.
-   - Remove `_uses_cv_engines()` (or inline it as `False`).
-   - In `_build_engines()`, remove the cv branch and the
-     `from gpu_fuzzy_trader.phases.phase2_cv import build_cv_fold_engines`
-     import (phase2_cv.py never existed — this was a latent bug).
-   - Remove the `use_cv_admission = False` block (and the entire
-     `if use_cv_admission:` body).
-   - Remove the `evaluate_purged_cv_pool_admission_batch` reference
-     and the related docstring paragraph.
-   - Update Rule_Pool_Generator.__init__ to drop the `cv_folds`
-     parameter (signature must remain backward compatible — i.e.
-     accepting the param but ignoring it is OK, or just dropping it).
-   - Search for any other `cv_fold` / `cv_folds` / `purged` reference
-     in this file and remove it.
+5. **Re-run the pipeline** (Phase 2-3-4-5 only; the existing
+   Phase 2 pool is reused because of the archive cache):
+   ```bash
+   .venv/bin/python -m gpu_fuzzy_trader.run_pipeline
+   ```
+   Capture `outputs/reports/test_{long,short}_*.csv` and
+   `outputs/reports/gen_diag_iter12.csv`.
 
-6. **Strip `gpu_fuzzy_trader/phases/phase2_support.py`**:
-   - Remove `_split_mode_is_purged_cv()`.
-   - In `_pool_admission_floors`, drop the `cv_fold` parameter and
-     always return the holdout tuple.
-   - In `_passes_pool_admission_impl`, drop the `cv_fold` parameter;
-     remove the `cv_fold and _split_mode_is_purged_cv()` drawdown
-     checks; keep the rest.
-   - Remove the entire `passes_pool_admission_cv_fold()` function.
-   - In `passes_pool_entry_admission`, remove the `_split_mode_is_purged_cv()`
-     branch and the `cv_folds_passing` / `cv_folds_total` check; keep
-     the holdout logic.
-   - In `passes_pool_trade_floor`, remove the `if
-     _split_mode_is_purged_cv():` trade-floor switch.
-   - Search for any other `cv_fold` / `purged` reference and remove it.
+6. **Commit the changes**:
+   ```bash
+   git add -A
+   git commit -m "task-12: lower per-symbol Phase 3 thresholds + diagnostic CSV
 
-7. **Strip `gpu_fuzzy_trader/phases/phase3_rule_set.py`**:
-   - Remove the `cv_folds` parameter from `Rule_Set_Selector.__init__`
-     (and any internal storage of it). Drop the corresponding
-     docstring paragraph.
+   - PHASE3_PER_SYMBOL_MIN_TRADES 15 -> 8
+   - PHASE3_PER_SYMBOL_MIN_RETURN 1.5 -> 0.5
+   - Add PHASE3_DIAGNOSTIC_REPORT_ENABLED flag
+   - Write outputs/reports/gen_diag_iter12.csv with per-symbol
+     trades, return, gap, n_selected, top_rule_signature
+   - Add unit test for the threshold diagnostic
+   - Re-run pipeline; record results in gen_diag_iter12.csv
+   "
+   ```
 
-8. **Strip `gpu_fuzzy_trader/phases/phase4_wf_optimizer.py`**:
-   - Remove the `cv_folds` parameter from `WalkForwardRiskOptimizer`
-     and from `Phase4WalkForwardEvaluator`.
-   - Delete the `build_phase4_multi_cv_fold_splits` function and
-     `_walk_forward_splits_for_val_block` helper.
-   - In `Phase4WalkForwardEvaluator.__init__`, drop the `cv_folds`
-     branch.
-   - Update the docstring to drop the cv_folds paragraph.
+7. **Write handoff JSON** to
+   `.opencode/handoffs/task-12-implementer.json` with:
+   - `branch`: `feature/task-12-lower-phase3-thresholds`
+   - `commit`: the implementer commit SHA
+   - `verification`: dict with the test outputs and the test PnL
+     numbers (both directions).
 
-9. **Strip `gpu_fuzzy_trader/phases/phase5_oos.py`**:
-   - Change `train_df, val_df, _cv_folds = splitter.split_and_persist(train_full)`
-     to `train_df, val_df = splitter.split_and_persist(train_full)`.
+### Acceptance criteria for Task 12
 
-10. **Strip `gpu_fuzzy_trader/evolution/evox_runner.py`**:
-    - Remove `_split_mode_is_purged_cv()`.
-    - Remove `if str(_cfg.SPLIT_MODE).strip().lower() == "purged_rolling_cv"`
-      blocks (keep the else-branch logic).
-    - Remove `if _split_mode_is_purged_cv()` blocks.
-    - Search for any other `purged` reference and remove it.
+- `outputs/reports/gen_diag_iter12.csv` exists and has one row per
+  (direction, symbol) where at least 1 rule was selected.
+- `outputs/reports/test_{long,short}_per_symbol_performance.csv`
+  has rows for at least 6 distinct symbols per direction (currently
+  4/10).
+- All unit tests pass:
+  ```bash
+  .venv/bin/python -m pytest \
+    tests/unit/test_phase3_rule_set.py \
+    tests/unit/test_phase3_threshold_diagnostic.py \
+    -v
+  ```
+- The new test must show: rule with 8 trades / 0.5% return IS
+  selected; rule with 7 trades / 0.4% return is NOT selected.
 
-11. **Strip `gpu_fuzzy_trader/run_pipeline.py`**:
-    - Remove `self._cv_folds: list = []` from `__init__`.
-    - Remove `_prune_cv_folds_after_phase1()` method entirely.
-    - Remove the three calls to `self._prune_cv_folds_after_phase1(...)`.
-    - In `_load_and_split_data`, drop the `_cv_folds = []` assignment
-      and update the return to drop the cv_folds plumbing.
-    - In `_apply_debug_symbol_scope`, remove the
-      `from gpu_fuzzy_trader.data.cv_folds import PurgedFold` import
-      and the `if self._cv_folds:` block that rebuilds cv folds.
-    - Update the docstring on `_load_and_split_data`.
+### Skip / proceed decision for Task 12
 
-12. **Strip `gpu_fuzzy_trader/backtest/gpu_engine.py`**:
-    - In `_phase2_trade_floor()`, remove the SPLIT_MODE branch and
-      always return `int(_cfg.MIN_TRADE_POOL_FLOOR)`.
+- **If test PnL improves by ≥3pp on either direction** AND **the
+  number of symbols with rules on test reaches ≥7/10**: declare
+  Task 12 the fix, skip Task 13, and proceed to Task 14.
+- **Otherwise**: Task 12 is recorded as a partial improvement
+  (lower threshold but no test improvement). Record results, mark
+  task as DONE, and proceed to Task 13.
 
-13. **Strip `tests/unit/test_run_pipeline.py`**:
-    - Remove the `PurgedFold` import.
-    - Remove the `TestPruneCvFoldsAfterPhase1` class entirely.
-    - In `TestDebugSymbolScope`, remove the `fold = PurgedFold(...)` /
-      `orch._cv_folds = [fold]` setup and the assertions that read
-      `orch._cv_folds[0]`. The remaining train/val filter assertions
-      stay.
+---
 
-14. **Strip `tests/unit/test_evox_runner.py`**:
-    - Remove the test that sets `SPLIT_MODE = "purged_rolling_cv"`.
-      Identify the exact test by reading the test file.
+## Task 13 — Add monthly-window shadow test to Phase 2 pool admission
 
-15. **Strip `docs/`**:
-    - `docs/phase0_shared.md`: remove the "A. Purged rolling CV"
-      section, the "SPLIT_MODE" row, the "CV_FOLDS_MANIFEST_PATH"
-      row, and the "SPLIT_MODE | `purged_rolling_cv`" recommendation
-      paragraphs. Keep the "holdout_75_25" / 70-30 narrative.
-    - `docs/phase2_rule_pool.md`: remove the "Purged CV" section and
-      any `PHASE2_CV_*` mentions.
-    - `docs/phase3_rule_set.md`: remove the "Purged CV evaluation"
-      section and any `PHASE2_CV_*` / `SPLIT_MODE` mentions.
-    - `docs/phase4_wf_risk.md`: remove the "Relationship to Phase 2/3
-      purged CV" section and the "last CV fold" mentions.
-    - `docs/phase5_oos.md`: remove the "purged rolling CV" mentions.
-    - `docs/README.md`: remove the `(purged CV vs 75/25)` /
-      `purged_rolling_cv` entries.
+**Priority: high** (if Task 12 is inconclusive)
+**Risk: medium** (touches Phase 2 pool admission; must not break
+existing pool size)
+**Runtime cost: +5–10 min on top of Phase 2** (post-evolution
+re-evaluation, not per-generation)
 
-16. **Update `.opencode/CONTEXT.md`**:
-    - Add task 11 row to the task ledger: "Remove purged CV feature
-      completely" / **DONE / APPROVED** / `feature/task-11-remove-purged-cv`
-      / `<commit>` / **YES** (`<merge-sha>` on `main`).
-    - Update the "Active orchestration state" to point at task 11.
+### Why this is the right second step
 
-17. **Commit the changes**:
-    ```bash
-    git add -A
-    git commit -m "task-11: remove purged CV feature completely
+Even with relaxed Phase 3 thresholds, the surviving pool may still
+contain rules that are good on the *last month* of train (which is
+what the user is using as "validation") but fail on the *first
+5 months* of train. This is the canonical overfit pattern that
+purged CV was supposed to catch — but we removed purged CV in
+Task 11. We need a cheaper replacement: a **monthly-window shadow
+test** evaluated on the **final pool**, not during evolution.
 
-    - Delete gpu_fuzzy_trader/data/cv_folds.py
-    - Delete gpu_fuzzy_trader/validation/rolling_cv.py
-    - Delete tests/unit/test_phase2_pool_admission.py
-    - Strip purged_rolling_cv branch from data/splitter.py
-    - Strip PHASE2_CV_*/CV_N_FOLDS/etc from config.py
-    - Strip cv_fold branching from phase2_rule_pool.py and
-      phase2_support.py (passes_pool_admission_cv_fold removed)
-    - Strip cv_folds params from phase3_rule_set.py,
-      phase4_wf_optimizer.py, phase5_oos.py
-    - Strip _split_mode_is_purged_cv from evolution/evox_runner.py
-    - Strip _cv_folds plumbing from run_pipeline.py
-    - Strip SPLIT_MODE branch from backtest/gpu_engine.py
-    - Strip purged CV tests from test_run_pipeline.py and
-      test_evox_runner.py
-    - Update docs/ to drop purged CV references
-    - Update .opencode/CONTEXT.md task ledger
-    "
-    ```
+`monthly_windows.py` (Task 1) already builds 30-day rolling
+windows; `monthly_penalty()` (Task 2) already exists. We just
+need to make it a **hard pool-admission gate** (not a soft
+penalty).
 
-18. **Write handoff JSON** to
-    `.opencode/handoffs/task-11-implementer.json` with:
-    - `branch`: `feature/task-11-remove-purged-cv`
-    - `commit`: the implementer commit SHA
-    - `summary`: file list removed + key sections stripped
-    - `verification`: results of the imports / grep checks
-    - `base_branch`: `main`
+### Files
 
-## Verification (run by the implementer before commit)
+- `gpu_fuzzy_trader/config.py` (add 2 constants)
+- `gpu_fuzzy_trader/phases/phase2_rule_pool.py` (add a post-build
+  filter step)
+- `gpu_fuzzy_trader/validation/monthly_windows.py` (no change
+  expected; read-only usage)
+- `tests/unit/test_phase2_monthly_admission.py` (new)
 
-1. `git grep -n "purged\|PurgedFold" -- 'gpu_fuzzy_trader/' 'tests/' 'docs/'`
-   returns **zero matches**.
-2. `git grep -n "cv_folds\|cv_fold" -- 'gpu_fuzzy_trader/' 'tests/'`
-   returns **zero matches** (after the cv_folds internal var and
-   imports are gone).
-3. `git grep -n "PHASE2_CV_\|PURGED_CV" -- 'gpu_fuzzy_trader/config.py'`
-   returns **zero matches**.
-4. `.venv/bin/python -c "import ast; ast.parse(open('gpu_fuzzy_trader/data/splitter.py').read())"`
-   exits 0.
-5. `.venv/bin/python -c "import ast; ast.parse(open('gpu_fuzzy_trader/config.py').read())"`
-   exits 0.
-6. `.venv/bin/python -c "import ast; ast.parse(open('gpu_fuzzy_trader/run_pipeline.py').read())"`
-   exits 0.
-7. `.venv/bin/python -c "import ast; ast.parse(open('gpu_fuzzy_trader/phases/phase2_support.py').read())"`
-   exits 0.
-8. `.venv/bin/python -c "import ast; ast.parse(open('gpu_fuzzy_trader/phases/phase2_rule_pool.py').read())"`
-   exits 0.
-9. `.venv/bin/python -c "from gpu_fuzzy_trader.data.splitter import Data_Splitter, split_and_persist; print('ok')"`
-   exits 0.
-10. `.venv/bin/python -c "from gpu_fuzzy_trader.run_pipeline import Pipeline_Orchestrator; print('ok')"`
-    exits 0.
-11. `.venv/bin/python -c "from gpu_fuzzy_trader.phases.phase2_support import _passes_pool_admission_impl, passes_pool_admission_gate, passes_pool_entry_admission, passes_pool_trade_floor; print('ok')"`
-    exits 0.
-12. Run the 4 small unit tests we can safely run with the user's
-    RAM budget (one each from `test_data_splitter`,
-    `test_run_pipeline`, `test_phase2_support`, `test_reporter`).
-    Do **not** run the full suite (per AGENTS.md and the user's
-    RAM limit).
+### Implementation steps
 
-## Risks & mitigations
+1. **Create the feature branch from `main` after Task 12 is
+   merged**:
+   ```bash
+   git checkout main && git pull
+   git checkout -b feature/task-13-phase2-monthly-admission
+   ```
 
-- **Risk**: Hidden references in friend_project (committed code).
-  **Mitigation**: the user explicitly said "my project"; we
-  restrict `git grep` to `gpu_fuzzy_trader/`, `tests/`, `docs/`.
-- **Risk**: Removing a function still called by an unrelated path.
-  **Mitigation**: implementer runs the verification checks (#9–#11)
-  + small unit tests.
-- **Risk**: Removing a docstring paragraph that explained a real
-  behaviour. **Mitigation**: keep all `holdout_70_30` paragraphs;
-  only strip the `purged_rolling_cv` paragraphs.
-- **Risk**: Changing `split_and_persist` return type breaks Phase 5
-  (and any other call site). **Mitigation**: implementer does a
-  grep for `split_and_persist` and updates every call site.
-- **Risk**: Removing `Rule_Pool_Generator(cv_folds=...)` breaks
-  tests. **Mitigation**: if any test passes `cv_folds=`, drop the
-  kwarg (default is `None` / nothing).
-- **Risk**: Removing `WalkForwardRiskOptimizer(cv_folds=...)` breaks
-  tests. Same fix.
+2. **In `gpu_fuzzy_trader/config.py`**:
+   - Add `PHASE2_MONTHLY_ADMISSION_ENABLED = True`.
+   - Add `PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO = 0.5`
+     (rule must be profitable on ≥50% of monthly windows in the
+     train split).
+   - Add `PHASE2_MONTHLY_ADMISSION_MIN_MONTHS = 4` (need at least
+     4 months of data; reject if train is shorter).
+   - Add a brief comment block explaining the gate.
 
-## Out of scope (deferred)
+3. **In `gpu_fuzzy_trader/phases/phase2_rule_pool.py`**:
+   - After the existing pool-builder produces the merged pool
+     (currently at `pool_size=78` for long, `122` for short on
+     this dataset), add a post-filter:
+     ```python
+     if _cfg.PHASE2_MONTHLY_ADMISSION_ENABLED:
+         monthly_windows = build_monthly_windows(train_df)
+         # min-months gate
+         if len(monthly_windows) < _cfg.PHASE2_MONTHLY_ADMISSION_MIN_MONTHS:
+             logger.warning(
+                 "Phase 2 [%s]: only %d monthly windows; skipping gate",
+                 self.direction, len(monthly_windows))
+         else:
+             keep = []
+             for rule in merged_pool:
+                 ret_pcts = [
+                     evaluate_rule_on_window(rule, w)["total_return_pct"]
+                     for w in monthly_windows
+                 ]
+                 profitable = sum(1 for r in ret_pcts if r > 0)
+                 if profitable / len(ret_pcts) >= _cfg.PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO:
+                     keep.append(rule)
+             merged_pool = keep
+     ```
+   - `evaluate_rule_on_window(rule, w)` is a small helper that
+     uses the existing `CPUBacktestEngine.simulate_rule_set()` to
+     backtest a single rule on a single window. Reuse the same
+     logic that `_simulate_team` uses.
+   - If the gate filters out everything, log a clear warning and
+     keep the original pool (degrade gracefully).
+   - Log the gate stats: `pre_filter_count, post_filter_count,
+     median_profitable_ratio, p10_profitable_ratio`.
 
-- Refactoring the `holdout_70_30` path itself.
-- Improving the Phase 2 pool admission (the `PHASE2_CV_MIN_WORST_*`
-  thresholds in the deleted section are gone — the holdout uses
-  `PHASE2_POOL_TRAIN_RETURN_MIN_PCT`, `PHASE2_POOL_VAL_RETURN_MIN_PCT`,
-  `PHASE2_PROFIT_FACTOR_FLOOR`).
-- Re-running the pipeline (the user will re-run on their own).
+4. **In `tests/unit/test_phase2_monthly_admission.py`** (new):
+   - Construct a pool of 3 rules: one profitable on all months,
+     one profitable on half the months, one profitable on no
+     months.
+   - Construct a 6-month train split with synthetic positive and
+     negative PnL per month.
+   - Assert the gate keeps only the first.
+   - Assert that disabling the flag keeps all 3.
+   - Assert that with `min_months=10` and 6 months of data, the
+     gate is skipped and the original pool is kept.
 
-## Target files
+5. **Re-run the pipeline** (full run, ~3 hours).
 
-| File | Change |
-|---|---|
-| `gpu_fuzzy_trader/data/cv_folds.py` | **deleted** |
-| `gpu_fuzzy_trader/validation/rolling_cv.py` | **deleted** |
-| `tests/unit/test_phase2_pool_admission.py` | **deleted** |
-| `gpu_fuzzy_trader/data/splitter.py` | strip purged branch, return 2-tuple, inline `holdout_70_30_split` |
-| `gpu_fuzzy_trader/config.py` | strip `SPLIT_MODE`, `CV_*`, `PHASE2_CV_*`, `_cv_pool_*` |
-| `gpu_fuzzy_trader/phases/phase2_rule_pool.py` | strip cv_fold branching, dead cv path |
-| `gpu_fuzzy_trader/phases/phase2_support.py` | strip `passes_pool_admission_cv_fold`, cv_fold branches |
-| `gpu_fuzzy_trader/phases/phase3_rule_set.py` | drop `cv_folds` param |
-| `gpu_fuzzy_trader/phases/phase4_wf_optimizer.py` | drop `cv_folds` param, `build_phase4_multi_cv_fold_splits` |
-| `gpu_fuzzy_trader/phases/phase5_oos.py` | 2-tuple destructure |
-| `gpu_fuzzy_trader/evolution/evox_runner.py` | drop `_split_mode_is_purged_cv` |
-| `gpu_fuzzy_trader/run_pipeline.py` | drop `_cv_folds` plumbing |
-| `gpu_fuzzy_trader/backtest/gpu_engine.py` | drop `_phase2_trade_floor` SPLIT_MODE branch |
-| `tests/unit/test_run_pipeline.py` | drop `PurgedFold` import + `TestPruneCvFoldsAfterPhase1` |
-| `tests/unit/test_evox_runner.py` | drop `SPLIT_MODE = "purged_rolling_cv"` test |
-| `docs/*.md` | strip purged CV mentions |
-| `.opencode/CONTEXT.md` | add task 11 to ledger |
-| `.opencode/handoffs/task-11-implementer.json` | **new** |
-| `.opencode/tasks/task-11.md` | **new** |
+6. **Commit the changes** with a clear message; update
+   `outputs/reports/gen_diag_iter13.csv` with pre/post-filter
+   counts and final test PnL.
 
-## Workflow
+7. **Write handoff JSON** to
+   `.opencode/handoffs/task-13-implementer.json`.
 
-- base_branch: `main`
-- branch_policy: **isolated** (one branch per task)
-- execution_mode: **checkpoint** (stop after implementer for user
-  review)
-- review flow: implementer → spec-reviewer → code-reviewer →
-  user-confirmed merge
+### Acceptance criteria for Task 13
+
+- The pool after Task 13 is **strictly smaller** than the pool
+  after Task 12 (we are filtering, not adding).
+- Pool size is still ≥30 rules per direction (so Phase 3 has
+  enough candidates).
+- All unit tests pass:
+  ```bash
+  .venv/bin/python -m pytest \
+    tests/unit/test_phase2_monthly_admission.py \
+    -v
+  ```
+- `outputs/reports/gen_diag_iter13.csv` exists with the gate
+  statistics.
+
+### Skip / proceed decision for Task 13
+
+- **If test PnL improves by ≥3pp vs. Task 12** AND
+  **pool size is still ≥30**: declare Task 13 a success and
+  proceed to Task 14.
+- **If pool is too small** (<30) but test PnL improved: relax
+  the gate to `MIN_PROFITABLE_RATIO = 0.4` and re-run.
+- **If test PnL did not improve**: close Task 13 as
+  inconclusive; record results; proceed to Task 14 anyway
+  (Task 14 is independent of Phase 2).
+
+---
+
+## Task 14 — Per-(rule, symbol) Phase 4 risk tuning
+
+**Priority: medium**
+**Risk: low** (additive; when flag is False, behaviour is
+unchanged)
+**Runtime cost: +20–30s on top of Phase 4** (Phase 4 currently
+takes 2.2s for 6,480 trials; 10 symbols × per-symbol grid is
+64,800 trials ≈ 22s)
+
+### Why this is the right third step
+
+The user's idea of "per-symbol training" is partially
+implementable as "per-symbol risk tuning": keep the global rule
+set (Phase 2/3) but allow each (rule, symbol) pair to have its
+own TP/SL/capital_pct. This isolates the per-symbol risk
+exposure from the per-symbol *signal* (which is what the
+expensive per-symbol training would change).
+
+### Files
+
+- `gpu_fuzzy_trader/config.py` (add 3 constants)
+- `gpu_fuzzy_trader/phases/phase4_wf_optimizer.py` (add a
+  per-symbol grid branch)
+- `gpu_fuzzy_trader/output/writer.py` (extend the output
+  schema to support per-(rule, symbol) risk — see "Output
+  schema" below)
+- `tests/unit/test_phase4_per_symbol_risk.py` (new)
+
+### Output schema (per-(rule, symbol) risk)
+
+Currently the output rule looks like:
+```json
+{
+  "tp": 2.0,
+  "sl": 1.0,
+  "capital_pct": 16.66,
+  "conditions": ["[feature] IS Value", "symbol is 4"]
+}
+```
+
+With per-symbol risk, the new shape is:
+```json
+{
+  "conditions": ["[feature] IS Value"],
+  "risk_per_symbol": {
+    "4": {"tp": 2.0, "sl": 1.0, "capital_pct": 16.66},
+    "9": {"tp": 1.5, "sl": 1.2, "capital_pct": 10.0}
+  }
+}
+```
+
+**Critical:** `evaluator_v5.ipynb` reads `tp`, `sl`,
+`capital_pct` directly from the rule (not from a
+`risk_per_symbol` sub-dict). So when `risk_per_symbol` is
+present, Phase 5 must:
+- For each rule, find the symbol the rule fires on (via
+  `symbol is X` conditions).
+- Look up that symbol in `risk_per_symbol`.
+- Inject `{tp, sl, capital_pct}` at the top level of the
+  rule.
+
+Phase 5 already filters negative-PnL rules. The new path is
+additive: when `risk_per_symbol` is present, the filter is
+applied **per (rule, symbol)** rather than per rule.
+
+### Implementation steps
+
+1. **Create the feature branch from `main` after Task 13 is
+   merged**:
+   ```bash
+   git checkout main && git pull
+   git checkout -b feature/task-14-per-symbol-risk
+   ```
+
+2. **In `gpu_fuzzy_trader/config.py`**:
+   - Add `PHASE4_PER_SYMBOL_RISK_ENABLED = False` (default off
+     — user opts in only when they want it).
+   - Add `PHASE4_PER_SYMBOL_RISK_TOP_K_SYMBOLS = 3` (only tune
+     the top 3 most-active symbols per rule, to keep grid
+     tractable).
+   - Add `PHASE4_PER_SYMBOL_RISK_MAX_DELTA_PCT = 20.0` (the
+     per-symbol risk must differ from the global risk by at
+     most 20%, to prevent overfit).
+   - Add a brief comment block explaining the three constants.
+
+3. **In `gpu_fuzzy_trader/phases/phase4_wf_optimizer.py`**:
+   - When `PHASE4_PER_SYMBOL_RISK_ENABLED`:
+     - After the global grid is done, for each rule, identify
+       the top-K symbols (by `trade_count` on val).
+     - For each (rule, top_symbol), run a local grid of
+       `±20%` around the global best TP/SL/capital and keep
+       the per-symbol best.
+     - Store the result in a new
+       `risk_per_symbol[symbol]` dict.
+   - The per-symbol grid is much smaller (5×5×5 = 125 cells
+     vs. 540 global cells).
+   - When the flag is False, the new code path is not
+     executed at all (zero behavior change).
+
+4. **In `gpu_fuzzy_trader/phases/phase5_oos.py`**:
+   - When loading `outputs/long.json` / `outputs/short.json`,
+     if a rule has `risk_per_symbol`:
+       - Find the rule's symbols from `symbol is X` conditions.
+       - For each symbol, look up the risk in `risk_per_symbol`.
+       - Inject the risk at the top level of the rule.
+     - If a symbol is not in `risk_per_symbol`, fall back to
+       the global TP/SL/capital.
+
+5. **In `tests/unit/test_phase4_per_symbol_risk.py`** (new):
+   - Construct a small rule set with 2 rules, each on 2
+     symbols.
+   - Run `Phase4WalkForwardOptimizer` with
+     `PHASE4_PER_SYMBOL_RISK_ENABLED=True`.
+   - Assert each rule has a `risk_per_symbol` dict with the
+     expected symbols.
+   - Assert the per-symbol risk differs from the global risk
+     by at most `MAX_DELTA_PCT`.
+
+6. **Re-run the pipeline** with the flag enabled (since it
+   defaults to False, the user must opt in for the run).
+
+7. **Commit the changes**; update
+   `outputs/reports/gen_diag_iter14.csv`.
+
+8. **Write handoff JSON** to
+   `.opencode/handoffs/task-14-implementer.json`.
+
+### Acceptance criteria for Task 14
+
+- All unit tests pass:
+  ```bash
+  .venv/bin/python -m pytest \
+    tests/unit/test_phase4_per_symbol_risk.py \
+    -v
+  ```
+- `outputs/long.json` and `outputs/short.json` have
+  `risk_per_symbol` sub-dicts when the flag is enabled, and
+  the top-level `tp/sl/capital_pct` are the **fallback**
+  values for symbols not in `risk_per_symbol`.
+- `outputs/reports/test_{long,short}_*.csv` shows that at
+  least one symbol's net PnL improved by ≥3pp vs. Task 13.
+- `evaluator_v5.ipynb` was not modified.
+
+### Skip / proceed decision for Task 14
+
+- **If test PnL improves by ≥3pp on either direction** vs.
+  Task 13: declare success. The diagnostic-first path is
+  complete; Tasks 15+ are not needed.
+- **If test PnL is still negative on both directions** after
+  Tasks 12+13+14: consider Task 15 (full per-symbol refactor)
+  only if the user explicitly asks for it. The cost is ≈10×
+  Phase 2 runtime, with no guarantee of improvement.
+
+---
+
+## Task 15 (last resort) — Full per-symbol Phase 2 refactor
+
+**Priority: low** — only attempted if the user explicitly
+requests it and Tasks 12-14 are collectively insufficient.
+**Risk: high** (touches the most expensive phase)
+**Runtime cost: ≈10× Phase 2 cost** (one NSGA-III run per
+symbol, total ~28 hours for both directions on this dataset)
+
+This task is **NOT started by default**. It is documented here
+for completeness so the user has a clear path if the
+diagnostic-first sequence fails.
+
+### When to attempt
+
+- Tasks 12, 13, 14 all merged.
+- Test PnL still ≤ −3% on both directions.
+- User explicitly requests the full per-symbol refactor.
+
+### High-level design (sketch only — not a plan yet)
+
+1. **Phase 2 per-symbol**:
+   - For each symbol, run NSGA-III on a symbol-scoped train
+     split.
+   - Lower `MIN_TRADE_SUPPORT` from 45 to 12 to account for
+     the smaller per-symbol data.
+   - Lower `MIN_CONDITIONS` from 3 to 2 to keep the search
+     space explorable.
+   - Add a **shared-pool post-filter**: from the union of
+     per-symbol pool rules, keep rules that are profitable on
+     **≥5 symbols** with at least `8` trades per symbol
+     (this is a hard minimum to avoid spurious shared rules).
+   - The shared pool and the per-symbol pool are both kept
+     and passed to Phase 3.
+
+2. **Phase 3 (per-symbol, with shared pool injection)**:
+   - For each symbol, run greedy selection on the
+     concatenation of (local pool ∪ shared pool), giving
+     shared rules a slight priority.
+   - Add a `top_k` cap on how many shared rules can be
+     selected per symbol (default 1) to prevent a single
+     shared rule from dominating.
+
+3. **Phase 4 (per-symbol risk, always on)**:
+   - Task 14 is folded in: `PHASE4_PER_SYMBOL_RISK_ENABLED`
+     becomes `True` by default.
+
+4. **Skip criteria for this task** (in case it does not help):
+   - If the test PnL still does not improve vs. Tasks 12-14,
+     revert and accept that the regime shift is too large for
+     the available data.
+
+### Why this is the LAST resort
+
+The brainstorming analysis showed:
+- Per-symbol training does not fix the regime-shift problem.
+- It 10x's the runtime for unclear gain.
+- The "≥5 symbols" shared-pool filter is statistically
+  dangerous at N=10 symbols (you cannot reliably detect
+  cross-sectional robustness from 10 symbols).
+
+The diagnostic-first path (Tasks 12-14) is much cheaper and
+addresses the actual failure modes identified in the data.
+
+---
+
+## Task ledger
+
+| # | Title | Status | Branch |
+|---|---|---|---|
+| 12 | Lower per-symbol Phase 3 thresholds + diagnostic CSV | **TODO** | `feature/task-12-lower-phase3-thresholds` |
+| 13 | Monthly-window shadow test in Phase 2 pool admission | **TODO** | `feature/task-13-phase2-monthly-admission` |
+| 14 | Per-(rule, symbol) Phase 4 risk tuning | **TODO** | `feature/task-14-per-symbol-risk` |
+| 15 | (Last resort) Full per-symbol Phase 2 refactor | **DEFERRED** | n/a |
+
+## Implementation order
+
+Tasks 12 → 13 → 14 in that order. Each task produces a
+re-runnable pipeline, a handoff JSON, a unit test, and a
+diagnostic CSV. The next task is only started after the
+previous one is merged and the user is shown the
+`gen_diag_iterN.csv` summary.
+
+## Constraints (carry-over from CONTEXT.md)
+
+- **Do NOT modify `evaluator_v5.ipynb`.**
+- **Do NOT** touch `friend_project/` (committed reference).
+- **Use `.venv/bin/python`** for all commands.
+- **Do NOT run all tests** — pick the relevant unit tests per
+  task (full pipeline run is the integration test).
+- **Keep the `outputs/long.json` and `outputs/short.json`
+  shape** compatible with `evaluator_v5.ipynb`; the new
+  `risk_per_symbol` sub-dict is additive (the legacy
+  `tp/sl/capital_pct` fields stay as fallback values).
+- **Use feature branches** `feature/task-N-*`; one implementer
+  per task; spec-reviewer, then code-reviewer; merge to `main`.
+- **Update `.opencode/CONTEXT.md` task ledger** after each
+  task merges.
