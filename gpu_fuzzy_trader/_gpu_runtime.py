@@ -169,8 +169,7 @@ def log_gpu_runtime_config() -> None:
     cache_dir = os.environ.get("JAX_COMPILATION_CACHE_DIR", "")
     logger.info(
         "Phase 2 GPU runtime: backend=%s devices=%s vram=%s ram=%s used=%s "
-        "batch_size=%d scan_unroll=%d fp32=%s data_int8=%s jax_cache=%s "
-        "cv_workers=%d",
+        "batch_size=%d scan_unroll=%d fp32=%s data_int8=%s jax_cache=%s",
         backend,
         devices,
         vram_str,

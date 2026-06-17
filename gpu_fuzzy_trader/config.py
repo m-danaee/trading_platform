@@ -613,6 +613,14 @@ PHASE2_MAX_TRAIN_VAL_GAP_PCT = 20.0
 #   Lower  → smaller pool; faster Phase 3, fewer combinations.
 PHASE2_KEEP_TOP_RULES = 140
 
+# PHASE2_REQUIRE_LAST_FOLD_POSITIVE — in the holdout pool-admission path,
+# require the (single) validation fold to have positive total return.
+#   True  → pool admission rejects rules with val_return <= 0%.
+#   False → val_return can be non-positive (other gates still apply).
+# (Originally named for the multi-fold CV era; the check itself runs in the
+# holdout path where cv_fold=False, so it remains meaningful without CV.)
+PHASE2_REQUIRE_LAST_FOLD_POSITIVE: bool = False
+
 
 # =============================================================================
 # Phase 2 — Fitness objectives & joint evaluation

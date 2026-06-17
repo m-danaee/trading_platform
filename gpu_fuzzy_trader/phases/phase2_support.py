@@ -321,6 +321,15 @@ def _passes_pool_admission_impl(
     if val_metrics is None:
         return False
 
+    # Holdout-path gate: in single-fold (holdout) mode, optionally require the
+    # validation fold to have positive total return. Originally introduced for
+    # the multi-fold CV era (named "last fold positive") but the check itself
+    # runs in the holdout path; it remains a useful deployability filter even
+    # without purged rolling CV.
+    if _cfg.PHASE2_REQUIRE_LAST_FOLD_POSITIVE:
+        if float(val_metrics.get("total_return_pct", 0.0)) <= 0.0:
+            return False
+
     val_trades = int(val_metrics.get("executed_trades", 0))
     if val_trades < min_val_trades:
         return False
