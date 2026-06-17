@@ -1256,6 +1256,8 @@ class Rule_Set_Selector:
             monthly_windows = build_monthly_windows(combined_df)
 
         symbol_assignments: dict[str, list[int]] = {}
+        # Per-symbol diagnostic data (Task 12).
+        diag_per_symbol: dict[str, dict] = {}
         for sym in self._symbols:
             sym_df = self._symbol_dfs.get(sym)
             if sym_df is None or len(sym_df) == 0:
@@ -1281,6 +1283,46 @@ class Rule_Set_Selector:
                     "Phase 3 [%s]: symbol %s → %d rules selected",
                     self.direction, sym, len(selected),
                 )
+
+                # --- Accumulate per-symbol diagnostic (Task 12) ---
+                if _cfg.PHASE3_DIAGNOSTIC_REPORT_ENABLED:
+                    top_idx = selected[0]
+                    top_rule = enriched_pool[top_idx]
+                    # Re-score top rule on this symbol to get val_trades / val_return_pct.
+                    result = _score_pool_rule_on_symbol(
+                        top_rule, sym_df, self.direction,
+                        train_symbol_df=train_sym_df,
+                    )
+                    val_trades = result["trades"]
+                    val_return_pct = result["return_pct"]
+
+                    # Compute train return for train_val_gap_pct.
+                    train_ret = -999.0
+                    if train_sym_df is not None and len(train_sym_df) > 0 and val_return_pct > -999:
+                        fmt = _rule_set_to_engine_format([top_rule])
+                        t_engine = CPUBacktestEngine(
+                            train_sym_df, {}, self.direction, fee_pct=_cfg.FEE_PCT,
+                        )
+                        train_metrics_ = t_engine.simulate_rule_set(fmt)
+                        train_ret = float(train_metrics_.get("total_return_pct", -999.0))
+
+                    train_val_gap_pct = (
+                        (train_ret - val_return_pct)
+                        if train_ret > -999 and val_return_pct > -999
+                        else 0.0
+                    )
+                    top_rule_condition_signature = ";".join(
+                        str(c) for c in top_rule.get("conditions", [])
+                    )
+                    diag_per_symbol[sym] = {
+                        "direction": self.direction,
+                        "symbol": sym,
+                        "val_trades": int(val_trades),
+                        "val_return_pct": round(float(val_return_pct), 4),
+                        "train_val_gap_pct": round(train_val_gap_pct, 4),
+                        "n_rules_selected": len(selected),
+                        "top_rule_condition_signature": top_rule_condition_signature,
+                    }
             else:
                 logger.info(
                     "Phase 3 [%s]: symbol %s → no rules selected",
@@ -1398,6 +1440,31 @@ class Rule_Set_Selector:
                 val_metrics, "validation", direction=self.direction)
         except Exception as exc:
             logger.warning("Reporter validation equity/csv failed (non-fatal): %s", exc)
+
+        # --- Write per-symbol diagnostic CSV (Task 12) ---
+        if _cfg.PHASE3_DIAGNOSTIC_REPORT_ENABLED and diag_per_symbol:
+            import csv as _csv
+
+            os.makedirs(_cfg.REPORTS_DIR, exist_ok=True)
+            diag_path = os.path.join(
+                _cfg.REPORTS_DIR, "gen_diag_iter12.csv")
+            fieldnames = [
+                "direction", "symbol", "val_trades", "val_return_pct",
+                "train_val_gap_pct", "n_rules_selected",
+                "top_rule_condition_signature",
+            ]
+            file_exists = os.path.isfile(diag_path)
+            with open(diag_path, "a" if file_exists else "w",
+                      newline="", encoding="utf-8") as fh:
+                writer = _csv.DictWriter(fh, fieldnames=fieldnames)
+                if not file_exists:
+                    writer.writeheader()
+                for sym in sorted(diag_per_symbol.keys()):
+                    writer.writerow(diag_per_symbol[sym])
+            logger.info(
+                "Phase 3 [%s]: diagnostic CSV written to %s (%d rows)",
+                self.direction, diag_path, len(diag_per_symbol),
+            )
 
         return output_dict
 
