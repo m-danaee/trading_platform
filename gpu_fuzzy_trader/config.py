@@ -1052,7 +1052,10 @@ PHASE3_PER_SYMBOL_GREEDY_TOP_K = 25
 #   cannot reach 50 trades per symbol (∼6 val trades/symbol on average).
 #   15 aligns with SYMBOL_SPECIALIZATION_MIN_VAL_TRADES=6 (Task 6) while
 #   still requiring more-than-minimal evidence on each symbol.
-PHASE3_PER_SYMBOL_MIN_TRADES = 15
+#   Lowered from 15→8 on 2026-06-17 (Task 12) because 6/10 symbols still
+#   have no rules on test; 8 trades on a ~7k-row per-symbol validation
+#   window (≈0.1% of bars) is still a reasonable evidence minimum.
+PHASE3_PER_SYMBOL_MIN_TRADES = 8
 
 # PHASE3_PER_SYMBOL_MIN_RETURN — min val return % on symbol for rule.
 #   Higher → only profitable-on-symbol rules considered.
@@ -1062,7 +1065,21 @@ PHASE3_PER_SYMBOL_MIN_TRADES = 15
 #   only ∼2-4% max returns per symbol; 3.0 was rejecting everything.
 #   1.5 still requires modest profitability while allowing Phase 4 risk
 #   optimization to improve the final team's return.
-PHASE3_PER_SYMBOL_MIN_RETURN = 1.5
+#   Lowered from 1.5→0.5 on 2026-06-17 (Task 12) — many rules have
+#   positive but small per-symbol returns (<1%) due to the thin
+#   per-symbol validation window (~7k rows).  0.5% is still a positive
+#   return that Phase 4 risk optimization can amplify.
+PHASE3_PER_SYMBOL_MIN_RETURN = 0.5
+
+# PHASE3_DIAGNOSTIC_REPORT_ENABLED — write per-symbol diagnostic CSV.
+#   When True, ``Rule_Set_Selector.run()`` writes
+#   ``outputs/reports/gen_diag_iter12.csv`` with columns:
+#   direction, symbol, val_trades, val_return_pct, train_val_gap_pct,
+#   n_rules_selected, top_rule_condition_signature.
+#   The CSV has one row per (direction, symbol) pair that had at least
+#   1 rule selected.  This is a diagnostic artifact for the user to see
+#   which symbols are still being dropped and why.
+PHASE3_DIAGNOSTIC_REPORT_ENABLED = True
 
 # PHASE3_MAX_CAPITAL_PCT_PER_RULE — cap per rule before normalization.
 #   Higher → each rule can use more notional; higher overlap drawdown risk.
