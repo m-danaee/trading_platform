@@ -1,6 +1,6 @@
 """Unit tests for the Phase 2 monthly-window shadow-test gate (Task 13).
 
-Tests the gate logic in isolation by monkeypatching
+Tests ``_apply_monthly_admission_gate`` directly by monkeypatching
 ``_evaluate_rule_on_window`` to return deterministic values,
 so no real backtest engine or data is needed.
 """
@@ -10,6 +10,9 @@ from __future__ import annotations
 import pytest
 
 from gpu_fuzzy_trader import config as _cfg
+from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+    _apply_monthly_admission_gate,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -74,46 +77,6 @@ POOL_THREE = [
 ]
 
 
-def _run_gate(
-    pool: list[dict],
-    n_months: int = 6,
-    enabled: bool = True,
-    min_ratio: float = 0.5,
-    min_months: int = 4,
-) -> list[dict]:
-    """Simulate the monthly-admission gate logic (replicates ``run()``).
-
-    Accesses ``_evaluate_rule_on_window`` through the module so monkeypatch
-    on the module attribute works correctly.
-    """
-    import gpu_fuzzy_trader.phases.phase2_rule_pool as _p2rp
-
-    # If gate is disabled, return the pool unchanged.
-    if not enabled:
-        return list(pool)
-
-    # Skip gate when not enough months.
-    if n_months < min_months:
-        return list(pool)
-
-    # Evaluate each rule on each (dummy) window.
-    keep: list[dict] = []
-    for entry in pool:
-        ret_pcts: list[float] = []
-        for w in range(n_months):
-            ret = _p2rp._evaluate_rule_on_window(entry, w, "long")
-            ret_pcts.append(ret)
-        profitable = sum(1 for r in ret_pcts if r > 0)
-        ratio = profitable / max(1, len(ret_pcts))
-        if ratio >= min_ratio:
-            keep.append(entry)
-
-    # Graceful degradation: if gate would empty the pool, return original.
-    if len(keep) == 0:
-        return list(pool)
-    return keep
-
-
 # ===========================================================================
 # Tests
 # ===========================================================================
@@ -122,11 +85,17 @@ def _run_gate(
 class TestMonthlyAdmissionGate:
     """Verify the gate keeps / rejects rules based on profitable_ratio."""
 
-    def test_keeps_only_fully_profitable_rule(self, monkeypatch):
-        """Rule 0 profitable on all 6 months → kept; others partially → dropped."""
+    # ------------------------------------------------------------------
+    # Test 1: basic profitability filtering
+    # ------------------------------------------------------------------
+
+    def test_keeps_profitable_and_half_profitable(self, monkeypatch):
+        """Rule 0 profitable on all 6 months (ratio=1.0) and rule 1
+        on half (ratio=0.5) both pass the >=0.5 threshold; rule 2 (ratio=0.0)
+        is dropped."""
         returns = [
             [1.0, 0.5, 2.0, 1.5, 0.8, 1.2],    # rule 0: 6/6 = 1.0
-            [1.0, -0.5, 2.0, -1.0, 0.5, -0.3],  # rule 1: 3/6 = 0.5 (passes but...)
+            [1.0, -0.5, 2.0, -1.0, 0.5, -0.3],  # rule 1: 3/6 = 0.5
             [-1.0, -2.0, -0.5, -1.5, -3.0, -0.8],  # rule 2: 0/6 = 0.0
         ]
         monkeypatch.setattr(
@@ -134,39 +103,38 @@ class TestMonthlyAdmissionGate:
             _DeterministicEvaluator(returns),
         )
 
-        result = _run_gate(POOL_THREE, n_months=6)
-        # Rule 0 has ratio 1.0, rule 1 has 0.5, rule 2 has 0.0.
-        # With min_ratio=0.5, rules 0 and 1 should be kept.
+        result = _apply_monthly_admission_gate(POOL_THREE, list(range(6)), "long")
+        # Rule 0 (1.0) and rule 1 (0.5) both pass >=0.5; rule 2 (0.0) dropped.
         assert len(result) == 2
         assert result[0]["conditions"] == POOL_THREE[0]["conditions"]
         assert result[1]["conditions"] == POOL_THREE[1]["conditions"]
 
-    def test_disabled_flag_keeps_all_rules(self, monkeypatch):
-        """When the flag is False, the gate does not run — all 3 rules kept."""
-        result = _run_gate(POOL_THREE, n_months=6, enabled=False)
-        assert len(result) == 3
+    # ------------------------------------------------------------------
+    # Test 2: all rules just below threshold are rejected,
+    #         triggering graceful degradation
+    # ------------------------------------------------------------------
 
-    def test_skip_gate_when_min_months_exceeds_windows(self, monkeypatch):
-        """With min_months=10 and only 6 months, skip gate → all 3 rules kept."""
-        result = _run_gate(POOL_THREE, n_months=6, min_months=10)
-        assert len(result) == 3
-
-    def test_graceful_degradation_empty_pool(self, monkeypatch):
-        """When all rules fail the gate, original pool is kept (not emptied)."""
+    def test_rejects_below_threshold_graceful_degradation(self, monkeypatch):
+        """All rules have ratio < 0.5 → gate empties pool → graceful
+        degradation keeps original pool."""
         returns = [
-            [-1.0, -0.5, -2.0, -1.5, -0.8, -1.2],  # rule 0: all negative
-            [-1.0, -0.5, -2.0, -1.0, -0.5, -0.3],  # rule 1: all negative
-            [-1.0, -2.0, -0.5, -1.5, -3.0, -0.8],  # rule 2: all negative
+            [-1.0, -0.5, -2.0, -1.5, -0.8, -1.2],  # rule 0: 0/6 = 0.0
+            [-1.0, -0.5, -2.0, -1.0, -0.5, -0.3],  # rule 1: 0/6 = 0.0
+            [-1.0, -2.0, -0.5, -1.5, -3.0, -0.8],  # rule 2: 0/6 = 0.0
         ]
         monkeypatch.setattr(
             "gpu_fuzzy_trader.phases.phase2_rule_pool._evaluate_rule_on_window",
             _DeterministicEvaluator(returns),
         )
 
-        result = _run_gate(POOL_THREE, n_months=6)
+        result = _apply_monthly_admission_gate(POOL_THREE, list(range(6)), "long")
         # Graceful degradation: original pool returned (3 rules)
         assert len(result) == 3
         assert result == POOL_THREE
+
+    # ------------------------------------------------------------------
+    # Test 3: boundary — ratio exactly at 0.5 threshold
+    # ------------------------------------------------------------------
 
     def test_boundary_exact_half_profitable(self, monkeypatch):
         """Rule with exactly 3/6 = 0.5 passes when min_ratio=0.5."""
@@ -180,6 +148,47 @@ class TestMonthlyAdmissionGate:
             _DeterministicEvaluator(returns),
         )
 
-        result = _run_gate(POOL_THREE, n_months=6)
+        result = _apply_monthly_admission_gate(POOL_THREE, list(range(6)), "long")
         assert len(result) == 1
         assert result[0]["conditions"] == POOL_THREE[0]["conditions"]
+
+    # ------------------------------------------------------------------
+    # Test 4: boundary — ratio just below 0.5 threshold
+    # ------------------------------------------------------------------
+
+    def test_boundary_just_below_threshold(self, monkeypatch):
+        """Rule with 2/6 ≈ 0.33 (< 0.5) is rejected; 3/6 = 0.5 passes."""
+        returns = [
+            [1.0, -1.0, 1.0, -1.0, -1.0, -1.0],  # rule 0: 2/6 ≈ 0.33 (rejected)
+            [1.0, -1.0, 1.0, -1.0, 1.0, -1.0],   # rule 1: 3/6 = 0.5 (passes)
+            [-1.0, -2.0, -3.0, -4.0, -5.0, -6.0],  # rule 2: 0/6
+        ]
+        monkeypatch.setattr(
+            "gpu_fuzzy_trader.phases.phase2_rule_pool._evaluate_rule_on_window",
+            _DeterministicEvaluator(returns),
+        )
+
+        result = _apply_monthly_admission_gate(POOL_THREE, list(range(6)), "long")
+        assert len(result) == 1
+        assert result[0]["conditions"] == POOL_THREE[1]["conditions"]
+
+    # ------------------------------------------------------------------
+    # Test 5: multiple rules with different ratios pass the gate
+    # ------------------------------------------------------------------
+
+    def test_multiple_rules_pass_gate(self, monkeypatch):
+        """Two rules with >= 0.5 ratio are kept, one below threshold is dropped."""
+        returns = [
+            [1.0, 0.5, 2.0, 1.5, 0.8, 1.2],    # rule 0: 6/6 = 1.0 (passes)
+            [1.0, -0.5, 2.0, -1.0, 0.5, -1.0],  # rule 1: 3/6 = 0.5 (passes)
+            [1.0, -0.5, -2.0, -1.0, -0.5, -0.3],  # rule 2: 1/6 ≈ 0.17 (rejected)
+        ]
+        monkeypatch.setattr(
+            "gpu_fuzzy_trader.phases.phase2_rule_pool._evaluate_rule_on_window",
+            _DeterministicEvaluator(returns),
+        )
+
+        result = _apply_monthly_admission_gate(POOL_THREE, list(range(6)), "long")
+        assert len(result) == 2
+        assert result[0]["conditions"] == POOL_THREE[0]["conditions"]
+        assert result[1]["conditions"] == POOL_THREE[1]["conditions"]
