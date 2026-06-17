@@ -147,16 +147,15 @@ The current run already has that shape — we must preserve it.
 
 ## Active orchestration state
 
-- base_branch: `main` @ `ffe4f34` (new plan committed)
-- current_task: **Task 12 — Lower per-symbol Phase 3 thresholds + diagnostic CSV** — IMPLEMENT + SPEC + CODE REVIEW DONE
-- previous: Task 11 DONE / merged (`1b8e002` on `main`)
-- active_branch: `none` (branch deleted after merge)
+- base_branch: `main` @ `8634c23` (Task 12 results committed; Task 13 spec added)
+- current_task: **Task 13 — Monthly-window shadow test in Phase 2 pool admission** — IMPLEMENTER DISPATCHED
+- previous: Task 12 DONE / merged (`b903061` on `main`); post-merge re-run committed (`336e29f`). Test result regressed (LONG -8.09%, SHORT -7.43% vs baseline -1.02% / -2.56%). Regime-shift hypothesis confirmed by diagnostic CSV.
+- active_branch: `feature/task-13-phase2-monthly-admission` (created from `main@8634c23`)
 - dispatch_mode: one implementer at a time, then spec-reviewer, then code-reviewer
 - execution_mode: **checkpoint** (user explicitly said "continue task N" semantics; do not auto-continue past a completed task)
 - branch_policy: **isolated** (each task on `feature/task-N-*`; merge to `main` after spec+code review)
 - handoff_dir: `.opencode/handoffs/`
-- task_file: `.opencode/tasks/task-12.md`
-- awaiting_user: **merge decision** — see "Next steps for user" below
+- task_file: `.opencode/tasks/task-13.md`
 
 ## New plan — Tasks 12-15: Diagnostic-first path for test-set generalization
 

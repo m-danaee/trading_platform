@@ -621,6 +621,36 @@ PHASE2_KEEP_TOP_RULES = 140
 # holdout path where cv_fold=False, so it remains meaningful without CV.)
 PHASE2_REQUIRE_LAST_FOLD_POSITIVE: bool = False
 
+# =============================================================================
+# Phase 2 — Monthly-window shadow test for pool admission (Task 13, 2026-06-17)
+# =============================================================================
+# These flags add a hard pool-admission gate after Phase 2 evolution: each
+# candidate rule must be profitable on at least 50% of monthly rolling windows
+# in the train split.  This addresses the regime-shift problem identified in
+# Task 12's diagnostic CSV: per-symbol rules that pass Phase 3 on val bleed on
+# test because they are not stable across time.  The gate is additive — when
+# PHASE2_MONTHLY_ADMISSION_ENABLED is False, the existing pool path is
+# unchanged.
+
+# PHASE2_MONTHLY_ADMISSION_ENABLED — toggle the monthly-window gate.
+#   True  → rules must pass the monthly profitable-ratio filter to enter the pool.
+#   False → skip the gate (zero behaviour change vs. pre-Task-13 code).
+PHASE2_MONTHLY_ADMISSION_ENABLED = True
+
+# PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO — fraction of monthly windows
+# where the rule must have positive total_return_pct to be admitted.
+#   Higher → stricter time-stability requirement; fewer rules pass.
+#   Lower  → more lenient; rules that work on a minority of windows survive.
+#   0.50 means the rule must be profitable on at least half the windows.
+PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO = 0.5
+
+# PHASE2_MONTHLY_ADMISSION_MIN_MONTHS — minimum number of monthly windows
+# required before the gate is applied.  When the train split is shorter than
+# this, the gate is skipped (with a warning) and the original pool is kept.
+#   Higher → skip the gate more often on short data; avoid false negatives.
+#   Lower  → require monthly evidence even on short trains.
+PHASE2_MONTHLY_ADMISSION_MIN_MONTHS = 4
+
 
 # =============================================================================
 # Phase 2 — Fitness objectives & joint evaluation
