@@ -2,3 +2,4 @@
 - After changing sections of my code, remove additional(wasted) parts from old implementation to get clean my project.
 - Your evaluation must be based on evaluator_v5.ipynb because testing my rule sets is based on this file! (Don't change this file anymore)
 - Do not run all tests because I'm not have enough RAM and get OOM error!
+- Do not run my project because it get OOM error! I'm run it mostly on colab GPU!
