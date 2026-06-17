@@ -1633,6 +1633,56 @@ def _validate_archive_payload(
                 )
 
 
+# ---------------------------------------------------------------------------
+# Monthly-window helper (Task 13)
+# ---------------------------------------------------------------------------
+
+
+def _evaluate_rule_on_window(
+    pool_entry: dict,
+    window_df: pd.DataFrame,
+    direction: str,
+) -> float:
+    """Evaluate a single pool rule on a single monthly window.
+
+    Returns ``total_return_pct`` (float).  Uses the existing
+    ``CPUBacktestEngine.simulate_rule_set`` with Phase 2 static risk
+    parameters (``PHASE2_TP``, ``PHASE2_SL``, ``PHASE2_CAPITAL_PCT``).
+
+    Parameters
+    ----------
+    pool_entry:
+        Pool JSON entry with a ``conditions`` key (list of condition strings).
+    window_df:
+        Monthly-window DataFrame (must contain label and meta columns).
+    direction:
+        ``"long"`` or ``"short"``.
+
+    Returns
+    -------
+    float
+        ``total_return_pct`` from the backtest, or ``-100.0`` on failure.
+    """
+    from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
+
+    rule = {
+        "conditions": pool_entry["conditions"],
+        "tp": _cfg.PHASE2_TP,
+        "sl": _cfg.PHASE2_SL,
+        "capital_pct": _cfg.PHASE2_CAPITAL_PCT,
+    }
+    try:
+        engine = CPUBacktestEngine(
+            window_df,
+            {},
+            direction,
+            fee_pct=_cfg.FEE_PCT,
+        )
+        metrics = engine.simulate_rule_set([rule])
+        return float(metrics.get("total_return_pct", 0.0))
+    except Exception:
+        return -100.0
+
 
 # ---------------------------------------------------------------------------
 # Rule_Pool_Generator
@@ -2092,6 +2142,70 @@ class Rule_Pool_Generator:
             len(new_pool),
             len(pool),
         )
+
+        # --- Monthly-window shadow-test gate (Task 13, 2026-06-17) ---
+        # After the existing pool-admission filter, apply a hard gate that
+        # requires each candidate rule to be profitable on at least 50% of
+        # monthly rolling windows in the train split.  This addresses the
+        # regime-shift problem: rules that work on one validation slice but
+        # bleed on test are rejected early.
+        if _cfg.PHASE2_MONTHLY_ADMISSION_ENABLED:
+            from gpu_fuzzy_trader.validation.monthly_windows import (
+                build_monthly_windows,
+            )
+
+            monthly_windows = build_monthly_windows(self._train_df)
+            if len(monthly_windows) < _cfg.PHASE2_MONTHLY_ADMISSION_MIN_MONTHS:
+                logger.warning(
+                    "Phase 2 [%s]: only %d monthly windows (< MIN_MONTHS=%d); "
+                    "skipping monthly-admission gate",
+                    self.direction,
+                    len(monthly_windows),
+                    _cfg.PHASE2_MONTHLY_ADMISSION_MIN_MONTHS,
+                )
+            else:
+                pre_filter_count = len(pool)
+                profitable_ratios: list[float] = []
+                keep: list[dict] = []
+                for entry in pool:
+                    ret_pcts = []
+                    for w in monthly_windows:
+                        ret = _evaluate_rule_on_window(
+                            entry, w, self.direction,
+                        )
+                        ret_pcts.append(ret)
+                    profitable = sum(1 for r in ret_pcts if r > 0)
+                    ratio = profitable / max(1, len(ret_pcts))
+                    profitable_ratios.append(ratio)
+                    if ratio >= _cfg.PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO:
+                        keep.append(entry)
+
+                post_filter_count = len(keep)
+                if pre_filter_count > 0 and profitable_ratios:
+                    median_ratio = float(np.median(profitable_ratios))
+                    p10_ratio = float(np.percentile(profitable_ratios, 10))
+                else:
+                    median_ratio = 0.0
+                    p10_ratio = 0.0
+
+                if post_filter_count == 0:
+                    logger.warning(
+                        "Phase 2 [%s]: monthly-admission gate emptied the pool "
+                        "(%d → 0); keeping original pool (graceful degradation)",
+                        self.direction,
+                        pre_filter_count,
+                    )
+                else:
+                    pool = keep
+                    logger.info(
+                        "Phase 2 [%s]: monthly-admission gate %d → %d rules "
+                        "(median_profitable_ratio=%.3f, p10=%.3f)",
+                        self.direction,
+                        pre_filter_count,
+                        post_filter_count,
+                        median_ratio,
+                        p10_ratio,
+                    )
 
         pool_path = _resolve_pool_path(self.direction)
         history_path = _resolve_history_path(self.direction)
