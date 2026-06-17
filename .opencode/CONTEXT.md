@@ -150,7 +150,7 @@ The current run already has that shape — we must preserve it.
 - base_branch: `main` @ `ffe4f34` (new plan committed)
 - current_task: **Task 12 — Lower per-symbol Phase 3 thresholds + diagnostic CSV** — IMPLEMENT + SPEC + CODE REVIEW DONE
 - previous: Task 11 DONE / merged (`1b8e002` on `main`)
-- active_branch: `feature/task-12-lower-phase3-thresholds` @ `df70cc3` (code review APPROVED with 6 non-blocking nits)
+- active_branch: `none` (branch deleted after merge)
 - dispatch_mode: one implementer at a time, then spec-reviewer, then code-reviewer
 - execution_mode: **checkpoint** (user explicitly said "continue task N" semantics; do not auto-continue past a completed task)
 - branch_policy: **isolated** (each task on `feature/task-N-*`; merge to `main` after spec+code review)
@@ -283,7 +283,7 @@ JSON files and skipped OOS evaluation.
 | 9 | Evaluator-clean writer | DONE / APPROVED | `feature/task-9-evaluator-clean-writer` | `f63a8d8` | **YES** (`1c3e15f` on `main`) |
 | 10 | Fix empty rules + Date-based equity plot | **DONE / APPROVED** (4 nits) | `feature/task-10-fix-empty-rules-and-date-equity` | `b8509a7` (impl) + `886cfcf` (review) | **YES** (`82d7604` on `main`) |
 | 11 | Remove purged CV feature completely | **DONE / APPROVED** | `feature/task-11-remove-purged-cv` | `34d060a` (impl) + `ce587f1` (review fix) | **YES** (`1b8e002` on `main`) |
-| 12 | Lower per-symbol Phase 3 thresholds + diagnostic CSV | **TODO** | `feature/task-12-lower-phase3-thresholds` | — | — |
+| 12 | Lower per-symbol Phase 3 thresholds + diagnostic CSV | **DONE** | `feature/task-12-lower-phase3-thresholds` | `df70cc3` (impl) + `b903061` (merge) | **YES** (`b903061` on `main`) |
 | 13 | Monthly-window shadow test in Phase 2 pool admission | **TODO** (after 12 merges) | `feature/task-13-phase2-monthly-admission` | — | — |
 | 14 | Per-(rule, symbol) Phase 4 risk tuning | **TODO** (after 13 merges) | `feature/task-14-per-symbol-risk` | — | — |
 | 15 | Full per-symbol Phase 2 refactor | **DEFERRED** (last resort) | n/a | — | — |
