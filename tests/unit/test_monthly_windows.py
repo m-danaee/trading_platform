@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.validation.monthly_windows import (
     MonthlyWindowSummary,
     build_monthly_windows,
@@ -74,6 +75,36 @@ class TestSummarizeMonthlyMetrics:
         summary = summarize_monthly_metrics([])
         assert summary.windows == 0
         assert summary.score == -1e6
+
+    def test_zero_threshold_includes_flat_months(self, monkeypatch) -> None:
+        """With MONTHLY_GOOD_RETURN_MIN_PCT=0, flat months count as good."""
+        monkeypatch.setattr(_cfg, "MONTHLY_GOOD_RETURN_MIN_PCT", 0.0)
+        metrics = [
+            {"total_return_pct": 1.0, "profit_factor": 1.2,
+             "max_drawdown_pct": 2.0, "executed_trades": 30},
+            {"total_return_pct": 0.0, "profit_factor": 0.0,
+             "max_drawdown_pct": 0.0, "executed_trades": 0},
+            {"total_return_pct": -1.0, "profit_factor": 0.8,
+             "max_drawdown_pct": 5.0, "executed_trades": 20},
+        ]
+        summary = summarize_monthly_metrics(metrics)
+        assert summary.profitable_windows == 2
+        assert summary.profitable_ratio == pytest.approx(2 / 3)
+
+    def test_positive_threshold_requires_min_return(self, monkeypatch) -> None:
+        """With MONTHLY_GOOD_RETURN_MIN_PCT=2, only months with return >= 2% count."""
+        monkeypatch.setattr(_cfg, "MONTHLY_GOOD_RETURN_MIN_PCT", 2.0)
+        metrics = [
+            {"total_return_pct": 3.0, "profit_factor": 1.2,
+             "max_drawdown_pct": 2.0, "executed_trades": 30},
+            {"total_return_pct": 1.0, "profit_factor": 1.0,
+             "max_drawdown_pct": 0.0, "executed_trades": 10},
+            {"total_return_pct": 2.0, "profit_factor": 1.1,
+             "max_drawdown_pct": 5.0, "executed_trades": 20},
+        ]
+        summary = summarize_monthly_metrics(metrics)
+        assert summary.profitable_windows == 2
+        assert summary.profitable_ratio == pytest.approx(2 / 3)
 
 
 class TestBuildMonthlyWindows:

@@ -31,6 +31,36 @@ from gpu_fuzzy_trader.backtest.df_slim import slim_backtest_df
 logger = logging.getLogger(__name__)
 
 
+def monthly_return_counts_as_good(
+    return_pct: float,
+    min_return_pct: float,
+    *,
+    strict_above_zero: bool = False,
+) -> bool:
+    """Return True when a monthly window counts toward the good-month ratio.
+
+    Parameters
+    ----------
+    return_pct:
+        ``total_return_pct`` from one monthly backtest window.
+    min_return_pct:
+        Configured minimum return threshold (%).
+    strict_above_zero:
+        When *min_return_pct* is ``0.0`` and this is True, only
+        ``return_pct > 0`` counts (Phase 2 default).  Otherwise
+        ``return_pct >= 0`` counts at zero threshold.
+        When *min_return_pct* ``> 0``, a month is good iff
+        ``return_pct >= min_return_pct``.
+    """
+    value = float(return_pct)
+    threshold = float(min_return_pct)
+    if threshold > 0.0:
+        return value >= threshold
+    if strict_above_zero:
+        return value > 0.0
+    return value >= 0.0
+
+
 @dataclass
 class MonthlyWindowSummary:
     """Aggregate statistics across rolling monthly windows."""
@@ -215,12 +245,15 @@ def summarize_monthly_metrics(metrics: Iterable[dict]) -> MonthlyWindowSummary:
     worst_pf = float(np.min(active_pfs)) if len(active_pfs) > 0 else 0.0
     mean_pf = float(np.mean(active_pfs)) if len(active_pfs) > 0 else 0.0
 
-    profitable = int(np.sum(returns > 0.0))
-    
-    # Treat months with exactly 0.0 return (no trades) as "successful" risk management 
-    # instead of punishing them as unprofitable.
-    non_losing = int(np.sum(returns >= 0.0))
-    profitable_ratio = non_losing / max(1, len(returns))
+    min_good_return = float(
+        getattr(_cfg, "MONTHLY_GOOD_RETURN_MIN_PCT", 0.0))
+    good_count = sum(
+        1 for r in returns
+        if monthly_return_counts_as_good(
+            float(r), min_good_return, strict_above_zero=False)
+    )
+    profitable = good_count
+    profitable_ratio = good_count / max(1, len(returns))
 
     # Composite score (used internally for ranking).
     score = (

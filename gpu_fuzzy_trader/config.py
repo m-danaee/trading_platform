@@ -637,11 +637,18 @@ PHASE2_REQUIRE_LAST_FOLD_POSITIVE: bool = False
 #   False → skip the gate (zero behaviour change vs. pre-Task-13 code).
 PHASE2_MONTHLY_ADMISSION_ENABLED = True
 
+# PHASE2_MONTHLY_GOOD_RETURN_MIN_PCT — minimum total_return_pct (%) for a monthly
+# window to count as "good" in the pool-admission gate.
+#   0.0  → strict profit only (return must be > 0; flat months do not count).
+#   2.0  → month must earn at least +2% to count as good.
+#   -1.0 → month counts if return >= -1% (more lenient non-loss bar).
+PHASE2_MONTHLY_GOOD_RETURN_MIN_PCT = 0.0
+
 # PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO — fraction of monthly windows
-# where the rule must have positive total_return_pct to be admitted.
+# that must count as "good" per PHASE2_MONTHLY_GOOD_RETURN_MIN_PCT to be admitted.
 #   Higher → stricter time-stability requirement; fewer rules pass.
 #   Lower  → more lenient; rules that work on a minority of windows survive.
-#   0.50 means the rule must be profitable on at least half the windows.
+#   0.50 means the rule must pass on at least half the windows.
 PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO = 0.5
 
 # PHASE2_MONTHLY_ADMISSION_MIN_MONTHS — minimum number of monthly windows
@@ -1384,6 +1391,16 @@ MONTHLY_WINDOW_MIN_ROWS = 2500
 MONTHLY_WINDOW_MAX_WINDOWS = 24
 MONTHLY_RECENCY_WEIGHT = 2.2
 MONTHLY_MIN_TRADES = 20
+
+# MONTHLY_GOOD_RETURN_MIN_PCT — minimum total_return_pct (%) for a monthly window
+# to count toward profitable_ratio in summarize_monthly_metrics / monthly_penalty.
+#   0.0  → non-losing months count (return >= 0; flat months are OK).
+#   2.0  → month must earn at least +2% to count as good.
+#   -1.0 → month counts if return >= -1%.
+MONTHLY_GOOD_RETURN_MIN_PCT = 2.0
+
+# MONTHLY_MIN_PROFITABLE_RATIO — target fraction of "good" months per
+# MONTHLY_GOOD_RETURN_MIN_PCT; monthly_penalty rises when ratio falls below this.
 MONTHLY_MIN_PROFITABLE_RATIO = 0.60
 MONTHLY_WORST_RETURN_FLOOR = -1.5
 MONTHLY_WORST_PF_FLOOR = 0.85
@@ -1397,12 +1414,25 @@ MONTHLY_LATEST_WEIGHT = 0.6
 
 # PHASE3_MONTHLY_PENALTY_WEIGHT — multiplier on monthly_penalty() in Phase 3 scoring.
 PHASE3_MONTHLY_PENALTY_WEIGHT = 1.0
+# PHASE3_MONTHLY_PENALTY_SCALE — divides the weighted monthly penalty before it is
+# subtracted from min(train, val) return (%).  Converts abstract penalty points
+# into a return-comparable drag: effective_drag = penalty * WEIGHT / SCALE.
+#   Higher → weaker monthly influence (e.g. 10.0 turns a 20-pt penalty into −2%).
+#   Lower  → stronger monthly influence; must be > 0.
+PHASE3_MONTHLY_PENALTY_SCALE = 7.0
 # PHASE3_MONTHLY_FALLBACK_PENALTY — fallback penalty when monthly windows == 0.
 PHASE3_MONTHLY_FALLBACK_PENALTY = 5.0
-# PHASE4_MONTHLY_SCORE_WEIGHT — multiplier on monthly_penalty() in Phase 4 trial objective.
+# PHASE4_MONTHLY_SCORE_WEIGHT — multiplier on monthly_penalty() in Phase 4 grid scoring.
 PHASE4_MONTHLY_SCORE_WEIGHT = 0.70
-# PHASE4_MONTHLY_EVAL_EVERY_TRIAL — compute fresh monthly summary every trial (True)
-# or only on a subset (not yet implemented — kept for future tuning).
+# PHASE4_MONTHLY_PENALTY_SCALE — divides the weighted monthly penalty before it is
+# subtracted from the grid composite score (_score_metrics output).
+#   Higher → weaker monthly influence during TP/SL/capital search.
+#   Lower  → stronger monthly influence; must be > 0.
+PHASE4_MONTHLY_PENALTY_SCALE = 10.0
+# PHASE4_MONTHLY_FALLBACK_PENALTY — fallback raw penalty when monthly windows == 0.
+PHASE4_MONTHLY_FALLBACK_PENALTY = 5.0
+# PHASE4_MONTHLY_EVAL_EVERY_TRIAL — when True, evaluate monthly_penalty on every
+# grid trial using cached train+val monthly windows.
 PHASE4_MONTHLY_EVAL_EVERY_TRIAL = True
 
 
@@ -1475,6 +1505,12 @@ assert 0.0 < PHASE2_STAGE_A_MUTATION_RATE <= 0.5
 assert 0.0 < PHASE2_STAGE_B_MUTATION_RATE <= 0.5
 assert PHASE2_STAGE_A_MUTATION_RATE >= PHASE2_STAGE_B_MUTATION_RATE, (
     "Stage A should be at least as explorative as Stage B on mutation rate"
+)
+assert float(PHASE3_MONTHLY_PENALTY_SCALE) > 0.0, (
+    "PHASE3_MONTHLY_PENALTY_SCALE must be > 0"
+)
+assert float(PHASE4_MONTHLY_PENALTY_SCALE) > 0.0, (
+    "PHASE4_MONTHLY_PENALTY_SCALE must be > 0"
 )
 assert PHASE1_SIGN_CONSISTENCY_MIN_FOLDS <= PHASE1_STATIONARITY_FOLDS, (
     "sign-consistency cannot require more folds than stationarity uses"

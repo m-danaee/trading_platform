@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from dataclasses import dataclass
 from typing import Any, Optional
 
 import numpy as np
@@ -27,6 +28,7 @@ from gpu_fuzzy_trader.output.writer import (
     _maybe_write_evaluator_clean,
     write_evaluator_clean,
 )
+from gpu_fuzzy_trader.phases.phase3_rule_set import _monthly_feature_names
 from gpu_fuzzy_trader.reporting.reporter import Reporter
 from gpu_fuzzy_trader.validation.monthly_windows import (
     build_monthly_windows,
@@ -229,6 +231,79 @@ def _normalize_capital_pct(rules_set: list[dict]) -> list[dict]:
     return rules_set
 
 
+@dataclass
+class _Phase4MonthlyContext:
+    """Cached monthly windows for Phase 4 grid scoring."""
+
+    combined_df: pd.DataFrame
+    monthly_windows: list[pd.DataFrame]
+    feature_names: list[str]
+    direction: str
+
+
+def _phase4_scaled_monthly_penalty(raw_penalty: float) -> float:
+    """Convert raw monthly_penalty points into a grid-score drag."""
+    weight = float(getattr(_cfg, "PHASE4_MONTHLY_SCORE_WEIGHT", 0.70))
+    scale = float(getattr(_cfg, "PHASE4_MONTHLY_PENALTY_SCALE", 10.0))
+    if scale <= 0.0:
+        raise ValueError(
+            f"PHASE4_MONTHLY_PENALTY_SCALE must be > 0, got {scale!r}"
+        )
+    return float(raw_penalty) * weight / scale
+
+
+def _build_phase4_monthly_context(
+    train_df: pd.DataFrame | None,
+    val_df: pd.DataFrame,
+    direction: str,
+) -> _Phase4MonthlyContext | None:
+    """Build train+val monthly windows once per Phase 4 grid run."""
+    if not bool(getattr(_cfg, "MONTHLY_VALIDATION_ENABLED", False)):
+        return None
+    if not bool(getattr(_cfg, "PHASE4_MONTHLY_EVAL_EVERY_TRIAL", True)):
+        return None
+
+    parts: list[pd.DataFrame] = []
+    if train_df is not None and len(train_df) > 0:
+        parts.append(train_df)
+    if val_df is not None and len(val_df) > 0:
+        parts.append(val_df)
+    if not parts:
+        return None
+
+    combined = pd.concat(parts, ignore_index=True)
+    return _Phase4MonthlyContext(
+        combined_df=combined,
+        monthly_windows=build_monthly_windows(combined),
+        feature_names=_monthly_feature_names(combined),
+        direction=direction,
+    )
+
+
+def _monthly_drag_for_rules(
+    rules: list[dict],
+    monthly_ctx: _Phase4MonthlyContext,
+) -> float:
+    """Monthly penalty drag for one grid trial's rule set."""
+    try:
+        summary, _ = evaluate_rule_set_monthly(
+            monthly_ctx.combined_df,
+            rules,
+            monthly_ctx.direction,
+            feature_names=monthly_ctx.feature_names,
+            windows=monthly_ctx.monthly_windows,
+        )
+        if summary.windows <= 0:
+            raw_pen = float(
+                getattr(_cfg, "PHASE4_MONTHLY_FALLBACK_PENALTY", 5.0))
+        else:
+            raw_pen = monthly_penalty(summary)
+    except Exception as exc:
+        logger.debug("Phase 4 monthly eval failed for grid trial: %s", exc)
+        raw_pen = float(getattr(_cfg, "PHASE4_MONTHLY_FALLBACK_PENALTY", 5.0))
+    return _phase4_scaled_monthly_penalty(raw_pen)
+
+
 def _score_metrics(train_m: dict, valid_m: dict) -> float:
     """Composite score for grid search (return / DD / PF weighted).
 
@@ -283,11 +358,15 @@ def _evaluate_ruleset(
     train_engine: CPUBacktestEngine,
     val_engine: CPUBacktestEngine,
     rules: list[dict],
+    *,
+    monthly_ctx: _Phase4MonthlyContext | None = None,
 ) -> tuple[dict, dict, float]:
     """Evaluate a full rule set on train and val, returning metrics + score."""
     train_m = train_engine.simulate_rule_set(rules)
     val_m = val_engine.simulate_rule_set(rules)
     score = _score_metrics(train_m, val_m)
+    if monthly_ctx is not None:
+        score -= _monthly_drag_for_rules(rules, monthly_ctx)
     return train_m, val_m, score
 
 
@@ -296,6 +375,7 @@ def _optimize_risk_grid(
     train_engine: CPUBacktestEngine,
     val_engine: CPUBacktestEngine,
     *,
+    monthly_ctx: _Phase4MonthlyContext | None = None,
     min_improvement: float = 0.02,
 ) -> tuple[list[dict], dict, dict, float, list[dict]]:
     """Per-rule round-robin grid search over TP, SL, capital_pct.
@@ -327,7 +407,7 @@ def _optimize_risk_grid(
 
     # Initial evaluation
     cur_train, cur_val, cur_score = _evaluate_ruleset(
-        train_engine, val_engine, best_rules)
+        train_engine, val_engine, best_rules, monthly_ctx=monthly_ctx)
 
     hist: list[dict] = [{
         "pass": 0,
@@ -387,7 +467,8 @@ def _optimize_risk_grid(
 
                         try:
                             train_m, val_m, score = _evaluate_ruleset(
-                                train_engine, val_engine, trial)
+                                train_engine, val_engine, trial,
+                                monthly_ctx=monthly_ctx)
                         except (ValueError, KeyError, TypeError) as exc:
                             logger.debug(
                                 "grid trial failed (tp=%.2f, sl=%.2f, cap=%.2f): %s",
@@ -437,7 +518,7 @@ def _optimize_risk_grid(
 
     # Final evaluation with optimized rules
     final_train, final_val, final_score = _evaluate_ruleset(
-        train_engine, val_engine, best_rules)
+        train_engine, val_engine, best_rules, monthly_ctx=monthly_ctx)
     return best_rules, final_train, final_val, final_score, hist
 
 
@@ -622,6 +703,9 @@ class WalkForwardRiskOptimizer:
         val_engine = CPUBacktestEngine(
             self.val_df, {}, self.direction)
 
+        monthly_ctx = _build_phase4_monthly_context(
+            _train_df, self.val_df, self.direction)
+
         min_improvement = float(
             getattr(_cfg, "PHASE4_GRID_MIN_IMPROVEMENT", 0.02))
 
@@ -646,9 +730,10 @@ class WalkForwardRiskOptimizer:
         logger.info(
             "Phase 4 grid [%s]: grid_size=%d (tp=%d × sl=%d × capital=%d), "
             "rules=%d, passes=%d, expected_backtests≈%d, "
-            "min_improvement=%.2f, max_total_capital=%.1f%%",
+            "min_improvement=%.2f, max_total_capital=%.1f%%, monthly=%s",
             self.direction, total_combos, len(tp_grid), len(sl_grid), len(cap_grid),
             n_rules, passes, expected_trials, min_improvement, max_total_cap,
+            "on" if monthly_ctx is not None else "off",
         )
 
         optimized_rules, train_metrics, val_metrics, score, history = (
@@ -656,6 +741,7 @@ class WalkForwardRiskOptimizer:
                 rules,
                 train_engine,
                 val_engine,
+                monthly_ctx=monthly_ctx,
                 min_improvement=min_improvement,
             )
         )

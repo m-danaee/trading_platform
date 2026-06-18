@@ -172,9 +172,43 @@ class TestMonthlyAdmissionGate:
         assert len(result) == 1
         assert result[0]["conditions"] == POOL_THREE[1]["conditions"]
 
-    # ------------------------------------------------------------------
-    # Test 5: multiple rules with different ratios pass the gate
-    # ------------------------------------------------------------------
+    def test_zero_threshold_strict_profit_excludes_flat_months(
+        self, monkeypatch,
+    ) -> None:
+        """Phase 2 at min=0 uses strict >0; flat months do not count."""
+        returns = [
+            [0.0, 0.0, 0.0, 1.0, 0.0, 0.0],  # rule 0: 1/6 strict profit
+            [-1.0, -2.0, -3.0, -4.0, -5.0, -6.0],
+            [-1.0, -2.0, -3.0, -4.0, -5.0, -6.0],
+        ]
+        monkeypatch.setattr(
+            "gpu_fuzzy_trader.phases.phase2_rule_pool._evaluate_rule_on_window",
+            _DeterministicEvaluator(returns),
+        )
+        monkeypatch.setattr(_cfg, "PHASE2_MONTHLY_GOOD_RETURN_MIN_PCT", 0.0)
+
+        result = _apply_monthly_admission_gate(
+            POOL_THREE, list(range(6)), "long")
+        assert len(result) == 3
+        assert result == POOL_THREE
+
+    def test_positive_threshold_requires_min_return(self, monkeypatch) -> None:
+        """With PHASE2_MONTHLY_GOOD_RETURN_MIN_PCT=2, months need return >= 2%."""
+        returns = [
+            [3.0, 0.0, 2.0, 1.0, 2.5, 0.0],  # rule 0: 4/6 >= 2%
+            [-1.0, -2.0, -3.0, -4.0, -5.0, -6.0],
+            [-1.0, -2.0, -3.0, -4.0, -5.0, -6.0],
+        ]
+        monkeypatch.setattr(
+            "gpu_fuzzy_trader.phases.phase2_rule_pool._evaluate_rule_on_window",
+            _DeterministicEvaluator(returns),
+        )
+        monkeypatch.setattr(_cfg, "PHASE2_MONTHLY_GOOD_RETURN_MIN_PCT", 2.0)
+
+        result = _apply_monthly_admission_gate(
+            POOL_THREE, list(range(6)), "long")
+        assert len(result) == 1
+        assert result[0]["conditions"] == POOL_THREE[0]["conditions"]
 
     def test_multiple_rules_pass_gate(self, monkeypatch):
         """Two rules with >= 0.5 ratio are kept, one below threshold is dropped."""

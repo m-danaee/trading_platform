@@ -58,7 +58,10 @@ from gpu_fuzzy_trader.phases.phase2_support import (
     trade_support_penalty as _regime_trade_support_penalty,
 )
 from gpu_fuzzy_trader.reporting.reporter import Reporter
-from gpu_fuzzy_trader.validation.monthly_windows import build_monthly_windows
+from gpu_fuzzy_trader.validation.monthly_windows import (
+    build_monthly_windows,
+    monthly_return_counts_as_good,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1699,10 +1702,9 @@ def _apply_monthly_admission_gate(
     """Apply the monthly-window shadow-test gate to a pool of rules.
 
     Each rule is evaluated on every monthly window via
-    ``_evaluate_rule_on_window``.  Only rules whose profitable ratio
-    (fraction of windows with positive ``total_return_pct``) meets or
-    exceeds the configured threshold (``PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO``)
-    are kept.
+    ``_evaluate_rule_on_window``.  Only rules whose good-month ratio
+    (per ``PHASE2_MONTHLY_GOOD_RETURN_MIN_PCT``) meets or exceeds
+    ``PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO`` are kept.
 
     Graceful degradation: if the gate would empty the pool, the **original**
     pool is returned and a warning is logged.
@@ -1730,7 +1732,13 @@ def _apply_monthly_admission_gate(
         for w in monthly_windows:
             ret = _evaluate_rule_on_window(entry, w, direction)
             ret_pcts.append(ret)
-        profitable = sum(1 for r in ret_pcts if r > 0)
+        min_good_return = float(
+            getattr(_cfg, "PHASE2_MONTHLY_GOOD_RETURN_MIN_PCT", 0.0))
+        profitable = sum(
+            1 for r in ret_pcts
+            if monthly_return_counts_as_good(
+                r, min_good_return, strict_above_zero=True)
+        )
         ratio = profitable / max(1, len(ret_pcts))
         profitable_ratios.append(ratio)
         if ratio >= _cfg.PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO:
