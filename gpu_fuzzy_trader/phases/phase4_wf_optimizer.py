@@ -2,9 +2,9 @@
 phase4_wf_optimizer.py — WalkForwardRiskOptimizer (Phase 4)
 
 Fine-tunes TP, SL, and capital_pct for each rule in the selected rule set using
-Optuna multi-objective walk-forward optimization. Rule conditions are
-frozen from Phase 3. Each trial is scored on the worst return, drawdown, and
-turnover across all windows.
+deterministic grid search. Rule conditions are frozen from Phase 3. Each rule is
+optimized on its assigned symbol slice (``symbol is X`` conditions). Deployment
+gate metrics still use the full ruleset on the full universe.
 
 Skip logic:
   If outputs/{direction}.json exists, TP/SL/capital_pct are within bounds,
@@ -25,6 +25,10 @@ import pandas as pd
 from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
 from gpu_fuzzy_trader.backtest.df_slim import slim_backtest_df
+from gpu_fuzzy_trader.backtest.symbol_conditions import (
+    get_normalized_symbol_array,
+    split_feature_and_symbol_conditions,
+)
 from gpu_fuzzy_trader.output.writer import (
     _maybe_write_evaluator_clean,
     write_evaluator_clean,
@@ -249,6 +253,77 @@ class _Phase4MonthlyContext:
     window_caches: list[Phase3EvalCache] = field(default_factory=list)
 
 
+@dataclass
+class _RuleOptContext:
+    """Per-rule train/val engines scoped to the rule's assigned symbol(s)."""
+
+    symbols: list[str]
+    train_engine: CPUBacktestEngine
+    val_engine: CPUBacktestEngine
+    eval_cache: Phase3EvalCache | None = None
+    monthly_ctx: _Phase4MonthlyContext | None = None
+
+
+def _symbols_for_rule(rule: dict, rule_index: int) -> list[str]:
+    """Return normalized symbol filters for a rule (empty = all symbols)."""
+    _, symbols = split_feature_and_symbol_conditions(
+        list(rule.get("conditions", [])),
+        rule_number=rule_index + 1,
+    )
+    return symbols
+
+
+def _filter_df_by_symbols(
+    df: pd.DataFrame,
+    symbols: list[str],
+) -> pd.DataFrame:
+    """Keep rows whose normalized symbol is in *symbols* (no-op when empty)."""
+    if not symbols or len(df) == 0:
+        return df
+    if "symbol" not in df.columns:
+        raise ValueError(
+            "Rule has symbol filters but dataframe has no 'symbol' column"
+        )
+    allowed = {str(s) for s in symbols}
+    norm = get_normalized_symbol_array(df)
+    mask = np.isin(norm, list(allowed))
+    if not mask.any():
+        return df.iloc[0:0].copy()
+    return df.iloc[np.where(mask)[0]].copy()
+
+
+def _build_rule_opt_contexts(
+    rules: list[dict],
+    train_df: pd.DataFrame,
+    val_df: pd.DataFrame,
+    direction: str,
+) -> list[_RuleOptContext]:
+    """Build per-rule engines on each rule's assigned symbol slice."""
+    contexts: list[_RuleOptContext] = []
+    for idx, rule in enumerate(rules):
+        symbols = _symbols_for_rule(rule, idx)
+        rule_train = _filter_df_by_symbols(train_df, symbols)
+        rule_val = _filter_df_by_symbols(val_df, symbols)
+        train_engine = CPUBacktestEngine(rule_train, {}, direction)
+        val_engine = CPUBacktestEngine(rule_val, {}, direction)
+        eval_cache = (
+            build_rules_signal_cache([rule], rule_train, rule_val)
+            if len(rule_train) > 0 and len(rule_val) > 0
+            else None
+        )
+        monthly_ctx = _build_phase4_monthly_context(
+            rule_train, rule_val, direction, [rule],
+        )
+        contexts.append(_RuleOptContext(
+            symbols=symbols,
+            train_engine=train_engine,
+            val_engine=val_engine,
+            eval_cache=eval_cache,
+            monthly_ctx=monthly_ctx,
+        ))
+    return contexts
+
+
 def _phase4_scaled_monthly_penalty(raw_penalty: float) -> float:
     """Convert raw monthly_penalty points into a grid-score drag."""
     weight = float(getattr(_cfg, "PHASE4_MONTHLY_SCORE_WEIGHT", 0.70))
@@ -425,6 +500,21 @@ def _evaluate_ruleset(
     return train_m, val_m, score
 
 
+def _evaluate_single_rule(
+    rule: dict,
+    rule_ctx: _RuleOptContext,
+) -> tuple[dict, dict, float]:
+    """Evaluate one rule on its assigned symbol slice."""
+    rules = [rule]
+    return _evaluate_ruleset(
+        rule_ctx.train_engine,
+        rule_ctx.val_engine,
+        rules,
+        monthly_ctx=rule_ctx.monthly_ctx,
+        eval_cache=rule_ctx.eval_cache,
+    )
+
+
 def _optimize_risk_grid(
     rules: list[dict],
     train_engine: CPUBacktestEngine,
@@ -432,6 +522,7 @@ def _optimize_risk_grid(
     *,
     monthly_ctx: _Phase4MonthlyContext | None = None,
     eval_cache: Phase3EvalCache | None = None,
+    rule_contexts: list[_RuleOptContext] | None = None,
     min_improvement: float = 0.02,
 ) -> tuple[list[dict], dict, dict, float, list[dict]]:
     """Per-rule round-robin grid search over TP, SL, capital_pct.
@@ -441,14 +532,20 @@ def _optimize_risk_grid(
     PHASE4_GRID_MAX_TOTAL_CAPITAL`` or fail ``gate_positive_good`` are skipped.
     Two passes of round-robin per-rule tuning are performed.
 
+    When *rule_contexts* is provided, each rule is scored in isolation on its
+    assigned symbol slice (from ``symbol is X`` conditions).
+
     Parameters
     ----------
     rules : list[dict]
         Input rule set with ``tp``, ``sl``, ``capital_pct``.
     train_engine : CPUBacktestEngine
-        Engine for training split evaluation.
+        Engine for training split evaluation (full universe).
     val_engine : CPUBacktestEngine
-        Engine for validation split evaluation.
+        Engine for validation split evaluation (full universe).
+    rule_contexts : list[_RuleOptContext] | None
+        Per-rule symbol-scoped engines; when set, grid trials score each rule
+        only on its symbols.
     min_improvement : float
         Minimum score improvement to accept a new combination (default 0.02).
 
@@ -459,9 +556,12 @@ def _optimize_risk_grid(
     """
     from gpu_fuzzy_trader.phases.phase3_rule_set import gate_positive_good
 
+    per_rule_symbols = rule_contexts is not None and len(
+        rule_contexts) == len(rules)
+
     best_rules = [dict(r) for r in rules]
 
-    # Initial evaluation
+    # Initial evaluation (full ruleset on full universe for deployment metrics)
     cur_train, cur_val, cur_score = _evaluate_ruleset(
         train_engine, val_engine, best_rules,
         monthly_ctx=monthly_ctx, eval_cache=eval_cache)
@@ -496,6 +596,13 @@ def _optimize_risk_grid(
     for p in range(1, passes + 1):
         improved = False
         for idx in range(n_rules):
+            rule_ctx = rule_contexts[idx] if per_rule_symbols else None
+            if per_rule_symbols and rule_ctx is not None:
+                _, _, cur_rule_score = _evaluate_single_rule(
+                    best_rules[idx], rule_ctx)
+            else:
+                cur_rule_score = cur_score
+
             local_best: tuple[float, list[dict], dict, dict] | None = None
             for tp in tp_grid:
                 for sl in sl_grid:
@@ -523,10 +630,14 @@ def _optimize_risk_grid(
                             continue
 
                         try:
-                            train_m, val_m, score = _evaluate_ruleset(
-                                train_engine, val_engine, trial,
-                                monthly_ctx=monthly_ctx,
-                                eval_cache=eval_cache)
+                            if per_rule_symbols and rule_ctx is not None:
+                                train_m, val_m, score = _evaluate_single_rule(
+                                    trial[idx], rule_ctx)
+                            else:
+                                train_m, val_m, score = _evaluate_ruleset(
+                                    train_engine, val_engine, trial,
+                                    monthly_ctx=monthly_ctx,
+                                    eval_cache=eval_cache)
                         except (ValueError, KeyError, TypeError) as exc:
                             logger.debug(
                                 "grid trial failed (tp=%.2f, sl=%.2f, cap=%.2f): %s",
@@ -549,13 +660,33 @@ def _optimize_risk_grid(
                             if score > _best_score_sofar:
                                 _best_score_sofar = score
 
-            if local_best is not None and local_best[0] > cur_score + min_improvement:
-                cur_score, best_rules, cur_train, cur_val = local_best
+            accept_threshold = (
+                cur_rule_score + min_improvement
+                if per_rule_symbols
+                else cur_score + min_improvement
+            )
+            if local_best is not None and local_best[0] > accept_threshold:
+                if per_rule_symbols:
+                    cur_rule_score = local_best[0]
+                    best_rules[idx] = dict(local_best[1][idx])
+                else:
+                    cur_score, best_rules, cur_train, cur_val = local_best
                 improved = True
+                cur_train, cur_val, cur_score = _evaluate_ruleset(
+                    train_engine, val_engine, best_rules,
+                    monthly_ctx=monthly_ctx, eval_cache=eval_cache)
                 hist.append({
                     "pass": p,
                     "rule_index": idx + 1,
                     "score": cur_score,
+                    "rule_score": (
+                        float(local_best[0]) if per_rule_symbols else None
+                    ),
+                    "symbols": (
+                        list(rule_ctx.symbols)
+                        if per_rule_symbols and rule_ctx is not None
+                        else None
+                    ),
                     "train_return_pct": float(cur_train.get("total_return_pct", 0.0)),
                     "valid_return_pct": float(cur_val.get("total_return_pct", 0.0)),
                     "train_pf": float(cur_train.get("profit_factor", 0.0)),
@@ -568,9 +699,15 @@ def _optimize_risk_grid(
                 })
                 logger.info(
                     "Phase 4 grid [%s]: improve pass=%d rule=%d score=%.2f "
-                    "train=%.2f%% val=%.2f%%",
+                    "rule_score=%.2f symbols=%s train=%.2f%% val=%.2f%%",
                     getattr(train_engine, "direction", "?"),
                     p, idx + 1, cur_score,
+                    float(local_best[0]) if per_rule_symbols else cur_score,
+                    (
+                        rule_ctx.symbols
+                        if per_rule_symbols and rule_ctx is not None
+                        else "all"
+                    ),
                     float(cur_train.get("total_return_pct", 0.0)),
                     float(cur_val.get("total_return_pct", 0.0)),
                 )
@@ -777,6 +914,16 @@ class WalkForwardRiskOptimizer:
         monthly_ctx = _build_phase4_monthly_context(
             _train_df, self.val_df, self.direction, rules)
 
+        per_rule_symbols = bool(
+            getattr(_cfg, "PHASE4_OPTIMIZE_PER_RULE_SYMBOL", True))
+        rule_contexts = (
+            _build_rule_opt_contexts(
+                rules, _train_df, self.val_df, self.direction,
+            )
+            if per_rule_symbols
+            else None
+        )
+
         min_improvement = float(
             getattr(_cfg, "PHASE4_GRID_MIN_IMPROVEMENT", 0.02))
 
@@ -801,10 +948,12 @@ class WalkForwardRiskOptimizer:
         logger.info(
             "Phase 4 grid [%s]: grid_size=%d (tp=%d × sl=%d × capital=%d), "
             "rules=%d, passes=%d, expected_backtests≈%d, "
-            "min_improvement=%.2f, max_total_capital=%.1f%%, monthly=%s",
+            "min_improvement=%.2f, max_total_capital=%.1f%%, monthly=%s, "
+            "per_rule_symbol=%s",
             self.direction, total_combos, len(tp_grid), len(sl_grid), len(cap_grid),
             n_rules, passes, expected_trials, min_improvement, max_total_cap,
             "on" if monthly_ctx is not None else "off",
+            "on" if rule_contexts is not None else "off",
         )
 
         optimized_rules, train_metrics, val_metrics, score, history = (
@@ -814,6 +963,7 @@ class WalkForwardRiskOptimizer:
                 val_engine,
                 monthly_ctx=monthly_ctx,
                 eval_cache=eval_cache,
+                rule_contexts=rule_contexts,
                 min_improvement=min_improvement,
             )
         )

@@ -1518,6 +1518,12 @@ PHASE4_GRID_PASSES = 2
 # PHASE4_GRID_MIN_IMPROVEMENT — minimum score improvement to accept a new combo.
 PHASE4_GRID_MIN_IMPROVEMENT = 0.005
 
+# PHASE4_OPTIMIZE_PER_RULE_SYMBOL — tune each rule on its assigned symbol(s) only.
+#   True  → grid trials for a rule are scored on train/val rows for that rule's
+#           "symbol is X" filters (matches Phase 3 per-symbol selection).
+#   False → legacy portfolio-level scoring on the full universe.
+PHASE4_OPTIMIZE_PER_RULE_SYMBOL = True
+
 
 # =============================================================================
 # Phase 5 — Out-of-sample evaluation (test.csv only; never used in Phases 1–4)
