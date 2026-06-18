@@ -343,9 +343,8 @@ def _monthly_drag_for_rules(
 def _score_metrics(train_m: dict, valid_m: dict) -> float:
     """Composite score for grid search (return / DD / PF weighted).
 
-    This is a simplified port of the friend's ``_score_metrics`` from
-    ``rb_governor.py``.  It emphasises validation return-to-drawdown ratio,
-    profit factor, and penalises negative returns.
+    When ``PHASE4_USE_ROBUST_SCORE`` is True, return terms use
+    ``min(train, val)`` so Phase 4 does not chase validation-only spikes.
     """
     train_ret = float(train_m.get("total_return_pct", 0.0))
     train_dd = float(train_m.get("max_drawdown_pct", 100.0))
@@ -357,24 +356,32 @@ def _score_metrics(train_m: dict, valid_m: dict) -> float:
     valid_pf = float(valid_m.get("profit_factor", 0.0))
     valid_wr = float(valid_m.get("win_rate", 0.0))
 
+    use_robust = bool(getattr(_cfg, "PHASE4_USE_ROBUST_SCORE", True))
+    score_ret = min(train_ret, valid_ret) if use_robust else valid_ret
+    aux_ret = valid_ret if use_robust else train_ret
+    score_dd = max(train_dd, valid_dd) if use_robust else valid_dd
+    aux_dd = train_dd if use_robust else valid_dd
+    score_pf = min(train_pf, valid_pf) if use_robust else valid_pf
+    aux_pf = train_pf if use_robust else valid_pf
+
     dd_floor = 0.50
-    train_ratio = train_ret / max(train_dd, dd_floor)
-    valid_ratio = valid_ret / max(valid_dd, dd_floor)
+    score_ratio = score_ret / max(score_dd, dd_floor)
+    aux_ratio = aux_ret / max(aux_dd, dd_floor)
 
     def _pf_term(pf: float, cap: float = 5.0) -> float:
         return min(pf, cap)
 
     score = (
-        120.0 * valid_ratio
-        + 45.0 * train_ratio
-        + 4.5 * valid_ret
-        + 1.2 * train_ret
-        + 14.0 * _pf_term(valid_pf)
-        + 5.0 * _pf_term(train_pf)
+        120.0 * score_ratio
+        + 45.0 * aux_ratio
+        + 4.5 * score_ret
+        + 1.2 * aux_ret
+        + 14.0 * _pf_term(score_pf)
+        + 5.0 * _pf_term(aux_pf)
         + 0.06 * valid_wr
         + 0.025 * train_wr
-        - 0.25 * valid_dd
-        - 0.08 * train_dd
+        - 0.25 * score_dd
+        - 0.08 * aux_dd
     )
 
     # Penalise negative returns and low PF heavily
@@ -386,6 +393,11 @@ def _score_metrics(train_m: dict, valid_m: dict) -> float:
         score -= (1.0 - train_pf) * 60.0
     if valid_pf < 1.0:
         score -= (1.0 - valid_pf) * 120.0
+
+    val_train_gap = valid_ret - train_ret
+    gap_max = float(getattr(_cfg, "PHASE4_MAX_VAL_TRAIN_GAP_PCT", 12.0))
+    if val_train_gap > gap_max:
+        score -= (val_train_gap - gap_max) * 35.0
 
     return float(score)
 
@@ -523,6 +535,13 @@ def _optimize_risk_grid(
 
                         # Must pass gate_positive_good
                         if not gate_positive_good(train_m, val_m):
+                            continue
+
+                        train_ret = float(train_m.get("total_return_pct", 0.0))
+                        val_ret = float(val_m.get("total_return_pct", 0.0))
+                        gap_max = float(
+                            getattr(_cfg, "PHASE4_MAX_VAL_TRAIN_GAP_PCT", 12.0))
+                        if val_ret - train_ret > gap_max:
                             continue
 
                         if local_best is None or score > local_best[0]:

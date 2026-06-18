@@ -2,29 +2,28 @@
   "direction": "short",
   "rules_set": [
     {
+      "conditions": [
+        "[range_compression_20_100] IS Very High",
+        "[drawdown_from_peak_60] IS Very High",
+        "[ret_vol_corr_30] IS Neutral Positive",
+        "symbol is 1",
+        "symbol is 5"
+      ],
       "tp": 2.0,
       "sl": 1.0,
-      "capital_pct": 8.333333333333334,
-      "conditions": [
-        "[downside_semivol_20] IS Very High",
-        "[roc_10] IS Strong Bullish",
-        "[body_to_tr] IS Medium",
-        "symbol is 2",
-        "symbol is 8",
-        "symbol is 3"
-      ]
+      "capital_pct": 45.0
     },
     {
-      "tp": 2.0,
-      "sl": 1.0,
-      "capital_pct": 8.333333333333334,
       "conditions": [
-        "[roc_10] IS Strong Bullish",
-        "[rsi_centered_14] IS Extreme Bearish",
-        "[absret_ema_ratio_20_100] IS Very High",
-        "symbol is 7",
-        "symbol is 4"
-      ]
+        "[downside_semivol_20] IS Very High",
+        "[up_close_ratio_5] IS Very Low",
+        "[ret_vol_corr_30] IS Neutral Positive",
+        "symbol is 5",
+        "symbol is 6"
+      ],
+      "tp": 4.0,
+      "sl": 1.5,
+      "capital_pct": 10.0
     }
   ]
 }

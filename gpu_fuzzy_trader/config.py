@@ -338,7 +338,7 @@ PHASE1_DISPERSION_THRESHOLD = 0.95
 # PHASE1_TOP_K_FEATURES — shortlist size per direction (long / short).
 #   Higher → wider Phase 2 search space, slower evolution, more combinations.
 #   Lower  → faster search, risk of missing predictive features.
-PHASE1_TOP_K_FEATURES = 33
+PHASE1_TOP_K_FEATURES = 20
 
 # PHASE1_MAX_FEATURE_OVERLAP — max Jaccard overlap between long & short lists.
 #   Higher → more shared features across directions; smaller combined gene space.
@@ -590,7 +590,7 @@ PHASE2_SYMBOL_MEDIAN_RETURN_FLOOR_PCT = -0.5
 # PHASE2_MIN_PROFITABLE_SYMBOLS — min count of symbols with positive PnL.
 #   Higher → demand broad cross-symbol edge; stricter for 10-symbol universe.
 #   Lower  → allow niche symbol specialists.
-PHASE2_MIN_PROFITABLE_SYMBOLS = 5
+PHASE2_MIN_PROFITABLE_SYMBOLS = 4
 
 # PHASE2_MAX_DRAWDOWN_GATE — hard DD % cap; above this all objectives penalized.
 #   Lower  → Pareto front pushed toward low-drawdown rules; may cut high return.
@@ -652,7 +652,7 @@ PHASE2_MONTHLY_GOOD_RETURN_MIN_PCT = 0.0
 #   Higher → stricter time-stability requirement; fewer rules pass.
 #   Lower  → more lenient; rules that work on a minority of windows survive.
 #   0.50 means the rule must pass on at least half the windows.
-PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO = 0.55
+PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO = 0.5
 
 # PHASE2_MONTHLY_ADMISSION_MIN_MONTHS — minimum number of monthly windows
 # required before the gate is applied.  When the train split is shorter than
@@ -1452,7 +1452,14 @@ PHASE4_GRID_TP_VALUES = (2.0, 2.5, 3.0, 4.0, 5.0)
 PHASE4_GRID_SL_VALUES = (1.0, 1.5, 2.0, 2.5)
 
 # PHASE4_GRID_CAPITAL_VALUES — capital_pct values (%) to enumerate (5 values).
-PHASE4_GRID_CAPITAL_VALUES = (15.0, 25.0, 35.0, 45.0)
+PHASE4_GRID_CAPITAL_VALUES = (10.0, 15.0, 20.0, 25.0, 30.0)
+
+# PHASE4_MAX_VAL_TRAIN_GAP_PCT — reject grid trials when val return exceeds
+# train return by more than this (validation overfit during risk tuning).
+PHASE4_MAX_VAL_TRAIN_GAP_PCT = 12.0
+
+# PHASE4_USE_ROBUST_SCORE — score grid trials on min(train, val) return (like Phase 3).
+PHASE4_USE_ROBUST_SCORE = True
 
 # PHASE4_GRID_MAX_TOTAL_CAPITAL — hard cap on sum(capital_pct) across all rules.
 #   Combinations that push the total above this cap are skipped.

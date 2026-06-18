@@ -324,6 +324,28 @@ def _build_symbol_specialized_variants(
     return [v for _, v in scored_variants[:max_variants]]
 
 
+def _build_per_symbol_assigned_rules(
+    symbol_assignments: dict[str, list[int]],
+    pool: list[dict],
+) -> list[dict]:
+    """One rule per greedy (symbol, pool_idx) pair — preserves Phase 3 selections."""
+    merged: list[dict] = []
+    seen: set[tuple[int, str]] = set()
+    for sym in sorted(symbol_assignments.keys(), key=str):
+        for pool_idx in symbol_assignments[sym]:
+            key = (int(pool_idx), str(sym))
+            if key in seen:
+                continue
+            seen.add(key)
+            rule = dict(pool[int(pool_idx)])
+            base_conditions = _strip_symbol_conditions(
+                list(rule.get("conditions", [])))
+            rule["conditions"] = base_conditions + [f"symbol is {sym}"]
+            rule["_pool_idx"] = int(pool_idx)
+            merged.append(rule)
+    return merged
+
+
 def _build_multi_symbol_merged_rules(
     symbol_assignments: dict[str, list[int]],
     pool: list[dict],
@@ -378,8 +400,16 @@ def _build_multi_symbol_merged_rules(
             best = variants[0]
             best["_pool_idx"] = int(pool_idx)
             merged.append(best)
+        elif eligible:
+            # Never emit an unscoped rule: bind to the first greedy symbol.
+            fallback = dict(rule)
+            base_conditions = _strip_symbol_conditions(
+                list(rule.get("conditions", [])))
+            fallback["conditions"] = base_conditions + [
+                f"symbol is {eligible[0]}"]
+            fallback["_pool_idx"] = int(pool_idx)
+            merged.append(fallback)
         else:
-            # Fallback: keep the original rule without any symbol filter.
             merged.append(rule)
 
     return merged
@@ -1412,9 +1442,16 @@ class Rule_Set_Selector:
             # (Task 6).  The new path calls ``_build_symbol_specialized_variants``
             # per pool rule to find the best 1-, 2-, or 3-symbol combination
             # instead of blindly appending all symbols that selected the rule.
+            max_sym_per_rule = max(
+                1, int(getattr(
+                    _cfg, "SYMBOL_SPECIALIZATION_MAX_SYMBOLS_PER_RULE", 3)))
             use_symbol_specialization = bool(
                 getattr(_cfg, "SYMBOL_SPECIALIZATION_USE_COMBINATIONS", True))
-            if use_symbol_specialization:
+            if max_sym_per_rule <= 1:
+                merged_rules = _build_per_symbol_assigned_rules(
+                    symbol_assignments, enriched_pool,
+                )
+            elif use_symbol_specialization:
                 merged_rules = _build_multi_symbol_merged_rules(
                     symbol_assignments, enriched_pool,
                     self._train_engine, self._val_engine,

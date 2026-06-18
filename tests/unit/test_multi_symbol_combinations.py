@@ -21,6 +21,7 @@ import pytest
 from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.phases.phase3_rule_set import (
     _build_multi_symbol_merged_rules,
+    _build_per_symbol_assigned_rules,
     _build_symbol_specialized_variants,
     _is_symbol_condition,
     _merge_per_symbol_rules,
@@ -318,6 +319,28 @@ class TestBuildSymbolSpecializedVariants:
 # ===================================================================
 # ``_build_multi_symbol_merged_rules`` tests
 # ===================================================================
+
+
+class TestBuildPerSymbolAssignedRules:
+    """One output rule per greedy (symbol, pool_idx) when max symbols per rule is 1."""
+
+    def test_same_pool_different_symbols_produce_separate_rules(self) -> None:
+        pool = [_make_rule(["[feature_ma] IS Very High"])]
+        symbol_assignments = {"1": [0], "5": [0]}
+
+        merged = _build_per_symbol_assigned_rules(symbol_assignments, pool)
+
+        assert len(merged) == 2
+        sym_sets = [
+            tuple(
+                c.replace("symbol is ", "")
+                for c in r.get("conditions", [])
+                if _is_symbol_condition(c)
+            )
+            for r in merged
+        ]
+        assert ("1",) in sym_sets
+        assert ("5",) in sym_sets
 
 
 class TestBuildMultiSymbolMergedRules:
