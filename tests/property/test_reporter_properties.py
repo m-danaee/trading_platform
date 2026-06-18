@@ -42,6 +42,9 @@ selected_features
 """
 
 from __future__ import annotations
+import os
+from tests.property.hypothesis_config import prop_settings
+from hypothesis import given, HealthCheck
 
 import pandas as pd
 import numpy as np
@@ -475,9 +478,8 @@ def stratification_scenario_strategy(
 # Imports for property tests
 # ---------------------------------------------------------------------------
 
-import os
 import pytest
-from hypothesis import given, settings, HealthCheck
+
 from gpu_fuzzy_trader.reporting.reporter import Reporter
 
 
@@ -505,7 +507,7 @@ from gpu_fuzzy_trader.reporting.reporter import Reporter
         min_size=1, max_size=3
     ),
 )
-@settings(max_examples=100, deadline=None, suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example, HealthCheck.function_scoped_fixture])
+@prop_settings(max_examples=100, deadline=None, suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example, HealthCheck.function_scoped_fixture])
 def test_property_1_file_creation_round_trip(rule_set, logs, metrics, datasets, features, tmp_path):
     reporter = Reporter()
     # Test plot_per_rule_breakdown
@@ -526,7 +528,7 @@ def test_property_1_file_creation_round_trip(rule_set, logs, metrics, datasets, 
 # Feature: enhanced-reporting-outputs, Property 2: invalid direction raises ValueError
 # Validates: Requirements 1.9, 2.9
 @given(direction=st.text().filter(lambda s: s not in ("long", "short")))
-@settings(max_examples=100, suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example, HealthCheck.function_scoped_fixture])
+@prop_settings(max_examples=100, suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example, HealthCheck.function_scoped_fixture])
 def test_property_2_invalid_direction_raises(direction, tmp_path):
     reporter = Reporter()
     with pytest.raises(ValueError):
@@ -551,7 +553,7 @@ import os
 import tempfile
 import shutil
 from pathlib import Path
-from hypothesis import given, settings, HealthCheck
+
 from gpu_fuzzy_trader.reporting.reporter import Reporter
 
 
@@ -574,7 +576,7 @@ from gpu_fuzzy_trader.reporting.reporter import Reporter
         "test": st.one_of(st.none(), dataset_with_features_strategy()),
     }),
 )
-@settings(max_examples=100, suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example], deadline=None)
+@prop_settings(max_examples=100, suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example], deadline=None)
 def test_property_3_output_dir_respected(rule_set, logs, metrics, datasets):
     """
     **Validates: Requirements 6.4, 6.5, 6.6**
@@ -613,7 +615,7 @@ def test_property_3_output_dir_respected(rule_set, logs, metrics, datasets):
 
 # Feature: enhanced-reporting-outputs, Property 4: strategy evaluation table schema
 @given(rule_set=rule_set_strategy())
-@settings(max_examples=100, suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example])
+@prop_settings(max_examples=100, suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example])
 def test_property_4_evaluation_table_schema(rule_set):
     """
     **Validates: Requirements 2.2, 2.3, 2.4**
@@ -657,7 +659,7 @@ def test_property_4_evaluation_table_schema(rule_set):
 # Feature: enhanced-reporting-outputs, Property 5: Sharpe ratio computation correctness
 # Validates: Requirements 2.5, 5.6
 @given(trade_log=trade_log_strategy())
-@settings(max_examples=200, suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example, HealthCheck.function_scoped_fixture])
+@prop_settings(max_examples=200, suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example, HealthCheck.function_scoped_fixture])
 def test_property_5_sharpe_ratio_correctness(trade_log, tmp_path):
     reporter = Reporter()
     logs = {"train": trade_log, "validation": None, "test": None}
@@ -692,7 +694,7 @@ def test_property_5_sharpe_ratio_correctness(trade_log, tmp_path):
 # Feature: enhanced-reporting-outputs, Property 6: Spearman correlation correctness and range invariant
 # Validates: Requirements 3.2, 3.9
 @given(dataset=dataset_with_features_strategy())
-@settings(max_examples=200, suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example, HealthCheck.function_scoped_fixture])
+@prop_settings(max_examples=200, suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example, HealthCheck.function_scoped_fixture])
 def test_property_6_spearman_correctness(dataset, tmp_path):
     from scipy.stats import spearmanr as scipy_spearmanr
     reporter = Reporter()
@@ -739,7 +741,7 @@ def test_property_6_spearman_correctness(dataset, tmp_path):
 # Feature: enhanced-reporting-outputs, Property 7: Spearman output sorted by absolute train correlation
 # Validates: Requirements 3.4
 @given(dataset=dataset_with_features_strategy())
-@settings(max_examples=100, suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example, HealthCheck.function_scoped_fixture])
+@prop_settings(max_examples=100, suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example, HealthCheck.function_scoped_fixture])
 def test_property_7_spearman_sorted(dataset, tmp_path):
     reporter = Reporter()
     feature_names = [c for c in dataset.columns if c != "label_close_288"]
@@ -765,7 +767,7 @@ def test_property_7_spearman_sorted(dataset, tmp_path):
 # Feature: enhanced-reporting-outputs, Property 8: Distribution and equity skips empty splits
 # Validates: Requirements 4.1, 4.7, 4.8
 @given(logs=split_logs_strategy())
-@settings(max_examples=100, deadline=None, suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example, HealthCheck.function_scoped_fixture])
+@prop_settings(max_examples=100, deadline=None, suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example, HealthCheck.function_scoped_fixture])
 def test_property_8_distribution_equity_skips_empty(logs, tmp_path):
     reporter = Reporter()
     result = reporter.plot_distribution_and_equity(logs, "long", output_dir=str(tmp_path))
@@ -791,7 +793,7 @@ def test_property_8_distribution_equity_skips_empty(logs, tmp_path):
 # Feature: enhanced-reporting-outputs, Property 9: Feature stratification metric correctness
 # Validates: Requirements 5.3, 5.4, 5.5
 @given(scenario=stratification_scenario_strategy())
-@settings(max_examples=200, suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example, HealthCheck.function_scoped_fixture])
+@prop_settings(max_examples=200, suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example, HealthCheck.function_scoped_fixture])
 def test_property_9_stratification_metric_correctness(scenario, tmp_path):
     from gpu_fuzzy_trader import config as _cfg
     trade_logs_by_split, selected_features, datasets_by_split = scenario

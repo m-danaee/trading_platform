@@ -316,19 +316,82 @@ jupyter notebook evaluator_v5.ipynb
 From the project root (requires `pytest` and `hypothesis`):
 
 ```bash
-# All tests (GPU/JAX tests skipped automatically without JAX)
-PYTHONPATH=. pytest tests/ --hypothesis-seed=42
-
-# Unit tests only
-pytest tests/unit/
-
-# Property-based tests only
-pytest tests/property/ --hypothesis-seed=42
-
-# Verbose / single file
-pytest tests/ --hypothesis-seed=42 -v
-pytest tests/unit/test_cpu_engine.py -v
+source .venv/bin/activate
 ```
+
+### Recommended: low-memory mode (local / WSL)
+
+The full suite (~1200 tests) can OOM on machines with limited RAM. Property tests run many Hypothesis examples and JAX keeps compilation caches between tests.
+
+**Use this on local / WSL:**
+
+```bash
+PYTEST_LOW_MEMORY=1 PYTHONPATH=. pytest tests/ --hypothesis-seed=42
+```
+
+Low-memory mode:
+
+| Mechanism | Effect |
+| --------- | ------ |
+| `PYTEST_LOW_MEMORY=1` | Scales Hypothesis `max_examples` to **25%** (min 5 per test) |
+| `tests/conftest.py` | Sets `XLA_PYTHON_CLIENT_PREALLOCATE=false` and clears JAX caches after each test |
+| Benchmark skip | `tests/benchmark/` is **skipped** unless `RUN_BENCHMARKS=1` |
+
+Tune example count without editing tests:
+
+```bash
+# 50% of normal examples (between low-memory and full)
+PYTEST_LOW_MEMORY=1 HYPOTHESIS_EXAMPLE_SCALE=0.5 PYTHONPATH=. pytest tests/ --hypothesis-seed=42
+```
+
+### Full example counts (Colab / high RAM)
+
+```bash
+PYTHONPATH=. pytest tests/ --hypothesis-seed=42
+```
+
+### Quick checks (lowest RAM)
+
+```bash
+# Unit tests only — no property / Hypothesis load
+PYTHONPATH=. pytest tests/unit/ --hypothesis-seed=42
+
+# Property tests only (with low-memory scaling)
+PYTEST_LOW_MEMORY=1 PYTHONPATH=. pytest tests/property/ --hypothesis-seed=42
+```
+
+### Split runs (lowest peak RAM)
+
+Run unit and property suites in separate processes so memory is released between them:
+
+```bash
+PYTEST_LOW_MEMORY=1 PYTHONPATH=. pytest tests/unit/ --hypothesis-seed=42
+PYTEST_LOW_MEMORY=1 PYTHONPATH=. pytest tests/property/ --hypothesis-seed=42
+```
+
+### Benchmarks (opt-in)
+
+Throughput / warmup benchmarks are skipped by default:
+
+```bash
+RUN_BENCHMARKS=1 PYTHONPATH=. pytest tests/benchmark/ -v
+```
+
+### Verbose / single file
+
+```bash
+PYTEST_LOW_MEMORY=1 PYTHONPATH=. pytest tests/ --hypothesis-seed=42 -v
+PYTHONPATH=. pytest tests/unit/test_cpu_engine.py -v
+```
+
+### Test environment variables
+
+| Variable | Default | Purpose |
+| -------- | ------- | ------- |
+| `PYTEST_LOW_MEMORY` | off | Scale Hypothesis examples + JAX cache cleanup after each test |
+| `HYPOTHESIS_EXAMPLE_SCALE` | `0.25` when low-memory, else `1.0` | Fraction of each test's `max_examples` |
+| `RUN_BENCHMARKS` | off | Run `tests/benchmark/` (otherwise skipped) |
+| `LOG_MEMORY` | off | Log process RSS via `gpu_fuzzy_trader._memory.log_memory_rss` (needs `psutil`) |
 
 GPU/JAX tests are skipped automatically when JAX is not installed.
 
@@ -362,3 +425,4 @@ Run individual phases — see [README.md § Running Individual Phases](README.md
 | Phase 3 still slow                                          | Ensure `PHASE3_USE_PARALLEL_BATCH=True`; raise `PHASE3_BATCH_WORKERS`; then increase `PHASE3_REFINE_*` after profiling; optional `PHASE3_USE_GPU=True` |
 | Phase 4 uses random search                                  | Install `stable-baselines3`, `gymnasium`, and `torch` for DDPG/PPO                                                                                     |
 | Want fresh OOS only                                         | Keep `outputs/long.json` / `short.json`; re-run pipeline (Phase 5 always runs)                                                                         |
+| `pytest tests/` OOM on local / WSL                          | See **Run tests → low-memory mode**: `PYTEST_LOW_MEMORY=1 PYTHONPATH=. pytest tests/ --hypothesis-seed=42`; or run `tests/unit/` only; benchmarks need `RUN_BENCHMARKS=1` |

@@ -35,12 +35,14 @@ class EvolutionFloors:
 
 def resolve_evolution_floors(
     stage_params: Phase2StageParams | None = None,
+    *,
+    n_rows: int | None = None,
 ) -> EvolutionFloors:
     """Return stage-aware fitness floors; defaults to global strict knobs."""
     if stage_params is None:
         return EvolutionFloors(
             return_floor_pct=float(_cfg.PHASE2_RETURN_FLOOR_PCT),
-            min_trade_support=int(_cfg.MIN_TRADE_SUPPORT),
+            min_trade_support=int(_cfg.effective_min_trade_support(n_rows)),
             use_robust_return_obj=bool(_cfg.PHASE2_USE_ROBUST_RETURN_OBJ),
             soft_feasibility=False,
             pool_require_positive_splits=bool(
@@ -268,26 +270,32 @@ def trade_support_penalty(
     return pen, False, -1
 
 
-def _pool_admission_floors() -> tuple[int, float, float, float, int]:
+def _pool_admission_floors(
+    n_valid_rows: int | None = None,
+) -> tuple[int, float, float, float, int]:
     """Return (train_trade_floor, train_ret_min, val_ret_min, pf_floor, min_val_trades)."""
+    min_val = _cfg.effective_pool_min_val_trades(n_valid_rows)
+    train_floor = _cfg.effective_min_trade_pool_floor(n_valid_rows)
     return (
-        int(_cfg.MIN_TRADE_POOL_FLOOR),
+        int(train_floor),
         float(_cfg.PHASE2_POOL_TRAIN_RETURN_MIN_PCT),
         float(_cfg.PHASE2_POOL_VAL_RETURN_MIN_PCT),
         float(_cfg.PHASE2_PROFIT_FACTOR_FLOOR),
-        max(int(_cfg.MIN_TRADE_POOL_FLOOR) // 4, 10),
+        int(min_val),
     )
 
 
 def _passes_pool_admission_impl(
     train_metrics: dict,
     val_metrics: dict | None,
+    *,
+    n_valid_rows: int | None = None,
 ) -> bool:
     if not _cfg.PHASE2_POOL_REQUIRE_POSITIVE_SPLITS:
         return True
 
     train_floor, train_ret_min, val_ret_min, pf_floor, min_val_trades = (
-        _pool_admission_floors()
+        _pool_admission_floors(n_valid_rows)
     )
 
     train_trades = int(train_metrics.get("executed_trades", 0))
@@ -382,13 +390,17 @@ def _passes_pool_admission_impl(
 def passes_pool_admission_gate(
     train_metrics: dict,
     val_metrics: dict | None = None,
+    *,
+    n_valid_rows: int | None = None,
 ) -> bool:
     """
     Hard gate for Phase 2 pool/archive on merged holdout metrics.
 
     When ``PHASE2_POOL_REQUIRE_POSITIVE_SPLITS`` is False, always returns True.
     """
-    return _passes_pool_admission_impl(train_metrics, val_metrics)
+    return _passes_pool_admission_impl(
+        train_metrics, val_metrics, n_valid_rows=n_valid_rows,
+    )
 
 
 def passes_pool_entry_admission(entry: dict) -> bool:
@@ -424,9 +436,10 @@ def passes_pool_trade_floor(
     metrics: dict,
     *,
     regime_row_fractions_arr: np.ndarray | None = None,
+    n_rows: int | None = None,
 ) -> bool:
     """Pool/archive inclusion gate (may waive floor for regime specialists)."""
-    trade_floor = int(_cfg.MIN_TRADE_POOL_FLOOR)
+    trade_floor = _cfg.effective_min_trade_pool_floor(n_rows)
     if executed >= trade_floor:
         return True
 
@@ -468,7 +481,7 @@ def val_regime_confirmation(
     if train_dominant_regime < 0:
         return True
 
-    min_val_trades = max(_cfg.MIN_TRADE_POOL_FLOOR // 4, 10)
+    min_val_trades = max(_cfg.effective_min_trade_pool_floor(None) // 4, 10)
 
     if val_regime_row_counts is not None:
         row_counts = to_host_numpy(val_regime_row_counts, dtype=np.int64)
@@ -613,13 +626,15 @@ def robust_win_rate_pct(
 def _raw_feasibility_violation_score(
     train_metrics: dict,
     val_metrics: dict | None,
+    *,
+    n_valid_rows: int | None = None,
 ) -> float:
     """Compute violation score against pool admission floors (ignores stage soft mode)."""
     if not _cfg.PHASE2_POOL_REQUIRE_POSITIVE_SPLITS:
         return 0.0
 
     train_floor, train_ret_min, val_ret_min, pf_floor, min_val_trades = (
-        _pool_admission_floors()
+        _pool_admission_floors(n_valid_rows)
     )
     score = 0.0
 
@@ -656,6 +671,7 @@ def feasibility_violation_score(
     val_metrics: dict | None,
     *,
     stage_params: Phase2StageParams | None = None,
+    n_valid_rows: int | None = None,
 ) -> float:
     """
     Non-negative violation score; 0 means the rule meets deployability floors.
@@ -669,7 +685,7 @@ def feasibility_violation_score(
     if not floors.pool_require_positive_splits:
         return 0.0
     return _raw_feasibility_violation_score(
-        train_metrics, val_metrics,
+        train_metrics, val_metrics, n_valid_rows=n_valid_rows,
     )
 
 

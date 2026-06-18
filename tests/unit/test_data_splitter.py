@@ -88,6 +88,7 @@ def _split(symbol_sizes: dict, tmp_dir: str) -> tuple[pd.DataFrame, pd.DataFrame
 
     original_train = config_mod.TRAIN_70_PATH
     original_val = config_mod.VALIDATION_30_PATH
+    original_mode = config_mod.SPLIT_MODE
 
     train_path = os.path.join(tmp_dir, "train_70.parquet")
     val_path = os.path.join(tmp_dir, "validation_30.parquet")
@@ -95,13 +96,16 @@ def _split(symbol_sizes: dict, tmp_dir: str) -> tuple[pd.DataFrame, pd.DataFrame
     # Patch module-level constants used inside splitter
     splitter_mod.TRAIN_70_PATH = train_path
     splitter_mod.VALIDATION_30_PATH = val_path
+    config_mod.SPLIT_MODE = "holdout_70_30"
 
     try:
         df = _make_df(symbol_sizes)
-        train_df, val_df = Data_Splitter().split_and_persist(df)
+        train_df, val_df, cv_folds = Data_Splitter().split_and_persist(df)
+        assert cv_folds is None
     finally:
         splitter_mod.TRAIN_70_PATH = original_train
         splitter_mod.VALIDATION_30_PATH = original_val
+        config_mod.SPLIT_MODE = original_mode
 
     return train_df, val_df, train_path, val_path
 
@@ -289,19 +293,26 @@ class TestEdgeCases:
 
         original_train = config_mod.TRAIN_70_PATH
         original_val = config_mod.VALIDATION_30_PATH
-        splitter_mod.TRAIN_70_PATH = str(tmp_path / "train_70.parquet")
-        splitter_mod.VALIDATION_30_PATH = str(tmp_path / "validation_30.parquet")
+        original_mode = config_mod.SPLIT_MODE
+
+        train_path = os.path.join(tmp_path, "train_70.parquet")
+        val_path = os.path.join(tmp_path, "validation_30.parquet")
+
+        splitter_mod.TRAIN_70_PATH = train_path
+        splitter_mod.VALIDATION_30_PATH = val_path
+        config_mod.SPLIT_MODE = "holdout_70_30"
 
         try:
             empty_df = pd.DataFrame(
                 columns=["datetime", "symbol", "feature_a", "_symbol_bar_index"]
             )
-            train_df, val_df = Data_Splitter().split_and_persist(empty_df)
+            train_df, val_df, _ = Data_Splitter().split_and_persist(empty_df)
             assert len(train_df) == 0
             assert len(val_df) == 0
         finally:
             splitter_mod.TRAIN_70_PATH = original_train
             splitter_mod.VALIDATION_30_PATH = original_val
+            config_mod.SPLIT_MODE = original_mode
 
     def test_large_symbol_split_ratio_close_to_070(self, tmp_path):
         """For large N, train/total should be very close to 0.70."""
@@ -344,17 +355,26 @@ class TestModuleLevelFunction:
 
         original_train = config_mod.TRAIN_70_PATH
         original_val = config_mod.VALIDATION_30_PATH
-        splitter_mod.TRAIN_70_PATH = str(tmp_path / "train_70.parquet")
-        splitter_mod.VALIDATION_30_PATH = str(tmp_path / "validation_30.parquet")
+        original_mode = config_mod.SPLIT_MODE
+
+        train_path = str(tmp_path / "train_70.parquet")
+        val_path = str(tmp_path / "validation_30.parquet")
+
+        splitter_mod.TRAIN_70_PATH = train_path
+        splitter_mod.VALIDATION_30_PATH = val_path
+        config_mod.SPLIT_MODE = "holdout_70_30"
 
         try:
             df = _make_df({1: 100})
             result = split_and_persist(df)
             assert isinstance(result, tuple)
-            assert len(result) == 2
+            assert len(result) == 3
+            _train_df, _val_df, cv_folds = result
+            assert cv_folds is None
         finally:
             splitter_mod.TRAIN_70_PATH = original_train
             splitter_mod.VALIDATION_30_PATH = original_val
+            config_mod.SPLIT_MODE = original_mode
 
     def test_split_and_persist_function_matches_class(self, tmp_path):
         """Module-level function should produce same result as class method."""
@@ -363,13 +383,19 @@ class TestModuleLevelFunction:
 
         original_train = config_mod.TRAIN_70_PATH
         original_val = config_mod.VALIDATION_30_PATH
-        splitter_mod.TRAIN_70_PATH = str(tmp_path / "train_70.parquet")
-        splitter_mod.VALIDATION_30_PATH = str(tmp_path / "validation_30.parquet")
+        original_mode = config_mod.SPLIT_MODE
+
+        train_path = str(tmp_path / "train_70.parquet")
+        val_path = str(tmp_path / "validation_30.parquet")
+
+        splitter_mod.TRAIN_70_PATH = train_path
+        splitter_mod.VALIDATION_30_PATH = val_path
+        config_mod.SPLIT_MODE = "holdout_70_30"
 
         try:
             df = _make_df({1: 100})
-            train_func, val_func = split_and_persist(df)
-            train_class, val_class = Data_Splitter().split_and_persist(df)
+            train_func, val_func, cv_func = split_and_persist(df)
+            train_class, val_class, cv_class = Data_Splitter().split_and_persist(df)
             pd.testing.assert_frame_equal(
                 train_func.reset_index(drop=True),
                 train_class.reset_index(drop=True),
@@ -378,6 +404,41 @@ class TestModuleLevelFunction:
                 val_func.reset_index(drop=True),
                 val_class.reset_index(drop=True),
             )
+            assert cv_func == cv_class
+        finally:
+            splitter_mod.TRAIN_70_PATH = original_train
+            splitter_mod.VALIDATION_30_PATH = original_val
+            config_mod.SPLIT_MODE = original_mode
+
+
+class TestPurgedWalkForwardSplit:
+    def test_purged_mode_returns_cv_folds(self, tmp_path, monkeypatch):
+        import gpu_fuzzy_trader.config as config_mod
+        import gpu_fuzzy_trader.data.splitter as splitter_mod
+
+        monkeypatch.setattr(config_mod, "SPLIT_MODE", "purged_walk_forward")
+        monkeypatch.setattr(config_mod, "PURGED_WF_MIN_VALID_ROWS", 200)
+        monkeypatch.setattr(config_mod, "PURGED_WF_MIN_TRAIN_FRACTION", 0.20)
+        monkeypatch.setattr(
+            config_mod,
+            "CV_FOLDS_MANIFEST_PATH",
+            str(tmp_path / "cv_folds_manifest.json"),
+        )
+
+        original_train = config_mod.TRAIN_70_PATH
+        original_val = config_mod.VALIDATION_30_PATH
+
+        splitter_mod.TRAIN_70_PATH = str(tmp_path / "train_70.parquet")
+        splitter_mod.VALIDATION_30_PATH = str(
+            tmp_path / "validation_30.parquet")
+
+        try:
+            df = _make_df({1: 6000, 2: 6000})
+            train_df, val_df, cv_folds = Data_Splitter().split_and_persist(df)
+            assert cv_folds is not None
+            assert len(cv_folds) >= 2
+            assert len(train_df) + len(val_df) <= len(df)
+            assert os.path.exists(str(tmp_path / "cv_folds_manifest.json"))
         finally:
             splitter_mod.TRAIN_70_PATH = original_train
             splitter_mod.VALIDATION_30_PATH = original_val

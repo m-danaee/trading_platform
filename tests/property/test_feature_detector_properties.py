@@ -29,8 +29,10 @@ import math
 
 import pandas as pd
 import pytest
-from hypothesis import given, settings, HealthCheck
+from hypothesis import given, HealthCheck
 from hypothesis import strategies as st
+
+from tests.property.hypothesis_config import prop_settings
 
 from gpu_fuzzy_trader.features.detector import Feature_Detector
 
@@ -143,7 +145,7 @@ def large_value_series(draw: st.DrawFn) -> pd.Series:
 # ---------------------------------------------------------------------------
 
 @given(series=arbitrary_numeric_series())
-@settings(
+@prop_settings(
     max_examples=200,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
 )
@@ -178,7 +180,7 @@ def test_property_6_mode_classification_completeness_arbitrary(
 
 
 @given(series=single_value_series())
-@settings(
+@prop_settings(
     max_examples=100,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
 )
@@ -206,7 +208,7 @@ def test_property_6_mode_classification_completeness_single_value(
 
 
 @given(series=all_nan_series())
-@settings(
+@prop_settings(
     max_examples=50,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
 )
@@ -235,7 +237,7 @@ def test_property_6_mode_classification_completeness_all_nan(
 
 
 @given(series=large_value_series())
-@settings(
+@prop_settings(
     max_examples=100,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
 )
@@ -560,7 +562,7 @@ def sparse_signed_series(draw: st.DrawFn) -> pd.Series:
 # ---------------------------------------------------------------------------
 
 @given(series=binary_series())
-@settings(
+@prop_settings(
     max_examples=200,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
 )
@@ -580,7 +582,7 @@ def test_property_7_binary_mode_correctness(series: pd.Series) -> None:
 
 
 @given(series=ternary_series())
-@settings(
+@prop_settings(
     max_examples=200,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
 )
@@ -601,7 +603,7 @@ def test_property_7_ternary_mode_correctness(series: pd.Series) -> None:
 
 
 @given(series=positive_series())
-@settings(
+@prop_settings(
     max_examples=200,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
 )
@@ -622,7 +624,7 @@ def test_property_7_positive_mode_correctness(series: pd.Series) -> None:
 
 
 @given(series=sparse_positive_series())
-@settings(
+@prop_settings(
     max_examples=200,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
 )
@@ -643,7 +645,7 @@ def test_property_7_sparse_positive_mode_correctness(series: pd.Series) -> None:
 
 
 @given(series=signed_series())
-@settings(
+@prop_settings(
     max_examples=200,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
 )
@@ -664,7 +666,7 @@ def test_property_7_signed_mode_correctness(series: pd.Series) -> None:
 
 
 @given(series=sparse_signed_series())
-@settings(
+@prop_settings(
     max_examples=200,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
 )

@@ -24,8 +24,10 @@ import math
 import numpy as np
 import pandas as pd
 import pytest
-from hypothesis import HealthCheck, given, settings
+from hypothesis import HealthCheck, given
 from hypothesis import strategies as st
+
+from tests.property.hypothesis_config import prop_settings
 
 # ---------------------------------------------------------------------------
 # JAX availability guard
@@ -37,10 +39,13 @@ try:
 except ImportError:
     jax_available = False
 
-pytestmark = pytest.mark.skipif(
-    not jax_available,
-    reason="JAX not installed",
-)
+pytestmark = [
+    pytest.mark.skipif(
+        not jax_available,
+        reason="JAX not installed",
+    ),
+    pytest.mark.uses_jax,
+]
 
 # ---------------------------------------------------------------------------
 # Conditional imports (only executed when JAX is available)
@@ -249,7 +254,7 @@ def parity_scenario_strategy(draw: st.DrawFn) -> dict:
 # ---------------------------------------------------------------------------
 
 @given(scenario=parity_scenario_strategy())
-@settings(
+@prop_settings(
     max_examples=100,
     deadline=None,
     suppress_health_check=[HealthCheck.too_slow,
@@ -313,7 +318,7 @@ def test_property_16_gpu_cpu_total_return_parity(scenario: dict) -> None:
 
 
 @given(scenario=parity_scenario_strategy())
-@settings(
+@prop_settings(
     max_examples=100,
     deadline=None,
     suppress_health_check=[HealthCheck.too_slow,
@@ -385,7 +390,7 @@ def test_property_16_gpu_cpu_max_drawdown_parity(scenario: dict) -> None:
 
 
 @given(scenario=parity_scenario_strategy())
-@settings(
+@prop_settings(
     max_examples=100,
     deadline=None,
     suppress_health_check=[HealthCheck.too_slow,
@@ -459,7 +464,7 @@ def test_property_16_gpu_cpu_win_rate_parity(scenario: dict) -> None:
 
 
 @given(scenario=parity_scenario_strategy())
-@settings(
+@prop_settings(
     max_examples=100,
     deadline=None,
     suppress_health_check=[HealthCheck.too_slow,
@@ -534,7 +539,7 @@ def test_property_16_gpu_cpu_profit_factor_parity(scenario: dict) -> None:
 
 
 @given(scenario=parity_scenario_strategy())
-@settings(
+@prop_settings(
     max_examples=100,
     deadline=None,
     suppress_health_check=[HealthCheck.too_slow,
@@ -593,7 +598,7 @@ def test_property_16_gpu_cpu_all_metrics_parity(scenario: dict) -> None:
 
 
 @given(scenario=parity_scenario_strategy())
-@settings(
+@prop_settings(
     max_examples=50,
     deadline=None,
     suppress_health_check=[HealthCheck.too_slow,

@@ -13,7 +13,9 @@ import os
 
 import numpy as np
 import pytest
-from hypothesis import given, settings
+from hypothesis import given
+
+from tests.property.hypothesis_config import prop_settings
 from hypothesis import strategies as st
 
 from gpu_fuzzy_trader._jax_env import configure_jax_env
@@ -25,7 +27,7 @@ from gpu_fuzzy_trader._jax_env import configure_jax_env
 
 # Feature: crash-fix-and-run-logging, Property 1: Log formatter preserves message content
 @given(st.text(min_size=1))
-@settings(max_examples=100)
+@prop_settings(max_examples=100)
 def test_run_log_formatter_preserves_message(message: str) -> None:
     """**Validates: Requirements 1.3**
 
@@ -60,7 +62,7 @@ def test_run_log_formatter_preserves_message(message: str) -> None:
 
 # Feature: crash-fix-and-run-logging, Property 2: configure_jax_env does not overwrite pre-existing env vars
 @given(st.text(min_size=1).filter(lambda s: "\x00" not in s))
-@settings(max_examples=100)
+@prop_settings(max_examples=100)
 def test_configure_jax_env_does_not_overwrite_preallocate(pre_existing_value: str) -> None:
     """**Validates: Requirements 2.2**
 
@@ -170,7 +172,7 @@ def _merge_pop_and_metrics_and_population(draw):
 # ---------------------------------------------------------------------------
 
 @given(triple=_merge_pop_and_metrics_and_population())
-@settings(max_examples=100)
+@prop_settings(max_examples=100)
 def test_metrics_cache_rebuild_correctness(triple):
     """
     **Validates: Requirements 5.1, 5.2, 5.3**
@@ -211,7 +213,7 @@ def test_metrics_cache_rebuild_correctness(triple):
 
 
 @given(triple=_merge_pop_and_metrics_and_population())
-@settings(max_examples=100)
+@prop_settings(max_examples=100)
 def test_metrics_cache_rebuild_empty_fallback(triple):
     """
     **Validates: Requirements 5.3**
@@ -231,7 +233,7 @@ def test_metrics_cache_rebuild_empty_fallback(triple):
 
 
 @given(triple=_merge_pop_and_metrics_and_population())
-@settings(max_examples=100)
+@prop_settings(max_examples=100)
 def test_metrics_cache_rebuild_length_invariant(triple):
     """
     **Validates: Requirements 5.1**

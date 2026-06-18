@@ -14,7 +14,10 @@ def _metrics(ret: float, dd: float = 3.0, pf: float = 1.3) -> dict:
     }
 
 
-def test_robust_score_penalizes_validation_spike() -> None:
+def test_robust_score_penalizes_validation_spike(monkeypatch) -> None:
+    from gpu_fuzzy_trader import config as _cfg
+
+    monkeypatch.setattr(_cfg, "PHASE4_MAX_VAL_TRAIN_GAP_PCT", 5.0)
     train = _metrics(8.0)
     val_ok = _metrics(9.0)
     val_spike = _metrics(25.0, dd=2.0, pf=1.8)

@@ -27,8 +27,10 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
-from hypothesis import given, settings, HealthCheck, assume
+from hypothesis import given, HealthCheck, assume
 from hypothesis import strategies as st
+
+from tests.property.hypothesis_config import prop_settings
 
 from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
 
@@ -146,7 +148,7 @@ def overlapping_rule_set_strategy(draw: st.DrawFn) -> tuple[list[dict], list[flo
 # ---------------------------------------------------------------------------
 
 @given(data=overlapping_rule_set_strategy())
-@settings(
+@prop_settings(
     max_examples=200,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
 )
@@ -183,7 +185,7 @@ def test_property_10_no_row_assigned_to_multiple_rules(
 
 
 @given(data=overlapping_rule_set_strategy())
-@settings(
+@prop_settings(
     max_examples=200,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
 )
@@ -357,7 +359,7 @@ def _expected_outcome(
 # ---------------------------------------------------------------------------
 
 @given(scenario=trade_scenario_strategy())
-@settings(
+@prop_settings(
     max_examples=500,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
 )
@@ -471,7 +473,7 @@ def test_property_11_trade_outcome_correctness(scenario: dict) -> None:
 
 
 @given(scenario=trade_scenario_strategy())
-@settings(
+@prop_settings(
     max_examples=300,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
 )
@@ -641,7 +643,7 @@ def fee_deduction_scenario(draw: st.DrawFn) -> dict:
 # ---------------------------------------------------------------------------
 
 @given(scenario=fee_deduction_scenario())
-@settings(
+@prop_settings(
     max_examples=100,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
 )
@@ -785,7 +787,7 @@ def equity_tracking_scenario(draw: st.DrawFn) -> dict:
 # ---------------------------------------------------------------------------
 
 @given(scenario=equity_tracking_scenario())
-@settings(
+@prop_settings(
     max_examples=100,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
 )
@@ -947,7 +949,7 @@ def multi_symbol_scenario(draw: st.DrawFn) -> dict:
 # ---------------------------------------------------------------------------
 
 @given(scenario=multi_symbol_scenario())
-@settings(
+@prop_settings(
     max_examples=100,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
 )

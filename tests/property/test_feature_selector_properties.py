@@ -20,8 +20,10 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
-from hypothesis import given, settings, HealthCheck
+from hypothesis import given, HealthCheck
 from hypothesis import strategies as st
+
+from tests.property.hypothesis_config import prop_settings
 
 from gpu_fuzzy_trader.features.selector import Feature_Selector, _remove_low_dispersion
 from gpu_fuzzy_trader import config
@@ -120,7 +122,7 @@ def dataset_with_label_and_meta_columns(draw: st.DrawFn) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 @given(train_df=dataset_with_label_and_meta_columns())
-@settings(
+@prop_settings(
     max_examples=50,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
 )
@@ -163,7 +165,7 @@ def test_property_17_label_and_meta_column_exclusion_long(
 
 
 @given(train_df=dataset_with_label_and_meta_columns())
-@settings(
+@prop_settings(
     max_examples=50,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
 )
@@ -325,7 +327,7 @@ def dataset_with_sufficient_dispersion_feature(draw: st.DrawFn) -> tuple[pd.Data
 # ---------------------------------------------------------------------------
 
 @given(args=dataset_with_high_dispersion_feature())
-@settings(
+@prop_settings(
     max_examples=50,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
 )
@@ -365,7 +367,7 @@ def test_property_18_low_dispersion_feature_excluded(
 
 
 @given(args=dataset_with_high_dispersion_feature())
-@settings(
+@prop_settings(
     max_examples=50,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
 )
@@ -397,7 +399,7 @@ def test_property_18_low_dispersion_feature_excluded_short(
 
 
 @given(args=dataset_with_sufficient_dispersion_feature())
-@settings(
+@prop_settings(
     max_examples=50,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
 )

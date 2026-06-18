@@ -407,12 +407,103 @@ def _sample_df(
 
 
 # ---------------------------------------------------------------------------
+# Purged CV fold evaluator (CPU, sequential per fold)
+# ---------------------------------------------------------------------------
+
+
+class CvFoldValEvaluator:
+    """
+    Evaluate chromosomes on purged CV validation folds (excluding holdout).
+
+    Aggregates per-fold metrics with ``aggregate_fold_metrics`` for fitness.
+    Builds one fold engine at a time to limit RAM use.
+    """
+
+    def __init__(
+        self,
+        cv_folds: list,
+        feature_modes: dict[str, str],
+        feature_names: list[str],
+        direction: str,
+    ) -> None:
+        from gpu_fuzzy_trader.validation.rolling_cv import (
+            aggregate_fold_metrics,
+            cv_folds_only,
+        )
+
+        self._folds = cv_folds_only(cv_folds)
+        self._feature_modes = feature_modes
+        self._feature_names = feature_names
+        self._direction = direction
+        self._aggregate_fn = aggregate_fold_metrics
+        fold_rows = [int(f.n_valid_rows) for f in self._folds]
+        self.n_valid_rows = min(fold_rows) if fold_rows else 0
+        self._regime_row_counts = None
+
+    def simulate_rule_batch(
+        self,
+        chromosomes: np.ndarray,
+        *,
+        tp: float,
+        sl: float,
+        capital_pct: float,
+    ) -> list[dict]:
+        if not self._folds:
+            return [
+                self._aggregate_fn([])
+                for _ in range(len(chromosomes))
+            ]
+
+        n_chrom = len(chromosomes)
+        per_chrom: list[list[dict]] = [[] for _ in range(n_chrom)]
+
+        for fold in self._folds:
+            slim = slim_backtest_df(fold.valid_df, self._feature_names)
+            engine = CPUBacktestEngine(
+                slim,
+                self._feature_modes,
+                self._direction,
+                fee_pct=_cfg.FEE_PCT,
+            )
+            try:
+                fold_metrics = engine.simulate_rule_batch(
+                    chromosomes=chromosomes,
+                    tp=tp,
+                    sl=sl,
+                    capital_pct=capital_pct,
+                )
+            except Exception as exc:
+                logger.debug(
+                    "CvFoldValEvaluator fold %d failed: %s",
+                    fold.fold_id,
+                    exc,
+                )
+                fold_metrics = [
+                    {
+                        "total_return_pct": -100.0,
+                        "profit_factor": 0.0,
+                        "sortino_ratio": 0.0,
+                        "max_drawdown_pct": 100.0,
+                        "executed_trades": 0,
+                        "win_rate": 0.0,
+                    }
+                    for _ in range(n_chrom)
+                ]
+            for i, metrics in enumerate(fold_metrics):
+                per_chrom[i].append(metrics)
+            del engine, slim
+
+        mode = str(getattr(_cfg, "PURGED_WF_AGGREGATION", "worst"))
+        return [self._aggregate_fn(fms, mode=mode) for fms in per_chrom]
+
+
+# ---------------------------------------------------------------------------
 # Fitness evaluation
 # ---------------------------------------------------------------------------
 
-def _val_trade_floor_for_objectives() -> int:
+def _val_trade_floor_for_objectives(n_valid_rows: int | None = None) -> int:
     """Minimum validation trades before joint Sortino is trusted."""
-    return max(int(_cfg.MIN_TRADE_POOL_FLOOR) // 4, 10)
+    return int(_cfg.effective_val_trade_floor_for_objectives(n_valid_rows))
 
 
 def compute_phase2_objectives_from_metrics(
@@ -427,6 +518,7 @@ def compute_phase2_objectives_from_metrics(
     diversity_reference: list[np.ndarray] | None = None,
     diversity_metrics_by_key: dict[tuple[int, ...], dict] | None = None,
     stage_params=None,
+    n_valid_rows: int | None = None,
 ) -> tuple[np.ndarray, dict]:
     """
     Build Phase 2 minimisation objectives from precomputed train/val metrics.
@@ -440,7 +532,7 @@ def compute_phase2_objectives_from_metrics(
         robust_return_pct,
     )
 
-    floors = resolve_evolution_floors(stage_params)
+    floors = resolve_evolution_floors(stage_params, n_rows=n_valid_rows)
     active = _count_active_conditions(chromosome, dont_cares)
 
     cond_penalty = 0.0
@@ -461,7 +553,7 @@ def compute_phase2_objectives_from_metrics(
 
     sortino_for_obj = sortino_train
     val_floor_penalty = 0.0
-    val_trade_floor = _val_trade_floor_for_objectives()
+    val_trade_floor = _val_trade_floor_for_objectives(n_valid_rows)
 
     if val_metrics is not None:
         raw_val_sortino = float(val_metrics.get(
@@ -691,6 +783,12 @@ def _evaluate_chromosome(
     if val_regime_row_counts is None and val_engine is not None:
         val_regime_row_counts = getattr(val_engine, "_regime_row_counts", None)
 
+    n_valid_rows = (
+        int(getattr(val_engine, "n_valid_rows"))
+        if val_engine is not None and getattr(val_engine, "n_valid_rows", None)
+        else None
+    )
+
     return compute_phase2_objectives_from_metrics(
         chromosome,
         dont_cares,
@@ -702,6 +800,7 @@ def _evaluate_chromosome(
         diversity_reference=diversity_reference,
         diversity_metrics_by_key=diversity_metrics_by_key,
         stage_params=stage_params,
+        n_valid_rows=n_valid_rows,
     )
 
 
@@ -1175,6 +1274,9 @@ def _build_pool_from_archive(
     metrics_by_chrom: dict[tuple, dict] | None = None,
     regime_row_fractions_arr: np.ndarray | None = None,
     val_engine=None,
+    cv_fold_evaluator: CvFoldValEvaluator | None = None,
+    holdout_n_valid_rows: int | None = None,
+    train_n_rows: int | None = None,
     direction: str = "",
 ) -> list[dict]:
     """
@@ -1231,12 +1333,40 @@ def _build_pool_from_archive(
                 continue
 
         val_metrics = _simulate_val_metrics_for_chrom(chrom, val_engine)
-        if not passes_pool_admission_gate(metrics, val_metrics):
+        if not passes_pool_admission_gate(
+            metrics,
+            val_metrics,
+            n_valid_rows=holdout_n_valid_rows,
+        ):
             continue
+
+        if (
+            cv_fold_evaluator is not None
+            and bool(getattr(_cfg, "PURGED_WF_REQUIRE_ALL_CV_FOLDS", False))
+        ):
+            try:
+                cv_metrics_list = cv_fold_evaluator.simulate_rule_batch(
+                    chromosomes=_chromosome_batch(chrom),
+                    tp=_cfg.PHASE2_TP,
+                    sl=_cfg.PHASE2_SL,
+                    capital_pct=_cfg.PHASE2_CAPITAL_PCT,
+                )
+                cv_summary = cv_metrics_list[0] if cv_metrics_list else {}
+            except Exception:
+                cv_summary = {}
+            if not passes_pool_admission_gate(
+                metrics,
+                cv_summary,
+                n_valid_rows=cv_fold_evaluator.n_valid_rows,
+            ):
+                continue
 
         executed = int(metrics.get("executed_trades", 0))
         if not passes_pool_trade_floor(
-            executed, metrics, regime_row_fractions_arr=regime_row_fractions_arr,
+            executed,
+            metrics,
+            regime_row_fractions_arr=regime_row_fractions_arr,
+            n_rows=train_n_rows,
         ):
             continue
 
@@ -1811,6 +1941,7 @@ class Rule_Pool_Generator:
         n_generations: int | None = None,
         seed: int | None = None,
         val_df: pd.DataFrame | None = None,
+        cv_folds: list | None = None,
     ) -> None:
         if direction not in ("long", "short"):
             raise ValueError(
@@ -1833,6 +1964,11 @@ class Rule_Pool_Generator:
 
         self._scoped_train_df = train_df
         self._scoped_val_df = val_df
+        self._cv_folds = cv_folds
+        self._cv_val_evaluator: CvFoldValEvaluator | None = None
+        self._holdout_n_valid_rows = (
+            int(len(val_df)) if val_df is not None else None
+        )
 
         # Sample training data to budget, then slim to backtest-only columns
         sample_seed = seed if seed is not None else _cfg.PHASE2_SEED
@@ -1856,6 +1992,20 @@ class Rule_Pool_Generator:
         self._val_engine = None
         self._val_regime_row_counts = None
         self._build_engines()
+        if self._cv_folds:
+            self._cv_val_evaluator = CvFoldValEvaluator(
+                self._cv_folds,
+                self._feature_modes,
+                self._feature_names,
+                self.direction,
+            )
+            logger.info(
+                "Phase 2 [%s]: purged CV fitness evaluator (%d folds, "
+                "min_fold_valid_rows=%d)",
+                self.direction,
+                len(self._cv_val_evaluator._folds),
+                self._cv_val_evaluator.n_valid_rows,
+            )
 
         # Keep slimmed copy for park/unpark cycles, free the full DataFrames
         self._cached_slim_train = self._train_df
@@ -1897,6 +2047,8 @@ class Rule_Pool_Generator:
                     regime_ids=val_regime_ids,
                     n_regimes=val_n_regimes,
                 )
+                self._holdout_n_valid_rows = len(slim_val)
+                self._val_engine.n_valid_rows = len(slim_val)
                 if self._val_regime_row_counts is not None:
                     self._val_engine._regime_row_counts = (
                         self._val_regime_row_counts
@@ -2126,18 +2278,29 @@ class Rule_Pool_Generator:
             and self.pop_size == _cfg.PHASE2_POPULATION_SIZE
         )
 
-        # The val engine is built for both pool admission and (optionally) joint
-        # train+val fitness. The evolution loop will skip per-chromosome val
-        # simulation when PHASE2_JOINT_TRAIN_VAL is False, but the pool builder
-        # still receives the val engine so elite chromosomes can be evaluated
-        # for admission.
+        # Purged CV: fitness on aggregated CV folds; pool admission on holdout val.
+        fitness_val_engine = self._val_engine
+        if (
+            self._cv_val_evaluator is not None
+            and _cfg.PHASE2_JOINT_TRAIN_VAL
+            and _cfg.split_mode_is_purged_walk_forward()
+        ):
+            fitness_val_engine = self._cv_val_evaluator
+
+        train_n_rows = len(
+            self._train_df) if self._train_df is not None else None
+
         evo_kwargs = dict(
             feature_infos=self.feature_infos,
             engine=self._engine,
             pop_size=self.pop_size,
             rng=rng,
             seed_chromosomes=seed_chromosomes,
-            val_engine=self._val_engine,
+            val_engine=fitness_val_engine,
+            pool_val_engine=self._val_engine,
+            cv_fold_evaluator=self._cv_val_evaluator,
+            holdout_n_valid_rows=self._holdout_n_valid_rows,
+            train_n_rows=train_n_rows,
             regime_row_fractions=self._regime_row_fractions,
             val_regime_row_counts=self._val_regime_row_counts,
             feature_probs=feature_probs,

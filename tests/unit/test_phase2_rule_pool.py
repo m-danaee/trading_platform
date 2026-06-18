@@ -1462,6 +1462,7 @@ class TestPhenotypeDiversityPenalty:
         monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 1)
         monkeypatch.setattr(_cfg, "PHASE2_DIVERSITY_PENALTY", 10.0)
         monkeypatch.setattr(_cfg, "PHASE2_DIVERSITY_HAMMING_THRESHOLD", 0)
+        monkeypatch.setattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ", False)
         monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
 
         dont_cares = np.full(5, 5, dtype=np.int32)

@@ -20,8 +20,10 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from hypothesis import given, settings, HealthCheck
+from hypothesis import given, HealthCheck
 from hypothesis import strategies as st
+
+from tests.property.hypothesis_config import prop_settings
 
 from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.phases.phase3_objectives import (
@@ -149,7 +151,7 @@ def selector_args(draw: st.DrawFn):
 # ---------------------------------------------------------------------------
 
 @given(args=selector_args())
-@settings(
+@prop_settings(
     max_examples=20,
     deadline=None,
     suppress_health_check=[HealthCheck.too_slow,
@@ -209,7 +211,7 @@ def test_property_21_rule_set_size_bounds(
 # ---------------------------------------------------------------------------
 
 @given(args=selector_args())
-@settings(
+@prop_settings(
     max_examples=20,
     deadline=None,
     suppress_health_check=[HealthCheck.too_slow,

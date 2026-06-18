@@ -421,6 +421,7 @@ class Pipeline_Orchestrator:
     def __init__(self, output_dir: str | None = None) -> None:
         self._output_dir = _resolve_output_root(output_dir)
         self._log_path = os.path.join(self._output_dir, "pipeline.log")
+        self._cv_folds: list | None = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -479,6 +480,8 @@ class Pipeline_Orchestrator:
                 results["phase1"] = phase1_result
                 train_df, val_df = self._prune_splits_after_phase1(
                     train_df, val_df, phase1_result)
+                self._cv_folds = self._prune_cv_folds_after_phase1(
+                    self._cv_folds, phase1_result)
 
                 # ------------------------------------------------------------------
                 # Phase 2: Rule Pool Generation
@@ -595,6 +598,8 @@ class Pipeline_Orchestrator:
                 results["phase1"] = phase1_result
                 train_df, val_df = self._prune_splits_after_phase1(
                     train_df, val_df, phase1_result)
+                self._cv_folds = self._prune_cv_folds_after_phase1(
+                    self._cv_folds, phase1_result)
 
                 phase2_result = self._run_phase2(
                     train_df, phase1_result, force=force, val_df=val_df)
@@ -678,6 +683,8 @@ class Pipeline_Orchestrator:
                 phase1_result = self._load_phase1_outputs()
                 train_df, val_df = self._prune_splits_after_phase1(
                     train_df, val_df, phase1_result)
+                self._cv_folds = self._prune_cv_folds_after_phase1(
+                    self._cv_folds, phase1_result)
                 results["phase2"] = self._run_phase2(
                     train_df, phase1_result, force=True, val_df=val_df)
 
@@ -838,21 +845,20 @@ class Pipeline_Orchestrator:
         """
         Load train.csv and split into train/validation DataFrames.
 
-        Returns
-        -------
-        tuple[pd.DataFrame, pd.DataFrame]
-            (train_df, val_df)
+        When ``SPLIT_MODE`` is ``purged_walk_forward``, also rebuilds CV folds
+        (stored on ``self._cv_folds``) for Phases 2–3.
         """
-
-        if True:
-            cached_split = self._load_cached_split_if_fresh()
-            if cached_split is not None:
-                logger.info(
-                    "Using cached train/validation split from %s and %s",
-                    _cfg.TRAIN_70_PATH,
-                    _cfg.VALIDATION_30_PATH,
-                )
-                return self._apply_debug_symbol_scope(*cached_split)
+        cached_split = self._load_cached_split_if_fresh()
+        if cached_split is not None:
+            train_df, val_df = cached_split
+            self._cv_folds = self._rebuild_cv_folds_if_needed()
+            logger.info(
+                "Using cached train/validation split from %s and %s (mode=%s)",
+                _cfg.TRAIN_70_PATH,
+                _cfg.VALIDATION_30_PATH,
+                _cfg.SPLIT_MODE,
+            )
+            return self._apply_debug_symbol_scope(train_df, val_df)
 
         logger.info("Loading training data from %s …", _cfg.TRAIN_CSV_PATH)
         loader = Data_Loader()
@@ -860,19 +866,27 @@ class Pipeline_Orchestrator:
         logger.info(
             "Loaded %d rows, %d symbols",
             len(train_full),
-            train_full["symbol"].nunique(
-            ) if "symbol" in train_full.columns else 0,
+            train_full["symbol"].nunique()
+            if "symbol" in train_full.columns
+            else 0,
         )
 
         splitter = Data_Splitter()
-        logger.info("Splitting into train (75%) / validation (25%) …")
+        split_label = (
+            "purged walk-forward"
+            if _cfg.split_mode_is_purged_walk_forward()
+            else "holdout 70/30"
+        )
+        logger.info("Splitting train.csv (%s) …", split_label)
 
-        train_df, val_df = splitter.split_and_persist(train_full)
-        
+        train_df, val_df, cv_folds = splitter.split_and_persist(train_full)
+        self._cv_folds = cv_folds
+
         logger.info(
-            "Split complete: train=%d rows, val=%d rows",
+            "Split complete: train=%d rows, val=%d rows, cv_folds=%s",
             len(train_df),
             len(val_df),
+            len(cv_folds) if cv_folds else "n/a",
         )
         return self._apply_debug_symbol_scope(train_df, val_df)
 
@@ -888,6 +902,31 @@ class Pipeline_Orchestrator:
 
         scoped_train = _cfg.filter_df_to_symbols(train_df, symbols)
         scoped_val = _cfg.filter_df_to_symbols(val_df, symbols)
+
+        if self._cv_folds:
+            from dataclasses import replace
+
+            from gpu_fuzzy_trader.validation.rolling_cv import PurgedFold
+
+            sym_set = set(str(s) for s in symbols)
+            scoped_folds: list[PurgedFold] = []
+            for fold in self._cv_folds:
+                train_part = fold.train_df[
+                    fold.train_df["symbol"].astype(str).isin(sym_set)
+                ].reset_index(drop=True)
+                valid_part = fold.valid_df[
+                    fold.valid_df["symbol"].astype(str).isin(sym_set)
+                ].reset_index(drop=True)
+                scoped_folds.append(
+                    replace(
+                        fold,
+                        train_df=train_part,
+                        valid_df=valid_part,
+                        n_train_rows=len(train_part),
+                        n_valid_rows=len(valid_part),
+                    )
+                )
+            self._cv_folds = scoped_folds
 
         logger.info(
             "DEBUG SYMBOL SCOPE: enabled, count=%d symbols=%s, "
@@ -905,14 +944,28 @@ class Pipeline_Orchestrator:
         csv_path = _cfg.TRAIN_CSV_PATH
         train_path = _cfg.TRAIN_70_PATH
         val_path = _cfg.VALIDATION_30_PATH
+        manifest_path = getattr(_cfg, "CV_FOLDS_MANIFEST_PATH", "")
 
-        if not (os.path.exists(csv_path) and os.path.exists(train_path) and os.path.exists(val_path)):
+        if not (
+            os.path.exists(csv_path)
+            and os.path.exists(train_path)
+            and os.path.exists(val_path)
+        ):
             return None
 
         try:
             csv_mtime = os.path.getmtime(csv_path)
-            cache_mtime = min(os.path.getmtime(train_path),
-                              os.path.getmtime(val_path))
+            cache_mtime = min(
+                os.path.getmtime(train_path),
+                os.path.getmtime(val_path),
+            )
+            if _cfg.split_mode_is_purged_walk_forward():
+                if not os.path.exists(manifest_path):
+                    return None
+                manifest = json.load(open(manifest_path, encoding="utf-8"))
+                if manifest.get("split_mode") != _cfg.SPLIT_MODE:
+                    return None
+                cache_mtime = min(cache_mtime, os.path.getmtime(manifest_path))
         except OSError:
             return None
 
@@ -924,6 +977,31 @@ class Pipeline_Orchestrator:
         train_df = downcast_numeric_df(pd.read_parquet(train_path))
         val_df = downcast_numeric_df(pd.read_parquet(val_path))
         return train_df, val_df
+
+    @staticmethod
+    def _rebuild_cv_folds_if_needed() -> list | None:
+        """Rebuild in-memory CV folds when using a cached purged split."""
+        if not _cfg.split_mode_is_purged_walk_forward():
+            return None
+
+        from gpu_fuzzy_trader.validation.rolling_cv import (
+            build_purged_walk_forward_folds,
+            load_cv_folds_manifest,
+        )
+
+        manifest = load_cv_folds_manifest()
+        if manifest is not None:
+            ref = manifest.get("reference_rows")
+            if ref is not None:
+                _cfg.set_purged_wf_reference_rows(int(ref))
+
+        loader = Data_Loader()
+        train_full = loader.load_dataset(_cfg.TRAIN_CSV_PATH)
+        if manifest is None or manifest.get("reference_rows") is None:
+            _cfg.set_purged_wf_reference_rows(len(train_full))
+
+        folds = build_purged_walk_forward_folds(train_full)
+        return folds if folds else None
 
     @staticmethod
     def _phase1_keep_feature_names(
@@ -969,6 +1047,43 @@ class Pipeline_Orchestrator:
 
         log_memory_rss("after Phase 1 column prune")
         return pruned_train, pruned_val
+
+    @staticmethod
+    def _prune_cv_folds_after_phase1(
+        cv_folds: list | None,
+        phase1_result: dict[str, list[dict]],
+    ) -> list | None:
+        """Drop unused feature columns from CV fold DataFrames after Phase 1."""
+        if not cv_folds:
+            return cv_folds
+
+        from dataclasses import replace
+
+        from gpu_fuzzy_trader.backtest.df_slim import prune_train_columns
+        from gpu_fuzzy_trader.validation.rolling_cv import PurgedFold
+
+        names = Pipeline_Orchestrator._phase1_keep_feature_names(phase1_result)
+        if not names:
+            return cv_folds
+
+        pruned: list[PurgedFold] = []
+        for fold in cv_folds:
+            pruned_train = prune_train_columns(fold.train_df, names)
+            pruned_valid = prune_train_columns(fold.valid_df, names)
+            pruned.append(
+                replace(
+                    fold,
+                    train_df=pruned_train,
+                    valid_df=pruned_valid,
+                    n_train_rows=len(pruned_train),
+                    n_valid_rows=len(pruned_valid),
+                )
+            )
+        logger.info(
+            "Pruned cv_folds columns after Phase 1 (%d folds)",
+            len(pruned),
+        )
+        return pruned
 
     @staticmethod
     def _prune_train_df_after_phase1(
@@ -1117,8 +1232,8 @@ class Pipeline_Orchestrator:
                     feature_infos=feature_infos,
                     direction=direction,
                     val_df=val_df,
+                    cv_folds=self._cv_folds,
                     seed=_cfg.PHASE2_SEED,
-                    
                 )
                 pool = generator.run()
             except Exception as exc:
@@ -1228,7 +1343,7 @@ class Pipeline_Orchestrator:
                     val_df=val_df,
                     pool=enriched_pool,
                     direction=direction,
-                    
+                    cv_folds=self._cv_folds,
                 )
                 rule_set = selector.run()
             except Exception as exc:

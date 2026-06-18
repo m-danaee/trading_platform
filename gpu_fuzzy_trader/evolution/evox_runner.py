@@ -996,6 +996,7 @@ def _assign_eval_result(
     diversity_metrics_by_key: dict[tuple[int, ...], dict] | None = None,
     stage_params: Phase2StageParams | None = None,
     engine=None,
+    n_valid_rows: int | None = None,
 ) -> None:
     """Compute penalties/objectives from metrics; write objectives[i] and metrics_cache[i]."""
     from gpu_fuzzy_trader.phases.phase2_rule_pool import (
@@ -1013,6 +1014,7 @@ def _assign_eval_result(
         diversity_reference=diversity_reference,
         diversity_metrics_by_key=diversity_metrics_by_key,
         stage_params=stage_params,
+        n_valid_rows=n_valid_rows,
     )
     objectives[i] = obj
     metrics_cache[i] = processed
@@ -1098,6 +1100,12 @@ def _evaluate_population_indices(
         val_regime_row_counts = getattr(
             val_engine, "_regime_row_counts", None)
 
+    n_valid_rows = (
+        int(getattr(val_engine, "n_valid_rows"))
+        if val_engine is not None and getattr(val_engine, "n_valid_rows", None)
+        else None
+    )
+
     gpu_pending: list[int] = []
     cache_hits = 0
     if _cfg.PHASE2_EVAL_GLOBAL_CACHE and global_metrics_cache is not None:
@@ -1122,6 +1130,7 @@ def _evaluate_population_indices(
                     diversity_metrics_by_key=diversity_metrics_by_key,
                     stage_params=stage_params,
                     engine=engine,
+                    n_valid_rows=n_valid_rows,
                 )
                 cache_hits += 1
             else:
@@ -1208,6 +1217,7 @@ def _evaluate_population_indices(
                 diversity_metrics_by_key=diversity_metrics_by_key,
                 stage_params=stage_params,
                 engine=engine,
+                n_valid_rows=n_valid_rows,
             )
 
             if _cfg.PHASE2_EVAL_GLOBAL_CACHE and global_metrics_cache is not None:
@@ -1421,6 +1431,10 @@ def _run_nsga2_fallback(
     seed_chromosomes: np.ndarray | None = None,
     log_tag: str | None = None,
     val_engine=None,
+    pool_val_engine=None,
+    cv_fold_evaluator=None,
+    holdout_n_valid_rows: int | None = None,
+    train_n_rows: int | None = None,
     regime_row_fractions: np.ndarray | None = None,
     val_regime_row_counts: np.ndarray | None = None,
     feature_probs: np.ndarray | None = None,
@@ -1709,7 +1723,10 @@ def _run_nsga2_fallback(
         engine,
         metrics_by_chrom=metrics_by_chrom,
         regime_row_fractions_arr=regime_row_fractions,
-        val_engine=val_engine,
+        val_engine=pool_val_engine if pool_val_engine is not None else val_engine,
+        cv_fold_evaluator=cv_fold_evaluator,
+        holdout_n_valid_rows=holdout_n_valid_rows,
+        train_n_rows=train_n_rows,
         direction=log_tag or "",
     )
     return pareto_pool, history
@@ -1724,6 +1741,10 @@ def _run_nsga3(
     seed_chromosomes: np.ndarray | None = None,
     log_tag: str | None = None,
     val_engine=None,
+    pool_val_engine=None,
+    cv_fold_evaluator=None,
+    holdout_n_valid_rows: int | None = None,
+    train_n_rows: int | None = None,
     regime_row_fractions: np.ndarray | None = None,
     val_regime_row_counts: np.ndarray | None = None,
     feature_probs: np.ndarray | None = None,
@@ -2247,7 +2268,10 @@ def _run_nsga3(
         engine,
         metrics_by_chrom=metrics_by_chrom,
         regime_row_fractions_arr=regime_row_fractions,
-        val_engine=val_engine,
+        val_engine=pool_val_engine if pool_val_engine is not None else val_engine,
+        cv_fold_evaluator=cv_fold_evaluator,
+        holdout_n_valid_rows=holdout_n_valid_rows,
+        train_n_rows=train_n_rows,
         direction=log_tag or "",
     )
     if return_state:
@@ -2352,6 +2376,10 @@ def run_phase2_evolution(
     seed_chromosomes: np.ndarray | None = None,
     log_tag: str | None = None,
     val_engine=None,
+    pool_val_engine=None,
+    cv_fold_evaluator=None,
+    holdout_n_valid_rows: int | None = None,
+    train_n_rows: int | None = None,
     regime_row_fractions: np.ndarray | None = None,
     val_regime_row_counts: np.ndarray | None = None,
     feature_probs: np.ndarray | None = None,
@@ -2374,6 +2402,10 @@ def run_phase2_evolution(
         build_pool=build_pool,
         return_state=return_state,
         apply_seed_chromosomes=apply_seed_chromosomes,
+        pool_val_engine=pool_val_engine,
+        cv_fold_evaluator=cv_fold_evaluator,
+        holdout_n_valid_rows=holdout_n_valid_rows,
+        train_n_rows=train_n_rows,
     )
     if not _EVOX_AVAILABLE:
         logger.warning(
@@ -2408,6 +2440,8 @@ def run_phase2_evolution(
             stage=stage,
             **{k: v for k, v in evo_kwargs.items() if k in (
                 "feature_probs", "init_strategy", "stratum_fractions",
+                "pool_val_engine", "cv_fold_evaluator",
+                "holdout_n_valid_rows", "train_n_rows",
             )},
         )
 

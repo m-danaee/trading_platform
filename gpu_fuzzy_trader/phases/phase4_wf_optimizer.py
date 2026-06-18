@@ -689,7 +689,9 @@ class WalkForwardRiskOptimizer:
         self.rule_set = rule_set
         self.direction = direction
         self.n_trials = 1
-        self.n_splits = n_splits if n_splits is not None else _cfg.PHASE4_WF_SPLITS
+        self.n_splits = (
+            n_splits if n_splits is not None else _cfg.effective_phase4_wf_splits()
+        )
         self.seed = seed if seed is not None else 42
         self._selected_trial: Any = None
         self._study: Any = None

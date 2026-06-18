@@ -19,8 +19,10 @@ import tempfile
 
 import pandas as pd
 import pytest
-from hypothesis import HealthCheck, given, settings
+from hypothesis import HealthCheck, given
 from hypothesis import strategies as st
+
+from tests.property.hypothesis_config import prop_settings
 
 from gpu_fuzzy_trader.config import LABEL_COLUMNS, TAIL_DROP_ROWS
 from gpu_fuzzy_trader.data.loader import Data_Loader
@@ -153,7 +155,7 @@ def valid_test_csv_dataframe(draw: st.DrawFn) -> pd.DataFrame:
 
 
 @given(raw_df=valid_test_csv_dataframe())
-@settings(
+@prop_settings(
     max_examples=30,
     suppress_health_check=[
         HealthCheck.too_slow,

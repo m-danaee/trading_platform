@@ -806,6 +806,53 @@ def _build_per_symbol_monthly_context(
 # ---------------------------------------------------------------------------
 
 
+def _cv_worst_val_for_rule(
+    rule: dict,
+    direction: str,
+    cv_folds: list,
+    *,
+    symbol: str | None = None,
+) -> tuple[float, dict, int]:
+    """Worst-fold validation return for a rule (optionally per symbol)."""
+    from gpu_fuzzy_trader.validation.rolling_cv import cv_folds_only
+
+    fmt = _rule_set_to_engine_format([rule])
+    fold_returns: list[float] = []
+    fold_metrics: list[dict] = []
+    sym_row_counts: list[int] = []
+
+    for fold in cv_folds_only(cv_folds):
+        if symbol is not None and "symbol" in fold.valid_df.columns:
+            sym_df = fold.valid_df[
+                fold.valid_df["symbol"].astype(str) == str(symbol)
+            ].reset_index(drop=True)
+        else:
+            sym_df = fold.valid_df
+
+        if len(sym_df) == 0:
+            fold_returns.append(-999.0)
+            fold_metrics.append({})
+            sym_row_counts.append(0)
+            continue
+
+        sym_row_counts.append(len(sym_df))
+        engine = CPUBacktestEngine(sym_df, {}, direction, fee_pct=_cfg.FEE_PCT)
+        try:
+            metrics = engine.simulate_rule_set(fmt)
+            fold_returns.append(float(metrics.get("total_return_pct", -999.0)))
+            fold_metrics.append(metrics)
+        except Exception:
+            fold_returns.append(-999.0)
+            fold_metrics.append({})
+
+    if not fold_returns:
+        return -999.0, {}, 0
+
+    worst_idx = int(np.argmin(fold_returns))
+    min_sym_rows = min((r for r in sym_row_counts if r > 0), default=0)
+    return fold_returns[worst_idx], fold_metrics[worst_idx], min_sym_rows
+
+
 def _score_pool_rule_on_symbol(
     rule: dict,
     symbol_df: pd.DataFrame,
@@ -813,6 +860,8 @@ def _score_pool_rule_on_symbol(
     train_symbol_df: pd.DataFrame | None = None,
     val_engine: object | None = None,
     train_engine: object | None = None,
+    cv_folds: list | None = None,
+    symbol: str | None = None,
 ) -> dict:
     """Score a pool rule on a single symbol.
 
@@ -824,18 +873,36 @@ def _score_pool_rule_on_symbol(
     fmt = _rule_set_to_engine_format([rule])
 
     # --- val metrics ---
-    if val_engine is not None:
+    min_sym_val_rows: int | None = None
+    if cv_folds:
+        val_return, val_metrics, min_sym_val_rows = _cv_worst_val_for_rule(
+            rule, direction, cv_folds, symbol=symbol,
+        )
+        val_trades = int(val_metrics.get("executed_trades", 0))
+    elif val_engine is not None:
         engine = val_engine
+        try:
+            val_metrics = engine.simulate_rule_set(fmt)
+        except Exception:
+            return {"return_pct": -999.0, "trades": 0}
+        val_return = float(val_metrics.get("total_return_pct", -999.0))
+        val_trades = int(val_metrics.get("executed_trades", 0))
+        min_sym_val_rows = len(symbol_df)
     else:
         engine = CPUBacktestEngine(
             symbol_df, {}, direction, fee_pct=_cfg.FEE_PCT,
         )
-    try:
-        val_metrics = engine.simulate_rule_set(fmt)
-    except Exception:
-        return {"return_pct": -999.0, "trades": 0}
-    val_return = float(val_metrics.get("total_return_pct", -999.0))
-    val_trades = int(val_metrics.get("executed_trades", 0))
+        try:
+            val_metrics = engine.simulate_rule_set(fmt)
+        except Exception:
+            return {"return_pct": -999.0, "trades": 0}
+        val_return = float(val_metrics.get("total_return_pct", -999.0))
+        val_trades = int(val_metrics.get("executed_trades", 0))
+        min_sym_val_rows = len(symbol_df)
+
+    scaled_min_val_trades = int(
+        _cfg.effective_phase3_min_val_trades(min_sym_val_rows)
+    )
 
     # --- train metrics (when available) ---
     if train_symbol_df is not None and len(train_symbol_df) > 0:
@@ -866,8 +933,7 @@ def _score_pool_rule_on_symbol(
                     getattr(_cfg, "PHASE3_MIN_VAL_PF", 1.0)),
                 min_train_trades=int(
                     getattr(_cfg, "PHASE3_MIN_TRAIN_TRADES", 25)),
-                min_val_trades=int(
-                    getattr(_cfg, "PHASE3_MIN_VAL_TRADES", 15)),
+                min_val_trades=scaled_min_val_trades,
                 require_execution_health=bool(
                     getattr(_cfg, "PHASE3_GATE_EXECUTION_HEALTH", True)),
             ):
@@ -903,6 +969,7 @@ def _per_symbol_greedy(
     combined_df: pd.DataFrame | None = None,
     feature_names: list[str] | None = None,
     monthly_windows: list[pd.DataFrame] | None = None,
+    cv_folds: list | None = None,
 ) -> list[int]:
     """Greedy rule selection for a single symbol.
 
@@ -943,6 +1010,8 @@ def _per_symbol_greedy(
             train_symbol_df=train_symbol_df,
             val_engine=val_engine,
             train_engine=train_engine,
+            cv_folds=cv_folds,
+            symbol=symbol,
         )
         if result["trades"] >= min_trades and result["return_pct"] >= min_return:
             scored.append((idx, result["return_pct"], result["trades"]))
@@ -964,15 +1033,41 @@ def _per_symbol_greedy(
     def _robust_combo_return(combo_indices: list[int]) -> float:
         """Evaluate a combination with min(train, val) return and monthly penalty."""
         combo_fmt = _rule_set_to_engine_format([pool[i] for i in combo_indices])
-        # val leg
-        val_engine_local = CPUBacktestEngine(
-            symbol_df, {}, direction, fee_pct=_cfg.FEE_PCT,
-        )
-        try:
-            val_m = val_engine_local.simulate_rule_set(combo_fmt)
-            v_ret = float(val_m.get("total_return_pct", -999.0))
-        except Exception:
-            v_ret = -999.0
+        if cv_folds:
+            from gpu_fuzzy_trader.validation.rolling_cv import cv_folds_only
+
+            v_rets: list[float] = []
+            val_m: dict = {}
+            for fold in cv_folds_only(cv_folds):
+                if "symbol" in fold.valid_df.columns:
+                    sym_df = fold.valid_df[
+                        fold.valid_df["symbol"].astype(str) == str(symbol)
+                    ].reset_index(drop=True)
+                else:
+                    sym_df = fold.valid_df
+                if len(sym_df) == 0:
+                    v_rets.append(-999.0)
+                    continue
+                val_engine_local = CPUBacktestEngine(
+                    sym_df, {}, direction, fee_pct=_cfg.FEE_PCT,
+                )
+                try:
+                    val_m = val_engine_local.simulate_rule_set(combo_fmt)
+                    v_rets.append(float(val_m.get("total_return_pct", -999.0)))
+                except Exception:
+                    v_rets.append(-999.0)
+            v_ret = min(v_rets) if v_rets else -999.0
+        else:
+            # val leg
+            val_engine_local = CPUBacktestEngine(
+                symbol_df, {}, direction, fee_pct=_cfg.FEE_PCT,
+            )
+            try:
+                val_m = val_engine_local.simulate_rule_set(combo_fmt)
+                v_ret = float(val_m.get("total_return_pct", -999.0))
+            except Exception:
+                v_ret = -999.0
+                val_m = {}
         # train leg (when available)
         if train_symbol_df is not None and len(train_symbol_df) > 0:
             train_engine_local = CPUBacktestEngine(
@@ -1247,6 +1342,7 @@ class Rule_Set_Selector:
         pool: list[dict],
         direction: str,
         seed: int = 42,
+        cv_folds: list | None = None,
     ) -> None:
         if direction not in ("long", "short"):
             raise ValueError(
@@ -1256,6 +1352,7 @@ class Rule_Set_Selector:
 
         self.direction = direction
         self.pool = pool
+        self._cv_folds = cv_folds
         self._full_train_df = train_df
         self._full_val_df = val_df
         self.seed = seed
@@ -1358,6 +1455,7 @@ class Rule_Set_Selector:
                 combined_df=sym_combined_df,
                 feature_names=feature_names,
                 monthly_windows=sym_monthly_windows,
+                cv_folds=self._cv_folds,
             )
             if selected:
                 symbol_assignments[sym] = selected

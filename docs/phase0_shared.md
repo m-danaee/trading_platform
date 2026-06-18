@@ -49,22 +49,40 @@ All numeric columns are downcast to the smallest safe dtype (e.g., `float64 → 
 
 **Module:**
 - `gpu_fuzzy_trader/data/splitter.py` → `Data_Splitter.split_and_persist`
+- `gpu_fuzzy_trader/validation/rolling_cv.py` → purged walk-forward folds (when enabled)
 
-`Data_Splitter.split_and_persist(df)` returns `(train_df, validation_df)` and always writes:
+`Data_Splitter.split_and_persist(df)` returns `(train_df, validation_df, cv_folds)` and always writes:
 
-- `data/train_75.parquet`
-- `data/validation_25.parquet`
+- `data/train_70.parquet` (train block)
+- `data/validation_30.parquet` (validation holdout)
 
-The split is `holdout_70_30` per symbol (70% train, 30% validation).
+`cv_folds` is a list of `PurgedFold` objects when `SPLIT_MODE == purged_walk_forward`, else `None`.
 
-### Per-symbol split
+### Split modes (`SPLIT_MODE`)
 
-`holdout_70_30_split()` — per symbol:
+| Mode | Behaviour |
+|------|-----------|
+| `holdout_70_30` (default) | Single per-symbol 70/30 chronological split |
+| `purged_walk_forward` | K−1 expanding CV folds + primary tail holdout with 288-bar embargo |
 
-1. `split_point = floor(N × 0.75)`.
+### Holdout mode (`holdout_70_30`)
+
+Per symbol:
+
+1. `split_point = floor(N × 0.70)`.
 2. Rows `[0, split_point)` → train; `[split_point, N)` → validation.
 
-Phases 2–3 use one train engine and one val engine.
+### Purged walk-forward (`purged_walk_forward`)
+
+Per symbol (chronological):
+
+1. Reserve tail `PURGED_WF_HOLDOUT_FRACTION` (default 25%) as **primary holdout** → persisted `validation_30.parquet`.
+2. Split the prefix into `PURGED_WF_N_SPLITS − 1` CV validation segments (expanding train).
+3. Purge train rows with `_symbol_bar_index >= valid_start − PURGED_WF_EMBARGO_CANDLES` (288).
+4. CV folds feed Phase 2 fitness and Phase 3 robust scoring (worst-fold aggregation).
+5. Manifest written to `data/cv_folds_manifest.json`.
+
+Trade-count gates scale via `scale_trade_floor()` when `PURGED_WF_SCALE_TRADE_FLOORS=True`.
 
 ### Why per-symbol?
 
@@ -72,9 +90,9 @@ A global time cut would leave some symbols entirely in train or val. Per-symbol 
 
 ### Parquet cache
 
-If `train_75.parquet` and `validation_25.parquet` are newer than `train.csv`, the pipeline loads the cache and skips splitting.
+If `train_70.parquet` and `validation_30.parquet` are newer than `train.csv` (and the CV manifest is fresh in purged mode), the pipeline loads the cache and rebuilds in-memory CV folds from `train.csv`.
 
-After changing split parameters, delete `data/train_75.parquet` and `data/validation_25.parquet`, then rerun.
+After changing `SPLIT_MODE` or purged-WF parameters, delete `data/train_70.parquet`, `data/validation_30.parquet`, and `data/cv_folds_manifest.json`, then rerun.
 
 ---
 
@@ -178,7 +196,7 @@ Simulation stops and marks `account_ruined = True` when `equity ≤ 0`. All subs
 
 ### Split mode
 
-The project uses a single `holdout_70_30` per-symbol split. No other split modes exist.
+The project supports `holdout_70_30` (default) and `purged_walk_forward` split modes via `SPLIT_MODE` in `config.py`.
 
 ### Schema constants
 

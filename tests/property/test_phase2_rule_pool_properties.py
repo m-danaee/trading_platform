@@ -22,8 +22,10 @@ import tempfile
 import numpy as np
 import pandas as pd
 import pytest
-from hypothesis import given, settings, HealthCheck
+from hypothesis import given, HealthCheck
 from hypothesis import strategies as st
+
+from tests.property.hypothesis_config import prop_settings
 
 from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.phases.phase2_rule_pool import (
@@ -192,7 +194,7 @@ def feature_infos_and_train_df(draw: st.DrawFn):
 # ---------------------------------------------------------------------------
 
 @given(args=feature_infos_and_train_df())
-@settings(
+@prop_settings(
     max_examples=20,
     suppress_health_check=[HealthCheck.too_slow,
                            HealthCheck.function_scoped_fixture],
@@ -271,7 +273,7 @@ def test_property_19_phase2_static_risk_parameters(
 # ---------------------------------------------------------------------------
 
 @given(args=feature_infos_and_train_df())
-@settings(
+@prop_settings(
     max_examples=20,
     suppress_health_check=[HealthCheck.too_slow,
                            HealthCheck.function_scoped_fixture],

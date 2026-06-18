@@ -276,6 +276,46 @@ TAIL_DROP_ROWS = 288
 # =============================================================================
 # Phases 4–5 always use persisted train_70 + validation_30 (see splitter.py).
 
+# SPLIT_MODE — how train.csv is divided before Phase 2.
+#   holdout_70_30       → single per-symbol 70/30 chronological split (legacy).
+#   purged_walk_forward → expanding CV folds + primary tail holdout with embargo.
+SPLIT_MODE = "holdout_70_30"
+
+# --- Purged walk-forward (when SPLIT_MODE == purged_walk_forward) ---
+
+# PURGED_WF_N_SPLITS — total fold count including primary holdout (K).
+#   K-1 folds are CV; last fold is the persisted validation holdout.
+PURGED_WF_N_SPLITS = 4
+
+# PURGED_WF_HOLDOUT_FRACTION — tail fraction per symbol reserved for val parquet.
+PURGED_WF_HOLDOUT_FRACTION = 0.25
+
+# PURGED_WF_EMBARGO_CANDLES — purge gap between train and valid (label horizon).
+PURGED_WF_EMBARGO_CANDLES = 288
+
+# PURGED_WF_MIN_TRAIN_FRACTION — minimum train prefix before first CV valid block.
+PURGED_WF_MIN_TRAIN_FRACTION = 0.40
+
+# PURGED_WF_MIN_VALID_ROWS — minimum rows in a CV valid block (holdout exempt).
+PURGED_WF_MIN_VALID_ROWS = 3000
+
+# PURGED_WF_AGGREGATION — combine per-fold metrics: worst | mean.
+PURGED_WF_AGGREGATION = "worst"
+
+# PURGED_WF_REQUIRE_ALL_CV_FOLDS — pool admission also checks every CV fold.
+PURGED_WF_REQUIRE_ALL_CV_FOLDS = False
+
+# PURGED_WF_SCALE_TRADE_FLOORS — scale trade-count gates by slice row fraction.
+PURGED_WF_SCALE_TRADE_FLOORS = True
+
+# PURGED_WF_MIN_TRADE_FLOOR_ABSOLUTE — floor after proportional scaling.
+PURGED_WF_MIN_TRADE_FLOOR_ABSOLUTE = 5
+
+CV_FOLDS_MANIFEST_PATH = "data/cv_folds_manifest.json"
+
+# Set at split time; used by scale_trade_floor when purged mode is active.
+_PURGED_WF_REFERENCE_ROWS: int | None = None
+
 
 # =============================================================================
 # Phase 0 — Backtest simulation (must match evaluator_v3.ipynb)
@@ -1096,7 +1136,7 @@ PHASE3_PER_SYMBOL_GREEDY_TOP_K = 25
 #   Lowered from 15→8 on 2026-06-17 (Task 12) because 6/10 symbols still
 #   have no rules on test; 8 trades on a ~7k-row per-symbol validation
 #   window (≈0.1% of bars) is still a reasonable evidence minimum.
-PHASE3_PER_SYMBOL_MIN_TRADES = 6
+PHASE3_PER_SYMBOL_MIN_TRADES = 8
 
 # PHASE3_PER_SYMBOL_MIN_RETURN — min val return % on symbol for rule.
 #   Higher → only profitable-on-symbol rules considered.
@@ -1342,6 +1382,13 @@ PHASE4_HARD_CAP_NORMALIZE = True
 #   Lower  → larger windows, more trades per fold, less temporal coverage.
 PHASE4_WF_SPLITS = 2
 
+
+def effective_phase4_wf_splits() -> int:
+    """Inner validation WF windows; single window when purged CV already ran."""
+    if split_mode_is_purged_walk_forward():
+        return 1
+    return int(PHASE4_WF_SPLITS)
+
 PHASE4_INCLUDE_TAIL_HOLDOUT = True
 
 # PHASE4_TAIL_HOLDOUT_FRACTION — fraction of val reserved as final holdout window.
@@ -1490,6 +1537,100 @@ PHASE5_VALIDATION_PROFIT_FACTOR_GATE = 1.05
 #   True  → clean up losing rules after OOS evaluation.
 #   False → keep all rules regardless of test performance.
 PHASE5_REMOVE_NEGATIVE_PNL_RULES = True
+
+
+# =============================================================================
+# Purged walk-forward helpers (trade-floor scaling)
+# =============================================================================
+
+
+def split_mode_is_purged_walk_forward() -> bool:
+    """True when the active split mode is purged walk-forward."""
+    return str(SPLIT_MODE).strip().lower() == "purged_walk_forward"
+
+
+def set_purged_wf_reference_rows(n_rows: int) -> None:
+    """Store full train.csv row count after loader prep (split time)."""
+    global _PURGED_WF_REFERENCE_ROWS
+    _PURGED_WF_REFERENCE_ROWS = max(0, int(n_rows))
+
+
+def get_purged_wf_reference_rows() -> int | None:
+    """Return reference row count for trade-floor scaling, if set."""
+    return _PURGED_WF_REFERENCE_ROWS
+
+
+def scale_trade_floor(
+    base: int,
+    n_rows: int,
+    reference_rows: int | None = None,
+) -> int:
+    """Scale an integer trade floor by slice size vs reference universe."""
+    if not split_mode_is_purged_walk_forward():
+        return int(base)
+    if not PURGED_WF_SCALE_TRADE_FLOORS:
+        return int(base)
+    ref = reference_rows if reference_rows is not None else _PURGED_WF_REFERENCE_ROWS
+    if ref is None or ref <= 0:
+        return int(base)
+    scaled = int(round(int(base) * int(n_rows) / int(ref)))
+    return max(int(PURGED_WF_MIN_TRADE_FLOOR_ABSOLUTE), scaled)
+
+
+def effective_min_trade_support(n_rows: int | None = None) -> int:
+    base = int(MIN_TRADE_SUPPORT)
+    if n_rows is None:
+        return base
+    return scale_trade_floor(base, n_rows)
+
+
+def effective_min_trade_pool_floor(n_rows: int | None = None) -> int:
+    base = int(MIN_TRADE_POOL_FLOOR)
+    if n_rows is None:
+        return base
+    return scale_trade_floor(base, n_rows)
+
+
+def effective_sortino_min_trade_threshold(n_rows: int | None = None) -> int:
+    base = int(PHASE2_SORTINO_MIN_TRADE_THRESHOLD)
+    if n_rows is None:
+        return base
+    return scale_trade_floor(base, n_rows)
+
+
+def effective_val_trade_floor_for_objectives(n_rows: int | None = None) -> int:
+    base = max(int(MIN_TRADE_POOL_FLOOR) // 4, 10)
+    if n_rows is None:
+        return base
+    return scale_trade_floor(base, n_rows)
+
+
+def effective_pool_min_val_trades(n_rows: int | None = None) -> int:
+    base = max(int(MIN_TRADE_POOL_FLOOR) // 4, 10)
+    if n_rows is None:
+        return base
+    return scale_trade_floor(base, n_rows)
+
+
+def effective_phase3_min_val_trades(n_rows: int | None = None) -> int:
+    base = int(PHASE3_MIN_VAL_TRADES)
+    if n_rows is None:
+        return base
+    return scale_trade_floor(base, n_rows)
+
+
+def effective_phase4_min_worst_trades(n_rows: int | None = None) -> int:
+    base = int(PHASE4_MIN_WORST_TRADES)
+    if n_rows is None:
+        return base
+    return scale_trade_floor(base, n_rows)
+
+
+def effective_monthly_min_trades(n_rows: int | None = None) -> int:
+    base = int(MONTHLY_MIN_TRADES)
+    if n_rows is None:
+        return base
+    return scale_trade_floor(base, n_rows)
 
 
 # =============================================================================

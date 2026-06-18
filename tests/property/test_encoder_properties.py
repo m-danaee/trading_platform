@@ -37,8 +37,10 @@ import re
 
 import numpy as np
 import pytest
-from hypothesis import given, settings, HealthCheck
+from hypothesis import given, HealthCheck
 from hypothesis import strategies as st
+
+from tests.property.hypothesis_config import prop_settings
 
 from gpu_fuzzy_trader.features.encoder import (
     ConfigurationError,
@@ -185,7 +187,7 @@ def valid_chromosome_and_feature_infos(draw: st.DrawFn) -> tuple[np.ndarray, lis
     feature_name=feature_name_strategy(),
     mode_and_gene=valid_mode_and_gene(),
 )
-@settings(
+@prop_settings(
     max_examples=300,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
 )
@@ -214,7 +216,7 @@ def test_property_8a_encode_condition_starts_with_feature_name(
     feature_name=feature_name_strategy(),
     mode_and_gene=valid_mode_and_gene(),
 )
-@settings(
+@prop_settings(
     max_examples=300,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
 )
@@ -243,7 +245,7 @@ def test_property_8b_encode_condition_contains_is(
     feature_name=feature_name_strategy(),
     mode_and_gene=valid_mode_and_gene(),
 )
-@settings(
+@prop_settings(
     max_examples=300,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
 )
@@ -273,7 +275,7 @@ def test_property_8c_encode_condition_ends_with_valid_fuzzy_name(
     feature_name=feature_name_strategy(),
     mode_and_gene=valid_mode_and_gene(),
 )
-@settings(
+@prop_settings(
     max_examples=300,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
 )
@@ -309,7 +311,7 @@ def test_property_8d_encode_condition_exact_format(
 
 
 @given(chromosome_and_infos=valid_chromosome_and_feature_infos())
-@settings(
+@prop_settings(
     max_examples=300,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
 )
@@ -345,7 +347,7 @@ def test_property_8e_decode_chromosome_condition_count(
 
 
 @given(chromosome_and_infos=valid_chromosome_and_feature_infos())
-@settings(
+@prop_settings(
     max_examples=300,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
 )
@@ -383,7 +385,7 @@ def test_property_8f_decode_chromosome_each_string_matches_pattern(
 
 
 @given(chromosome_and_infos=valid_chromosome_and_feature_infos())
-@settings(
+@prop_settings(
     max_examples=300,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
 )
@@ -505,7 +507,7 @@ def all_active_chromosome_strategy(draw: st.DrawFn) -> tuple[np.ndarray, list[di
 # ---------------------------------------------------------------------------
 
 @given(mode=st.sampled_from(_ALL_MODES))
-@settings(
+@prop_settings(
     max_examples=100,
     suppress_health_check=[HealthCheck.too_slow],
 )
@@ -542,7 +544,7 @@ def test_property_9a_dont_care_equals_num_classes(mode: str) -> None:
     mode=st.sampled_from(_ALL_MODES),
     feature_name=feature_name_strategy(),
 )
-@settings(
+@prop_settings(
     max_examples=200,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
 )
@@ -570,7 +572,7 @@ def test_property_9b_encode_condition_raises_for_dont_care(
 # ---------------------------------------------------------------------------
 
 @given(mode=st.sampled_from(_ALL_MODES))
-@settings(
+@prop_settings(
     max_examples=100,
     suppress_health_check=[HealthCheck.too_slow],
 )
@@ -609,7 +611,7 @@ def test_property_9c_dont_care_strictly_greater_than_all_valid_genes(
 # ---------------------------------------------------------------------------
 
 @given(data=chromosome_with_dont_cares_strategy())
-@settings(
+@prop_settings(
     max_examples=300,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
 )
@@ -662,7 +664,7 @@ def test_property_9d_decode_chromosome_skips_dont_care_genes(
 # ---------------------------------------------------------------------------
 
 @given(data=all_active_chromosome_strategy())
-@settings(
+@prop_settings(
     max_examples=200,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
 )
@@ -696,7 +698,7 @@ def test_property_9e_decode_chromosome_includes_all_active_genes(
 # ---------------------------------------------------------------------------
 
 @given(mode=st.sampled_from(_ALL_MODES), n=st.integers(min_value=1, max_value=20))
-@settings(
+@prop_settings(
     max_examples=100,
     suppress_health_check=[HealthCheck.too_slow],
 )

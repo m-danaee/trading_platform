@@ -27,8 +27,10 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from hypothesis import given, settings, HealthCheck
+from hypothesis import given, HealthCheck
 from hypothesis import strategies as st
+
+from tests.property.hypothesis_config import prop_settings
 
 from gpu_fuzzy_trader.backtest.symbol_conditions import parse_symbol_condition
 from gpu_fuzzy_trader.output.writer import Output_Writer, ValidationError
@@ -176,7 +178,7 @@ def rule_set_with_all_zero_rule_st(draw: st.DrawFn) -> dict:
 # ---------------------------------------------------------------------------
 
 @given(rule_set=valid_rule_set_st())
-@settings(
+@prop_settings(
     max_examples=50,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture],
 )
@@ -292,7 +294,7 @@ def test_property_23a_valid_rule_set_schema(rule_set: dict) -> None:
 # ---------------------------------------------------------------------------
 
 @given(rule_set=oversized_rule_set_st())
-@settings(
+@prop_settings(
     max_examples=30,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture],
 )
@@ -348,7 +350,7 @@ def test_property_23b_oversized_rule_set_truncated_to_5(rule_set: dict) -> None:
 # ---------------------------------------------------------------------------
 
 @given(rule_set=rule_set_with_all_zero_rule_st())
-@settings(
+@prop_settings(
     max_examples=30,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture],
 )

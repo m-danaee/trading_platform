@@ -18,8 +18,10 @@ import tempfile
 
 import pandas as pd
 import pytest
-from hypothesis import given, settings, HealthCheck
+from hypothesis import given, HealthCheck
 from hypothesis import strategies as st
+
+from tests.property.hypothesis_config import prop_settings
 
 from gpu_fuzzy_trader.config import (
     INTERNAL_COLUMNS,
@@ -123,7 +125,7 @@ def _load_from_df(df: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 @given(raw_df=valid_multi_symbol_dataframe())
-@settings(
+@prop_settings(
     max_examples=50,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
 )
@@ -221,7 +223,7 @@ def valid_multi_symbol_dataframe_with_counts(draw: st.DrawFn):
 
 
 @given(data=valid_multi_symbol_dataframe_with_counts())
-@settings(
+@prop_settings(
     max_examples=50,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
 )
@@ -378,7 +380,7 @@ def dataframe_with_nan_labels(draw: st.DrawFn) -> pd.DataFrame:
 
 
 @given(raw_df=dataframe_with_nan_labels())
-@settings(
+@prop_settings(
     max_examples=50,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example],
 )
@@ -505,7 +507,7 @@ def dataframe_with_nan_features(draw: st.DrawFn) -> pd.DataFrame:
 
 
 @given(raw_df=dataframe_with_nan_features())
-@settings(
+@prop_settings(
     max_examples=50,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example, HealthCheck.data_too_large],
 )
