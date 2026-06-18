@@ -6,24 +6,12 @@
       "sl": 1.0,
       "capital_pct": 20.0,
       "conditions": [
-        "[downside_semivol_20] IS Very High",
-        "[band_bb_percB_20_2] IS Bullish",
-        "[ret_vol_corr_30] IS Bullish",
-        "symbol is 10",
-        "symbol is 1",
-        "symbol is 9"
-      ]
-    },
-    {
-      "tp": 2.0,
-      "sl": 1.0,
-      "capital_pct": 20.0,
-      "conditions": [
         "[drawdown_from_peak_60] IS Medium",
-        "[roc_10] IS Extreme Bullish",
-        "[ret_vol_corr_30] IS Bullish",
-        "symbol is 1",
-        "symbol is 3"
+        "[rsi_centered_14] IS Neutral Positive",
+        "[ret_vol_corr_30] IS Strong Bullish",
+        "symbol is 10",
+        "symbol is 7",
+        "symbol is 4"
       ]
     },
     {
@@ -31,37 +19,10 @@
       "sl": 1.0,
       "capital_pct": 20.0,
       "conditions": [
-        "[amihud_illiquidity_20] IS Very High",
-        "[roc_10] IS Bearish",
-        "[ret_vol_corr_30] IS Bullish",
-        "symbol is 9",
-        "symbol is 3",
-        "symbol is 8"
-      ]
-    },
-    {
-      "tp": 2.0,
-      "sl": 1.0,
-      "capital_pct": 20.0,
-      "conditions": [
-        "[range_compression_20_100] IS Low",
-        "[dmi_balance_14] IS Strong Bullish",
+        "[dmi_balance_14] IS Neutral Negative",
         "[bb_width_rel_20] IS Very High",
-        "symbol is 1",
-        "symbol is 2"
-      ]
-    },
-    {
-      "tp": 2.0,
-      "sl": 1.0,
-      "capital_pct": 20.0,
-      "conditions": [
-        "[downside_semivol_20] IS Very High",
-        "[absret_ema_ratio_20_100] IS Medium",
-        "[ret_vol_corr_30] IS Bullish",
-        "symbol is 9",
-        "symbol is 2",
-        "symbol is 1"
+        "[rsi_centered_14] IS Neutral Positive",
+        "symbol is 9"
       ]
     }
   ]

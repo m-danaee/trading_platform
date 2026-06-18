@@ -136,9 +136,10 @@ class TestBuildSymbolSpecializedVariants:
         rule = _make_rule()
         symbols = ["1", "2", "3", "4", "5"]
 
-        variants = _build_symbol_specialized_variants(
-            rule, train_engine, val_engine, symbols,
-        )
+        with patch.object(_cfg, "SYMBOL_SPECIALIZATION_MAX_SYMBOLS_PER_RULE", 3):
+            variants = _build_symbol_specialized_variants(
+                rule, train_engine, val_engine, symbols,
+            )
 
         # Since all variants have the same mock return and all pass the gate,
         # the list should contain a mix of 1-, 2-, and 3-symbol variants.
@@ -230,6 +231,29 @@ class TestBuildSymbolSpecializedVariants:
         assert len([c for c in conds if _is_symbol_condition(c)]) == 1
 
     # --- Test 6: Empty symbols returns rule as-is ---
+
+    def test_eligible_symbols_restricts_universe(self) -> None:
+        """eligible_symbols limits which symbols are specialized."""
+        train_engine = _mock_engine(return_pct=5.0, trades=20)
+        val_engine = _mock_engine(return_pct=3.0, trades=15)
+        rule = _make_rule()
+        symbols = ["1", "2", "3", "4", "5"]
+
+        with patch.object(_cfg, "SYMBOL_SPECIALIZATION_USE_COMBINATIONS", False):
+            variants = _build_symbol_specialized_variants(
+                rule, train_engine, val_engine, symbols,
+                eligible_symbols=["2", "4"],
+            )
+
+        sym_sets = {
+            tuple(
+                c.replace("symbol is ", "")
+                for c in v.get("conditions", [])
+                if _is_symbol_condition(c)
+            )
+            for v in variants
+        }
+        assert sym_sets <= {("2",), ("4",)}
 
     def test_empty_symbols(self) -> None:
         """When symbols list is empty, return the rule unchanged."""
@@ -398,7 +422,7 @@ class TestConfigKeys:
         )
         assert (
             getattr(_cfg, "SYMBOL_SPECIALIZATION_MAX_SYMBOLS_PER_RULE", None)
-            == 3
+            == 1
         )
         assert (
             getattr(_cfg, "SYMBOL_SPECIALIZATION_TOP_SINGLE_SYMBOLS", None)

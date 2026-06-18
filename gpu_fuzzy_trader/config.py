@@ -100,7 +100,10 @@ OUTPUTS_DIR = "outputs"
 RUN_LOG_PATH = os.path.join(OUTPUTS_DIR, "run.log")
 REPORTS_DIR = "outputs/reports"
 
-# Evaluator-clean writer (Task 9).
+# Evaluator v5 schema: rules_set must contain 2–EVALUATOR_MAX_RULES rules.
+EVALUATOR_MAX_RULES = 5
+EVALUATOR_MIN_RULES = 2
+
 # When True, Output_Writer.write also writes a stripped file containing only
 # direction and rules_set (defensive: protects against stricter evaluators
 # that reject unknown top-level keys).
@@ -551,7 +554,7 @@ PHASE2_SUPPORT_PENALTY_WEIGHT_F3 = 0.5  # return / win-rate objective
 # PHASE2_USE_TOTAL_RETURN_OBJ — f3 uses return instead of win rate.
 #   True  → optimize deployable return; aligns with PnL goals.
 #   False → optimize win rate; may favor many small wins over net PnL.
-PHASE2_USE_TOTAL_RETURN_OBJ = False
+PHASE2_USE_TOTAL_RETURN_OBJ = True
 
 # PHASE2_USE_ROBUST_RETURN_OBJ — f3 uses min(train_return, val_return).
 #   True  → penalizes train-only return spikes (recommended with val/CV).
@@ -572,7 +575,7 @@ PHASE2_RETURN_FLOOR_PCT = 0
 # PHASE2_VAL_RETURN_FLOOR_PCT — min validation return % for feasibility.
 #   Higher → stricter OOS alignment during evolution.
 #   Lower  → allow negative val return during search (gates may still catch later).
-PHASE2_VAL_RETURN_FLOOR_PCT = 0.0
+PHASE2_VAL_RETURN_FLOOR_PCT = 0.5
 
 # PHASE2_PROFIT_FACTOR_FLOOR — min profit factor for feasibility.
 #   Higher → require gross wins >> losses; fewer rules pass.
@@ -587,7 +590,7 @@ PHASE2_SYMBOL_MEDIAN_RETURN_FLOOR_PCT = -0.5
 # PHASE2_MIN_PROFITABLE_SYMBOLS — min count of symbols with positive PnL.
 #   Higher → demand broad cross-symbol edge; stricter for 10-symbol universe.
 #   Lower  → allow niche symbol specialists.
-PHASE2_MIN_PROFITABLE_SYMBOLS = 4
+PHASE2_MIN_PROFITABLE_SYMBOLS = 5
 
 # PHASE2_MAX_DRAWDOWN_GATE — hard DD % cap; above this all objectives penalized.
 #   Lower  → Pareto front pushed toward low-drawdown rules; may cut high return.
@@ -605,13 +608,13 @@ PHASE2_POOL_VAL_RETURN_MIN_PCT = 0.0
 # val return by more than this threshold (classic overfit signal).
 #   Higher → more lenient; only extreme train>>val gaps rejected.
 #   Lower  → stricter alignment between train and val required.
-PHASE2_MAX_TRAIN_VAL_GAP_PCT = 20.0
+PHASE2_MAX_TRAIN_VAL_GAP_PCT = 15.0
 
 # PHASE2_KEEP_TOP_RULES — max rules kept in the final Phase 2 pool after
 # admission filtering, sorted by deployability_rank_score descending.
 #   Higher → larger pool for Phase 3 greedy selection.
 #   Lower  → smaller pool; faster Phase 3, fewer combinations.
-PHASE2_KEEP_TOP_RULES = 140
+PHASE2_KEEP_TOP_RULES = 80
 
 # PHASE2_REQUIRE_LAST_FOLD_POSITIVE — in the holdout pool-admission path,
 # require the (single) validation fold to have positive total return.
@@ -649,7 +652,7 @@ PHASE2_MONTHLY_GOOD_RETURN_MIN_PCT = 0.0
 #   Higher → stricter time-stability requirement; fewer rules pass.
 #   Lower  → more lenient; rules that work on a minority of windows survive.
 #   0.50 means the rule must pass on at least half the windows.
-PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO = 0.5
+PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO = 0.55
 
 # PHASE2_MONTHLY_ADMISSION_MIN_MONTHS — minimum number of monthly windows
 # required before the gate is applied.  When the train split is shorter than
@@ -742,7 +745,7 @@ PHASE2_EARLY_STOP_USE_MEDIAN_RETURN = True
 # PHASE2_EARLY_STOP_MIN_VALID_RULES — require at least this many valid Pareto rules.
 #   Higher → don't early-stop while front is still sparse.
 #   Lower  → stop even with tiny front.
-PHASE2_EARLY_STOP_MIN_VALID_RULES = 5
+PHASE2_EARLY_STOP_MIN_VALID_RULES = 3
 
 # --- Plateau early stop (no improvement in best return) ---
 
@@ -855,7 +858,7 @@ PHASE2_STAGE_A_DIVERSITY_RECOVERY_INJECT_FRACTION = 0.35
 PHASE2_STAGE_A_DIVERSITY_RECOVERY_MUTATION_BOOST = 2.0
 
 # PHASE2_STAGE_A_PLATEAU_EARLY_STOP_PATIENCE — gens without progress before stop in A.
-PHASE2_STAGE_A_PLATEAU_EARLY_STOP_PATIENCE = 20
+PHASE2_STAGE_A_PLATEAU_EARLY_STOP_PATIENCE = 28
 
 # PHASE2_STAGE_A_PLATEAU_EARLY_STOP_MIN_GENERATION — earliest plateau stop gen in A.
 PHASE2_STAGE_A_PLATEAU_EARLY_STOP_MIN_GENERATION = 30
@@ -1072,9 +1075,10 @@ PHASE3_PER_SYMBOL_MAX_RULES = 2
 
 # PHASE3_GLOBAL_MIN_RULES / MAX_RULES — total rules in the output JSON.
 #   Higher MIN → require at least this many rules across all symbols.
-#   Higher MAX → cap total rules (10 symbols × 3 max = 30).
+#   MAX must match EVALUATOR_MAX_RULES (evaluator v5 accepts 2–5 rules).
 PHASE3_GLOBAL_MIN_RULES = 2
-PHASE3_GLOBAL_MAX_RULES = 30
+# Evaluator v5 accepts at most 5 rules; Phase 3 must not exceed this.
+PHASE3_GLOBAL_MAX_RULES = 5
 
 # PHASE3_PER_SYMBOL_GREEDY_TOP_K — top-K pool rules tested per greedy round.
 #   Higher → more thorough search per symbol, slower.
@@ -1092,7 +1096,7 @@ PHASE3_PER_SYMBOL_GREEDY_TOP_K = 25
 #   Lowered from 15→8 on 2026-06-17 (Task 12) because 6/10 symbols still
 #   have no rules on test; 8 trades on a ~7k-row per-symbol validation
 #   window (≈0.1% of bars) is still a reasonable evidence minimum.
-PHASE3_PER_SYMBOL_MIN_TRADES = 8
+PHASE3_PER_SYMBOL_MIN_TRADES = 6
 
 # PHASE3_PER_SYMBOL_MIN_RETURN — min val return % on symbol for rule.
 #   Higher → only profitable-on-symbol rules considered.
@@ -1130,7 +1134,7 @@ PHASE3_MAX_CAPITAL_PCT_PER_RULE = 50.0
 #   Higher → more lenient; only extreme gaps rejected.
 #   Lower  → stricter; tighter alignment between train and val required.
 #   Set to a large number (e.g. 999) to disable the gap gate entirely.
-PHASE3_MAX_TRAIN_VAL_GAP_PCT = 20.0
+PHASE3_MAX_TRAIN_VAL_GAP_PCT = 12.0
 
 # --- Engines ---
 
@@ -1252,7 +1256,7 @@ SYMBOL_SPECIALIZATION_USE_COMBINATIONS = True
 #   3 = 1+2+3 combos).
 #   Higher → more symbols per rule, potential overfitting to specific baskets.
 #   Lower  → simpler rules, easier to interpret.
-SYMBOL_SPECIALIZATION_MAX_SYMBOLS_PER_RULE = 3
+SYMBOL_SPECIALIZATION_MAX_SYMBOLS_PER_RULE = 1
 
 # SYMBOL_SPECIALIZATION_TOP_SINGLE_SYMBOLS — number of top-ranked single-symbol
 #   variants used as the seed set for generating 2- and 3-symbol combinations.
@@ -1397,7 +1401,7 @@ MONTHLY_MIN_TRADES = 20
 #   0.0  → non-losing months count (return >= 0; flat months are OK).
 #   2.0  → month must earn at least +2% to count as good.
 #   -1.0 → month counts if return >= -1%.
-MONTHLY_GOOD_RETURN_MIN_PCT = 2.0
+MONTHLY_GOOD_RETURN_MIN_PCT = 0.5
 
 # MONTHLY_MIN_PROFITABLE_RATIO — target fraction of "good" months per
 # MONTHLY_GOOD_RETURN_MIN_PCT; monthly_penalty rises when ratio falls below this.
@@ -1459,7 +1463,7 @@ PHASE4_GRID_MAX_TOTAL_CAPITAL = 95.0
 PHASE4_GRID_PASSES = 2
 
 # PHASE4_GRID_MIN_IMPROVEMENT — minimum score improvement to accept a new combo.
-PHASE4_GRID_MIN_IMPROVEMENT = 0.02
+PHASE4_GRID_MIN_IMPROVEMENT = 0.005
 
 
 # =============================================================================
@@ -1511,6 +1515,9 @@ assert float(PHASE3_MONTHLY_PENALTY_SCALE) > 0.0, (
 )
 assert float(PHASE4_MONTHLY_PENALTY_SCALE) > 0.0, (
     "PHASE4_MONTHLY_PENALTY_SCALE must be > 0"
+)
+assert int(PHASE3_GLOBAL_MAX_RULES) <= int(EVALUATOR_MAX_RULES), (
+    "PHASE3_GLOBAL_MAX_RULES must not exceed evaluator schema cap"
 )
 assert PHASE1_SIGN_CONSISTENCY_MIN_FOLDS <= PHASE1_STATIONARITY_FOLDS, (
     "sign-consistency cannot require more folds than stationarity uses"

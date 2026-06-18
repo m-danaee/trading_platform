@@ -161,6 +161,8 @@ def _build_symbol_specialized_variants(
     train_engine: object,
     val_engine: object,
     symbols: list[str],
+    *,
+    eligible_symbols: list[str] | None = None,
 ) -> list[dict]:
     """Build top-K 1-, 2-, and 3-symbol variants of *rule*, scored and filtered.
 
@@ -188,6 +190,9 @@ def _build_symbol_specialized_variants(
         Engine with ``simulate_rule_set`` method (validation split).
     symbols : list[str]
         All available symbol labels in the universe.
+    eligible_symbols : list[str] | None
+        When set, only these symbols are considered for specialization
+        (typically symbols that greedily selected this pool rule in Phase 3).
 
     Returns
     -------
@@ -221,6 +226,12 @@ def _build_symbol_specialized_variants(
 
     if not symbols:
         return [dict(rule)]
+
+    if eligible_symbols:
+        eligible_set = {str(s) for s in eligible_symbols}
+        symbols = [str(s) for s in symbols if str(s) in eligible_set]
+        if not symbols:
+            return [dict(rule)]
 
     # When combinations are disabled, only single-symbol variants are generated.
     # This is equivalent to the legacy Phase 3 behaviour.
@@ -346,17 +357,21 @@ def _build_multi_symbol_merged_rules(
         Merged rules ready for sorting and final output.
     """
     selected_indices: set[int] = set()
-    for indices in symbol_assignments.values():
+    pool_idx_to_symbols: dict[int, list[str]] = {}
+    for sym, indices in symbol_assignments.items():
         for idx in indices:
             selected_indices.add(idx)
+            pool_idx_to_symbols.setdefault(int(idx), []).append(str(sym))
 
     merged: list[dict] = []
     for pool_idx in sorted(selected_indices):
         rule = dict(pool[pool_idx])
         rule["_pool_idx"] = int(pool_idx)
 
+        eligible = pool_idx_to_symbols.get(int(pool_idx), [])
         variants = _build_symbol_specialized_variants(
             rule, train_engine, val_engine, symbols,
+            eligible_symbols=eligible or None,
         )
         if variants:
             # variants are sorted by score descending; pick the best.

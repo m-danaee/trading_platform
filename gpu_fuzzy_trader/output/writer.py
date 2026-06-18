@@ -25,7 +25,8 @@ Schema (must match evaluator_v3.ipynb exactly):
 Constraints (Requirements 12.1–12.9):
   - direction must be "long" or "short"
   - rules_set must contain 2–5 rule objects
-  - If > 5 rules, truncate to first 5 (log WARNING)
+      - Truncates rules_set to EVALUATOR_MAX_RULES if needed (log WARNING).
+      - Rules must already be score-ranked (Phase 3 sorts before write).
   - Each rule must have exactly: tp, sl, capital_pct, conditions
   - tp, sl, capital_pct must be floats
   - If all three of tp/sl/capital_pct are zero → reject rule (log ERROR, raise ValidationError)
@@ -223,7 +224,7 @@ def _validate_rule_set(rule_set: object) -> dict:
       - Checks top-level keys
       - Validates direction
       - Truncates rules_set to 5 if needed (log WARNING)
-      - Validates 2–5 rules after truncation
+      - Validates EVALUATOR_MIN_RULES–EVALUATOR_MAX_RULES rules after truncation
       - Validates each rule object
 
     Returns a normalised dict ready for JSON serialisation.
@@ -255,17 +256,18 @@ def _validate_rule_set(rule_set: object) -> dict:
             f"'rules_set' must be a list, got {type(rules_list).__name__!r}."
         )
 
-    # Requirement 12.8: truncate to max if > max
-    schema_max = 5
+    # Requirement 12.8: truncate to evaluator max (list must be score-ranked)
+    schema_max = int(getattr(_cfg, "EVALUATOR_MAX_RULES", 5))
+    schema_min = int(getattr(_cfg, "EVALUATOR_MIN_RULES", 2))
     if len(rules_list) > schema_max:
         logger.warning(
-            "rules_set contains %d rules (max %d); truncating to first %d.",
+            "rules_set contains %d rules (max %d); truncating to top %d "
+            "(score-ranked list order).",
             len(rules_list), schema_max, schema_max,
         )
         rules_list = rules_list[:schema_max]
 
     # Requirement 12.8: must have at least min rules
-    schema_min = 2
     if len(rules_list) < schema_min:
         raise ValidationError(
             f"'rules_set' must contain at least {schema_min} rules, got {len(rules_list)}."
