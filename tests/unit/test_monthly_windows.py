@@ -114,21 +114,54 @@ class TestBuildMonthlyWindows:
             }
         )
 
-        # With min_rows=0 (no filter), expect 2 windows over 60 days
-        # (2 × 30 days = 60 days with stride=30).
+        # With min_rows=0 (no filter), expect 2 sequential 30-day windows.
         windows_no_filter = build_monthly_windows(
-            df, window_days=30, stride_days=30, min_rows=0, max_windows=24
+            df, window_days=30, min_rows=0, max_windows=24
         )
 
         # With min_rows=2500 (strict filter), expect fewer or same windows.
         windows_filtered = build_monthly_windows(
-            df, window_days=30, stride_days=30, min_rows=2500, max_windows=24
+            df, window_days=30, min_rows=2500, max_windows=24
         )
 
         assert len(windows_no_filter) >= len(windows_filtered), (
             f"min_rows=0 should give at least as many windows "
             f"as min_rows=2500 ({len(windows_no_filter)} vs {len(windows_filtered)})"
         )
+
+    def test_build_monthly_windows_are_sequential_non_overlapping(self) -> None:
+        """Each window starts where the previous one ended (no overlap)."""
+        n_rows = 10_000
+        start = pd.Timestamp("2020-01-01")
+        df = pd.DataFrame(
+            {
+                "datetime": [
+                    start + pd.Timedelta(minutes=5 * i)
+                    for i in range(n_rows)
+                ],
+                "symbol": [1] * n_rows,
+                "label_open_next": [0.0] * n_rows,
+                "label_close_288": [0.0] * n_rows,
+                "label_min_288": [0.0] * n_rows,
+                "label_max_288": [0.0] * n_rows,
+                "label_max_before_min": [0.0] * n_rows,
+            }
+        )
+        windows = build_monthly_windows(
+            df, window_days=30, min_rows=0, max_windows=24
+        )
+        assert len(windows) >= 2
+
+        prev_end: pd.Timestamp | None = None
+        for w in windows:
+            dt = pd.to_datetime(w["datetime"])
+            w_start = dt.min()
+            w_end = dt.max()
+            if prev_end is not None:
+                assert w_start >= prev_end, (
+                    "window start must not precede previous window's last bar"
+                )
+            prev_end = w_end
 
 
 class TestSmoke:

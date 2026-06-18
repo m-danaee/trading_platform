@@ -164,12 +164,6 @@ class OOS_Evaluator:
                 if split == "test":
                     all_per_symbol.extend(per_symbol_rows)
 
-            results[direction] = {
-                split: metrics_by_split[split]
-                for split in ("train", "validation", "test")
-                if split in metrics_by_split
-            }
-
             # 3b. Remove negative-PnL rules from the strategy (before reports)
             cleaned = False
             if _cfg.PHASE5_REMOVE_NEGATIVE_PNL_RULES:
@@ -189,6 +183,12 @@ class OOS_Evaluator:
                 all_per_symbol = [
                     r for r in all_per_symbol if r.get("dataset") != "test"
                 ] + per_symbol_rows2
+
+            results[direction] = {
+                split: metrics_by_split[split]
+                for split in ("train", "validation", "test")
+                if split in metrics_by_split
+            }
 
             test_metrics = metrics_by_split.get("test", {})
             test_return = float(test_metrics.get("total_return_pct", 0.0))

@@ -63,11 +63,15 @@ def _datetime_series(df: pd.DataFrame) -> pd.Series:
 def build_monthly_windows(
     df: pd.DataFrame,
     window_days: int | None = None,
-    stride_days: int | None = None,
     min_rows: int | None = None,
     max_windows: int | None = None,
 ) -> list[pd.DataFrame]:
-    """Return chronological rolling validation windows.
+    """Return sequential, non-overlapping validation windows.
+
+    Windows tile the timeline back-to-back: each slice is
+    ``[cur, cur + window_days)``, then ``cur`` advances to the end of that
+    slice.  No overlap between kept windows; calendar days only skip
+    evaluation when a slice fails ``min_rows``.
 
     Parameters
     ----------
@@ -77,9 +81,6 @@ def build_monthly_windows(
     window_days:
         Width of each window in calendar days.  Default ``MONTHLY_WINDOW_DAYS``
         (30).
-    stride_days:
-        Step between window starts.  Default ``MONTHLY_WINDOW_STRIDE_DAYS``
-        (also 30, i.e. non-overlapping).
     min_rows:
         Minimum number of rows a window must contain to be kept.
         Default ``MONTHLY_WINDOW_MIN_ROWS`` (2500).
@@ -102,10 +103,6 @@ def build_monthly_windows(
     window_days = int(
         window_days if window_days is not None
         else getattr(_cfg, "MONTHLY_WINDOW_DAYS", 30)
-    )
-    stride_days = int(
-        stride_days if stride_days is not None
-        else getattr(_cfg, "MONTHLY_WINDOW_STRIDE_DAYS", window_days)
     )
     min_rows = int(
         min_rows if min_rows is not None
@@ -134,7 +131,6 @@ def build_monthly_windows(
     windows: list[pd.DataFrame] = []
     cur = start
     delta = pd.Timedelta(days=window_days)
-    stride = pd.Timedelta(days=stride_days)
 
     while cur <= end and len(windows) < max_windows:
         nxt = cur + delta
@@ -142,7 +138,7 @@ def build_monthly_windows(
         part = work.loc[mask].drop(columns=["__dt"])
         if len(part) >= min_rows:
             windows.append(part.reset_index(drop=True))
-        cur += stride
+        cur = nxt
 
     return windows
 

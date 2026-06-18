@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -809,6 +810,107 @@ class TestOOSEvaluatorRun:
                 assert col in df.columns, f"Missing column: {col}"
         finally:
             self._restore_paths(m, orig_s, orig_r)
+
+    def test_returned_results_match_post_cleanup_report_metrics(self, tmp_path):
+        """Returned Phase 5 metrics must match saved report after rule pruning."""
+        import gpu_fuzzy_trader.phases.phase5_oos as m
+
+        orig_s, orig_r = self._setup_paths(m, tmp_path, directions=("short",))
+        strategy = _make_rule_set("short", n_rules=3)
+        pre_test_metrics = {
+            "direction": "short",
+            "total_return_pct": -3.59,
+            "max_drawdown_pct": 8.42,
+            "win_rate": 38.0,
+            "profit_factor": 0.9,
+            "executed_trades": 900,
+            "account_ruined": False,
+            "final_equity": 964.1,
+            "per_symbol_metrics": {},
+        }
+        post_test_metrics = {
+            "direction": "short",
+            "total_return_pct": 0.2,
+            "max_drawdown_pct": 5.31,
+            "win_rate": 39.9,
+            "profit_factor": 1.0,
+            "executed_trades": 750,
+            "account_ruined": False,
+            "final_equity": 1002.0,
+            "per_symbol_metrics": {},
+        }
+        split_metrics = {
+            "train": {"total_return_pct": 1.0, "executed_trades": 100},
+            "validation": {"total_return_pct": 0.5, "executed_trades": 80},
+            "test": pre_test_metrics,
+        }
+        test_trade_log = pd.DataFrame(
+            {
+                "Rule_Index": [1, 2, 3],
+                "Net_PnL": [10.0, -20.0, -5.0],
+                "Equity_After": [1010.0, 990.0, 985.0],
+            }
+        )
+        evaluate_calls = {"count": 0}
+
+        def mock_evaluate(_self, _df, _strategy, direction):
+            evaluate_calls["count"] += 1
+            if evaluate_calls["count"] == 3:
+                return pre_test_metrics, [], test_trade_log
+            if evaluate_calls["count"] == 4:
+                return post_test_metrics, [], test_trade_log.iloc[:1]
+            split = ("train", "validation")[evaluate_calls["count"] - 1]
+            return split_metrics[split], [], pd.DataFrame()
+
+        datasets = {
+            "train": _make_df(n_rows=20),
+            "validation": _make_df(n_rows=20),
+            "test": _make_df(n_rows=20),
+        }
+
+        with patch.object(
+            OOS_Evaluator,
+            "_load_datasets_by_split",
+            return_value=datasets,
+        ), patch.object(
+            OOS_Evaluator,
+            "_evaluate_strategy",
+            mock_evaluate,
+        ), patch.object(
+            OOS_Evaluator,
+            "_remove_negative_pnl_rules",
+            return_value=(strategy, True),
+        ), patch.object(
+            OOS_Evaluator,
+            "_load_selected_features",
+            return_value=[],
+        ), patch(
+            "gpu_fuzzy_trader.phases.phase5_oos.Reporter"
+        ) as reporter_cls:
+            reporter_cls.return_value.plot_equity_curve.return_value = ""
+            reporter_cls.return_value.write_per_symbol_csv.return_value = None
+            reporter_cls.return_value.write_strategy_evaluation_table.return_value = None
+            reporter_cls.return_value.plot_per_rule_breakdown.return_value = None
+            reporter_cls.return_value.plot_distribution_and_equity.return_value = None
+            reporter_cls.return_value.write_spearman_correlation_report.return_value = None
+            reporter_cls.return_value.write_feature_stratified_performance.return_value = None
+            reporter_cls.return_value.write_generalization_diagnostics.return_value = None
+
+            report_path = m._REPORT_PATHS["short"]
+            try:
+                result = OOS_Evaluator(test_csv_path=str(
+                    tmp_path / "unused.csv")).run()
+            finally:
+                self._restore_paths(m, orig_s, orig_r)
+
+        assert result["short"]["test"]["total_return_pct"] == pytest.approx(
+            0.2)
+        assert result["short"]["test"]["executed_trades"] == 750
+
+        with open(report_path) as fh:
+            report = json.load(fh)
+        assert report["total_return_pct"] == pytest.approx(0.2)
+        assert report["executed_trades"] == 750
 
     def test_run_creates_extended_reporting_outputs(self, tmp_path):
         import gpu_fuzzy_trader.phases.phase5_oos as m
