@@ -154,6 +154,87 @@ def _rule_to_engine_format(rule: dict) -> dict:
     }
 
 
+def _populate_split_mask_cache(
+    cache: Phase3EvalCache,
+    rules: list[dict],
+    train_df: pd.DataFrame,
+    val_df: pd.DataFrame,
+) -> int:
+    """Fill train/val signal masks for unique rule conditions. Returns unique count."""
+    if "datetime" in train_df.columns:
+        cache.train_row_priority = compute_entry_time_priority(
+            train_df["datetime"].values, len(train_df)
+        )
+    else:
+        cache.train_row_priority = np.arange(len(train_df), dtype=np.int64)
+
+    if len(val_df) > 0:
+        if "datetime" in val_df.columns:
+            cache.val_row_priority = compute_entry_time_priority(
+                val_df["datetime"].values, len(val_df)
+            )
+        else:
+            cache.val_row_priority = np.arange(len(val_df), dtype=np.int64)
+
+    if "symbol" in train_df.columns:
+        cache.train_normalized_symbols = get_normalized_symbol_array(train_df)
+    if len(val_df) > 0 and "symbol" in val_df.columns:
+        cache.val_normalized_symbols = get_normalized_symbol_array(val_df)
+
+    train_mask_cache: dict[tuple[str, ...], np.ndarray] = {}
+    val_mask_cache: dict[tuple[str, ...], np.ndarray] = {}
+    seen: set[frozenset] = set()
+
+    for rule in rules:
+        key = conditions_key(rule["conditions"])
+        if key in seen:
+            continue
+        seen.add(key)
+        conditions = rule["conditions"]
+
+        cache.train_masks[key] = get_or_build_rule_mask(
+            train_df, conditions, train_mask_cache,
+        )
+        if len(val_df) > 0:
+            cache.val_masks[key] = get_or_build_rule_mask(
+                val_df, conditions, val_mask_cache,
+            )
+
+    return len(seen)
+
+
+def build_rules_signal_cache(
+    rules: list[dict],
+    train_df: pd.DataFrame,
+    val_df: pd.DataFrame,
+) -> Phase3EvalCache:
+    """
+    Precompute train/val signal masks for a fixed rule set (Phase 4 grid).
+
+    Skips per-rule validation gate stats — only conditions matter for masks.
+    """
+    cache = Phase3EvalCache(
+        n_rows_train=len(train_df),
+        n_rows_val=len(val_df),
+    )
+    n_unique = _populate_split_mask_cache(cache, rules, train_df, val_df)
+    logger.info(
+        "Phase 4 signal cache: %d unique rules, train_rows=%d, val_rows=%d",
+        n_unique, cache.n_rows_train, cache.n_rows_val,
+    )
+    return cache
+
+
+def build_single_split_signal_cache(
+    rules: list[dict],
+    df: pd.DataFrame,
+) -> Phase3EvalCache:
+    """Mask cache for one dataframe slice (e.g. monthly window). Use split='train'."""
+    cache = Phase3EvalCache(n_rows_train=len(df), n_rows_val=0)
+    _populate_split_mask_cache(cache, rules, df, pd.DataFrame())
+    return cache
+
+
 def build_phase3_eval_cache(
     pool: list[dict],
     train_df: pd.DataFrame,
@@ -167,46 +248,15 @@ def build_phase3_eval_cache(
         n_rows_train=len(train_df),
         n_rows_val=len(val_df),
     )
+    n_unique = _populate_split_mask_cache(cache, pool, train_df, val_df)
 
-    if "datetime" in train_df.columns:
-        cache.train_row_priority = compute_entry_time_priority(
-            train_df["datetime"].values, len(train_df)
-        )
-    else:
-        cache.train_row_priority = np.arange(len(train_df), dtype=np.int64)
-
-    if "datetime" in val_df.columns:
-        cache.val_row_priority = compute_entry_time_priority(
-            val_df["datetime"].values, len(val_df)
-        )
-    else:
-        cache.val_row_priority = np.arange(len(val_df), dtype=np.int64)
-
-    if "symbol" in train_df.columns:
-        cache.train_normalized_symbols = get_normalized_symbol_array(train_df)
-    if "symbol" in val_df.columns:
-        cache.val_normalized_symbols = get_normalized_symbol_array(val_df)
-
-    train_mask_cache: dict[tuple[str, ...], np.ndarray] = {}
-    val_mask_cache: dict[tuple[str, ...], np.ndarray] = {}
-    seen: set[frozenset] = set()
-
+    seen_val: set[frozenset] = set()
     for rule in pool:
         key = conditions_key(rule["conditions"])
-        if key in seen:
+        if key in seen_val:
             continue
-        seen.add(key)
-
+        seen_val.add(key)
         fmt = _rule_to_engine_format(rule)
-        conditions = fmt["conditions"]
-
-        cache.train_masks[key] = get_or_build_rule_mask(
-            train_df, conditions, train_mask_cache,
-        )
-        cache.val_masks[key] = get_or_build_rule_mask(
-            val_df, conditions, val_mask_cache,
-        )
-
         try:
             metrics = val_engine.simulate_rule_set([fmt])
         except Exception as exc:
@@ -218,7 +268,7 @@ def build_phase3_eval_cache(
 
     logger.info(
         "Phase 3 eval cache: %d unique rules, train_rows=%d, val_rows=%d",
-        len(seen), cache.n_rows_train, cache.n_rows_val,
+        n_unique, cache.n_rows_train, cache.n_rows_val,
     )
     return cache
 

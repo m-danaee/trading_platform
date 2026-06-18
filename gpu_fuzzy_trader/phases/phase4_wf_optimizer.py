@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional
 
 import numpy as np
@@ -24,9 +24,15 @@ import pandas as pd
 
 from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
+from gpu_fuzzy_trader.backtest.df_slim import slim_backtest_df
 from gpu_fuzzy_trader.output.writer import (
     _maybe_write_evaluator_clean,
     write_evaluator_clean,
+)
+from gpu_fuzzy_trader.phases.phase3_cache import (
+    Phase3EvalCache,
+    build_rules_signal_cache,
+    build_single_split_signal_cache,
 )
 from gpu_fuzzy_trader.phases.phase3_rule_set import _monthly_feature_names
 from gpu_fuzzy_trader.reporting.reporter import Reporter
@@ -233,12 +239,14 @@ def _normalize_capital_pct(rules_set: list[dict]) -> list[dict]:
 
 @dataclass
 class _Phase4MonthlyContext:
-    """Cached monthly windows for Phase 4 grid scoring."""
+    """Cached monthly windows and per-window mask caches for Phase 4 grid scoring."""
 
     combined_df: pd.DataFrame
     monthly_windows: list[pd.DataFrame]
     feature_names: list[str]
     direction: str
+    window_engines: list[CPUBacktestEngine] = field(default_factory=list)
+    window_caches: list[Phase3EvalCache] = field(default_factory=list)
 
 
 def _phase4_scaled_monthly_penalty(raw_penalty: float) -> float:
@@ -256,8 +264,9 @@ def _build_phase4_monthly_context(
     train_df: pd.DataFrame | None,
     val_df: pd.DataFrame,
     direction: str,
+    rules: list[dict],
 ) -> _Phase4MonthlyContext | None:
-    """Build train+val monthly windows once per Phase 4 grid run."""
+    """Build train+val monthly windows and per-window mask caches once per grid run."""
     if not bool(getattr(_cfg, "MONTHLY_VALIDATION_ENABLED", False)):
         return None
     if not bool(getattr(_cfg, "PHASE4_MONTHLY_EVAL_EVERY_TRIAL", True)):
@@ -272,11 +281,27 @@ def _build_phase4_monthly_context(
         return None
 
     combined = pd.concat(parts, ignore_index=True)
+    feature_names = _monthly_feature_names(combined)
+    monthly_windows = build_monthly_windows(combined)
+
+    window_engines: list[CPUBacktestEngine] = []
+    window_caches: list[Phase3EvalCache] = []
+    for part in monthly_windows:
+        slim = (
+            slim_backtest_df(part, feature_names)
+            if feature_names
+            else part
+        )
+        window_caches.append(build_single_split_signal_cache(rules, slim))
+        window_engines.append(CPUBacktestEngine(slim, {}, direction))
+
     return _Phase4MonthlyContext(
         combined_df=combined,
-        monthly_windows=build_monthly_windows(combined),
-        feature_names=_monthly_feature_names(combined),
+        monthly_windows=monthly_windows,
+        feature_names=feature_names,
         direction=direction,
+        window_engines=window_engines,
+        window_caches=window_caches,
     )
 
 
@@ -286,13 +311,24 @@ def _monthly_drag_for_rules(
 ) -> float:
     """Monthly penalty drag for one grid trial's rule set."""
     try:
-        summary, _ = evaluate_rule_set_monthly(
-            monthly_ctx.combined_df,
-            rules,
-            monthly_ctx.direction,
-            feature_names=monthly_ctx.feature_names,
-            windows=monthly_ctx.monthly_windows,
-        )
+        if monthly_ctx.window_engines and monthly_ctx.window_caches:
+            metrics: list[dict] = []
+            for eng, win_cache in zip(
+                monthly_ctx.window_engines,
+                monthly_ctx.window_caches,
+                strict=True,
+            ):
+                metrics.append(
+                    eng.simulate_rule_set_from_cache(rules, win_cache, "train"))
+            summary = summarize_monthly_metrics(metrics)
+        else:
+            summary, _ = evaluate_rule_set_monthly(
+                monthly_ctx.combined_df,
+                rules,
+                monthly_ctx.direction,
+                feature_names=monthly_ctx.feature_names,
+                windows=monthly_ctx.monthly_windows,
+            )
         if summary.windows <= 0:
             raw_pen = float(
                 getattr(_cfg, "PHASE4_MONTHLY_FALLBACK_PENALTY", 5.0))
@@ -360,10 +396,17 @@ def _evaluate_ruleset(
     rules: list[dict],
     *,
     monthly_ctx: _Phase4MonthlyContext | None = None,
+    eval_cache: Phase3EvalCache | None = None,
 ) -> tuple[dict, dict, float]:
     """Evaluate a full rule set on train and val, returning metrics + score."""
-    train_m = train_engine.simulate_rule_set(rules)
-    val_m = val_engine.simulate_rule_set(rules)
+    if eval_cache is not None:
+        train_m = train_engine.simulate_rule_set_from_cache(
+            rules, eval_cache, "train")
+        val_m = val_engine.simulate_rule_set_from_cache(
+            rules, eval_cache, "val")
+    else:
+        train_m = train_engine.simulate_rule_set(rules)
+        val_m = val_engine.simulate_rule_set(rules)
     score = _score_metrics(train_m, val_m)
     if monthly_ctx is not None:
         score -= _monthly_drag_for_rules(rules, monthly_ctx)
@@ -376,6 +419,7 @@ def _optimize_risk_grid(
     val_engine: CPUBacktestEngine,
     *,
     monthly_ctx: _Phase4MonthlyContext | None = None,
+    eval_cache: Phase3EvalCache | None = None,
     min_improvement: float = 0.02,
 ) -> tuple[list[dict], dict, dict, float, list[dict]]:
     """Per-rule round-robin grid search over TP, SL, capital_pct.
@@ -407,7 +451,8 @@ def _optimize_risk_grid(
 
     # Initial evaluation
     cur_train, cur_val, cur_score = _evaluate_ruleset(
-        train_engine, val_engine, best_rules, monthly_ctx=monthly_ctx)
+        train_engine, val_engine, best_rules,
+        monthly_ctx=monthly_ctx, eval_cache=eval_cache)
 
     hist: list[dict] = [{
         "pass": 0,
@@ -468,7 +513,8 @@ def _optimize_risk_grid(
                         try:
                             train_m, val_m, score = _evaluate_ruleset(
                                 train_engine, val_engine, trial,
-                                monthly_ctx=monthly_ctx)
+                                monthly_ctx=monthly_ctx,
+                                eval_cache=eval_cache)
                         except (ValueError, KeyError, TypeError) as exc:
                             logger.debug(
                                 "grid trial failed (tp=%.2f, sl=%.2f, cap=%.2f): %s",
@@ -518,7 +564,8 @@ def _optimize_risk_grid(
 
     # Final evaluation with optimized rules
     final_train, final_val, final_score = _evaluate_ruleset(
-        train_engine, val_engine, best_rules, monthly_ctx=monthly_ctx)
+        train_engine, val_engine, best_rules,
+        monthly_ctx=monthly_ctx, eval_cache=eval_cache)
     return best_rules, final_train, final_val, final_score, hist
 
 
@@ -703,8 +750,11 @@ class WalkForwardRiskOptimizer:
         val_engine = CPUBacktestEngine(
             self.val_df, {}, self.direction)
 
+        eval_cache = build_rules_signal_cache(
+            rules, _train_df, self.val_df)
+
         monthly_ctx = _build_phase4_monthly_context(
-            _train_df, self.val_df, self.direction)
+            _train_df, self.val_df, self.direction, rules)
 
         min_improvement = float(
             getattr(_cfg, "PHASE4_GRID_MIN_IMPROVEMENT", 0.02))
@@ -742,6 +792,7 @@ class WalkForwardRiskOptimizer:
                 train_engine,
                 val_engine,
                 monthly_ctx=monthly_ctx,
+                eval_cache=eval_cache,
                 min_improvement=min_improvement,
             )
         )
@@ -765,7 +816,8 @@ class WalkForwardRiskOptimizer:
                 float(rule.get("capital_pct", 0.0)), cap)
         optimized_rules = _normalize_capital_pct(optimized_rules)
 
-        val_metrics_final = val_engine.simulate_rule_set(optimized_rules)
+        val_metrics_final = val_engine.simulate_rule_set_from_cache(
+            optimized_rules, eval_cache, "val")
         val_ret = float(val_metrics_final.get("total_return_pct", 0.0))
         val_pf = float(val_metrics_final.get("profit_factor", 0.0))
         ret_gate = float(_cfg.PHASE5_VALIDATION_RETURN_GATE_PCT)
