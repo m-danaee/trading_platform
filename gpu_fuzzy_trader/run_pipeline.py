@@ -1227,15 +1227,28 @@ class Pipeline_Orchestrator:
                 dir_phase_name, len(feature_infos),
             )
             try:
-                generator = Rule_Pool_Generator(
-                    train_df=train_df,
-                    feature_infos=feature_infos,
-                    direction=direction,
-                    val_df=val_df,
-                    cv_folds=self._cv_folds,
-                    seed=_cfg.PHASE2_SEED,
-                )
-                pool = generator.run()
+                if _cfg.PHASE2_ISLAND_MODE == "cluster":
+                    from gpu_fuzzy_trader.phases.phase2_island_scheduler import (
+                        run_cluster_phase2,
+                    )
+                    pool = run_cluster_phase2(
+                        train_df=train_df,
+                        val_df=val_df,
+                        feature_infos=feature_infos,
+                        direction=direction,
+                        cv_folds=self._cv_folds,
+                        seed=_cfg.PHASE2_SEED,
+                    )
+                else:
+                    generator = Rule_Pool_Generator(
+                        train_df=train_df,
+                        feature_infos=feature_infos,
+                        direction=direction,
+                        val_df=val_df,
+                        cv_folds=self._cv_folds,
+                        seed=_cfg.PHASE2_SEED,
+                    )
+                    pool = generator.run()
             except Exception as exc:
                 logger.error(
                     "Phase 2 [%s] failed: %s", direction, exc, exc_info=True

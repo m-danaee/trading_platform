@@ -99,6 +99,7 @@ class TestStageObjectivePenalties:
 
 class TestIslandStageBudgets:
     def test_island_budgets_scale_total_generations(self, monkeypatch):
+        monkeypatch.setattr(_cfg, "PHASE2_ISLAND_MODE", "global")
         monkeypatch.setattr(_cfg, "PHASE2_TWO_STAGE_ENABLED", True)
         monkeypatch.setattr(_cfg, "PHASE2_STAGE_A_GENERATIONS", 80)
         monkeypatch.setattr(_cfg, "PHASE2_STAGE_B_GENERATIONS", 40)
@@ -108,6 +109,7 @@ class TestIslandStageBudgets:
         assert stage_a > stage_b
 
     def test_resolve_island_stage_transitions_to_b(self, monkeypatch):
+        monkeypatch.setattr(_cfg, "PHASE2_ISLAND_MODE", "global")
         monkeypatch.setattr(_cfg, "PHASE2_TWO_STAGE_ENABLED", True)
         monkeypatch.setattr(_cfg, "PHASE2_STAGE_A_GENERATIONS", 80)
         monkeypatch.setattr(_cfg, "PHASE2_STAGE_B_GENERATIONS", 40)

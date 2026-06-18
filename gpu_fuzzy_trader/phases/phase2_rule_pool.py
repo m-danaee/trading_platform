@@ -519,6 +519,7 @@ def compute_phase2_objectives_from_metrics(
     diversity_metrics_by_key: dict[tuple[int, ...], dict] | None = None,
     stage_params=None,
     n_valid_rows: int | None = None,
+    island_hyperparams: _cfg.IslandHyperparams | None = None,
 ) -> tuple[np.ndarray, dict]:
     """
     Build Phase 2 minimisation objectives from precomputed train/val metrics.
@@ -532,7 +533,9 @@ def compute_phase2_objectives_from_metrics(
         robust_return_pct,
     )
 
-    floors = resolve_evolution_floors(stage_params, n_rows=n_valid_rows)
+    floors = resolve_evolution_floors(
+        stage_params, n_rows=n_valid_rows, island_hyperparams=island_hyperparams,
+    )
     active = _count_active_conditions(chromosome, dont_cares)
 
     cond_penalty = 0.0
@@ -553,7 +556,11 @@ def compute_phase2_objectives_from_metrics(
 
     sortino_for_obj = sortino_train
     val_floor_penalty = 0.0
-    val_trade_floor = _val_trade_floor_for_objectives(n_valid_rows)
+    val_trade_floor = (
+        int(island_hyperparams.val_trade_floor)
+        if island_hyperparams is not None
+        else _val_trade_floor_for_objectives(n_valid_rows)
+    )
 
     if val_metrics is not None:
         raw_val_sortino = float(val_metrics.get(
@@ -609,9 +616,10 @@ def compute_phase2_objectives_from_metrics(
     if profit_factor < _cfg.PHASE2_PROFIT_FACTOR_FLOOR:
         support_penalty += (_cfg.PHASE2_PROFIT_FACTOR_FLOOR - profit_factor) * 5.0
 
-    support_penalty += _symbol_robustness_penalty(metrics)
-    if val_metrics is not None:
-        support_penalty += _symbol_robustness_penalty(val_metrics)
+    if not (island_hyperparams is not None and island_hyperparams.skip_symbol_robustness_penalty):
+        support_penalty += _symbol_robustness_penalty(metrics)
+        if val_metrics is not None:
+            support_penalty += _symbol_robustness_penalty(val_metrics)
     support_penalty += val_floor_penalty
 
     dd_gate = getattr(_cfg, "PHASE2_MAX_DRAWDOWN_GATE", 20.0)
@@ -735,6 +743,7 @@ def _evaluate_chromosome(
     diversity_reference: list[np.ndarray] | None = None,
     diversity_metrics_by_key: dict[tuple[int, ...], dict] | None = None,
     stage_params=None,
+    island_hyperparams: _cfg.IslandHyperparams | None = None,
 ) -> tuple[np.ndarray, dict]:
     """
     Evaluate a single chromosome and return (objectives, metrics).
@@ -783,6 +792,9 @@ def _evaluate_chromosome(
     if val_regime_row_counts is None and val_engine is not None:
         val_regime_row_counts = getattr(val_engine, "_regime_row_counts", None)
 
+    if island_hyperparams is None:
+        island_hyperparams = getattr(engine, "_island_hyperparams", None)
+
     n_valid_rows = (
         int(getattr(val_engine, "n_valid_rows"))
         if val_engine is not None and getattr(val_engine, "n_valid_rows", None)
@@ -801,6 +813,7 @@ def _evaluate_chromosome(
         diversity_metrics_by_key=diversity_metrics_by_key,
         stage_params=stage_params,
         n_valid_rows=n_valid_rows,
+        island_hyperparams=island_hyperparams,
     )
 
 
@@ -1942,6 +1955,12 @@ class Rule_Pool_Generator:
         seed: int | None = None,
         val_df: pd.DataFrame | None = None,
         cv_folds: list | None = None,
+        island_id: str | None = None,
+        source_symbols: list[str] | None = None,
+        island_hyperparams: _cfg.IslandHyperparams | None = None,
+        island_profile: str = "global",
+        reference_rows: int | None = None,
+        pending_migrant_seeds: list[dict] | None = None,
     ) -> None:
         if direction not in ("long", "short"):
             raise ValueError(
@@ -1961,6 +1980,12 @@ class Rule_Pool_Generator:
         self._evolution_state = None
         self._island_history: list[dict] = []
         self._island_generations_done = 0
+        self.island_id = island_id
+        self.source_symbols = list(source_symbols or [])
+        self.island_hyperparams = island_hyperparams
+        self.island_profile = str(island_profile)
+        self.reference_rows = reference_rows
+        self._pending_migrant_seeds = list(pending_migrant_seeds or [])
 
         self._scoped_train_df = train_df
         self._scoped_val_df = val_df
@@ -2014,6 +2039,26 @@ class Rule_Pool_Generator:
         self._cached_slim_train_n_regimes = self._n_regimes
         self._scoped_train_df = None
         self._scoped_val_df = None
+
+        if self.island_hyperparams is not None:
+            hp = self.island_hyperparams
+            tag = f"{self.direction}"
+            if self.island_id is not None:
+                tag += f" cluster_{self.island_id}"
+            logger.info(
+                "Phase 2 [%s]: island hyperparams profile=%s rows=%d "
+                "min_trade_support=%d pool_floor=%d min_profitable_symbols=%d",
+                tag,
+                hp.profile,
+                hp.n_rows,
+                hp.min_trade_support,
+                hp.min_trade_pool_floor,
+                hp.min_profitable_symbols,
+            )
+
+    def set_pending_migrant_seeds(self, seeds: list[dict]) -> None:
+        """Inject guarded migration seeds for the next epoch."""
+        self._pending_migrant_seeds = list(seeds)
 
     # ------------------------------------------------------------------
     # Engine construction
@@ -2133,6 +2178,14 @@ class Rule_Pool_Generator:
             n_regimes=n_regimes,
         )
 
+    @staticmethod
+    def _set_island_engine_context(engine, owner) -> None:
+        """Attach optional island metadata; safe when *owner* is a partial mock."""
+        hp = getattr(owner, "island_hyperparams", None)
+        if hp is not None:
+            engine._island_hyperparams = hp
+        engine._island_profile = getattr(owner, "island_profile", "global")
+
     def _build_engine_for_df(
         self,
         df: pd.DataFrame,
@@ -2163,6 +2216,7 @@ class Rule_Pool_Generator:
                 )
                 if self._regime_row_fractions is not None:
                     engine._regime_row_fractions = self._regime_row_fractions
+                Rule_Pool_Generator._set_island_engine_context(engine, self)
                 logger.info(
                     "Phase 2 using GPUBacktestEngine (backend: %s)",
                     engine.backend,
@@ -2184,7 +2238,11 @@ class Rule_Pool_Generator:
         )
         if self._regime_row_fractions is not None:
             engine._regime_row_fractions = self._regime_row_fractions
+        Rule_Pool_Generator._set_island_engine_context(engine, self)
         return engine
+
+    def _attach_island_engine_context(self, engine) -> None:
+        Rule_Pool_Generator._set_island_engine_context(engine, self)
 
     # ------------------------------------------------------------------
     # Public API
@@ -2274,6 +2332,7 @@ class Rule_Pool_Generator:
         progress_tag = "Phase 2 [%s] NSGA-III" % self.direction
         use_two_stage = (
             bool(getattr(_cfg, "PHASE2_TWO_STAGE_ENABLED", False))
+            and self.island_profile == "global"
             and self.n_generations == _cfg.PHASE2_GENERATIONS
             and self.pop_size == _cfg.PHASE2_POPULATION_SIZE
         )
@@ -2306,6 +2365,8 @@ class Rule_Pool_Generator:
             feature_probs=feature_probs,
             init_strategy=_cfg.PHASE2_INIT_STRATEGY,
             stratum_fractions=_cfg.PHASE2_INIT_STRATUM_FRACTIONS,
+            island_profile=self.island_profile,
+            island_hyperparams=self.island_hyperparams,
         )
 
         if use_two_stage:
@@ -2726,11 +2787,19 @@ class Rule_Pool_Generator:
                 stage_plan.remaining_in_stage,
                 0 if seed_chromosomes is None else len(seed_chromosomes),
             )
-        elif apply_seeds:
+        elif apply_seeds or self._pending_migrant_seeds:
+            seed_entries: list[dict] = []
             if first_epoch:
-                seed_entries = self._assemble_epoch_seed_entries()
-                local_cap = max(1, int(round(self.pop_size * float(_cfg.PHASE2_ARCHIVE_SEED_FRACTION))))
-                local_seeds = seed_entries[:local_cap]
+                seed_entries.extend(self._assemble_epoch_seed_entries())
+            if self._pending_migrant_seeds:
+                seed_entries.extend(self._pending_migrant_seeds)
+                self._pending_migrant_seeds = []
+            if seed_entries:
+                local_cap = max(
+                    1,
+                    int(round(self.pop_size * float(_cfg.PHASE2_ARCHIVE_SEED_FRACTION))),
+                )
+                local_seeds = _merge_archive_entries(seed_entries)[:local_cap]
                 seed_chromosomes = _pool_seed_chromosomes(
                     local_seeds, dont_cares)
                 seed_fraction = (
@@ -2738,6 +2807,7 @@ class Rule_Pool_Generator:
                     if stage_plan.two_stage_active
                     else float(_cfg.PHASE2_ARCHIVE_SEED_FRACTION)
                 )
+                apply_seeds = True
 
         rng = np.random.default_rng(self.seed)
         feature_probs = build_feature_sampling_probs(self.feature_infos)
@@ -2764,6 +2834,8 @@ class Rule_Pool_Generator:
             stage=stage_plan.stage if stage_plan.two_stage_active else None,
             apply_seed_chromosomes=apply_seeds,
             reset_plateau=reset_plateau,
+            island_profile=self.island_profile,
+            island_hyperparams=self.island_hyperparams,
         )
         for entry in epoch_history:
             if stage_plan.two_stage_active and stage_plan.stage is not None:
@@ -2799,8 +2871,19 @@ class Rule_Pool_Generator:
             regime_row_fractions=self._regime_row_fractions,
             val_regime_row_counts=self._val_regime_row_counts,
             feature_probs=feature_probs,
+            island_profile=self.island_profile,
+            island_hyperparams=self.island_hyperparams,
         )
         new_pool = result[0] if isinstance(result, tuple) else []
+        if self.island_id is not None:
+            pool = _filter_pool_by_admission(list(new_pool))
+            pool = Rule_Pool_Generator._annotate_archive_entries(
+                pool,
+                source_symbols=self.source_symbols or None,
+            )
+            self._release_resources()
+            return pool
+
         previous_pool = Rule_Pool_Generator.load_pool(
             self.direction,
         ) or []

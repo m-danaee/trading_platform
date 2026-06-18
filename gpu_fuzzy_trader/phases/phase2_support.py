@@ -37,8 +37,19 @@ def resolve_evolution_floors(
     stage_params: Phase2StageParams | None = None,
     *,
     n_rows: int | None = None,
+    island_hyperparams: _cfg.IslandHyperparams | None = None,
 ) -> EvolutionFloors:
     """Return stage-aware fitness floors; defaults to global strict knobs."""
+    if island_hyperparams is not None:
+        return EvolutionFloors(
+            return_floor_pct=float(_cfg.PHASE2_RETURN_FLOOR_PCT),
+            min_trade_support=int(island_hyperparams.min_trade_support),
+            use_robust_return_obj=bool(_cfg.PHASE2_USE_ROBUST_RETURN_OBJ),
+            soft_feasibility=False,
+            pool_require_positive_splits=bool(
+                _cfg.PHASE2_POOL_REQUIRE_POSITIVE_SPLITS
+            ),
+        )
     if stage_params is None:
         return EvolutionFloors(
             return_floor_pct=float(_cfg.PHASE2_RETURN_FLOOR_PCT),
@@ -437,9 +448,13 @@ def passes_pool_trade_floor(
     *,
     regime_row_fractions_arr: np.ndarray | None = None,
     n_rows: int | None = None,
+    island_hyperparams: _cfg.IslandHyperparams | None = None,
 ) -> bool:
     """Pool/archive inclusion gate (may waive floor for regime specialists)."""
-    trade_floor = _cfg.effective_min_trade_pool_floor(n_rows)
+    if island_hyperparams is not None:
+        trade_floor = int(island_hyperparams.min_trade_pool_floor)
+    else:
+        trade_floor = _cfg.effective_min_trade_pool_floor(n_rows)
     if executed >= trade_floor:
         return True
 
@@ -694,6 +709,7 @@ def passes_evolution_deployability_preview(
     val_metrics: dict | None,
     *,
     regime_row_fractions_arr: np.ndarray | None = None,
+    island_hyperparams: _cfg.IslandHyperparams | None = None,
 ) -> bool:
     """
     Lightweight deployability check used during evolution (no per-fold CV).
@@ -705,6 +721,7 @@ def passes_evolution_deployability_preview(
         int(train_metrics.get("executed_trades", 0)),
         train_metrics,
         regime_row_fractions_arr=regime_row_fractions_arr,
+        island_hyperparams=island_hyperparams,
     ):
         return False
     return feasibility_violation_score(

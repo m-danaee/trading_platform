@@ -35,6 +35,8 @@ Environment overrides: DATA_ROOT, TRAIN_CSV_PATH, TEST_CSV_PATH,
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
+from typing import Literal
 
 import pandas as pd
 
@@ -1007,6 +1009,55 @@ PHASE2_SEED: int = get_seed()
 
 
 # =============================================================================
+# Phase 2 — Island / cluster mode (scoped evolution)
+# =============================================================================
+# When PHASE2_ISLAND_MODE == "cluster", Phase 2 runs K hybrid clusters with a
+# fixed total generation budget split across islands. Global knobs below stay
+# as universe bases; runtime scaling via resolve_island_hyperparams().
+
+PHASE2_ISLAND_MODE = "cluster"  # "global" | "cluster"
+PHASE2_N_CLUSTERS = 3
+PHASE2_ISLAND_TOTAL_GENERATIONS = PHASE2_GENERATIONS
+PHASE2_ISLAND_EPOCH_GENERATIONS = 8
+PHASE2_ISLAND_TWO_STAGE_ENABLED = False
+PHASE2_ISLAND_EARLY_STOP_ENABLED = False
+PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED = False
+PHASE2_ISLAND_SCALE_TRADE_FLOORS = True
+PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN = 8
+PHASE2_ISLAND_MONTHLY_MIN_MONTHS = 3
+PHASE2_MIGRATION_EPOCH_INTERVAL = 2
+PHASE2_MIGRATION_TOP_K = 5
+PHASE2_MIGRATION_REQUIRE_DEPLOYABILITY = True
+PHASE2_MIGRATION_MIN_VAL_RETURN_PCT = 0.0
+PHASE2_MIGRATION_MIN_VAL_TRADES: int | None = None
+
+PHASE2_ORPHAN_ENABLED = True
+PHASE2_ORPHAN_GENERATIONS = 18
+PHASE2_ORPHAN_POPULATION_SIZE = 100
+PHASE2_ORPHAN_MIN_TRADE_SUPPORT = 8
+PHASE2_ORPHAN_MIN_TRADE_POOL_FLOOR = 8
+PHASE2_ORPHAN_SORTINO_MIN_TRADE_THRESHOLD = 8
+PHASE2_ORPHAN_MIN_VAL_TRADES = 6
+PHASE2_ORPHAN_MIN_VAL_RETURN_PCT = 0.0
+PHASE2_ORPHAN_MONTHLY_MIN_PROFITABLE_RATIO = 0.4
+
+
+def phase2_cluster_archive_path(direction: str, cluster_id: str) -> str:
+    """Persistent archive for one cluster island."""
+    return os.path.join(
+        PHASE2_ARCHIVE_DIR,
+        direction,
+        f"cluster_{cluster_id}",
+        "archive.json",
+    )
+
+
+def phase2_shared_archive_path(direction: str) -> str:
+    """Cross-cluster shared archive for migration warm-start."""
+    return os.path.join(PHASE2_ARCHIVE_DIR, direction, "shared_archive.json")
+
+
+# =============================================================================
 # Phase 2 — Regime-stratified support & profitability
 # =============================================================================
 
@@ -1639,6 +1690,123 @@ def effective_monthly_min_trades(n_rows: int | None = None) -> int:
     return scale_trade_floor(base, n_rows)
 
 
+def scale_trade_floor_by_universe(
+    base: int,
+    n_rows: int,
+    reference_rows: int,
+    *,
+    absolute_min: int | None = None,
+) -> int:
+    """Scale integer trade floors by slice size vs full-universe reference."""
+    ref = int(reference_rows)
+    if ref <= 0:
+        return int(base)
+    floor_min = int(
+        absolute_min if absolute_min is not None else PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN
+    )
+    scaled = int(round(int(base) * int(n_rows) / ref))
+    return max(floor_min, scaled)
+
+
+@dataclass(frozen=True)
+class IslandHyperparams:
+    """Resolved Phase 2 knobs for cluster or orphan slices."""
+
+    profile: Literal["cluster", "orphan"]
+    min_trade_support: int
+    min_trade_pool_floor: int
+    sortino_min_trade_threshold: int
+    val_trade_floor: int
+    pool_min_val_trades: int
+    min_profitable_symbols: int
+    monthly_admission_min_months: int
+    monthly_admission_min_profitable_ratio: float
+    skip_symbol_robustness_penalty: bool
+    n_rows: int
+    n_symbols: int
+
+
+def resolve_island_hyperparams(
+    profile: Literal["cluster", "orphan"],
+    n_rows: int,
+    reference_rows: int,
+    n_symbols: int,
+) -> IslandHyperparams:
+    """Resolve scaled trade floors and relaxed cross-symbol gates."""
+    ref = max(1, int(reference_rows))
+    rows = max(1, int(n_rows))
+    sym_n = max(1, int(n_symbols))
+
+    if profile == "orphan":
+        min_support = int(PHASE2_ORPHAN_MIN_TRADE_SUPPORT)
+        pool_floor = int(PHASE2_ORPHAN_MIN_TRADE_POOL_FLOOR)
+        sortino_thr = int(PHASE2_ORPHAN_SORTINO_MIN_TRADE_THRESHOLD)
+        min_profitable = 1
+        monthly_months = max(2, int(PHASE2_ISLAND_MONTHLY_MIN_MONTHS) - 1)
+        monthly_ratio = float(PHASE2_ORPHAN_MONTHLY_MIN_PROFITABLE_RATIO)
+    else:
+        if PHASE2_ISLAND_SCALE_TRADE_FLOORS:
+            abs_min = int(PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN)
+            min_support = scale_trade_floor_by_universe(
+                MIN_TRADE_SUPPORT, rows, ref, absolute_min=abs_min,
+            )
+            pool_floor = scale_trade_floor_by_universe(
+                MIN_TRADE_POOL_FLOOR, rows, ref, absolute_min=abs_min,
+            )
+            sortino_thr = scale_trade_floor_by_universe(
+                PHASE2_SORTINO_MIN_TRADE_THRESHOLD, rows, ref, absolute_min=abs_min,
+            )
+        else:
+            min_support = int(MIN_TRADE_SUPPORT)
+            pool_floor = int(MIN_TRADE_POOL_FLOOR)
+            sortino_thr = int(PHASE2_SORTINO_MIN_TRADE_THRESHOLD)
+        min_profitable = min(
+            int(PHASE2_MIN_PROFITABLE_SYMBOLS),
+            max(1, sym_n // 2),
+        )
+        monthly_months = int(PHASE2_ISLAND_MONTHLY_MIN_MONTHS)
+        monthly_ratio = float(PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO)
+
+    val_floor = max(pool_floor // 4, 8)
+    val_floor = scale_trade_floor_by_universe(
+        max(int(MIN_TRADE_POOL_FLOOR) // 4, 10), rows, ref,
+        absolute_min=8,
+    )
+
+    return IslandHyperparams(
+        profile=profile,
+        min_trade_support=int(min_support),
+        min_trade_pool_floor=int(pool_floor),
+        sortino_min_trade_threshold=int(sortino_thr),
+        val_trade_floor=int(val_floor),
+        pool_min_val_trades=int(val_floor),
+        min_profitable_symbols=int(min_profitable),
+        monthly_admission_min_months=int(monthly_months),
+        monthly_admission_min_profitable_ratio=float(monthly_ratio),
+        skip_symbol_robustness_penalty=True,
+        n_rows=int(rows),
+        n_symbols=int(sym_n),
+    )
+
+
+def island_early_stop_enabled() -> bool:
+    if PHASE2_ISLAND_MODE == "cluster":
+        return bool(PHASE2_ISLAND_EARLY_STOP_ENABLED)
+    return bool(PHASE2_EARLY_STOP_ENABLED)
+
+
+def island_plateau_early_stop_enabled() -> bool:
+    if PHASE2_ISLAND_MODE == "cluster":
+        return bool(PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED)
+    return bool(PHASE2_PLATEAU_EARLY_STOP_ENABLED)
+
+
+def island_two_stage_enabled() -> bool:
+    if PHASE2_ISLAND_MODE == "cluster":
+        return bool(PHASE2_ISLAND_TWO_STAGE_ENABLED)
+    return bool(PHASE2_TWO_STAGE_ENABLED)
+
+
 # =============================================================================
 # Cross-parameter sanity (import-time)
 # =============================================================================
@@ -1671,6 +1839,12 @@ assert float(PHASE4_MONTHLY_PENALTY_SCALE) > 0.0, (
 )
 assert int(PHASE3_GLOBAL_MAX_RULES) <= int(EVALUATOR_MAX_RULES), (
     "PHASE3_GLOBAL_MAX_RULES must not exceed evaluator schema cap"
+)
+assert int(PHASE2_ORPHAN_MIN_TRADE_SUPPORT) <= int(MIN_TRADE_SUPPORT), (
+    "orphan min trade support should not exceed global"
+)
+assert int(PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN) >= 5, (
+    "island trade floor absolute min too low"
 )
 assert PHASE1_SIGN_CONSISTENCY_MIN_FOLDS <= PHASE1_STATIONARITY_FOLDS, (
     "sign-consistency cannot require more folds than stationarity uses"
