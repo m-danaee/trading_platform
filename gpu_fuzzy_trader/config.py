@@ -338,7 +338,7 @@ PHASE1_DISPERSION_THRESHOLD = 0.95
 # PHASE1_TOP_K_FEATURES — shortlist size per direction (long / short).
 #   Higher → wider Phase 2 search space, slower evolution, more combinations.
 #   Lower  → faster search, risk of missing predictive features.
-PHASE1_TOP_K_FEATURES = 20
+PHASE1_TOP_K_FEATURES = 33
 
 # PHASE1_MAX_FEATURE_OVERLAP — max Jaccard overlap between long & short lists.
 #   Higher → more shared features across directions; smaller combined gene space.
