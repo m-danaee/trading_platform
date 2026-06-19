@@ -124,6 +124,20 @@ class TestIslandStageBudgets:
         assert plan_b.entering_stage_b is True
         assert plan_b.remaining_in_stage == stage_b
 
+    def test_cluster_mode_disables_two_stage(self, monkeypatch):
+        monkeypatch.setattr(_cfg, "PHASE2_ISLAND_MODE", "cluster")
+        monkeypatch.setattr(_cfg, "PHASE2_TWO_STAGE_ENABLED", True)
+        monkeypatch.setattr(_cfg, "PHASE2_ISLAND_TWO_STAGE_ENABLED", False)
+
+        stage_a, stage_b = island_stage_budgets(43)
+        assert stage_a == 43
+        assert stage_b == 0
+
+        plan = resolve_island_stage(0, 43)
+        assert plan.stage is None
+        assert plan.two_stage_active is False
+        assert plan.remaining_in_stage == 43
+
 
 class TestParetoCollapseDiversityRecovery:
     def test_triggers_when_pareto_collapses_despite_unique_population(self):

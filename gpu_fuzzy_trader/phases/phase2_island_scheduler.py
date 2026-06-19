@@ -280,9 +280,15 @@ def _run_orphan_boosts(
                 island_id=f"orphan_{sym}",
                 source_symbols=[sym],
                 island_hyperparams=hp,
-                island_profile="cluster",
+                island_profile="orphan",
             )
-            orphan_pool = gen.run()
+            n_gens = int(_cfg.PHASE2_ORPHAN_GENERATIONS)
+            epoch = int(_cfg.PHASE2_ISLAND_EPOCH_GENERATIONS)
+            while gen._island_generations_done < n_gens:
+                remaining = n_gens - gen._island_generations_done
+                gen.run_epoch(n_generations=min(epoch, remaining))
+                gen.park_engines()
+            orphan_pool = gen.finalize_island()
         except Exception as exc:
             logger.warning(
                 "Phase 2 [%s]: orphan mini-run failed for %s: %s",

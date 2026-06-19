@@ -574,7 +574,7 @@ PHASE2_ENCODING = "sparse_slots"
 # MIN_TRADE_SUPPORT — target executed trades before support penalty vanishes.
 #   Higher → penalize low-frequency rules harder; pool favors robust sample size.
 #   Lower  → allow rare-pattern rules; noisier Sortino/return estimates.
-MIN_TRADE_SUPPORT = 45
+MIN_TRADE_SUPPORT = 90
 
 # SUPPORT_PENALTY_MAX — cap on quadratic support shortfall penalty.
 #   Higher → stronger push away from under-supported rules on all objectives.
@@ -990,7 +990,7 @@ PHASE2_POPULATION_SIZE = 200
 # PHASE2_GENERATIONS — total evolutionary generations (before early stop).
 #   Higher → more search budget; diminishing returns after plateau.
 #   Lower  → faster runs; may under-explore gene space.
-PHASE2_GENERATIONS = 130
+PHASE2_GENERATIONS = 200
 
 PHASE2_ALGORITHM = "NSGA3"
 
@@ -1023,8 +1023,8 @@ PHASE2_ISLAND_TWO_STAGE_ENABLED = False
 PHASE2_ISLAND_EARLY_STOP_ENABLED = False
 PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED = False
 PHASE2_ISLAND_SCALE_TRADE_FLOORS = True
-PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN = 8
-PHASE2_ISLAND_MONTHLY_MIN_MONTHS = 3
+PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN = 10
+PHASE2_ISLAND_MONTHLY_MIN_MONTHS = 4
 PHASE2_MIGRATION_EPOCH_INTERVAL = 2
 PHASE2_MIGRATION_TOP_K = 5
 PHASE2_MIGRATION_REQUIRE_DEPLOYABILITY = True
@@ -1799,6 +1799,11 @@ def island_plateau_early_stop_enabled() -> bool:
     if PHASE2_ISLAND_MODE == "cluster":
         return bool(PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED)
     return bool(PHASE2_PLATEAU_EARLY_STOP_ENABLED)
+
+
+def scoped_island_profile(island_profile: str) -> bool:
+    """True for cluster/orphan scoped runs (not the legacy global Phase 2 path)."""
+    return str(island_profile) != "global"
 
 
 def island_two_stage_enabled() -> bool:

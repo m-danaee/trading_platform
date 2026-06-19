@@ -2477,6 +2477,15 @@ class Rule_Pool_Generator:
                     pool, monthly_windows, self.direction,
                 )
 
+        if self.island_id is not None:
+            pool = _filter_pool_by_admission(list(pool))
+            pool = Rule_Pool_Generator._annotate_archive_entries(
+                pool,
+                source_symbols=self.source_symbols or None,
+            )
+            self._release_resources()
+            return pool
+
         pool_path = _resolve_pool_path(self.direction)
         history_path = _resolve_history_path(self.direction)
         pool_dir = os.path.dirname(pool_path)
@@ -2784,6 +2793,7 @@ class Rule_Pool_Generator:
             seed_fraction = float(_cfg.PHASE2_STAGE_B_SEED_FRACTION)
             logger.info(
                 "Phase 2 [%s]: entering Stage B (%d gen remaining, %d seeds)",
+                self.direction,
                 stage_plan.remaining_in_stage,
                 0 if seed_chromosomes is None else len(seed_chromosomes),
             )

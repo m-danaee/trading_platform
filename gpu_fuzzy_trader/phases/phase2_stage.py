@@ -192,13 +192,13 @@ def resolve_island_stage(
     total = int(
         total_generations if total_generations is not None else _cfg.PHASE2_GENERATIONS)
     stage_a, stage_b = island_stage_budgets(total)
+    two_stage = _cfg.island_two_stage_enabled()
     if stage_b <= 0:
-        active = bool(getattr(_cfg, "PHASE2_TWO_STAGE_ENABLED", False))
         return IslandStagePlan(
-            "A" if active else None,
+            "A" if two_stage else None,
             max(0, total - int(generations_done)),
             False,
-            active,
+            two_stage,
         )
     done = int(generations_done)
     if done < stage_a:

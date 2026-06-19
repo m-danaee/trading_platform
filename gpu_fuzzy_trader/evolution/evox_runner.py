@@ -509,7 +509,7 @@ def _should_early_stop_phase2(
     *,
     island_profile: str = "global",
 ) -> bool:
-    if island_profile == "cluster":
+    if _cfg.scoped_island_profile(island_profile):
         if not _cfg.island_early_stop_enabled():
             return False
     elif not _cfg.PHASE2_EARLY_STOP_ENABLED:
@@ -572,7 +572,7 @@ def _should_plateau_early_stop_phase2(
     stage_params: Phase2StageParams | None = None,
     island_profile: str = "global",
 ) -> bool:
-    if island_profile == "cluster":
+    if _cfg.scoped_island_profile(island_profile):
         if not _cfg.island_plateau_early_stop_enabled():
             return False
     elif not _cfg.PHASE2_PLATEAU_EARLY_STOP_ENABLED:
