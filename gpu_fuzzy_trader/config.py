@@ -990,7 +990,7 @@ PHASE2_POPULATION_SIZE = 200
 # PHASE2_GENERATIONS — total evolutionary generations (before early stop).
 #   Higher → more search budget; diminishing returns after plateau.
 #   Lower  → faster runs; may under-explore gene space.
-PHASE2_GENERATIONS = 200
+PHASE2_GENERATIONS = 150
 
 PHASE2_ALGORITHM = "NSGA3"
 
@@ -1018,7 +1018,7 @@ PHASE2_SEED: int = get_seed()
 PHASE2_ISLAND_MODE = "cluster"  # "global" | "cluster"
 PHASE2_N_CLUSTERS = 3
 PHASE2_ISLAND_TOTAL_GENERATIONS = PHASE2_GENERATIONS
-PHASE2_ISLAND_EPOCH_GENERATIONS = 8
+PHASE2_ISLAND_EPOCH_GENERATIONS = 10
 PHASE2_ISLAND_TWO_STAGE_ENABLED = False
 PHASE2_ISLAND_EARLY_STOP_ENABLED = False
 PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED = False
