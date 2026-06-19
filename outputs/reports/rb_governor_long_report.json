@@ -1,0 +1,171 @@
+{
+  "direction": "long",
+  "rb_score": -7405.1177715059375,
+  "train_metrics": {
+    "direction": "long",
+    "total_return_pct": "1.5000105",
+    "sortino_ratio": 0.4999999883584684,
+    "max_drawdown_pct": "0.118088186",
+    "win_rate": 75.0,
+    "account_ruined": false,
+    "loss_count": 1,
+    "time_closed_count": 0,
+    "raw_signal_count": 49,
+    "executed_trades": 4,
+    "final_equity": "1015.00006",
+    "profit_factor": "13.5",
+    "avg_position_notional": 250.0,
+    "skipped_min_notional_count": 45,
+    "max_simultaneous_positions": 4,
+    "max_total_open_exposure": 1000.0,
+    "per_symbol_metrics": {
+      "SYM_A": {
+        "trade_count": 4,
+        "win_rate": 0.0,
+        "net_pnl": "15.000001"
+      }
+    }
+  },
+  "valid_metrics": {
+    "direction": "long",
+    "total_return_pct": "1.5000105",
+    "sortino_ratio": 0.4999999883584684,
+    "max_drawdown_pct": "0.118088186",
+    "win_rate": 75.0,
+    "account_ruined": false,
+    "loss_count": 1,
+    "time_closed_count": 0,
+    "raw_signal_count": 49,
+    "executed_trades": 4,
+    "final_equity": "1015.00006",
+    "profit_factor": "13.5",
+    "avg_position_notional": 250.0,
+    "skipped_min_notional_count": 45,
+    "max_simultaneous_positions": 4,
+    "max_total_open_exposure": 1000.0,
+    "per_symbol_metrics": {
+      "SYM_A": {
+        "trade_count": 4,
+        "win_rate": 0.0,
+        "net_pnl": "15.000001"
+      }
+    }
+  },
+  "train_minus_valid_return_pct": 0.0,
+  "train_valid_ratio": 1.0,
+  "n_positive_single_rules": 3,
+  "selected_rules": 1,
+  "compose_history": [
+    {
+      "step": 1,
+      "action": "seed",
+      "score": -7405.1177715059375,
+      "train_return_pct": 1.5000104904174805,
+      "valid_return_pct": 1.5000104904174805,
+      "rules": 1
+    }
+  ],
+  "risk_history": [
+    {
+      "pass": 0,
+      "rule_index": -1,
+      "score": -7405.1177715059375,
+      "train_return_pct": 1.5000104904174805,
+      "valid_return_pct": 1.5000104904174805,
+      "train_pf": 13.5,
+      "valid_pf": 13.5
+    }
+  ],
+  "profit_amplifier": {
+    "enabled": true,
+    "accepted": false,
+    "baseline_profit_amp_objective": -224.4927661940431,
+    "baseline_certificate": {
+      "passed": false,
+      "reasons": [
+        "full_sample_positive_good_failed"
+      ],
+      "train_return_pct": 1.5000104904174805,
+      "valid_return_pct": 1.5000104904174805,
+      "train_profit_factor": 13.5,
+      "valid_profit_factor": 13.5,
+      "train_drawdown_pct": 0.11808818578720093,
+      "valid_drawdown_pct": 0.11808818578720093,
+      "train_trades": 4,
+      "valid_trades": 4
+    },
+    "baseline_monthly_metrics": [],
+    "reason": "no_certified_profit_seed"
+  },
+  "top_single_rules": [
+    {
+      "rank": 1,
+      "score": -7391.817771505938,
+      "train_return_pct": 1.5000104904174805,
+      "valid_return_pct": 1.5000104904174805,
+      "train_pf": 13.5,
+      "valid_pf": 13.5,
+      "valid_dd": 0.11808818578720093,
+      "valid_trades": 4,
+      "conditions": [
+        "[feat_2] IS Very High",
+        "symbol is SYM_A"
+      ],
+      "rule": {
+        "conditions": [
+          "[feat_2] IS Very High",
+          "symbol is SYM_A"
+        ],
+        "tp": 2.0,
+        "sl": 1.0,
+        "capital_pct": 30.0
+      }
+    },
+    {
+      "rank": 2,
+      "score": -7545.131973841342,
+      "train_return_pct": 0.9000062942504883,
+      "valid_return_pct": 0.9000062942504883,
+      "train_pf": 3.500000238418579,
+      "valid_pf": 3.500000238418579,
+      "valid_dd": 0.3580639958381653,
+      "valid_trades": 4,
+      "conditions": [
+        "[feat_0] IS Very High",
+        "symbol is SYM_A"
+      ],
+      "rule": {
+        "conditions": [
+          "[feat_0] IS Very High",
+          "symbol is SYM_A"
+        ],
+        "tp": 2.0,
+        "sl": 1.0,
+        "capital_pct": 30.0
+      }
+    },
+    {
+      "rank": 3,
+      "score": -9321.21167885357,
+      "train_return_pct": -0.29999613761901855,
+      "valid_return_pct": -0.29999613761901855,
+      "train_pf": 0.6428571939468384,
+      "valid_pf": 0.6428571939468384,
+      "valid_dd": 0.7199950814247131,
+      "valid_trades": 4,
+      "conditions": [
+        "[feat_1] IS Very High",
+        "symbol is SYM_A"
+      ],
+      "rule": {
+        "conditions": [
+          "[feat_1] IS Very High",
+          "symbol is SYM_A"
+        ],
+        "tp": 2.0,
+        "sl": 1.0,
+        "capital_pct": 30.0
+      }
+    }
+  ]
+}

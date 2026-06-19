@@ -31,6 +31,7 @@ from gpu_fuzzy_trader.phases import phase5_oos as _phase5_module
 from gpu_fuzzy_trader.phases import phase4_wf_optimizer as _phase4_module
 from gpu_fuzzy_trader.phases import phase3_rule_set as _phase3_module
 from gpu_fuzzy_trader.phases import phase2_rule_pool as _phase2_module
+from gpu_fuzzy_trader import rb_governor as _rb_governor_module
 from gpu_fuzzy_trader.features import selector as _selector_module
 from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.data.loader import Data_Loader
@@ -501,6 +502,12 @@ class Pipeline_Orchestrator:
                     results["phase3"] = {}
                     results["phase4"] = {}
                     phase5_directions: frozenset[str] = frozenset()
+                elif bool(getattr(_cfg, "RB_GOVERNOR_ENABLED", False)):
+                    rb_result = self._run_rb_governor(
+                        train_df, val_df, phase2_result)
+                    results["phase3"] = rb_result
+                    results["phase4"] = rb_result
+                    phase5_directions = frozenset(rb_result.keys())
                 else:
                     # ------------------------------------------------------------------
                     # Phase 3: Rule Set Selection
@@ -615,6 +622,12 @@ class Pipeline_Orchestrator:
                     results["phase3"] = {}
                     results["phase4"] = {}
                     phase5_directions: frozenset[str] = frozenset()
+                elif bool(getattr(_cfg, "RB_GOVERNOR_ENABLED", False)):
+                    rb_result = self._run_rb_governor(
+                        train_df, val_df, phase2_result)
+                    results["phase3"] = rb_result
+                    results["phase4"] = rb_result
+                    phase5_directions = frozenset(rb_result.keys())
                 else:
                     phase3_result = self._run_phase3(
                         train_df, val_df, phase2_result, force=force)
@@ -695,8 +708,14 @@ class Pipeline_Orchestrator:
                     "val_rows": len(val_df),
                 }
                 phase2_result = self._load_phase2_outputs()
-                results["phase3"] = self._run_phase3(
-                    train_df, val_df, phase2_result, force=True)
+                if bool(getattr(_cfg, "RB_GOVERNOR_ENABLED", False)):
+                    rb_result = self._run_rb_governor(
+                        train_df, val_df, phase2_result)
+                    results["phase3"] = rb_result
+                    results["phase4"] = rb_result
+                else:
+                    results["phase3"] = self._run_phase3(
+                        train_df, val_df, phase2_result, force=True)
 
             elif phase == 4:
                 train_df, val_df = self._load_and_split_data()
@@ -704,9 +723,16 @@ class Pipeline_Orchestrator:
                     "train_rows": len(train_df),
                     "val_rows": len(val_df),
                 }
-                phase3_result = self._load_phase3_outputs()
-                results["phase4"] = self._run_phase4(
-                    train_df, val_df, phase3_result, force=True)
+                if bool(getattr(_cfg, "RB_GOVERNOR_ENABLED", False)):
+                    phase2_result = self._load_phase2_outputs()
+                    rb_result = self._run_rb_governor(
+                        train_df, val_df, phase2_result)
+                    results["phase3"] = rb_result
+                    results["phase4"] = rb_result
+                else:
+                    phase3_result = self._load_phase3_outputs()
+                    results["phase4"] = self._run_phase4(
+                        train_df, val_df, phase3_result, force=True)
 
             else:
                 self._ensure_phase5_inputs()
@@ -1511,6 +1537,60 @@ class Pipeline_Orchestrator:
             },
         )
         return optimized
+
+    # ------------------------------------------------------------------
+    # RB Governor (replaces Phase 3 + Phase 4)
+    # ------------------------------------------------------------------
+
+    def _run_rb_governor(
+        self,
+        train_df: pd.DataFrame,
+        val_df: pd.DataFrame,
+        phase2_result: dict[str, list[dict]],
+    ) -> dict[str, dict]:
+        """Run the RB Governor pipeline (Phase 3 + Phase 4 replacement).
+
+        Returns a dict keyed by direction, each value being the strategy dict
+        written to disk (containing ``direction`` and ``rules_set``).  The
+        shape matches the legacy Phase 4 output so Phase 5 can load the
+        generated ``{direction}.json`` files unchanged.
+        """
+        phase_name = "RB Governor (Phase 3+4 replacement)"
+        start_ts = _now_iso()
+        t0 = time.monotonic()
+
+        directions = tuple(
+            d for d in ("long", "short") if phase2_result.get(d)
+        )
+        logger.info(
+            "Running %s … (directions=%s, pools=%s)",
+            phase_name,
+            list(directions),
+            {d: len(phase2_result.get(d, [])) for d in directions},
+        )
+
+        try:
+            strategies = _rb_governor_module.run_rb_governor_pipeline(
+                train_df=train_df,
+                val_df=val_df,
+                pools=phase2_result,
+                directions=directions,
+                output_dir=_cfg.OUTPUTS_DIR,
+            )
+        except Exception as exc:
+            logger.error("RB Governor failed: %s", exc, exc_info=True)
+            strategies = {}
+
+        elapsed = time.monotonic() - t0
+        _log_phase_entry(
+            self._log_path, phase_name, start_ts, _now_iso(),
+            elapsed, skipped=False,
+            result_summary={
+                d: len(s.get("rules_set", []))
+                for d, s in strategies.items()
+            },
+        )
+        return strategies
 
     # ------------------------------------------------------------------
     # Phase 5

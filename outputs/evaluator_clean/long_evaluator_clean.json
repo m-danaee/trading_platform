@@ -3,26 +3,12 @@
   "rules_set": [
     {
       "conditions": [
-        "[amihud_illiquidity_20] IS Very High",
-        "[open_gap_atr_14] IS Weak Negative",
-        "[vol_regime_pct_120] IS Very Low",
-        "symbol is 9"
+        "[feat_2] IS Very High",
+        "symbol is SYM_A"
       ],
       "tp": 2.0,
       "sl": 1.0,
-      "capital_pct": 45.0
-    },
-    {
-      "conditions": [
-        "[downside_semivol_20] IS Very High",
-        "[log_range_over_vol_100] IS Very Low",
-        "[vol_ratio_20_100] IS Low",
-        "symbol is 1",
-        "symbol is 5"
-      ],
-      "tp": 3.0,
-      "sl": 2.5,
-      "capital_pct": 45.0
+      "capital_pct": 30.0
     }
   ]
 }

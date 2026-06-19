@@ -337,7 +337,8 @@ class TestPipelineOrchestratorRun:
         assert result["data"]["train_rows"] == 200
         assert result["data"]["val_rows"] == 100
 
-    def test_run_force_true_propagates_to_phases(self, tmp_path):
+    def test_run_force_true_propagates_to_phases(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(_cfg, "RB_GOVERNOR_ENABLED", False)
         train_df = _make_df()
         val_df = _make_df()
         orch = self._make_orch(tmp_path)
@@ -532,8 +533,9 @@ class TestLoadAndSplitDataCache:
             orch.run()
         run_mock.assert_called_once_with(allowed_directions=frozenset())
 
-    def test_phases_3_and_4_run_when_pool_nonempty(self, tmp_path):
+    def test_phases_3_and_4_run_when_pool_nonempty(self, tmp_path, monkeypatch):
         """When Phase 2 pool has rules, Phases 3 and 4 should run."""
+        monkeypatch.setattr(_cfg, "RB_GOVERNOR_ENABLED", False)
         train_df = _make_df()
         val_df = _make_df()
         orch = self._make_orch(tmp_path)

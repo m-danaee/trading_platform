@@ -1,7 +1,27 @@
 {
   "permissions": {
     "allow": [
-      "Bash(rtk git:*)"
+      "Bash(rtk git:*)",
+      "Bash(rtk git commit -m \"$\\(cat <<'EOF'\nAdd friend_project and Qoder local settings\nEOF\n\\)\")",
+      "Bash(rtk ls /home/danaee/trading_platform/gpu_fuzzy_trader/ && echo \"---\" && rtk ls /home/danaee/trading_platform/friend_project/ 2>/dev/null || rtk ls /home/danaee/trading_platform/)",
+      "Bash(rtk find /home/danaee/trading_platform -type d -name \"friend*\" 2>/dev/null && echo \"---\" && rtk find /home/danaee/trading_platform -iname \"*rb_governor*\" 2>/dev/null && echo \"---\" && rtk find /home/danaee/trading_platform -iname \"*governor*\" 2>/dev/null)",
+      "Bash(rtk find /home/danaee -maxdepth 4 -name \"rb_governor*\" 2>/dev/null; echo \"---\"; rtk find /home/danaee -maxdepth 4 -type d -name \"friend_project\" 2>/dev/null; echo \"---\"; rtk ls /home/danaee/trading_platform/)",
+      "Bash(rtk ls /home/danaee/trading_platform/friend_project/gpu_fuzzy_trader/ && echo \"---\" && rtk ls /home/danaee/trading_platform/gpu_fuzzy_trader/phases/ && echo \"---\" && rtk ls /home/danaee/trading_platform/gpu_fuzzy_trader/output/ 2>/dev/null)",
+      "Bash(rtk ls /home/danaee/trading_platform/gpu_fuzzy_trader/backtest/ && echo \"---\" && rtk ls /home/danaee/trading_platform/friend_project/gpu_fuzzy_trader/backtest/)",
+      "Bash(rtk ls /home/danaee/trading_platform/gpu_fuzzy_trader/scoring* /home/danaee/trading_platform/gpu_fuzzy_trader/validation/ /home/danaee/trading_platform/gpu_fuzzy_trader/data/ 2>/dev/null; echo \"---FRIEND---\"; rtk ls /home/danaee/trading_platform/friend_project/gpu_fuzzy_trader/scoring* /home/danaee/trading_platform/friend_project/gpu_fuzzy_trader/validation/ /home/danaee/trading_platform/friend_project/gpu_fuzzy_trader/data/ 2>/dev/null)",
+      "Bash(rtk cp /home/danaee/trading_platform/friend_project/gpu_fuzzy_trader/rb_governor.py /home/danaee/trading_platform/gpu_fuzzy_trader/rb_governor.py && rtk wc -l /home/danaee/trading_platform/gpu_fuzzy_trader/rb_governor.py)",
+      "Bash(rtk python:*)",
+      "Bash(rtk:*)",
+      "Bash(rtk grep -oE '_cfg\\\\.[A-Z_][A-Z0-9_]*|getattr\\\\\\(_cfg, \"[A-Z_][A-Z0-9_]*\"' /home/danaee/trading_platform/gpu_fuzzy_trader/rb_governor.py | sort -u)",
+      "Bash(rtk grep -n \"PHASE2_KEEP_TOP_RULES\\\\|test_new_config_parameters_exist\" /home/danaee/trading_platform/tests/unit/test_config_additions.py | head -20)",
+      "Bash(rtk git diff gpu_fuzzy_trader/config.py | head -30)",
+      "Bash(rtk git show 09c1ded --stat | head -10; echo \"---\"; rtk git log --all -S \"PHASE2_ISLAND_EPOCH_GENERATIONS = \" --oneline -- gpu_fuzzy_trader/config.py | head -5)",
+      "Bash(rtk git stash && PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_config_additions.py::test_new_config_parameters_exist -x 2>&1 | tail -10; rtk git stash pop)",
+      "Bash(rtk PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_run_pipeline.py::TestPipelineOrchestratorRun::test_run_force_true_propagates_to_phases tests/unit/test_run_pipeline.py::TestLoadAndSplitDataCache::test_phases_3_and_4_run_when_pool_nonempty -v 2>&1 | tail -15)",
+      "Bash(rtk .venv/bin/python -m pytest PYTEST_LOW_MEMORY=1 tests/unit/test_run_pipeline.py::TestPipelineOrchestratorRun::test_run_force_true_propagates_to_phases tests/unit/test_run_pipeline.py::TestLoadAndSplitDataCache::test_phases_3_and_4_run_when_pool_nonempty 2>&1 | tail -15)",
+      "Bash(rtk env PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_run_pipeline.py::TestPipelineOrchestratorRun::test_run_force_true_propagates_to_phases tests/unit/test_run_pipeline.py::TestLoadAndSplitDataCache::test_phases_3_and_4_run_when_pool_nonempty 2>&1 | tail -12)",
+      "Bash(rtk git status --short | head -20)",
+      "Bash(rtk env PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_config_additions.py::test_new_config_parameters_exist 2>&1 | tail -6)"
     ]
   }
 }

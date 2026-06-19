@@ -1881,6 +1881,254 @@ def _apply_colab_gpu_defaults() -> None:
 _apply_colab_gpu_defaults()
 
 
+# =============================================================================
+# RB Governor — replaces Phase 3 (rule-set selection) + Phase 4 (risk tuning)
+# =============================================================================
+# When RB_GOVERNOR_ENABLED is True, ``run_pipeline.py`` bypasses the legacy
+# Phase 3 (Rule_Set_Selector) and Phase 4 (WalkForwardRiskOptimizer) modules
+# and calls ``run_rb_governor_pipeline`` from ``rb_governor.py``. The output
+# strategy JSONs keep the same ``{direction: {rules_set: [...]}}`` shape so
+# Phase 5 (OOS evaluation) and evaluator_v5.ipynb are unaffected.
+
+# RB_GOVERNOR_ENABLED — master switch.
+#   True  → use RB Governor for rule selection + TP/SL/capital optimization.
+#   False → legacy Phase 3 + Phase 4 modules (backwards compatible).
+RB_GOVERNOR_ENABLED: bool = True
+
+
+# --- Rule scoring / gating ---
+
+# RB_MIN_TRAIN_RETURN / RB_MIN_VALID_RETURN — return-% floors below which a
+#   heavy score penalty is applied to a candidate rule.
+#   Higher → only clearly profitable single rules pass the gate.
+#   Lower  → allow marginal rules into the candidate pool.
+RB_MIN_TRAIN_RETURN: float = 0.0
+RB_MIN_VALID_RETURN: float = 0.0
+
+# RB_MIN_TRAIN_PF / RB_MIN_VALID_PF — minimum profit factor for each split.
+#   1.0 = break-even before fees.
+RB_MIN_TRAIN_PF: float = 1.00
+RB_MIN_VALID_PF: float = 1.00
+
+# RB_MIN_TRAIN_TRADES / RB_MIN_VALID_TRADES — per-rule trade-count floors
+#   used by ``gate_positive_good`` and ``_score_metrics`` for single rules.
+#   Lowered vs. the friend's defaults because per-symbol specialized rules
+#   typically see thin validation slices (~7k rows / symbol).
+RB_MIN_TRAIN_TRADES: int = 10
+RB_MIN_VALID_TRADES: int = 6
+
+# RB_RULESET_MIN_* — trade-count floors applied to the composed team (all
+#   rules together).  Should be larger than the per-rule floors because the
+#   combined team fires more frequently than any single rule.
+RB_RULESET_MIN_TRAIN_TRADES: int = 20
+RB_RULESET_MIN_VALID_TRADES: int = 12
+
+
+# --- Pool & candidate limits ---
+
+# RB_MAX_POOL_RULES_TO_EVALUATE — cap on Phase 2 pool rules passed through
+#   symbol-specialization in ``_filter_good_rules``.
+#   Higher → more candidates, slower filtering.
+RB_MAX_POOL_RULES_TO_EVALUATE: int = 200
+
+# RB_KEEP_TOP_RULES — how many positive-good candidates survive the
+#   single-rule ranking to feed ``_compose_ruleset``.
+#   Should be comfortably larger than PHASE2_KEEP_TOP_RULES.
+RB_KEEP_TOP_RULES: int = 80
+
+
+# --- Team composition ---
+
+# RB_MAX_RULES — maximum rules in the composed team (hard cap, must remain
+#   ≤ EVALUATOR_MAX_RULES=5 or Phase 5 evaluator_v5 will reject the file).
+RB_MAX_RULES: int = 5
+
+# RB_MAX_PAIR_OVERLAP — max Hamming-style overlap between any two rules in
+#   the team. Lower = more diverse team, harder to grow.
+#   Set slightly higher than the friend's 0.24 because the incoming pool is
+#   already symbol-specialized and therefore more likely to share conditions.
+RB_MAX_PAIR_OVERLAP: float = 0.30
+
+# RB_RULESET_MUST_BEAT_SUBSETS — a candidate team must beat both its parent
+#   subset and the standalone candidate on both train and val return.
+RB_RULESET_MUST_BEAT_SUBSETS: bool = True
+
+# RB_MIN_SCORE_IMPROVEMENT — minimum delta in the governor score to add a
+#   new rule in ``_compose_ruleset``.
+RB_MIN_SCORE_IMPROVEMENT: float = 0.03
+
+# RB_MIN_TRAIN_RETURN_IMPROVEMENT / RB_MIN_VALID_RETURN_IMPROVEMENT — min
+#   return-% uplift required from adding a candidate rule. Lowered vs the
+#   friend's 0.01 because per-symbol returns on val are often <1%.
+RB_MIN_TRAIN_RETURN_IMPROVEMENT: float = 0.005
+RB_MIN_VALID_RETURN_IMPROVEMENT: float = 0.005
+
+# RB_RETURN_DD_FLOOR — drawdown floor (%) used when converting return to a
+#   return/drawdown ratio inside ``_score_metrics``.
+RB_RETURN_DD_FLOOR: float = 0.50
+
+# RB_TRADE_PENALTY — per-trade penalty weight applied when a rule falls
+#   below the minimum trade-count floors.
+RB_TRADE_PENALTY: float = 0.70
+
+# RB_TRAIN_VALID_RATIO_GAP_WEIGHT / RB_TRAIN_VALID_RETURN_GAP_WEIGHT —
+#   overfit penalties applied to the train>>val gap in the score.
+RB_TRAIN_VALID_RATIO_GAP_WEIGHT: float = 6.0
+RB_TRAIN_VALID_RETURN_GAP_WEIGHT: float = 0.25
+
+
+# --- Lenient-add mode (friend's recommended path) ---
+
+# RB_RULE_ADD_BY_RETURN_ONLY — add rules purely on combined-return uplift
+#   (skips the stricter subset-beat and overlap checks when paired with
+#   RB_RULE_ADD_IGNORE_OVERLAP=True).  Profit amplifier still re-checks.
+RB_RULE_ADD_BY_RETURN_ONLY: bool = True
+RB_RULE_ADD_IGNORE_OVERLAP: bool = True
+RB_RULE_ADD_IGNORE_SUBSET_BEAT: bool = True
+RB_MIN_COMBINED_RETURN_IMPROVEMENT: float = 0.05
+
+
+# --- Train-valid shape prior (anti-overfit) ---
+
+# RB_REQUIRE_TRAIN_SLIGHTLY_ABOVE_VALID — when True, apply a shape
+#   bonus/penalty so that train return is slightly above val return (a
+#   healthy sign) but not wildly above (overfit sign).
+RB_REQUIRE_TRAIN_SLIGHTLY_ABOVE_VALID: bool = True
+RB_TRAIN_VALID_MIN_RATIO: float = 1.03
+RB_TRAIN_VALID_MAX_RATIO: float = 1.35
+RB_TRAIN_VALID_MIN_ABS_GAP: float = 0.20
+RB_TRAIN_VALID_MAX_ABS_GAP: float = 12.0
+RB_TRAIN_BELOW_VALID_PENALTY: float = 900.0
+RB_TRAIN_TOO_HIGH_PENALTY: float = 220.0
+RB_TRAIN_VALID_SHAPE_BONUS: float = 160.0
+
+
+# --- Default risk parameters (initial TP/SL/capital_pct embedded in rules
+#     before risk optimization, and minimum allowed values) ---
+
+RB_DEFAULT_TP: float = 2.0
+RB_DEFAULT_SL: float = 1.2
+RB_DEFAULT_CAPITAL_PCT: float = 12.5
+RB_REQUIRE_TP_SL_ABOVE_ONE: bool = True
+RB_MIN_TP: float = 1.0
+RB_MIN_SL: float = 1.0
+
+
+# --- Risk grid search (replaces Phase 4 Walk-Forward optimizer) ---
+
+# RB_TP_GRID / RB_SL_GRID / RB_CAPITAL_GRID — values enumerated per rule in
+#   the round-robin grid search.  Coarser than the friend's full grid to
+#   keep runtime reasonable on a ~10-symbol universe.
+RB_TP_GRID: tuple[float, ...] = (1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0)
+RB_SL_GRID: tuple[float, ...] = (1.0, 1.2, 1.5, 2.0, 2.5)
+RB_CAPITAL_GRID: tuple[float, ...] = (15.0, 20.0, 25.0, 35.0)
+
+# RB_RISK_OPT_PASSES — round-robin passes through all rules.
+RB_RISK_OPT_PASSES: int = 2
+
+# RB_RISK_MIN_IMPROVEMENT — min score delta to accept a new TP/SL/cap combo.
+RB_RISK_MIN_IMPROVEMENT: float = 0.02
+
+# RB_MAX_TOTAL_CAPITAL — hard cap on sum(capital_pct) across all rules.
+RB_MAX_TOTAL_CAPITAL: float = 95.0
+
+
+# --- Symbol specialization (per-rule ``symbol is X`` conditions) ---
+
+# RB_REQUIRE_SYMBOL_FILTERS — every final rule must include at least one
+#   ``symbol is X`` condition (required for per-symbol strategies).
+RB_REQUIRE_SYMBOL_FILTERS: bool = True
+
+# RB_SYMBOL_USE_COMBINATIONS — when True, generate 1-/2-/3-symbol variants
+#   of each pool rule.  Set False to restrict to single-symbol variants only.
+RB_SYMBOL_USE_COMBINATIONS: bool = False  # pool is already symbol-specialized
+
+# RB_SYMBOL_MAX_SYMBOLS_PER_RULE — max ``symbol is X`` conditions per rule.
+RB_SYMBOL_MAX_SYMBOLS_PER_RULE: int = 1
+
+# RB_SYMBOL_TOP_SINGLE_SYMBOLS — top-ranked single-symbol variants kept as
+#   seeds for multi-symbol combinations.
+RB_SYMBOL_TOP_SINGLE_SYMBOLS: int = 5
+RB_SYMBOL_MAX_VARIANTS_PER_RULE: int = 10
+RB_SYMBOL_MIN_TRAIN_TRADES: int = 10
+RB_SYMBOL_MIN_VALID_TRADES: int = 4  # per-symbol val slices are thin
+RB_SYMBOL_STRICT_OUTPUT_CHECK: bool = True
+
+
+# --- Evaluator-health penalties (mirror evaluator_v5 execution checks) ---
+
+RB_MAX_SKIPPED_SIGNAL_RATIO: float = 0.20
+RB_MIN_EXECUTED_RAW_RATIO: float = 0.60
+RB_SKIPPED_RATIO_PENALTY: float = 3500.0
+RB_EXECUTED_RATIO_PENALTY: float = 2500.0
+RB_MAX_SIMULTANEOUS_POSITIONS: int = 10
+RB_MAX_POSITIONS_PENALTY: float = 120.0
+
+
+# --- Profit amplifier (post-risk-optimization refinement stage) ---
+
+# RB_PROFIT_AMPLIFIER_ENABLED — when True, after risk grid search a final
+#   refinement pass swaps/adds rules from the candidate pool and reallocates
+#   capital to maximize a blended valid-return objective.  Keep enabled for
+#   maximum performance; disable for faster but slightly weaker results.
+RB_PROFIT_AMPLIFIER_ENABLED: bool = True
+
+RB_PROFIT_AMP_MAX_CANDIDATES: int = 60
+RB_PROFIT_AMP_MAX_RULES: int = 5
+# RB_PROFIT_AMP_MIN_OBJECTIVE_IMPROVEMENT — minimum objective delta to
+#   accept a profit-amplifier candidate.  Lowered from friend's 0.10 because
+#   our governor scores are typically smaller in magnitude.
+RB_PROFIT_AMP_MIN_OBJECTIVE_IMPROVEMENT: float = 0.05
+RB_PROFIT_AMP_MIN_RETURN_IMPROVEMENT: float = 0.02
+RB_PROFIT_AMP_VALID_WEIGHT: float = 1.55
+RB_PROFIT_AMP_TRAIN_WEIGHT: float = 1.00
+RB_PROFIT_AMP_BALANCE_WEIGHT: float = 0.20
+RB_PROFIT_AMP_DD_WEIGHT: float = 0.02
+RB_PROFIT_AMP_HEALTH_WEIGHT: float = 0.030
+RB_PROFIT_AMP_OVERLAP_PENALTY: float = 2.5
+RB_PROFIT_AMP_MAX_PAIR_OVERLAP: float = 0.55
+RB_PROFIT_AMP_MAX_VALID_DD: float = 12.0
+RB_PROFIT_AMP_MAX_TRAIN_DD: float = 18.0
+RB_PROFIT_AMP_MONTHLY_ENABLED: bool = True
+RB_PROFIT_AMP_MIN_MONTHLY_WINDOWS: int = 2
+RB_PROFIT_AMP_MIN_MONTHLY_PROFITABLE_RATIO: float = 0.55
+RB_PROFIT_AMP_WORST_MONTHLY_RETURN_FLOOR: float = -2.0
+RB_PROFIT_AMP_WORST_MONTHLY_PF_FLOOR: float = 0.80
+RB_PROFIT_AMP_MAX_MONTHLY_DD: float = 10.0
+RB_PROFIT_AMP_CAPITAL_REALLOCATION_ENABLED: bool = True
+RB_PROFIT_AMP_CAPITAL_PASSES: int = 2
+RB_PROFIT_AMP_CAPITAL_GRID: tuple[float, ...] = RB_CAPITAL_GRID
+RB_PROFIT_AMP_KEEP_BASELINE_UNLESS_BETTER: bool = True
+
+
+# --- Cross-run global bank (disabled by default to keep runs isolated) ---
+
+RB_GLOBAL_BANK_ENABLED: bool = False
+RB_GLOBAL_COMPOSE_AFTER_EACH_RUN: bool = False
+RB_GLOBAL_BANK_DIRNAME: str = "rb_bank"
+RB_GLOBAL_BANK_MAX_RULES_PER_DIRECTION: int = 700
+RB_GLOBAL_BANK_IMPORT_TOP_SINGLE_RULES: int = 80
+RB_GLOBAL_MAX_RULES: int = 12
+RB_GLOBAL_MIN_COMBINED_RETURN_IMPROVEMENT: float = 0.05
+RB_GLOBAL_REQUIRE_POSITIVE_TRAIN_VALID: bool = True
+RB_GLOBAL_RISK_OPT_PASSES: int = 2
+RB_GLOBAL_BEST_DIRNAME: str = "best_global"
+RB_GLOBAL_TP_GRID: tuple[float, ...] = (1.5, 2.0, 3.0, 5.0, 8.0)
+RB_GLOBAL_SL_GRID: tuple[float, ...] = (1.2, 1.5, 2.0, 2.5)
+RB_GLOBAL_CAPITAL_GRID: tuple[float, ...] = (5.0, 12.5, 25.0, 50.0)
+RB_GLOBAL_MAX_TOTAL_CAPITAL: float = 100.0
+
+
+# =============================================================================
+# Phase 2 — Governor-friendly adjustments
+# =============================================================================
+# These tune the Phase 2 pool to feed RB Governor with enough candidates.
+# RB Governor benefits from a slightly wider pool than the legacy Phase 3
+# greedy selector, so we raise PHASE2_KEEP_TOP_RULES modestly.
+# (PHASE2_KEEP_TOP_RULES is already defined above; override here.)
+PHASE2_KEEP_TOP_RULES = 120
+
+
 assert MIN_CONDITIONS <= MAX_CONDITIONS, (
     f"MIN_CONDITIONS ({MIN_CONDITIONS}) must be <= MAX_CONDITIONS ({MAX_CONDITIONS})"
 )
