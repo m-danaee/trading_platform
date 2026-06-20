@@ -1,4 +1,4 @@
-"""Unit tests for regime-aware Phase 2 support penalties."""
+"""Unit tests for Phase 2 support penalties."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ import pytest
 
 from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.phases.phase2_support import (
-    _compact_regime_labels,
     _raw_feasibility_violation_score,
     compute_support_penalty_and_specialist,
     deployability_rank_score,
@@ -18,7 +17,6 @@ from gpu_fuzzy_trader.phases.phase2_support import (
     passes_pool_trade_floor,
     robust_return_pct,
     trade_support_penalty,
-    val_regime_confirmation,
 )
 from gpu_fuzzy_trader.phases.phase2_stage import resolve_phase2_stage_params
 
@@ -121,105 +119,6 @@ class TestTradeSupportPenaltyStatic:
         assert 0.0 < pen <= _cfg.SUPPORT_PENALTY_MAX
 
 
-class TestRegimeSpecialist:
-    def _regime_metrics(
-        self,
-        executed: int,
-        dominant_trades: int,
-        dominant_wins: int,
-        dominant_pnl: float,
-        n_regimes: int = 3,
-    ) -> dict:
-        counts = [0] * n_regimes
-        wins = [0] * n_regimes
-        pnl = [0.0] * n_regimes
-        counts[1] = dominant_trades
-        wins[1] = dominant_wins
-        pnl[1] = dominant_pnl
-        other = executed - dominant_trades
-        if other > 0:
-            counts[0] = other
-        return {
-            "executed_trades": executed,
-            "regime_trade_counts": counts,
-            "regime_win_counts": wins,
-            "regime_net_pnl": pnl,
-        }
-
-    def test_specialist_waives_penalty(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(_cfg, "PHASE2_REGIME_SUPPORT_ENABLED", True)
-        fracs = np.array([0.1, 0.8, 0.1], dtype=np.float64)
-        metrics = self._regime_metrics(40, 38, 20, 100.0)
-        pen, spec, dom = trade_support_penalty(
-            40,
-            regime_trade_counts=np.array(metrics["regime_trade_counts"]),
-            regime_win_counts=np.array(metrics["regime_win_counts"]),
-            regime_net_pnl=np.array(metrics["regime_net_pnl"]),
-            regime_row_fractions_arr=fracs,
-        )
-        assert spec is True
-        assert dom == 1
-        assert pen == 0.0
-
-    def test_scattered_trades_not_specialist(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(_cfg, "PHASE2_REGIME_SUPPORT_ENABLED", True)
-        fracs = np.array([1.0 / 3, 1.0 / 3, 1.0 / 3], dtype=np.float64)
-        metrics = {
-            "executed_trades": 40,
-            "regime_trade_counts": [14, 13, 13],
-            "regime_win_counts": [8, 8, 8],
-            "regime_net_pnl": [1.0, 1.0, 1.0],
-        }
-        pen, spec, _ = trade_support_penalty(
-            40,
-            regime_trade_counts=np.array(metrics["regime_trade_counts"]),
-            regime_win_counts=np.array(metrics["regime_win_counts"]),
-            regime_net_pnl=np.array(metrics["regime_net_pnl"]),
-            regime_row_fractions_arr=fracs,
-        )
-        assert spec is False
-        assert pen > 0.0
-
-    def test_pool_floor_waived_for_specialist(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(_cfg, "PHASE2_REGIME_SUPPORT_ENABLED", True)
-        fracs = np.array([0.05, 0.9, 0.05], dtype=np.float64)
-        metrics = self._regime_metrics(40, 38, 20, 50.0)
-        assert passes_pool_trade_floor(
-            40, metrics, regime_row_fractions_arr=fracs)
-
-
-class TestValRegimeConfirmation:
-    def test_missing_val_regime_passes(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(
-            _cfg, "PHASE2_REGIME_REQUIRE_VAL_CONFIRMATION", True)
-        val_metrics = {
-            "executed_trades": 20,
-            "regime_trade_counts": [20, 0, 0],
-            "regime_win_counts": [10, 0, 0],
-            "regime_net_pnl": [1.0, 0.0, 0.0],
-        }
-        assert val_regime_confirmation(
-            1, val_metrics, val_regime_row_counts=np.array([50, 0, 0]),
-        )
-
-    def test_val_confirmation_fails_low_concentration(
-        self, monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        monkeypatch.setattr(
-            _cfg, "PHASE2_REGIME_REQUIRE_VAL_CONFIRMATION", True)
-        val_metrics = {
-            "executed_trades": 50,
-            "regime_trade_counts": [10, 18, 22],
-            "regime_win_counts": [5, 9, 11],
-            "regime_net_pnl": [1.0, -1.0, -1.0],
-        }
-        assert not val_regime_confirmation(
-            1,
-            val_metrics,
-            val_regime_row_counts=np.array([100, 100, 100]),
-        )
-
-
 class TestDeployabilityHelpers:
     def test_robust_return_uses_min_train_val(self) -> None:
         train = {"total_return_pct": 5.0}
@@ -271,25 +170,6 @@ class TestDeployabilityHelpers:
         assert feasibility_violation_score(
             train, val, stage_params=stage_b,
         ) > 0.0
-
-
-class TestRegimeCompaction:
-    def test_drops_empty_regime_and_remaps_labels(self) -> None:
-        regime_ids = np.array([0, 0, 1, 1, 0, 1], dtype=np.int32)
-        compacted, fracs, n_regimes = _compact_regime_labels(regime_ids, 3)
-        assert n_regimes == 2
-        assert compacted is not None
-        assert fracs is not None
-        assert set(compacted.tolist()) == {0, 1}
-        assert fracs.shape == (2,)
-        assert pytest.approx(float(fracs.sum())) == 1.0
-
-    def test_disables_support_when_only_one_regime_remains(self) -> None:
-        regime_ids = np.array([0, 0, 0, 0, 0], dtype=np.int32)
-        compacted, fracs, n_regimes = _compact_regime_labels(regime_ids, 3)
-        assert compacted is None
-        assert fracs is None
-        assert n_regimes == 0
 
     def test_deployability_preview_requires_trade_floor(self) -> None:
         train = {

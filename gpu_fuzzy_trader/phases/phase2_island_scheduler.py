@@ -125,9 +125,6 @@ def filter_migrants_for_cluster(
             if not passes_evolution_deployability_preview(
                 train_m,
                 val_m,
-                regime_row_fractions_arr=getattr(
-                    train_engine, "_regime_row_fractions", None,
-                ),
                 island_hyperparams=hp,
             ):
                 logger.debug(

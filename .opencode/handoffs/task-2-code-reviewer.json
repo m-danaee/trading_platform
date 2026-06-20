@@ -1,34 +1,112 @@
 {
-  "task": "task-2",
-  "verdict": "APPROVED",
+  "task": "task-2-strip-phase1-regime",
   "reviewer": "code-reviewer",
-  "reviewed_at": "2026-06-20",
-  "findings": [
-    {
-      "severity": "low",
-      "finding": "Commit hash in handoff is stale: handoff says 'commit: 769caf3' (the task-1 merge commit on main) but the actual task-2 commit is 13d77c4 (feature/task-2-integration-test). Verified via 'git show 13d77c4' — only .opencode/handoffs/task-2-implementer.json changed in that commit.",
-      "fix": "Update handoff.json commit field from 769caf3 to 13d77c4. Cosmetic only — does not affect correctness of verification."
-    },
-    {
-      "severity": "low",
-      "finding": "Colab artifact verification is incomplete. The provided command only checks the 4 top-level keys (best_trial, best_score, best_params, user_attrs) in optuna_best_params.json, but task spec step 4 explicitly requires: 'best_params dict contains all 12 hyperparameter names'. A regression where the script silently returns an empty best_params (e.g., if config patching fails or all trials crash) would pass the current check.",
-      "fix": "Extend the Colab verification command to also assert that best_params contains all 12 SEARCH_SPACE keys, e.g.:\n\npython -c \"import json; d=json.load(open('outputs/optuna_best_params.json')); bp=d['best_params']; required=['PHASE1_TOP_K_FEATURES','MIN_TRADE_SUPPORT','MIN_TRADE_POOL_FLOOR','PHASE2_MAX_DRAWDOWN_GATE','PHASE2_MAX_TRAIN_VAL_GAP_PCT','PHASE2_KEEP_TOP_RULES','PHASE2_POPULATION_SIZE','PHASE2_MUTATION_RATE','PHASE2_STAGE_A_GENERATIONS','PHASE3_VAL_RETURN_FLOOR_PCT','RB_MIN_TRAIN_RETURN','RB_MIN_VALID_RETURN']; missing=[k for k in required if k not in bp]; assert not missing, f'missing keys: {missing}'; print(f'all {len(required)} params present in best_params')\""
-    },
-    {
-      "severity": "low",
-      "finding": "Colab command does not validate trial count. Task spec requires 3 trials in --debug mode and 2 trials in --fast mode, but the current verification only checks the JSON file exists. If the script crashes mid-search and the best params file is written from a partial study, the check would still pass.",
-      "fix": "Add a Colab step to read the Optuna study and assert trial count, e.g.:\n\npython -c \"import optuna; s=optuna.load_study(study_name='test_debug_run', storage='sqlite:///outputs/optuna_study.db'); done=[t for t in s.trials if t.value is not None]; assert len(done) >= 3, f'expected >=3 completed trials, got {len(done)}'; print(f'{len(done)} completed trials')\""
-    },
-    {
-      "severity": "low",
-      "finding": "Colab command does not verify 'different trials have different param values' (task spec step 2). TPE sampler with seed=42 should normally produce diverse params, but a deterministic-only or duplicate-producing regression would not be caught.",
-      "fix": "Optional: extend the trial-count check above to also assert len({tuple(sorted(t.params.items())) for t in done}) >= 2 to verify parameter diversity."
-    },
-    {
-      "severity": "info",
-      "finding": "Implementer used --n-trials 1 (not 3) for the local debug run, and --n-trials 1 (not 2) for the local fast run. This is acceptable because both were expected to timeout, and reducing the trial count reduces wasted time. However, the handoff should explicitly note this substitution so the Colab runner understands why local results show '1 trial' numbers.",
-      "fix": "No code fix needed; this is informational for the next person reading the handoff."
-    }
-  ],
-  "summary": "Task-2 is a verification-only task. The implementer correctly followed the AGENTS.md OOM constraint: did not run the full pipeline locally, verified what could be verified cheaply (import, syntax, help, search space, score functions), honestly reported the timeouts, and provided a Colab command for full end-to-end verification. The status 'DONE_WITH_CONCERNS' is an honest reflection of state. Local verification is sound and re-confirmed by this reviewer (import works, --help shows all 5 CLI args with correct defaults, SEARCH_SPACE has exactly the 12 expected hyperparameters). No production code was changed — the only diff is the handoff JSON itself, which is the appropriate scope for a verification task. The Colab command is well-organized but has minor gaps in artifact validation (missing 12-key assertion, missing trial-count assertion). These are non-blocking improvements that could be added before the user runs on Colab. Overall: APPROVED."
+  "status": "DONE",
+  "branch": "feature/task-2-strip-phase1-regime",
+  "base_branch": "main",
+  "commit_reviewed": "639d145",
+  "diff_summary": {
+    "files_changed": [
+      "gpu_fuzzy_trader/features/selector.py",
+      "gpu_fuzzy_trader/features/symbol_cluster.py"
+    ],
+    "insertions": 17,
+    "deletions": 185,
+    "net_removal": 168
+  },
+  "correctness": {
+    "regime_code_paths_removed": "PASS",
+    "no_dangling_references": "PASS",
+    "imports_work": "PASS",
+    "details": [
+      "rg -i regime in selector.py and symbol_cluster.py returns 0 matches.",
+      "rg regime_cluster in both files returns 0 matches.",
+      "Public-API call sites in run_pipeline.py, phase5_oos.py, phase2_island_scheduler.py unchanged — none pass regime_labels or _regime_bundle, so removing those parameters is safe.",
+      "Backward-compatible alias `_compute_stationarity_scores = _compute_chronological_stationarity_scores` preserved — protects any external import.",
+      "Live import test passes: `from gpu_fuzzy_trader.features.selector import Feature_Selector, Phase1SharedContext, build_phase1_shared_context; from gpu_fuzzy_trader.features.symbol_cluster import build_hybrid_symbol_clusters`.",
+      "regime_cluster.py and phase2_support.py still use 'regime_labels' but those are Phase 2 engine-metrics labels, NOT Phase 1 selector inputs — out of scope and untouched by this diff.",
+      "Literal `100` replacing config.PHASE1_REGIME_MIN_SAMPLES in _compute_chronological_stationarity_scores() is a valid final regime-string removal (config key is now orphaned for this path; see maintainability note)."
+    ]
+  },
+  "edge_cases": {
+    "regime_labels_none_old_path": "N/A — the regime_labels parameter has been removed entirely from the public API. Old callers that passed `regime_labels=None` will now get a TypeError if positional/keyword arg is supplied, but no in-tree caller does so. Callers relying on the previous regime path will silently get chronological-only behavior, which is the intended outcome.",
+    "fallback_when_n_valid_lt_2": "REMOVED — the chronological path runs unconditionally inside the `if config.PHASE1_STATIONARITY_FOLDS >= 2` block. The regime → chronological fallback branch has been deleted; chronological scores are computed directly. This is a clean simplification with no behavior regression for callers.",
+    "Feature_Selector instance state": "Class is now stateless. Empty `__init__` with `pass` is acceptable; an even cleaner option is to delete `__init__` entirely (Python provides a default no-op). The class is still a valid namespace for classmethods (`skip_if_valid`, `load_and_validate`) and instance methods (`select_features`, `run`).",
+    "shared_context_with_no_regime_field": "Phase1SharedContext.regime_labels field removed; build_phase1_shared_context() no longer accepts regime_labels. No in-tree caller relied on these — confirmed via grep."
+  },
+  "maintainability": {
+    "leftover_dead_code": "MINOR",
+    "cleanliness": "GOOD",
+    "details": [
+      "Pass replaced with `pass` body in `Feature_Selector.__init__` — semantically identical to removing the method, but the explicit placeholder signals 'intentionally stateless'. Style choice, not a bug.",
+      "No leftover dead variables inside the deleted branch (e.g. `stratify`, `labels`, `fold_scores: dict[str, list[float]]` annotation) — all removed cleanly.",
+      "Logger call simplified from `direction, stratify, n_before_stationarity, len(scored)` to `direction, n_before_stationarity, len(scored)` — log message format string correctly updated to drop the %s for stratify.",
+      "Step 7b comment header updated from 'Stationarity filter (regime or chronological folds)' to 'Stationarity filter (chronological folds)'. Accurate.",
+      "symbol_cluster.py module docstring updated to drop regime reference.",
+      "`embedding = block_a` is the new minimal line — clean and self-explanatory.",
+      "Backward-compatible alias `_compute_stationarity_scores = _compute_chronological_stationarity_scores` is well-placed at module bottom — easy to spot and to delete later if no external user is found."
+    ],
+    "out_of_scope_followups": [
+      {
+        "id": "followup-A",
+        "severity": "low",
+        "location": "gpu_fuzzy_trader/config.py:432, 467",
+        "finding": "PHASE1_STATIONARITY_STRATIFY (= 'regime') and PHASE1_REGIME_MIN_SAMPLES (= 100) are now orphan config keys (selector.py no longer reads them). config.PHASE1_REGIME_MIN_SAMPLES is still used by regime_cluster.py, so cannot be removed yet. PHASE1_STATIONARITY_STRATIFY is only referenced in its own docstring — fully dead.",
+        "remediation": "Delete PHASE1_STATIONARITY_STRATIFY and its docstring block in a follow-up config-cleanup task. Keep PHASE1_REGIME_MIN_SAMPLES until regime_cluster.py is also removed (out of scope here)."
+      },
+      {
+        "id": "followup-B",
+        "severity": "low",
+        "location": "gpu_fuzzy_trader/features/symbol_cluster.py:58, 81, 97, 120",
+        "finding": "Function name `build_hybrid_symbol_clusters` and method value `'hybrid_v1'` are now misleading — the embedding is purely feature-based, no 'hybrid' (feature + return/regime) structure remains. Renaming would improve clarity.",
+        "remediation": "Rename to `build_feature_symbol_clusters` and update method value to `'feature_v1'` in a follow-up. Caller update needed: phase2_island_scheduler.py:22,433."
+      }
+    ]
+  },
+  "test_quality": {
+    "coverage_adequate": "PASS",
+    "test_count": 75,
+    "test_details": [
+      "tests/unit/test_feature_selector.py — 66 tests, all pass.",
+      "tests/unit/test_symbol_cluster.py — 2 tests, all pass.",
+      "tests/property/test_feature_selector_properties.py — 5 tests, all pass (verified separately).",
+      "tests/unit/test_regime_cluster.py + tests/unit/test_regime_profitability_gate.py + tests/unit/test_gpu_engine_regime.py — 8 tests, all pass (out of scope but unaffected).",
+      "Total chronological-only-path coverage: 73 tests, all pass.",
+      "The two new tests in test_symbol_cluster.py (`test_hybrid_cluster_covers_all_symbols`, `test_single_symbol_skips_clustering`) cover the feature-only path: (a) k < n_symbols branches through KMeans, (b) k == n_symbols returns one-symbol-per-cluster.",
+      "The chronological stationarity path is covered by `TestStationarityFilter` (2 tests) and indirectly through `select_features` integration tests with various PHASE1_STATIONARITY_FOLDS values."
+    ],
+    "minor_concerns": [
+      {
+        "id": "test-A",
+        "severity": "low",
+        "location": "tests/unit/test_feature_selector.py:772",
+        "finding": "`test_regime_rank_drift_rejects_large_swing` is misnamed. The test invokes `_stationarity_filter` directly with synthetic fold_scores (no regime involvement). The name 'regime' now refers to a code path that no longer exists.",
+        "remediation": "Rename to `test_rank_drift_filter_rejects_large_swing` in a follow-up test-cleanup task. Test logic is correct as-is; name is stale."
+      },
+      {
+        "id": "test-B",
+        "severity": "low",
+        "location": "tests/unit/test_symbol_cluster.py:1",
+        "finding": "Module docstring `'''Unit tests for hybrid symbol clustering.'''` is stale — same 'hybrid' wording as the source function name (see followup-B).",
+        "remediation": "Update to `'Unit tests for feature-profile symbol clustering.'` in a follow-up."
+      }
+    ]
+  },
+  "security_and_reliability": {
+    "data_loss": "NONE",
+    "input_validation": "UNCHANGED",
+    "details": [
+      "No new input validation gaps introduced.",
+      "Behavior change is silent for callers that previously passed regime_labels — they now get chronological-only results. This is the intended consequence of stripping regime support. No data integrity risk."
+    ]
+  },
+  "verdict": "APPROVED",
+  "summary": "Task 2 (Strip regime from Phase 1) is implemented correctly. The diff removes all regime code paths from selector.py and symbol_cluster.py without leaving dangling references. Backward compatibility for the public API is preserved (callers do not pass regime_labels). 73 tests covering the chronological-only path pass. Scope is correctly limited to the two target files. Two minor naming-staleness issues (function name, test name) and one dead-config key (PHASE1_STATIONARITY_STRATIFY) are noted as low-severity follow-ups but do not block the change. APPROVED.",
+  "approval_conditions": [],
+  "followups": [
+    "Rename `build_hybrid_symbol_clusters` → `build_feature_symbol_clusters` and method value 'hybrid_v1' → 'feature_v1' (followup-B).",
+    "Delete `PHASE1_STATIONARITY_STRATIFY` from config.py (followup-A).",
+    "Rename `test_regime_rank_drift_rejects_large_swing` → `test_rank_drift_filter_rejects_large_swing` (test-A).",
+    "Update stale 'hybrid' docstring in test_symbol_cluster.py (test-B)."
+  ]
 }

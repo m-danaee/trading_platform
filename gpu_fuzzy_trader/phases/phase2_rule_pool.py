@@ -54,8 +54,7 @@ from gpu_fuzzy_trader.phases.phase2_support import (
     compute_support_penalty_and_specialist,
     passes_pool_admission_gate,
     passes_pool_trade_floor,
-    regime_row_fractions,
-    trade_support_penalty as _regime_trade_support_penalty,
+    trade_support_penalty as _trade_support_penalty,
 )
 from gpu_fuzzy_trader.reporting.reporter import Reporter
 from gpu_fuzzy_trader.validation.monthly_windows import (
@@ -68,67 +67,8 @@ logger = logging.getLogger(__name__)
 
 def trade_support_penalty(executed: int, **kwargs) -> float:
     """Backward-compatible wrapper returning penalty only."""
-    penalty, _, _ = _regime_trade_support_penalty(executed, **kwargs)
+    penalty, _, _ = _trade_support_penalty(executed, **kwargs)
     return penalty
-
-
-def _prepare_regime_context(
-    sampled_df: pd.DataFrame,
-) -> tuple[np.ndarray | None, np.ndarray | None, int]:
-    """
-    Assign regime labels to *sampled_df* rows using the Phase 1 artifact.
-
-    Returns (regime_ids, regime_row_fractions_arr, n_regimes).
-    """
-    if not _cfg.PHASE2_REGIME_SUPPORT_ENABLED:
-        return None, None, 0
-
-    from gpu_fuzzy_trader.features.regime_cluster import (
-        assign_regime_labels,
-        load_regime_model,
-    )
-
-    try:
-        bundle = load_regime_model(_cfg.PHASE2_REGIME_MODEL_PATH)
-    except FileNotFoundError:
-        logger.warning(
-            "Phase 2 regime support: model not found at %s; using static penalty",
-            _cfg.PHASE2_REGIME_MODEL_PATH,
-        )
-        return None, None, 0
-
-    missing = [c for c in bundle["regime_features"]
-               if c not in sampled_df.columns]
-    if missing:
-        logger.warning(
-            "Phase 2 regime support: missing columns %s; using static penalty",
-            missing,
-        )
-        return None, None, 0
-
-    try:
-        labels = assign_regime_labels(sampled_df, bundle)
-    except Exception as exc:
-        logger.warning(
-            "Phase 2 regime support: label assignment failed (%s); static penalty",
-            exc,
-        )
-        return None, None, 0
-
-    n_regimes = int(bundle.get("n_clusters", labels.nunique()))
-    regime_ids = labels.reindex(sampled_df.index).fillna(
-        0).astype(np.int32).values
-    from gpu_fuzzy_trader.phases.phase2_support import _compact_regime_labels
-
-    regime_ids, fracs, n_regimes = _compact_regime_labels(regime_ids, n_regimes)
-    if regime_ids is None:
-        return None, None, 0
-    logger.info(
-        "Phase 2 regime support: n_regimes=%d, row_counts=%s",
-        n_regimes,
-        np.bincount(regime_ids.astype(np.int64), minlength=n_regimes).tolist(),
-    )
-    return regime_ids, fracs, n_regimes
 
 
 def _saturating_sortino(raw: float) -> float:
@@ -438,7 +378,6 @@ class CvFoldValEvaluator:
         self._aggregate_fn = aggregate_fold_metrics
         fold_rows = [int(f.n_valid_rows) for f in self._folds]
         self.n_valid_rows = min(fold_rows) if fold_rows else 0
-        self._regime_row_counts = None
         # Cache: build fold engines once, reuse across all evolution calls
         self._cached_fold_engines: list | None = None
 
@@ -533,8 +472,6 @@ def compute_phase2_objectives_from_metrics(
     pareto_front: list[np.ndarray],
     *,
     val_metrics: dict | None = None,
-    regime_row_fractions_arr: np.ndarray | None = None,
-    val_regime_row_counts: np.ndarray | None = None,
     diversity_reference: list[np.ndarray] | None = None,
     diversity_metrics_by_key: dict[tuple[int, ...], dict] | None = None,
     stage_params=None,
@@ -609,14 +546,9 @@ def compute_phase2_objectives_from_metrics(
                 _cfg.PHASE2_PROFIT_FACTOR_FLOOR - val_profit_factor
             ) * 5.0
 
-    support_penalty, is_specialist, dominant_regime = (
-        compute_support_penalty_and_specialist(
-            metrics,
-            regime_row_fractions_arr,
-            val_metrics=val_metrics,
-            val_regime_row_counts=val_regime_row_counts,
-            min_trade_support=floors.min_trade_support,
-        )
+    support_penalty, _, _ = compute_support_penalty_and_specialist(
+        metrics,
+        min_trade_support=floors.min_trade_support,
     )
     if (
         val_metrics is not None
@@ -625,11 +557,6 @@ def compute_phase2_objectives_from_metrics(
         support_penalty = max(support_penalty, _cfg.SUPPORT_PENALTY_MAX)
         if _cfg.PHASE2_JOINT_TRAIN_VAL:
             sortino_for_obj = min(sortino_train, 0.0)
-        is_specialist = False
-
-    if is_specialist:
-        metrics["regime_specialist"] = True
-        metrics["dominant_regime"] = dominant_regime
 
     if total_return < floors.return_floor_pct:
         support_penalty = max(support_penalty, _cfg.SUPPORT_PENALTY_MAX)
@@ -758,8 +685,6 @@ def _evaluate_chromosome(
     engine,  # GPUBacktestEngine or CPUBacktestEngine
     pareto_front: list[np.ndarray],
     val_engine=None,  # optional second engine for joint train+val objective
-    regime_row_fractions_arr: np.ndarray | None = None,
-    val_regime_row_counts: np.ndarray | None = None,
     diversity_reference: list[np.ndarray] | None = None,
     diversity_metrics_by_key: dict[tuple[int, ...], dict] | None = None,
     stage_params=None,
@@ -806,12 +731,6 @@ def _evaluate_chromosome(
             logger.warning("val simulate_rule_batch failed for chromosome %s: %s", key_suffix, exc)
             val_metrics = None
 
-    if regime_row_fractions_arr is None:
-        regime_row_fractions_arr = getattr(
-            engine, "_regime_row_fractions", None)
-    if val_regime_row_counts is None and val_engine is not None:
-        val_regime_row_counts = getattr(val_engine, "_regime_row_counts", None)
-
     if island_hyperparams is None:
         island_hyperparams = getattr(engine, "_island_hyperparams", None)
 
@@ -827,8 +746,6 @@ def _evaluate_chromosome(
         metrics,
         pareto_front,
         val_metrics=val_metrics,
-        regime_row_fractions_arr=regime_row_fractions_arr,
-        val_regime_row_counts=val_regime_row_counts,
         diversity_reference=diversity_reference,
         diversity_metrics_by_key=diversity_metrics_by_key,
         stage_params=stage_params,
@@ -962,12 +879,10 @@ def _init_population(
     ``"legacy"`` uses independent per-gene *dont_care_prob* sampling.
     """
     from gpu_fuzzy_trader.phases.phase2_init import (
-        assign_three_strata_to_indices,
         assign_strata_to_indices,
         build_feature_sampling_probs,
         pick_active_count,
         repair_active_count,
-        sample_regime_stratum_chromosome,
         sample_sparse_chromosome,
     )
 
@@ -1092,44 +1007,15 @@ def _init_population(
 
     fresh_indices = np.where(~seeded_mask)[0]
 
-    # Determine whether the 3-stratum (elite / explorer / regime) init is active.
-    _regime_enabled = bool(
-        getattr(_cfg, "PHASE2_REGIME_STRATUM_ENABLED", True)
+    strata = assign_strata_to_indices(
+        fresh_indices,
+        stratum_fractions,
+        rng,
     )
-
-    if _regime_enabled:
-        # Build 3-tuple fractions from the 2-tuple config plus the regime frac.
-        elite_f, explorer_f = stratum_fractions
-        total_2 = elite_f + explorer_f
-        regime_frac = float(getattr(_cfg, "PHASE2_REGIME_STRATUM_FRAC", 0.25))
-        if total_2 > 0:
-            elite_f3 = elite_f / total_2 * (1.0 - regime_frac)
-            explorer_f3 = explorer_f / total_2 * (1.0 - regime_frac)
-        else:
-            elite_f3, explorer_f3 = 0.40, 0.35
-        three_fractions = (elite_f3, explorer_f3, regime_frac)
-        strata: list[str] = assign_three_strata_to_indices(
-            fresh_indices, three_fractions, rng,
-        )
-    else:
-        strata = assign_strata_to_indices(
-            fresh_indices,
-            stratum_fractions,
-            rng,
-        )
 
     for row_idx, stratum in zip(fresh_indices, strata):
         k_active = pick_active_count(rng)
-        if stratum == "regime":
-            # Build a regime-anchored chromosome.
-            dense_chrom = sample_regime_stratum_chromosome(
-                rng, feature_infos, dont_cares, k_active, feature_probs,
-            )
-            if use_sparse_slots():
-                population[row_idx] = dense_to_sparse(dense_chrom, dont_cares)
-            else:
-                population[row_idx] = dense_chrom
-        elif use_sparse_slots():
+        if use_sparse_slots():
             from gpu_fuzzy_trader.phases.phase2_sparse_encoding import (
                 sample_sparse_slots_chromosome,
             )
@@ -1305,7 +1191,6 @@ def _build_pool_from_archive(
     dont_cares: np.ndarray,
     engine,
     metrics_by_chrom: dict[tuple, dict] | None = None,
-    regime_row_fractions_arr: np.ndarray | None = None,
     val_engine=None,
     cv_fold_evaluator: CvFoldValEvaluator | None = None,
     holdout_n_valid_rows: int | None = None,
@@ -1323,9 +1208,6 @@ def _build_pool_from_archive(
         "executed_trades": ...
     }
     """
-    if regime_row_fractions_arr is None:
-        regime_row_fractions_arr = getattr(engine, "_regime_row_fractions", None)
-
     # Deduplicate and filter by condition count before any expensive backtest.
     unique_chroms: list[np.ndarray] = []
     seen: set[tuple] = set()
@@ -1398,7 +1280,6 @@ def _build_pool_from_archive(
         if not passes_pool_trade_floor(
             executed,
             metrics,
-            regime_row_fractions_arr=regime_row_fractions_arr,
             n_rows=train_n_rows,
         ):
             continue
@@ -1434,11 +1315,6 @@ def _build_pool_from_archive(
             }
             pool_entry["val_executed_trades"] = int(
                 val_metrics.get("executed_trades", 0))
-        if metrics.get("regime_specialist"):
-            pool_entry["regime_specialist"] = True
-            pool_entry["dominant_regime"] = int(metrics.get("dominant_regime", -1))
-        if metrics.get("regime_trade_counts") is not None:
-            pool_entry["regime_trade_counts"] = list(metrics["regime_trade_counts"])
         pool.append(pool_entry)
 
     # --- Cap pool size to PHASE2_KEEP_TOP_RULES (Task 5) ---
@@ -1996,9 +1872,6 @@ class Rule_Pool_Generator:
         self.n_generations = n_generations if n_generations is not None else _cfg.PHASE2_GENERATIONS
         self.seed = seed  # preserved as-is (None when not provided, per docstring)
         self._feature_signature = _archive_feature_signature(feature_infos)
-        self._regime_row_fractions: np.ndarray | None = None
-        self._n_regimes = 0
-        self._val_regime_row_counts: np.ndarray | None = None
         self._evolution_state = None
         self._island_history: list[dict] = []
         self._island_generations_done = 0
@@ -2024,11 +1897,7 @@ class Rule_Pool_Generator:
         )
         feature_names = [fi["name"] for fi in feature_infos]
 
-        train_regime_ids, self._regime_row_fractions, self._n_regimes = (
-            _prepare_regime_context(sampled)
-        )
         self._train_df = slim_backtest_df(sampled, feature_names)
-        self._train_regime_ids = train_regime_ids
         self._feature_names = feature_names
         self._sample_seed = sample_seed
 
@@ -2037,11 +1906,8 @@ class Rule_Pool_Generator:
 
         self._engine = None
         self._val_engine = None
-        self._val_regime_row_counts = None
-        # Cached val data for rebuilds after park_engines (mirrors _cached_slim_train pattern)
+        # Cached val data for rebuilds after park_engines
         self._cached_slim_val = None
-        self._cached_val_regime_ids = None
-        self._cached_val_regime_row_counts = None
         self._build_engines()
         if self._cv_folds:
             self._cv_val_evaluator = CvFoldValEvaluator(
@@ -2060,9 +1926,6 @@ class Rule_Pool_Generator:
 
         # Keep slimmed copy for park/unpark cycles, free the full DataFrames
         self._cached_slim_train = self._train_df
-        self._cached_slim_train_regime = train_regime_ids
-        self._cached_slim_train_regime_frac = self._regime_row_fractions
-        self._cached_slim_train_n_regimes = self._n_regimes
         self._scoped_train_df = None
         self._scoped_val_df = None
 
@@ -2092,10 +1955,7 @@ class Rule_Pool_Generator:
 
     def _build_engines(self) -> None:
         """Build train/val backtest engines."""
-        self._engine = self._build_engine(
-            regime_ids=self._train_regime_ids,
-            n_regimes=self._n_regimes,
-        )
+        self._engine = self._build_engine()
         self._val_engine = None
         if self._scoped_val_df is not None:
             # First-time build from scoped val df
@@ -2105,30 +1965,12 @@ class Rule_Pool_Generator:
                     _cfg.PHASE1_SAMPLING_TOTAL,
                     random_state=self._sample_seed,
                 )
-                val_regime_ids, _val_fracs, val_n_regimes = (
-                    _prepare_regime_context(val_sampled)
-                )
-                if val_regime_ids is not None:
-                    self._val_regime_row_counts = np.bincount(
-                        val_regime_ids.astype(np.int64),
-                        minlength=val_n_regimes,
-                    ).astype(np.int64)
                 slim_val = slim_backtest_df(val_sampled, self._feature_names)
-                self._val_engine = self._build_engine_for_df(
-                    slim_val,
-                    regime_ids=val_regime_ids,
-                    n_regimes=val_n_regimes,
-                )
+                self._val_engine = self._build_engine_for_df(slim_val)
                 self._holdout_n_valid_rows = len(slim_val)
                 self._val_engine.n_valid_rows = len(slim_val)
-                if self._val_regime_row_counts is not None:
-                    self._val_engine._regime_row_counts = (
-                        self._val_regime_row_counts
-                    )
                 # Snapshot to cache for rebuilds after park_engines
                 self._cached_slim_val = slim_val
-                self._cached_val_regime_ids = val_regime_ids
-                self._cached_val_regime_row_counts = self._val_regime_row_counts
                 if _cfg.PHASE2_JOINT_TRAIN_VAL:
                     logger.info(
                         "Phase 2 [%s]: joint train+val fitness enabled "
@@ -2156,15 +1998,9 @@ class Rule_Pool_Generator:
             try:
                 self._val_engine = self._build_engine_for_df(
                     self._cached_slim_val,
-                    regime_ids=self._cached_val_regime_ids,
-                    n_regimes=len(self._cached_val_regime_row_counts) if self._cached_val_regime_row_counts is not None else 0,
                 )
                 self._holdout_n_valid_rows = len(self._cached_slim_val)
                 self._val_engine.n_valid_rows = len(self._cached_slim_val)
-                if self._cached_val_regime_row_counts is not None:
-                    self._val_engine._regime_row_counts = (
-                        self._cached_val_regime_row_counts
-                    )
                 if _cfg.PHASE2_JOINT_TRAIN_VAL:
                     logger.info(
                         "Phase 2 [%s]: joint train+val fitness enabled "
@@ -2197,9 +2033,6 @@ class Rule_Pool_Generator:
     def _rebuild_train_df(self) -> None:
         """Restore slimmed training data from cache (no re-sampling needed)."""
         self._train_df = self._cached_slim_train
-        self._train_regime_ids = self._cached_slim_train_regime
-        self._regime_row_fractions = self._cached_slim_train_regime_frac
-        self._n_regimes = self._cached_slim_train_n_regimes
 
     def _ensure_engines(self) -> None:
         """Rebuild engines after ``park_engines`` dropped GPU state."""
@@ -2214,7 +2047,6 @@ class Rule_Pool_Generator:
         self._engine = None
         self._val_engine = None
         self._train_df = None
-        self._train_regime_ids = None
         if getattr(self, "_evolution_state", None) is not None:
             from gpu_fuzzy_trader.evolution.evox_runner import (
                 trim_evolution_state_memory,
@@ -2231,17 +2063,9 @@ class Rule_Pool_Generator:
         )
         release_phase2_resources()
 
-    def _build_engine(
-        self,
-        regime_ids: np.ndarray | None = None,
-        n_regimes: int = 0,
-    ):
+    def _build_engine(self):
         """Build GPUBacktestEngine if JAX available, else CPUBacktestEngine."""
-        return self._build_engine_for_df(
-            self._train_df,
-            regime_ids=regime_ids,
-            n_regimes=n_regimes,
-        )
+        return self._build_engine_for_df(self._train_df)
 
     @staticmethod
     def _set_island_engine_context(engine, owner) -> None:
@@ -2251,18 +2075,11 @@ class Rule_Pool_Generator:
             engine._island_hyperparams = hp
         engine._island_profile = getattr(owner, "island_profile", "global")
 
-    def _build_engine_for_df(
-        self,
-        df: pd.DataFrame,
-        regime_ids: np.ndarray | None = None,
-        n_regimes: int = 0,
-    ):
+    def _build_engine_for_df(self, df: pd.DataFrame):
         """Build an engine on *df* using the same backend selection logic."""
-        engine_kwargs: dict = {}
-        if regime_ids is not None and n_regimes > 0:
-            engine_kwargs["regime_ids"] = regime_ids
-            engine_kwargs["n_regimes"] = n_regimes
-        engine_kwargs["fee_pct"] = _cfg.FEE_PCT
+        engine_kwargs: dict = {
+            "fee_pct": _cfg.FEE_PCT,
+        }
 
         from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
 
@@ -2279,8 +2096,6 @@ class Rule_Pool_Generator:
                     self.direction,
                     **engine_kwargs,
                 )
-                if self._regime_row_fractions is not None:
-                    engine._regime_row_fractions = self._regime_row_fractions
                 Rule_Pool_Generator._set_island_engine_context(engine, self)
                 logger.info(
                     "Phase 2 using GPUBacktestEngine (backend: %s)",
@@ -2301,8 +2116,6 @@ class Rule_Pool_Generator:
             self.direction,
             **engine_kwargs,
         )
-        if self._regime_row_fractions is not None:
-            engine._regime_row_fractions = self._regime_row_fractions
         Rule_Pool_Generator._set_island_engine_context(engine, self)
         return engine
 
@@ -2425,8 +2238,6 @@ class Rule_Pool_Generator:
             cv_fold_evaluator=self._cv_val_evaluator,
             holdout_n_valid_rows=self._holdout_n_valid_rows,
             train_n_rows=train_n_rows,
-            regime_row_fractions=self._regime_row_fractions,
-            val_regime_row_counts=self._val_regime_row_counts,
             feature_probs=feature_probs,
             init_strategy=_cfg.PHASE2_INIT_STRATEGY,
             stratum_fractions=_cfg.PHASE2_INIT_STRATUM_FRACTIONS,
@@ -2525,7 +2336,7 @@ class Rule_Pool_Generator:
         # After the existing pool-admission filter, apply a hard gate that
         # requires each candidate rule to be profitable on at least 50% of
         # monthly rolling windows in the train split.  This addresses the
-        # regime-shift problem: rules that work on one validation slice but
+        # rules that work on one validation slice but
         # bleed on test are rejected early.
         if _cfg.PHASE2_MONTHLY_ADMISSION_ENABLED:
             monthly_windows = build_monthly_windows(self._train_df)
@@ -2900,8 +2711,6 @@ class Rule_Pool_Generator:
             seed_chromosomes=seed_chromosomes,
             log_tag=tag,
             val_engine=self._val_engine,
-            regime_row_fractions=self._regime_row_fractions,
-            val_regime_row_counts=self._val_regime_row_counts,
             feature_probs=feature_probs,
             init_strategy=_cfg.PHASE2_INIT_STRATEGY,
             stratum_fractions=_cfg.PHASE2_INIT_STRATUM_FRACTIONS,
@@ -2943,8 +2752,6 @@ class Rule_Pool_Generator:
             return_state=False,
             log_tag=tag,
             val_engine=self._val_engine,
-            regime_row_fractions=self._regime_row_fractions,
-            val_regime_row_counts=self._val_regime_row_counts,
             feature_probs=feature_probs,
             island_profile=self.island_profile,
             island_hyperparams=self.island_hyperparams,
