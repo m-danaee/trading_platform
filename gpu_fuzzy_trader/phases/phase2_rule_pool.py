@@ -474,11 +474,10 @@ class CvFoldValEvaluator:
             ]
 
         n_chrom = len(chromosomes)
-        per_chrom: list[list[dict]] = [[] for _ in range(n_chrom)]
 
-        for engine in self._ensure_fold_engines():
+        def _eval_one_fold(engine) -> list[dict]:
             try:
-                fold_metrics = engine.simulate_rule_batch(
+                return engine.simulate_rule_batch(
                     chromosomes=chromosomes,
                     tp=tp,
                     sl=sl,
@@ -489,7 +488,7 @@ class CvFoldValEvaluator:
                     "CvFoldValEvaluator fold engine failed: %s",
                     exc,
                 )
-                fold_metrics = [
+                return [
                     {
                         "total_return_pct": -100.0,
                         "profit_factor": 0.0,
@@ -500,6 +499,17 @@ class CvFoldValEvaluator:
                     }
                     for _ in range(n_chrom)
                 ]
+
+        engines = self._ensure_fold_engines()
+        if len(engines) <= 1:
+            all_fold_metrics = [_eval_one_fold(e) for e in engines]
+        else:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=len(engines)) as pool:
+                all_fold_metrics = list(pool.map(_eval_one_fold, engines))
+
+        per_chrom: list[list[dict]] = [[] for _ in range(n_chrom)]
+        for fold_metrics in all_fold_metrics:
             for i, metrics in enumerate(fold_metrics):
                 per_chrom[i].append(metrics)
 

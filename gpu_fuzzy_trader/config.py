@@ -796,12 +796,12 @@ PHASE2_PLATEAU_EARLY_STOP_ENABLED = True
 # PHASE2_PLATEAU_EARLY_STOP_MIN_GENERATION — earliest gen for plateau stop.
 #   Higher → more exploration in Stage A before plateau can end run.
 #   Lower  → may stop during initial transient; should be ≤ STAGE_A_GENERATIONS.
-PHASE2_PLATEAU_EARLY_STOP_MIN_GENERATION = 28
+PHASE2_PLATEAU_EARLY_STOP_MIN_GENERATION = 3
 
 # PHASE2_PLATEAU_EARLY_STOP_PATIENCE — gens without improvement before stop.
 #   Higher → wait longer for breakthrough; uses more compute.
 #   Lower  → stop quickly when progress stalls.
-PHASE2_PLATEAU_EARLY_STOP_PATIENCE = 12
+PHASE2_PLATEAU_EARLY_STOP_PATIENCE = 5
 
 # PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT — min return improvement to reset patience.
 #   Higher → need larger gains to count as progress.
@@ -1018,7 +1018,7 @@ PHASE2_SEED: int = get_seed()
 PHASE2_ISLAND_MODE = "cluster"  # "global" | "cluster"
 PHASE2_N_CLUSTERS = 3
 PHASE2_ISLAND_TOTAL_GENERATIONS = PHASE2_GENERATIONS
-PHASE2_ISLAND_EPOCH_GENERATIONS = 10
+PHASE2_ISLAND_EPOCH_GENERATIONS = 25
 PHASE2_ISLAND_TWO_STAGE_ENABLED = False
 PHASE2_ISLAND_EARLY_STOP_ENABLED = False
 PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED = False
