@@ -12,6 +12,9 @@ __all__ = [
     "jax_gpu_backtest_available",
 ]
 
-GPUBacktestEngine = get_gpu_backtest_engine_class()
+try:
+    GPUBacktestEngine = get_gpu_backtest_engine_class()
+except Exception:
+    GPUBacktestEngine = None
 if GPUBacktestEngine is not None:
     __all__.append("GPUBacktestEngine")
