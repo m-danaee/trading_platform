@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import time
 import traceback
 from typing import Any
@@ -167,23 +168,32 @@ def run_pipeline_for_trial(
     output_dir: str,
     fast_mode: bool,
     debug_mode: bool,
+    baseline_outputs_dir: str = "outputs",
 ) -> dict:
     """Run the pipeline with currently patched config values.
 
     Parameters
     ----------
     output_dir : str
-        Base output directory for pipeline artifacts.
+        Per-trial output directory (e.g. ``outputs/trial_0``).
     fast_mode : bool
-        If True, pass ``force=False`` (resume mode — skip valid cached phases).
+        If True, copy Phase 1+2 artifacts from *baseline_outputs_dir* into
+        *output_dir* so those phases are skipped, then run Phase 3–5 fresh
+        with ``force=False``.  This avoids the bug where all trials share
+        the same Phase 3+ output directory and only the first trial varies.
     debug_mode : bool
         If True, enable ``DEBUG_SYMBOL_SCOPE`` with 4 symbols.
+    baseline_outputs_dir : str
+        Directory containing pre-existing Phase 1+2 outputs, used as the
+        source for copied artifacts in fast mode.
 
     Returns
     -------
     dict
         Full results dict from ``Pipeline_Orchestrator.run()``.
     """
+    os.makedirs(output_dir, exist_ok=True)
+
     # Apply debug scope *before* creating the orchestrator so that the
     # pipeline picks up the narrowed symbol universe from the start.
     if debug_mode:
@@ -191,6 +201,14 @@ def run_pipeline_for_trial(
 
         cfg.DEBUG_SYMBOL_SCOPE_ENABLED = True
         cfg.DEBUG_SYMBOL_COUNT = 4
+
+    # ------------------------------------------------------------------
+    # Fast mode: seed the trial directory with Phase 1+2 outputs so those
+    # phases are skipped, but Phase 3+ run fresh (their outputs don't exist
+    # in the empty trial directory).
+    # ------------------------------------------------------------------
+    if fast_mode:
+        _copy_phase1_2_outputs(baseline_outputs_dir, output_dir)
 
     # Import pipeline modules *after* config has been patched so that
     # module-level references to ``_cfg.XXX`` are still dynamic lookups.
@@ -206,6 +224,37 @@ def run_pipeline_for_trial(
 
 
 # ---------------------------------------------------------------------------
+# Fast-mode helpers
+# ---------------------------------------------------------------------------
+
+# Files to copy from baseline output dir into trial dir when running in
+# fast mode.  Phase 1+2 only — Phase 3+ outputs are intentionally omitted
+# so each trial re-runs rule-set selection with fresh hyperparameters.
+_FAST_MODE_COPY_FILES: tuple[str, ...] = (
+    "selected_features_long.json",
+    "selected_features_short.json",
+    "phase2_long_pool.json",
+    "phase2_short_pool.json",
+    "phase2_long_history.json",
+    "phase2_short_history.json",
+    "symbol_clusters.json",
+)
+
+
+def _copy_phase1_2_outputs(src_dir: str, dst_dir: str) -> None:
+    """Copy Phase 1+2 artifacts from *src_dir* to *dst_dir*.
+
+    Silently skips files that don't exist in *src_dir* (e.g. optional
+    history files or outputs from a different pipeline version).
+    """
+    for filename in _FAST_MODE_COPY_FILES:
+        src = os.path.join(src_dir, filename)
+        dst = os.path.join(dst_dir, filename)
+        if os.path.isfile(src) and not os.path.exists(dst):
+            shutil.copy2(src, dst)
+
+
+# ---------------------------------------------------------------------------
 # Optuna objective
 # ---------------------------------------------------------------------------
 
@@ -216,10 +265,13 @@ def objective(trial: optuna.Trial) -> float:
     For each trial:
       1. Sample candidate hyperparameters from ``SEARCH_SPACE``.
       2. Patch ``gpu_fuzzy_trader.config`` with the trial values.
-      3. Run the full pipeline.
+      3. Run the full pipeline in an isolated per-trial output directory.
       4. Compute a composite score from test returns and drawdowns.
       5. Restore original config values.
       6. Return the score.
+
+    Each trial uses its own ``outputs/trial_{N}/`` directory so that
+    Phase 3+ outputs from one trial never contaminate another.
 
     Failed trials return ``-999.0`` (heavy penalty) rather than crashing.
     """
@@ -231,15 +283,17 @@ def objective(trial: optuna.Trial) -> float:
     # --- 2. Apply config patches ---
     patchers = apply_trial_config(trial_params)
 
-    # Use a stable output directory so resume-mode can reuse cached phases.
-    output_dir = "outputs"
+    # Each trial gets its own output directory to prevent cross-trial
+    # contamination of Phase 3+ artifacts.
+    trial_output_dir = os.path.join("outputs", f"trial_{trial.number}")
 
     try:
         # --- 3. Run pipeline ---
         results = run_pipeline_for_trial(
-            output_dir=output_dir,
+            output_dir=trial_output_dir,
             fast_mode=_fast_mode,
             debug_mode=_debug_mode,
+            baseline_outputs_dir="outputs",
         )
 
         # --- 4. Collect & score metrics ---
@@ -303,9 +357,11 @@ def main() -> None:
         "--fast",
         action="store_true",
         help=(
-            "Fast/resume mode: run pipeline with force=False so that "
-            "phases with valid cached outputs are skipped.  Useful when "
-            "iterating on a subset of hyperparameters."
+            "Fast/resume mode: each trial copies Phase 1+2 outputs from "
+            "outputs/ into a per-trial directory (outputs/trial_N/), "
+            "skips those expensive phases, and re-runs Phase 3–5 fresh "
+            "with the trial's hyperparameters.  "
+            "Phase 2 parameters are frozen to the baseline run."
         ),
     )
     parser.add_argument(
