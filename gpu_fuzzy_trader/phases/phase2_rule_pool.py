@@ -2016,6 +2016,10 @@ class Rule_Pool_Generator:
         self._engine = None
         self._val_engine = None
         self._val_regime_row_counts = None
+        # Cached val data for rebuilds after park_engines (mirrors _cached_slim_train pattern)
+        self._cached_slim_val = None
+        self._cached_val_regime_ids = None
+        self._cached_val_regime_row_counts = None
         self._build_engines()
         if self._cv_folds:
             self._cv_val_evaluator = CvFoldValEvaluator(
@@ -2072,6 +2076,7 @@ class Rule_Pool_Generator:
         )
         self._val_engine = None
         if self._scoped_val_df is not None:
+            # First-time build from scoped val df
             try:
                 val_sampled = _sample_df(
                     self._scoped_val_df,
@@ -2098,6 +2103,10 @@ class Rule_Pool_Generator:
                     self._val_engine._regime_row_counts = (
                         self._val_regime_row_counts
                     )
+                # Snapshot to cache for rebuilds after park_engines
+                self._cached_slim_val = slim_val
+                self._cached_val_regime_ids = val_regime_ids
+                self._cached_val_regime_row_counts = self._val_regime_row_counts
                 if _cfg.PHASE2_JOINT_TRAIN_VAL:
                     logger.info(
                         "Phase 2 [%s]: joint train+val fitness enabled "
@@ -2120,14 +2129,48 @@ class Rule_Pool_Generator:
                     exc,
                 )
                 self._val_engine = None
+        elif self._cached_slim_val is not None:
+            # Rebuild from cached data after park_engines (no re-sampling needed)
+            try:
+                self._val_engine = self._build_engine_for_df(
+                    self._cached_slim_val,
+                    regime_ids=self._cached_val_regime_ids,
+                    n_regimes=len(self._cached_val_regime_row_counts) if self._cached_val_regime_row_counts is not None else 0,
+                )
+                self._holdout_n_valid_rows = len(self._cached_slim_val)
+                self._val_engine.n_valid_rows = len(self._cached_slim_val)
+                if self._cached_val_regime_row_counts is not None:
+                    self._val_engine._regime_row_counts = (
+                        self._cached_val_regime_row_counts
+                    )
+                if _cfg.PHASE2_JOINT_TRAIN_VAL:
+                    logger.info(
+                        "Phase 2 [%s]: joint train+val fitness enabled "
+                        "(val_rows=%d)",
+                        self.direction,
+                        len(self._cached_slim_val),
+                    )
+                else:
+                    logger.info(
+                        "Phase 2 [%s]: val engine built for pool admission "
+                        "only (joint_train_val=False; val_rows=%d)",
+                        self.direction,
+                        len(self._cached_slim_val),
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "Phase 2 [%s]: failed to build val engine, "
+                    "falling back to train-only admission: %s",
+                    self.direction,
+                    exc,
+                )
+                self._val_engine = None
 
         from gpu_fuzzy_trader._gpu_runtime import configure_phase2_gpu_runtime
         from gpu_fuzzy_trader._memory import log_memory_rss
 
         configure_phase2_gpu_runtime(self._engine, val_engine=self._val_engine)
         log_memory_rss(f"Phase2 [{self.direction}] engine init")
-
-        self._scoped_val_df = None
 
     def _rebuild_train_df(self) -> None:
         """Restore slimmed training data from cache (no re-sampling needed)."""
