@@ -3,12 +3,58 @@
   "rules_set": [
     {
       "conditions": [
-        "[feat_1] IS Very High",
-        "symbol is SYM_A"
+        "[roc_10] IS Extreme Bullish",
+        "[channel_pos_20] IS Very Low",
+        "[vol_ratio_20_100] IS Very High",
+        "symbol is 1"
+      ],
+      "tp": 2.5,
+      "sl": 1.5,
+      "capital_pct": 35.0
+    },
+    {
+      "conditions": [
+        "[range_compression_20_100] IS High",
+        "[open_gap_atr_14] IS Weak Negative",
+        "[vol_over_ema20] IS Very Low",
+        "symbol is 10"
+      ],
+      "tp": 2.5,
+      "sl": 1.2,
+      "capital_pct": 20.0
+    },
+    {
+      "conditions": [
+        "[drawdown_from_peak_60] IS Very High",
+        "[bb_width_rel_20] IS Medium",
+        "[lower_wick_to_tr] IS Medium",
+        "symbol is 6"
       ],
       "tp": 2.0,
+      "sl": 1.2,
+      "capital_pct": 12.5
+    },
+    {
+      "conditions": [
+        "[dmi_balance_14] IS Bullish",
+        "[drawdown_from_peak_60] IS High",
+        "[cand_up_down_vol_ratio_20] IS Very Low",
+        "symbol is 9"
+      ],
+      "tp": 6.0,
       "sl": 1.0,
-      "capital_pct": 30.0
+      "capital_pct": 15.0
+    },
+    {
+      "conditions": [
+        "[open_gap_atr_14] IS Weak Negative",
+        "[atr_ratio_14_63] IS Very High",
+        "[body_signed_to_tr] IS Weak Bearish",
+        "symbol is 5"
+      ],
+      "tp": 2.0,
+      "sl": 1.2,
+      "capital_pct": 12.5
     }
   ]
 }
