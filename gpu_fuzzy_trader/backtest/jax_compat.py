@@ -12,7 +12,7 @@ from typing import Any, Optional, Type
 
 logger = logging.getLogger(__name__)
 
-_GPU_ENGINE_ERRORS = (ImportError, RuntimeError, OSError)
+_GPU_ENGINE_ERRORS = (ImportError, RuntimeError, OSError, AttributeError)
 
 
 def get_gpu_backtest_engine_class() -> Optional[Type[Any]]:
