@@ -1,8 +1,24 @@
 {
-  "task": "task-1",
+  "task_id": "task-1",
   "status": "DONE",
-  "commit": "56bbc7d",
-  "files_changed": ["gpu_fuzzy_trader/phases/phase2_rule_pool.py"],
-  "summary": "Fixed P0 bugs: (1) df attribute name, (2) two-path build (first-time from scoped_val_df + cache snapshot, rebuild from cache), (3) regime_ids compatibility. All 95 tests pass.",
-  "previous_commit": "6070f52"
+  "commit": "769caf3",
+  "files_changed": ["gpu_fuzzy_trader/optuna_search.py"],
+  "tests_run": [
+    ".venv/bin/python -c \"import gpu_fuzzy_trader.optuna_search\": PASS",
+    ".venv/bin/python -m gpu_fuzzy_trader.optuna_search --help: PASS (all 5 CLI args shown)",
+    ".venv/bin/python -m py_compile gpu_fuzzy_trader/optuna_search.py: PASS (syntax valid)",
+    "Verification script: ALL CHECKS PASSED (12 params, compute_score, patching, restore)"
+  ],
+  "notes": [
+    "All 12 acceptance criteria verified programmatically",
+    "Search space covers all 12 hyperparameters from the plan",
+    "Config patching uses unittest.mock.patch with proper restore in finally block",
+    "Objective function computes composite score: combined_return - 3*max(0, max_dd-8)",
+    "Failed trials return -999.0 penalty score instead of crashing",
+    "Study saved to SQLite DB at outputs/optuna_study.db (default)",
+    "Best params exported to outputs/optuna_best_params.json",
+    "Script uses from __future__ import annotations and matches project code style",
+    "Unused imports (sys, Pathlib.Path) cleaned up per project guidelines",
+    "WARNING: Do NOT run full pipeline locally (OOM risk). Use --debug mode for testing."
+  ]
 }

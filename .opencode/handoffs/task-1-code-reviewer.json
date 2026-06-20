@@ -1,34 +1,99 @@
 {
-  "task": "Task 1 — Add validation/monthly_windows.py and validation/rolling_cv.py",
-  "verdict": "REQUEST_CHANGES",
-  "findings": [
+  "task_id": "task-1",
+  "reviewer": "code-reviewer",
+  "review_timestamp": "2026-06-20T00:00:00Z",
+  "verdict": "APPROVED",
+  "summary": "High-quality implementation. Correctly implements the spec, handles errors gracefully, restores state properly, and is well-organized. Only minor cosmetic issues found (import ordering, unnecessary lambda wrapper).",
+  "findings": [],
+  "minor_observations": [
     {
-      "severity": "medium",
-      "finding": "`build_monthly_windows` uses Python's `or` operator for default fallbacks (`window_days or getattr(...)`, `min_rows or getattr(...)`, etc.), which incorrectly overrides intentional zero values. For example, passing `min_rows=0` is silently replaced with the config default 2500, making it impossible to disable the min-rows filter. This contrasts with `rolling_cv.py` which correctly uses `is not None` checks.",
-      "fix": "Replace the `or` pattern with `if param is not None else` in `build_monthly_windows`, matching the style already used in `build_purged_rolling_folds`. Specifically, change lines 84–95 of `monthly_windows.py` from `window_days or getattr(...)` to `window_days if window_days is not None else getattr(...)` (and the same for `stride_days`, `min_rows`, `max_windows`)."
+      "severity": "trivial",
+      "category": "style",
+      "description": "PEP8 import ordering: `from unittest.mock import patch` is placed on line 22 after the third-party `optuna` imports. The stdlib `unittest.mock` should be in the stdlib group (between `traceback` and `from typing import Any`).",
+      "evidence": "Lines 9-22 of gpu_fuzzy_trader/optuna_search.py: `from unittest.mock import patch` appears after `from optuna.samplers import TPESampler`.",
+      "fix_suggestion": "Move `from unittest.mock import patch` up into the stdlib block, alphabetically placed near `import traceback` and `from typing import Any`.",
+      "blocking": false
     },
     {
-      "severity": "medium",
-      "finding": "`_datetime_series` returns `pd.Series(np.arange(len(df)))` when `datetime` is missing, producing integer values. But `build_monthly_windows` later performs `cur + pd.Timedelta(days=...)` on these integers, causing a `TypeError: unsupported operand type(s) for +: 'numpy.int64' and 'Timedelta'`. The defensive fallback path is broken.",
-      "fix": "Either: (a) document that `datetime` is required and raise a `ValueError('DataFrame must contain a datetime column')` early in `build_monthly_windows` when `datetime` is absent, or (b) implement proper integer-based windowing in the fallback (using `cur += window_days` with integer offsets). Option (a) is simpler and consistent with the task spec which states the DataFrame must contain `datetime`."
-    },
-    {
-      "severity": "low",
-      "finding": "`monthly_windows.py` has no module-level logger, while `rolling_cv.py` defines `logger = logging.getLogger(__name__)` and uses it. The task spec calls for 'module-level logger' consistency.",
-      "fix": "Add `import logging` and `logger = logging.getLogger(__name__)` to `monthly_windows.py`. Consider logging a debug message when `evaluate_rule_set_monthly` catches exceptions on a per-window basis (currently silent except for the fallback metrics dict)."
-    },
-    {
-      "severity": "low",
-      "finding": "No unit tests were added for the ~750 lines of new code. The implementer ran inline smoke tests, and all 8 acceptance criteria pass, but there is no persistent test coverage for edge cases (empty df, missing datetime, zero-window summary, NaN handling, etc.).",
-      "fix": "Add a minimal `tests/unit/test_monthly_windows.py` covering: (1) empty df returns [], (2) `monthly_penalty` returns 100.0 for zero windows, (3) `summarize_monthly_metrics` on empty iterable, (4) single-window summary has correct shape. This is ~20 lines of test code and can be smoke-tested without running the full test suite."
-    },
-    {
-      "severity": "low",
-      "finding": "`summarize_monthly_metrics` creates the `trades` array with `dtype=float` from `int` values: `np.asarray([int(m.get(...))], dtype=float)`. This is harmless but wasteful — the floats are immediately cast through `int(np.min(trades))`.",
-      "fix": "Use `dtype=int` or omit the dtype argument to let NumPy infer it. This is a minor cleanup; no behavioral change."
+      "severity": "trivial",
+      "category": "style",
+      "description": "Pointless lambda wrapper: `study.optimize(lambda trial: objective(trial), ...)` could pass `objective` directly. Cosmetic only.",
+      "evidence": "Line 363 of gpu_fuzzy_trader/optuna_search.py: `lambda trial: objective(trial)`.",
+      "fix_suggestion": "Replace with `study.optimize(objective, n_trials=..., show_progress_bar=True)`.",
+      "blocking": false
     }
   ],
-  "summary": "All 8 explicit acceptance criteria pass: imports work, config keys are present, backward compatibility is maintained, no friend-project or rb_evaluator imports leak, and synthetic smoke tests produce correct shapes. Two medium-severity issues were found: (1) the `or` fallback pattern overrides intentional zero values (unlike rolling_cv.py's correct `is not None` pattern), and (2) the `_datetime_series` fallback to integer indices is incompatible with `pd.Timedelta` arithmetic, causing a TypeError when `datetime` is missing. Three low-severity findings cover missing logger, missing unit tests, and a minor dtype inconsistency. None of the findings are critical — the code is functionally correct for the expected call path (DataFrames always have `datetime`, and callers pass explicit positive values). The code is well-structured, has thorough docstrings, proper type hints, and follows PEP 8.",
-  "checked_at": "2026-06-15",
-  "commit": "776fe2d"
+  "checks_performed": {
+    "imports_and_compile": {
+      "result": "PASS",
+      "evidence": "`python -m py_compile gpu_fuzzy_trader/optuna_search.py` and `python -c 'import gpu_fuzzy_trader.optuna_search'` both succeed."
+    },
+    "cli_args": {
+      "result": "PASS",
+      "evidence": "`--help` shows all 5 required arguments: --n-trials, --fast, --debug, --study-name, --storage."
+    },
+    "search_space_size_and_values": {
+      "result": "PASS",
+      "evidence": "Programmatically verified: SEARCH_SPACE has exactly 12 keys with the exact values from task-1.md §2."
+    },
+    "compute_score_formula": {
+      "result": "PASS",
+      "evidence": "Tested compute_score({long_ret:5, short_ret:3, long_dd:6, short_dd:7}) -> 4.0 (no penalty). Tested (5, 3, 12, 9) -> -8.0 (penalty=3*(12-8)=12, 4-12=-8). Formula matches spec exactly."
+    },
+    "collect_phase5_metrics": {
+      "result": "PASS",
+      "evidence": "Tested with both nested (`{test: {...}}`) and flat metric structures. Returns expected flat dict with test_{direction}_{field} keys, correct default fallbacks (-999 for return, 100 for dd, 0 for pf)."
+    },
+    "patch_start_and_restore": {
+      "result": "PASS",
+      "evidence": "Verified that apply_trial_config({'PHASE1_TOP_K_FEATURES': 42}) sets cfg.PHASE1_TOP_K_FEATURES to 42, and p.stop() restores it to original 20. No state leak between trials."
+    },
+    "config_keys_exist": {
+      "result": "PASS",
+      "evidence": "All 12 SEARCH_SPACE keys exist on gpu_fuzzy_trader.config module (PHASE1_TOP_K_FEATURES=20, MIN_TRADE_SUPPORT=90, MIN_TRADE_POOL_FLOOR=17, PHASE2_MAX_DRAWDOWN_GATE=25.0, PHASE2_MAX_TRAIN_VAL_GAP_PCT=8.0, PHASE2_KEEP_TOP_RULES=120, PHASE2_POPULATION_SIZE=200, PHASE2_MUTATION_RATE=0.22, PHASE2_STAGE_A_GENERATIONS=85, PHASE3_VAL_RETURN_FLOOR_PCT=5.0, RB_MIN_TRAIN_RETURN=2.0, RB_MIN_VALID_RETURN=2.0). Patches will not raise AttributeError."
+    },
+    "subprocess_safety": {
+      "result": "PASS",
+      "evidence": "No subprocess usage. Implementation imports Pipeline_Orchestrator and calls .run() directly, which is the safer approach per spec discussion."
+    },
+    "hardcoded_secrets": {
+      "result": "PASS",
+      "evidence": "No API keys, tokens, or credentials. Storage URL defaults to local sqlite:// path. Safe."
+    },
+    "exception_handling": {
+      "result": "PASS",
+      "evidence": "objective() uses try/except Exception/finally pattern. Failed trials return -999.0 penalty with traceback stored in user_attr. KeyboardInterrupt (BaseException) is not caught, which is correct. Patchers are guaranteed to stop in the finally block, preventing cross-trial contamination."
+    },
+    "resource_management": {
+      "result": "PASS",
+      "evidence": "No file handles leak (JSON write is in `with` block). SQLite storage managed by Optuna. No threads or long-lived resources."
+    },
+    "module_reload_needed": {
+      "result": "PASS",
+      "evidence": "All phase modules use `from gpu_fuzzy_trader import config as _cfg` and access `_cfg.XXX` dynamically. Therefore unittest.mock.patch on the config module attribute is observed by all consumers without reload. Implementation correctly relies on this dynamic-lookup pattern."
+    },
+    "colab_default_safety": {
+      "result": "PASS",
+      "evidence": "Verified _apply_colab_gpu_defaults() (line 1867 of config.py) only sets PHASE3_USE_GPU and PHASE2_GPU_BATCH_SIZE_AUTO — neither is in the SEARCH_SPACE, so colab-time overrides cannot interfere with trial values."
+    },
+    "config_double_definition": {
+      "result": "INFO",
+      "evidence": "PHASE2_KEEP_TOP_RULES is defined at config.py:659 (value 80) and overridden at config.py:2129 (value 120). This is a pre-existing project quirk, NOT caused by this PR. The optuna patch will still override whatever the final value is, so the search works correctly. Worth noting but not blocking.",
+      "fix_suggestion": "None required for this PR. Project may want to clean up the duplicate definition in a separate task."
+    }
+  },
+  "edge_cases_considered": {
+    "pipeline_returns_None": "Defensively handled: collect_phase5_metrics calls .get() on the input; if results is None, .get would raise AttributeError, caught by objective's except Exception, returning -999.0 penalty.",
+    "missing_metrics": "collect_phase5_metrics uses .get(..., -999) for returns and .get(..., 100) for drawdowns. Missing keys return sensible penalty defaults, so a single missing metric produces a -999 score rather than a crash.",
+    "optuna_not_installed": "Raises ModuleNotFoundError at import. Acceptable — consistent with project convention; user gets a clear stack trace with a pip-install hint.",
+    "all_trials_fail": "study.best_value will be -999.0 and study.best_params will reflect one of the failed trials' params. Best params JSON is still saved. Acceptable graceful degradation.",
+    "sqlite_locked": "If two optuna_search instances run concurrently against the same DB, Optuna will raise an OperationalError. Usage-pattern concern, not a code bug."
+  },
+  "test_adequacy": {
+    "verdict": "ADEQUATE_FOR_PROJECT",
+    "evidence": "Implementer ran 4 verification checks (import, --help, py_compile, verification script for 12 params + compute_score + patching + restore). All passed. End-to-end pipeline test is intentionally NOT run locally (per project AGENTS.md: 'Do not run my project because it get OOM error!'). Task-2 is the integration test. Test approach is appropriate."
+  },
+  "files_changed": ["gpu_fuzzy_trader/optuna_search.py"],
+  "diff_size": 397,
+  "ready_to_merge": true
 }

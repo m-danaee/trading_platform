@@ -1,8 +1,78 @@
 {
-  "task": "Task 1 — Add validation/monthly_windows.py and validation/rolling_cv.py",
+  "task_id": "task-1",
+  "reviewer": "spec-reviewer",
+  "review_timestamp": "2026-06-20T00:00:00Z",
   "verdict": "APPROVED",
-  "issues": [],
-  "summary": "All 8 acceptance criteria pass. The diff touches exactly the 4 expected files (config.py added 17 MONTHLY_* keys, validation/__init__.py, monthly_windows.py, rolling_cv.py). No out-of-scope changes to evaluator_v5.ipynb, Phase 2/3/4/5 code, or any other module. Imports all point at my codebase (gpu_fuzzy_trader.backtest.cpu_engine, gpu_fuzzy_trader.backtest.df_slim, gpu_fuzzy_trader.config) — no references to friend_project or rb_evaluator. monthly_penalty(MonthlyWindowSummary(windows=0, ...)) returns exactly 100.0. evaluate_rule_set_monthly returns (MonthlyWindowSummary, list[dict]) with windows matching actual window count. build_purged_rolling_folds correctly uses getattr(_cfg, ...) fallback pattern for PURGED_CV_* config keys (which don't actually exist in config.py — the adaptor correctly handled this spec mismatch with safe defaults: 4, 288, 0.45, 5000). All 17 MONTHLY_* config keys are present and accessible. No new third-party dependencies. The adaptation from the friend's code is clean and correct — key differences (getattr fallbacks, richer docstrings, explicit type hints, _valid_start_bar/_valid_end_bar set on fold engines) are all improvements or necessary safety adaptations, not regressions.",
-  "checked_at": "2026-06-15",
-  "commit": "776fe2d"
+  "acceptance_criteria_results": [
+    {
+      "ac": "1. optuna_search.py exists and is syntactically valid",
+      "result": "PASS",
+      "evidence": "File exists on feature branch (397 lines, single-file diff). py_compile verified by implementer."
+    },
+    {
+      "ac": "2. CLI with --n-trials, --fast, --debug, --study-name, --storage",
+      "result": "PASS",
+      "evidence": "All 5 flags present with correct types and defaults: --n-trials (int, 50), --fast (store_true), --debug (store_true), --study-name (str, 'gpu_fuzzy_optuna'), --storage (str, 'sqlite:///outputs/optuna_study.db'). Verified by --help test."
+    },
+    {
+      "ac": "3. Search space covers all 12 hyperparameters from plan",
+      "result": "PASS",
+      "evidence": "All 12 parameters present with exact candidate values matching spec table. Verified line-by-line against task-1.md §2."
+    },
+    {
+      "ac": "4. Objective computes composite score from test return and drawdown",
+      "result": "PASS",
+      "evidence": "compute_score() implements: combined_return - 3.0 * max(0, max_dd - 8.0). DD_THRESHOLD=8.0, DD_PENALTY_WEIGHT=3.0. combined_return=(long+short)/2, max_dd=max(long_dd,short_dd)."
+    },
+    {
+      "ac": "5. Config values patched per-trial and restored after",
+      "result": "PASS",
+      "evidence": "apply_trial_config() starts unittest.mock.patch patchers. objective() finally block calls p.stop() on all patchers."
+    },
+    {
+      "ac": "6. Study saved to SQLite DB, best params exported to JSON",
+      "result": "PASS",
+      "evidence": "Study storage default: sqlite:///outputs/optuna_study.db. Best params saved to outputs/optuna_best_params.json with best_trial, best_score, best_params, user_attrs."
+    },
+    {
+      "ac": "7. Failed trials return -999 penalty score",
+      "result": "PASS",
+      "evidence": "except Exception block returns -999.0, sets error traceback as user attr, prints traceback."
+    },
+    {
+      "ac": "8. Uses from __future__ import annotations, matches project code style",
+      "result": "PASS",
+      "evidence": "from __future__ import annotations present at line 10. Type hints used throughout (dict[str, Any], dict[str, float]). Docstrings follow project NumPy-style convention."
+    }
+  ],
+  "detailed_review": {
+    "search_space_exact_values": {
+      "PHASE1_TOP_K_FEATURES": [10, 15, 20, 25, 30],
+      "MIN_TRADE_SUPPORT": [30, 60, 90, 120, 150],
+      "MIN_TRADE_POOL_FLOOR": [8, 12, 17, 25, 35],
+      "PHASE2_MAX_DRAWDOWN_GATE": [12.0, 18.0, 25.0, 30.0, 35.0],
+      "PHASE2_MAX_TRAIN_VAL_GAP_PCT": [4.0, 6.0, 8.0, 10.0, 15.0],
+      "PHASE2_KEEP_TOP_RULES": [40, 60, 80, 100, 120],
+      "PHASE2_POPULATION_SIZE": [100, 150, 200, 250],
+      "PHASE2_MUTATION_RATE": [0.12, 0.17, 0.22, 0.27, 0.32],
+      "PHASE2_STAGE_A_GENERATIONS": [50, 70, 85, 100, 120],
+      "PHASE3_VAL_RETURN_FLOOR_PCT": [2.0, 4.0, 5.0, 7.0, 10.0],
+      "RB_MIN_TRAIN_RETURN": [1.0, 2.0, 3.0, 5.0],
+      "RB_MIN_VALID_RETURN": [1.0, 2.0, 3.0, 5.0]
+    },
+    "all_values_match_spec": true,
+    "objective_formula": "combined_return - 3.0 * max(0.0, max_dd - 8.0)",
+    "formula_matches_spec": true,
+    "config_patching": "unittest.mock.patch on gpu_fuzzy_trader.config.{key}, stopped in finally block",
+    "metrics_source": "Pipeline_Orchestrator.run() return dict (in-memory, not disk JSON)",
+    "metrics_source_note": "Spec says 'Parse Phase 5 output (from outputs/ directory or pipeline log)'. Implementation reads from the orchestrator's in-memory return dict which IS the Phase 5 output. This is more robust than parsing JSON files from disk. Phase 5 returns {direction: {split: metrics}} and collect_phase5_metrics correctly extracts test metrics.",
+    "files_changed": ["gpu_fuzzy_trader/optuna_search.py"],
+    "no_existing_files_modified": true,
+    "scope_compliance": "Only creates optuna_search.py. No modifications to config.py or any other existing files."
+  },
+  "minor_observations": [
+    "Import ordering: `from unittest.mock import patch` is placed after third-party optuna imports (line 22) instead of in the stdlib group (should be after `from typing import Any` on line 16). Cosmetic only, does not affect functionality.",
+    "Implementation correctly removed unused imports from the spec template (sys, pathlib.Path).",
+    "Added benign enhancements: elapsed time tracking, top-5 trials ranking, additional user_attrs (long_pf, short_pf, score). These do not conflict with the spec."
+  ]
 }

@@ -1,9 +1,14 @@
 # Context
 
-- **Active objective:** Fix empty Phase 2 pool bug — COMPLETED
-- **Current phase:** Done
+- **Active objective:** Optuna hyperparameter optimization for GPU Fuzzy Trader config
+- **Current phase:** Task-3 — extend search space 12→26 params
 - **base_branch:** `main`
-- **Merged branch:** `feature/task-1-cache-val-df-rebuild` (commit 56bbc7d)
-- **Result:** Merged into main. Fix caches val DataFrame for Phase 2 engine rebuilds after park_engines().
+- **Current branch:** `feature/task-3-extend-search-space`
+- **Plan file:** `.opencode/plans/PLAN.md`
+- **execution_mode:** checkpoint
+- **branch_policy:** isolated
+- **Task-1:** DONE ✅ (merged to main)
+- **Task-2:** DONE ✅ (verification complete)
+- **Task-3:** In progress — adding 14 hyperparameters
 - **Pending blockers:** None
-- **Next action:** Clean up feature branch
+- **Next action:** Dispatch implementer for task-3

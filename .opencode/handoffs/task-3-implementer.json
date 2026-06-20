@@ -1,47 +1,14 @@
 {
   "task": "task-3",
   "status": "DONE",
-  "commit": "93b1dd4",
-  "branch": "feature/task-3-positive-good-gate",
-  "summary": "Added gate_positive_good pure function and wired it into Phase 3 per-symbol greedy, combo scoring, fallback, and merged-rule scoring. Added 8 new config keys. Added optional stricter Phase 2 pool admission flag (default OFF). 20 new unit tests + all 94 existing tests pass.",
+  "commit_sha": "4a8617eb787a3c64e99d0f29285fd9f2ed1446c4",
   "files_changed": [
-    "gpu_fuzzy_trader/config.py",
-    "gpu_fuzzy_trader/phases/phase3_rule_set.py",
-    "gpu_fuzzy_trader/phases/phase2_support.py",
-    "tests/unit/test_positive_good_gate.py"
+    "gpu_fuzzy_trader/optuna_search.py"
   ],
-  "acceptance_criteria_verified": {
-    "gate_positive_good_importable": true,
-    "gate_positive_good_returns_true_when_positive_pf_gte_1_trades_ok": true,
-    "gate_positive_good_returns_false_when_return_leq_0": true,
-    "gate_positive_good_returns_false_when_pf_lt_1": true,
-    "gate_positive_good_returns_false_when_trades_below_floor": true,
-    "gate_positive_good_handles_missing_keys": true,
-    "gate_positive_good_wired_into_score_pool_rule_on_symbol": true,
-    "gate_positive_good_wired_into_robust_combo_return": true,
-    "gate_positive_good_wired_into_global_pool_fallback": true,
-    "gate_positive_good_wired_into_merged_rule_scoring": true,
-    "PHASE3_MAX_TRAIN_VAL_GAP_PCT_preserved": true,
-    "PHASE2_STRICT_POSITIVE_GOOD_added_default_off": true,
-    "new_tests_pass_20_of_20": true,
-    "existing_tests_pass_94_of_94": true,
-    "no_changes_to_evaluator_v5": true,
-    "no_changes_to_gpu_engine": true
+  "summary": "Extended SEARCH_SPACE from 12 to 26 hyperparameters. Added 14 new entries (PHASE2_TP, PHASE2_SL, PHASE2_CAPITAL_PCT, PHASE2_RETURN_FLOOR_PCT, PHASE2_VAL_RETURN_FLOOR_PCT, PHASE2_PROFIT_FACTOR_FLOOR, PHASE2_STAGE_B_GENERATIONS, PHASE2_DIVERSITY_PENALTY, PHASE2_FEASIBILITY_VIOLATION_WEIGHT, PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO, PHASE2_MIN_PROFITABLE_SYMBOLS, PHASE3_PER_SYMBOL_MIN_TRADES, RB_KEEP_TOP_RULES, RB_MAX_PAIR_OVERLAP) with exact values from task-3 spec. All 12 original params unchanged.",
+  "verification": {
+    "import_test": "PASSED — 26 params confirmed via assert",
+    "help_test": "PASSED — --help shows all CLI args"
   },
-  "test_results": {
-    "tests/unit/test_positive_good_gate.py": "20 passed",
-    "tests/unit/test_phase3_rule_set.py": "65 passed, 1 skipped",
-    "tests/unit/test_phase2_support.py": "21 passed",
-    "tests/unit/test_monthly_wired_into_scoring.py": "4 passed",
-    "tests/unit/test_config_additions.py": "4 passed"
-  },
-  "notes_for_reviewer": [
-    "gate_positive_good is a pure function (no side effects, no engine calls) placed near the top of phase3_rule_set.py after imports.",
-    "All gate calls use getattr(_cfg, 'KEY', default) pattern for safe config access.",
-    "PHASE3_REQUIRE_POSITIVE_GOOD defaults to True (gate enabled).",
-    "PHASE2_STRICT_POSITIVE_GOOD defaults to False (not breaking existing pool).",
-    "The existing PHASE3_MAX_TRAIN_VAL_GAP_PCT=20.0 gap-reject gate remains in place — the positive-good gate runs BEFORE it.",
-    "Lazy import in phase2_support.py avoids circular dependency with phase3_rule_set.",
-    "New test file has 20 test cases across 6 test classes covering pure function behavior (14 cases), integration (3 cases), skippable flag (1), importable check (1), and existing gate preservation (1)."
-  ]
+  "notes_for_reviewer": "Only SEARCH_SPACE dict was modified. No functions, imports, CLI, or existing params were changed. All new parameter values match the spec exactly."
 }

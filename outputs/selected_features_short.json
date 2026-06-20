@@ -4,102 +4,77 @@
     {
       "name": "amihud_illiquidity_20",
       "mode": "positive",
-      "score": 0.21285850343400156
+      "score": 0.22192020767065823
     },
     {
       "name": "range_compression_20_100",
       "mode": "positive",
-      "score": 0.10980078573166947
-    },
-    {
-      "name": "downside_semivol_20",
-      "mode": "positive",
-      "score": 0.07553210370096114
+      "score": 0.10314109267545421
     },
     {
       "name": "dmi_balance_14",
       "mode": "signed",
-      "score": 0.03347481814970301
-    },
-    {
-      "name": "drawdown_from_peak_60",
-      "mode": "positive",
-      "score": 0.02651455174691421
-    },
-    {
-      "name": "bb_width_rel_20",
-      "mode": "positive",
-      "score": 0.01272297198161966
+      "score": 0.0417510936628277
     },
     {
       "name": "roc_10",
       "mode": "signed",
-      "score": 0.010659133200279697
-    },
-    {
-      "name": "open_gap_atr_14",
-      "mode": "sparse_signed",
-      "score": 0.006190483981416426
+      "score": 0.03174706380166224
     },
     {
       "name": "rsi_centered_14",
       "mode": "signed",
-      "score": 0.004035847925887342
+      "score": 0.011522945420004193
     },
     {
-      "name": "channel_pos_20",
-      "mode": "positive",
-      "score": 0.0029324200042281285
+      "name": "open_gap_atr_14",
+      "mode": "sparse_signed",
+      "score": 0.009530879875802648
     },
     {
-      "name": "lower_wick_to_tr",
+      "name": "log_range_over_vol_100",
       "mode": "positive",
-      "score": 0.0025070287373167217
-    },
-    {
-      "name": "mom_stoch_rsi_14_14_3",
-      "mode": "positive",
-      "score": 0.0017620409261782377
-    },
-    {
-      "name": "cand_up_down_vol_ratio_20",
-      "mode": "positive",
-      "score": 0.0015167081169406502
+      "score": 0.008213906717306138
     },
     {
       "name": "efficiency_ratio_20",
       "mode": "positive",
-      "score": 0.0015021967253815288
-    },
-    {
-      "name": "absret_ema_ratio_20_100",
-      "mode": "positive",
-      "score": 0.001231446862668033
-    },
-    {
-      "name": "vol_ratio_20_100",
-      "mode": "positive",
-      "score": 0.0005819206367608539
-    },
-    {
-      "name": "atr_ratio_14_63",
-      "mode": "positive",
-      "score": 0.0005411836076511968
-    },
-    {
-      "name": "vol_over_ema20",
-      "mode": "positive",
-      "score": 0.0005272811587285933
+      "score": 0.00361155809508525
     },
     {
       "name": "body_signed_to_tr",
       "mode": "signed",
-      "score": 0.00026931762689879664
+      "score": 0.0033502064370773553
+    },
+    {
+      "name": "body_to_tr",
+      "mode": "positive",
+      "score": 0.0032636924027474425
+    },
+    {
+      "name": "close_location_value",
+      "mode": "positive",
+      "score": 0.0028160471266088878
+    },
+    {
+      "name": "upper_wick_to_tr",
+      "mode": "positive",
+      "score": 0.0017378222318760262
+    },
+    {
+      "name": "absret_ema_ratio_20_100",
+      "mode": "positive",
+      "score": 0.001613080661694181
+    },
+    {
+      "name": "vol_over_ema20",
+      "mode": "positive",
+      "score": 0.0015111405834762023
     },
     {
       "name": "up_close_ratio_5",
-      "mode": "sparse_positive",
-      "score": 0.00015421117563161054
+      "mode": "positive",
+      "score": 0.001293861396701613
     }
   ]
 }

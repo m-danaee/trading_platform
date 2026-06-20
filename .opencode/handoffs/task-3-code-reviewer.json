@@ -1,22 +1,80 @@
 {
   "task": "task-3",
   "verdict": "APPROVED",
-  "findings": [
-    {
-      "severity": "medium",
-      "finding": "`_safe_get` in `gate_positive_good` does not sanitize non-finite floats (NaN, Inf). The friend's equivalent helper (`_f` in `rb_governor.py:35-39`) includes `math.isfinite(value)` to return the default when the value is NaN or Inf. Currently, if `profit_factor` or `total_return_pct` is NaN, the gate may incorrectly pass because `nan < 1.0` and `nan <= 0.0` are both `False` in Python. If `executed_trades` is NaN, `int(float('nan'))` raises an unhandled `ValueError` that would crash the caller.",
-      "fix": "Add `import math` at the top of `gate_positive_good` and update `_safe_get` to:\n```python\ndef _safe_get(m: dict, key: str, default: float = 0.0) -> float:\n    val = m.get(key)\n    if val is None:\n        return float(default)\n    try:\n        f = float(val)\n        return f if math.isfinite(f) else float(default)\n    except (TypeError, ValueError):\n        return float(default)\n```\nThis matches the friend's robustness pattern exactly."
+  "reviewer": "code-reviewer",
+  "commit_reviewed": "4a8617eb787a3c64e99d0f29285fd9f2ed1446c4",
+  "branch": "feature/task-3-extend-search-space",
+  "files_changed": ["gpu_fuzzy_trader/optuna_search.py"],
+  "summary": "Implementation is correct, minimal, and matches the task spec exactly. SEARCH_SPACE extended from 12 to 26 entries. All 14 new keys are valid top-level config.py attributes. The dict syntax is correct, patching will work with unittest.mock.patch, and the import test confirms 26 entries. The `--help` CLI is unchanged and functional. No out-of-scope changes (no functions, imports, CLI, or docstrings were touched).",
+  "checks_performed": {
+    "all_14_new_keys_exist_in_config_py": {
+      "passed": true,
+      "details": "All 14 new keys verified via grep in gpu_fuzzy_trader/config.py: PHASE2_TP (L538), PHASE2_SL (L543), PHASE2_CAPITAL_PCT (L548), PHASE2_RETURN_FLOOR_PCT (L615), PHASE2_VAL_RETURN_FLOOR_PCT (L620), PHASE2_PROFIT_FACTOR_FLOOR (L625), PHASE2_MIN_PROFITABLE_SYMBOLS (L635), PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO (L697), PHASE2_DIVERSITY_PENALTY (L756), PHASE2_FEASIBILITY_VIOLATION_WEIGHT (L822), PHASE2_STAGE_B_GENERATIONS (L866), PHASE3_PER_SYMBOL_MIN_TRADES (L1190), RB_KEEP_TOP_RULES (L1937), RB_MAX_PAIR_OVERLAP (L1950)"
     },
-    {
-      "severity": "low",
-      "finding": "`test_gap_gate_still_rejects` only asserts `isinstance(result, dict)` without verifying the gap gate actually produced a rejection (`return_pct == -999.0`). The assertion is too weak to confirm the existing gate is still functional alongside the new positive-good gate.",
-      "fix": "Either (a) assert `result['return_pct'] == -999.0` after setting `PHASE3_MAX_TRAIN_VAL_GAP_PCT` to a very low value (e.g., 0.0) to guarantee rejection, or (b) rename the test to `test_gap_gate_still_executes_without_crash` to reflect its actual scope, and add a separate targeted test that patches the engine to return controlled train/val returns verifying gap rejection produces -999."
+    "values_match_spec": {
+      "passed": true,
+      "details": "Programmatic comparison of all 14 new keys/values against the spec table — exact match."
     },
-    {
-      "severity": "low",
-      "finding": "No explicit test for empty metric dicts (`train_metrics = {}`, `val_metrics = {}`). The code handles this correctly via `_safe_get` defaulting missing keys to 0.0, but an explicit regression test would be defensive against future refactors.",
-      "fix": "Add a single test case: `test_empty_dicts_fail` that passes `{}, {}` and asserts `gate_positive_good({}, {}) is False`."
+    "dict_count_equals_26": {
+      "passed": true,
+      "details": "Runtime check: len(SEARCH_SPACE) == 26 (assert passed)."
+    },
+    "original_12_unchanged": {
+      "passed": true,
+      "details": "All 12 original entries (PHASE1_TOP_K_FEATURES through RB_MIN_VALID_RETURN) are byte-identical to the pre-task version on main."
+    },
+    "dict_syntax_valid": {
+      "passed": true,
+      "details": "Module imports cleanly; commas/brackets balanced; no missing punctuation."
+    },
+    "patch_compatible_with_unittest_mock_patch": {
+      "passed": true,
+      "details": "apply_trial_config uses `patch(f\"gpu_fuzzy_trader.config.{key}\", value)`. All 14 new keys are top-level module attributes (no nested paths), so the patch() string form will resolve correctly."
+    },
+    "no_out_of_scope_changes": {
+      "passed": true,
+      "details": "Diff is +16/-0 lines, all additions. No function bodies, imports, CLI args, or docstrings modified."
+    },
+    "cli_help_still_works": {
+      "passed": true,
+      "details": "`python -m gpu_fuzzy_trader.optuna_search --help` runs and prints all expected CLI flags (--n-trials, --fast, --debug, --study-name, --storage)."
     }
+  },
+  "value_risk_assessment": {
+    "PHASE2_TP_range_1_to_4_pct": "Reasonable. Default is 2.0%.",
+    "PHASE2_SL_range_0.5_to_2_pct": "Reasonable. Default is 1.0%.",
+    "PHASE2_CAPITAL_PCT_range_15_to_40": "Reasonable. Default is 30%.",
+    "PHASE2_RETURN_FLOOR_PCT_-2": "Acceptable. config.py comment explicitly states 'Lower → more exploration; weak rules linger until other gates remove them.' Downstream RB/Phase-3 gates still apply.",
+    "PHASE2_VAL_RETURN_FLOOR_PCT_range_0_to_5": "Reasonable. Default is 0.5%.",
+    "PHASE2_PROFIT_FACTOR_FLOOR_range_1.0_to_1.20": "Reasonable. Default is 1.05.",
+    "PHASE2_STAGE_B_GENERATIONS_min_25": "Tight but valid. Cross-param asserts in config.py: PHASE2_STAGE_B_EARLY_STOP_MIN_GENERATION=20 and PHASE2_STAGE_B_PLATEAU_EARLY_STOP_MIN_GENERATION=15. Min search value 25 leaves only 5 gens after return-based early stop and 10 gens after plateau early stop — acceptable for a refinement phase, not unreasonable.",
+    "PHASE2_DIVERSITY_PENALTY_range_3_to_16": "Reasonable. Default is 8.",
+    "PHASE2_FEASIBILITY_VIOLATION_WEIGHT_range_10_to_50": "Reasonable. Default is 25.",
+    "PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO_range_0.3_to_0.7": "Reasonable. Default is 0.5.",
+    "PHASE2_MIN_PROFITABLE_SYMBOLS_range_2_to_6": "Reasonable. Default is 4.",
+    "PHASE3_PER_SYMBOL_MIN_TRADES_range_4_to_16": "Reasonable. Default is 8.",
+    "RB_KEEP_TOP_RULES_range_40_to_120": "Reasonable. Default is 80.",
+    "RB_MAX_PAIR_OVERLAP_range_0.15_to_0.40": "Reasonable. Default is 0.30."
+  },
+  "comments_audit": {
+    "original_12_parameters_unchanged": "Accurate — the 12 entries above the comment are byte-identical to the main branch version.",
+    "14_new_parameters_task_3": "Accurate — exactly 14 new entries below the comment.",
+    "file_level_comment_search_space_12_hyperparameters": "OUTDATED but not misleading. The header comment on lines 24-26 still says 'Search space: 12 hyperparameters from config.py'. After this task it should say 26. However, the in-dict comment 'Original 12 parameters (unchanged)' is accurate, and the task spec explicitly says 'Do NOT change...docstrings' and 'Only add lines to the SEARCH_SPACE dict', so leaving it untouched is in-scope. Not a blocker.",
+    "dict_syntax_audit": "All entries have matching brackets, commas are present, no trailing comma issues."
+  },
+  "test_coverage_notes": [
+    "No test asserts on SEARCH_SPACE size — safe to expand.",
+    "No test patches on any of the 14 new config keys via SEARCH_SPACE, so no test would break.",
+    "No test hardcodes the 12-param count anywhere.",
+    "Many unit tests already reference these same config keys (e.g. test_phase2_rule_pool.py, test_evox_runner.py, test_monthly_wired_into_scoring.py, test_phase3_threshold_diagnostic.py) and use monkeypatch.setattr on them directly, so the keys are exercised in tests independently of the search space — the new entries are guaranteed to be valid attributes."
   ],
-  "summary": "Review of 4 files (+530 lines): config keys, gate_positive_good pure function, wire-in at 4 Phase 3 call sites, optional Phase 2 gate, and 20 unit tests. The implementation follows the task spec faithfully. The gate's comparison semantics (`>` for return, `>=` for PF, `>=` for trades) match the friend's `_is_positive_good` exactly. The wire-in correctly skips when train data is unavailable and runs alongside the existing `PHASE3_MAX_TRAIN_VAL_GAP_PCT` gap check. Performance is acceptable (pure function, ~2800 calls in normal run). The 20 tests are well-structured and all pass. One medium finding: `_safe_get` does not sanitize NaN/Inf like the friend's `_f` helper does, which could allow NaN metrics to pass the gate or crash on `int(nan)`. Two low findings on test coverage gaps (weak gap-gate assertion, no empty-dict test). No blocking issues."
+  "type_consistency_observations": [
+    "Some search values are ints where config holds floats: PHASE2_CAPITAL_PCT (int vs float), PHASE2_DIVERSITY_PENALTY (int vs float), PHASE2_FEASIBILITY_VIOLATION_WEIGHT (int vs float). Spec specifies ints, so this is intentional and harmless — Python numeric comparisons treat them as compatible.",
+    "PHASE2_RETURN_FLOOR_PCT=-2 is the only negative value in the search space. Per config.py docstring this is intentional ('more exploration')."
+  ],
+  "issues": [],
+  "out_of_scope_suggestions": [
+    "Optional follow-up (NOT required for this task): the file-level comment on lines 24-26 still says '12 hyperparameters' but should say 26. Out of scope per task spec; consider a tiny follow-up docstring hygiene commit if desired."
+  ],
+  "decision_rationale": "All acceptance criteria are met, all 14 new keys resolve in config.py, dict syntax is valid, the import assertion holds, --help works, the patch() path is sound, value ranges are sensible, comments inside the dict are accurate, and the diff is minimal. No blockers. APPROVED."
 }
