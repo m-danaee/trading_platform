@@ -1,26 +1,20 @@
 {
   "task": "task-2",
   "status": "DONE",
-  "commit": "69d21f4",
-  "branch": "feature/task-2-monthly-penalty-scoring",
+  "commit": "3ee6bfc",
+  "branch": "feature/task-2-backtest-init-defensive",
   "files_changed": [
-    "gpu_fuzzy_trader/config.py",
-    "gpu_fuzzy_trader/phases/phase3_rule_set.py",
-    "gpu_fuzzy_trader/phases/phase4_wf_optimizer.py",
-    "tests/unit/test_monthly_wired_into_scoring.py"
+    "gpu_fuzzy_trader/backtest/__init__.py"
   ],
   "tests_run": [
-    "python -m pytest tests/unit/test_monthly_wired_into_scoring.py -v: PASSED (2/2)",
-    "python -m pytest tests/unit/test_monthly_windows.py -v: PASSED (7/7)",
-    "python -m pytest tests/unit/test_config_additions.py -v: PASSED (4/4)"
+    ".venv/bin/python -c \"from gpu_fuzzy_trader.backtest import CPUBacktestEngine; print('OK:', CPUBacktestEngine)\": OK: <class 'gpu_fuzzy_trader.backtest.cpu_engine.CPUBacktestEngine'>",
+    ".venv/bin/python -c \"from gpu_fuzzy_trader.backtest import GPUBacktestEngine; print('GPU engine:', type(GPUBacktestEngine).__name__ if GPUBacktestEngine else None)\": GPU engine: type",
+    ".venv/bin/python -c \"from gpu_fuzzy_trader.backtest import GPUBacktestEngine; print(GPUBacktestEngine is not None); import gpu_fuzzy_trader.backtest; print(gpu_fuzzy_trader.backtest.__all__)\": True / __all__ includes GPUBacktestEngine"
   ],
   "notes_for_reviewer": [
-    "Task 1 (feature/task-1-monthly-validation) was NOT on main. Merged it into this branch as a fast-forward before implementing Task 2.",
-    "Phase3: monthly penalty is computed inside _robust_combo_return (nested in _per_symbol_greedy). It subtracts (monthly_penalty * PHASE3_MONTHLY_PENALTY_WEIGHT) from the base robust return. When windows == 0, PHASE3_MONTHLY_FALLBACK_PENALTY (5.0) is used.",
-    "Phase4: monthly penalty is computed inside the Optuna objective function using self.val_df as the combined dataset (since train_df is not available in the WalkForwardRiskOptimizer constructor). The penalty (monthly_penalty * PHASE4_MONTHLY_SCORE_WEIGHT) is subtracted from the worst_return before scaling by WORST_RETURN_WEIGHT.",
-    "combined_df and feature_names are built once in Rule_Set_Selector.run() and passed down to _per_symbol_greedy -> _robust_combo_return to avoid recomputing per candidate.",
-    "Unit test: Phase 3 test uses synthetic data and two real rule-sets; Phase 4 test uses manually constructed MonthlyWindowSummary objects to verify penalty differentiation.",
-    "All existing imports and config keys are intact. No changes to evaluator_v5.ipynb or public function signatures.",
-    "Sign convention: higher score = better. The monthly_penalty is non-negative (larger = worse). We subtract (weight * monthly_penalty) from the base score, so a worse monthly profile reduces the composite score."
+    "Wrapped get_gpu_backtest_engine_class() call in try/except Exception as defense-in-depth.",
+    "jax_compat.py on this branch is the original version (without AttributeError from task-1). The defense-in-depth wrapping provides coverage for any unexpected exception types.",
+    "All acceptance criteria verified: CPUBacktestEngine imports OK, GPUBacktestEngine is real class when jax available, __all__ includes GPUBacktestEngine.",
+    "The try/except pattern catches ANY exception, providing robustness beyond just the _GPU_ENGINE_ERRORS tuple in jax_compat.py."
   ]
 }

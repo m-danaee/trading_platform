@@ -1,112 +1,88 @@
 {
-  "task": "task-2-strip-phase1-regime",
+  "task": "task-2-backtest-init-defensive",
   "reviewer": "code-reviewer",
-  "status": "DONE",
-  "branch": "feature/task-2-strip-phase1-regime",
-  "base_branch": "main",
-  "commit_reviewed": "639d145",
-  "diff_summary": {
-    "files_changed": [
-      "gpu_fuzzy_trader/features/selector.py",
-      "gpu_fuzzy_trader/features/symbol_cluster.py"
-    ],
-    "insertions": 17,
-    "deletions": 185,
-    "net_removal": 168
+  "review_date": "2026-06-21",
+  "commit_reviewed": "3ee6bfc",
+  "verdict": "APPROVED",
+  "summary": "Minimal, precise defense-in-depth fix. The try/except Exception wrapping in backtest/__init__.py correctly preserves all 4 acceptance criteria in both success and failure paths. All 148 existing backtest/jax_compat/cpu_engine/gpu_engine tests pass; manual failure-mode simulation (AttributeError from get_gpu_backtest_engine_class) confirms CPUBacktestEngine remains importable and GPUBacktestEngine is None. Spec compliance: the implementer chose the 'alternative simpler approach' which the task spec explicitly allows.",
+  "diff_reviewed": {
+    "file": "gpu_fuzzy_trader/backtest/__init__.py",
+    "insertions": 4,
+    "deletions": 1,
+    "out_of_scope_changes": false
   },
   "correctness": {
-    "regime_code_paths_removed": "PASS",
-    "no_dangling_references": "PASS",
-    "imports_work": "PASS",
-    "details": [
-      "rg -i regime in selector.py and symbol_cluster.py returns 0 matches.",
-      "rg regime_cluster in both files returns 0 matches.",
-      "Public-API call sites in run_pipeline.py, phase5_oos.py, phase2_island_scheduler.py unchanged — none pass regime_labels or _regime_bundle, so removing those parameters is safe.",
-      "Backward-compatible alias `_compute_stationarity_scores = _compute_chronological_stationarity_scores` preserved — protects any external import.",
-      "Live import test passes: `from gpu_fuzzy_trader.features.selector import Feature_Selector, Phase1SharedContext, build_phase1_shared_context; from gpu_fuzzy_trader.features.symbol_cluster import build_hybrid_symbol_clusters`.",
-      "regime_cluster.py and phase2_support.py still use 'regime_labels' but those are Phase 2 engine-metrics labels, NOT Phase 1 selector inputs — out of scope and untouched by this diff.",
-      "Literal `100` replacing config.PHASE1_REGIME_MIN_SAMPLES in _compute_chronological_stationarity_scores() is a valid final regime-string removal (config key is now orphaned for this path; see maintainability note)."
-    ]
+    "ac1_cpu_import_works": {
+      "status": "PASS",
+      "evidence": "CPUBacktestEngine is imported at the top of __init__.py before the try/except. Manually verified: patching get_gpu_backtest_engine_class to raise AttributeError and re-importing the package, CPUBacktestEngine remains importable. Existing test test_cpu_engine_import_without_jax also passes."
+    },
+    "ac2_gpu_engine_none_on_failure": {
+      "status": "PASS",
+      "evidence": "except Exception block sets GPUBacktestEngine = None. Manual simulation with AttributeError, RuntimeError, and other exceptions all yield None. Importantly, KeyboardInterrupt (a BaseException) is NOT caught and correctly propagates, preserving user Ctrl+C semantics."
+    },
+    "ac3_gpu_engine_real_class": {
+      "status": "PASS",
+      "evidence": "When get_gpu_backtest_engine_class() succeeds, the assignment works unchanged. Verified: in the dev environment, GPUBacktestEngine is the real class (type) and __all__ includes it."
+    },
+    "ac4_all_conditional": {
+      "status": "PASS",
+      "evidence": "The if GPUBacktestEngine is not None: __all__.append('GPUBacktestEngine') guard is unchanged from the original. Verified in both success and failure paths."
+    }
   },
   "edge_cases": {
-    "regime_labels_none_old_path": "N/A — the regime_labels parameter has been removed entirely from the public API. Old callers that passed `regime_labels=None` will now get a TypeError if positional/keyword arg is supplied, but no in-tree caller does so. Callers relying on the previous regime path will silently get chronological-only behavior, which is the intended outcome.",
-    "fallback_when_n_valid_lt_2": "REMOVED — the chronological path runs unconditionally inside the `if config.PHASE1_STATIONARITY_FOLDS >= 2` block. The regime → chronological fallback branch has been deleted; chronological scores are computed directly. This is a clean simplification with no behavior regression for callers.",
-    "Feature_Selector instance state": "Class is now stateless. Empty `__init__` with `pass` is acceptable; an even cleaner option is to delete `__init__` entirely (Python provides a default no-op). The class is still a valid namespace for classmethods (`skip_if_valid`, `load_and_validate`) and instance methods (`select_features`, `run`).",
-    "shared_context_with_no_regime_field": "Phase1SharedContext.regime_labels field removed; build_phase1_shared_context() no longer accepts regime_labels. No in-tree caller relied on these — confirmed via grep."
+    "keyboard_interrupt_propagates": "PASS - 'except Exception' does not catch BaseException subclasses (KeyboardInterrupt, SystemExit). Confirmed by direct call test.",
+    "memory_error": "Caught (MemoryError is a subclass of Exception). Acceptable for module-import time; consequence is just GPUBacktestEngine = None, which is the desired fallback.",
+    "syntax_error": "Caught (SyntaxError is a subclass of Exception). Unlikely at module level but safe; would still allow import to succeed with GPU disabled.",
+    "multiple_consecutive_imports": "PASS - if the package is reloaded (e.g., in tests), the try/except runs each time. No cached state issues."
+  },
+  "security": {
+    "broad_exception_handling": "INFO - 'except Exception' is broad by design (defense-in-depth). It does NOT mask BaseException, so intentional user/system signals still propagate. No security concern: the only consequence of catching is GPUBacktestEngine = None, which is a benign degraded state.",
+    "no_user_input": "PASS - No user input is processed at module level.",
+    "no_secrets": "PASS - No credentials or tokens involved.",
+    "no_subprocess_or_fs": "PASS - No shell, file, or network operations at module level."
   },
   "maintainability": {
-    "leftover_dead_code": "MINOR",
-    "cleanliness": "GOOD",
-    "details": [
-      "Pass replaced with `pass` body in `Feature_Selector.__init__` — semantically identical to removing the method, but the explicit placeholder signals 'intentionally stateless'. Style choice, not a bug.",
-      "No leftover dead variables inside the deleted branch (e.g. `stratify`, `labels`, `fold_scores: dict[str, list[float]]` annotation) — all removed cleanly.",
-      "Logger call simplified from `direction, stratify, n_before_stationarity, len(scored)` to `direction, n_before_stationarity, len(scored)` — log message format string correctly updated to drop the %s for stratify.",
-      "Step 7b comment header updated from 'Stationarity filter (regime or chronological folds)' to 'Stationarity filter (chronological folds)'. Accurate.",
-      "symbol_cluster.py module docstring updated to drop regime reference.",
-      "`embedding = block_a` is the new minimal line — clean and self-explanatory.",
-      "Backward-compatible alias `_compute_stationarity_scores = _compute_chronological_stationarity_scores` is well-placed at module bottom — easy to spot and to delete later if no external user is found."
-    ],
-    "out_of_scope_followups": [
-      {
-        "id": "followup-A",
-        "severity": "low",
-        "location": "gpu_fuzzy_trader/config.py:432, 467",
-        "finding": "PHASE1_STATIONARITY_STRATIFY (= 'regime') and PHASE1_REGIME_MIN_SAMPLES (= 100) are now orphan config keys (selector.py no longer reads them). config.PHASE1_REGIME_MIN_SAMPLES is still used by regime_cluster.py, so cannot be removed yet. PHASE1_STATIONARITY_STRATIFY is only referenced in its own docstring — fully dead.",
-        "remediation": "Delete PHASE1_STATIONARITY_STRATIFY and its docstring block in a follow-up config-cleanup task. Keep PHASE1_REGIME_MIN_SAMPLES until regime_cluster.py is also removed (out of scope here)."
-      },
-      {
-        "id": "followup-B",
-        "severity": "low",
-        "location": "gpu_fuzzy_trader/features/symbol_cluster.py:58, 81, 97, 120",
-        "finding": "Function name `build_hybrid_symbol_clusters` and method value `'hybrid_v1'` are now misleading — the embedding is purely feature-based, no 'hybrid' (feature + return/regime) structure remains. Renaming would improve clarity.",
-        "remediation": "Rename to `build_feature_symbol_clusters` and update method value to `'feature_v1'` in a follow-up. Caller update needed: phase2_island_scheduler.py:22,433."
-      }
-    ]
+    "minimal_change": "PASS - 4 insertions, 1 deletion in a single file. The diff is exactly the 'alternative simpler approach' from the spec.",
+    "import_order": "PASS - CPUBacktestEngine and jax_compat imports at top remain unchanged; the try/except only wraps the single eager call.",
+    "code_clarity": "PASS - The intent is clear without comments: 'try to detect GPU engine; if anything goes wrong, fall back to None'. No docstring changes needed.",
+    "scope_discipline": "PASS - Only gpu_fuzzy_trader/backtest/__init__.py modified. No drive-by changes to other files."
   },
-  "test_quality": {
-    "coverage_adequate": "PASS",
-    "test_count": 75,
-    "test_details": [
-      "tests/unit/test_feature_selector.py — 66 tests, all pass.",
-      "tests/unit/test_symbol_cluster.py — 2 tests, all pass.",
-      "tests/property/test_feature_selector_properties.py — 5 tests, all pass (verified separately).",
-      "tests/unit/test_regime_cluster.py + tests/unit/test_regime_profitability_gate.py + tests/unit/test_gpu_engine_regime.py — 8 tests, all pass (out of scope but unaffected).",
-      "Total chronological-only-path coverage: 73 tests, all pass.",
-      "The two new tests in test_symbol_cluster.py (`test_hybrid_cluster_covers_all_symbols`, `test_single_symbol_skips_clustering`) cover the feature-only path: (a) k < n_symbols branches through KMeans, (b) k == n_symbols returns one-symbol-per-cluster.",
-      "The chronological stationarity path is covered by `TestStationarityFilter` (2 tests) and indirectly through `select_features` integration tests with various PHASE1_STATIONARITY_FOLDS values."
-    ],
-    "minor_concerns": [
-      {
-        "id": "test-A",
-        "severity": "low",
-        "location": "tests/unit/test_feature_selector.py:772",
-        "finding": "`test_regime_rank_drift_rejects_large_swing` is misnamed. The test invokes `_stationarity_filter` directly with synthetic fold_scores (no regime involvement). The name 'regime' now refers to a code path that no longer exists.",
-        "remediation": "Rename to `test_rank_drift_filter_rejects_large_swing` in a follow-up test-cleanup task. Test logic is correct as-is; name is stale."
-      },
-      {
-        "id": "test-B",
-        "severity": "low",
-        "location": "tests/unit/test_symbol_cluster.py:1",
-        "finding": "Module docstring `'''Unit tests for hybrid symbol clustering.'''` is stale — same 'hybrid' wording as the source function name (see followup-B).",
-        "remediation": "Update to `'Unit tests for feature-profile symbol clustering.'` in a follow-up."
-      }
-    ]
+  "test_adequacy": {
+    "existing_tests_pass": "PASS - All 3 tests in test_jax_compat.py pass; all 90 tests in test_cpu_engine.py and test_jax_compat.py pass; all 148 tests across test_jax_compat/test_cpu_engine/test_gpu_engine pass.",
+    "new_path_covered": "INFO - None of the existing tests directly exercise the new try/except path. They all patch get_gpu_backtest_engine_class to return None (successful path). A regression test that patches it to raise an unexpected exception (e.g., AttributeError) and verifies the package still imports would lock in the defense-in-depth contract. This is a nice-to-have, not blocking, because (a) the existing tests cover the end-to-end behavior, and (b) the logic is trivial and visually verifiable.",
+    "test_jax_compat_staleness": "INFO - The current test file on this branch still has the old test name 'test_get_gpu_backtest_engine_class_returns_none_on_runtime_error' (not the '_on_import_error' that the task-1 handoff claims). This is a task-1 follow-up, not a task-2 issue."
   },
-  "security_and_reliability": {
-    "data_loss": "NONE",
-    "input_validation": "UNCHANGED",
-    "details": [
-      "No new input validation gaps introduced.",
-      "Behavior change is silent for callers that previously passed regime_labels — they now get chronological-only results. This is the intended consequence of stripping regime support. No data integrity risk."
-    ]
-  },
-  "verdict": "APPROVED",
-  "summary": "Task 2 (Strip regime from Phase 1) is implemented correctly. The diff removes all regime code paths from selector.py and symbol_cluster.py without leaving dangling references. Backward compatibility for the public API is preserved (callers do not pass regime_labels). 73 tests covering the chronological-only path pass. Scope is correctly limited to the two target files. Two minor naming-staleness issues (function name, test name) and one dead-config key (PHASE1_STATIONARITY_STRATIFY) are noted as low-severity follow-ups but do not block the change. APPROVED.",
-  "approval_conditions": [],
-  "followups": [
-    "Rename `build_hybrid_symbol_clusters` → `build_feature_symbol_clusters` and method value 'hybrid_v1' → 'feature_v1' (followup-B).",
-    "Delete `PHASE1_STATIONARITY_STRATIFY` from config.py (followup-A).",
-    "Rename `test_regime_rank_drift_rejects_large_swing` → `test_rank_drift_filter_rejects_large_swing` (test-A).",
-    "Update stale 'hybrid' docstring in test_symbol_cluster.py (test-B)."
-  ]
+  "manual_verification_performed": [
+    "Imported backtest package after patching get_gpu_backtest_engine_class to raise AttributeError: package imports cleanly, CPUBacktestEngine available, GPUBacktestEngine is None, __all__ excludes GPUBacktestEngine.",
+    "Verified normal success path: GPUBacktestEngine is the real class and is in __all__.",
+    "Verified KeyboardInterrupt propagates correctly (not swallowed by except Exception).",
+    "Ran py_compile: syntax OK.",
+    "Ran full test_jax_compat.py + test_cpu_engine.py + test_gpu_engine.py suite: 148/148 pass."
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "category": "test_coverage",
+      "description": "No regression test directly exercises the new try/except path. Existing tests in test_jax_compat.py all patch get_gpu_backtest_engine_class to return None (the success path of the new try/except), so the new defense-in-depth block is never actually entered by the test suite.",
+      "evidence": "tests/unit/test_jax_compat.py test_cpu_engine_import_without_jax uses monkeypatch.setattr(jc, 'get_gpu_backtest_engine_class', lambda: None) — no exception is ever raised during the patched call.",
+      "fix_suggestion": "Add a test that patches get_gpu_backtest_engine_class to raise an unexpected exception (e.g., AttributeError) and asserts that 'from gpu_fuzzy_trader.backtest import CPUBacktestEngine' still works. Example: monkeypatch.setattr(jc, 'get_gpu_backtest_engine_class', lambda: (_ for _ in ()).throw(AttributeError('test'))).",
+      "blocking": false
+    },
+    {
+      "severity": "trivial",
+      "category": "observability",
+      "description": "The except block silently sets GPUBacktestEngine = None without logging the cause. If a future change causes get_gpu_backtest_engine_class to raise an unexpected exception (the defense-in-depth scenario this PR guards against), there will be no diagnostic trail in the logs explaining why GPU is unavailable.",
+      "evidence": "backtest/__init__.py lines 16-18: bare 'except Exception: GPUBacktestEngine = None' with no log call.",
+      "fix_suggestion": "Optional: 'import logging; logger = logging.getLogger(__name__); ... except Exception as exc: logger.warning(\"GPU backtest engine detection failed unexpectedly (%s: %s); falling back to CPU.\", type(exc).__name__, exc); GPUBacktestEngine = None'.",
+      "blocking": false
+    }
+  ],
+  "checks_performed": {
+    "syntax_compile": "PASS",
+    "spec_compliance": "PASS (alternative simpler approach, explicitly allowed)",
+    "scope_discipline": "PASS (one file, 4 insertions, 1 deletion)",
+    "all_existing_tests": "PASS (148/148 in jax_compat/cpu_engine/gpu_engine suites)",
+    "manual_failure_simulation": "PASS (AttributeError caught cleanly, KeyboardInterrupt propagates)",
+    "security_review": "PASS (no user input, no secrets, no subprocess, broad exception is appropriate for module-level defense-in-depth)"
+  }
 }

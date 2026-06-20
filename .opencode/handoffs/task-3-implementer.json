@@ -1,14 +1,37 @@
 {
   "task": "task-3",
   "status": "DONE",
-  "commit_sha": "4a8617eb787a3c64e99d0f29285fd9f2ed1446c4",
+  "commit": "97ca047",
+  "branch": "feature/task-3-gpu-engine-lazy-jax",
   "files_changed": [
-    "gpu_fuzzy_trader/optuna_search.py"
+    "gpu_fuzzy_trader/backtest/gpu_engine.py",
+    "tests/unit/test_gpu_engine_jax_failure.py"
   ],
-  "summary": "Extended SEARCH_SPACE from 12 to 26 hyperparameters. Added 14 new entries (PHASE2_TP, PHASE2_SL, PHASE2_CAPITAL_PCT, PHASE2_RETURN_FLOOR_PCT, PHASE2_VAL_RETURN_FLOOR_PCT, PHASE2_PROFIT_FACTOR_FLOOR, PHASE2_STAGE_B_GENERATIONS, PHASE2_DIVERSITY_PENALTY, PHASE2_FEASIBILITY_VIOLATION_WEIGHT, PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO, PHASE2_MIN_PROFITABLE_SYMBOLS, PHASE3_PER_SYMBOL_MIN_TRADES, RB_KEEP_TOP_RULES, RB_MAX_PAIR_OVERLAP) with exact values from task-3 spec. All 12 original params unchanged.",
-  "verification": {
-    "import_test": "PASSED — 26 params confirmed via assert",
-    "help_test": "PASSED — --help shows all CLI args"
+  "summary": "Addressed all 3 code review findings. Fixed @jit decorators with safe wrappers, preserved exception chain, added logger warning, and added subprocess-based tests for the JAX-failure path.",
+  "acceptance_criteria_met": {
+    "F1": "3 new tests (RuntimeError/AttributeError/ImportError) verify import doesn't crash, _require_jax() and GPUBacktestEngine instantiation raise RuntimeError with chain. All pass.",
+    "F2": "_jax_import_error stores exception object; raise RuntimeError(...) from _jax_import_error preserves chain.",
+    "F3": "logger.warning(...) added in except block with type name and message.",
+    "AC-4": "58 existing tests still pass (working JAX path preserved).",
+    "AC-5": "Importing gpu_engine.py when JAX is broken now truly does not crash (fixed @jit decorator issue uncovered by testing)."
   },
-  "notes_for_reviewer": "Only SEARCH_SPACE dict was modified. No functions, imports, CLI, or existing params were changed. All new parameter values match the spec exactly."
+  "out_of_scope_fixes": {
+    "description": "Discovered that @jit decorators at module level crash when jit=None. Fixed by introducing _maybe_jit and _maybe_partial_jit safe wrappers that return fn unchanged when jit is not available.",
+    "files": ["gpu_fuzzy_trader/backtest/gpu_engine.py"],
+    "rationale": "Required for AC-5 (import must not crash)."
+  },
+  "tests": {
+    "gpu_engine_existing": "58 passed",
+    "jax_failure_new": "3/3 passed",
+    "gpu_rule_set_batch": "1 passed",
+    "jax_compat": "3 passed",
+    "command": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/ -k 'jax' -v",
+    "result": "9 passed"
+  },
+  "notes_for_reviewer": [
+    "Changed @jit decorators to @_maybe_jit / @_maybe_partial_jit - this was necessary to prevent module-level crash when jit is None",
+    "New test file uses subprocess because JAX is installed on this machine",
+    "Tests simulate 3 failure modes: RuntimeError, AttributeError, ImportError",
+    "No handoff/context files were committed (only code changes)"
+  ]
 }

@@ -1,176 +1,98 @@
-# Task 3: Strip regime from Phase 2 (support, pool, init, scheduler)
+# Task 3: Suppress JAX import crash in gpu_engine.py module level
 
-**Goal:** Remove all regime-related functions, parameters, and branching from the 4 Phase 2 modules. This is the largest change — ~500 lines removed.
+**File:** `gpu_fuzzy_trader/backtest/gpu_engine.py`
 
-## Target files
+## Change
 
-1. `gpu_fuzzy_trader/phases/phase2_support.py`
-2. `gpu_fuzzy_trader/phases/phase2_rule_pool.py`
-3. `gpu_fuzzy_trader/phases/phase2_init.py`
-4. `gpu_fuzzy_trader/phases/phase2_island_scheduler.py`
+Replace the module-level `try/except ImportError` block (lines 44-65) to catch `Exception` and set JAX globals to `None` instead of re-raising.
 
----
-
-## Changes in phase2_support.py
-
-### 3a. Remove dead functions (delete entirely)
-- `_compact_regime_labels()` (lines ~74-109)
-- `regime_row_fractions()` (lines ~129-137)
-- `per_regime_trade_thresholds()` (lines ~141-163)
-- `_is_regime_specialist()` (lines ~166-210)
-- `val_regime_confirmation()` (lines ~482-506)
-- `metrics_regime_arrays()` (lines ~550-556)
-
-### 3b. Simplify `trade_support_penalty()` (lines ~229-278)
-Remove all regime parameters:
+**Current (lines 44-65):**
 ```python
-def trade_support_penalty(
-    executed: int,
-    *,
-    min_trade_support: int | None = None,
-) -> tuple[float, bool, int]:
+configure_jax_env()
+
+try:
+    import jax
+    import jax.numpy as jnp
+    from jax import jit, vmap
+    import jax.lax as lax
+
+    def _resolve_jax_float_dtype():
+        use_fp32 = bool(getattr(_cfg, "PHASE2_GPU_USE_FP32", True))
+        if use_fp32:
+            jax.config.update("jax_enable_x64", False)
+            return jnp.float32
+        jax.config.update("jax_enable_x64", True)
+        return jnp.float64
+
+    _JXF = _resolve_jax_float_dtype()
+    _JX_INT = jnp.int8 if bool(
+        getattr(_cfg, "PHASE2_GPU_DATA_INT8", True)) else jnp.int32
+except ImportError as _jax_err:
+    raise ImportError(
+        "JAX is required for GPUBacktestEngine but could not be imported. "
+        "Install it with: pip install jax jaxlib\n"
+        f"Original error: {_jax_err}"
+    ) from _jax_err
 ```
-Body: always call `_static_support_penalty(executed, min_trade_support=support_target)`, return `(pen, False, -1)`. Remove all `use_regime` / `to_host_numpy` / `_is_regime_specialist` logic.
 
-### 3c. Simplify `compute_support_penalty_and_specialist()` (lines ~561-597)
-Remove `regime_row_fractions_arr`, `val_regime_row_counts`, `val_metrics` parameters. Body: just call `trade_support_penalty(executed, min_trade_support=min_trade_support)` and return `(penalty, False, -1)`.
-
-### 3d. Simplify `_passes_pool_admission_impl()` (lines ~300-380)
-- Remove the "Regime Profitability Gate" block (lines ~324-336) that checks `PHASE2_REGIME_PROFITABILITY_GATE`
-- Remove the `PHASE2_REGIME_REQUIRE_VAL_CONFIRMATION` / `val_regime_confirmation()` block (lines ~367-373)
-
-### 3e. Simplify `passes_pool_trade_floor()` (lines ~443-480)
-- Remove `regime_row_fractions_arr` parameter
-- Remove the entire `PHASE2_REGIME_SUPPORT_ENABLED` / regime specialist waiver block after `return False`
-- After the `executed >= trade_floor` check returns True, just `return False` on failure
-
-### 3f. Clean `passes_pool_admission_gate()` (line ~431-432)
-Remove `regime_specialist` and `dominant_regime` from `train_metrics` dict construction (they'll always be False/-1).
-
-### 3g. Update imports
-Remove any remaining regime-related imports from the top of the file. If `to_host_numpy` is still used elsewhere in the file, keep it.
-
----
-
-## Changes in phase2_rule_pool.py
-
-### 3h. Remove `_prepare_regime_context()` function (lines ~75-131)
-Delete the entire function and all its imports (`assign_regime_labels`, `load_regime_model`, `_compact_regime_labels`).
-
-### 3i. Remove `_regime_feature_indices()` function
-If present in this file (check), delete it. It should only exist in phase2_init.py.
-
-### 3j. Remove regime init from `_init_population()` (lines ~1095-1128)
-Remove the 3-stratum (`elite/explorer/regime`) init path. Always use the 2-stratum (`elite/explorer`) path.
-- Remove `_regime_enabled` variable and the `if _regime_enabled:` branch
-- Remove `sample_regime_stratum_chromosome` import (line ~970)
-- Remove `regime_frac` / `three_fractions` / `regime` stratum sampling
-
-### 3k. Clean function signatures (multiple locations)
-Remove from all functions:
-- `regime_row_fractions_arr` parameter
-- `val_regime_row_counts` parameter
-- `regime_row_fractions_arr=getattr(engine, "_regime_row_fractions", None)` calls
-- `val_regime_row_counts = getattr(val_engine, "_regime_row_counts", None)` calls
-
-### 3l. Clean `compute_phase2_objectives_from_metrics()` (line ~536+)
-- Remove `regime_row_fractions_arr` and `val_regime_row_counts` parameters
-- Simplify the `compute_support_penalty_and_specialist()` call — remove regime params, just pass `metrics` and `min_trade_support`
-- Remove `is_specialist`/`dominant_regime` variable usage and `metrics["regime_specialist"]` / `metrics["dominant_regime"]` assignments
-
-### 3m. Remove regime pool-entry fields (lines ~1437-1441)
-Remove lines that set `pool_entry["regime_specialist"]`, `pool_entry["dominant_regime"]`, `pool_entry["regime_trade_counts"]`.
-
-### 3n. Clean engine attributes (lines ~1999-2130)
-In the engine's init and `_init_engines()`, remove:
-- `self._regime_row_fractions`, `self._n_regimes`, `self._val_regime_row_counts`
-- `self._train_regime_ids`, `self._cached_val_regime_ids`, `self._cached_val_regime_row_counts`
-- `self._cached_slim_train_regime` and related caching
-- All `_prepare_regime_context()` calls and `regime_ids=` engine kwargs
-- `val_regime_ids` / `val_regime_row_counts` computation
-- Engine `_regime_row_counts` attribute setting
-
----
-
-## Changes in phase2_init.py
-
-### 3o. Revert `Stratum` literal (line ~13)
+**Target:**
 ```python
-Stratum = Literal["elite", "explorer"]  # remove "regime"
+configure_jax_env()
+
+_jax_import_error = None
+
+try:
+    import jax
+    import jax.numpy as jnp
+    from jax import jit, vmap
+    import jax.lax as lax
+
+    def _resolve_jax_float_dtype():
+        use_fp32 = bool(getattr(_cfg, "PHASE2_GPU_USE_FP32", True))
+        if use_fp32:
+            jax.config.update("jax_enable_x64", False)
+            return jnp.float32
+        jax.config.update("jax_enable_x64", True)
+        return jnp.float64
+
+    _JXF = _resolve_jax_float_dtype()
+    _JX_INT = jnp.int8 if bool(
+        getattr(_cfg, "PHASE2_GPU_DATA_INT8", True)) else jnp.int32
+except Exception as _jax_err:
+    jax = jnp = jit = vmap = lax = None
+    _JXF = _JX_INT = None
+    _jax_import_error = str(_jax_err)
 ```
 
-### 3p. Remove dead functions
-- `_regime_feature_indices()` (lines ~16-28)
-- `assign_three_strata_to_indices()` (lines ~284-330)
-- `sample_regime_stratum_chromosome()` (lines ~335-370)
-
-### 3q. Simplify `_init_population()`
-- Remove `_regime_enabled` / 3-stratum branching — always use 2-stratum
-- Remove `regime_frac` related code
-- The `stratum_fractions` parameter should be `tuple[float, float]` for 2-stratum
-- Remove code that builds 3-tuple fractions from 2-tuple
-
----
-
-## Changes in phase2_island_scheduler.py
-
-### 3r. Remove regime parameter (lines ~128-129)
-Remove `regime_row_fractions_arr=getattr(train_engine, "_regime_row_fractions", None)` from function calls.
-
----
-
-## Acceptance criteria
-
-1. **Zero regime references in all 4 files:**
-   ```bash
-   rg -i regime gpu_fuzzy_trader/phases/phase2_support.py gpu_fuzzy_trader/phases/phase2_rule_pool.py gpu_fuzzy_trader/phases/phase2_init.py gpu_fuzzy_trader/phases/phase2_island_scheduler.py
-   ```
-   Returns empty.
-
-2. **All imports work:**
-   ```bash
-   python -c "from gpu_fuzzy_trader.phases.phase2_support import trade_support_penalty, _passes_pool_admission_impl; print('support OK')"
-   python -c "from gpu_fuzzy_trader.phases.phase2_rule_pool import Rule_Pool_Generator; print('pool OK')"
-   python -c "from gpu_fuzzy_trader.phases.phase2_init import _init_population, Stratum; print('init OK')"
-   python -c "from gpu_fuzzy_trader.phases.phase2_island_scheduler import IslandScheduler; print('scheduler OK')"
-   ```
-
-3. **No `regime_cluster` imports in any file:**
-   ```bash
-   rg "regime_cluster" gpu_fuzzy_trader/phases/phase2_*.py
-   ```
-   Returns empty.
-
-4. **`Stratum` literal is `Literal["elite", "explorer"]` (no "regime"):**
-   ```bash
-   python -c "from gpu_fuzzy_trader.phases.phase2_init import Stratum; import typing; assert typing.get_args(Stratum) == ('elite', 'explorer'), f'Got {typing.get_args(Stratum)}'"
-   ```
-
-5. **Run existing tests (excluding regime-specific ones that will fail):**
-   ```bash
-   PYTEST_LOW_MEMORY=1 python -m pytest tests/unit/ -x --timeout=120 --ignore=tests/unit/test_regime_cluster.py --ignore=tests/unit/test_regime_keyword_stratum.py --ignore=tests/unit/test_regime_profitability_gate.py --ignore=tests/unit/test_gpu_engine_regime.py 2>&1 | tail -30
-   ```
-
-## Verification commands
-
-```bash
-cd /home/danaee/trading_platform && source .venv/bin/activate
-
-# Zero regime references
-rg -i regime gpu_fuzzy_trader/phases/phase2_support.py gpu_fuzzy_trader/phases/phase2_rule_pool.py gpu_fuzzy_trader/phases/phase2_init.py gpu_fuzzy_trader/phases/phase2_island_scheduler.py && echo "FAIL" || echo "PASS"
-
-# Zero regime_cluster imports  
-rg "regime_cluster" gpu_fuzzy_trader/phases/phase2_*.py && echo "FAIL" || echo "PASS"
-
-# Import checks
-python -c "from gpu_fuzzy_trader.phases.phase2_support import trade_support_penalty; print('support OK')"
-python -c "from gpu_fuzzy_trader.phases.phase2_rule_pool import Rule_Pool_Generator; print('pool OK')"
-python -c "from gpu_fuzzy_trader.phases.phase2_init import _init_population; print('init OK')"
-python -c "from gpu_fuzzy_trader.phases.phase2_island_scheduler import IslandScheduler; print('scheduler OK')"
-
-# Stratum check
-python -c "from gpu_fuzzy_trader.phases.phase2_init import Stratum; import typing; assert typing.get_args(Stratum) == ('elite', 'explorer'), f'Got {typing.get_args(Stratum)}'; print('stratum OK')"
-
-# Tests (excluding regime-specific ones)
-PYTEST_LOW_MEMORY=1 python -m pytest tests/unit/ -x --timeout=120 --ignore=tests/unit/test_regime_cluster.py --ignore=tests/unit/test_regime_keyword_stratum.py --ignore=tests/unit/test_regime_profitability_gate.py --ignore=tests/unit/test_gpu_engine_regime.py 2>&1 | tail -35
+Then add a guard function:
+```python
+def _require_jax():
+    """Raise RuntimeError if JAX failed to import at module level."""
+    if jax is None:
+        raise RuntimeError(
+            "JAX could not be imported (required for GPUBacktestEngine). "
+            f"Original error: {_jax_import_error}"
+        )
 ```
+
+And call `_require_jax()` at the top of `GPUBacktestEngine.__init__()` (or `simulate_rule_batch`, whichever is the primary entry point).
+
+## Why
+
+Currently, `gpu_engine.py` re-raises `ImportError` when JAX fails — which propagates through `jax_compat.py`'s try/except (since `ImportError` IS caught). BUT the problem is that `jax_compat.py` catches `_GPU_ENGINE_ERRORS` which was `(ImportError, RuntimeError, OSError)` BEFORE task-1. The original error (`AttributeError`) was NOT in that tuple.
+
+After task-1, `_GPU_ENGINE_ERRORS` includes `AttributeError` too. But `gpu_engine.py` catches only `ImportError` and re-raises it. If JAX fails with `AttributeError`, it's NOT caught by `gpu_engine.py`'s try/except (which only catches `ImportError`). The `AttributeError` would propagate to `jax_compat.py` which NOW catches it (after task-1).
+
+So actually, after task-1, the pipeline SHOULD work! But task-3 provides additional defense-in-depth by:
+1. Catching ALL exception types (not just `ImportError`) at gpu_engine.py's module level
+2. Providing a clear error message when GPU functions are actually called (lazy error, not import-time crash)
+3. Allowing `gpu_engine.py` to be imported safely even when JAX is completely broken
+
+## Acceptance Criteria
+
+1. Module-level `try/except ImportError` replaced with `try/except Exception`
+2. JAX globals set to `None` on failure instead of re-raising
+3. `_require_jax()` guard function added, called at `GPUBacktestEngine.__init__()` entry
+4. When JAX is available: all existing behavior preserved
+5. When JAX is broken: importing gpu_engine.py does not crash; using it raises clear RuntimeError
+6. All existing tests pass: `PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_gpu_engine.py -v`
