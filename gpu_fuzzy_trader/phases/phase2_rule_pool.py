@@ -1552,7 +1552,9 @@ def _merge_archive_entries(
 
     deduped: dict[tuple, dict] = {}
     for entry in entries:
-        key = tuple(entry["chromosome"])
+        key = tuple(
+            int(v) for v in np.asarray(entry["chromosome"], dtype=np.int32).ravel().tolist()
+        )
         current = deduped.get(key)
         if current is None or _is_better_archive_entry(entry, current):
             deduped[key] = entry
