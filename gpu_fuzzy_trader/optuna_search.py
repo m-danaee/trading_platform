@@ -27,6 +27,7 @@ from unittest.mock import patch
 # ---------------------------------------------------------------------------
 
 SEARCH_SPACE: dict[str, list[Any]] = {
+    # Original 12 parameters (unchanged)
     "PHASE1_TOP_K_FEATURES": [10, 15, 20, 25, 30],
     "MIN_TRADE_SUPPORT": [30, 60, 90, 120, 150],
     "MIN_TRADE_POOL_FLOOR": [8, 12, 17, 25, 35],
@@ -39,6 +40,21 @@ SEARCH_SPACE: dict[str, list[Any]] = {
     "PHASE3_VAL_RETURN_FLOOR_PCT": [2.0, 4.0, 5.0, 7.0, 10.0],
     "RB_MIN_TRAIN_RETURN": [1.0, 2.0, 3.0, 5.0],
     "RB_MIN_VALID_RETURN": [1.0, 2.0, 3.0, 5.0],
+    # 14 new parameters (task-3)
+    "PHASE2_TP": [1.0, 1.5, 2.0, 3.0, 4.0],
+    "PHASE2_SL": [0.5, 1.0, 1.5, 2.0],
+    "PHASE2_CAPITAL_PCT": [15, 20, 25, 30, 40],
+    "PHASE2_RETURN_FLOOR_PCT": [-2, 0, 2, 5],
+    "PHASE2_VAL_RETURN_FLOOR_PCT": [0, 0.5, 2, 5],
+    "PHASE2_PROFIT_FACTOR_FLOOR": [1.0, 1.05, 1.10, 1.20],
+    "PHASE2_STAGE_B_GENERATIONS": [25, 35, 45, 60, 80],
+    "PHASE2_DIVERSITY_PENALTY": [3, 5, 8, 12, 16],
+    "PHASE2_FEASIBILITY_VIOLATION_WEIGHT": [10, 15, 25, 35, 50],
+    "PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO": [0.3, 0.4, 0.5, 0.6, 0.7],
+    "PHASE2_MIN_PROFITABLE_SYMBOLS": [2, 3, 4, 5, 6],
+    "PHASE3_PER_SYMBOL_MIN_TRADES": [4, 6, 8, 12, 16],
+    "RB_KEEP_TOP_RULES": [40, 60, 80, 100, 120],
+    "RB_MAX_PAIR_OVERLAP": [0.15, 0.20, 0.25, 0.30, 0.40],
 }
 
 # ---------------------------------------------------------------------------
