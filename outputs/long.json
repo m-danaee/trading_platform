@@ -2,26 +2,24 @@
   "direction": "long",
   "rules_set": [
     {
-      "tp": 2.0,
-      "sl": 1.2,
-      "capital_pct": 12.5,
       "conditions": [
-        "[amihud_illiquidity_20] IS Very High",
-        "[drawdown_from_peak_60] IS Low",
-        "[rsi_hidden_div_flag] IS Positive (1)",
-        "symbol is 9"
-      ]
-    },
-    {
+        "[feat_0] IS Very High",
+        "symbol is SYM_A"
+      ],
       "tp": 2.0,
-      "sl": 1.2,
-      "capital_pct": 12.5,
-      "conditions": [
-        "[range_compression_20_100] IS Low",
-        "[bb_width_rel_20] IS Very High",
-        "[cand_up_down_vol_ratio_20] IS Low",
-        "symbol is 9"
-      ]
+      "sl": 1.0,
+      "capital_pct": 30.0
     }
-  ]
+  ],
+  "risk_optimized": true,
+  "rb_score": -9103.432288553866,
+  "rb_train_return_pct": 0.9000062942504883,
+  "rb_valid_return_pct": 0.9000062942504883,
+  "rb_valid_profit_factor": 3.500000238418579,
+  "rb_valid_max_drawdown_pct": 0.3580639958381653,
+  "rb_valid_executed_trades": 4,
+  "rb_train_minus_valid_return_pct": 0.0,
+  "rb_train_valid_ratio": 1.0,
+  "rb_profit_amp_objective": -222.05343960559227,
+  "rb_profit_amp_accepted": false
 }

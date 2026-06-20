@@ -231,7 +231,7 @@ def test_phase2_use_total_return_obj():
                     "sortino_ratio": 0.5,
                     "max_drawdown_pct": 2.0,
                     "win_rate": 50.0,
-                    "profit_factor": 1.0,
+                    "profit_factor": 5.0,
                 }]
                 
         engine = MockEngine()
