@@ -489,9 +489,6 @@ class CPUBacktestEngine:
         self.min_position_notional = float(
             constants.get("min_position_notional", _cfg.MIN_POSITION_NOTIONAL)
         )
-        self._regime_ids = constants.get("regime_ids", None)
-        self._n_regimes = int(constants.get("n_regimes", 0))
-
         # --- Pre-extract arrays for speed ---
         entry = df["label_open_next"].values.astype(float)
 
@@ -655,15 +652,6 @@ class CPUBacktestEngine:
 
                 if pos["exit_reason"] == "Time_288":
                     stats["time_closed_count"] += 1
-
-                if self._regime_ids is not None and self._n_regimes > 0:
-                    entry_idx = pos["entry_index"]
-                    regime = int(self._regime_ids[entry_idx])
-                    if 0 <= regime < self._n_regimes:
-                        stats["regime_trade_counts"][regime] += 1
-                        if pos["net_pnl"] > 0:
-                            stats["regime_win_counts"][regime] += 1
-                        stats["regime_net_pnl"][regime] += pos["net_pnl"]
 
                 account_status = "ACTIVE"
                 if equity <= 0:
@@ -896,11 +884,6 @@ class CPUBacktestEngine:
             "gross_loss_sum": 0.0,
             "account_ruined": False,
         }
-
-        if self._regime_ids is not None and self._n_regimes > 0:
-            stats["regime_trade_counts"] = np.zeros(self._n_regimes, dtype=np.int64)
-            stats["regime_win_counts"] = np.zeros(self._n_regimes, dtype=np.int64)
-            stats["regime_net_pnl"] = np.zeros(self._n_regimes, dtype=np.float64)
 
         executed_trades = 0
         skipped_min_notional_count = 0
@@ -1143,11 +1126,6 @@ class CPUBacktestEngine:
             "max_total_open_exposure": max_total_open_exposure,
             "per_symbol_metrics": per_symbol_metrics,
         }
-
-        if self._regime_ids is not None and self._n_regimes > 0:
-            metrics["regime_trade_counts"] = stats["regime_trade_counts"].tolist()
-            metrics["regime_win_counts"] = stats["regime_win_counts"].tolist()
-            metrics["regime_net_pnl"] = stats["regime_net_pnl"].tolist()
 
         if return_logs:
             logs_df = pd.DataFrame(logs)
