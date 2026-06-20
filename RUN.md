@@ -200,58 +200,75 @@ python -m gpu_fuzzy_trader.run_pipeline --phase 2
 
 Tune Phase 2 hyperparameters in `gpu_fuzzy_trader/config.py` (`PHASE2_POPULATION_SIZE`, `PHASE2_GENERATIONS`, `PHASE2_ARCHIVE_SEED_FRACTION`, etc.).
 
-### Optuna config tuner (low-RAM profile)
+### Optuna hyperparameter search (`optuna_search.py`)
 
-Automated search over high-impact `config.py` knobs using **validation** metrics (test is logged only, not optimized). Each trial runs **Phases 2–5** with Phase 1 features copied from a baseline run.
+Automated search over **26 high-impact `config.py` hyperparameters** using Optuna with TPE sampling and median pruning. Each trial runs the full pipeline (Phases 1–5), patches config values per trial, and maximizes a composite OOS test score:
 
-The tuner CLI pins **CPU-only** execution (`JAX_PLATFORMS=cpu`, `PHASE2_USE_GPU=False`, `PHASE3_USE_GPU=False` via the `low_ram` profile). Full pipeline runs on **Colab GPU** are unchanged — use `main.ipynb` or `run_pipeline` there with default `PHASE2_USE_GPU=True`.
-
-#### Local CPU-only (WSL / no GPU)
-
-**Prerequisites** (once):
-
-```bash
-source .venv/bin/activate
-python -m gpu_fuzzy_trader.run_pipeline --phase 1
-# or full pipeline into outputs/
+```
+score = (long_return + short_return) / 2  −  3.0 × max(0, max_drawdown − 8%)
 ```
 
-**Run tuning** (2-core / 4GB friendly defaults: fixed pop=100/gen=50, searches CV folds {2,3}, Phase 2–4 gates, pool-size objective penalty, CPU engines):
+**⚠️ Important**: The full pipeline is GPU/memory intensive. Run on **Colab GPU** or a machine with ≥16 GB RAM. Do not run locally on WSL / low-RAM hosts — use `--debug` mode for quick smoke tests only.
+
+#### Quick test (4 symbols only)
 
 ```bash
-python -m gpu_fuzzy_trader.tuning \
-  --baseline-output outputs \
-  --study-dir tuning_studies/low_ram \
-  --n-trials 2 \
-  --profile low_ram \
-  --seed 42
+python -m gpu_fuzzy_trader.optuna_search --debug --n-trials 3
 ```
 
-`--force-cpu` is on by default. Use `--no-force-cpu` only if you intentionally want JAX GPU on the tuning host.
+#### Resume mode (skip cached phases)
 
-Confirm CPU mode in the log line `Tuning runtime: JAX_PLATFORMS=cpu ... trial PHASE2_USE_GPU=False`.
+Use after a prior run has populated Phase 1–2 outputs:
 
-#### Colab GPU verification
+```bash
+python -m gpu_fuzzy_trader.optuna_search --fast --n-trials 50
+```
 
-1. Copy **generalization knobs** from `tuning_studies/low_ram/best_config.json` → `params` or `merged_config` into `gpu_fuzzy_trader/config.py` (gates, CV floors, pop/gen, etc.).
-2. On Colab, **keep** `PHASE2_USE_GPU=True` (default) and do **not** copy tuning-only CPU caps (`PHASE2_USE_GPU=False`, small pop caps) unless you want a slow run.
-3. Run `main.ipynb` or `python -m gpu_fuzzy_trader.run_pipeline` and confirm: `Phase 2 using GPUBacktestEngine (backend: gpu)`.
-4. Final acceptance: **`evaluator_v5.ipynb`** (same backtest contract as Phase 5). CPU trial scores may differ slightly from GPU Phase 2.
+#### Full production search
 
-Outputs under `tuning_studies/low_ram/`:
+```bash
+python -m gpu_fuzzy_trader.optuna_search --n-trials 200 --study-name production_v1
+```
+
+#### CLI flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--n-trials N` | `50` | Number of Optuna trials |
+| `--fast` | off | Resume mode: skip phases with valid cached outputs |
+| `--debug` | off | Enable `DEBUG_SYMBOL_SCOPE` with 4 symbols (fast, not representative) |
+| `--study-name NAME` | `gpu_fuzzy_optuna` | Optuna study name |
+| `--storage URL` | `sqlite:///outputs/optuna_study.db` | Storage URL for the Optuna study |
+
+#### Searched hyperparameters (26 total)
+
+| Phase | Parameters | Count |
+|-------|-----------|-------|
+| Phase 1 — Feature Selection | `PHASE1_TOP_K_FEATURES` | 1 |
+| Phase 2 — Trade Support | `MIN_TRADE_SUPPORT`, `MIN_TRADE_POOL_FLOOR`, `PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO` | 3 |
+| Phase 2 — Risk Params | `PHASE2_TP`, `PHASE2_SL`, `PHASE2_CAPITAL_PCT` | 3 |
+| Phase 2 — Quality Floors | `PHASE2_RETURN_FLOOR_PCT`, `PHASE2_VAL_RETURN_FLOOR_PCT`, `PHASE2_PROFIT_FACTOR_FLOOR`, `PHASE2_MAX_DRAWDOWN_GATE`, `PHASE2_MAX_TRAIN_VAL_GAP_PCT` | 5 |
+| Phase 2 — Search & Diversity | `PHASE2_POPULATION_SIZE`, `PHASE2_MUTATION_RATE`, `PHASE2_STAGE_A_GENERATIONS`, `PHASE2_STAGE_B_GENERATIONS`, `PHASE2_DIVERSITY_PENALTY`, `PHASE2_FEASIBILITY_VIOLATION_WEIGHT` | 6 |
+| Phase 2 — Pool & Cross-Symbol | `PHASE2_KEEP_TOP_RULES`, `PHASE2_MIN_PROFITABLE_SYMBOLS` | 2 |
+| Phase 3 — Rule Set | `PHASE3_VAL_RETURN_FLOOR_PCT`, `PHASE3_PER_SYMBOL_MIN_TRADES` | 2 |
+| RB Governor | `RB_MIN_TRAIN_RETURN`, `RB_MIN_VALID_RETURN`, `RB_KEEP_TOP_RULES`, `RB_MAX_PAIR_OVERLAP` | 4 |
+
+#### Outputs
 
 | File | Purpose |
 |------|---------|
-| `optuna.db` | SQLite study storage |
-| `best_config.json` | `params` (Optuna knobs), `merged_config` (profile + knobs for handoff) |
-| `trials_summary.csv` | Val/test metrics per trial |
-| `trial_N/` | Isolated pipeline outputs per trial |
+| `outputs/optuna_study.db` | SQLite study with all trials and their scores |
+| `outputs/optuna_best_params.json` | Best hyperparameter combination (`best_trial`, `best_score`, `best_params`, per-direction metrics) |
 
-Re-run a single trial path manually (uses current `config.py`, not trial overlay):
+#### Apply best params
+
+After the search completes, copy the values from `outputs/optuna_best_params.json` → `best_params` into `gpu_fuzzy_trader/config.py`, then re-run the pipeline normally:
 
 ```bash
-python -m gpu_fuzzy_trader.run_pipeline --output tuning_studies/low_ram/trial_0 --from-phase 2
+python -m gpu_fuzzy_trader.run_pipeline
 ```
+
+Verify the final strategy with `evaluator_v5.ipynb`.
 
 ---
 
