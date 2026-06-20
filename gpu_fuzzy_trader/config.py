@@ -281,13 +281,13 @@ TAIL_DROP_ROWS = 288
 # SPLIT_MODE — how train.csv is divided before Phase 2.
 #   holdout_70_30       → single per-symbol 70/30 chronological split (legacy).
 #   purged_walk_forward → expanding CV folds + primary tail holdout with embargo.
-SPLIT_MODE = "holdout_70_30"
+SPLIT_MODE = "purged_walk_forward"
 
 # --- Purged walk-forward (when SPLIT_MODE == purged_walk_forward) ---
 
 # PURGED_WF_N_SPLITS — total fold count including primary holdout (K).
 #   K-1 folds are CV; last fold is the persisted validation holdout.
-PURGED_WF_N_SPLITS = 4
+PURGED_WF_N_SPLITS = 3
 
 # PURGED_WF_HOLDOUT_FRACTION — tail fraction per symbol reserved for val parquet.
 PURGED_WF_HOLDOUT_FRACTION = 0.25
@@ -296,7 +296,7 @@ PURGED_WF_HOLDOUT_FRACTION = 0.25
 PURGED_WF_EMBARGO_CANDLES = 288
 
 # PURGED_WF_MIN_TRAIN_FRACTION — minimum train prefix before first CV valid block.
-PURGED_WF_MIN_TRAIN_FRACTION = 0.40
+PURGED_WF_MIN_TRAIN_FRACTION = 0.25
 
 # PURGED_WF_MIN_VALID_ROWS — minimum rows in a CV valid block (holdout exempt).
 PURGED_WF_MIN_VALID_ROWS = 3000
@@ -622,7 +622,7 @@ PHASE2_VAL_RETURN_FLOOR_PCT = 0.5
 # PHASE2_PROFIT_FACTOR_FLOOR — min profit factor for feasibility.
 #   Higher → require gross wins >> losses; fewer rules pass.
 #   Lower  → allow marginal PF; more rules in Pareto set.
-PHASE2_PROFIT_FACTOR_FLOOR = 1.0
+PHASE2_PROFIT_FACTOR_FLOOR = 1.05
 
 # PHASE2_SYMBOL_MEDIAN_RETURN_FLOOR_PCT — min median return across symbols.
 #   Higher → rules must work on typical symbols, not one outlier.
@@ -650,7 +650,7 @@ PHASE2_POOL_VAL_RETURN_MIN_PCT = 0.0
 # val return by more than this threshold (classic overfit signal).
 #   Higher → more lenient; only extreme train>>val gaps rejected.
 #   Lower  → stricter alignment between train and val required.
-PHASE2_MAX_TRAIN_VAL_GAP_PCT = 15.0
+PHASE2_MAX_TRAIN_VAL_GAP_PCT = 8.0
 
 # PHASE2_KEEP_TOP_RULES — max rules kept in the final Phase 2 pool after
 # admission filtering, sorted by deployability_rank_score descending.
@@ -1902,8 +1902,8 @@ RB_GOVERNOR_ENABLED: bool = True
 #   heavy score penalty is applied to a candidate rule.
 #   Higher → only clearly profitable single rules pass the gate.
 #   Lower  → allow marginal rules into the candidate pool.
-RB_MIN_TRAIN_RETURN: float = 0.0
-RB_MIN_VALID_RETURN: float = 0.0
+RB_MIN_TRAIN_RETURN: float = 2.0
+RB_MIN_VALID_RETURN: float = 2.0
 
 # RB_MIN_TRAIN_PF / RB_MIN_VALID_PF — minimum profit factor for each split.
 #   1.0 = break-even before fees.
