@@ -431,45 +431,6 @@ PHASE1_STATIONARITY_RANK_DRIFT_MAX = 8
 #   "chronological" → time-ordered chunks; simpler, ignores regime structure.
 PHASE1_STATIONARITY_STRATIFY = "regime"
 
-# --- Regime detection (when STRATIFY == "regime") ---
-
-# PHASE1_REGIME_FAST_WINDOW / SLOW_WINDOW — rolling regression window lengths.
-#   Higher → smoother regime labels, slower regime switches, fewer regimes.
-#   Lower  → more reactive labels, noisier regime boundaries.
-PHASE1_REGIME_FAST_WINDOW = 10
-PHASE1_REGIME_SLOW_WINDOW = 24
-
-# PHASE1_REGIME_FAST_R2_THRESHOLD / SLOW_R2_THRESHOLD — min R² for trend regime.
-#   Higher → only strong trends labeled as trending; more "chop" regimes.
-#   Lower  → weak trends count as trending; fewer chop labels.
-PHASE1_REGIME_FAST_R2_THRESHOLD = 0.20
-PHASE1_REGIME_SLOW_R2_THRESHOLD = 0.25
-
-# PHASE1_REGIME_FAST_SLOPE_THRESHOLD / SLOW_SLOPE_THRESHOLD — min |slope|.
-#   Higher → steeper move required to call a trend; stricter trend detection.
-#   Lower  → flat markets may still be labeled trending.
-PHASE1_REGIME_FAST_SLOPE_THRESHOLD = 0.0016
-PHASE1_REGIME_SLOW_SLOPE_THRESHOLD = 0.0010
-
-# PHASE1_REGIME_MED_WINDOW — median filter on regime labels (smooth flicker).
-#   Higher → stabler regime IDs; delayed regime transitions.
-#   Lower  → faster regime switches; noisier per-bar labels.
-PHASE1_REGIME_MED_WINDOW = 9
-
-# PHASE1_REGIME_MIN_DAYS — minimum calendar days to fit regime model.
-#   Higher → regime model trained on longer history; may miss recent structure.
-#   Lower  → fits on less data; unstable clusters on short histories.
-PHASE1_REGIME_MIN_DAYS = 14
-
-# PHASE1_REGIME_MIN_SAMPLES — minimum rows per stationarity fold.
-#   Higher → skip thin folds; stricter MI estimates.
-#   Lower  → allow sparse folds; noisier stationarity scores.
-PHASE1_REGIME_MIN_SAMPLES = 100
-
-PHASE1_REGIME_MODEL_PATH = os.path.join(
-    OUTPUTS_DIR, "phase1_regime_cluster.joblib")
-
-
 # =============================================================================
 # Phase 1 → Phase 2 bridge — GPU row budget & JAX performance
 # =============================================================================
@@ -1058,46 +1019,6 @@ def phase2_shared_archive_path(direction: str) -> str:
 
 
 # =============================================================================
-# Phase 2 — Regime-stratified support & profitability
-# =============================================================================
-
-PHASE2_REGIME_SUPPORT_ENABLED = True
-PHASE2_REGIME_MODEL_PATH = PHASE1_REGIME_MODEL_PATH
-
-# PHASE2_REGIME_CONCENTRATION_MIN — fraction of trades in dominant regime.
-#   Higher → only sharp regime specialists bypass global support penalty.
-#   Lower  → diffuse rules can claim specialist status more easily.
-PHASE2_REGIME_CONCENTRATION_MIN = 0.70
-
-# PHASE2_REGIME_MIN_WIN_RATE — min win rate in dominant regime for specialist.
-#   Higher → specialists must show stronger edge in their niche.
-#   Lower  → marginal win rate allowed for regime bypass.
-PHASE2_REGIME_MIN_WIN_RATE = 0.40
-
-PHASE2_REGIME_USE_PNL_GATE = True
-
-# PHASE2_REGIME_MIN_TRADE_FRACTION — scales per-regime trade thresholds.
-#   Higher → more trades required per regime slice.
-#   Lower  → easier regime specialist qualification.
-PHASE2_REGIME_MIN_TRADE_FRACTION = 1.0
-
-# PHASE2_REGIME_REQUIRE_VAL_CONFIRMATION — specialist must pass on val too.
-#   True  → blocks train-only regime overfit (important for short).
-#   False → train regime stats alone can qualify specialist.
-PHASE2_REGIME_REQUIRE_VAL_CONFIRMATION = True
-
-# PHASE2_REGIME_PROFITABILITY_GATE — require profit > 0 in enough regimes.
-#   True  → rules must work in multiple regimes, not one lucky slice.
-#   False → single-regime profitability sufficient.
-PHASE2_REGIME_PROFITABILITY_GATE: bool = True
-
-# PHASE2_REGIME_MIN_RETURN_PER_REGIME — min return % per regime to count as profitable.
-#   Higher → stricter multi-regime edge; fewer rules pass gate.
-#   Lower  → tiny positive return per regime counts as OK.
-PHASE2_REGIME_MIN_RETURN_PER_REGIME: float = 0.25
-
-
-# =============================================================================
 # Phase 2 — Engine, initialization & mutation
 # =============================================================================
 
@@ -1119,18 +1040,6 @@ PHASE2_INIT_STRATEGY = "stratified_sparse"
 #   Shift toward first fraction → more random sparse rules.
 #   Shift toward second → more archive-biased / structured seeds.
 PHASE2_INIT_STRATUM_FRACTIONS = (0.67, 0.33)
-
-# Phase 2 regime keyword stratum initialization (complements the bar-level regime label).
-# When enabled, 25% of non-seeded chromosomes are forced to have their first active gene
-# be a regime/volatility/trend feature (vol, atr, bb_width, compression, adx, dmi, etc.).
-# This is a feature-space proxy for regime-aware rules and is complementary to the
-# per-bar regime label from regime_cluster.py.
-PHASE2_REGIME_STRATUM_ENABLED = True
-PHASE2_REGIME_STRATUM_FRAC = 0.25
-PHASE2_REGIME_FEATURE_KEYWORDS = (
-    "vol", "atr", "bb_width", "compression", "range", "trend", "regime",
-    "breakout", "drawdown", "channel", "adx", "dmi", "semivol",
-)
 
 # PHASE2_INIT_SOFTMAX_TEMP — temperature for weighted feature activation in init.
 #   Higher → more uniform random feature picks.

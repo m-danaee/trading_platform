@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from gpu_fuzzy_trader.backtest.gpu_engine import GPUBacktestEngine
 
-# Avoid re-compiling identical (n_rows, K, regime, batch) shapes across islands.
+# Avoid re-compiling identical (n_rows, K, batch) shapes across islands.
 _WARMED_SIGNATURES: set[tuple] = set()
 
 
