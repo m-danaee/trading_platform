@@ -213,7 +213,7 @@ score = (long_return + short_return) / 2  −  3.0 × max(0, max_drawdown − 8%
 #### Quick test (4 symbols only)
 
 ```bash
-python -m gpu_fuzzy_trader.optuna_search --debug --n-trials 3
+python -m gpu_fuzzy_trader.optuna_search --debug --n-trials 200
 ```
 
 #### Resume mode (skip cached phases)
