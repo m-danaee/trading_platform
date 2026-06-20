@@ -346,8 +346,6 @@ def _update_deployable_archive(
     population: np.ndarray,
     indices: list[int],
     metrics_cache: list[dict],
-    *,
-    regime_row_fractions_arr: np.ndarray | None = None,
 ) -> None:
     """Keep best deployability-preview candidates across generations."""
     from gpu_fuzzy_trader.phases.phase2_sparse_encoding import chromosome_key
@@ -365,7 +363,6 @@ def _update_deployable_archive(
         if not passes_evolution_deployability_preview(
             metrics,
             val_metrics,
-            regime_row_fractions_arr=regime_row_fractions_arr,
         ):
             continue
         chrom = population[int(i)].copy()
@@ -430,8 +427,6 @@ def _pareto_robust_return_pct(
 def _count_deployable_preview(
     pareto_indices: list[int],
     metrics_cache: list[dict],
-    *,
-    regime_row_fractions_arr: np.ndarray | None = None,
 ) -> int:
     from gpu_fuzzy_trader.phases.phase2_support import (
         passes_evolution_deployability_preview,
@@ -445,7 +440,6 @@ def _count_deployable_preview(
         if passes_evolution_deployability_preview(
             metrics,
             _val_metrics_from_cache(metrics),
-            regime_row_fractions_arr=regime_row_fractions_arr,
         ):
             count += 1
     return count
@@ -769,8 +763,6 @@ def _should_inject_diversity_recovery(
 def _count_pop_viable(
     pop_size: int,
     metrics_cache: list[dict],
-    *,
-    regime_row_fractions_arr: np.ndarray | None = None,
 ) -> int:
     """Population-wide count passing the pool trade floor."""
     from gpu_fuzzy_trader.phases.phase2_support import passes_pool_trade_floor
@@ -782,7 +774,6 @@ def _count_pop_viable(
         and passes_pool_trade_floor(
             int(metrics_cache[i].get("executed_trades", 0)),
             metrics_cache[i],
-            regime_row_fractions_arr=regime_row_fractions_arr,
         )
     )
 
@@ -999,8 +990,6 @@ def _assign_eval_result(
     pareto_archive: list[np.ndarray],
     objectives: np.ndarray,
     metrics_cache: list[dict],
-    regime_row_fractions: np.ndarray | None,
-    val_regime_row_counts: np.ndarray | None,
     diversity_reference: list[np.ndarray] | None = None,
     diversity_metrics_by_key: dict[tuple[int, ...], dict] | None = None,
     stage_params: Phase2StageParams | None = None,
@@ -1018,8 +1007,6 @@ def _assign_eval_result(
         metrics,
         pareto_archive,
         val_metrics=val_metrics,
-        regime_row_fractions_arr=regime_row_fractions,
-        val_regime_row_counts=val_regime_row_counts,
         diversity_reference=diversity_reference,
         diversity_metrics_by_key=diversity_metrics_by_key,
         stage_params=stage_params,
@@ -1085,8 +1072,6 @@ def _evaluate_population_indices(
     objectives: np.ndarray,
     metrics_cache: list[dict],
     val_engine=None,
-    regime_row_fractions: np.ndarray | None = None,
-    val_regime_row_counts: np.ndarray | None = None,
     global_metrics_cache: dict[tuple[int, ...], dict] | None = None,
     diversity_reference: list[np.ndarray] | None = None,
     diversity_metrics_by_key: dict[tuple[int, ...], dict] | None = None,
@@ -1101,13 +1086,6 @@ def _evaluate_population_indices(
     pending = [i for i in indices if np.any(np.isinf(objectives[i]))]
     if not pending:
         return _empty_eval_stats()
-
-    if regime_row_fractions is None:
-        regime_row_fractions = getattr(
-            engine, "_regime_row_fractions", None)
-    if val_regime_row_counts is None and val_engine is not None:
-        val_regime_row_counts = getattr(
-            val_engine, "_regime_row_counts", None)
 
     n_valid_rows = (
         int(getattr(val_engine, "n_valid_rows"))
@@ -1133,8 +1111,6 @@ def _evaluate_population_indices(
                     pareto_archive,
                     objectives,
                     metrics_cache,
-                    regime_row_fractions,
-                    val_regime_row_counts,
                     diversity_reference=diversity_reference,
                     diversity_metrics_by_key=diversity_metrics_by_key,
                     stage_params=stage_params,
@@ -1220,8 +1196,6 @@ def _evaluate_population_indices(
                 pareto_archive,
                 objectives,
                 metrics_cache,
-                regime_row_fractions,
-                val_regime_row_counts,
                 diversity_reference=diversity_reference,
                 diversity_metrics_by_key=diversity_metrics_by_key,
                 stage_params=stage_params,
@@ -1242,8 +1216,6 @@ def _evaluate_population_indices(
             obj, metrics = _evaluate_chromosome(
                 population[i], dont_cares, engine, pareto_archive,
                 val_engine=val_engine,
-                regime_row_fractions_arr=regime_row_fractions,
-                val_regime_row_counts=val_regime_row_counts,
                 diversity_reference=diversity_reference,
                 diversity_metrics_by_key=diversity_metrics_by_key,
                 stage_params=stage_params,
@@ -1288,8 +1260,6 @@ def _reevaluate_infinite_objectives(
     pareto_archive: list[np.ndarray],
     *,
     val_engine=None,
-    regime_row_fractions: np.ndarray | None = None,
-    val_regime_row_counts: np.ndarray | None = None,
     global_metrics_cache: dict[tuple[int, ...], dict] | None = None,
     diversity_reference: list[np.ndarray] | None = None,
     diversity_metrics_by_key: dict[tuple[int, ...], dict] | None = None,
@@ -1314,8 +1284,6 @@ def _reevaluate_infinite_objectives(
         objectives,
         metrics_cache,
         val_engine=val_engine,
-        regime_row_fractions=regime_row_fractions,
-        val_regime_row_counts=val_regime_row_counts,
         global_metrics_cache=global_metrics_cache,
         diversity_reference=diversity_reference,
         diversity_metrics_by_key=diversity_metrics_by_key,
@@ -1444,11 +1412,9 @@ def _run_nsga2_fallback(
     cv_fold_evaluator=None,
     holdout_n_valid_rows: int | None = None,
     train_n_rows: int | None = None,
-    regime_row_fractions: np.ndarray | None = None,
-    val_regime_row_counts: np.ndarray | None = None,
     feature_probs: np.ndarray | None = None,
     init_strategy: str | None = None,
-    stratum_fractions: tuple[float, float, float] | None = None,
+    stratum_fractions: tuple[float, float] | None = None,
     seed_fraction: float | None = None,
     reset_plateau: bool = False,
     stage: StageLabel = None,
@@ -1508,8 +1474,6 @@ def _run_nsga2_fallback(
                 obj, metrics = _evaluate_chromosome(
                     population[i], dont_cares, engine, pareto_archive,
                     val_engine=val_engine,
-                    regime_row_fractions_arr=regime_row_fractions,
-                    val_regime_row_counts=val_regime_row_counts,
                     stage_params=stage_params,
                 )
                 objectives[i] = obj
@@ -1524,7 +1488,6 @@ def _run_nsga2_fallback(
             population,
             list(range(pop_size)),
             metrics_cache,
-            regime_row_fractions_arr=regime_row_fractions,
         )
 
         pareto_obj = objectives[pareto_indices]
@@ -1534,7 +1497,6 @@ def _run_nsga2_fallback(
         deployable_count = _count_deployable_preview(
             pareto_indices,
             metrics_cache,
-            regime_row_fractions_arr=regime_row_fractions,
         )
         unique_ratio = float(pareto_diag.get("unique_chromosome_ratio", 0.0))
         pop_unique_ratio = _population_unique_chromosome_ratio(population)
@@ -1572,13 +1534,11 @@ def _run_nsga2_fallback(
             if passes_pool_trade_floor(
                 int(metrics_cache[i].get("executed_trades", 0)),
                 metrics_cache[i],
-                regime_row_fractions_arr=regime_row_fractions,
             )
         )
         pop_viable_count = _count_pop_viable(
             pop_size,
             metrics_cache,
-            regime_row_fractions_arr=regime_row_fractions,
         )
         plateau_best_progress, plateau_streak = _update_max_return_plateau(
             plateau_metric, plateau_best_progress, plateau_streak,
@@ -1684,8 +1644,6 @@ def _run_nsga2_fallback(
                 engine,
                 pareto_archive,
                 val_engine=val_engine,
-                regime_row_fractions=regime_row_fractions,
-                val_regime_row_counts=val_regime_row_counts,
                 stage_params=stage_params,
             )
             mutation_rate = _stage_mutation_rate(
@@ -1707,8 +1665,6 @@ def _run_nsga2_fallback(
             obj, metrics = _evaluate_chromosome(
                 offspring[i], dont_cares, engine, pareto_archive,
                 val_engine=val_engine,
-                regime_row_fractions_arr=regime_row_fractions,
-                val_regime_row_counts=val_regime_row_counts,
                 stage_params=stage_params,
             )
             off_obj[i] = obj
@@ -1735,7 +1691,6 @@ def _run_nsga2_fallback(
         dont_cares,
         engine,
         metrics_by_chrom=metrics_by_chrom,
-        regime_row_fractions_arr=regime_row_fractions,
         val_engine=pool_val_engine if pool_val_engine is not None else val_engine,
         cv_fold_evaluator=cv_fold_evaluator,
         holdout_n_valid_rows=holdout_n_valid_rows,
@@ -1758,11 +1713,9 @@ def _run_nsga3(
     cv_fold_evaluator=None,
     holdout_n_valid_rows: int | None = None,
     train_n_rows: int | None = None,
-    regime_row_fractions: np.ndarray | None = None,
-    val_regime_row_counts: np.ndarray | None = None,
     feature_probs: np.ndarray | None = None,
     init_strategy: str | None = None,
-    stratum_fractions: tuple[float, float, float] | None = None,
+    stratum_fractions: tuple[float, float] | None = None,
     seed_fraction: float | None = None,
     reset_plateau: bool = False,
     stage: StageLabel = None,
@@ -1875,8 +1828,6 @@ def _run_nsga3(
             objectives,
             metrics_cache,
             val_engine=val_engine,
-            regime_row_fractions=regime_row_fractions,
-            val_regime_row_counts=val_regime_row_counts,
             global_metrics_cache=global_metrics_cache,
             diversity_reference=diversity_reference,
             diversity_metrics_by_key=diversity_metrics_by_key,
@@ -1893,7 +1844,6 @@ def _run_nsga3(
             population,
             list(range(pop_size)),
             metrics_cache,
-            regime_row_fractions_arr=regime_row_fractions,
         )
 
         pareto_obj = objectives[pareto_indices]
@@ -1903,7 +1853,6 @@ def _run_nsga3(
         deployable_count = _count_deployable_preview(
             pareto_indices,
             metrics_cache,
-            regime_row_fractions_arr=regime_row_fractions,
         )
         unique_ratio = float(pareto_diag.get("unique_chromosome_ratio", 0.0))
         pop_unique_ratio = _population_unique_chromosome_ratio(population)
@@ -1943,13 +1892,11 @@ def _run_nsga3(
             if passes_pool_trade_floor(
                 int(metrics_cache[i].get("executed_trades", 0)),
                 metrics_cache[i],
-                regime_row_fractions_arr=regime_row_fractions,
             )
         )
         pop_viable_count = _count_pop_viable(
             pop_size,
             metrics_cache,
-            regime_row_fractions_arr=regime_row_fractions,
         )
 
         # #region agent log
@@ -2070,8 +2017,6 @@ def _run_nsga3(
                     engine,
                     pareto_archive,
                     val_engine=val_engine,
-                    regime_row_fractions=regime_row_fractions,
-                    val_regime_row_counts=val_regime_row_counts,
                     global_metrics_cache=global_metrics_cache,
                     diversity_reference=diversity_reference,
                     diversity_metrics_by_key=diversity_metrics_by_key,
@@ -2120,8 +2065,6 @@ def _run_nsga3(
                 off_obj,
                 off_metrics,
                 val_engine=val_engine,
-                regime_row_fractions=regime_row_fractions,
-                val_regime_row_counts=val_regime_row_counts,
                 global_metrics_cache=global_metrics_cache,
                 diversity_reference=diversity_reference,
                 diversity_metrics_by_key=diversity_metrics_by_key,
@@ -2284,7 +2227,6 @@ def _run_nsga3(
         dont_cares,
         engine,
         metrics_by_chrom=metrics_by_chrom,
-        regime_row_fractions_arr=regime_row_fractions,
         val_engine=pool_val_engine if pool_val_engine is not None else val_engine,
         cv_fold_evaluator=cv_fold_evaluator,
         holdout_n_valid_rows=holdout_n_valid_rows,
@@ -2347,11 +2289,9 @@ def run_phase2_evolution_epoch(
     seed_chromosomes: np.ndarray | None = None,
     log_tag: str | None = None,
     val_engine=None,
-    regime_row_fractions: np.ndarray | None = None,
-    val_regime_row_counts: np.ndarray | None = None,
     feature_probs: np.ndarray | None = None,
     init_strategy: str | None = None,
-    stratum_fractions: tuple[float, float, float] | None = None,
+    stratum_fractions: tuple[float, float] | None = None,
     seed_fraction: float | None = None,
     stage: StageLabel = None,
     apply_seed_chromosomes: bool | None = None,
@@ -2369,8 +2309,6 @@ def run_phase2_evolution_epoch(
         seed_chromosomes=seed_chromosomes,
         log_tag=log_tag,
         val_engine=val_engine,
-        regime_row_fractions=regime_row_fractions,
-        val_regime_row_counts=val_regime_row_counts,
         feature_probs=feature_probs,
         init_strategy=init_strategy,
         stratum_fractions=stratum_fractions,
@@ -2401,8 +2339,6 @@ def run_phase2_evolution(
     cv_fold_evaluator=None,
     holdout_n_valid_rows: int | None = None,
     train_n_rows: int | None = None,
-    regime_row_fractions: np.ndarray | None = None,
-    val_regime_row_counts: np.ndarray | None = None,
     feature_probs: np.ndarray | None = None,
     init_strategy: str | None = None,
     stratum_fractions: tuple[float, float] | None = None,
@@ -2446,8 +2382,6 @@ def run_phase2_evolution(
                 seed_chromosomes=seed_chromosomes,
                 log_tag=fallback_tag,
                 val_engine=val_engine,
-                regime_row_fractions=regime_row_fractions,
-                val_regime_row_counts=val_regime_row_counts,
                 seed_fraction=seed_fraction,
                 reset_plateau=reset_plateau,
                 stage=stage,
@@ -2458,8 +2392,6 @@ def run_phase2_evolution(
             seed_chromosomes=seed_chromosomes,
             log_tag=fallback_tag,
             val_engine=val_engine,
-            regime_row_fractions=regime_row_fractions,
-            val_regime_row_counts=val_regime_row_counts,
             seed_fraction=seed_fraction,
             reset_plateau=reset_plateau,
             stage=stage,
@@ -2475,8 +2407,6 @@ def run_phase2_evolution(
         feature_infos, engine, pop_size, n_generations, rng,
         seed_chromosomes=seed_chromosomes, log_tag=log_tag,
         val_engine=val_engine,
-        regime_row_fractions=regime_row_fractions,
-        val_regime_row_counts=val_regime_row_counts,
         seed_fraction=seed_fraction,
         reset_plateau=reset_plateau,
         stage=stage,
