@@ -3,7 +3,7 @@
   "rules_set": [
     {
       "conditions": [
-        "[feat_2] IS Very High",
+        "[feat_0] IS Very High",
         "symbol is SYM_A"
       ],
       "tp": 2.0,

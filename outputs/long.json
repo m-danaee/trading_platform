@@ -3,7 +3,7 @@
   "rules_set": [
     {
       "conditions": [
-        "[feat_2] IS Very High",
+        "[feat_0] IS Very High",
         "symbol is SYM_A"
       ],
       "tp": 2.0,
@@ -12,14 +12,14 @@
     }
   ],
   "risk_optimized": true,
-  "rb_score": -7405.1177715059375,
-  "rb_train_return_pct": 1.5000104904174805,
-  "rb_valid_return_pct": 1.5000104904174805,
-  "rb_valid_profit_factor": 13.5,
-  "rb_valid_max_drawdown_pct": 0.11808818578720093,
+  "rb_score": -7558.4319738413415,
+  "rb_train_return_pct": 0.9000062942504883,
+  "rb_valid_return_pct": 0.9000062942504883,
+  "rb_valid_profit_factor": 3.500000238418579,
+  "rb_valid_max_drawdown_pct": 0.3580639958381653,
   "rb_valid_executed_trades": 4,
   "rb_train_minus_valid_return_pct": 0.0,
   "rb_train_valid_ratio": 1.0,
-  "rb_profit_amp_objective": -224.4927661940431,
+  "rb_profit_amp_objective": -222.05343960559227,
   "rb_profit_amp_accepted": false
 }
