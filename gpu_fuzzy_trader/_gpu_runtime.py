@@ -197,9 +197,8 @@ def _warmup_signature(engine: object, batch_size: int) -> tuple:
         k = int(inner._data_matrix_jax.shape[1])
     else:
         k = 0
-    n_regimes = int(getattr(inner, "_n_regimes", 0) or 0)
     encoding = "sparse" if use_sparse_slots() else "dense"
-    return (n_rows, k, n_regimes, int(batch_size), encoding)
+    return (n_rows, k, int(batch_size), encoding)
 
 
 def _warmup_engine(engine: object, batch_size: int = 1) -> None:
