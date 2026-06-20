@@ -63,7 +63,12 @@ try:
 except Exception as _jax_err:
     jax = jnp = jit = vmap = lax = None
     _JXF = _JX_INT = None
-    _jax_import_error = str(_jax_err)
+    _jax_import_error = _jax_err
+    logger.warning(
+        "JAX unavailable in gpu_engine (%s: %s); "
+        "GPUBacktestEngine will raise RuntimeError on use.",
+        type(_jax_err).__name__, _jax_err,
+    )
 
 
 def _require_jax():
@@ -72,7 +77,7 @@ def _require_jax():
         raise RuntimeError(
             "JAX could not be imported (required for GPUBacktestEngine). "
             f"Original error: {_jax_import_error}"
-        )
+        ) from _jax_import_error
 
 
 def _phase2_trade_floor() -> int:
@@ -137,7 +142,21 @@ def _build_data_matrix(
 # JAX-jitted pure functions
 # ---------------------------------------------------------------------------
 
-@jit
+def _maybe_jit(fn):
+    """Apply ``jit`` if JAX is available, otherwise return *fn* unchanged."""
+    if jit is not None:
+        return jit(fn)
+    return fn
+
+
+def _maybe_partial_jit(**jit_kwargs):
+    """Return a decorator that applies ``jit`` with keyword args if available."""
+    if jit is not None:
+        return partial(jit, **jit_kwargs)
+    return lambda fn: fn
+
+
+@_maybe_jit
 def _jax_compute_rule_signals(
     data_matrix: jnp.ndarray,   # (N, K) int32
     chromosome: jnp.ndarray,    # (K,) int32
@@ -150,7 +169,7 @@ def _jax_compute_rule_signals(
     return jnp.all(effective_match, axis=-1)
 
 
-@jit
+@_maybe_jit
 def _jax_compute_rule_signals_batch(
     data_matrix: jnp.ndarray,    # (N, K) int32
     chromosomes: jnp.ndarray,    # (B, K) int32
@@ -168,7 +187,7 @@ def _jax_compute_rule_signals_batch(
     return jnp.all(effective_match, axis=-1)                  # (B, N)
 
 
-@jit
+@_maybe_jit
 def _jax_compute_rule_signals_sparse_batch(
     data_matrix: jnp.ndarray,    # (N, K) int32
     # (B, S, 2) int32 — [:,:,0]=feat_idx, [:,:,1]=gene
@@ -186,7 +205,7 @@ def _jax_compute_rule_signals_sparse_batch(
     return jnp.all(effective, axis=-1)                        # (B, N)
 
 
-@jit
+@_maybe_jit
 def _jax_compute_trade_outcomes(
     max_ret: jnp.ndarray,        # (N,) float64
     min_ret: jnp.ndarray,        # (N,) float64
@@ -287,7 +306,7 @@ def _jax_open_slot(
     return new_slot_release, new_slot_notional, new_open_exposure
 
 
-@partial(jit, static_argnums=(4, 5, 6, 7, 8, 9, 10))
+@_maybe_partial_jit(static_argnums=(4, 5, 6, 7, 8, 9, 10))
 def _jax_simulate_equity_batch(
     signals_batch: jnp.ndarray,       # (B, N) bool
     price_returns_all: jnp.ndarray,   # (N,) float64
