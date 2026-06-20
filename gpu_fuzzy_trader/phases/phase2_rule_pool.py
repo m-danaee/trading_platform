@@ -439,6 +439,25 @@ class CvFoldValEvaluator:
         fold_rows = [int(f.n_valid_rows) for f in self._folds]
         self.n_valid_rows = min(fold_rows) if fold_rows else 0
         self._regime_row_counts = None
+        # Cache: build fold engines once, reuse across all evolution calls
+        self._cached_fold_engines: list | None = None
+
+    def _ensure_fold_engines(self) -> list:
+        """Build and cache one CPUBacktestEngine per CV fold (one-time cost)."""
+        if self._cached_fold_engines is not None:
+            return self._cached_fold_engines
+        engines: list = []
+        for fold in self._folds:
+            slim = slim_backtest_df(fold.valid_df, self._feature_names)
+            engine = CPUBacktestEngine(
+                slim,
+                self._feature_modes,
+                self._direction,
+                fee_pct=_cfg.FEE_PCT,
+            )
+            engines.append(engine)
+        self._cached_fold_engines = engines
+        return engines
 
     def simulate_rule_batch(
         self,
@@ -457,14 +476,7 @@ class CvFoldValEvaluator:
         n_chrom = len(chromosomes)
         per_chrom: list[list[dict]] = [[] for _ in range(n_chrom)]
 
-        for fold in self._folds:
-            slim = slim_backtest_df(fold.valid_df, self._feature_names)
-            engine = CPUBacktestEngine(
-                slim,
-                self._feature_modes,
-                self._direction,
-                fee_pct=_cfg.FEE_PCT,
-            )
+        for engine in self._ensure_fold_engines():
             try:
                 fold_metrics = engine.simulate_rule_batch(
                     chromosomes=chromosomes,
@@ -474,8 +486,7 @@ class CvFoldValEvaluator:
                 )
             except Exception as exc:
                 logger.debug(
-                    "CvFoldValEvaluator fold %d failed: %s",
-                    fold.fold_id,
+                    "CvFoldValEvaluator fold engine failed: %s",
                     exc,
                 )
                 fold_metrics = [
@@ -491,7 +502,6 @@ class CvFoldValEvaluator:
                 ]
             for i, metrics in enumerate(fold_metrics):
                 per_chrom[i].append(metrics)
-            del engine, slim
 
         mode = str(getattr(_cfg, "PURGED_WF_AGGREGATION", "worst"))
         return [self._aggregate_fn(fms, mode=mode) for fms in per_chrom]
