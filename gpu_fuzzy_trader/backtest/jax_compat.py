@@ -1,8 +1,10 @@
 """
 Detect whether JAX / GPUBacktestEngine can be loaded on this host.
 
-jaxlib wheels are often built with AVX (and NumPy 2.4+ with x86-64-v2). Older
-CPUs and some VPS instances fail at import with RuntimeError, not ImportError.
+JAX can fail during import or initialisation with a variety of exceptions:
+ImportError, RuntimeError, OSError, or AttributeError (e.g. AVX/NumPy
+incompatibility, partially-initialised module state).  All are caught so
+that callers fall back to CPUBacktestEngine.
 """
 
 from __future__ import annotations

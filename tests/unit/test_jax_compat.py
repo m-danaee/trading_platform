@@ -7,16 +7,23 @@ import builtins
 import pytest
 
 
-def test_get_gpu_backtest_engine_class_returns_none_on_runtime_error(monkeypatch):
+@pytest.mark.parametrize(
+    "exc",
+    [
+        ImportError("simulated ImportError"),
+        RuntimeError("This version of jaxlib was built using AVX instructions"),
+        OSError("simulated OSError"),
+        AttributeError("partially initialized module 'jax' has no attribute 'version'"),
+    ],
+)
+def test_get_gpu_backtest_engine_class_returns_none_on_import_error(exc, monkeypatch):
     import gpu_fuzzy_trader.backtest.jax_compat as jc
 
     real_import = builtins.__import__
 
     def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
         if name == "gpu_fuzzy_trader.backtest.gpu_engine":
-            raise RuntimeError(
-                "This version of jaxlib was built using AVX instructions"
-            )
+            raise exc
         return real_import(name, globals, locals, fromlist, level)
 
     monkeypatch.setattr(builtins, "__import__", guarded_import)
