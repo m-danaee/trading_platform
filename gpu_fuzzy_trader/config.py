@@ -429,7 +429,7 @@ PHASE1_STATIONARITY_RANK_DRIFT_MAX = 8
 # PHASE1_STATIONARITY_STRATIFY — how folds are built for stationarity.
 #   "regime"        → cluster by trend/vol regime (needs regime model).
 #   "chronological" → time-ordered chunks; simpler, ignores regime structure.
-PHASE1_STATIONARITY_STRATIFY = "regime"
+PHASE1_STATIONARITY_STRATIFY = "chronological"
 
 # --- Regime detection (when STRATIFY == "regime") ---
 
@@ -1061,7 +1061,7 @@ def phase2_shared_archive_path(direction: str) -> str:
 # Phase 2 — Regime-stratified support & profitability
 # =============================================================================
 
-PHASE2_REGIME_SUPPORT_ENABLED = True
+PHASE2_REGIME_SUPPORT_ENABLED = False
 PHASE2_REGIME_MODEL_PATH = PHASE1_REGIME_MODEL_PATH
 
 # PHASE2_REGIME_CONCENTRATION_MIN — fraction of trades in dominant regime.
@@ -1074,7 +1074,7 @@ PHASE2_REGIME_CONCENTRATION_MIN = 0.70
 #   Lower  → marginal win rate allowed for regime bypass.
 PHASE2_REGIME_MIN_WIN_RATE = 0.40
 
-PHASE2_REGIME_USE_PNL_GATE = True
+PHASE2_REGIME_USE_PNL_GATE = False
 
 # PHASE2_REGIME_MIN_TRADE_FRACTION — scales per-regime trade thresholds.
 #   Higher → more trades required per regime slice.
@@ -1084,12 +1084,12 @@ PHASE2_REGIME_MIN_TRADE_FRACTION = 1.0
 # PHASE2_REGIME_REQUIRE_VAL_CONFIRMATION — specialist must pass on val too.
 #   True  → blocks train-only regime overfit (important for short).
 #   False → train regime stats alone can qualify specialist.
-PHASE2_REGIME_REQUIRE_VAL_CONFIRMATION = True
+PHASE2_REGIME_REQUIRE_VAL_CONFIRMATION = False
 
 # PHASE2_REGIME_PROFITABILITY_GATE — require profit > 0 in enough regimes.
 #   True  → rules must work in multiple regimes, not one lucky slice.
 #   False → single-regime profitability sufficient.
-PHASE2_REGIME_PROFITABILITY_GATE: bool = True
+PHASE2_REGIME_PROFITABILITY_GATE: bool = False
 
 # PHASE2_REGIME_MIN_RETURN_PER_REGIME — min return % per regime to count as profitable.
 #   Higher → stricter multi-regime edge; fewer rules pass gate.
@@ -1125,7 +1125,7 @@ PHASE2_INIT_STRATUM_FRACTIONS = (0.67, 0.33)
 # be a regime/volatility/trend feature (vol, atr, bb_width, compression, adx, dmi, etc.).
 # This is a feature-space proxy for regime-aware rules and is complementary to the
 # per-bar regime label from regime_cluster.py.
-PHASE2_REGIME_STRATUM_ENABLED = True
+PHASE2_REGIME_STRATUM_ENABLED = False
 PHASE2_REGIME_STRATUM_FRAC = 0.25
 PHASE2_REGIME_FEATURE_KEYWORDS = (
     "vol", "atr", "bb_width", "compression", "range", "trend", "regime",
