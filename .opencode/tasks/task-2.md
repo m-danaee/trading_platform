@@ -1,50 +1,46 @@
-# task-2: Integration test — verify optuna_search works end-to-end
+# Task 2: Make backtest/__init__.py robust to GPU engine import failure
 
-## Goal
-Verify that `gpu_fuzzy_trader/optuna_search.py` runs correctly end-to-end with `--debug --n-trials 3` and `--fast --n-trials 2`.
+**File:** `gpu_fuzzy_trader/backtest/__init__.py`
 
-## Verification steps
+## Change
 
-### 1. Import test
-```bash
-cd /home/danaee/trading_platform
-PYTEST_LOW_MEMORY=1 .venv/bin/python -c "import gpu_fuzzy_trader.optuna_search; print('Import OK')"
+Wrap the eager `GPUBacktestEngine = get_gpu_backtest_engine_class()` call (line 14) in a try/except block so the subpackage is importable even when jax is broken.
+
+**Current:**
+```python
+GPUBacktestEngine = get_gpu_backtest_engine_class()
+if GPUBacktestEngine is not None:
+    __all__.append("GPUBacktestEngine")
 ```
 
-### 2. Debug mode run (3 trials with 4-symbol scope)
-```bash
-PYTEST_LOW_MEMORY=1 .venv/bin/python -m gpu_fuzzy_trader.optuna_search --debug --n-trials 3 --study-name test_debug_run
+**Target:**
+```python
+try:
+    GPUBacktestEngine = get_gpu_backtest_engine_class()
+except Exception:
+    from gpu_fuzzy_trader.backtest.jax_compat import _GPU_ENGINE_ERRORS
+    GPUBacktestEngine = None
+if GPUBacktestEngine is not None:
+    __all__.append("GPUBacktestEngine")
 ```
 
-Expected:
-- 3 trials complete (or fail gracefully)
-- `outputs/optuna_study.db` exists
-- `outputs/optuna_best_params.json` exists with valid JSON
-- Different trials have different param values
-
-### 3. Fast mode run (2 trials, resume from existing outputs)
-```bash
-PYTEST_LOW_MEMORY=1 .venv/bin/python -m gpu_fuzzy_trader.optuna_search --fast --n-trials 2 --study-name test_fast_run
+Alternative simpler approach: just wrap in try/except:
+```python
+try:
+    GPUBacktestEngine = get_gpu_backtest_engine_class()
+except Exception:
+    GPUBacktestEngine = None
+if GPUBacktestEngine is not None:
+    __all__.append("GPUBacktestEngine")
 ```
 
-Expected:
-- 2 trials complete using --resume pipeline
-- Study is appended to (or new study created)
+## Why
 
-### 4. Artifact check
-- Confirm `outputs/optuna_study.db` file size > 0
-- Confirm `outputs/optuna_best_params.json` has keys: best_trial, best_score, best_params, user_attrs
-- Confirm best_params dict contains all 12 hyperparameter names
+`backtest/__init__.py` calls `get_gpu_backtest_engine_class()` at module level. Since `jax_compat.py`'s `get_gpu_backtest_engine_class()` already catches `_GPU_ENGINE_ERRORS` internally and returns `None`, this call should be safe after task-1. However, as an additional defense-in-depth measure, wrapping this call ensures that even unexpected exceptions during GPU engine detection won't prevent importing the `backtest` subpackage (which is needed for `CPUBacktestEngine`).
 
-### 5. Help text
-```bash
-.venv/bin/python -m gpu_fuzzy_trader.optuna_search --help
-```
-Expected: Shows all CLI options with descriptions.
+## Acceptance Criteria
 
-## Acceptance criteria
-- Import succeeds without errors
-- `--debug --n-trials 3` completes (all trials score, none crash)
-- `--fast --n-trials 2` completes
-- Output artifacts exist and are valid
-- CLI help shows all expected arguments
+1. `from gpu_fuzzy_trader.backtest import CPUBacktestEngine` works regardless of jax availability
+2. `GPUBacktestEngine` is `None` when jax is unavailable (current behavior, but without crashing the import)
+3. `GPUBacktestEngine` is the real class when jax is available (existing behavior preserved)
+4. `__all__` still only includes `"GPUBacktestEngine"` when it's available

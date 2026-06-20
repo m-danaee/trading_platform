@@ -1,110 +1,73 @@
-# Plan: Optuna Hyperparameter Optimization for GPU Fuzzy Trader
+# Plan: Fix JAX import crash blocking Optuna Phase 2
 
 ## Goal
 
-Create an Optuna-based hyperparameter search script that finds the best combination of the most impactful hyperparameters in `gpu_fuzzy_trader/config.py`. The objective function evaluates the pipeline output using `evaluator_v5.ipynb` metrics (test total return, max drawdown, profit factor).
+Fix the `AttributeError: partially initialized module 'jax' has no attribute 'version'` crash that causes every Optuna trial to fail at Phase 2, wasting all 35 trials (~2.5 hours).
+
+## Root Cause
+
+`jax_compat.py` catches only `ImportError, RuntimeError, OSError` but JAX fails with **`AttributeError`**. When `gpu_engine.py` does `import jax` at module level, the uncaught exception propagates → Phase 2 returns no rules → sentinel score -1275 for every trial.
+
+### Secondary issue
+`backtest/__init__.py` eagerly calls `get_gpu_backtest_engine_class()` at import time, making the entire backtest subpackage depend on jax availability.
 
 ## Approach
 
-- **Script location**: `gpu_fuzzy_trader/optuna_search.py`
-- **Method**: Each Optuna trial modifies config values, runs the pipeline, then scores the OOS result
-- **Search space**: 26 hyperparameters with discrete/categorical choices around current values
-- **Pruning**: Use MedianPruner to kill bad trials early
-- **Storage**: Optuna SQLite DB at `outputs/optuna_study.db`
+Three targeted changes, all defensive-only (no logic changes):
 
-## Selected Hyperparameters to Search
-
-### Phase 1 — Feature Selection (1 param)
-| # | Parameter | Values |
-|---|-----------|--------|
-| 1 | `PHASE1_TOP_K_FEATURES` | [10, 15, 20, 25, 30] |
-
-### Phase 2 — Trade Support & Pool Admission (3 params)
-| # | Parameter | Values |
-|---|-----------|--------|
-| 2 | `MIN_TRADE_SUPPORT` | [30, 60, 90, 120, 150] |
-| 3 | `MIN_TRADE_POOL_FLOOR` | [8, 12, 17, 25, 35] |
-| 4 | `PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO` | [0.3, 0.4, 0.5, 0.6, 0.7] |
-
-### Phase 2 — Risk Params During Evolution (3 params)
-| # | Parameter | Values |
-|---|-----------|--------|
-| 5 | `PHASE2_TP` | [1.0, 1.5, 2.0, 3.0, 4.0] |
-| 6 | `PHASE2_SL` | [0.5, 1.0, 1.5, 2.0] |
-| 7 | `PHASE2_CAPITAL_PCT` | [15, 20, 25, 30, 40] |
-
-### Phase 2 — Quality Floors (5 params)
-| # | Parameter | Values |
-|---|-----------|--------|
-| 8 | `PHASE2_RETURN_FLOOR_PCT` | [-2, 0, 2, 5] |
-| 9 | `PHASE2_VAL_RETURN_FLOOR_PCT` | [0, 0.5, 2, 5] |
-| 10 | `PHASE2_PROFIT_FACTOR_FLOOR` | [1.0, 1.05, 1.10, 1.20] |
-| 11 | `PHASE2_MAX_DRAWDOWN_GATE` | [12.0, 18.0, 25.0, 30.0, 35.0] |
-| 12 | `PHASE2_MAX_TRAIN_VAL_GAP_PCT` | [4.0, 6.0, 8.0, 10.0, 15.0] |
-
-### Phase 2 — Search Budget & Diversity (6 params)
-| # | Parameter | Values |
-|---|-----------|--------|
-| 13 | `PHASE2_POPULATION_SIZE` | [100, 150, 200, 250] |
-| 14 | `PHASE2_MUTATION_RATE` | [0.12, 0.17, 0.22, 0.27, 0.32] |
-| 15 | `PHASE2_STAGE_A_GENERATIONS` | [50, 70, 85, 100, 120] |
-| 16 | `PHASE2_STAGE_B_GENERATIONS` | [25, 35, 45, 60, 80] |
-| 17 | `PHASE2_DIVERSITY_PENALTY` | [3, 5, 8, 12, 16] |
-| 18 | `PHASE2_FEASIBILITY_VIOLATION_WEIGHT` | [10, 15, 25, 35, 50] |
-
-### Phase 2 — Pool & Cross-Symbol (2 params)
-| # | Parameter | Values |
-|---|-----------|--------|
-| 19 | `PHASE2_KEEP_TOP_RULES` | [40, 60, 80, 100, 120] |
-| 20 | `PHASE2_MIN_PROFITABLE_SYMBOLS` | [2, 3, 4, 5, 6] |
-
-### Phase 3 — Rule Set Selection (2 params)
-| # | Parameter | Values |
-|---|-----------|--------|
-| 21 | `PHASE3_VAL_RETURN_FLOOR_PCT` | [2.0, 4.0, 5.0, 7.0, 10.0] |
-| 22 | `PHASE3_PER_SYMBOL_MIN_TRADES` | [4, 6, 8, 12, 16] |
-
-### RB Governor (4 params)
-| # | Parameter | Values |
-|---|-----------|--------|
-| 23 | `RB_MIN_TRAIN_RETURN` | [1.0, 2.0, 3.0, 5.0] |
-| 24 | `RB_MIN_VALID_RETURN` | [1.0, 2.0, 3.0, 5.0] |
-| 25 | `RB_KEEP_TOP_RULES` | [40, 60, 80, 100, 120] |
-| 26 | `RB_MAX_PAIR_OVERLAP` | [0.15, 0.20, 0.25, 0.30, 0.40] |
-
-**Total: 26 hyperparameters**
+1. **`jax_compat.py`** — Add `AttributeError` to the caught exception tuple
+2. **`backtest/__init__.py`** — Wrap eager engine detection in try/except
+3. **`gpu_engine.py`** — Add lazy-import helper so jax isn't imported at module level
 
 ## Tasks
 
-### task-1 ✅ DONE: Create `optuna_search.py` (12 params)
-### task-2 ✅ DONE: Integration test verification
+### task-1: Add AttributeError to jax_compat error handling
 
-### task-3: Extend search space from 12 → 26 hyperparameters
+**File:** `gpu_fuzzy_trader/backtest/jax_compat.py`
 
-**Files to modify:**
-- `gpu_fuzzy_trader/optuna_search.py` — update `SEARCH_SPACE` dict
-
-**What it does:**
-1. Adds 14 new hyperparameters to `SEARCH_SPACE`
-2. Each new param uses `suggest_categorical` with values from the table above
-3. No other logic changes needed (objective, patching, CLI remain identical)
+**Change:** Add `AttributeError` to `_GPU_ENGINE_ERRORS` tuple.
 
 **Acceptance criteria:**
-- `SEARCH_SPACE` contains exactly 26 entries
-- All 14 new parameters have correct values
-- Script imports and runs without errors
-- `--help` still works
-- Existing 12 params unchanged
+- `_GPU_ENGINE_ERRORS` includes `AttributeError`
+- When jax fails to import (any reason), `get_gpu_backtest_engine_class()` returns `None` instead of crashing
+- Pipeline falls back to CPUBacktestEngine gracefully
 
-## Dependencies
+### task-2: Make backtest/__init__.py robust to GPU engine import failure
 
-- `optuna` package
-- Existing pipeline modules: `run_pipeline`, `config`
-- `PYTEST_LOW_MEMORY=1` for test runs
+**File:** `gpu_fuzzy_trader/backtest/__init__.py`
+
+**Change:** Wrap `GPUBacktestEngine = get_gpu_backtest_engine_class()` in try/except so the subpackage is importable even when jax is broken.
+
+**Acceptance criteria:**
+- `from gpu_fuzzy_trader.backtest import CPUBacktestEngine` works regardless of jax availability
+- `GPUBacktestEngine` is `None` when jax is unavailable (current behavior, but without crashing)
+
+### task-3: Lazy-import jax in gpu_engine.py
+
+**File:** `gpu_fuzzy_trader/backtest/gpu_engine.py`
+
+**Change:** Replace module-level `import jax` + `import jax.numpy as jnp` etc. with a lazy `_ensure_jax()` helper that imports and caches on first use. All functions that use jax/jnp/lax/vmap call `_ensure_jax()` first.
+
+**Acceptance criteria:**
+- Module-level `import jax` removed from `gpu_engine.py`
+- All existing jax-using functions work identically (first call triggers import)
+- If jax is unavailable, a clear `RuntimeError` is raised explaining the fallback
+- `gpu_engine.py` can be imported without jax installed
+
+## Verification
+
+```bash
+cd /home/danaee/trading_platform && \
+  .venv/bin/python -c "
+from gpu_fuzzy_trader.backtest.jax_compat import jax_gpu_backtest_available
+print('jax available:', jax_gpu_backtest_available())
+from gpu_fuzzy_trader.backtest import CPUBacktestEngine
+print('CPU engine importable:', CPUBacktestEngine is not None)
+"
+```
 
 ## Non-goals
 
-- Not tuning ALL 200+ config values
-- Not modifying evaluator_v5.ipynb
-- Not changing the pipeline architecture
-- Not implementing distributed Optuna (single-machine only)
+- Fixing the jax package itself on the remote machine
+- Modifying Optuna or pipeline logic
+- Adding GPU fallback retries

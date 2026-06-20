@@ -1,99 +1,51 @@
 {
   "task_id": "task-1",
   "reviewer": "code-reviewer",
-  "review_timestamp": "2026-06-20T00:00:00Z",
+  "review_type": "re-review-after-fixes",
+  "previous_verdict": "REQUEST_CHANGES",
+  "previous_findings": ["F1", "F2"],
   "verdict": "APPROVED",
-  "summary": "High-quality implementation. Correctly implements the spec, handles errors gracefully, restores state properly, and is well-organized. Only minor cosmetic issues found (import ordering, unnecessary lambda wrapper).",
+  "review_focus": ["correctness", "edge_cases", "maintainability", "test_adequacy"],
   "findings": [],
-  "minor_observations": [
-    {
-      "severity": "trivial",
-      "category": "style",
-      "description": "PEP8 import ordering: `from unittest.mock import patch` is placed on line 22 after the third-party `optuna` imports. The stdlib `unittest.mock` should be in the stdlib group (between `traceback` and `from typing import Any`).",
-      "evidence": "Lines 9-22 of gpu_fuzzy_trader/optuna_search.py: `from unittest.mock import patch` appears after `from optuna.samplers import TPESampler`.",
-      "fix_suggestion": "Move `from unittest.mock import patch` up into the stdlib block, alphabetically placed near `import traceback` and `from typing import Any`.",
-      "blocking": false
+  "fixes_verification": {
+    "F1": {
+      "status": "FIXED",
+      "details": "Test was renamed from test_get_gpu_backtest_engine_class_returns_none_on_runtime_error to test_get_gpu_backtest_engine_class_returns_none_on_import_error (broader scope) and parametrized over all 4 exception types: ImportError, RuntimeError, OSError, AttributeError. The test now uses real exception instances including a realistic AttributeError message ('partially initialized module \"jax\" has no attribute \"version\"'). All 4 parametrized cases + 2 existing tests pass (6 total in tests/unit/test_jax_compat.py). This locks in the full catch contract: any future refactor that drops one of the four exception types from _GPU_ENGINE_ERRORS will be caught by the parametrized test. AC#2 is now actually verified by an automated test."
     },
-    {
-      "severity": "trivial",
-      "category": "style",
-      "description": "Pointless lambda wrapper: `study.optimize(lambda trial: objective(trial), ...)` could pass `objective` directly. Cosmetic only.",
-      "evidence": "Line 363 of gpu_fuzzy_trader/optuna_search.py: `lambda trial: objective(trial)`.",
-      "fix_suggestion": "Replace with `study.optimize(objective, n_trials=..., show_progress_bar=True)`.",
-      "blocking": false
-    }
-  ],
-  "checks_performed": {
-    "imports_and_compile": {
-      "result": "PASS",
-      "evidence": "`python -m py_compile gpu_fuzzy_trader/optuna_search.py` and `python -c 'import gpu_fuzzy_trader.optuna_search'` both succeed."
-    },
-    "cli_args": {
-      "result": "PASS",
-      "evidence": "`--help` shows all 5 required arguments: --n-trials, --fast, --debug, --study-name, --storage."
-    },
-    "search_space_size_and_values": {
-      "result": "PASS",
-      "evidence": "Programmatically verified: SEARCH_SPACE has exactly 12 keys with the exact values from task-1.md §2."
-    },
-    "compute_score_formula": {
-      "result": "PASS",
-      "evidence": "Tested compute_score({long_ret:5, short_ret:3, long_dd:6, short_dd:7}) -> 4.0 (no penalty). Tested (5, 3, 12, 9) -> -8.0 (penalty=3*(12-8)=12, 4-12=-8). Formula matches spec exactly."
-    },
-    "collect_phase5_metrics": {
-      "result": "PASS",
-      "evidence": "Tested with both nested (`{test: {...}}`) and flat metric structures. Returns expected flat dict with test_{direction}_{field} keys, correct default fallbacks (-999 for return, 100 for dd, 0 for pf)."
-    },
-    "patch_start_and_restore": {
-      "result": "PASS",
-      "evidence": "Verified that apply_trial_config({'PHASE1_TOP_K_FEATURES': 42}) sets cfg.PHASE1_TOP_K_FEATURES to 42, and p.stop() restores it to original 20. No state leak between trials."
-    },
-    "config_keys_exist": {
-      "result": "PASS",
-      "evidence": "All 12 SEARCH_SPACE keys exist on gpu_fuzzy_trader.config module (PHASE1_TOP_K_FEATURES=20, MIN_TRADE_SUPPORT=90, MIN_TRADE_POOL_FLOOR=17, PHASE2_MAX_DRAWDOWN_GATE=25.0, PHASE2_MAX_TRAIN_VAL_GAP_PCT=8.0, PHASE2_KEEP_TOP_RULES=120, PHASE2_POPULATION_SIZE=200, PHASE2_MUTATION_RATE=0.22, PHASE2_STAGE_A_GENERATIONS=85, PHASE3_VAL_RETURN_FLOOR_PCT=5.0, RB_MIN_TRAIN_RETURN=2.0, RB_MIN_VALID_RETURN=2.0). Patches will not raise AttributeError."
-    },
-    "subprocess_safety": {
-      "result": "PASS",
-      "evidence": "No subprocess usage. Implementation imports Pipeline_Orchestrator and calls .run() directly, which is the safer approach per spec discussion."
-    },
-    "hardcoded_secrets": {
-      "result": "PASS",
-      "evidence": "No API keys, tokens, or credentials. Storage URL defaults to local sqlite:// path. Safe."
-    },
-    "exception_handling": {
-      "result": "PASS",
-      "evidence": "objective() uses try/except Exception/finally pattern. Failed trials return -999.0 penalty with traceback stored in user_attr. KeyboardInterrupt (BaseException) is not caught, which is correct. Patchers are guaranteed to stop in the finally block, preventing cross-trial contamination."
-    },
-    "resource_management": {
-      "result": "PASS",
-      "evidence": "No file handles leak (JSON write is in `with` block). SQLite storage managed by Optuna. No threads or long-lived resources."
-    },
-    "module_reload_needed": {
-      "result": "PASS",
-      "evidence": "All phase modules use `from gpu_fuzzy_trader import config as _cfg` and access `_cfg.XXX` dynamically. Therefore unittest.mock.patch on the config module attribute is observed by all consumers without reload. Implementation correctly relies on this dynamic-lookup pattern."
-    },
-    "colab_default_safety": {
-      "result": "PASS",
-      "evidence": "Verified _apply_colab_gpu_defaults() (line 1867 of config.py) only sets PHASE3_USE_GPU and PHASE2_GPU_BATCH_SIZE_AUTO — neither is in the SEARCH_SPACE, so colab-time overrides cannot interfere with trial values."
-    },
-    "config_double_definition": {
-      "result": "INFO",
-      "evidence": "PHASE2_KEEP_TOP_RULES is defined at config.py:659 (value 80) and overridden at config.py:2129 (value 120). This is a pre-existing project quirk, NOT caused by this PR. The optuna patch will still override whatever the final value is, so the search works correctly. Worth noting but not blocking.",
-      "fix_suggestion": "None required for this PR. Project may want to clean up the duplicate definition in a separate task."
+    "F2": {
+      "status": "FIXED",
+      "details": "Module docstring now reads: 'JAX can fail during import or initialisation with a variety of exceptions: ImportError, RuntimeError, OSError, or AttributeError (e.g. AVX/NumPy incompatibility, partially-initialised module state). All are caught so that callers fall back to CPUBacktestEngine.' The rationale now correctly mentions all 4 exception types, including the specific reason for AttributeError (partially-initialised module state) that was the trigger for this task. Future readers will understand why AttributeError is in the catch list."
     }
   },
-  "edge_cases_considered": {
-    "pipeline_returns_None": "Defensively handled: collect_phase5_metrics calls .get() on the input; if results is None, .get would raise AttributeError, caught by objective's except Exception, returning -999.0 penalty.",
-    "missing_metrics": "collect_phase5_metrics uses .get(..., -999) for returns and .get(..., 100) for drawdowns. Missing keys return sensible penalty defaults, so a single missing metric produces a -999 score rather than a crash.",
-    "optuna_not_installed": "Raises ModuleNotFoundError at import. Acceptable — consistent with project convention; user gets a clear stack trace with a pip-install hint.",
-    "all_trials_fail": "study.best_value will be -999.0 and study.best_params will reflect one of the failed trials' params. Best params JSON is still saved. Acceptable graceful degradation.",
-    "sqlite_locked": "If two optuna_search instances run concurrently against the same DB, Optuna will raise an OperationalError. Usage-pattern concern, not a code bug."
+  "correctness": {
+    "passes": true,
+    "notes": "The try/except in get_gpu_backtest_engine_class() catches _GPU_ENGINE_ERRORS by reference, so adding AttributeError to the tuple is sufficient to satisfy AC#1 and AC#2. The diff is minimal: 1 line insertion in the tuple, 2 lines in docstring (3 added, 2 removed) in jax_compat.py; 1 test function rename with 4-way parametrization in test_jax_compat.py. No other logic changes."
+  },
+  "security": {
+    "passes": true,
+    "notes": "Defensive catch widening has no security implications. No new I/O, no new external calls, no new attack surface."
+  },
+  "edge_cases": {
+    "passes": true,
+    "notes": "The parametrized test now covers all four exception types in _GPU_ENGINE_ERRORS (ImportError, RuntimeError, OSError, AttributeError). Each case is exercised via the same monkeypatched __import__ path, so the catch contract is fully locked in. The slightly broader AttributeError net (vs. the original three exceptions) is acceptable: the CPU fallback is the correct behavior when JAX is unusable, and Phase 2/3 callers already treat None as 'use CPU'."
+  },
+  "maintainability": {
+    "passes": true,
+    "notes": "Test rename from 'on_runtime_error' to 'on_import_error' is more accurate since the test now exercises 4 exception types, not just RuntimeError. No stale references to the old test name exist elsewhere in the codebase (verified via grep). Docstring is now self-documenting: a new reader immediately sees why each exception type is in the catch list."
   },
   "test_adequacy": {
-    "verdict": "ADEQUATE_FOR_PROJECT",
-    "evidence": "Implementer ran 4 verification checks (import, --help, py_compile, verification script for 12 params + compute_score + patching + restore). All passed. End-to-end pipeline test is intentionally NOT run locally (per project AGENTS.md: 'Do not run my project because it get OOM error!'). Task-2 is the integration test. Test approach is appropriate."
+    "passes": true,
+    "notes": "6 tests pass under PYTEST_LOW_MEMORY=1. The parametrized test_get_gpu_backtest_engine_class_returns_none_on_import_error provides 4 cases (one per exception type) and serves as a strong regression guard. The two existing integration-style tests (test_cpu_engine_import_without_jax, test_run_pipeline_imports_on_cpu_only_host) continue to verify the package import chain works without jax installed. Test coverage is now adequate for the scope of this change."
   },
-  "files_changed": ["gpu_fuzzy_trader/optuna_search.py"],
-  "diff_size": 397,
-  "ready_to_merge": true
+  "diff_summary": {
+    "files_changed": ["gpu_fuzzy_trader/backtest/jax_compat.py", "tests/unit/test_jax_compat.py"],
+    "insertions": 16,
+    "deletions": 7,
+    "scope_creep": false
+  },
+  "existing_tests_run": {
+    "command": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_jax_compat.py -v",
+    "result": "6 passed in 2.11s"
+  },
+  "notes": "All review findings from the previous round are correctly addressed. F1 is fixed by parameterizing the test over all 4 exception types in _GPU_ENGINE_ERRORS. F2 is fixed by updating the module docstring to enumerate the exception types and explain the rationale for AttributeError. The implementation remains minimal and focused. No new issues introduced. APPROVED."
 }

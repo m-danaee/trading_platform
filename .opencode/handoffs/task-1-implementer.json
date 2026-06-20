@@ -1,24 +1,22 @@
 {
   "task_id": "task-1",
   "status": "DONE",
-  "commit": "769caf3",
-  "files_changed": ["gpu_fuzzy_trader/optuna_search.py"],
-  "tests_run": [
-    ".venv/bin/python -c \"import gpu_fuzzy_trader.optuna_search\": PASS",
-    ".venv/bin/python -m gpu_fuzzy_trader.optuna_search --help: PASS (all 5 CLI args shown)",
-    ".venv/bin/python -m py_compile gpu_fuzzy_trader/optuna_search.py: PASS (syntax valid)",
-    "Verification script: ALL CHECKS PASSED (12 params, compute_score, patching, restore)"
+  "commit_hash": "4f942c8",
+  "branch": "feature/task-1-jax-compat-attrerror",
+  "summary": "Added AttributeError to _GPU_ENGINE_ERRORS, updated docstring, parameterized test",
+  "files_changed": [
+    "gpu_fuzzy_trader/backtest/jax_compat.py",
+    "tests/unit/test_jax_compat.py"
   ],
-  "notes": [
-    "All 12 acceptance criteria verified programmatically",
-    "Search space covers all 12 hyperparameters from the plan",
-    "Config patching uses unittest.mock.patch with proper restore in finally block",
-    "Objective function computes composite score: combined_return - 3*max(0, max_dd-8)",
-    "Failed trials return -999.0 penalty score instead of crashing",
-    "Study saved to SQLite DB at outputs/optuna_study.db (default)",
-    "Best params exported to outputs/optuna_best_params.json",
-    "Script uses from __future__ import annotations and matches project code style",
-    "Unused imports (sys, Pathlib.Path) cleaned up per project guidelines",
-    "WARNING: Do NOT run full pipeline locally (OOM risk). Use --debug mode for testing."
-  ]
+  "acceptance_criteria": {
+    "1": "PASS: _GPU_ENGINE_ERRORS includes AttributeError",
+    "2": "PASS: Any JAX import failure (including AttributeError) results in None return",
+    "3": "PASS: No other logic changes beyond tuple and docstring",
+    "4": "PASS: from gpu_fuzzy_trader.backtest.jax_compat import jax_gpu_backtest_available works"
+  },
+  "review_fixes": {
+    "F1": "Parameterized test_get_gpu_backtest_engine_class_returns_none_on_import_error over all 4 exception types (ImportError, RuntimeError, OSError, AttributeError) — 4 parametrized cases + 2 existing tests = 6 passing",
+    "F2": "Updated module docstring to mention AttributeError with rationale about partially-initialised module state"
+  },
+  "notes": "Review findings addressed. The original test was renamed from test_get_gpu_backtest_engine_class_returns_none_on_runtime_error to test_get_gpu_backtest_engine_class_returns_none_on_import_error to reflect the broader scope. All 6 tests pass."
 }
