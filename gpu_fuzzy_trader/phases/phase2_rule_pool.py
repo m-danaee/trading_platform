@@ -2041,11 +2041,6 @@ class Rule_Pool_Generator:
         self._cached_slim_train_regime = train_regime_ids
         self._cached_slim_train_regime_frac = self._regime_row_fractions
         self._cached_slim_train_n_regimes = self._n_regimes
-        # Cache val data for rebuilds (mirrors _cached_slim_train pattern)
-        if self._val_engine is not None:
-            self._cached_slim_val = getattr(self._val_engine, "_df", None)
-            self._cached_val_regime_ids = getattr(self._val_engine, "_regime_ids", None)
-            self._cached_val_regime_row_counts = self._val_regime_row_counts
         self._scoped_train_df = None
         self._scoped_val_df = None
 
@@ -2080,9 +2075,63 @@ class Rule_Pool_Generator:
             n_regimes=self._n_regimes,
         )
         self._val_engine = None
-        if self._cached_slim_val is not None:
+        if self._scoped_val_df is not None:
+            # First-time build from scoped val df
             try:
-                # Rebuild val engine from cached slim data (no re-sampling needed)
+                val_sampled = _sample_df(
+                    self._scoped_val_df,
+                    _cfg.PHASE1_SAMPLING_TOTAL,
+                    random_state=self._sample_seed,
+                )
+                val_regime_ids, _val_fracs, val_n_regimes = (
+                    _prepare_regime_context(val_sampled)
+                )
+                if val_regime_ids is not None:
+                    self._val_regime_row_counts = np.bincount(
+                        val_regime_ids.astype(np.int64),
+                        minlength=val_n_regimes,
+                    ).astype(np.int64)
+                slim_val = slim_backtest_df(val_sampled, self._feature_names)
+                self._val_engine = self._build_engine_for_df(
+                    slim_val,
+                    regime_ids=val_regime_ids,
+                    n_regimes=val_n_regimes,
+                )
+                self._holdout_n_valid_rows = len(slim_val)
+                self._val_engine.n_valid_rows = len(slim_val)
+                if self._val_regime_row_counts is not None:
+                    self._val_engine._regime_row_counts = (
+                        self._val_regime_row_counts
+                    )
+                # Snapshot to cache for rebuilds after park_engines
+                self._cached_slim_val = slim_val
+                self._cached_val_regime_ids = val_regime_ids
+                self._cached_val_regime_row_counts = self._val_regime_row_counts
+                if _cfg.PHASE2_JOINT_TRAIN_VAL:
+                    logger.info(
+                        "Phase 2 [%s]: joint train+val fitness enabled "
+                        "(val_rows=%d)",
+                        self.direction,
+                        len(slim_val),
+                    )
+                else:
+                    logger.info(
+                        "Phase 2 [%s]: val engine built for pool admission "
+                        "only (joint_train_val=False; val_rows=%d)",
+                        self.direction,
+                        len(slim_val),
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "Phase 2 [%s]: failed to build val engine, "
+                    "falling back to train-only admission: %s",
+                    self.direction,
+                    exc,
+                )
+                self._val_engine = None
+        elif self._cached_slim_val is not None:
+            # Rebuild from cached data after park_engines (no re-sampling needed)
+            try:
                 self._val_engine = self._build_engine_for_df(
                     self._cached_slim_val,
                     regime_ids=self._cached_val_regime_ids,
