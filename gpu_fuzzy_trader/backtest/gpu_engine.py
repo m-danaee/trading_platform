@@ -41,6 +41,8 @@ from gpu_fuzzy_trader._jax_env import configure_jax_env
 
 configure_jax_env()
 
+_jax_import_error = None
+
 try:
     import jax
     import jax.numpy as jnp
@@ -58,12 +60,19 @@ try:
     _JXF = _resolve_jax_float_dtype()
     _JX_INT = jnp.int8 if bool(
         getattr(_cfg, "PHASE2_GPU_DATA_INT8", True)) else jnp.int32
-except ImportError as _jax_err:
-    raise ImportError(
-        "JAX is required for GPUBacktestEngine but could not be imported. "
-        "Install it with: pip install jax jaxlib\n"
-        f"Original error: {_jax_err}"
-    ) from _jax_err
+except Exception as _jax_err:
+    jax = jnp = jit = vmap = lax = None
+    _JXF = _JX_INT = None
+    _jax_import_error = str(_jax_err)
+
+
+def _require_jax():
+    """Raise RuntimeError if JAX failed to import at module level."""
+    if jax is None:
+        raise RuntimeError(
+            "JAX could not be imported (required for GPUBacktestEngine). "
+            f"Original error: {_jax_import_error}"
+        )
 
 
 def _phase2_trade_floor() -> int:
@@ -568,6 +577,7 @@ class GPUBacktestEngine:
         direction: str,
         **constants,
     ) -> None:
+        _require_jax()
         from gpu_fuzzy_trader.backtest.cpu_engine import _normalize_direction
         self.df = df
         self.feature_modes = feature_modes
