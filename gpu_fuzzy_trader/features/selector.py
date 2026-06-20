@@ -37,11 +37,6 @@ from scipy.stats import spearmanr
 
 from gpu_fuzzy_trader import config
 from gpu_fuzzy_trader.features.detector import Feature_Detector
-from gpu_fuzzy_trader.features.regime_cluster import (
-    RegimeBundle,
-    fit_regime_labels,
-    persist_regime_model,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -73,14 +68,12 @@ class Phase1SharedContext:
     feature_cols: list[str]
     feature_modes: dict[str, str]
     targets: dict[str, pd.Series]
-    regime_labels: Optional[pd.Series] = None
     feature_array: np.ndarray | None = None
     symbol_masks: dict[str, np.ndarray] | None = None
 
 
 def build_phase1_shared_context(
     train_df: pd.DataFrame,
-    regime_labels: Optional[pd.Series] = None,
 ) -> Phase1SharedContext:
     """Precompute candidates, modes, and long/short targets in one pass."""
     exclude = (
@@ -109,7 +102,6 @@ def build_phase1_shared_context(
         feature_cols=feature_cols,
         feature_modes=feature_modes,
         targets=targets,
-        regime_labels=regime_labels,
         feature_array=feature_array,
         symbol_masks=_build_symbol_masks(train_df),
     )
@@ -287,8 +279,7 @@ class Feature_Selector:
     """Score and rank features separately for long and short directions."""
 
     def __init__(self) -> None:
-        self._regime_labels: Optional[pd.Series] = None
-        self._regime_bundle: Optional[RegimeBundle] = None
+        pass
 
     # ------------------------------------------------------------------
     # Core selection logic
@@ -298,7 +289,6 @@ class Feature_Selector:
         self,
         train_df: pd.DataFrame,
         direction: str,
-        regime_labels: Optional[pd.Series] = None,
         shared: Phase1SharedContext | None = None,
         val_df: pd.DataFrame | None = None,
     ) -> list[dict]:
@@ -453,17 +443,10 @@ class Feature_Selector:
             })
 
         # ----------------------------------------------------------------
-        # Step 7b: Stationarity filter (regime or chronological folds)
+        # Step 7b: Stationarity filter (chronological folds)
         # ----------------------------------------------------------------
         if config.PHASE1_STATIONARITY_FOLDS >= 2:
-            stratify = config.PHASE1_STATIONARITY_STRATIFY.lower()
             rank_drift_max = config.PHASE1_STATIONARITY_RANK_DRIFT_MAX
-            fold_scores: dict[str, list[float]]
-            labels = (
-                regime_labels
-                if regime_labels is not None
-                else (shared.regime_labels if shared is not None else self._regime_labels)
-            )
             stationarity_feature_array = (
                 _align_feature_array(
                     shared.feature_array,
@@ -474,41 +457,14 @@ class Feature_Selector:
                 else None
             )
 
-            if stratify == "regime":
-                fold_scores = _compute_regime_stationarity_scores(
-                    train_df,
-                    feature_cols,
-                    feature_modes,
-                    target,
-                    labels,
-                    config.PHASE1_STATIONARITY_FOLDS,
-                    config.PHASE1_REGIME_MIN_SAMPLES,
-                    feature_array=stationarity_feature_array,
-                )
-                n_valid = _count_valid_stationarity_folds(fold_scores)
-                if n_valid < 2:
-                    logger.warning(
-                        "Phase 1 [%s]: regime stationarity insufficient (%d folds); "
-                        "falling back to chronological",
-                        direction, n_valid,
-                    )
-                    fold_scores = _compute_chronological_stationarity_scores(
-                        train_df,
-                        feature_cols,
-                        feature_modes,
-                        target,
-                        config.PHASE1_STATIONARITY_FOLDS,
-                        feature_array=stationarity_feature_array,
-                    )
-            else:
-                fold_scores = _compute_chronological_stationarity_scores(
-                    train_df,
-                    feature_cols,
-                    feature_modes,
-                    target,
-                    config.PHASE1_STATIONARITY_FOLDS,
-                    feature_array=stationarity_feature_array,
-                )
+            fold_scores = _compute_chronological_stationarity_scores(
+                train_df,
+                feature_cols,
+                feature_modes,
+                target,
+                config.PHASE1_STATIONARITY_FOLDS,
+                feature_array=stationarity_feature_array,
+            )
 
             survivors = _stationarity_filter(
                 fold_scores,
@@ -518,9 +474,9 @@ class Feature_Selector:
             n_before_stationarity = len(scored)
             scored = [f for f in scored if f["name"] in survivors]
             logger.info(
-                "Phase 1 [%s]: stationarity filter (%s) %d → %d features "
+                "Phase 1 [%s]: stationarity filter (chronological) %d → %d features "
                 "(cv_max=%.2f, rank_drift_max=%d)",
-                direction, stratify, n_before_stationarity, len(scored),
+                direction, n_before_stationarity, len(scored),
                 config.PHASE1_STATIONARITY_CV_MAX,
                 rank_drift_max,
             )
@@ -575,30 +531,8 @@ class Feature_Selector:
             {"long": [...], "short": [...]}
             Also persists results to outputs/selected_features_{direction}.json.
         """
-        self._regime_labels = None
-        self._regime_bundle = None
-        if (
-            config.PHASE1_STATIONARITY_FOLDS >= 2
-            and config.PHASE1_STATIONARITY_STRATIFY.lower() == "regime"
-        ):
-            fit_result = fit_regime_labels(
-                train_df,
-                n_clusters=config.PHASE1_STATIONARITY_FOLDS,
-            )
-            if fit_result is not None:
-                self._regime_labels, self._regime_bundle = fit_result
-                try:
-                    persist_regime_model(
-                        config.PHASE1_REGIME_MODEL_PATH,
-                        self._regime_bundle,
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "Phase 1: could not persist regime model: %s", exc,
-                    )
-
         shared = build_phase1_shared_context(
-            train_df, regime_labels=self._regime_labels,
+            train_df,
         )
         logger.info(
             "Phase 1: shared preprocessing — %d features after dispersion",
@@ -610,7 +544,6 @@ class Feature_Selector:
             ranked[direction] = self.select_features(
                 train_df,
                 direction,
-                regime_labels=self._regime_labels,
                 shared=shared,
                 val_df=val_df,
             )
@@ -926,14 +859,6 @@ def _compute_stability(sym_scores: list[float]) -> float:
         return 0.0
 
 
-def _count_valid_stationarity_folds(
-    fold_scores: dict[str, list[float]],
-) -> int:
-    if not fold_scores:
-        return 0
-    return max(len(scores) for scores in fold_scores.values())
-
-
 def _mi_scores_for_mask(
     feature_array: np.ndarray,
     feature_cols: list[str],
@@ -989,7 +914,7 @@ def _compute_chronological_stationarity_scores(
 
     fold_scores: dict[str, list[float]] = {col: [] for col in feature_cols}
     n = len(target_values)
-    min_samples = config.PHASE1_REGIME_MIN_SAMPLES
+    min_samples = 100
     if n < n_folds * min_samples:
         return fold_scores
 
@@ -998,47 +923,6 @@ def _compute_chronological_stationarity_scores(
         lo, hi = int(boundaries[f]), int(boundaries[f + 1])
         mask = np.zeros(n, dtype=bool)
         mask[lo:hi] = True
-        scores = _mi_scores_for_mask(
-            feature_array,
-            feature_cols,
-            feature_modes,
-            target_values,
-            mask,
-            min_samples,
-        )
-        if scores is None:
-            continue
-        for i, col in enumerate(feature_cols):
-            fold_scores[col].append(scores[i])
-
-    return fold_scores
-
-
-def _compute_regime_stationarity_scores(
-    df: pd.DataFrame,
-    feature_cols: list[str],
-    feature_modes: dict[str, str],
-    target: pd.Series,
-    regime_labels: Optional[pd.Series],
-    n_regimes: int,
-    min_samples: int,
-    *,
-    feature_array: np.ndarray | None = None,
-) -> dict[str, list[float]]:
-    """
-    Per-regime MI using pre-fitted row labels (train only).
-    """
-    fold_scores: dict[str, list[float]] = {col: [] for col in feature_cols}
-    if regime_labels is None or n_regimes < 2:
-        return fold_scores
-
-    if feature_array is None:
-        feature_array = df[feature_cols].to_numpy(copy=False)
-    target_values = target.to_numpy(copy=False)
-    labels = regime_labels.reindex(df.index).to_numpy()
-
-    for regime_id in range(n_regimes):
-        mask = labels == regime_id
         scores = _mi_scores_for_mask(
             feature_array,
             feature_cols,

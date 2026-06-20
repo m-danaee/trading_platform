@@ -1,7 +1,5 @@
 """
-symbol_cluster.py — Hybrid per-symbol clustering for Phase 2 island scheduling.
-
-Combines Phase 1 feature profiles with return/regime similarity (Option C).
+symbol_cluster.py — Per-symbol clustering for Phase 2 island scheduling using feature profiles.
 """
 
 from __future__ import annotations
@@ -57,55 +55,6 @@ def _feature_profile_block(
     return np.vstack(rows)
 
 
-def _return_regime_block(
-    train_df: pd.DataFrame,
-    symbols: list[str],
-) -> np.ndarray:
-    """Per-symbol daily return stats + 3-bin regime histogram."""
-    from gpu_fuzzy_trader.features.regime_cluster import assign_regime_labels, load_regime_model
-
-    rows: list[np.ndarray] = []
-    bundle = None
-    try:
-        bundle = load_regime_model(config.PHASE2_REGIME_MODEL_PATH)
-    except FileNotFoundError:
-        logger.warning(
-            "symbol_cluster: regime model not found at %s; using return-only block",
-            config.PHASE2_REGIME_MODEL_PATH,
-        )
-
-    for sym in symbols:
-        sym_df = train_df[train_df["symbol"].astype(str) == str(sym)]
-        if sym_df.empty or "label_open_next" not in sym_df.columns:
-            rows.append(np.zeros(5, dtype=np.float64))
-            continue
-
-        price = sym_df["label_open_next"].astype(float)
-        rets = price.pct_change().replace([np.inf, -np.inf], np.nan).dropna()
-        if len(rets) == 0:
-            ret_mean, ret_std = 0.0, 0.0
-        else:
-            ret_mean = float(rets.mean())
-            ret_std = float(rets.std(ddof=0))
-
-        hist = np.zeros(3, dtype=np.float64)
-        if bundle is not None:
-            try:
-                labels = assign_regime_labels(sym_df, bundle).astype(int)
-                counts = np.bincount(labels.clip(
-                    0, 2), minlength=3).astype(np.float64)
-                total = counts.sum()
-                if total > 0:
-                    hist = counts / total
-            except Exception as exc:
-                logger.debug(
-                    "symbol_cluster: regime assign failed for %s: %s", sym, exc)
-
-        rows.append(
-            np.array([ret_mean, ret_std, *hist.tolist()], dtype=np.float64))
-    return np.vstack(rows)
-
-
 def build_hybrid_symbol_clusters(
     train_df: pd.DataFrame,
     feature_infos_long: list[dict],
@@ -114,7 +63,7 @@ def build_hybrid_symbol_clusters(
     random_state: int | None = None,
 ) -> dict[str, Any]:
     """
-    Cluster symbols by hybrid feature + return/regime embedding.
+    Cluster symbols by feature profile embedding.
 
     Returns dict with keys ``clusters`` (id -> symbol list), ``method``, ``n_clusters``.
     """
@@ -139,8 +88,7 @@ def build_hybrid_symbol_clusters(
     feature_names = _feature_names_union(
         feature_infos_long, feature_infos_short)
     block_a = _feature_profile_block(train_df, symbols, feature_names)
-    block_b = _return_regime_block(train_df, symbols)
-    embedding = np.hstack([block_a, block_b])
+    embedding = block_a
     embedding = np.nan_to_num(embedding, nan=0.0, posinf=0.0, neginf=0.0)
 
     if k == len(symbols):
