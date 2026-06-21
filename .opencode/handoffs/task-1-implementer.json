@@ -1,22 +1,33 @@
 {
   "task_id": "task-1",
   "status": "DONE",
-  "commit_hash": "4f942c8",
-  "branch": "feature/task-1-jax-compat-attrerror",
-  "summary": "Added AttributeError to _GPU_ENGINE_ERRORS, updated docstring, parameterized test",
+  "commit_hash": "ea079d4",
+  "branch": "feature/task-1-gpu-runtime",
+  "summary": "Added GPU Runtime Support for friend_project",
   "files_changed": [
-    "gpu_fuzzy_trader/backtest/jax_compat.py",
-    "tests/unit/test_jax_compat.py"
+    "friend_project/gpu_fuzzy_trader/_gpu_runtime.py (NEW)",
+    "friend_project/gpu_fuzzy_trader/_jax_env.py",
+    "friend_project/gpu_fuzzy_trader/config.py",
+    "friend_project/gpu_fuzzy_trader/phases/phase2_rule_pool.py",
+    "friend_project/gpu_fuzzy_trader/run_pipeline.py"
   ],
   "acceptance_criteria": {
-    "1": "PASS: _GPU_ENGINE_ERRORS includes AttributeError",
-    "2": "PASS: Any JAX import failure (including AttributeError) results in None return",
-    "3": "PASS: No other logic changes beyond tuple and docstring",
-    "4": "PASS: from gpu_fuzzy_trader.backtest.jax_compat import jax_gpu_backtest_available works"
+    "1": "PASS: _gpu_runtime.py exists and imports without errors (no sparse_encoding refs)",
+    "2": "PASS: config.py has all 6 GPU knobs with correct defaults",
+    "3": "PASS: is_colab_runtime() returns False locally, would return True on Colab",
+    "4": "PASS: _apply_colab_gpu_defaults() autodetects and configures PHASE3_USE_GPU and PHASE2_GPU_BATCH_SIZE_AUTO",
+    "5": "PASS: _jax_env.py has Colab JAX cache path (/content/jax_cache)",
+    "6": "PASS: run_pipeline.py calls log_gpu_runtime_config() when PHASE2_USE_GPU is True",
+    "7": "PASS: phase2_rule_pool.py calls configure_phase2_gpu_runtime() in _build_engine",
+    "8": "PASS: No import errors from sparse_encoding references",
+    "9": "PASS: Existing tests pass (8/8 in friend_project)"
   },
-  "review_fixes": {
-    "F1": "Parameterized test_get_gpu_backtest_engine_class_returns_none_on_import_error over all 4 exception types (ImportError, RuntimeError, OSError, AttributeError) — 4 parametrized cases + 2 existing tests = 6 passing",
-    "F2": "Updated module docstring to mention AttributeError with rationale about partially-initialised module state"
-  },
-  "notes": "Review findings addressed. The original test was renamed from test_get_gpu_backtest_engine_class_returns_none_on_runtime_error to test_get_gpu_backtest_engine_class_returns_none_on_import_error to reflect the broader scope. All 6 tests pass."
+  "notes": [
+    "Adapted _gpu_runtime.py from main project, removing phase2_sparse_encoding references",
+    "Kept dense-only path in _warmup_signature and _warmup_engine (no sparse branch)",
+    "resolve_phase2_gpu_batch_size default caps at 16 on non-GPU machine (unknown VRAM path)",
+    "configure_phase2_gpu_runtime() is called in phase2_rule_pool.py __init__ after engine build",
+    "run_pipeline.py calls log_gpu_runtime_config() at start of _run_phase2 when GPU enabled",
+    "Pre-existing test failure in main project (test_feature_order_follows_feature_modes) is unrelated"
+  ]
 }

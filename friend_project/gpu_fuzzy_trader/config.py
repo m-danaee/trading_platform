@@ -85,9 +85,6 @@ PHASE2_GPU_USE_FP32 = True
 # PHASE2_GPU_DATA_INT8 — store discretized feature matrix as int8 on GPU.
 PHASE2_GPU_DATA_INT8 = True
 
-# PHASE2_GPU_ENRICH_SYMBOL_METRICS — merge CPU per-symbol metrics after GPU batch eval.
-PHASE2_GPU_ENRICH_SYMBOL_METRICS = True
-
 # PHASE2_USE_GPU — enable JAX GPU backtest during Phase 2 evolution.
 PHASE2_USE_GPU = True
 
@@ -389,9 +386,10 @@ RB_USE_EVALUATOR_V5_FILES = True
 
 def is_colab_runtime() -> bool:
     """True when running on Google Colab (/content runtime)."""
+    import importlib.util
     return (
-        os.environ.get("COLAB_RELEASE_TAG") is not None
-        or os.path.isdir("/content")
+        importlib.util.find_spec("google.colab") is not None
+        or os.environ.get("COLAB_RELEASE_TAG") is not None
     )
 
 
@@ -399,13 +397,11 @@ def _apply_colab_gpu_defaults() -> None:
     """
     Colab T4 optimizations for notebook runs.
 
-    - Phase 3 uses GPUBacktestEngine (mask cache + batch eval path).
-    - VRAM auto batch sizing uses the T4-friendly 128 cap when enabled.
+    VRAM auto batch sizing uses the T4-friendly 128 cap when enabled.
     """
-    global PHASE3_USE_GPU, PHASE2_GPU_BATCH_SIZE_AUTO
+    global PHASE2_GPU_BATCH_SIZE_AUTO
     if not is_colab_runtime():
         return
-    PHASE3_USE_GPU = True
     PHASE2_GPU_BATCH_SIZE_AUTO = True
 
 

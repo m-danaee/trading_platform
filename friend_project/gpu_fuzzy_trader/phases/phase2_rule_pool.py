@@ -950,10 +950,14 @@ class Rule_Pool_Generator:
 
         self._engine = self._build_engine()
 
-        from gpu_fuzzy_trader._gpu_runtime import configure_phase2_gpu_runtime
+        from gpu_fuzzy_trader._gpu_runtime import resolve_phase2_gpu_batch_size
         from gpu_fuzzy_trader._memory import log_memory_rss
 
-        configure_phase2_gpu_runtime(self._engine)
+        _resolved_batch = resolve_phase2_gpu_batch_size()
+        logger.info(
+            "Phase 2 [%s]: resolved GPU batch size = %d",
+            direction, _resolved_batch,
+        )
         log_memory_rss(f"Phase2 [{direction}] engine init")
 
 

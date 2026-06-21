@@ -16,7 +16,7 @@ def configure_jax_env() -> None:
     """
     os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
     os.environ.setdefault("JAX_PLATFORMS", "cuda,cpu")
-    os.environ.setdefault("JAX_ENABLE_X64", "True")
+    os.environ.setdefault("JAX_ENABLE_X64", "False")
     if "JAX_COMPILATION_CACHE_DIR" not in os.environ:
         if os.path.isdir("/content"):
             cache_dir = "/content/jax_cache"
