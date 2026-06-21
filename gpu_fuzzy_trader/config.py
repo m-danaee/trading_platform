@@ -380,7 +380,7 @@ PHASE1_DISPERSION_THRESHOLD = 0.95
 # PHASE1_TOP_K_FEATURES — shortlist size per direction (long / short).
 #   Higher → wider Phase 2 search space, slower evolution, more combinations.
 #   Lower  → faster search, risk of missing predictive features.
-PHASE1_TOP_K_FEATURES = 20
+PHASE1_TOP_K_FEATURES = 25
 
 # PHASE1_MAX_FEATURE_OVERLAP — max Jaccard overlap between long & short lists.
 #   Higher → more shared features across directions; smaller combined gene space.
@@ -506,7 +506,7 @@ PHASE2_SL = 1.0
 # PHASE2_CAPITAL_PCT — % of equity allocated per rule signal in Phase 2.
 #   Higher → larger simulated positions; drawdown and return scale up.
 #   Lower  → conservative sizing; may understate overlap effects until Phase 4.
-PHASE2_CAPITAL_PCT = 30.0
+PHASE2_CAPITAL_PCT = 48.0
 
 
 # =============================================================================
@@ -519,7 +519,7 @@ PHASE2_CAPITAL_PCT = 30.0
 #   Higher MAX → allow complex rules (if encoding supports variable count).
 #   Lower MAX → force simplicity; more generalization, less specificity.
 MIN_CONDITIONS = 3
-MAX_CONDITIONS = 3
+MAX_CONDITIONS = 5
 
 # PHASE2_ENCODING — chromosome memory layout during evolution.
 #   "dense"        — length-K vector with per-feature dont_care (legacy).
@@ -535,17 +535,17 @@ PHASE2_ENCODING = "sparse_slots"
 # MIN_TRADE_SUPPORT — target executed trades before support penalty vanishes.
 #   Higher → penalize low-frequency rules harder; pool favors robust sample size.
 #   Lower  → allow rare-pattern rules; noisier Sortino/return estimates.
-MIN_TRADE_SUPPORT = 90
+MIN_TRADE_SUPPORT = 150
 
 # SUPPORT_PENALTY_MAX — cap on quadratic support shortfall penalty.
 #   Higher → stronger push away from under-supported rules on all objectives.
 #   Lower  → evolution tolerates thin trade counts longer.
-SUPPORT_PENALTY_MAX = 12.0
+SUPPORT_PENALTY_MAX = 10.0
 
 # MIN_TRADE_POOL_FLOOR — hard reject below this executed trade count.
 #   Higher → archive/pool never keeps very rare rules.
 #   Lower  → extremely sparse rules can survive if other metrics excel.
-MIN_TRADE_POOL_FLOOR = 17
+MIN_TRADE_POOL_FLOOR = 38
 
 # PHASE2_SUPPORT_PENALTY_WEIGHT_F1/F2/F3 — per-objective support penalty scale.
 #   Higher → that objective punishes low support more (steer Sortino vs DD vs return).
@@ -641,7 +641,7 @@ PHASE2_REQUIRE_LAST_FOLD_POSITIVE: bool = False
 # PHASE2_MONTHLY_ADMISSION_ENABLED — toggle the monthly-window gate.
 #   True  → rules must pass the monthly profitable-ratio filter to enter the pool.
 #   False → skip the gate (zero behaviour change vs. pre-Task-13 code).
-PHASE2_MONTHLY_ADMISSION_ENABLED = True
+PHASE2_MONTHLY_ADMISSION_ENABLED = False
 
 # PHASE2_MONTHLY_GOOD_RETURN_MIN_PCT — minimum total_return_pct (%) for a monthly
 # window to count as "good" in the pool-admission gate.
@@ -672,7 +672,7 @@ PHASE2_MONTHLY_ADMISSION_MIN_MONTHS = 4
 # SORTINO_CAP — maximum saturated Sortino after tanh compression.
 #   Higher → more differentiation among top Sortino rules on f1.
 #   Lower  → flatter f1 landscape; diversity across other objectives easier.
-SORTINO_CAP = 7.0
+SORTINO_CAP = 10.0
 
 # SORTINO_SCALE — divisor inside tanh(raw_sortino / scale); controls saturation.
 #   Higher → less compression; extreme Sortino values still differentiate f1.
@@ -814,7 +814,7 @@ PHASE2_DIVERSITY_RECOVERY_MUTATION_BOOST = 1.75
 
 # --- Two-stage evolution: wide exploration → val-robust refinement ---
 
-PHASE2_TWO_STAGE_ENABLED = True
+PHASE2_TWO_STAGE_ENABLED = False
 
 # PHASE2_STAGE_A_GENERATIONS — Stage A (exploration) generation budget.
 #   Higher → more diverse initial Pareto before val-focused Stage B.
@@ -976,7 +976,7 @@ PHASE2_SEED: int = get_seed()
 # fixed total generation budget split across islands. Global knobs below stay
 # as universe bases; runtime scaling via resolve_island_hyperparams().
 
-PHASE2_ISLAND_MODE = "cluster"  # "global" | "cluster"
+PHASE2_ISLAND_MODE = "global"  # "global" | "cluster"
 PHASE2_N_CLUSTERS = 3
 PHASE2_ISLAND_TOTAL_GENERATIONS = PHASE2_GENERATIONS
 PHASE2_ISLAND_EPOCH_GENERATIONS = 25
