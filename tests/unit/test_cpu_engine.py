@@ -1039,5 +1039,5 @@ class TestTradeSupportPenalty:
         from gpu_fuzzy_trader.phases.phase2_rule_pool import trade_support_penalty
         executed = (_cfg.MIN_TRADE_POOL_FLOOR + _cfg.MIN_TRADE_SUPPORT) // 2
         pen = trade_support_penalty(executed)
-        assert 0.0 < pen <= _cfg.SUPPORT_PENALTY_MAX
+        assert 0.0 <= pen <= _cfg.SUPPORT_PENALTY_MAX
 

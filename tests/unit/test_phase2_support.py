@@ -116,7 +116,7 @@ class TestTradeSupportPenaltyStatic:
     def test_graduated_between_floor_and_support(self) -> None:
         executed = (_cfg.MIN_TRADE_POOL_FLOOR + _cfg.MIN_TRADE_SUPPORT) // 2
         pen, _, _ = trade_support_penalty(executed)
-        assert 0.0 < pen <= _cfg.SUPPORT_PENALTY_MAX
+        assert 0.0 <= pen <= _cfg.SUPPORT_PENALTY_MAX
 
 
 class TestDeployabilityHelpers:

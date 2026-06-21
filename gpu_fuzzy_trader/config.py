@@ -540,7 +540,7 @@ MIN_TRADE_SUPPORT = 150
 # SUPPORT_PENALTY_MAX — cap on quadratic support shortfall penalty.
 #   Higher → stronger push away from under-supported rules on all objectives.
 #   Lower  → evolution tolerates thin trade counts longer.
-SUPPORT_PENALTY_MAX = 10.0
+SUPPORT_PENALTY_MAX = 0.0
 
 # MIN_TRADE_POOL_FLOOR — hard reject below this executed trade count.
 #   Higher → archive/pool never keeps very rare rules.
