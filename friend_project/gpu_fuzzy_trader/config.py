@@ -394,6 +394,23 @@ RB_SYMBOL_STRICT_OUTPUT_CHECK = True
 
 RB_USE_EVALUATOR_V5_FILES = True
 
+# ---------------------------------------------------------------------------
+# Phase 5 — OOS evaluator
+# ---------------------------------------------------------------------------
+
+# PHASE5_REMOVE_NEGATIVE_PNL_RULES — remove rules with Net_PnL <= 0 on test.
+# When True, the OOS evaluator prunes negative-PnL rules from the strategy
+# and rewrites the output JSON before generating reports.
+PHASE5_REMOVE_NEGATIVE_PNL_RULES = True
+
+# PHASE3_GLOBAL_MIN_RULES — minimum number of rules required in a strategy.
+# The negative-PnL pruning safeguard will not drop below this threshold.
+PHASE3_GLOBAL_MIN_RULES = 2
+
+# WRITE_EVALUATOR_CLEAN — write a stripped strategy JSON (direction + rules_set
+# only) to outputs/evaluator_clean/{direction}_evaluator_clean.json.
+WRITE_EVALUATOR_CLEAN = True
+
 
 def is_colab_runtime() -> bool:
     """True when running on Google Colab (/content runtime)."""

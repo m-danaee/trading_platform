@@ -6,6 +6,8 @@ import logging
 import re
 from pathlib import Path
 
+from gpu_fuzzy_trader import config as _cfg
+
 logger = logging.getLogger(__name__)
 
 
@@ -244,6 +246,13 @@ class Output_Writer:
             dest,
         )
 
+        # Write evaluator-clean variant (defensive — strip extra metadata).
+        if getattr(_cfg, "WRITE_EVALUATOR_CLEAN", True):
+            direction = validated["direction"]
+            clean_dir = dest.parent / "evaluator_clean"
+            clean_path = clean_dir / f"{direction}_evaluator_clean.json"
+            write_evaluator_clean(validated, clean_path)
+
     def load_and_validate(self, path: str | Path) -> dict:
         """
         Load JSON from path and run full schema validation.
@@ -282,3 +291,76 @@ class Output_Writer:
             ) from exc
 
         return _validate_rule_set(data)
+
+
+# ---------------------------------------------------------------------------
+# Evaluator-clean writer
+# ---------------------------------------------------------------------------
+
+
+def write_evaluator_clean(strategy: dict, output_path: str | Path) -> None:
+    """
+    Write a stripped strategy file containing only ``direction`` and
+    ``rules_set``.
+
+    Extra top-level keys (e.g. ``risk_optimized``, ``deployment_accepted``,
+    ``validation_gate``) are stripped. This is a safety net for evaluators
+    that may reject unknown top-level keys in future versions.
+
+    Parameters
+    ----------
+    strategy : dict
+        The full strategy dict (must contain ``direction`` and ``rules_set``).
+    output_path : str or Path
+        Destination path for the clean JSON file. Parent directories are
+        created automatically if they do not exist.
+
+    Raises
+    ------
+    KeyError
+        If ``strategy`` is missing ``direction`` or ``rules_set``.
+    """
+    clean = {
+        "direction": strategy["direction"],
+        "rules_set": strategy["rules_set"],
+    }
+    dest = Path(output_path)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with dest.open("w", encoding="utf-8") as fh:
+        json.dump(clean, fh, indent=2)
+    logger.info(
+        "Wrote evaluator-clean file (%s, %d rules) to %s",
+        clean["direction"],
+        len(clean["rules_set"]),
+        dest,
+    )
+
+
+def _maybe_write_evaluator_clean(
+    strategy: dict, main_path: str | Path, direction: str
+) -> None:
+    """
+    Write a stripped strategy file if ``WRITE_EVALUATOR_CLEAN`` is ``True``.
+
+    This is a convenience helper for production pipeline code that writes
+    strategy files via direct ``json.dump`` (Phases 3/4/5) rather than
+    through ``Output_Writer.write``.
+
+    Parameters
+    ----------
+    strategy : dict
+        The full strategy dict (must contain ``direction`` and ``rules_set``).
+    main_path : str or Path
+        The path of the main strategy file that was just written. The clean
+        file is placed next to it in an ``evaluator_clean/`` subdirectory.
+    direction : str
+        ``"long"`` or ``"short"`` — used to name the clean file.
+    """
+    if not bool(getattr(_cfg, "WRITE_EVALUATOR_CLEAN", True)):
+        return
+    main_path = Path(main_path)
+    clean_path = main_path.parent / "evaluator_clean" / f"{direction}_evaluator_clean.json"
+    try:
+        write_evaluator_clean(strategy, clean_path)
+    except Exception as exc:
+        logger.debug("evaluator_clean write failed for %s: %s", direction, exc)

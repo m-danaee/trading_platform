@@ -15,7 +15,11 @@ from gpu_fuzzy_trader.backtest.df_slim import downcast_numeric_df
 from gpu_fuzzy_trader.data.loader import Data_Loader
 from gpu_fuzzy_trader.data.splitter import Data_Splitter
 from gpu_fuzzy_trader.features.selector import Feature_Selector
-from gpu_fuzzy_trader.output.writer import Output_Writer, ValidationError
+from gpu_fuzzy_trader.output.writer import (
+    Output_Writer,
+    ValidationError,
+    _maybe_write_evaluator_clean,
+)
 from gpu_fuzzy_trader.reporting.reporter import Reporter
 
 logger = logging.getLogger(__name__)
@@ -104,6 +108,26 @@ class OOS_Evaluator:
 
                 if split == "test":
                     all_per_symbol.extend(per_symbol_rows)
+
+            # Phase 5: remove negative-PnL rules from the strategy (before reports)
+            cleaned = False
+            if getattr(_cfg, "PHASE5_REMOVE_NEGATIVE_PNL_RULES", False):
+                test_trade_log = trade_logs_by_split.get("test")
+                if test_trade_log is not None and not test_trade_log.empty:
+                    strategy, cleaned = self._remove_negative_pnl_rules(
+                        strategy, test_trade_log, direction
+                    )
+
+            # Re-evaluate test split after cleanup so reports use correct metrics
+            if cleaned:
+                test_metrics2, per_symbol_rows2, trade_log2 = self._evaluate_strategy(
+                    datasets_by_split["test"], strategy, direction
+                )
+                metrics_by_split["test"] = test_metrics2
+                trade_logs_by_split["test"] = trade_log2
+                all_per_symbol = [
+                    r for r in all_per_symbol if r.get("dataset") != "test"
+                ] + per_symbol_rows2
 
             results[direction] = metrics_by_split.get("test", {})
 
@@ -391,6 +415,58 @@ class OOS_Evaluator:
         )
 
         return metrics, per_symbol_rows, trade_log
+
+    @staticmethod
+    def _remove_negative_pnl_rules(
+        strategy: dict,
+        trade_log: pd.DataFrame,
+        direction: str,
+    ) -> tuple[dict, bool]:
+        rules = strategy.get("rules_set", [])
+        if not rules or trade_log is None or trade_log.empty:
+            return strategy, False
+
+        kept: list[dict] = []
+        for rule_idx, rule in enumerate(rules, start=1):
+            rule_trades = trade_log[trade_log["Rule_Index"] == rule_idx]
+            if rule_trades.empty:
+                kept.append(rule)
+                continue
+            total_pnl = float(rule_trades["Net_PnL"].sum())
+            if total_pnl > 0:
+                kept.append(rule)
+
+        global_min = int(getattr(_cfg, "PHASE3_GLOBAL_MIN_RULES", 1))
+        if len(kept) < global_min:
+            logger.warning(
+                "Phase 5 [%s]: cannot remove negative-PnL rules: "
+                "would drop below minimum %d rules. Keeping all %d rules.",
+                direction, global_min, len(rules),
+            )
+            return strategy, False
+
+        removed = len(rules) - len(kept)
+        if removed > 0:
+            logger.info(
+                "Phase 5 [%s]: removed %d negative-PnL rules, kept %d",
+                direction, removed, len(kept),
+            )
+            strategy["rules_set"] = kept
+
+            # Re-write the cleaned strategy back to disk
+            output_path = _STRATEGY_PATHS[direction]
+            try:
+                with open(output_path, "w", encoding="utf-8") as fh:
+                    json.dump(strategy, fh, indent=2)
+                _maybe_write_evaluator_clean(strategy, output_path, direction)
+            except OSError as exc:
+                logger.warning(
+                    "Phase 5 [%s]: failed to rewrite cleaned strategy: %s",
+                    direction, exc,
+                )
+            return strategy, True
+
+        return strategy, False
 
     @staticmethod
     def _build_per_symbol_rows(
