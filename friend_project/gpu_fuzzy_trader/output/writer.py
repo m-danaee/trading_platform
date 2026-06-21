@@ -362,5 +362,5 @@ def _maybe_write_evaluator_clean(
     clean_path = main_path.parent / "evaluator_clean" / f"{direction}_evaluator_clean.json"
     try:
         write_evaluator_clean(strategy, clean_path)
-    except Exception as exc:
+    except (OSError, KeyError, TypeError, ValueError) as exc:
         logger.debug("evaluator_clean write failed for %s: %s", direction, exc)

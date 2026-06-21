@@ -18,7 +18,6 @@ from gpu_fuzzy_trader.features.selector import Feature_Selector
 from gpu_fuzzy_trader.output.writer import (
     Output_Writer,
     ValidationError,
-    _maybe_write_evaluator_clean,
 )
 from gpu_fuzzy_trader.reporting.reporter import Reporter
 
@@ -126,7 +125,7 @@ class OOS_Evaluator:
                 metrics_by_split["test"] = test_metrics2
                 trade_logs_by_split["test"] = trade_log2
                 all_per_symbol = [
-                    r for r in all_per_symbol if r.get("dataset") != "test"
+                    r for r in all_per_symbol if r.get("direction") != direction
                 ] + per_symbol_rows2
 
             results[direction] = metrics_by_split.get("test", {})
@@ -453,17 +452,20 @@ class OOS_Evaluator:
             )
             strategy["rules_set"] = kept
 
-            # Re-write the cleaned strategy back to disk
+            # Re-write the cleaned strategy back to disk via Output_Writer
             output_path = _STRATEGY_PATHS[direction]
             try:
-                with open(output_path, "w", encoding="utf-8") as fh:
-                    json.dump(strategy, fh, indent=2)
-                _maybe_write_evaluator_clean(strategy, output_path, direction)
-            except OSError as exc:
+                Output_Writer().write(strategy, output_path)
+                logger.info(
+                    "Phase 5 [%s]: rewritten cleaned strategy to %s",
+                    direction, output_path,
+                )
+            except (OSError, ValidationError) as exc:
                 logger.warning(
                     "Phase 5 [%s]: failed to rewrite cleaned strategy: %s",
                     direction, exc,
                 )
+                return strategy, False
             return strategy, True
 
         return strategy, False
