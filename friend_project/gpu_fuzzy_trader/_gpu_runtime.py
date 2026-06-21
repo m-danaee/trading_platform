@@ -5,14 +5,10 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
-from typing import TYPE_CHECKING
 
 from gpu_fuzzy_trader import config as _cfg
 
 logger = logging.getLogger(__name__)
-
-if TYPE_CHECKING:
-    from gpu_fuzzy_trader.backtest.gpu_engine import GPUBacktestEngine
 
 # Avoid re-compiling identical (n_rows, K, batch) shapes across islands.
 _WARMED_SIGNATURES: set[tuple] = set()
@@ -208,6 +204,14 @@ def _warmup_engine(engine: object, batch_size: int = 1) -> None:
 
     target = _resolve_warmup_inner(engine)
     n = max(1, int(batch_size))
+
+    if not hasattr(target, "_data_matrix_jax") or not hasattr(target, "_dont_cares_jax"):
+        logger.debug(
+            "Skipping warmup for %s: missing _data_matrix_jax or _dont_cares_jax",
+            type(target).__name__,
+        )
+        _WARMED_SIGNATURES.add(signature)
+        return
 
     k = int(target._data_matrix_jax.shape[1])
     if k == 0:
