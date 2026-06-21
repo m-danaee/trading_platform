@@ -1,43 +1,60 @@
 {
-  "task": "task-4-strip-engine-regime",
+  "task": "task-4-phase5-filtering",
   "status": "DONE",
-  "commit": "14a19bd",
-  "branch": "feature/task-4-strip-engine-regime",
+  "commit": "5069c94",
+  "branch": "feature/task-4-phase5-filtering",
   "files_changed": [
-    "gpu_fuzzy_trader/backtest/cpu_engine.py",
-    "gpu_fuzzy_trader/backtest/gpu_engine.py",
-    "gpu_fuzzy_trader/_gpu_runtime.py"
+    "friend_project/gpu_fuzzy_trader/config.py",
+    "friend_project/gpu_fuzzy_trader/output/writer.py",
+    "friend_project/gpu_fuzzy_trader/phases/phase5_oos.py",
+    "friend_project/tests/test_phase5_rule_filtering.py"
   ],
-  "summary": "Removed all regime tracking from both backtest engines.",
+  "summary": "Implemented Phase 5 rule filtering + addressed code review F1–F6 fixes.",
   "details": {
-    "cpu_engine": [
-      "Removed _regime_ids and _n_regimes from constructor init",
-      "Removed per-trade regime tracking if-block in trade loop",
-      "Removed regime stats arrays initialization",
-      "Removed regime metrics fields from output dict"
+    "config_additions": [
+      "PHASE5_REMOVE_NEGATIVE_PNL_RULES = True",
+      "PHASE3_GLOBAL_MIN_RULES = 2",
+      "WRITE_EVALUATOR_CLEAN = True"
     ],
-    "gpu_engine": [
-      "Deleted _jax_simulate_equity_batch_regime function (~210 lines of JAX JIT-compiled code)",
-      "Removed _regime_ids_jax, _n_regimes from constructor",
-      "Simplified _simulate_signals_batch to always use non-regime kernel (returns array directly, no tuple)",
-      "Simplified _batch_metrics_from_array — removed regime_np and n_regimes parameters",
-      "Simplified simulate_rule_batch — removed regime_chunks, has_regime, regime_jax, regime_np concatenation"
+    "writer_additions": [
+      "write_evaluator_clean() — stripped strategy JSON writer (direction + rules_set only)",
+      "_maybe_write_evaluator_clean() — gated helper for direct json.dump callers",
+      "Output_Writer.write() now writes evaluator-clean variant when WRITE_EVALUATOR_CLEAN=True",
+      "F4 fixed: narrowed bare except to (OSError, KeyError, TypeError, ValueError)"
     ],
-    "_gpu_runtime": [
-      "Removed n_regimes from _engine_shape_key tuple (JIT cache key)"
+    "phase5_additions": [
+      "_remove_negative_pnl_rules() — removes rules with Net_PnL <= 0 on test split",
+      "Keeps rules with empty trade_log (no trades to judge)",
+      "Minimum rule safeguard: won't drop below PHASE3_GLOBAL_MIN_RULES",
+      "After pruning, re-evaluates test split with cleaned rules",
+      "Cleaned strategy overwrites outputs/{direction}.json via Output_Writer.write()",
+      "Wires into run() after all splits evaluated, before reporter calls",
+      "Gated by PHASE5_REMOVE_NEGATIVE_PNL_RULES flag (False = skip)",
+      "F1 fixed: per_symbol dedup filter uses 'direction' instead of non-existent 'dataset'",
+      "F3 fixed: returns (strategy, False) when file write fails",
+      "F5 fixed: uses Output_Writer().write() instead of direct json.dump",
+      "F6 fixed: logs rewritten file path"
+    ],
+    "tests_added": [
+      "tests/test_phase5_rule_filtering.py with 8 test cases covering:",
+      "  - Basic removal (rules with net positive/negative PnL)",
+      "  - Empty trade_log (all rules kept)",
+      "  - All negative with minimum-rule safeguard",
+      "  - All positive (no removal)",
+      "  - Single negative with safeguard (no removal)",
+      "  - Rule_Index 1-based alignment with engine",
+      "  - File-on-disk rewrite + evaluator_clean written",
+      "  - WRITE_EVALUATOR_CLEAN=False suppresses evaluator_clean file"
     ]
   },
   "tests_run": [
-    "tests/unit/test_gpu_engine.py: 58 passed",
-    "tests/unit/test_cpu_engine.py: 87 passed",
-    "All unit tests (excl. regime-specific): 1109 passed, 3 pre-existing failures unrelated to changes"
+    "tests/ (friend_project): 29 passed (21 original + 8 new)"
   ],
   "notes_for_reviewer": [
-    "GPU engine _simulate_signals_batch now returns jnp.ndarray directly instead of tuple (no more regime_stats return)",
-    "test_gpu_engine_regime.py will fail because it tests regime output fields that no longer exist — should be deleted or skipped",
-    "The _batch_metrics_from_array signature changed: removed regime_np and n_regimes params — all callers updated",
-    "Zero regime references remain in gpu_engine.py and cpu_engine.py",
-    "Some regime references remain in other modules (config.py, phase2_support.py, phase2_rule_pool.py, evox_runner.py, features/) — those are out of scope for this task",
-    "Pre-existing test failures (3) in test_evox_runner.py and test_phase2_rule_pool.py are unrelated to regime changes"
+    "All changes are in friend_project/ only — no changes to main project files",
+    "No changes to data splitter, Phase 1, Phase 2, or RB Governor",
+    "Uses getattr(..., default) for safe config access",
+    "All 29 tests pass (21 original + 8 new rule-filtering tests)",
+    "_maybe_write_evaluator_clean is still defined in writer.py for external callers but no longer imported by phase5_oos.py (Output_Writer.write handles it internally)"
   ]
 }

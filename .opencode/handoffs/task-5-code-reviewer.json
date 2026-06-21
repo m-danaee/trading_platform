@@ -1,30 +1,88 @@
 {
   "task": 5,
-  "title": "Expand Phase 2 pool admission",
-  "verdict": "APPROVED",
-  "findings": [
-    {
-      "severity": "medium",
-      "finding": "Missing pool cap test in _build_pool_from_archive. The test file docstring mentions the pool cap but no test verifies the sort-by-deployability_rank_score-and-slice behavior, nor the no-op path when len(pool) < PHASE2_KEEP_TOP_RULES.",
-      "fix": "Add a test that constructs synthetic pool entries with known deployability_rank_score ordering, calls _build_pool_from_archive with PHASE2_KEEP_TOP_RULES=3, and asserts only the top-3 remain ordered by score descending. Also test with a pool smaller than the cap to verify no-op."
-    },
-    {
-      "severity": "low",
-      "finding": "_raw_feasibility_violation_score does not check drawdown. The new per-fold DD gate in _passes_pool_admission_impl is not mirrored in _raw_feasibility_violation_score, so passes_evolution_deployability_preview can return True for rules with high DD that would later fail pool admission.",
-      "fix": "Add DD checks to _raw_feasibility_violation_score when cv_fold=True and _split_mode_is_purged_cv(), consistent with the admission function. Non-blocking; evolution preview is documented as lightweight."
-    },
-    {
-      "severity": "low",
-      "finding": "No train-side DD rejection test. test_phase2_pool_admission.py only tests val-side DD rejection.",
-      "fix": "Add a test case where train DD exceeds PHASE2_CV_MAX_WORST_DD (e.g., 25%) but val DD is within bounds (e.g., 8%)."
-    },
-    {
-      "severity": "low",
-      "finding": "Positive-good gate rejection not tested. test_positive_good_does_not_crash_on_valid_rule only verifies the gate doesn't crash; no test verifies actual rejection when a rule passes relaxed CV thresholds but fails gate_positive_good (e.g., train_pf=0.85 < 1.0).",
-      "fix": "Add a test where relaxed CV thresholds pass (val_ret=-5%, DD=10%) but train_pf=0.85 < PHASE3_MIN_TRAIN_PF=1.0 → assert False."
-    }
+  "title": "Create friend.ipynb Colab Notebook",
+  "reviewer": "code-reviewer",
+  "status": "APPROVED",
+  "commit": "11521f3",
+  "branch": "feature/task-5-colab-notebook",
+  "base_branch": "feature/task-4-phase5-filtering",
+  "files_changed": [
+    "friend_project/friend.ipynb"
   ],
-  "summary": "All 6 acceptance criteria met. Implementation correctly relaxes CV per-fold pool admission thresholds (val return >= -8%, PF >= 0.80, DD <= 18%, trades >= 10) while keeping the holdout path strict. Pool capped at PHASE2_KEEP_TOP_RULES=140 sorted by deployability_rank_score. PHASE2_STRICT_POSITIVE_GOOD=True gate runs as secondary check after relaxed CV thresholds. All 31 relevant tests pass (10 new + 21 patched). Two existing test files patched minimally (1 line each) to disable positive-good for legacy-format tests. Four non-blocking findings flagged for test coverage improvements.",
-  "tests_passed": 31,
-  "tests_total": 31
+  "scope_check": {
+    "diff_size": "1 file, 723 insertions",
+    "no_out_of_scope_files": true,
+    "no_modifications_to_main_project_code": true,
+    "no_modifications_to_tests": true,
+    "no_modifications_to_evaluator_v5": true
+  },
+  "acceptance_criteria": {
+    "1_seven_cells": "PASS — 7 cells: [0] markdown, [1] code (GitHub token), [2] code (bootstrap), [3] code (install), [4] code (import/config), [5] code (run), [6] markdown (results)",
+    "2_bootstrap_discovers": "PASS — _discover_project_root() checks PROJECT_ROOT, /content/friend_project, /content, then rglob. GITHUB_CLONE_DIR defaults to /content/friend_project.",
+    "3_install_colab_gpu": "PASS — _in_colab uses 3 markers (COLAB_RELEASE_TAG, /content dir, google.colab spec). COLAB path: pinned JAX CUDA 12 + EvoX + Torch CPU. Local path: requirements.txt + jax-cuda13-plugin.",
+    "4_import_config": "PASS — Sets cfg.PHASE2_SCAN_UNROLL=16, cfg.PER_SYMBOL_PHASE2=True, cfg.PHASE5_REMOVE_NEGATIVE_PNL_RULES=True. Calls configure_jax_env() before import. Reports VRAM, batch size, JAX backend.",
+    "5_run_sync": "PASS — Subprocess runs python -m gpu_fuzzy_trader.run_pipeline --output /content/friend_project_outputs. After success: copies outputs/, phase2_rule_archive/, pools/per_symbol/ to /content/drive/MyDrive/friend_project/.",
+    "6_numba_ops_graceful": "PASS — _repair_stale_numba_ops() checks if numba_ops.py exists at project_root/gpu_fuzzy_trader/evolution/numba_ops.py. Verified: that file does NOT exist in friend_project, so the function returns 'numba_ops.py not present (friend_project)' and exits gracefully.",
+    "7_friend_paths": "PASS — All path strings reference friend_project (/content/friend_project, /content/friend_project_data, /content/friend_project_outputs, /content/drive/MyDrive/friend_project/...). No references to main_project or /content/trading_platform.",
+    "8_valid_json": "PASS — nbformat=4, nbformat_minor=5, valid Jupyter format. Validated with json.load and ast.parse on every code cell.",
+    "9_tests_pass": "PASS — 29/29 friend_project tests pass: `cd friend_project && PYTHONPATH=. .venv/bin/python -m pytest tests/ -x -q` → 29 passed in 4.84s"
+  },
+  "review_findings": {
+    "python_syntax": {
+      "all_cells_parse": true,
+      "cells_checked": 5,
+      "verification": "ast.parse() succeeded for every code cell"
+    },
+    "imports_resolve": {
+      "all_modules_exist": true,
+      "verified_modules": [
+        "gpu_fuzzy_trader (package)",
+        "gpu_fuzzy_trader.run_pipeline",
+        "gpu_fuzzy_trader._jax_env (configure_jax_env)",
+        "gpu_fuzzy_trader._gpu_runtime (detect_gpu_vram_gb, resolve_phase2_gpu_batch_size)"
+      ]
+    },
+    "config_flags": {
+      "PER_SYMBOL_PHASE2": "EXISTS in friend_project/gpu_fuzzy_trader/config.py:226 (True)",
+      "PHASE2_SCAN_UNROLL": "EXISTS in friend_project/gpu_fuzzy_trader/config.py:80 (32 default, monkeypatched to 16)",
+      "PHASE5_REMOVE_NEGATIVE_PNL_RULES": "EXISTS in friend_project/gpu_fuzzy_trader/config.py:404 (True)",
+      "is_colab_runtime": "EXISTS in friend_project/gpu_fuzzy_trader/config.py as function",
+      "RB_GOVERNOR_ENABLED": "EXISTS in friend_project/gpu_fuzzy_trader/config.py (True default, matches markdown docs)"
+    },
+    "run_pipeline_args": {
+      "--output": "EXISTS at run_pipeline.py:1584 (default None, str)",
+      "--phase": "EXISTS at run_pipeline.py:1588 (int, choices=(1,2,3,4,5), default None)",
+      "--resume": "EXISTS at run_pipeline.py:1595 (action='store_true')",
+      "cell_command_construction": "Validates: ['-m', 'gpu_fuzzy_trader.run_pipeline', '--output', OUTPUT_DIR] + optional --phase N and --resume"
+    },
+    "drive_sync_safety": {
+      "handles_unmounted_drive": true,
+      "mechanism": "_ensure_drive_mounted() returns None if google.colab unavailable or mount fails; sync block gated by `if DRIVE_OUTPUT_DIR.parent.exists():` so silently skipped when Drive not mounted"
+    },
+    "no_local_paths": {
+      "no_home_danaee": true,
+      "no_main_project_refs": true,
+      "no_trading_platform_local_path": true,
+      "note": "One string `https://github.com/m-danaee/trading_platform.git` exists in DEFAULT_GITHUB_REPO_URL — this is the GitHub URL for cloning, not a local filesystem path. Acceptable."
+    },
+    "colab_safety": {
+      "google_colab_import_wrapped_in_try_except": true,
+      "git_clone_uses_GIT_TERMINAL_PROMPT_0": true,
+      "github_token_stored_in_env_var_not_hardcoded": true,
+      "auth_failure_detection_present": true
+    }
+  },
+  "minor_observations": {
+    "unused_import": "Pipeline_Orchestrator is imported in cell 5 (index 4) but never called — it serves as a smoke test for module loadability. Same pattern exists in main.ipynb. Not a bug, intentional convention.",
+    "redundant_mkdir_after_exists_check": "In cell 6 (run), the line `DRIVE_OUTPUT_DIR.parent.mkdir(parents=True, exist_ok=True)` follows `if DRIVE_OUTPUT_DIR.parent.exists():`, so the mkdir is a no-op when reached. Harmless but redundant. Could be removed for cleanliness, but does not affect correctness."
+  },
+  "test_execution": {
+    "command": "cd friend_project && PYTHONPATH=. .venv/bin/python -m pytest tests/ -x -q",
+    "result": "29 passed in 4.84s",
+    "notebook_json_validation": "PASS (nbformat=4, nbformat_minor=5)",
+    "syntax_validation": "PASS (5/5 code cells parse with ast.parse)"
+  },
+  "verdict": "APPROVED",
+  "verdict_rationale": "The notebook meets all 9 acceptance criteria. All Python syntax is valid, all imports resolve to friend_project modules, all monkeypatched config flags exist (PER_SYMBOL_PHASE2, PHASE2_SCAN_UNROLL, PHASE5_REMOVE_NEGATIVE_PNL_RULES), run_pipeline.py exposes the CLI flags the run cell uses, Drive sync is gated on a parent-exists check so it no-ops when Drive is unavailable, _repair_stale_numba_ops() correctly returns early because friend_project has no numba_ops.py, and the bootstrap cell handles both uploaded-folder and cloned-repo cases. No hardcoded local paths (only the GitHub clone URL string, which is correct). 29/29 friend_project tests pass. Minor observations (unused smoke-test import, redundant mkdir) are non-blocking and follow main.ipynb conventions.",
+  "follow_ups_for_user": []
 }

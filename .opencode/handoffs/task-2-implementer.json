@@ -1,20 +1,37 @@
 {
-  "task": "task-2",
+  "task": "task-2-per-symbol-phase2",
   "status": "DONE",
-  "commit": "3ee6bfc",
-  "branch": "feature/task-2-backtest-init-defensive",
+  "commit": "da8a2e1",
   "files_changed": [
-    "gpu_fuzzy_trader/backtest/__init__.py"
+    "friend_project/gpu_fuzzy_trader/config.py",
+    "friend_project/gpu_fuzzy_trader/run_pipeline.py"
   ],
-  "tests_run": [
-    ".venv/bin/python -c \"from gpu_fuzzy_trader.backtest import CPUBacktestEngine; print('OK:', CPUBacktestEngine)\": OK: <class 'gpu_fuzzy_trader.backtest.cpu_engine.CPUBacktestEngine'>",
-    ".venv/bin/python -c \"from gpu_fuzzy_trader.backtest import GPUBacktestEngine; print('GPU engine:', type(GPUBacktestEngine).__name__ if GPUBacktestEngine else None)\": GPU engine: type",
-    ".venv/bin/python -c \"from gpu_fuzzy_trader.backtest import GPUBacktestEngine; print(GPUBacktestEngine is not None); import gpu_fuzzy_trader.backtest; print(gpu_fuzzy_trader.backtest.__all__)\": True / __all__ includes GPUBacktestEngine"
-  ],
+  "acceptance_criteria": {
+    "PER_SYMBOL_PHASE2 = True in config.py (default)": true,
+    "PHASE2_PER_SYMBOL_POOL_DIR path exists in config": true,
+    "_run_phase2() loops over symbols when PER_SYMBOL_PHASE2=True": true,
+    "Per-symbol pools saved to pools/per_symbol/phase2_{direction}_{symbol}_pool.json": true,
+    "Each rule in per-symbol pool has 'symbol is S' condition": true,
+    "Merged pool saved to pools/phase2_{direction}_pool.json (backward compat)": true,
+    "Purged CV disabled for per-symbol runs (runtime override)": true,
+    "Symbols with too few rows are skipped with warning": true,
+    "Log messages indicate per-symbol progress": true,
+    "PER_SYMBOL_PHASE2=False restores original behavior (single combined run)": true,
+    "No changes to data splitter, Phase 1, or feature selection": true,
+    "Existing tests still pass": true
+  },
   "notes_for_reviewer": [
-    "Wrapped get_gpu_backtest_engine_class() call in try/except Exception as defense-in-depth.",
-    "jax_compat.py on this branch is the original version (without AttributeError from task-1). The defense-in-depth wrapping provides coverage for any unexpected exception types.",
-    "All acceptance criteria verified: CPUBacktestEngine imports OK, GPUBacktestEngine is real class when jax available, __all__ includes GPUBacktestEngine.",
-    "The try/except pattern catches ANY exception, providing robustness beyond just the _GPU_ENGINE_ERRORS tuple in jax_compat.py."
-  ]
+    "The acceptance criteria mention dict-based symbol conditions ({\"feature\": \"symbol\", ...}), but the actual codebase uses string-based conditions ('symbol is S'). This implementation matches the codebase convention (consistent with rb_governor._symbol_condition() and cpu_engine.parse_symbol_condition()).",
+    "Purged CV is disabled via `_cfg.PHASE2_CV_FILTER_ENABLED = False` inside a try/finally block to ensure restoration.",
+    "The `_tag_pool_with_symbol` helper uses `'symbol is {symbol}'` string format (not dict format) to match the existing project convention.",
+    "No changes to phase2_rule_pool.py — the purged CV override is done at the pipeline level in run_pipeline.py.",
+    "All 8 existing tests pass.",
+    "Backward compat verified: PER_SYMBOL_PHASE2=False restores original single combined behavior via the else branch."
+  ],
+  "test_results": {
+    "pytest tests/": "8/8 passed",
+    "import check": "from gpu_fuzzy_trader.run_pipeline import Pipeline_Orchestrator: OK",
+    "helper functions verification": "_tag_pool_with_symbol, _merge_pools: OK",
+    "config verification": "PER_SYMBOL_PHASE2=True, PER_SYMBOL_MIN_ROWS=1000, PHASE2_PER_SYMBOL_POOL_DIR set: OK"
+  }
 }

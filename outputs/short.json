@@ -8,18 +8,18 @@
       ],
       "tp": 2.0,
       "sl": 1.0,
-      "capital_pct": 30.0
+      "capital_pct": 48.0
     }
   ],
   "risk_optimized": true,
-  "rb_score": -9048.97901974992,
-  "rb_train_return_pct": 0.9000062942504883,
-  "rb_valid_return_pct": 0.9000062942504883,
-  "rb_valid_profit_factor": 3.500000238418579,
-  "rb_valid_max_drawdown_pct": 0.35615110397338867,
-  "rb_valid_executed_trades": 4,
+  "rb_score": -9019.815373851654,
+  "rb_train_return_pct": 1.680004596710205,
+  "rb_valid_return_pct": 1.680004596710205,
+  "rb_valid_profit_factor": 36.0,
+  "rb_valid_max_drawdown_pct": 0.047182727605104446,
+  "rb_valid_executed_trades": 3,
   "rb_train_minus_valid_return_pct": 0.0,
   "rb_train_valid_ratio": 1.0,
-  "rb_profit_amp_objective": -220.4197705731857,
+  "rb_profit_amp_objective": -227.04074153261024,
   "rb_profit_amp_accepted": false
 }

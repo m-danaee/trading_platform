@@ -1,0 +1,13 @@
+{
+  "task": "task-4",
+  "title": "Phase 5 Rule Filtering",
+  "status": "DONE",
+  "commit": "b5c3168",
+  "files_changed": [
+    "gpu_fuzzy_trader/config.py",
+    "gpu_fuzzy_trader/output/writer.py",
+    "gpu_fuzzy_trader/phases/phase5_oos.py"
+  ],
+  "tests": "21 passed",
+  "notes": "_remove_negative_pnl_rules() added to OOS_Evaluator. _maybe_write_evaluator_clean() in writer.py. Re-evaluation after pruning. Config flags added."
+}

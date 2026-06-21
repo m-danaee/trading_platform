@@ -1,0 +1,12 @@
+{
+  "task": "task-2",
+  "title": "Per-Symbol Phase 2 Training",
+  "status": "DONE",
+  "commit": "da8a2e1",
+  "files_changed": [
+    "gpu_fuzzy_trader/config.py",
+    "gpu_fuzzy_trader/run_pipeline.py"
+  ],
+  "tests": "8 passed",
+  "notes": "Per-symbol loop added to _run_phase2(). PER_SYMBOL_PHASE2=True default. Purged CV disabled during per-symbol. Symbol conditions in string format (symbol is S). Merged pool for backward compat."
+}

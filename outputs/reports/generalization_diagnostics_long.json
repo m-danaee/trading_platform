@@ -16,17 +16,17 @@
       "executed_trades": 0
     },
     "test": {
-      "total_return_pct": 0.9000062942504883,
-      "profit_factor": 3.500000238418579,
-      "win_rate": 75.0,
-      "max_drawdown_pct": 0.35999754071235657,
-      "executed_trades": 4
+      "total_return_pct": 0.3600001335144043,
+      "profit_factor": 1.625,
+      "win_rate": 66.66666666666666,
+      "max_drawdown_pct": 0.576000988483429,
+      "executed_trades": 3
     }
   },
   "split_shift": {
     "train_to_validation_delta_pct": 0.0,
-    "validation_to_test_delta_pct": 0.9000062942504883,
-    "train_to_test_delta_pct": 0.9000062942504883,
+    "validation_to_test_delta_pct": 0.3600001335144043,
+    "train_to_test_delta_pct": 0.3600001335144043,
     "train_to_test_sign_flip": false
   },
   "symbol_concentration": {
@@ -41,8 +41,8 @@
       "top_symbol": ""
     },
     "test": {
-      "hhi_abs_pnl": 0.5199999978807239,
-      "top_symbol_share_abs_pnl": 0.5999999947018095,
+      "hhi_abs_pnl": 0.5346260310567275,
+      "top_symbol_share_abs_pnl": 0.631578932691992,
       "top_symbol": "SYM_B"
     }
   },

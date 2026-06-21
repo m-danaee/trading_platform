@@ -1,27 +1,77 @@
 {
-  "task": "Task 4 — Evaluator-failure-mode awareness",
+  "task": "task-4-phase5-filtering",
+  "branch": "feature/task-4-phase5-filtering",
+  "base_branch": "feature/task-3-per-symbol-rb-governor",
+  "commit_reviewed": "5069c94",
   "verdict": "APPROVED",
-  "findings": [
+  "reviewer": "code-reviewer",
+  "review_date": "2026-06-21",
+  "summary": "All F1–F6 findings from the prior review round are correctly addressed in commit 5069c94. The F1 per_symbol dedup bug now filters on 'direction' (a real field in the row dict) instead of the non-existent 'dataset' field, F3 returns (strategy, False) on rewrite failure so re-evaluation cannot run on a stale on-disk file, F4 narrows the bare except to a specific tuple, F5 routes the rewrite through Output_Writer().write() (which validates schema and emits the evaluator_clean variant), and F6 logs the rewritten file path. The new tests/test_phase5_rule_filtering.py adds 8 well-targeted cases covering the previously-untested _remove_negative_pnl_rules path; all 29 friend_project tests pass.",
+  "fixes_verified": [
     {
-      "severity": "low",
-      "finding": "Unused imports in test file: `from unittest.mock import MagicMock, patch` in `tests/unit/test_evaluator_health.py` line 15. Neither `MagicMock` nor `patch` is used anywhere in the file.",
-      "fix": "Remove the unused import line."
+      "id": "F1",
+      "status": "FIXED",
+      "evidence": "phase5_oos.py:127 — `r for r in all_per_symbol if r.get('direction') != direction`. _build_per_symbol_rows (line 487) emits {direction, symbol, trade_count, win_rate, net_pnl}, so 'direction' is always present. The filter now correctly removes the current direction's rows before appending per_symbol_rows2."
     },
     {
-      "severity": "low",
-      "finding": "Import inside hot loop: both `phase3_rule_set.py:_robust_combo_return` and `phase4_wf_optimizer.py:objective` import `evaluator_health_penalty` from `gpu_fuzzy_trader.scoring.evaluator_health` inside the function body, rather than at module level. While Python caches imports, this is a code smell and adds a tiny per-call overhead (~0.5 µs per import lookup).",
-      "fix": "Move the import to module level: `from gpu_fuzzy_trader.scoring.evaluator_health import evaluator_health_penalty` at the top of both files."
+      "id": "F2",
+      "status": "FIXED",
+      "evidence": "friend_project/tests/test_phase5_rule_filtering.py (304 lines, 8 cases): test_basic_removal, test_empty_trade_log, test_all_negative_with_min_safeguard, test_all_positive_no_removal, test_single_negative_with_min_safeguard, test_rule_index_one_based_alignment, test_file_rewrite_and_evaluator_clean, test_write_evaluator_clean_false_suppresses_file. All 8 scenarios from the prior review are covered."
     },
     {
-      "severity": "low",
-      "finding": "`evaluator_health_penalty` and `execution_ok` do not guard against `metrics=None`. Calling `evaluator_health_penalty(None)` raises `AttributeError` because `_safe_int` calls `metrics.get(key)`. In practice this never happens because `simulate_rule_set` always returns a dict, but a defensive `if metrics is None: return 0.0` would be more robust.",
-      "fix": "Add `if metrics is None: return 0.0` at the top of `evaluator_health_penalty` and `if metrics is None: return False` at the top of `execution_ok`."
+      "id": "F3",
+      "status": "FIXED",
+      "evidence": "phase5_oos.py:460 — on (OSError, ValidationError) the function now `return strategy, False` before reaching the success return, so the caller (run) skips the second _evaluate_strategy and keeps the original metrics_by_split['test']. This prevents reports from being regenerated from a cleaned in-memory strategy while the on-disk file still has the un-pruned rules."
     },
     {
-      "severity": "low",
-      "finding": "No automated regression test verifying that `CPUBacktestEngine.simulate_rule_set` actually returns the 7 health-related fields in its output dict (spec AC #1). The implementer verified manually and the fields are indeed present (confirmed by reading `cpu_engine.py` lines 1133-1143), but there is no test that instantiates an engine and asserts the keys exist/non-zero. An accidental refactor of the return dict could silently drop these fields.",
-      "fix": "Add a test in `test_evaluator_health.py` that creates a `CPUBacktestEngine` with a small DataFrame, runs `simulate_rule_set`, and asserts all 7 keys (`raw_signal_count`, `executed_trades`, `skipped_min_notional_count`, `max_simultaneous_positions`, `max_total_open_exposure`, `loss_count`, `time_closed_count`, `account_ruined`) exist in the returned dict."
+      "id": "F4",
+      "status": "FIXED",
+      "evidence": "writer.py:362 — `except (OSError, KeyError, TypeError, ValueError) as exc:` replaces the bare `except Exception`. Specific, still defensive, no longer hides AttributeError/ImportError/etc."
+    },
+    {
+      "id": "F5",
+      "status": "FIXED",
+      "evidence": "phase5_oos.py:455 — `Output_Writer().write(strategy, output_path)` replaces the inline `open(...).write(json.dump(...))`. Output_Writer.write() validates the schema via _validate_rule_set and (gated by WRITE_EVALUATOR_CLEAN) emits the evaluator_clean variant — so the previously-required separate _maybe_write_evaluator_clean call was correctly dropped and the import was removed from phase5_oos.py."
+    },
+    {
+      "id": "F6",
+      "status": "FIXED",
+      "evidence": "phase5_oos.py:456-459 — new `logger.info('Phase 5 [%s]: rewritten cleaned strategy to %s', direction, output_path)` immediately after the successful Output_Writer().write() call. The path is now traceable from logs alone."
     }
   ],
-  "summary": "Implementation is correct and well-structured. Penalty math matches the friend's `_evaluator_health_penalty` from `rb_governor.py`: skip-ratio penalty `(skip_ratio - 0.20) * 3500`, exec-ratio penalty `(0.60 - exec_ratio) * 2500`, and max-position penalty `(max_pos - 10) * 120`. Role multipliers (1.5x for test on skip/exec, 1.2x for test on positions) are correct. `execution_ok` correctly returns False when `raw_signal_count == 0` or missing. `gate_positive_good` backward compatibility is preserved via the new `require_execution_health=False` default kwarg — all 23 existing Task 3 tests pass without modification. All 4 wire-in points (Phase 3 `_robust_combo_return`, Phase 3 gate call sites × 4, Phase 4 Optuna objective) are correctly connected. Config keys use `EVAL_HEALTH_` prefix to avoid collision with the friend's `RB_` prefix. The new `evaluator_health.py` module is pure functions with no I/O, side effects, or engine calls. All 24 new tests pass. 4 low-severity findings noted for code style, defensive programming, and test completeness."
+  "approved_items": [
+    "F1 fix is minimal and correct: filtering on `direction` matches the only real disambiguator in the row dict (all rows in all_per_symbol at this point are from the test split, so direction is the right key).",
+    "F2 tests are well-isolated: each mutates _cfg and _STRATEGY_PATHS inside a try/finally so state is restored even on assertion failure. Tests 7 and 8 use tempfile.TemporaryDirectory() to avoid disk pollution.",
+    "F2 test_rule_index_one_based_alignment directly verifies the 1-based Rule_Index contract by setting PHASE3_GLOBAL_MIN_RULES=1 and checking that Rule_Index=2 (Net_PnL=-1) is the one removed while Rule_Index=1 (+100) and Rule_Index=3 (+0.5) are kept.",
+    "F2 test_file_rewrite_and_evaluator_clean covers both the main-file rewrite and the evaluator_clean side effect in a single scenario; the `assert list(clean_data.keys()) == ['direction', 'rules_set']` assertion documents the strip contract.",
+    "F2 test_write_evaluator_clean_false_suppresses_file verifies the WRITE_EVALUATOR_CLEAN=False path: sets the flag, ensures no evaluator_clean file is produced even when Output_Writer().write() is called via _remove_negative_pnl_rules.",
+    "F5 path correctly removed the now-redundant _maybe_write_evaluator_clean import (verified — `from gpu_fuzzy_trader.output.writer import` block no longer references it).",
+    "F3 path: by returning (strategy, False) the downstream re-evaluation block (phase5_oos.py:121-131) is skipped, so the bug scenario (in-memory cleaned metrics but on-disk un-pruned rules) cannot occur.",
+    "Config additions are properly namespaced (PHASE5_*, PHASE3_GLOBAL_MIN_RULES, WRITE_EVALUATOR_CLEAN), documented with comments, and accessed via getattr with sensible defaults throughout the new code (no KeyError risk if a key is missing).",
+    "Re-evaluation scope is correct: only the test split is re-run; train/val splits in metrics_by_split/trade_logs_by_split are untouched, and per_symbol rows for the current direction are atomically replaced (no duplicates).",
+    "Logging is appropriate (INFO on normal removal, WARNING on min-safeguard, WARNING on rewrite failure, DEBUG on evaluator_clean write failure).",
+    "Empty inputs handled: empty `rules_set` and empty `trade_log` both return (strategy, False) without modification; all-empty-positive and all-empty-negative both exercise the safeguard path correctly.",
+    "No changes to evaluator_v5.ipynb or the GPU engine. No changes to data splitter, Phase 1, Phase 2, or RB Governor. All 29 friend_project tests pass (21 original + 8 new)."
+  ],
+  "new_findings": [
+    {
+      "id": "N1",
+      "severity": "INFO",
+      "category": "maintainability",
+      "title": "_maybe_write_evaluator_clean in writer.py is no longer used",
+      "location": "friend_project/gpu_fuzzy_trader/output/writer.py, lines 339-365",
+      "description": "After the F5 fix, phase5_oos.py no longer imports or calls _maybe_write_evaluator_clean. A repo-wide search confirms the function has zero call sites in friend_project/. The implementer noted it is kept for 'external callers' but no in-tree caller uses direct json.dump on a strategy dict plus this helper. Per AGENTS.md ('remove additional/wasted parts from old implementation to get clean my project') this is dead code that should either be removed or its docstring should be reworded to be honest about being a public API.",
+      "recommendation": "Either (a) delete _maybe_write_evaluator_clean (and its docstring mention of 'Phases 3/4/5'), or (b) explicitly keep it as a documented public helper and update the docstring to remove the misleading 'Phases 3/4/5' reference (those phases do not call it as of this commit). Not blocking."
+    }
+  ],
+  "blocking_findings": [],
+  "test_results": {
+    "phase5_rule_filtering": "8/8 PASSED",
+    "total_friend_project": "29/29 PASSED (21 pre-existing + 8 new)"
+  },
+  "out_of_scope": [
+    "Pre-existing unused `from typing import Optional` in phase5_oos.py — not introduced by this task.",
+    "Wider cleanup of direct json.dump call sites in phase3/phase4/rb_governor — not part of task-4."
+  ],
+  "recommendation": "Approved for merge. The single INFO finding (N1) about unused _maybe_write_evaluator_clean is a maintenance nit and can be addressed in a follow-up cleanup PR. All F1–F6 blockers are resolved and the new test coverage is strong."
 }

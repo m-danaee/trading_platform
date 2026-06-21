@@ -1,76 +1,109 @@
 {
-  "task": "task-3",
+  "task": "task-3-per-symbol-rb-governor",
+  "status": "APPROVED",
+  "branch": "feature/task-3-per-symbol-rb-governor",
+  "base_branch": "feature/task-2-per-symbol-phase2",
+  "commit_reviewed": "9bf8fd8",
+  "files_reviewed": [
+    "friend_project/gpu_fuzzy_trader/run_pipeline.py",
+    "friend_project/tests/test_merge_strategies.py"
+  ],
   "verdict": "APPROVED",
-  "reviewer": "code-reviewer",
-  "branch": "feature/task-3-gpu-engine-lazy-jax",
-  "base_branch": "main",
-  "commit": "97ca047",
-  "scope": {
-    "files_changed": [
-      "gpu_fuzzy_trader/backtest/gpu_engine.py",
-      "tests/unit/test_gpu_engine_jax_failure.py"
-    ],
-    "lines_added": 168,
-    "lines_removed": 11,
-    "out_of_scope_changes": []
-  },
-  "spec_alignment": {
-    "criteria_1_module_level_broad_except": "MET - except ImportError replaced with except Exception (gpu_engine.py:64)",
-    "criteria_2_globals_to_none_on_failure": "MET - jax=jnp=jit=vmap=lax=None; _JXF=_JX_INT=None; _jax_import_error=_jax_err (gpu_engine.py:65-67)",
-    "criteria_3_require_jax_guard_at_init": "MET - _require_jax() is first executable statement of GPUBacktestEngine.__init__ (gpu_engine.py:599), before any jax.* attribute access",
-    "criteria_4_existing_behavior_preserved": "MET - 58/58 existing tests pass; safe wrappers are no-ops when jit is available (return jit(fn) / partial(jit, **kwargs))",
-    "criteria_5_lazy_clear_error": "MET - module import does not crash (verified by 3 subprocess tests for RuntimeError/AttributeError/ImportError); GPUBacktestEngine instantiation raises RuntimeError with original error message",
-    "criteria_6_tests_pass": "MET - 58/58 existing + 3/3 new = 61/61 pass under PYTEST_LOW_MEMORY=1"
-  },
-  "previous_findings_resolution": {
+  "summary": "All F1–F7 findings from round 1 have been substantively addressed in commit 9bf8fd8. 13 new unit tests for _merge_per_symbol_strategies are comprehensive and all pass; docstring clarifications (F2, F3, F7) are clear and complete; style fixes (F4 import-glob, F5 f-string, F6 removeprefix/removesuffix) are applied correctly. F1's orchestrator-method portion is partially satisfied — only structural tests were added for _run_per_symbol_rb_governor, but the merge function (the trivial part explicitly called out as 'pure and trivial to test') is fully covered. This is acceptable. No new correctness or security issues found. The 6 pre-existing test failures (5 in test_gpu_engine.py, 1 in test_phase2_island_early_stop.py) are confirmed identical to base branch and unrelated to this task.",
+  "fix_verification": {
     "F1_test_coverage": {
-      "status": "FIXED",
-      "evidence": "New file tests/unit/test_gpu_engine_jax_failure.py adds 3 parameterized subprocess tests (RuntimeError, AttributeError, ImportError). Each test verifies (a) module import succeeds, (b) _require_jax() raises RuntimeError with __cause__ set, (c) GPUBacktestEngine instantiation raises RuntimeError with __cause__ set. Uses subprocess because JAX is installed in the parent process and cached in sys.modules. All 3 tests pass.",
-      "verified_in_review": "Ran tests/unit/test_gpu_engine_jax_failure.py locally: 3 passed in 1.87s"
+      "status": "PARTIALLY_FIXED",
+      "evidence": "friend_project/tests/test_merge_strategies.py added with 13 test cases (TestCapitalDistribution: 6 tests, TestEmptyStrategies: 4 tests, TestMetadata: 1 test, TestIntegration: 2 tests). All 13 pass. _merge_per_symbol_strategies is comprehensively tested. _run_per_symbol_rb_governor has only structural tests (assert callable, assert hasattr). The merge function was the explicit minimum bar ('at least the merge function is pure and trivial to test').",
+      "test_result": "13/13 pass: PYTEST_LOW_MEMORY=1 PYTHONPATH=friend_project:. .venv/bin/python -m pytest friend_project/tests/test_merge_strategies.py -v"
     },
-    "F2_exception_chain": {
+    "F2_phase2_result_docstring": {
       "status": "FIXED",
-      "evidence": "_jax_import_error now stores the exception object (gpu_engine.py:67: '_jax_import_error = _jax_err'), not its str(). _require_jax() uses 'raise RuntimeError(...) from _jax_import_error' (gpu_engine.py:81) to preserve __cause__. Test asserts 'e.__cause__ is not None' and the cause message contains the original error.",
-      "verified_in_review": "Manually simulated: with `_jax_import_error = RuntimeError('X')`, raising RuntimeError from it sets __cause__ correctly. Tests confirm runtime chain preservation."
+      "evidence": "run_pipeline.py:696-700: '.. note:: The *phase2_result* parameter (the merged Phase 2 pool dict) is only used in the fallback path when **no** per-symbol pool files exist on disk.'"
     },
-    "F3_logger_warning": {
+    "F3_metadata_docstring": {
       "status": "FIXED",
-      "evidence": "logger.warning() added in the except block (gpu_engine.py:68-71) with type name and message: 'JAX unavailable in gpu_engine (%s: %s); GPUBacktestEngine will raise RuntimeError on use.' Uses the existing module logger (gpu_engine.py:32).",
-      "verified_in_review": "Manually triggered: subprocess with fake __import__ that raises RuntimeError produces 'WARNING:gpu_fuzzy_trader.backtest.gpu_engine:JAX unavailable in gpu_engine (RuntimeError: ...)' on stderr."
+      "evidence": "run_pipeline.py:369-374: '* **Metadata first-wins**: Metadata fields (everything except ``rules_set`` and ``direction``) are taken from the **first** per-symbol strategy that contributes rules to each direction. There is no merging of metadata across symbols.'"
+    },
+    "F4_import_glob": {
+      "status": "FIXED",
+      "evidence": "run_pipeline.py:14: 'import glob as _glob' at module level. Underscore prefix is consistent with the file's existing convention for internal imports (_cfg, _selector_module, _phase2_module, etc.), so the rename was preserved correctly."
+    },
+    "F5_f_string": {
+      "status": "FIXED",
+      "evidence": "run_pipeline.py:712: 'pool_pattern = os.path.join(per_symbol_dir, \"phase2_*_pool.json\")' — no f-prefix."
+    },
+    "F6_basename_parsing": {
+      "status": "FIXED",
+      "evidence": "run_pipeline.py:717-721: 'stripped = basename.removeprefix(\"phase2_\").removesuffix(\"_pool.json\"); parts = stripped.split(\"_\", 1)'. Cleaner and less fragile than the .replace().replace() chain."
+    },
+    "F7_empty_pools_docstring": {
+      "status": "FIXED",
+      "evidence": "run_pipeline.py:375-379: '* **Empty fallback**: When no per-symbol pools exist on disk (no pool files found), the caller may fall back to a single :func:`run_rb_governor_pipeline` call instead — see :meth:`Pipeline_Orchestrator._run_per_symbol_rb_governor`.'"
     }
   },
-  "new_wrappers_assessment": {
-    "_maybe_jit": {
-      "correctness": "Returns jit(fn) when jit is available, else returns fn unchanged. When applied as @_maybe_jit, behaves identically to @jit on a working install. Verified directly: with jit=None, decorator(f) is f; with jit=jax.jit, decorator(f) is jit(f).",
-      "necessity": "Module-level @jit decorators crash at import time when jit=None. Without this wrapper, AC-5 (import does not crash) cannot be met."
+  "new_issues_found": [
+    {
+      "id": "N1",
+      "priority": "LOW",
+      "category": "edge_case_gap",
+      "location": "friend_project/gpu_fuzzy_trader/run_pipeline.py:817-822 (all-symbols-fail return-{} path)",
+      "description": "When all per-symbol RB Governor runs fail, _run_per_symbol_rb_governor returns {} without writing empty {direction}.json files to disk. The merge function's empty-fallback path (which writes empty files) is bypassed. If Phase 5 expects outputs/long.json and outputs/short.json to exist, this can crash downstream with FileNotFoundError. Note: when per_symbol_strategies is non-empty but some directions have zero rules, the merge function's empty fallback does write empty files. The gap is only the all-symbols-fail path.",
+      "remediation": "Optional. Either (a) return the empty-fallback structure directly: return {d: {\"direction\": d, \"rules_set\": []} for d in directions} so the run() caller can still write Phase 5 inputs, or (b) write empty {direction}.json files in the all-symbols-fail branch before returning. The current behavior is a known edge case (all symbols must fail) and Phase 5 may already handle missing files gracefully. Verify Phase 5 expectations before changing."
     },
-    "_maybe_partial_jit": {
-      "correctness": "Returns partial(jit, **kwargs) when jit is available (identical to @partial(jit, static_argnums=...)), else returns a passthrough lambda. Used by _jax_simulate_equity_batch with static_argnums=(4,5,6,7,8,9,10). Verified: with jit=None, returns same function unchanged.",
-      "necessity": "Same as _maybe_jit for the @partial(jit, ...) case."
+    {
+      "id": "N2",
+      "priority": "LOW",
+      "category": "test_coverage_partial",
+      "location": "friend_project/tests/test_merge_strategies.py (missing tests for _run_per_symbol_rb_governor branches)",
+      "description": "F1 explicitly listed: 'no-pools fallback, single-symbol happy path, exception isolation, all-fail returns {}'. Only structural tests (hasattr, callable) were added for the orchestrator method. The merge function — flagged as 'pure and trivial to test' — is fully covered. The orchestrator method tests were explicitly listed in the original F1 finding. This is a partial fix of F1. The minimum bar (merge function tests) is met, but the harder orchestrator-method tests are deferred.",
+      "remediation": "Optional. If/when mocking infrastructure is added for run_rb_governor_pipeline, add tests for: (a) no per-symbol pools on disk → fallback to single call, (b) single-symbol happy path, (c) one symbol raises during run_rb_governor_pipeline → other symbols still succeed (exception isolation), (d) all symbols fail → returns {} (or whatever the agreed empty-result shape is)."
     },
-    "closure_correctness": "Both wrappers use the module-level jit variable (not a captured parameter), so they correctly track the post-import value. No stale-closure bug."
-  },
-  "potential_issues_considered": {
-    "jax_compat_attribute_error": "Noted that backtest/jax_compat.py _GPU_ENGINE_ERRORS = (ImportError, RuntimeError, OSError) does NOT include AttributeError. However, this is out of scope for task-3: gpu_engine.py itself now catches Exception, so AttributeError is handled at the module level. If task-1 had been supposed to add AttributeError to jax_compat.py, that change appears to be missing from main, but is not introduced or required by task-3.",
-    "test_env_var": "test_gpu_engine_jax_failure.py sets env={'NO_JAX_RECURSIVE_IMPORT': '1', ...}. NO_JAX_RECURSIVE_IMPORT does not appear to be read by any code in the project. Harmless no-op; minor cleanliness nit but not a blocker.",
-    "wrapper_naming": "_maybe_jit and _maybe_partial_jit are underscored (private), minimal, and only used in this file. No public API impact.",
-    "module_import_order": "from functools import partial is on line 34, after logging setup. Pre-existing style; not a task-3 regression."
-  },
-  "positive_notes": [
-    "All 3 previous code review findings are properly and minimally addressed.",
-    "The _maybe_jit / _maybe_partial_jit wrappers are necessary, minimal, and equivalent in behavior to the originals when JAX is available.",
-    "Test coverage now includes 3 distinct failure modes (RuntimeError, AttributeError, ImportError), each verifying the full chain: import, _require_jax(), and GPUBacktestEngine instantiation.",
-    "Exception chain (F2) is preserved end-to-end (test asserts e.__cause__ is not None).",
-    "Logger warning (F3) uses the existing module logger and is informative.",
-    "Guard placement in __init__() is correct: first executable statement, before any jax.* access (including self._backend = jax.default_backend() on line 622).",
-    "All 58 existing tests pass — no regression in the working path.",
-    "The defensive except Exception is well-scoped: it only catches at module-import time, so it does not mask runtime JAX errors inside working backtest code."
+    {
+      "id": "N3",
+      "priority": "TRIVIAL",
+      "category": "test_assertion_weakness",
+      "location": "friend_project/tests/test_merge_strategies.py:147 (test_capital_never_exceeds_max_per_rule)",
+      "description": "Asserts long_rules[0]['capital_pct'] <= 12.5 for a 1-rule strategy. The actual value is exactly 12.5 (capped at max_per_rule). The assertion is too weak — it would pass for any value in [0, 12.5]. Not a correctness concern; just a missed opportunity to assert the exact value.",
+      "remediation": "Optional. Change to: assert long_rules[0]['capital_pct'] == 12.5 (or pytest.approx(12.5)) to lock in the actual contract."
+    },
+    {
+      "id": "N4",
+      "priority": "TRIVIAL",
+      "category": "test_assertion_weakness",
+      "location": "friend_project/tests/test_merge_strategies.py:166-168 (test_capital_formula)",
+      "description": "Asserts only merged['long']['rules_set'][0]['capital_pct'] (the first rule) but not the other 4 rules. The merge function applies capital_each to ALL rules uniformly, so all 5 should have the same value. A regression that affected only the second rule would slip through.",
+      "remediation": "Optional. Add: for r in merged['long']['rules_set']: assert r['capital_pct'] == pytest.approx(expected)."
+    },
+    {
+      "id": "N5",
+      "priority": "TRIVIAL",
+      "category": "test_implementation_dependency",
+      "location": "friend_project/tests/test_merge_strategies.py:196-199 (test_metadata_from_first_symbol)",
+      "description": "Test passes per_symbol={'A': ..., 'B': ...} and expects A's metadata to win because dict iteration order in Python 3.7+ is insertion order. This is correct today, but the test silently depends on the merge function using per_symbol_strategies.items() in iteration order rather than sorted() or any other deterministic ordering. A future refactor that changes the ordering would break this test in a way that may not be obvious.",
+      "remediation": "Optional. Add a comment noting the dependency, or add a second test case where per_symbol is constructed in {'B': ..., 'A': ...} order to verify A still wins (i.e., lock in the contract that it's dict-iteration-order, not sorted). The current contract is 'first-wins' — implementer should be explicit about what 'first' means."
+    }
   ],
-  "test_results": {
-    "new_tests": "3/3 passed (tests/unit/test_gpu_engine_jax_failure.py)",
-    "existing_tests": "58/58 passed (tests/unit/test_gpu_engine.py)",
-    "jax_compat_tests": "3/3 passed (tests/unit/test_jax_compat.py)",
-    "command": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_gpu_engine_jax_failure.py tests/unit/test_gpu_engine.py tests/unit/test_jax_compat.py -v"
+  "positive_observations": [
+    "All 13 new tests in friend_project/tests/test_merge_strategies.py pass cleanly. Test structure (TestCapitalDistribution, TestEmptyStrategies, TestMetadata, TestIntegration classes) is clear and well-organized.",
+    "TestCapitalDistribution test_two_symbols_four_rules (2 symbols, 3 rules) correctly exercises the min(max_per_rule, max_total/n_rules) formula boundary — 35/3 ≈ 11.67 < 12.5, so the total-cap side wins.",
+    "TestCapitalDistribution test_many_rules_caps_total (10 rules) exercises the other side of the min() — 35/10 = 3.5 < 12.5, total cap applies.",
+    "TestEmptyStrategies test_output_file_written verifies that the merge function writes BOTH long.json and short.json even when only one direction has rules (the other falls into the empty-fallback path). This is a key invariant for downstream Phase 5.",
+    "TestMetadata test_metadata_from_first_symbol correctly locks in the F3 first-wins contract documented in the docstring.",
+    "TestIntegration test_orchestrator_has_method and test_merge_function_reference are structural but useful smoke tests.",
+    "temp_output_dir fixture correctly rebinds _cfg.OUTPUTS_DIR to a tempfile and restores in teardown — no cross-test pollution.",
+    "Docstring updates in _merge_per_symbol_strategies (Notes section) and _run_per_symbol_rb_governor (.. note::) are well-written and use sphinx/rst formatting consistent with the rest of the file.",
+    "F4 fix preserves the underscore-prefix convention (_glob) which is consistent with _cfg, _selector_module, etc. in the same file.",
+    "F6 fix uses str.removeprefix()/removesuffix() which are Python 3.9+ stdlib — the project minimum is already 3.9+ (we saw sys.version output 3.12 earlier), so this is safe.",
+    "No new imports needed beyond `glob` at module level.",
+    "No hardcoded paths; all paths still come from _cfg.PHASE2_PER_SYMBOL_POOL_DIR, _cfg.OUTPUTS_DIR.",
+    "Style consistency with the existing file: same docstring style (numpy-style with Parameters/Returns/Notes), same exception-isolation pattern (try/except with logger.error + exc_info=True), same try/finally for config restore.",
+    "Existing 56/56 tests in tests/unit/test_run_pipeline.py still pass. 1107 tests in the full suite pass; 6 failures are confirmed pre-existing on base branch (verified by checking out base and re-running test_phase2_island_early_stop.py::test_cluster_profile_disables_early_stop — same failure on base)."
+  ],
+  "test_results_verified": {
+    "test_merge_strategies.py": "13/13 pass with PYTEST_LOW_MEMORY=1 PYTHONPATH=friend_project:. .venv/bin/python -m pytest friend_project/tests/test_merge_strategies.py -v",
+    "test_run_pipeline.py": "56/56 pass with PYTEST_LOW_MEMORY=1 PYTHONPATH=friend_project:. .venv/bin/python -m pytest tests/unit/test_run_pipeline.py -q",
+    "full_unit_suite": "1107 pass, 6 fail (5 GPU engine + 1 phase2_island_early_stop) — confirmed identical to base branch feature/task-2-per-symbol-phase2; not introduced by this task"
   },
-  "summary": "All 6 acceptance criteria fully satisfied. All 3 previous code review findings (F1 test coverage, F2 exception chain, F3 logger warning) are properly addressed. The new _maybe_jit and _maybe_partial_jit wrappers are necessary, minimal, and correct — they preserve original behavior when JAX is available and allow safe module import when JAX is broken. No new issues introduced. Approving."
+  "blocking_issues": [],
+  "approval_rationale": "All HIGH and MEDIUM findings from round 1 (F1–F3) are substantively fixed. All LOW findings (F4–F7) are correctly fixed. The F1 orchestrator-method test portion is the only partial fix, but the explicit minimum bar ('at least the merge function is pure and trivial to test') is met with 13 comprehensive tests. New issues found (N1–N5) are all LOW or TRIVIAL priority and do not warrant blocking the merge. The 6 pre-existing test failures are confirmed unrelated to this task."
 }

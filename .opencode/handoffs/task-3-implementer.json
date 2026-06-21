@@ -1,37 +1,38 @@
 {
-  "task": "task-3",
+  "task": "task-3-per-symbol-rb-governor",
   "status": "DONE",
-  "commit": "97ca047",
-  "branch": "feature/task-3-gpu-engine-lazy-jax",
+  "commit": "c46e27c",
+  "branch": "feature/task-3-per-symbol-rb-governor",
   "files_changed": [
-    "gpu_fuzzy_trader/backtest/gpu_engine.py",
-    "tests/unit/test_gpu_engine_jax_failure.py"
+    "friend_project/gpu_fuzzy_trader/run_pipeline.py"
   ],
-  "summary": "Addressed all 3 code review findings. Fixed @jit decorators with safe wrappers, preserved exception chain, added logger warning, and added subprocess-based tests for the JAX-failure path.",
-  "acceptance_criteria_met": {
-    "F1": "3 new tests (RuntimeError/AttributeError/ImportError) verify import doesn't crash, _require_jax() and GPUBacktestEngine instantiation raise RuntimeError with chain. All pass.",
-    "F2": "_jax_import_error stores exception object; raise RuntimeError(...) from _jax_import_error preserves chain.",
-    "F3": "logger.warning(...) added in except block with type name and message.",
-    "AC-4": "58 existing tests still pass (working JAX path preserved).",
-    "AC-5": "Importing gpu_engine.py when JAX is broken now truly does not crash (fixed @jit decorator issue uncovered by testing)."
+  "acceptance_criteria": {
+    "RB Governor runs per symbol when PER_SYMBOL_PHASE2=True": true,
+    "Per-symbol train/val data filtered correctly": true,
+    "RB_REQUIRE_SYMBOL_FILTERS=False set temporarily (rules already tagged)": true,
+    "Per-symbol RB Governor output saved to outputs/per_symbol/{symbol}/": true,
+    "_merge_per_symbol_strategies() combines all per-symbol rule sets": true,
+    "Final outputs/{direction}.json contains merged strategy": true,
+    "Capital distributed evenly across merged rules (≤ PHASE4_MAX_TOTAL_CAPITAL)": true,
+    "Exception isolation: one symbol failure doesn't abort others": true,
+    "PER_SYMBOL_PHASE2=False restores original single RB Governor call": true,
+    "Existing tests still pass (8 tests)": true,
+    "rb_governor.py needs NO code changes (config override only)": true
   },
-  "out_of_scope_fixes": {
-    "description": "Discovered that @jit decorators at module level crash when jit=None. Fixed by introducing _maybe_jit and _maybe_partial_jit safe wrappers that return fn unchanged when jit is not available.",
-    "files": ["gpu_fuzzy_trader/backtest/gpu_engine.py"],
-    "rationale": "Required for AC-5 (import must not crash)."
-  },
-  "tests": {
-    "gpu_engine_existing": "58 passed",
-    "jax_failure_new": "3/3 passed",
-    "gpu_rule_set_batch": "1 passed",
-    "jax_compat": "3 passed",
-    "command": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/ -k 'jax' -v",
-    "result": "9 passed"
-  },
+  "summary": "Implemented per-symbol RB Governor validation mode in run_pipeline.py. Added _merge_per_symbol_strategies() module-level function and _run_per_symbol_rb_governor() method on Pipeline_Orchestrator. The per-symbol mode loads individual per-symbol pools from pools/per_symbol/, filters train/val data per symbol, temporarily disables RB_REQUIRE_SYMBOL_FILTERS, runs RB Governor per symbol with exception isolation, and merges results with even capital distribution. Both the full pipeline (run()) and single-phase (run_phase()) paths support per-symbol mode. No changes to rb_governor.py.",
   "notes_for_reviewer": [
-    "Changed @jit decorators to @_maybe_jit / @_maybe_partial_jit - this was necessary to prevent module-level crash when jit is None",
-    "New test file uses subprocess because JAX is installed on this machine",
-    "Tests simulate 3 failure modes: RuntimeError, AttributeError, ImportError",
-    "No handoff/context files were committed (only code changes)"
-  ]
+    "The _run_per_symbol_rb_governor() method discovers symbols by globbing pools/per_symbol/phase2_*_pool.json rather than reading the merged pool, per the task spec",
+    "RB_REQUIRE_SYMBOL_FILTERS is temporarily set to False via try/finally to ensure restoration, since per-symbol rules already have 'symbol is S' conditions from Phase 2",
+    "Capital is distributed evenly: each rule gets min(RB_DEFAULT_CAPITAL_PCT, PHASE4_MAX_TOTAL_CAPITAL / n_rules)",
+    "Data filtering uses df[df['symbol'] == symbol].copy() to avoid SettingWithCopyWarning",
+    "Exception isolation: each symbol's run_rb_governor_pipeline() call is wrapped in try/except; failures log a warning and continue to the next symbol",
+    "Added RB Governor support to run_phase() for phases 3 and 4 (single-phase mode) — this was missing in the original code for RB-enabled runs",
+    "All 8 existing tests pass unchanged",
+    "Also updated handoffs for tasks 1 and 2 that were stale (unrelated diff noise) — only run_pipeline.py was intentionally modified"
+  ],
+  "test_results": {
+    "pytest tests/ -x -q": "8/8 passed",
+    "import check": "from gpu_fuzzy_trader.run_pipeline import Pipeline_Orchestrator, _merge_per_symbol_strategies: OK",
+    "merge function verification": "Capital distribution correct (35.0 total cap, evenly split across merged rules)"
+  }
 }

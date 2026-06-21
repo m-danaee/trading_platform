@@ -1,7 +1,51 @@
 {
   "task": 5,
-  "title": "Expand Phase 2 pool admission",
+  "title": "Create friend.ipynb Colab Notebook",
   "verdict": "APPROVED",
-  "issues": [],
-  "summary": "Re-review after spec annotation. The only blocking issue from the previous review — missing integration test (acceptance criterion #5) — is now resolved by the explicit '(OPTIONAL — skipped per RAM constraint)' marker added to the task spec in commit d01c8d7. The implementer's choice to skip the integration test is now formally correct. All other criteria pass as in the previous review:\n\n1. All 6 new config keys present with correct defaults matching the friend's values (PHASE2_CV_MIN_WORST_RETURN=-8.0, PHASE2_CV_MIN_WORST_PF=0.80, PHASE2_CV_MAX_WORST_DD=18.0, PHASE2_CV_MIN_FOLD_TRADES=10, PHASE2_KEEP_TOP_RULES=140, PHASE2_STRICT_POSITIVE_GOOD=True).\n2. _passes_pool_admission_impl uses new relaxed CV_* thresholds for cv_fold=True: val return >= -8%, PF >= 0.80, DD <= 18% (both train and val), min trades >= 10. Non-CV holdout path unchanged.\n3. _build_pool_from_archive caps pool at PHASE2_KEEP_TOP_RULES=140, sorted by deployability_rank_score descending.\n4. New test file tests/unit/test_phase2_pool_admission.py has 10 cases (exceeding spec minimum of 4), covering: mildly-negative pass, return rejection, DD rejection, PF rejection, relaxed trade floor, strict trade floor enforcement, positive-good gate non-crash, holdout path unchanged, config key presence, and default values. All 10 pass.\n5. Two existing test files (test_phase2_support.py, test_phase2_cv_admission.py) have minimal 1-line patches to set PHASE2_STRICT_POSITIVE_GOOD=False — harmless and correctly scoped.\n6. No changes to evaluator_v5.ipynb, GPU engine, EvoX runner, Phase 3/4, or JSON output contract.\n\nFull approval — all acceptance criteria met. Ready for merge."
+  "reviewer": "spec-reviewer",
+  "criteria_review": {
+    "1_seven_cells": {
+      "status": "PASS",
+      "detail": "Notebook has exactly 7 cells: cell 1 (markdown instructions), cell 2 (GitHub token), cell 3 (bootstrap), cell 4 (install), cell 5 (import/config), cell 6 (run pipeline), cell 7 (markdown results). Cell types: [markdown, code, code, code, code, code, markdown]."
+    },
+    "2_bootstrap_discovers": {
+      "status": "PASS",
+      "detail": "Cell 3 (bootstrap) includes _discover_project_root() that searches CWD, /content/friend_project, /content, and rglobs for requirements.txt. _ensure_drive_mounted() mounts Google Drive. _discover_dataset_paths() finds train.csv/test.csv from explicit paths, DATA_ROOT, project data/, Drive, or /content rglob. GITHUB_CLONE_DIR defaults to /content/friend_project."
+    },
+    "3_install_colab_gpu": {
+      "status": "PASS",
+      "detail": "Cell 4 installs COLAB_CORE_PINS, COLAB_TORCH_CPU (torch==2.5.1 CPU), COLAB_EVOX, and COLAB_JAX (jax[cuda12]==0.10.1) on Colab. Falls back to requirements.txt locally with optional jax-cuda13-plugin for local GPU. Same pin set as main.ipynb."
+    },
+    "4_import_config": {
+      "status": "PASS",
+      "detail": "Cell 5 sets cfg.PER_SYMBOL_PHASE2=True, cfg.PHASE5_REMOVE_NEGATIVE_PNL_RULES=True, cfg.PHASE2_SCAN_UNROLL=16. Calls configure_jax_env(). Reports GPU info via detect_gpu_vram_gb(), jax.default_backend(), jax.devices(), and package versions for evox, optuna, numba, torch, jax."
+    },
+    "5_run_sync": {
+      "status": "PASS",
+      "detail": "Cell 6 runs 'python -m gpu_fuzzy_trader.run_pipeline --output /content/friend_project_outputs'. After success, syncs local outputs to MyDrive/friend_project/outputs/, phase2_rule_archive to MyDrive/friend_project/phase2_rule_archive/, and pools/per_symbol to MyDrive/friend_project/pools/per_symbol/. Uses _ensure_drive_mounted() from cell 3."
+    },
+    "6_numba_ops_graceful": {
+      "status": "PASS",
+      "detail": "_repair_stale_numba_ops() in cell 3 returns 'numba_ops.py not present (friend_project)' when numba_ops.py does not exist. When present, repairs stale JIT empty branches. No crash on missing file."
+    },
+    "7_friend_paths": {
+      "status": "PASS",
+      "detail": "All paths reference friend_project: /content/friend_project, /content/friend_project_data, /content/friend_project_outputs, MyDrive/friend_project/outputs, MyDrive/friend_project/phase2_rule_archive, MyDrive/friend_project/pools/per_symbol. Zero references to /content/trading_platform. The only 'trading_platform' reference is the upstream GitHub repo URL (correct)."
+    },
+    "8_valid_json": {
+      "status": "PASS",
+      "detail": "Notebook JSON is valid Jupyter format: nbformat=4, nbformat_minor=5. Validated with json.load."
+    },
+    "9_tests_pass": {
+      "status": "PASS",
+      "detail": "29 friend_project tests passed in 4.50s. No changes to Python code or existing tests."
+    }
+  },
+  "summary": "All 9 acceptance criteria pass. The notebook is well-structured, uses friend_project-specific paths throughout, handles Colab and local execution paths, and gracefully manages missing numba_ops.py. No out-of-scope additions detected.",
+  "diff_scope": {
+    "files_changed": 1,
+    "file": "friend_project/friend.ipynb",
+    "change_type": "NEW",
+    "lines_added": 723
+  }
 }

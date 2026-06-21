@@ -1,30 +1,66 @@
 {
-  "task": "task-3",
+  "task": "task-3-per-symbol-rb-governor",
+  "role": "spec-reviewer",
   "verdict": "APPROVED",
-  "issues": [],
-  "summary": "All 6 acceptance criteria fully satisfied. The safe-jit wrappers (_maybe_jit, _maybe_partial_jit) are a necessary and minimal scope extension discovered during implementation to prevent module-level crashes when jit=None, which is required for AC-5. No out-of-scope additions beyond these wrappers and the new test file (which addresses code review finding F1). All three code review findings (F1 test coverage, F2 exception chain, F3 logger) have been resolved.",
-  "details": {
-    "criteria_met": {
-      "1": "Module-level try/except ImportError replaced with try/except Exception (line 44 diff)",
-      "2": "JAX globals set to None on failure: jax = jnp = jit = vmap = lax = None; _JXF = _JX_INT = None",
-      "3": "_require_jax() guard function added and called first line of GPUBacktestEngine.__init__()",
-      "4": "When JAX available: all existing behavior preserved (58 tests pass); safe wrappers apply jit as before",
-      "5": "When JAX broken: importing gpu_engine.py does not crash (globals set to None); GPUBacktestEngine instantiation raises RuntimeError with original error and preserved exception chain",
-      "6": "All existing tests pass (58/58) plus 3 new subprocess-based tests for JAX-failure path"
+  "acceptance_criteria_coverage": {
+    "1_RB_Governor_runs_per_symbol_when_PER_SYMBOL_PHASE2_True": {
+      "status": "PASS",
+      "evidence": "All three code paths (run(), run_phase(phase=3), run_phase(phase=4)) check per_symbol_phase2 and branch to self._run_per_symbol_rb_governor()."
     },
-    "safe_jit_wrappers_assessment": {
-      "necessity": "Required because @jit decorators at module level crash when jit=None, which would violate AC-5 (import must not crash). Without these wrappers, the module would raise AttributeError when trying to apply @jit to functions.",
-      "scope": "Minimal: two small functions in gpu_engine.py only, applied to existing internal functions. No new public API.",
-      "correctness": "_maybe_jit returns jit(fn) when jit available, else fn unchanged. _maybe_partial_jit returns partial(jit, **kwargs) when jit available, else identity decorator. Both are equivalent to original behavior when JAX is present."
+    "2_Per_symbol_train_val_data_filtered_correctly": {
+      "status": "PASS",
+      "evidence": "train_df[train_df['symbol'] == symbol].copy() and val_df[val_df['symbol'] == symbol].copy() — .copy() prevents SettingWithCopyWarning."
     },
-    "code_review_findings_addressed": {
-      "F1_test_coverage": "Added tests/unit/test_gpu_engine_jax_failure.py with 3 parameterized subprocess tests (RuntimeError, AttributeError, ImportError). Tests verify: (a) import does not crash, (b) _require_jax() raises RuntimeError, (c) GPUBacktestEngine instantiation raises RuntimeError with original error and exception chain.",
-      "F2_exception_chain": "_jax_import_error stores exception object (not str); _require_jax() raises RuntimeError(...) from _jax_import_error, preserving __cause__.",
-      "F3_logger": "logger.warning(...) added in except block with type name and message, using existing module logger."
+    "3_RB_REQUIRE_SYMBOL_FILTERS_set_temporarily": {
+      "status": "PASS",
+      "evidence": "Saved via getattr, disabled to False, restored in try/finally block. Rules already have 'symbol is S' conditions from Phase 2."
     },
-    "files_changed": ["gpu_fuzzy_trader/backtest/gpu_engine.py", "tests/unit/test_gpu_engine_jax_failure.py"],
-    "out_of_scope_changes": [],
-    "guard_placement": "GPUBacktestEngine.__init__() - first statement after docstring, before any jax.* attribute access",
-    "error_message_clarity": "Clear RuntimeError with original error message and preserved exception chain"
-  }
+    "4_Per_symbol_output_saved_to_outputs_per_symbol_symbol": {
+      "status": "PASS",
+      "evidence": "sym_output_dir = os.path.join(_cfg.OUTPUTS_DIR, 'per_symbol', symbol) with os.makedirs. Passed to run_rb_governor_pipeline(output_dir=sym_output_dir)."
+    },
+    "5_merge_per_symbol_strategies_combines_rule_sets": {
+      "status": "PASS",
+      "evidence": "Module-level _merge_per_symbol_strategies() iterates all symbols/directions, collects rules with r_copy = dict(r) to avoid aliasing."
+    },
+    "6_Final_outputs_direction_json_contains_merged_strategy": {
+      "status": "PASS",
+      "evidence": "_merge_per_symbol_strategies() writes os.path.join(_cfg.OUTPUTS_DIR, f'{direction}.json') with json.dump."
+    },
+    "7_Capital_distributed_evenly_le_max_total_capital": {
+      "status": "PASS",
+      "evidence": "capital_each = min(max_per_rule, max_total / n_rules). Total = capital_each * n_rules <= max_total by construction."
+    },
+    "8_Exception_isolation_one_symbol_failure_doesnt_abort_others": {
+      "status": "PASS",
+      "evidence": "Inner try/except around each symbol's run_rb_governor_pipeline() call. On failure: logger.error() + continue."
+    },
+    "9_PER_SYMBOL_PHASE2_False_restores_original_single_RB_Governor": {
+      "status": "PASS",
+      "evidence": "All three paths (run(), run_phase(phase=3), run_phase(phase=4)) have if/else branching back to original run_rb_governor_pipeline() call."
+    },
+    "10_Existing_tests_still_pass": {
+      "status": "PASS",
+      "evidence": "Implementer confirms 8/8 tests pass."
+    },
+    "11_rb_governor_py_no_code_changes": {
+      "status": "PASS",
+      "evidence": "git diff is empty for rb_governor.py — only config override via _cfg.RB_REQUIRE_SYMBOL_FILTERS."
+    }
+  },
+  "additional_observations": [
+    "run_phase() for phases 3 and 4 now includes RB_ENGINE_ENABLED checks that were previously missing. This is a necessary companion change for per-symbol mode to work in single-phase mode — in scope for AC9.",
+    "Symbol discovery via glob parsing (phase2_{direction}_{symbol}_pool.json) correctly handles symbols with underscores thanks to split('_', 1) splitting only on the first underscore.",
+    "Fallback when no per-symbol pools found gracefully degrades to single RB Governor call.",
+    "Minimum data thresholds (train<100, val<50) are a reasonable guard to prevent RB Governor from running on insufficient data.",
+    "Minor: f-string in pool_pattern = f'phase2_*_pool.json' has no interpolation — f-prefix is unnecessary. Cosmetic only."
+  ],
+  "scope_check": {
+    "files_changed": ["friend_project/gpu_fuzzy_trader/run_pipeline.py"],
+    "out_of_scope_additions": "None. run_phase() RB_ENGINE_ENABLED additions are required for AC9 compliance in single-phase mode."
+  },
+  "notes": [
+    ".opencode/tasks/task-3.md still describes the old JAX import crash task (different task-3 from a prior iteration). The actual task spec for this review comes from the delegated task text and acceptance criteria in the user prompt. Recommend updating the task file to avoid confusion.",
+    "No new unit tests for _merge_per_symbol_strategies or _run_per_symbol_rb_governor. This is acceptable per AC10 (only existing tests required to pass), but integration coverage would be stronger with targeted tests."
+  ]
 }
