@@ -11,6 +11,7 @@ import sys
 import os
 import logging
 import json
+import glob as _glob
 
 from gpu_fuzzy_trader.phases.phase5_oos import OOS_Evaluator
 from gpu_fuzzy_trader.rb_governor import run_rb_governor_pipeline
@@ -364,6 +365,17 @@ def _merge_per_symbol_strategies(
     -------
     dict[str, dict]
         Merged strategies keyed by direction, with capital distributed evenly.
+
+    Notes
+    -----
+    * **Metadata first-wins**: Metadata fields (everything except ``rules_set``
+      and ``direction``) are taken from the **first** per-symbol strategy that
+      contributes rules to each direction.  There is no merging of metadata
+      across symbols.
+    * **Empty fallback**: When no per-symbol pools exist on disk (no pool
+      files found), the caller may fall back to a single
+      :func:`run_rb_governor_pipeline` call instead — see
+      :meth:`Pipeline_Orchestrator._run_per_symbol_rb_governor`.
     """
     max_total = float(getattr(_cfg, "PHASE4_MAX_TOTAL_CAPITAL", 35.0))
     max_per_rule = float(getattr(_cfg, "RB_DEFAULT_CAPITAL_PCT", 12.5))
@@ -685,21 +697,27 @@ class Pipeline_Orchestrator:
 
         Returns merged result dict in the same format as
         ``run_rb_governor_pipeline``.
-        """
-        import glob as _glob
 
+        .. note::
+           The *phase2_result* parameter (the merged Phase 2 pool dict) is
+           only used in the fallback path when **no** per-symbol pool files
+           exist on disk.  When per-symbol pools are found, individual pool
+           files are loaded directly.
+        """
         per_symbol_strategies: dict[str, list[dict]] = {}
         per_symbol_dir = _cfg.PHASE2_PER_SYMBOL_POOL_DIR
         directions = self._directions
 
         # Discover symbols from per-symbol pool files
-        pool_pattern = os.path.join(per_symbol_dir, f"phase2_*_pool.json")
+        pool_pattern = os.path.join(per_symbol_dir, "phase2_*_pool.json")
         pool_files = sorted(_glob.glob(str(pool_pattern)))
         symbols: set[str] = set()
         for pf in pool_files:
             basename = os.path.basename(pf)
             # format: phase2_{direction}_{symbol}_pool.json
-            parts = basename.replace("phase2_", "").replace("_pool.json", "").split("_", 1)
+            stripped = basename.removeprefix("phase2_").removesuffix("_pool.json")
+            # Split on first underscore: left = direction, right = symbol
+            parts = stripped.split("_", 1)
             if len(parts) == 2:
                 symbols.add(parts[1])
 
