@@ -991,6 +991,11 @@ class Pipeline_Orchestrator:
                 manifest = json.load(open(manifest_path, encoding="utf-8"))
                 if manifest.get("split_mode") != _cfg.SPLIT_MODE:
                     return None
+                from gpu_fuzzy_trader.validation.rolling_cv import (
+                    purged_config_fingerprint,
+                )
+                if manifest.get("config_fingerprint") != purged_config_fingerprint():
+                    return None
                 cache_mtime = min(cache_mtime, os.path.getmtime(manifest_path))
         except OSError:
             return None

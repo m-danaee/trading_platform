@@ -409,6 +409,27 @@ def aggregate_fold_metrics(
     }
 
 
+_PURGED_CONFIG_KEYS = (
+    "PURGED_WF_N_SPLITS",
+    "PURGED_WF_HOLDOUT_FRACTION",
+    "PURGED_WF_EMBARGO_CANDLES",
+    "PURGED_WF_MIN_TRAIN_FRACTION",
+    "PURGED_WF_MIN_VALID_ROWS",
+)
+
+
+def purged_config_fingerprint() -> str:
+    """Return a short hash of all purged-WF config knobs for cache invalidation."""
+    import hashlib
+
+    parts: list[str] = []
+    for key in _PURGED_CONFIG_KEYS:
+        val = getattr(_cfg, key, None)
+        parts.append(f"{key}={val!r}")
+    raw = "|".join(parts)
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
 def write_cv_folds_manifest(
     folds: list[PurgedFold],
     *,
@@ -422,6 +443,7 @@ def write_cv_folds_manifest(
 
     payload: dict[str, Any] = {
         "split_mode": getattr(_cfg, "SPLIT_MODE", "holdout_70_30"),
+        "config_fingerprint": purged_config_fingerprint(),
         "reference_rows": int(reference_rows),
         "n_folds": len(folds),
         "config": {

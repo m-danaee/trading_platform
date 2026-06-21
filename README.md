@@ -134,7 +134,7 @@ flowchart TD
 | Mode | Train block | Validation block | CV folds | Phase 2 fitness val | Pool admission val |
 |------|-------------|------------------|----------|---------------------|-------------------|
 | **`holdout_70_30`** (default) | First 70% per symbol | Last 30% per symbol | `None` | `validation_30` if joint val on | Same holdout |
-| **`purged_walk_forward`** | Prefix minus holdout + embargo-purged CV trains | Tail `PURGED_WF_HOLDOUT_FRACTION` (25%) | K CV + holdout fold | **CV folds aggregated** if joint val on | **Holdout only** |
+| **`purged_walk_forward`** | Prefix minus holdout + embargo-purged CV trains | Tail `PURGED_WF_HOLDOUT_FRACTION` (30%) | K CV + holdout fold | **CV folds aggregated** if joint val on | **Holdout only** |
 
 **Purged-mode fitness switch** (`phase2_rule_pool.py`):
 
@@ -147,7 +147,7 @@ flowchart TD
 | Parameter | Default | Higher / enabled | Lower / disabled |
 |-----------|---------|------------------|------------------|
 | `PURGED_WF_N_SPLITS` | 3 | More CV folds; smaller valid blocks | Fewer folds |
-| `PURGED_WF_HOLDOUT_FRACTION` | 0.25 | Larger holdout (less CV prefix) | More CV data |
+| `PURGED_WF_HOLDOUT_FRACTION` | 0.3 | Larger holdout (less CV prefix) | More CV data |
 | `PURGED_WF_EMBARGO_CANDLES` | 288 | Wider purge gap; less train per fold | Leakage risk if &lt; label horizon |
 | `PURGED_WF_MIN_TRAIN_FRACTION` | 0.25 | More history required before first CV | Too high → no folds → **fallback to holdout_70_30** |
 | `PURGED_WF_MIN_VALID_ROWS` | 3000 | Stricter fold sizes; fewer folds | More/smaller folds |
@@ -216,7 +216,6 @@ Runs on **train split only** (no validation labels for ranking).
 | `PHASE1_STATIONARITY_FOLDS` | 2 | More robust stationarity check | Faster, looser |
 | `PHASE1_STATIONARITY_CV_MAX` | 1.0 | Allow rank instability | Drop swinging features |
 | `PHASE1_STATIONARITY_RANK_DRIFT_MAX` | 8 | Tolerate rank jumps | Only stable top ranks |
-| `PHASE1_STATIONARITY_STRATIFY` | `chronological` | `regime` = cluster by trend/vol | Time chunks only |
 
 ### Phase 1 → Phase 2 bridge (GPU budget)
 
@@ -375,19 +374,55 @@ Runs on **train split only** (no validation labels for ranking).
 | `PHASE2_STAGE_B_GENERATIONS` | 45 | Stage B budget |
 | `PHASE2_STAGE_B_SEED_TOP_K` | 50 | Elites seeded into Stage B |
 | `PHASE2_STAGE_B_SEED_FRACTION` | 0.30 | Fraction of Stage B pop from elites |
-| `PHASE2_STAGE_A_*` / `PHASE2_STAGE_B_*` | — | Per-stage mutation, diversity, plateau, floors |
+| `PHASE2_STAGE_A_MUTATION_RATE` | 0.25 | Per-gene mutation probability in Stage A |
+| `PHASE2_STAGE_A_MUTATION_WEIGHTED_ACTIVATE_PROB` | 0.50 | Activate-gene bias in Stage A |
+| `PHASE2_STAGE_A_DIVERSITY_PENALTY` | 10.0 | Crowding penalty in Stage A |
+| `PHASE2_STAGE_A_DIVERSITY_HAMMING_THRESHOLD` | 4 | Min genetic distance in Stage A |
+| `PHASE2_STAGE_A_DIVERSITY_RECOVERY_MIN_UNIQUE_RATIO` | 0.35 | Diversity-recovery trigger in Stage A |
+| `PHASE2_STAGE_A_DIVERSITY_RECOVERY_INJECT_FRACTION` | 0.35 | Random-injection fraction in Stage A |
+| `PHASE2_STAGE_A_DIVERSITY_RECOVERY_MUTATION_BOOST` | 2.0 | Mutation boost during recovery (Stage A) |
+| `PHASE2_STAGE_A_PLATEAU_EARLY_STOP_PATIENCE` | 28 | Plateau patience (gens) in Stage A |
+| `PHASE2_STAGE_A_PLATEAU_EARLY_STOP_MIN_GENERATION` | 30 | Min gen before plateau stop in Stage A |
+| `PHASE2_STAGE_A_EARLY_STOP_MIN_GENERATION` | 32 | Min gen before mean-return stop in Stage A |
+| `PHASE2_STAGE_A_ARCHIVE_SEED_FRACTION` | 0.20 | Archive warm-start fraction in Stage A |
+| `PHASE2_STAGE_A_RETURN_FLOOR_PCT` | 0.0 | Train return floor in Stage A |
+| `PHASE2_STAGE_A_USE_ROBUST_RETURN_OBJ` | True | f3 = min(train, val) in Stage A |
 | `PHASE2_STAGE_A_SOFT_FEASIBILITY` | True | Soft penalties in Stage A only |
 | `PHASE2_STAGE_A_MIN_TRADE_SUPPORT` | 30 | Looser support in Stage A |
+| `PHASE2_STAGE_B_MUTATION_RATE` | 0.18 | Per-gene mutation probability in Stage B |
+| `PHASE2_STAGE_B_MUTATION_WEIGHTED_ACTIVATE_PROB` | 0.40 | Activate-gene bias in Stage B |
+| `PHASE2_STAGE_B_DIVERSITY_PENALTY` | 5.0 | Crowding penalty in Stage B |
+| `PHASE2_STAGE_B_DIVERSITY_HAMMING_THRESHOLD` | 2 | Min genetic distance in Stage B |
+| `PHASE2_STAGE_B_DIVERSITY_RECOVERY_MIN_UNIQUE_RATIO` | 0.25 | Diversity-recovery trigger in Stage B |
+| `PHASE2_STAGE_B_DIVERSITY_RECOVERY_INJECT_FRACTION` | 0.20 | Random-injection fraction in Stage B |
+| `PHASE2_STAGE_B_DIVERSITY_RECOVERY_MUTATION_BOOST` | 1.4 | Mutation boost during recovery (Stage B) |
+| `PHASE2_STAGE_B_PLATEAU_EARLY_STOP_PATIENCE` | 15 | Plateau patience (gens) in Stage B |
+| `PHASE2_STAGE_B_PLATEAU_EARLY_STOP_MIN_GENERATION` | 15 | Min gen before plateau stop in Stage B |
+| `PHASE2_STAGE_B_EARLY_STOP_MIN_GENERATION` | 20 | Min gen before mean-return stop in Stage B |
 
 #### Early stop / plateau / recovery
 
 | Parameter | Default | When enabled | Exploration risk |
 |-----------|---------|--------------|------------------|
 | `PHASE2_EARLY_STOP_ENABLED` | True | Stop on poor mean/median return after gen 40 | Ends before recovery |
+| `PHASE2_EARLY_STOP_MIN_GENERATION` | 40 | Minimum gen before early stop can fire |
+| `PHASE2_EARLY_STOP_MEAN_RETURN_PCT` | -5.0 | Mean return threshold below which stop fires |
+| `PHASE2_EARLY_STOP_USE_MEDIAN_RETURN` | True | Use median (vs mean) for the threshold check |
+| `PHASE2_EARLY_STOP_MIN_VALID_RULES` | 3 | Min number of valid rules required to keep going |
 | `PHASE2_PLATEAU_EARLY_STOP_ENABLED` | True | Stop if no robust return improvement | Interacts with `PHASE2_PLATEAU_USE_ROBUST_RETURN` |
+| `PHASE2_PLATEAU_EARLY_STOP_MIN_GENERATION` | 3 | Min gen before plateau stop |
+| `PHASE2_PLATEAU_EARLY_STOP_PATIENCE` | 5 | Gens of no improvement before plateau stop |
+| `PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT` | 0.02 | Min improvement (%) to reset patience |
+| `PHASE2_PLATEAU_USE_ROBUST_RETURN` | True | Score plateau on `min(train, val)` return |
 | `PHASE2_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO` | True | Block plateau stop while deployable=0 | — |
+| `PHASE2_PLATEAU_BLOCK_WHEN_DIVERSITY_LOW` | False | Also block plateau stop if unique ratio is low | — |
 | `PHASE2_DIVERSITY_RECOVERY_ENABLED` | True | Inject random when unique ratio low | Counteracts early stop |
+| `PHASE2_DIVERSITY_RECOVERY_MIN_UNIQUE_RATIO` | 0.30 | Unique-ratio floor that triggers recovery |
+| `PHASE2_DIVERSITY_RECOVERY_INJECT_FRACTION` | 0.30 | Fraction of pop replaced during recovery |
+| `PHASE2_DIVERSITY_RECOVERY_MUTATION_BOOST` | 1.75 | Mutation-rate multiplier during recovery |
 | `PHASE2_VIABILITY_RECOVERY_ENABLED` | True | Archive seeds when valid rules collapse | — |
+| `PHASE2_VIABILITY_RECOVERY_MIN_VALID` | 5 | Min valid rules before recovery seeds archive |
+| `PHASE2_VIABILITY_RECOVERY_DEPLOYABLE_MUTATE_FRACTION` | 0.5 | Fraction of deployable elites mutated for seed |
 
 Island mode uses `island_early_stop_enabled()` / `island_plateau_early_stop_enabled()`.
 
@@ -397,7 +432,9 @@ Island mode uses `island_early_stop_enabled()` / `island_plateau_early_stop_enab
 |-----------|---------|--------|
 | `PHASE2_DIVERSITY_HAMMING_THRESHOLD` | 3 | Min genetic distance for uniqueness |
 | `PHASE2_DIVERSITY_PENALTY` | 8.0 | Crowding penalty on objectives |
-| `PHASE2_PHENOTYPE_*_STEP` | — | Behavioral diversity bucket widths |
+| `PHASE2_PHENOTYPE_SORTINO_STEP` | 0.5 | Sortino bucket width for phenotypic diversity |
+| `PHASE2_PHENOTYPE_DD_STEP` | 5.0 | DD bucket width for phenotypic diversity |
+| `PHASE2_PHENOTYPE_F3_STEP` | 10.0 | f3 (return/win-rate) bucket width |
 | `PHASE2_FEASIBILITY_VIOLATION_WEIGHT` | 25.0 | Soft floor violation scale |
 | `PHASE2_INFEASIBLE_OBJECTIVE_PENALTY` | 100.0 | Flat infeasible penalty |
 | `PHASE2_DEPLOYABLE_ARCHIVE_MAX_SIZE` | 100 | Cross-run deployable elite cap |
@@ -423,6 +460,7 @@ Island mode uses `island_early_stop_enabled()` / `island_plateau_early_stop_enab
 | `PHASE2_INIT_STRATUM_FRACTIONS` | (0.67, 0.33) | Explore vs exploit mix |
 | `PHASE2_INIT_SOFTMAX_TEMP` | 1.5 | Feature pick temperature |
 | `PHASE2_INIT_UNIFORM_MIX` | 0.05 | Random vs MI-guided init |
+| `PHASE2_INIT_SCORE_EPS` | 1e-6 | Epsilon floor on init MI scores (avoid div-by-zero) |
 | `PHASE2_MUTATION_RATE` | 0.22 | Per-gene mutation probability |
 | `PHASE2_MUTATION_WEIGHTED_ACTIVATE_PROB` | 0.45 | Bias toward activating genes |
 | `PHASE2_GPU_ENRICH_SYMBOL_METRICS` | True | CPU per-symbol metrics after GPU batch |
@@ -489,7 +527,11 @@ Skips legacy Phase 3 and Phase 4; runs `rb_governor.py`:
 | Parameter | Default | Effect |
 |-----------|---------|--------|
 | `RB_DEFAULT_TP` / `SL` / `CAPITAL_PCT` | 2.0 / 1.2 / 12.5 | Initial embedded risk |
-| `RB_TP_GRID` / `RB_SL_GRID` / `RB_CAPITAL_GRID` | tuples | Risk search space |
+| `RB_REQUIRE_TP_SL_ABOVE_ONE` | True | Reject combo where TP or SL ≤ 1.0 |
+| `RB_MIN_TP` / `RB_MIN_SL` | 1.0 / 1.0 | Per-rule TP/SL floor before grid eval |
+| `RB_TP_GRID` | `(1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0)` | TP search space |
+| `RB_SL_GRID` | `(1.0, 1.2, 1.5, 2.0, 2.5)` | SL search space |
+| `RB_CAPITAL_GRID` | `(15.0, 20.0, 25.0, 35.0)` | Capital search space |
 | `RB_RISK_OPT_PASSES` | 2 | Round-robin passes |
 | `RB_RISK_MIN_IMPROVEMENT` | 0.02 | Min score delta to accept combo |
 | `RB_MAX_TOTAL_CAPITAL` | 95.0 | Hard cap on sum capital_pct |
@@ -523,10 +565,27 @@ Skips legacy Phase 3 and Phase 4; runs `rb_governor.py`:
 | `RB_PROFIT_AMPLIFIER_ENABLED` | True | Post-risk refinement pass |
 | `RB_PROFIT_AMP_MAX_CANDIDATES` | 60 | Candidate pool size |
 | `RB_PROFIT_AMP_MAX_RULES` | 5 | Max rules in amp stage |
-| `RB_PROFIT_AMP_MIN_OBJECTIVE_IMPROVEMENT` | 0.05 | Min objective delta |
-| `RB_PROFIT_AMP_*_WEIGHT` | — | Valid/train/balance/DD/health weights |
+| `RB_PROFIT_AMP_MIN_OBJECTIVE_IMPROVEMENT` | 0.05 | Min objective delta to accept amp |
+| `RB_PROFIT_AMP_MIN_RETURN_IMPROVEMENT` | 0.02 | Min per-candidate return delta |
+| `RB_PROFIT_AMP_VALID_WEIGHT` | 1.55 | Weight on validation return in objective |
+| `RB_PROFIT_AMP_TRAIN_WEIGHT` | 1.00 | Weight on train return |
+| `RB_PROFIT_AMP_BALANCE_WEIGHT` | 0.20 | Weight on train/valid balance |
+| `RB_PROFIT_AMP_DD_WEIGHT` | 0.02 | Weight on drawdown |
+| `RB_PROFIT_AMP_HEALTH_WEIGHT` | 0.030 | Weight on evaluator health penalty |
+| `RB_PROFIT_AMP_OVERLAP_PENALTY` | 2.5 | Penalty per excess overlap unit |
+| `RB_PROFIT_AMP_MAX_PAIR_OVERLAP` | 0.55 | Pair-overlap ceiling for amp team |
+| `RB_PROFIT_AMP_MAX_VALID_DD` | 12.0 | Reject amp if valid DD > floor |
+| `RB_PROFIT_AMP_MAX_TRAIN_DD` | 18.0 | Reject amp if train DD > floor |
 | `RB_PROFIT_AMP_MONTHLY_ENABLED` | True | Monthly certificate in amp |
-| `RB_PROFIT_AMP_CAPITAL_REALLOCATION_ENABLED` | True | Capital grid after swaps |
+| `RB_PROFIT_AMP_MIN_MONTHLY_WINDOWS` | 2 | Min monthly windows before cert applies |
+| `RB_PROFIT_AMP_MIN_MONTHLY_PROFITABLE_RATIO` | 0.55 | Min profitable-month ratio for cert |
+| `RB_PROFIT_AMP_WORST_MONTHLY_RETURN_FLOOR` | -2.0 | Worst-month return floor |
+| `RB_PROFIT_AMP_WORST_MONTHLY_PF_FLOOR` | 0.80 | Worst-month PF floor |
+| `RB_PROFIT_AMP_MAX_MONTHLY_DD` | 10.0 | Worst-month DD ceiling |
+| `RB_PROFIT_AMP_CAPITAL_REALLOCATION_ENABLED` | True | Re-run capital grid after rule swaps |
+| `RB_PROFIT_AMP_CAPITAL_PASSES` | 2 | Capital reallocation passes |
+| `RB_PROFIT_AMP_CAPITAL_GRID` | `= RB_CAPITAL_GRID` | Grid used for reallocation |
+| `RB_PROFIT_AMP_KEEP_BASELINE_UNLESS_BETTER` | True | Never replace baseline with worse result |
 
 #### RB global bank (default off)
 
@@ -534,7 +593,18 @@ Skips legacy Phase 3 and Phase 4; runs `rb_governor.py`:
 |-----------|---------|--------|
 | `RB_GLOBAL_BANK_ENABLED` | False | Cross-run rule bank |
 | `RB_GLOBAL_COMPOSE_AFTER_EACH_RUN` | False | Compose global team after run |
-| `RB_GLOBAL_*` | — | Bank dirs, grids, caps |
+| `RB_GLOBAL_BANK_DIRNAME` | `"rb_bank"` | Subdir under `outputs/` for the bank |
+| `RB_GLOBAL_BANK_MAX_RULES_PER_DIRECTION` | 700 | Cap on bank size per direction |
+| `RB_GLOBAL_BANK_IMPORT_TOP_SINGLE_RULES` | 80 | Top-N single rules imported from each run |
+| `RB_GLOBAL_MAX_RULES` | 12 | Max rules in global team |
+| `RB_GLOBAL_MIN_COMBINED_RETURN_IMPROVEMENT` | 0.05 | Min combined return uplift to add a global rule |
+| `RB_GLOBAL_REQUIRE_POSITIVE_TRAIN_VALID` | True | Reject if train or valid ≤ 0 |
+| `RB_GLOBAL_RISK_OPT_PASSES` | 2 | Risk-opt passes for global team |
+| `RB_GLOBAL_BEST_DIRNAME` | `"best_global"` | Subdir for tracked best-global strategy |
+| `RB_GLOBAL_TP_GRID` | `(1.5, 2.0, 3.0, 5.0, 8.0)` | Global TP search space |
+| `RB_GLOBAL_SL_GRID` | `(1.2, 1.5, 2.0, 2.5)` | Global SL search space |
+| `RB_GLOBAL_CAPITAL_GRID` | `(5.0, 12.5, 25.0, 50.0)` | Global capital search space |
+| `RB_GLOBAL_MAX_TOTAL_CAPITAL` | 100.0 | Hard cap on global team capital |
 
 ### 6.2 `RB_GOVERNOR_ENABLED=False` — legacy Phase 3 + 4
 
@@ -595,7 +665,14 @@ Skips legacy Phase 3 and Phase 4; runs `rb_governor.py`:
 | `PHASE4_MIN_WORST_FOLD_RETURN_PCT` | -2.0 | Worst-window return floor |
 | `PHASE4_MIN_WORST_FOLD_PF` | 1.0 | Worst-window PF floor |
 | `PHASE4_HARD_CAP_NORMALIZE` | True | Scale capital to `MAX_TOTAL_EXPOSURE_PCT` |
-| `PHASE4_GRID_TP_VALUES` / `SL_VALUES` / `CAPITAL_VALUES` | tuples | Deterministic grid |
+| `PHASE4_TP_MIN` / `TP_MAX` | 2.0 / 5.0 | TP search range for the grid (clipped to `PHASE4_GRID_TP_VALUES`) |
+| `PHASE4_SL_MIN` / `SL_MAX` | 1.0 / 2.0 | SL search range (clipped to `PHASE4_GRID_SL_VALUES`) |
+| `PHASE4_MIN_TP_SL_RATIO` | 1.2 | Reject combos where TP/SL < ratio |
+| `PHASE4_CAPITAL_PCT_MIN` / `CAPITAL_PCT_MAX` | 10.0 / 30.0 | Capital range (clipped to `PHASE4_GRID_CAPITAL_VALUES`) |
+| `PHASE4_TP_STEP` / `SL_STEP` / `CAPITAL_STEP` | 0.5 / 0.5 / 5.0 | Linspace step per range |
+| `PHASE4_GRID_TP_VALUES` | `(2.0, 2.5, 3.0, 4.0, 5.0)` | Explicit TP grid (used when set) |
+| `PHASE4_GRID_SL_VALUES` | `(1.0, 1.5, 2.0, 2.5)` | Explicit SL grid (used when set) |
+| `PHASE4_GRID_CAPITAL_VALUES` | `(10.0, 15.0, 20.0, 25.0, 30.0)` | Explicit capital grid (used when set) |
 | `PHASE4_GRID_PASSES` | 2 | Round-robin passes |
 | `PHASE4_GRID_MIN_IMPROVEMENT` | 0.005 | Min score delta to accept |
 | `PHASE4_GRID_MAX_TOTAL_CAPITAL` | 95.0 | Skip combos above cap |
@@ -691,7 +768,7 @@ flowchart LR
 | `PHASE2_ISLAND_MODE=cluster` | `PHASE2_ISLAND_SCALE_TRADE_FLOORS` | Per-island rows much smaller than universe — floors must scale |
 | `PHASE2_ISLAND_MODE=cluster` | `PHASE2_TWO_STAGE_ENABLED` | Two-stage **silently off** unless `PHASE2_ISLAND_TWO_STAGE_ENABLED` |
 | `PHASE2_JOINT_TRAIN_VAL=False` | `PHASE2_STRICT_POSITIVE_GOOD` | Evolution ignores val; admission rejects overfit rules — **empty pool** |
-| `PHASE2_MONTHLY_ADMISSION` | `MONTHLY_VALIDATION_ENABLED` | Same concept, different phases — **double regime filter** |
+| `PHASE2_MONTHLY_ADMISSION` | `MONTHLY_VALIDATION_ENABLED` | Same concept, different phases — **double time-stability filter** |
 | `RB_MIN_TRAIN_RETURN=2.0` | `PHASE2_VAL_RETURN_FLOOR_PCT=0.5` | RB stricter than Phase 2 evolution — rules die at governor |
 | `DEBUG_SYMBOL_SCOPE` | `PHASE2_MIN_PROFITABLE_SYMBOLS` | Capped by `effective_min_profitable_symbols()` but still tight |
 | `PHASE2_ARCHIVE_SEED_FRACTION` | `PHASE2_PLATEAU_EARLY_STOP` | Warm-start + early stop → **truncated exploration** |

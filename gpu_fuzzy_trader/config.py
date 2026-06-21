@@ -284,7 +284,7 @@ PHASE1_ASYMMETRIC_TARGET = True
 # --- Sign consistency across stationarity folds ---
 
 # PHASE1_REQUIRE_SIGN_CONSISTENCY — drop features whose Spearman sign flips.
-#   True  → fewer regime-fragile features; stricter shortlist.
+#   True  → fewer unstable features; stricter shortlist.
 #   False → keep flip-flopping features; more noise in Phase 2.
 PHASE1_REQUIRE_SIGN_CONSISTENCY: bool = True
 
@@ -298,9 +298,9 @@ PHASE1_SIGN_CONSISTENCY_MIN_FOLDS: int = 2
 #   Lower  → even weak correlations must be stable; stricter pruning.
 PHASE1_SIGN_CONSISTENCY_MIN_ABS_CORR: float = 0.02
 
-# --- Stationarity (reduce regime-specific features) ---
+# --- Stationarity (reduce time-varying features) ---
 
-# PHASE1_STATIONARITY_FOLDS — chronological/regime chunks for stability tests.
+# PHASE1_STATIONARITY_FOLDS — chronological chunks for stability tests.
 #   Higher → more robust stationarity check, fewer features pass.
 #   Lower  → faster, looser stationarity filter.
 PHASE1_STATIONARITY_FOLDS = 2
@@ -314,11 +314,6 @@ PHASE1_STATIONARITY_CV_MAX = 1.0
 #   Higher → tolerate large rank jumps; more features survive.
 #   Lower  → only consistently top-ranked features kept.
 PHASE1_STATIONARITY_RANK_DRIFT_MAX = 8
-
-# PHASE1_STATIONARITY_STRATIFY — how folds are built for stationarity.
-#   "regime"        → cluster by trend/vol regime (needs regime model).
-#   "chronological" → time-ordered chunks; simpler, ignores regime structure.
-PHASE1_STATIONARITY_STRATIFY = "chronological"
 
 # =============================================================================
 # Phase 1 → Phase 2 bridge — GPU row budget & JAX performance
