@@ -220,6 +220,17 @@ AUTO_SEARCH_SCORE_MIN_TRADES = 60
 
 PHASE2_ROW_SAMPLE_TOTAL = PHASE1_SAMPLING_TOTAL
 
+# Per-symbol Phase 2 training mode.
+# True  → Phase 2 runs separately for each symbol; rules tagged with "symbol is S".
+# False → original behavior (single combined pool across all symbols).
+PER_SYMBOL_PHASE2 = True
+
+# Minimum rows required for a symbol to be processed in per-symbol Phase 2 mode.
+PER_SYMBOL_MIN_ROWS = 1000
+
+# Directory for per-symbol Phase 2 pools (within the pools/ hierarchy).
+PHASE2_PER_SYMBOL_POOL_DIR = os.path.join(PHASE2_POOL_DIR, "per_symbol")
+
 SYMBOL_SPECIALIZATION_ENABLED = True
 SYMBOL_SPECIALIZATION_MAX_SYMBOLS_PER_RULE = 3
 SYMBOL_SPECIALIZATION_MIN_TRADES = 20

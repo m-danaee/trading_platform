@@ -228,6 +228,47 @@ def _log_phase_entry(
     )
 
 
+def _tag_pool_with_symbol(pool: list[dict], symbol: str) -> list[dict]:
+    """Add ``'symbol is <symbol>'`` condition to each rule in the pool.
+
+    Parameters
+    ----------
+    pool : list[dict]
+        List of Phase 2 pool entries.  Each entry has a ``"conditions"`` key
+        holding a list of condition strings.
+    symbol : str
+        Symbol to tag (e.g. ``"BTC"``).
+
+    Returns
+    -------
+    list[dict]
+        New list of shallow-copied entries with the symbol condition appended
+        (unless already present).
+    """
+    cond_str = f"symbol is {symbol}"
+    tagged: list[dict] = []
+    for rule in pool:
+        rule = dict(rule)
+        conditions = list(rule.get("conditions", []))
+        if not any(str(c) == cond_str for c in conditions):
+            conditions.append(cond_str)
+        rule["conditions"] = conditions
+        tagged.append(rule)
+    return tagged
+
+
+def _merge_pools(per_symbol_pools: list[list[dict]]) -> list[dict]:
+    """Concatenate per-symbol pools into a single merged pool list.
+
+    No deduplication is performed — rules from different symbols carry
+    distinct ``symbol is S`` conditions and are inherently unique.
+    """
+    merged: list[dict] = []
+    for pool in per_symbol_pools:
+        merged.extend(pool)
+    return merged
+
+
 def _print_run_summary(results: dict[str, Any], phase: int | None, log_path: str) -> None:
     """Print a concise CLI summary for a full or single-phase run."""
     print("\n=== Pipeline Summary ===")
@@ -824,41 +865,143 @@ class Pipeline_Orchestrator:
                 pools[direction] = []
                 continue
 
-            logger.info(
-                "Running %s … (%d features from Phase 1)",
-                dir_phase_name, len(feature_infos),
-            )
-            try:
-                generator = Rule_Pool_Generator(
-                    train_df=train_df,
-                    feature_infos=feature_infos,
-                    direction=direction,
-                )
-                # Configure GPU runtime (log config + warmup JAX kernels) after engine init.
-                if _cfg.PHASE2_USE_GPU:
-                    try:
-                        from gpu_fuzzy_trader._gpu_runtime import (
-                            configure_phase2_gpu_runtime,
-                        )
-                        configure_phase2_gpu_runtime(generator._engine)
-                    except Exception as exc:
-                        logger.warning(
-                            "Phase 2 GPU runtime setup failed (non-fatal): %s", exc,
-                        )
-                pool = generator.run()
-            except Exception as exc:
-                logger.error(
-                    "Phase 2 [%s] failed: %s", direction, exc, exc_info=True
-                )
-                pool = []
+            per_symbol_phase2 = getattr(_cfg, "PER_SYMBOL_PHASE2", False)
 
-            dir_elapsed = time.monotonic() - dir_t0
-            _log_phase_entry(
-                self._log_path, dir_phase_name, dir_start_ts, _now_iso(),
-                dir_elapsed, skipped=False,
-                result_summary={"pool_size": len(pool)},
-            )
-            pools[direction] = pool
+            if per_symbol_phase2:
+                # ── Per‑symbol Phase 2 ──────────────────────────────────────
+                saved_cv = getattr(_cfg, "PHASE2_CV_FILTER_ENABLED", False)
+                per_symbol_pools: list[list[dict]] = []
+                symbols = sorted(train_df["symbol"].unique())
+                min_rows = int(getattr(_cfg, "PER_SYMBOL_MIN_ROWS", 1000))
+                symbols_processed = 0
+
+                try:
+                    if saved_cv:
+                        _cfg.PHASE2_CV_FILTER_ENABLED = False
+                        logger.info(
+                            "%s: purged CV disabled for per‑symbol mode",
+                            dir_phase_name,
+                        )
+
+                    for symbol in symbols:
+                        symbol_df = train_df[train_df["symbol"] == symbol].copy()
+                        n_rows = len(symbol_df)
+                        if n_rows < min_rows:
+                            logger.warning(
+                                "%s: skipping symbol %s — insufficient rows (%d < %d)",
+                                dir_phase_name, symbol, n_rows, min_rows,
+                            )
+                            continue
+
+                        logger.info(
+                            "%s: processing symbol %s (%d rows)",
+                            dir_phase_name, symbol, n_rows,
+                        )
+                        try:
+                            generator = Rule_Pool_Generator(
+                                train_df=symbol_df,
+                                feature_infos=feature_infos,
+                                direction=direction,
+                            )
+                            if _cfg.PHASE2_USE_GPU:
+                                try:
+                                    from gpu_fuzzy_trader._gpu_runtime import (
+                                        configure_phase2_gpu_runtime,
+                                    )
+                                    configure_phase2_gpu_runtime(generator._engine)
+                                except Exception as exc:
+                                    logger.warning(
+                                        "Phase 2 GPU runtime setup failed (non‑fatal): %s",
+                                        exc,
+                                    )
+                            pool = generator.run()
+                        except Exception as exc:
+                            logger.error(
+                                "%s: symbol %s failed: %s",
+                                dir_phase_name, symbol, exc, exc_info=True,
+                            )
+                            continue
+
+                        pool = _tag_pool_with_symbol(pool, symbol)
+
+                        per_symbol_dir = _cfg.PHASE2_PER_SYMBOL_POOL_DIR
+                        os.makedirs(per_symbol_dir, exist_ok=True)
+                        per_symbol_path = os.path.join(
+                            per_symbol_dir,
+                            f"phase2_{direction}_{symbol}_pool.json",
+                        )
+                        with open(per_symbol_path, "w", encoding="utf-8") as fh:
+                            json.dump(pool, fh, indent=2)
+
+                        logger.info(
+                            "%s: symbol %s — generated %d rules",
+                            dir_phase_name, symbol, len(pool),
+                        )
+                        per_symbol_pools.append(pool)
+                        symbols_processed += 1
+
+                finally:
+                    if saved_cv:
+                        _cfg.PHASE2_CV_FILTER_ENABLED = saved_cv
+
+                # Merge all per‑symbol pools and save to the standard path
+                merged_pool = _merge_pools(per_symbol_pools)
+                standard_path = _phase2_module._POOL_PATHS[direction]
+                standard_dir = os.path.dirname(standard_path) or "."
+                os.makedirs(standard_dir, exist_ok=True)
+                with open(standard_path, "w", encoding="utf-8") as fh:
+                    json.dump(merged_pool, fh, indent=2)
+
+                logger.info(
+                    "%s: merged %d rules from %d symbols",
+                    dir_phase_name, len(merged_pool), symbols_processed,
+                )
+
+                dir_elapsed = time.monotonic() - dir_t0
+                _log_phase_entry(
+                    self._log_path, dir_phase_name, dir_start_ts, _now_iso(),
+                    dir_elapsed, skipped=False,
+                    result_summary={"pool_size": len(merged_pool)},
+                )
+                pools[direction] = merged_pool
+
+            else:
+                # ── Original combined‑symbols Phase 2 ───────────────────────
+                logger.info(
+                    "Running %s … (%d features from Phase 1)",
+                    dir_phase_name, len(feature_infos),
+                )
+                try:
+                    generator = Rule_Pool_Generator(
+                        train_df=train_df,
+                        feature_infos=feature_infos,
+                        direction=direction,
+                    )
+                    # Configure GPU runtime (log config + warmup JAX kernels) after engine init.
+                    if _cfg.PHASE2_USE_GPU:
+                        try:
+                            from gpu_fuzzy_trader._gpu_runtime import (
+                                configure_phase2_gpu_runtime,
+                            )
+                            configure_phase2_gpu_runtime(generator._engine)
+                        except Exception as exc:
+                            logger.warning(
+                                "Phase 2 GPU runtime setup failed (non‑fatal): %s", exc,
+                            )
+                    pool = generator.run()
+                except Exception as exc:
+                    logger.error(
+                        "Phase 2 [%s] failed: %s", direction, exc, exc_info=True
+                    )
+                    pool = []
+
+                dir_elapsed = time.monotonic() - dir_t0
+                _log_phase_entry(
+                    self._log_path, dir_phase_name, dir_start_ts, _now_iso(),
+                    dir_elapsed, skipped=False,
+                    result_summary={"pool_size": len(pool)},
+                )
+                pools[direction] = pool
 
         elapsed = time.monotonic() - t0
         _log_phase_entry(
