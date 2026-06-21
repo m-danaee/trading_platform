@@ -1,884 +1,799 @@
-# GPU-Fuzzy Trading Pipeline
+# Hyperparameter Workflow Reference
 
-A ground-up, GPU-accelerated fuzzy rule mining pipeline that discovers, optimizes, and evaluates trading strategies across 10 symbols. The system mines interpretable fuzzy rules from a discretized feature dataset, refines risk parameters via walk-forward Optuna search, and produces two JSON strategy files (`long.json` and `short.json`) compatible with `evaluator_v5.ipynb` (symbol filters + feature conditions).
+End-to-end map of the GPU-Fuzzy Trading Pipeline: every major toggle, both enabled/disabled paths, per-knob effects, and cross-parameter interactions that can break exploration.
 
----
+**Source of truth:** [`gpu_fuzzy_trader/config.py`](../gpu_fuzzy_trader/config.py)  
+**Orchestration:** [`gpu_fuzzy_trader/run_pipeline.py`](../gpu_fuzzy_trader/run_pipeline.py)
 
-## Table of Contents
-
-1. [Project Overview](#1-project-overview)
-2. [Architecture](#2-architecture)
-3. [Dataset](#3-dataset)
-4. [Five-Phase Pipeline](#4-five-phase-pipeline)
-5. [Module Reference](#5-module-reference)
-6. [Configuration](#6-configuration)
-7. [Output Files](#7-output-files)
-8. [Strategy Format](#8-strategy-format)
-9. [Backtest Engine Semantics](#9-backtest-engine-semantics)
-10. [Feature Modes and Fuzzy Encoding](#10-feature-modes-and-fuzzy-encoding)
-11. [Running the Pipeline](#11-running-the-pipeline)
-12. [Testing](#12-testing)
-13. [Design Principles](#13-design-principles)
+**Hard invariant:** `test.csv` is used only in Phase 5. Phases 1–4 tune exclusively on `train.csv` → persisted parquets.
 
 ---
 
-## 1. Project Overview
+## Table of contents
 
-This project is a **rule-mining trading system**, not a conventional predictive model. The core idea is:
-
-- Start with pre-engineered, already-discretized feature columns.
-- Use future labels **only** for scoring and backtesting — never as model inputs.
-- Select stable, direction-specific features per output type.
-- Evolve a large pool of candidate fuzzy rules using GPU-accelerated **NSGA-III** multi-objective search (EvoX).
-- Assemble compact rule teams (default: 2–3 rules; strategy schema supports up to 5) via greedy construction and Pareto refinement.
-- Fine-tune risk parameters (TP, SL, capital allocation) using a deep RL agent.
-- Evaluate the final strategy on a held-out test set.
-
-The strongest design choices are the **symbol-aware chronological split**, **mode-aware feature selection**, **explicit fuzzy rule encoding**, and a **backtest engine that exactly mirrors `evaluator_v5.ipynb`** so optimization scores match final evaluation scores.
-
----
-
-## 2. Architecture
-
-```
-gpu_fuzzy_trader/
-├── config.py                    # Single source of truth for all hyperparameters
-├── run_pipeline.py              # Top-level orchestrator
-├── __main__.py                  # python -m gpu_fuzzy_trader.run_pipeline entry point
-│
-├── data/
-│   ├── loader.py                # Data_Loader: CSV loading, datetime parsing, NaN handling
-│   └── splitter.py              # Data_Splitter: per-symbol chronological 75/25 split
-│
-├── features/
-│   ├── detector.py              # Feature_Detector: mode classification (binary/ternary/etc.)
-│   ├── selector.py              # Feature_Selector: direction-specific scoring and ranking
-│   └── encoder.py               # Encoder: gene → fuzzy value name, condition string formatting
-│
-├── backtest/
-│   ├── cpu_engine.py            # CPUBacktestEngine: exact evaluator_v5.ipynb semantics
-│   └── gpu_engine.py            # GPUBacktestEngine: JAX-accelerated, numerically equivalent
-│
-├── evolution/
-│   └── evox_runner.py           # Phase 2 NSGA-III loop (EvoX ranking + reference vectors)
-│
-├── phases/
-│   ├── phase2_rule_pool.py      # Rule_Pool_Generator: orchestrates Phase 2 evolution
-│   ├── phase3_rule_set.py       # Rule_Set_Selector: greedy + refinement on validation
-│   ├── phase4_wf_optimizer.py   # WalkForwardRiskOptimizer: Optuna walk-forward risk tuning
-│   └── phase5_oos.py            # OOS_Evaluator: final test.csv evaluation
-│
-├── output/
-│   └── writer.py                # Output_Writer: JSON serialization and schema validation
-│
-└── reporting/
-    └── reporter.py              # Reporter: equity curves, per-symbol CSVs, phase metrics
-```
-
-### Data Flow
-
-```
-data/train.csv ──► Data_Loader ──► Data_Splitter ──► train_75.parquet
-                                                  └──► validation_25.parquet
-                                                           │
-                                              Feature_Detector (modes)
-                                                           │
-                                              Feature_Selector (Phase 1)
-                                                           │
-                                         ┌─────────────────┴──────────────────┐
-                                    long features                        short features
-                                         │                                     │
-                                  Rule_Pool_Generator (Phase 2, GPU)           │
-                                         │                                     │
-                                      pools/phase2_long_pool.json      pools/phase2_short_pool.json
-                                         │                                     │
-                                  Rule_Set_Selector (Phase 3, CPU validation)  │
-                                         │                                     │
-                                    long.json                           short.json
-                                         │                                     │
-                                  WalkForwardRiskOptimizer (Phase 4)           │
-                                         │                                     │
-                                    long.json (updated TP/SL/cap)    short.json (updated)
-                                         │                                     │
-                                  OOS_Evaluator (Phase 5, data/test.csv)
-                                         │
-                                  outputs/reports/test_*.json / *.png / *.csv
-```
+1. [Quick-start decision tree](#1-quick-start-decision-tree)
+2. [Master pipeline flow](#2-master-pipeline-flow)
+3. [Phase 0 — Data, split, backtest](#3-phase-0--data-split-backtest)
+4. [Phase 1 — Feature selection](#4-phase-1--feature-selection)
+5. [Phase 2 — Rule evolution](#5-phase-2--rule-evolution)
+6. [Phase 3 + 4 — Selection paths](#6-phase-3--4--selection-paths)
+7. [Monthly validation — three layers](#7-monthly-validation--three-layers)
+8. [Phase 5 — Out-of-sample](#8-phase-5--out-of-sample)
+9. [Critical interaction matrix](#9-critical-interaction-matrix)
+10. [Symptom → knob troubleshooting](#10-symptom--knob-troubleshooting)
+11. [Workflow variant appendix](#11-workflow-variant-appendix)
+12. [Evaluator parity checklist](#12-evaluator-parity-checklist)
 
 ---
 
-## 3. Dataset
+## 1. Quick-start decision tree
 
-### Files
+```mermaid
+flowchart TD
+    Start[Start tuning] --> Split{SPLIT_MODE?}
+    Split -->|holdout_70_30| H70[70/30 per symbol\nval used in fitness + admission]
+    Split -->|purged_walk_forward| Purged[CV folds for fitness\nholdout for admission only]
 
-| File                         | Purpose                                                                                               |
-| ---------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `data/train.csv`             | Training data — used for feature selection, rule pool generation, rule set selection, and RL training |
-| `data/test.csv`              | Held-out test data — used **only** in Phase 5 (out-of-sample evaluation)                              |
-| `data/train_75.parquet`      | Auto-generated: 75% chronological training split per symbol                                           |
-| `data/validation_25.parquet` | Auto-generated: 25% chronological validation split per symbol                                         |
+    H70 --> Island{PHASE2_ISLAND_MODE?}
+    Purged --> Island
 
-### Column Groups
+    Island -->|global| Global[Single NSGA-III on full universe]
+    Island -->|cluster| Cluster[K islands + orphan boost\nscaled trade floors]
 
-**Meta columns** (excluded from all modeling):
+    Global --> Joint{PHASE2_JOINT_TRAIN_VAL?}
+    Cluster --> Joint
 
-- `datetime` — timestamp of the candle
-- `symbol` — one of 10 trading instruments
+    Joint -->|True| AntiOverfit[min train,val objectives\nslower, safer]
+    Joint -->|False| TrainOnly[Train-only fitness\nfast, overfit risk]
 
-**Label columns** (look-ahead values, used only for trade simulation):
+    AntiOverfit --> RB{RB_GOVERNOR_ENABLED?}
+    TrainOnly --> RB
 
-- `label_open_next` — entry price (next candle open)
-- `label_close_288` — close price 288 candles ahead (24 hours at 5-min bars)
-- `label_min_288` — minimum price over the next 288 candles
-- `label_max_288` — maximum price over the next 288 candles
-- `label_max_before_min` — 1 if the max was reached before the min (used for TP/SL tie-breaking)
+    RB -->|True default| Gov[RB Governor:\nfilter + compose + risk grid + profit amp]
+    RB -->|False| Legacy[Phase 3 greedy + Phase 4 WF grid]
 
-**Feature columns** — hundreds of pre-engineered, discretized indicators (momentum, volatility, mean-reversion, trend, etc.). Values are integers representing discrete fuzzy states, not raw floats.
+    Gov --> P5[Phase 5: test.csv OOS]
+    Legacy --> P5
+```
 
-### Important: Last-288-Row Drop
+**First three knobs to set before anything else:**
 
-The last 288 rows per symbol have no valid labels (the look-ahead window extends beyond the dataset). These rows are **always dropped** before any processing in both train and test data.
-
-### Prediction Horizon
-
-The `_288` suffix means a 24-hour look-ahead window: 288 bars × 5 minutes = 1,440 minutes. This captures daily price cycles and significant intraday trends.
+| Order | Knob | Why |
+|-------|------|-----|
+| 1 | `SPLIT_MODE` | Changes train/val geometry, CV folds, trade-floor scaling, Phase 4 WF |
+| 2 | `PHASE2_ISLAND_MODE` | Changes generation budget, trade floors, early-stop, migration |
+| 3 | `RB_GOVERNOR_ENABLED` | Switches entire Phase 3+4 implementation |
 
 ---
 
-## 4. Five-Phase Pipeline
+## 2. Master pipeline flow
 
-### Phase 1 — Direction-Specific Feature Selection
+```mermaid
+flowchart TD
+    subgraph phase0 [Phase0_Data]
+        Load[Data_Loader train.csv]
+        Split[Data_Splitter SPLIT_MODE]
+        Parquet[train_70.parquet + validation_30.parquet]
+        Load --> Split --> Parquet
+    end
 
-**Module:** `gpu_fuzzy_trader/features/selector.py` → `Feature_Selector`
+    subgraph phase1 [Phase1_Features]
+        FS[Feature_Selector on train only]
+        Prune[Prune splits to selected features]
+        Parquet --> FS --> Prune
+    end
 
-Produces two independent feature lists (long and short) from the training split. The selection is mode-aware and symbol-aware.
+    subgraph phase2 [Phase2_Evolution]
+        Branch{PHASE2_ISLAND_MODE}
+        Global[Rule_Pool_Generator global NSGA-III]
+        Cluster[run_cluster_phase2 K islands + orphans]
+        Branch -->|global| Global
+        Branch -->|cluster| Cluster
+        Pool[phase2_long/short_pool.json]
+        Global --> Pool
+        Cluster --> Pool
+    end
 
-**Algorithm:**
+    Prune --> Branch
 
-1. Exclude all label and meta columns.
-2. Detect each feature's fuzzy mode from its value distribution (training split only).
-3. Remove near-zero dispersion features (>95% identical values).
-4. Build a direction-specific binary success target:
-   - **Long:** `label_max_288 ≥ entry × (1 + TP%)` before `label_min_288 ≤ entry × (1 − SL%)`
-   - **Short:** `label_min_288 ≤ entry × (1 − TP%)` before `label_max_288 ≥ entry × (1 + SL%)`
-5. Score each feature per symbol using mutual information.
-6. Compute cross-symbol stability = `1 − (std / mean)` of per-symbol scores.
-7. Final score = `relevance × stability`.
-8. Within-mode redundancy removal (pairwise correlation > 0.95 → drop lower-scored).
-9. Select top `PHASE1_TOP_K_FEATURES` (default: 25) per direction.
+    subgraph phase34 [Phase3_4_Selection]
+        Empty{Pool empty?}
+        RB{RB_GOVERNOR_ENABLED}
+        P3[Rule_Set_Selector greedy]
+        P4[WalkForwardRiskOptimizer grid]
+        Gov[rb_governor pipeline]
+        Pool --> Empty
+        Empty -->|yes| Skip34[Skip Phases 3-4]
+        Empty -->|no| RB
+        RB -->|True| Gov
+        RB -->|False| P3 --> P4
+    end
 
-**Outputs:**
+    subgraph phase5 [Phase5_OOS]
+        OOS[OOS_Evaluator on test.csv only]
+        Gov --> OOS
+        P4 --> OOS
+        Skip34 --> OOS
+    end
+```
 
-- `outputs/selected_features_long.json`
-- `outputs/selected_features_short.json`
+**Execution order** (`Pipeline_Orchestrator.run`):
 
-**Skip logic:** The `skip_if_valid()` helper can validate these files for programmatic use, but the default CLI full run forces Phase 1 to rerun.
+1. Load `train.csv` → split → cache parquets (+ CV manifest if purged)
+2. Phase 1 on train; prune feature columns from train/val/CV folds
+3. Phase 2 long + short pools (global or cluster islands)
+4. If pool empty → skip 3+4; else RB Governor **or** legacy Phase 3 → Phase 4
+5. Phase 5 on `test.csv` (always)
 
 ---
 
-### Phase 2 — GPU-Accelerated Rule Pool Generation
+## 3. Phase 0 — Data, split, backtest
 
-**Modules:**
+### 3.1 `SPLIT_MODE` — biggest workflow fork
 
-- `gpu_fuzzy_trader/phases/phase2_rule_pool.py` → `Rule_Pool_Generator` (orchestration, persistence, reporting)
-- `gpu_fuzzy_trader/evolution/evox_runner.py` → `run_phase2_evolution` (NSGA-III evolutionary loop)
+| Mode | Train block | Validation block | CV folds | Phase 2 fitness val | Pool admission val |
+|------|-------------|------------------|----------|---------------------|-------------------|
+| **`holdout_70_30`** (default) | First 70% per symbol | Last 30% per symbol | `None` | `validation_30` if joint val on | Same holdout |
+| **`purged_walk_forward`** | Prefix minus holdout + embargo-purged CV trains | Tail `PURGED_WF_HOLDOUT_FRACTION` (25%) | K CV + holdout fold | **CV folds aggregated** if joint val on | **Holdout only** |
 
-Evolves a large, diverse pool of candidate fuzzy rules using **NSGA-III** (Non-dominated Sorting Genetic Algorithm III). Each generation:
+**Purged-mode fitness switch** (`phase2_rule_pool.py`):
 
-1. Evaluates the population with `GPUBacktestEngine` (JAX) when available, else `CPUBacktestEngine`.
-2. Builds offspring via rank/crowding tournament mating, crossover, and mutation on integer chromosomes.
-3. Merges parents + offspring and applies **NSGA-III environmental selection** (EvoX non-dominated ranking + reference-vector niche filling on the last front).
+- `holdout_70_30` + `PHASE2_JOINT_TRAIN_VAL=True` → fitness uses the 30% holdout.
+- `purged_walk_forward` + `PHASE2_JOINT_TRAIN_VAL=True` → fitness uses CV fold aggregate (`worst` or `mean`); holdout never enters fitness.
+- `PHASE2_JOINT_TRAIN_VAL=False` → train-only fitness in **both** modes; holdout checked only at pool admission.
 
-**Requires `evox`** (and `torch`) for the NSGA-III survivor step. If EvoX is not installed, Phase 2 logs a warning and falls back to a built-in **NumPy NSGA-II** loop (history records `"NSGA-II (fallback)"`).
+#### Purged-only parameters (ignored when `SPLIT_MODE=holdout_70_30`)
 
-**Chromosome encoding:**
+| Parameter | Default | Higher / enabled | Lower / disabled |
+|-----------|---------|------------------|------------------|
+| `PURGED_WF_N_SPLITS` | 3 | More CV folds; smaller valid blocks | Fewer folds |
+| `PURGED_WF_HOLDOUT_FRACTION` | 0.25 | Larger holdout (less CV prefix) | More CV data |
+| `PURGED_WF_EMBARGO_CANDLES` | 288 | Wider purge gap; less train per fold | Leakage risk if &lt; label horizon |
+| `PURGED_WF_MIN_TRAIN_FRACTION` | 0.25 | More history required before first CV | Too high → no folds → **fallback to holdout_70_30** |
+| `PURGED_WF_MIN_VALID_ROWS` | 3000 | Stricter fold sizes; fewer folds | More/smaller folds |
+| `PURGED_WF_AGGREGATION` | `worst` | Stricter fitness (`mean` = looser) | N/A (enum) |
+| `PURGED_WF_REQUIRE_ALL_CV_FOLDS` | False | Pool gate also checks every CV fold | Holdout-only admission |
+| `PURGED_WF_SCALE_TRADE_FLOORS` | True | Floors scale with slice size | Full global floors on thin slices |
+| `PURGED_WF_MIN_TRADE_FLOOR_ABSOLUTE` | 5 | Higher minimum after scaling | Lower floor on tiny slices |
 
-```
-chromosome = [gene_0, gene_1, ..., gene_{K-1}]
-gene_i ∈ {0, ..., num_classes_i − 1, dont_care_i}
-dont_care_i = num_classes_i  (inactive condition)
-```
+**Cache trap:** After changing `SPLIT_MODE` or purged knobs, delete `data/train_70.parquet`, `data/validation_30.parquet`, and `data/cv_folds_manifest.json`.
 
-**Three objectives (all minimized):**
+### 3.2 Global randomness & paths
 
-- `f1 = −sortino_ratio`
-- `f2 = max_drawdown_pct`
-- `f3 = −win_rate`
+| Parameter | Effect |
+|-----------|--------|
+| `GLOBAL_SEED` | `None` = random per process; `int` = fully reproducible |
+| `DATA_ROOT`, `TRAIN_CSV_PATH`, `TEST_CSV_PATH` | Data locations (env overrides) |
+| `OUTPUTS_DIR`, `REPORTS_DIR` | Run artifacts; rewritten per `--output` |
+| `PHASE2_ARCHIVE_DIR` | Cross-run warm-start (not cleared by `--output`) |
 
-**Penalties applied to all objectives:**
+### 3.3 Schema & labels
 
-- **Support penalty** — if `executed_trades < MIN_TRADE_SUPPORT` (default: 200)
-- **Diversity penalty** — Hamming distance to nearest Pareto-front member
-- **Condition count penalty** — if active conditions outside `[MIN_CONDITIONS, MAX_CONDITIONS]` (default: 3–4)
+| Parameter | Effect |
+|-----------|--------|
+| `LABEL_COLUMNS`, `META_COLUMNS`, `INTERNAL_COLUMNS` | Never enter feature matrices |
+| `TAIL_DROP_ROWS` | Bars dropped per symbol tail; **must equal** `MAX_HOLD_CANDLES` |
 
-**Static risk parameters during Phase 2** (isolates predictive alpha from risk tuning):
+### 3.4 Backtest simulation (all phases — must match `evaluator_v5.ipynb`)
 
-- TP = 4.0%, SL = 2.0%, capital_pct = 50.0%
+| Parameter | Default | Higher → | Lower → |
+|-----------|---------|----------|---------|
+| `INITIAL_CAPITAL` | 1000 | Absolute PnL scales | — |
+| `LEVERAGE` | 1.0 | Larger gains/losses per trade | More conservative |
+| `FEE_PCT` | 0.20 | Penalizes turnover | Optimistic backtest |
+| `MAX_HOLD_CANDLES` | 288 | Longer holds; must match `TAIL_DROP_ROWS` | Quicker time exits |
+| `MAX_TOTAL_EXPOSURE_PCT` | 100.0 | More concurrent exposure | Thinner overlap cap |
+| `MIN_POSITION_NOTIONAL` | 1.0 | Filters dust trades | More micro-trades |
 
-**Outputs:**
+### 3.5 Logging
 
-- `outputs/phase2_long_pool.json` / `outputs/phase2_short_pool.json` (per-run, overwritten)
-- `outputs/phase2_long_history.json` / `outputs/phase2_short_history.json`
-- `phase2_rule_archive/phase2_long_archive.json` / `phase2_rule_archive/phase2_short_archive.json` (persistent)
-- `outputs/reports/phase2_long_metrics.png` / `outputs/reports/phase2_short_metrics.png`
+| Parameter | Effect |
+|-----------|--------|
+| `LOG_GENERATION_INTERVAL` | `0` = auto (~10% of gens); `N>0` = log every N generations |
 
-**Skip logic:** The `skip_if_valid()` helper can validate the pool files for programmatic use, but the default CLI full run forces Phase 2 to rerun. The root-level archive is persistent across output directories; compatible archived rules still seed part of the next Phase 2 population before the rest is initialized randomly.
+### 3.6 `DEBUG_SYMBOL_SCOPE_ENABLED`
 
----
-
-### Phase 3 — Rule Set Selection
-
-**Module:** `gpu_fuzzy_trader/phases/phase3_rule_set.py` → `Rule_Set_Selector`
-
-Selects the best ordered combination of rules from the Phase 2 pool using greedy construction followed by short Pareto refinement. By default, the search uses 2–3 rules (`PHASE3_MIN_RULES`–`PHASE3_MAX_RULES`), while the output schema remains compatible with 2–5 rules. Evaluated on the **validation split** using `CPUBacktestEngine`.
-
-**Search space:** All ordered combinations of `PHASE3_MIN_RULES`–`PHASE3_MAX_RULES` rules from the pool, with no duplicate rules (order-independent condition set equality).
-
-**Three objectives (all minimized):**
-
-- `f1 = −validation_sortino_ratio`
-- `f2 = validation_max_drawdown_pct`
-- `f3 = −validation_win_rate`
-
-**Penalties:**
-
-- **Coverage penalty** — if `symbols_with_trades < PHASE3_MIN_SYMBOL_COVERAGE` (default: 7 of 10)
-- **Zero-trade penalty** — if no trades executed at all
-- **Overfitting penalty** — `|train_return − val_return| / max(|train_return|, 1.0)`
-- **Duplicate rule penalty** — if any two rules share identical condition sets
-
-**Outputs:**
-
-- `outputs/long.json` / `outputs/short.json` (Phase 2 static TP/SL/capital_pct at this stage)
-- `outputs/reports/train_long_equity.png` / `outputs/reports/validation_long_equity.png`
-- `outputs/reports/train_per_symbol_performance.csv` / `outputs/reports/validation_per_symbol_performance.csv`
-
-**Skip logic:** The `skip_if_valid()` helper can validate these files for programmatic use, but the default CLI full run forces Phase 3 to rerun. The `--phase 3` command expects the Phase 2 pool files to already exist.
+| False (default) | True |
+|-----------------|------|
+| Full symbol universe | Only `DEBUG_SYMBOL_COUNT` symbols from `DEBUG_SYMBOL` |
+| Global trade/return floors | `effective_min_profitable_symbols()`, `effective_phase3_*()` scale down |
 
 ---
 
-### Phase 4 — Walk-Forward Risk Optimization
+## 4. Phase 1 — Feature selection
 
-**Module:** `gpu_fuzzy_trader/phases/phase4_wf_optimizer.py` → `WalkForwardRiskOptimizer`
+Runs on **train split only** (no validation labels for ranking).
 
-Fine-tunes TP, SL, and `capital_pct` for each rule using **Optuna multi-objective search** (NSGA-II by default) on **K walk-forward validation windows**. Rule conditions stay frozen from Phase 3.
+| Parameter | Default | True / higher | False / lower |
+|-----------|---------|---------------|---------------|
+| `PHASE1_DISPERSION_THRESHOLD` | 0.95 | Keep near-constant columns | Aggressive pruning |
+| `PHASE1_TOP_K_FEATURES` | 25 | Wider Phase 2 gene space | Faster, may miss signals |
+| `PHASE1_MAX_FEATURE_OVERLAP` | 0.8 | More shared long/short features | More asymmetric lists |
+| `PHASE1_ASYMMETRIC_TARGET` | True | Separate MI targets per direction | Shared target |
+| `PHASE1_REQUIRE_SIGN_CONSISTENCY` | True | Drop sign-flipping features | Keep unstable features |
+| `PHASE1_SIGN_CONSISTENCY_MIN_FOLDS` | 2 | Stricter sign agreement | Looser |
+| `PHASE1_SIGN_CONSISTENCY_MIN_ABS_CORR` | 0.02 | Only strong correlations must be stable | Stricter |
+| `PHASE1_STATIONARITY_FOLDS` | 2 | More robust stationarity check | Faster, looser |
+| `PHASE1_STATIONARITY_CV_MAX` | 1.0 | Allow rank instability | Drop swinging features |
+| `PHASE1_STATIONARITY_RANK_DRIFT_MAX` | 8 | Tolerate rank jumps | Only stable top ranks |
+| `PHASE1_STATIONARITY_STRATIFY` | `chronological` | `regime` = cluster by trend/vol | Time chunks only |
 
-**Search space (quantized, from `config.py`):**
+### Phase 1 → Phase 2 bridge (GPU budget)
 
-- TP: [2.0%, 4.0%] step 0.2
-- SL: [1.0%, 2.0%] step 0.2
-- capital_pct: [10.0%, 50.0%] step 5.0
-
-**Objective:** maximize worst-case Sortino and minimize worst-case max drawdown across windows (with overallocation penalty).
-
-**Selection:** Pareto front → filter by max drawdown → pick highest worst-case Sortino → hard-cap normalize capital.
-
-**Outputs:**
-
-- `outputs/long.json` / `outputs/short.json` (updated with optimized TP/SL/capital_pct, `risk_optimized: true`)
-- `outputs/reports/phase4_long_pareto.png` / `outputs/reports/phase4_short_pareto.png`
-
-**Skip logic:** The `skip_if_valid()` helper can validate these files for programmatic use, but the default CLI full run forces Phase 4 to rerun. The `--phase 4` command expects the Phase 3 strategy files to already exist.
-
----
-
-### Phase 5 — Out-of-Sample Evaluation
-
-**Module:** `gpu_fuzzy_trader/phases/phase5_oos.py` → `OOS_Evaluator`
-
-Loads the final strategies and evaluates them on the held-out `data/test.csv`. This is the only phase that should be treated as out-of-sample truth.
-
-**Data preparation** (identical to training pipeline):
-
-1. Load `data/test.csv`
-2. Sort by (symbol, datetime)
-3. Drop last 288 rows per symbol
-4. Drop NaN label rows
-5. Fill feature NaN with 0
-6. Compute `_symbol_bar_index`
-
-**Metrics reported:**
-
-- Total return %, max drawdown %, win rate %, profit factor
-- Executed trades, account status (survived / ruined)
-- Per-symbol: trade count, win rate, net PnL
-
-**Zero-trade handling:** Reports 0% total return; does NOT report account ruin unless equity actually reached zero.
-
-**Outputs:**
-
-- `outputs/reports/test_long_report.json` / `outputs/reports/test_short_report.json`
-- `outputs/reports/test_per_symbol_performance.csv`
-- `outputs/reports/test_long_equity.png` / `outputs/reports/test_short_equity.png`
+| Parameter | Default | Effect |
+|-----------|---------|--------|
+| `PHASE1_SAMPLING_TOTAL` | 701_000 | Max rows for Phase 2 GPU backtests; **largest VRAM lever** |
+| `PHASE2_GPU_BATCH_SIZE` | 198 | Chromosomes per JAX chunk when auto off |
+| `PHASE2_GPU_BATCH_SIZE_AUTO` | True | Cap batch by VRAM/RAM tiers |
+| `PHASE2_SCAN_UNROLL` | 32 | Higher = fewer launches, more compile/VRAM |
+| `PHASE2_EVAL_BATCH_DEDUP` | True | Skip duplicate chromosomes per batch |
+| `PHASE2_EVAL_GLOBAL_CACHE` | True | Run-wide chromosome → metrics cache |
+| `PHASE2_SKIP_ZERO_SIGNAL_SCAN` | True | Skip equity scan when 0 matches |
+| `PHASE2_SKIP_INFEASIBLE_SIGNAL_SCAN` | True | Skip scan when below trade floor |
+| `PHASE2_GPU_USE_FP32` | True | ~2× faster; tiny numeric drift |
+| `PHASE2_GPU_DATA_INT8` | True | Lower VRAM for feature tensor |
 
 ---
 
-## 5. Module Reference
+## 5. Phase 2 — Rule evolution
 
-### `gpu_fuzzy_trader/config.py`
+### 5.1 `PHASE2_ISLAND_MODE`
 
-Single source of truth. No module may define its own defaults that override these values. All paths, constants, and behavioral settings live here. See [Configuration](#6-configuration) for the full parameter table.
+| `global` (default) | `cluster` |
+|--------------------|-----------|
+| One `Rule_Pool_Generator` on full train/val | K=`PHASE2_N_CLUSTERS` symbol clusters + orphan boost |
+| `PHASE2_GENERATIONS` × full pop | Budget: `PHASE2_ISLAND_TOTAL_GENERATIONS` across epochs of `PHASE2_ISLAND_EPOCH_GENERATIONS` |
+| Global trade floors | `PHASE2_ISLAND_SCALE_TRADE_FLOORS` scales per island |
+| `PHASE2_TWO_STAGE_ENABLED` respected | Default off: `PHASE2_ISLAND_TWO_STAGE_ENABLED=False` |
+| Global early/plateau stop | Default off: `PHASE2_ISLAND_*_EARLY_STOP_ENABLED=False` |
+| Symbol robustness penalty on | **Skipped** on islands |
+| No migration | Elite migration every `PHASE2_MIGRATION_EPOCH_INTERVAL` epochs |
 
-### `gpu_fuzzy_trader/data/loader.py` — `Data_Loader`
+#### Island / cluster parameters
 
-Stateless CSV loader with a 7-step preparation pipeline:
+| Parameter | Default | Effect |
+|-----------|---------|--------|
+| `PHASE2_N_CLUSTERS` | 3 | Number of hybrid symbol clusters |
+| `PHASE2_ISLAND_TOTAL_GENERATIONS` | = `PHASE2_GENERATIONS` | Total gen budget across islands |
+| `PHASE2_ISLAND_EPOCH_GENERATIONS` | 25 | Gens per epoch before migration |
+| `PHASE2_ISLAND_TWO_STAGE_ENABLED` | False | Two-stage in cluster mode |
+| `PHASE2_ISLAND_SCALE_TRADE_FLOORS` | True | Scale support floors to island rows |
+| `PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN` | 10 | Floor after island scaling |
+| `PHASE2_ISLAND_MONTHLY_MIN_MONTHS` | 4 | Monthly gate min windows on islands |
+| `PHASE2_MIGRATION_EPOCH_INTERVAL` | 2 | Epochs between elite exchange |
+| `PHASE2_MIGRATION_TOP_K` | 5 | Elites migrated per island |
+| `PHASE2_MIGRATION_REQUIRE_DEPLOYABILITY` | True | Only deployable elites migrate |
+| `PHASE2_MIGRATION_MIN_VAL_RETURN_PCT` | 0.0 | Migration val return floor |
+| `PHASE2_MIGRATION_MIN_VAL_TRADES` | None | Optional migration trade floor |
 
-1. Read CSV (comma-separated)
-2. Parse `datetime` column
-3. Sort by `(symbol, datetime)`
-4. Drop last `TAIL_DROP_ROWS` (288) rows per symbol
-5. Drop rows where any label column is NaN
-6. Fill NaN in feature columns with 0
-7. Compute `_symbol_bar_index` via `groupby("symbol").cumcount()`
+#### Orphan boost (`PHASE2_ORPHAN_ENABLED=True`)
 
-### `gpu_fuzzy_trader/data/splitter.py` — `Data_Splitter`
+| Parameter | Default | Effect |
+|-----------|---------|--------|
+| `PHASE2_ORPHAN_ENABLED` | True | Short run for symbols outside clusters |
+| `PHASE2_ORPHAN_GENERATIONS` | 18 | Orphan evolution budget |
+| `PHASE2_ORPHAN_POPULATION_SIZE` | 100 | Orphan pop size |
+| `PHASE2_ORPHAN_MIN_TRADE_SUPPORT` | 8 | Relaxed support target |
+| `PHASE2_ORPHAN_MIN_TRADE_POOL_FLOOR` | 8 | Relaxed pool floor |
+| `PHASE2_ORPHAN_SORTINO_MIN_TRADE_THRESHOLD` | 8 | Relaxed Sortino threshold |
+| `PHASE2_ORPHAN_MIN_VAL_TRADES` | 6 | Relaxed val trades |
+| `PHASE2_ORPHAN_MIN_VAL_RETURN_PCT` | 0.0 | Relaxed val return |
+| `PHASE2_ORPHAN_MONTHLY_MIN_PROFITABLE_RATIO` | 0.4 | Relaxed monthly ratio |
 
-Per-symbol chronological 75/25 split. Uses `floor(N × 0.75)` for the split point. Persists to `data/train_75.parquet` and `data/validation_25.parquet`.
+### 5.2 Fixed risk during rule search
 
-### `gpu_fuzzy_trader/features/detector.py` — `Feature_Detector`
+| Parameter | Default | Effect |
+|-----------|---------|--------|
+| `PHASE2_TP` | 2.0 | TP % for Phase 2 scoring (Phase 4/RB retune) |
+| `PHASE2_SL` | 1.0 | SL % during search |
+| `PHASE2_CAPITAL_PCT` | 48.0 | Per-rule capital % during search |
 
-Classifies each feature column into one of six modes using the exact logic from `evaluator_v5.ipynb`. `zero_ratio` is computed on the full series including zeros.
+### 5.3 Rule genome
 
-### `gpu_fuzzy_trader/features/encoder.py` — `Encoder`
+| Parameter | Default | Effect |
+|-----------|---------|--------|
+| `MIN_CONDITIONS` | 3 | Higher → stricter, fewer matches |
+| `MAX_CONDITIONS` | 5 | Higher → allow complex rules |
+| `PHASE2_ENCODING` | `sparse_slots` | `dense` = legacy layout |
 
-Maps integer gene values to fuzzy value names and formats condition strings. Defines don't-care sentinels per mode. Raises `ConfigurationError` if a gene equals the don't-care sentinel.
+### 5.4 `PHASE2_JOINT_TRAIN_VAL` + objectives
 
-### `gpu_fuzzy_trader/features/selector.py` — `Feature_Selector`
+| Setting | f1 Sortino | f3 return | Exploration |
+|---------|------------|-----------|-------------|
+| `JOINT=True`, `ROBUST_RETURN=True` | min(train, val) | min(train, val) return | Slowest; anti-overfit |
+| `JOINT=False` | train only | train return | Fast; overfit risk |
+| + purged WF | val = CV aggregate | same | Holdout unseen during search |
 
-Direction-specific feature scoring. Produces `selected_features_long.json` and `selected_features_short.json`. Includes `skip_if_valid()` and `load_and_validate()` static methods.
+| Parameter | Default | Effect |
+|-----------|---------|--------|
+| `PHASE2_JOINT_TRAIN_VAL` | True | Joint train/val fitness |
+| `PHASE2_USE_TOTAL_RETURN_OBJ` | True | f3 = return (not win rate) |
+| `PHASE2_USE_ROBUST_RETURN_OBJ` | True | f3 = min(train, val) return |
+| `SORTINO_CAP` | 10.0 | Max saturated Sortino on f1 |
+| `SORTINO_SCALE` | 5.0 | Tanh compression divisor |
+| `PHASE2_RECENCY_WEIGHT_ENABLED` | True | Up-weight recent train bars in return |
+| `PHASE2_RECENCY_WEIGHT_FRACTION` | 0.25 | Tail fraction boosted |
+| `PHASE2_RECENCY_WEIGHT_MULTIPLIER` | 2.0 | Boost multiplier on recency fraction |
 
-### `gpu_fuzzy_trader/backtest/cpu_engine.py` — `CPUBacktestEngine`
+### 5.5 Trade support & pool admission (stacked gates)
 
-The canonical reference implementation. Exactly mirrors `evaluator_v5.ipynb`'s `CapitalManagedTradeSimulator`. All other engines must produce numerically equivalent results. Supports `return_logs=True` for detailed trade log DataFrames.
+**Layers (sequential — any failure drops the rule):**
 
-### `gpu_fuzzy_trader/backtest/gpu_engine.py` — `GPUBacktestEngine`
+1. Evolution feasibility (`PHASE2_RETURN_FLOOR_PCT`, PF, DD gate)
+2. `passes_pool_trade_floor` (`MIN_TRADE_POOL_FLOOR`, scaled)
+3. `passes_pool_admission_gate` (train/val returns, gap, PF)
+4. `PHASE2_STRICT_POSITIVE_GOOD` → `gate_positive_good`
+5. `PHASE2_MONTHLY_ADMISSION_ENABLED` → monthly ratio on train
+6. `PHASE2_KEEP_TOP_RULES` cap
 
-JAX-accelerated backtest engine used during Phase 2 (and optionally Phase 3 when `PHASE3_USE_GPU=True`). Produces results within 1e-4 relative tolerance of `CPUBacktestEngine`. Falls back to CPU transparently when no GPU is available. Raises `ImportError` if JAX cannot be imported.
+| Parameter | Default | Higher → | Lower → |
+|-----------|---------|----------|---------|
+| `MIN_TRADE_SUPPORT` | 150 | Stronger support penalty | Thin-sample rules survive |
+| `SUPPORT_PENALTY_MAX` | 0.0 | Stronger quadratic penalty | **0 = no support penalty on objectives** |
+| `MIN_TRADE_POOL_FLOOR` | 38 | Hard reject rare rules | Sparse rules in pool |
+| `PHASE2_SUPPORT_PENALTY_WEIGHT_F1/F2/F3` | 0.8/0.6/0.5 | Per-objective support scale | — |
+| `PHASE2_SORTINO_MIN_TRADE_THRESHOLD` | 50 | Sortino scaled down below this | — |
+| `PHASE2_RETURN_FLOOR_PCT` | 0 | Stricter train feasibility | More exploration |
+| `PHASE2_VAL_RETURN_FLOOR_PCT` | 0.5 | Stricter val feasibility | — |
+| `PHASE2_PROFIT_FACTOR_FLOOR` | 1.05 | Fewer feasible rules | — |
+| `PHASE2_SYMBOL_MEDIAN_RETURN_FLOOR_PCT` | -0.5 | Stricter cross-symbol median | — |
+| `PHASE2_MIN_PROFITABLE_SYMBOLS` | 4 | Broad cross-symbol edge required | Niche specialists OK |
+| `PHASE2_MAX_DRAWDOWN_GATE` | 25.0 | Stricter DD on objectives | Aggressive rules stay |
+| `PHASE2_POOL_REQUIRE_POSITIVE_SPLITS` | True | Infeasible if negative train/val | — |
+| `PHASE2_POOL_TRAIN_RETURN_MIN_PCT` | 0.0 | Pool train return floor | — |
+| `PHASE2_POOL_VAL_RETURN_MIN_PCT` | 0.0 | Pool val return floor | — |
+| `PHASE2_MAX_TRAIN_VAL_GAP_PCT` | 8.0 | Stricter train>>val rejection | — |
+| `PHASE2_KEEP_TOP_RULES` | 120 | Larger downstream pool | Smaller, faster |
+| `PHASE2_REQUIRE_LAST_FOLD_POSITIVE` | False | Reject val_return ≤ 0 at admission | — |
+| `PHASE2_STRICT_POSITIVE_GOOD` | True | Pool must pass positive-good gate | Legacy pool floors only |
 
-### `gpu_fuzzy_trader/evolution/evox_runner.py` — `run_phase2_evolution`
+### 5.6 `PHASE2_MONTHLY_ADMISSION_ENABLED`
 
-Phase 2 multi-objective evolutionary search. Implements NSGA-III with EvoX reference vectors and niche-based truncation on the critical front. Shared helpers in the same module cover offspring generation (tournament mating on Pareto rank/crowding), integer chromosome repair, and NSGA-II environmental selection used only when EvoX is missing.
+| False (default) | True |
+|-----------------|------|
+| No extra gate | Rule must pass `PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO` on train months |
+| | Skipped if &lt; `PHASE2_MONTHLY_ADMISSION_MIN_MONTHS` windows |
 
-### `gpu_fuzzy_trader/phases/phase2_rule_pool.py` — `Rule_Pool_Generator`
+| Parameter | Default | Effect |
+|-----------|---------|--------|
+| `PHASE2_MONTHLY_GOOD_RETURN_MIN_PCT` | 0.0 | Min return % for a month to count "good" |
+| `PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO` | 0.5 | Fraction of good months required |
+| `PHASE2_MONTHLY_ADMISSION_MIN_MONTHS` | 4 | Min windows before gate applies |
 
-Loads Phase 1 features, runs `run_phase2_evolution` separately for long and short directions, and writes pool/history JSON plus generation metric plots.
+### 5.7 Diversity, early stop, two-stage
 
-### `gpu_fuzzy_trader/output/writer.py` — `Output_Writer`
+#### `PHASE2_TWO_STAGE_ENABLED` (global only unless `PHASE2_ISLAND_TWO_STAGE_ENABLED`)
 
-Serializes rule sets to JSON with full schema enforcement. Truncates to 5 rules if > 5 (logs WARNING). Rejects rules with all-zero TP/SL/capital_pct (logs ERROR, raises `ValidationError`). Validates condition string format.
+| False (default) | True |
+|-----------------|------|
+| Single run `PHASE2_GENERATIONS` | Stage A exploration → Stage B refinement |
+| | Requires `island_profile=global`, full pop & gen match defaults |
 
-### `gpu_fuzzy_trader/reporting/reporter.py` — `Reporter`
+| Parameter | Default | Effect |
+|-----------|---------|--------|
+| `PHASE2_STAGE_A_GENERATIONS` | 85 | Stage A budget |
+| `PHASE2_STAGE_B_GENERATIONS` | 45 | Stage B budget |
+| `PHASE2_STAGE_B_SEED_TOP_K` | 50 | Elites seeded into Stage B |
+| `PHASE2_STAGE_B_SEED_FRACTION` | 0.30 | Fraction of Stage B pop from elites |
+| `PHASE2_STAGE_A_*` / `PHASE2_STAGE_B_*` | — | Per-stage mutation, diversity, plateau, floors |
+| `PHASE2_STAGE_A_SOFT_FEASIBILITY` | True | Soft penalties in Stage A only |
+| `PHASE2_STAGE_A_MIN_TRADE_SUPPORT` | 30 | Looser support in Stage A |
 
-Generates all visual and tabular reports. Uses matplotlib with the `Agg` backend (non-interactive). All methods accept an `output_dir` override for testability.
+#### Early stop / plateau / recovery
 
-### `gpu_fuzzy_trader/run_pipeline.py` — `Pipeline_Orchestrator`
+| Parameter | Default | When enabled | Exploration risk |
+|-----------|---------|--------------|------------------|
+| `PHASE2_EARLY_STOP_ENABLED` | True | Stop on poor mean/median return after gen 40 | Ends before recovery |
+| `PHASE2_PLATEAU_EARLY_STOP_ENABLED` | True | Stop if no robust return improvement | Interacts with `PHASE2_PLATEAU_USE_ROBUST_RETURN` |
+| `PHASE2_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO` | True | Block plateau stop while deployable=0 | — |
+| `PHASE2_DIVERSITY_RECOVERY_ENABLED` | True | Inject random when unique ratio low | Counteracts early stop |
+| `PHASE2_VIABILITY_RECOVERY_ENABLED` | True | Archive seeds when valid rules collapse | — |
 
-Top-level orchestrator. Runs all five phases in order, or a single requested phase, with forced full rebuilds on the default CLI path and structured JSON-lines logging to `outputs/pipeline.log`.
+Island mode uses `island_early_stop_enabled()` / `island_plateau_early_stop_enabled()`.
+
+#### Diversity & feasibility
+
+| Parameter | Default | Effect |
+|-----------|---------|--------|
+| `PHASE2_DIVERSITY_HAMMING_THRESHOLD` | 3 | Min genetic distance for uniqueness |
+| `PHASE2_DIVERSITY_PENALTY` | 8.0 | Crowding penalty on objectives |
+| `PHASE2_PHENOTYPE_*_STEP` | — | Behavioral diversity bucket widths |
+| `PHASE2_FEASIBILITY_VIOLATION_WEIGHT` | 25.0 | Soft floor violation scale |
+| `PHASE2_INFEASIBLE_OBJECTIVE_PENALTY` | 100.0 | Flat infeasible penalty |
+| `PHASE2_DEPLOYABLE_ARCHIVE_MAX_SIZE` | 100 | Cross-run deployable elite cap |
+
+### 5.8 NSGA-III search budget
+
+| Parameter | Default | Higher → | Lower → |
+|-----------|---------|----------|---------|
+| `PHASE2_POPULATION_SIZE` | 200 | Better Pareto coverage; linear GPU cost | Faster gens; convergence risk |
+| `PHASE2_GENERATIONS` | 150 | More search budget | Faster; under-explore |
+| `PHASE2_ARCHIVE_MAX_SIZE` | 200 | Richer elite memory | Leaner archive |
+| `PHASE2_ARCHIVE_SEED_FRACTION` | 0.25 | More warm-start; less fresh exploration | More random init |
+| `PHASE2_SEED` | `get_seed()` | Process seed for evolution | — |
+| `PHASE2_ALGORITHM` | `NSGA3` | — | — |
+
+### 5.9 Engine, init, mutation
+
+| Parameter | Default | Effect |
+|-----------|---------|--------|
+| `PHASE2_USE_GPU` | True | JAX GPU backtests |
+| `PHASE2_NUMBA_ENABLED` | True | Numba NSGA helpers |
+| `PHASE2_INIT_STRATEGY` | `stratified_sparse` | Initial population layout |
+| `PHASE2_INIT_STRATUM_FRACTIONS` | (0.67, 0.33) | Explore vs exploit mix |
+| `PHASE2_INIT_SOFTMAX_TEMP` | 1.5 | Feature pick temperature |
+| `PHASE2_INIT_UNIFORM_MIX` | 0.05 | Random vs MI-guided init |
+| `PHASE2_MUTATION_RATE` | 0.22 | Per-gene mutation probability |
+| `PHASE2_MUTATION_WEIGHTED_ACTIVATE_PROB` | 0.45 | Bias toward activating genes |
+| `PHASE2_GPU_ENRICH_SYMBOL_METRICS` | True | CPU per-symbol metrics after GPU batch |
 
 ---
 
-## 6. Configuration
+## 6. Phase 3 + 4 — Selection paths
 
-All hyperparameters live in [`gpu_fuzzy_trader/config.py`](gpu_fuzzy_trader/config.py). Edit that file to tune the pipeline — no runtime flags are used.
+### 6.1 `RB_GOVERNOR_ENABLED=True` (default)
 
-**Detailed reference:** For per-phase explanations, default values, and how each knob affects out-of-sample performance, generalization, and compute cost, see **[docs/hyperparameters/](docs/hyperparameters/README.md)** (one guide per pipeline phase, written for data scientists).
+Skips legacy Phase 3 and Phase 4; runs `rb_governor.py`:
 
-Quick index:
+1. `_filter_good_rules` — positive-good gate (`RB_MIN_*`)
+2. `_compose_ruleset` — greedy team (`RB_MAX_RULES`, overlap, subset-beat or lenient-add)
+3. `_optimize_risk` — grid on `RB_TP_GRID` / `RB_SL_GRID` / `RB_CAPITAL_GRID`
+4. Optional `RB_PROFIT_AMPLIFIER_ENABLED` — swap rules + capital realloc + monthly certificate
 
-| Doc | Covers |
-|-----|--------|
-| [Phase 0 — Shared](docs/hyperparameters/phase0_shared.md) | Paths, schema, backtest constants |
-| [Phase 1](docs/hyperparameters/phase1_feature_selection.md) | `PHASE1_*` feature selection |
-| [Phase 2](docs/hyperparameters/phase2_rule_pool.md) | Rule pool evolution, support penalties, archive |
-| [Phase 3](docs/hyperparameters/phase3_rule_set.md) | Rule set selection, validation gates |
-| [Phase 4](docs/hyperparameters/phase4_wf_risk.md) | Walk-forward risk optimization |
-| [Phase 5](docs/hyperparameters/phase5_oos.md) | OOS evaluation and metric interpretation |
+#### RB scoring / gating
 
----
+| Parameter | Default | Effect |
+|-----------|---------|--------|
+| `RB_MIN_TRAIN_RETURN` / `RB_MIN_VALID_RETURN` | 2.0 | Score penalty below these |
+| `RB_MIN_TRAIN_PF` / `RB_MIN_VALID_PF` | 1.00 | PF floors |
+| `RB_MIN_TRAIN_TRADES` / `RB_MIN_VALID_TRADES` | 10 / 6 | Per-rule trade floors |
+| `RB_RULESET_MIN_TRAIN_TRADES` / `RB_RULESET_MIN_VALID_TRADES` | 20 / 12 | Team-level trade floors |
+| `RB_MAX_POOL_RULES_TO_EVALUATE` | 200 | Cap on pool rules filtered |
+| `RB_KEEP_TOP_RULES` | 80 | Candidates after ranking |
+| `RB_MAX_RULES` | 20 | Hard team size cap |
 
-## 7. Output Files
+#### RB team composition
 
-```
-outputs/
-├── pipeline.log                          # JSON-lines phase timing log
-├── selected_features_long.json           # Phase 1: selected features for long direction
-├── selected_features_short.json          # Phase 1: selected features for short direction
-├── phase2_long_pool.json                 # Phase 2: Pareto-front rule pool (long) — per-run
-├── phase2_short_pool.json                # Phase 2: Pareto-front rule pool (short) — per-run
-├── phase2_long_history.json              # Phase 2: per-generation metrics (long)
-├── phase2_short_history.json             # Phase 2: per-generation metrics (short)
-├── long.json                             # Phase 3/4: final long strategy
-├── short.json                            # Phase 3/4: final short strategy
-└── reports/
-    ├── phase2_long_metrics.png           # Phase 2: objectives vs. generation (long)
-    ├── phase2_short_metrics.png          # Phase 2: objectives vs. generation (short)
-    ├── train_long_equity.png             # Phase 3: equity curve on training split (long)
-    ├── train_short_equity.png            # Phase 3: equity curve on training split (short)
-    ├── validation_long_equity.png        # Phase 3: equity curve on validation split (long)
-    ├── validation_short_equity.png       # Phase 3: equity curve on validation split (short)
-    ├── train_per_symbol_performance.csv  # Phase 3: per-symbol metrics on training split
-    ├── validation_per_symbol_performance.csv  # Phase 3: per-symbol metrics on validation
-    ├── phase4_long_pareto.png            # Phase 4: Pareto frontier (long)
-    ├── phase4_short_pareto.png           # Phase 4: Pareto frontier (short)
-    ├── test_long_report.json             # Phase 5: OOS metrics (long)
-    ├── test_short_report.json            # Phase 5: OOS metrics (short)
-    ├── test_per_symbol_performance.csv   # Phase 5: per-symbol OOS metrics
-    ├── test_long_equity.png              # Phase 5: equity curve on test set (long)
-    └── test_short_equity.png             # Phase 5: equity curve on test set (short)
+| Parameter | Default | Effect |
+|-----------|---------|--------|
+| `RB_MAX_PAIR_OVERLAP` | 0.30 | Max Hamming overlap between rules |
+| `RB_RULESET_MUST_BEAT_SUBSETS` | True | Team must beat parent subset |
+| `RB_MIN_SCORE_IMPROVEMENT` | 0.03 | Min score delta to add rule |
+| `RB_MIN_TRAIN_RETURN_IMPROVEMENT` / `RB_MIN_VALID_RETURN_IMPROVEMENT` | 0.005 | Min return uplift to add |
+| `RB_RETURN_DD_FLOOR` | 0.50 | DD floor in return/DD ratio |
+| `RB_TRADE_PENALTY` | 0.70 | Penalty below trade floors |
+| `RB_TRAIN_VALID_RATIO_GAP_WEIGHT` / `RB_TRAIN_VALID_RETURN_GAP_WEIGHT` | 6.0 / 0.25 | Overfit gap penalties |
 
-phase2_rule_archive/                      # Persistent across runs (project root)
-├── phase2_long_archive.json              # Phase 2: persistent best-rule archive (long)
-└── phase2_short_archive.json             # Phase 2: persistent best-rule archive (short)
-```
+#### RB lenient-add mode (current defaults)
 
----
+| Parameter | Default | Effect |
+|-----------|---------|--------|
+| `RB_RULE_ADD_BY_RETURN_ONLY` | True | Add on combined-return uplift |
+| `RB_RULE_ADD_IGNORE_OVERLAP` | True | Skip overlap checks |
+| `RB_RULE_ADD_IGNORE_SUBSET_BEAT` | True | Skip subset-beat checks |
+| `RB_MIN_COMBINED_RETURN_IMPROVEMENT` | 0.05 | Min combined return uplift |
 
-## 8. Strategy Format
+#### RB train-valid shape prior
 
-The final output files (`long.json` and `short.json`) are fully compatible with `evaluator_v5.ipynb`:
+| Parameter | Default | Effect |
+|-----------|---------|--------|
+| `RB_REQUIRE_TRAIN_SLIGHTLY_ABOVE_VALID` | True | Bonus/penalty for healthy train>val shape |
+| `RB_TRAIN_VALID_MIN_RATIO` / `MAX_RATIO` | 1.03 / 1.35 | Acceptable train/val ratio band |
+| `RB_TRAIN_VALID_MIN_ABS_GAP` / `MAX_ABS_GAP` | 0.20 / 12.0 | Absolute gap band |
+| `RB_TRAIN_BELOW_VALID_PENALTY` | 900.0 | Penalty when train &lt; val |
+| `RB_TRAIN_TOO_HIGH_PENALTY` | 220.0 | Penalty when train >> val |
+| `RB_TRAIN_VALID_SHAPE_BONUS` | 160.0 | Bonus in healthy band |
 
-```json
-{
-  "direction": "long",
-  "rules_set": [
-    {
-      "tp": 2.5,
-      "sl": 1.2,
-      "capital_pct": 15.0,
-      "conditions": [
-        "[dmi_balance_14] IS Bearish",
-        "[vol_ratio_20_100] IS Very Low"
-      ]
-    },
-    {
-      "tp": 3.1,
-      "sl": 1.8,
-      "capital_pct": 12.0,
-      "conditions": [
-        "[amihud_illiquidity_20] IS Very High",
-        "[macd_hist_atr] IS Extreme Bearish",
-        "[return_skew_30] IS Strong Bearish"
-      ]
-    }
-  ]
-}
-```
+#### RB default risk & grid
 
-**Schema constraints:**
+| Parameter | Default | Effect |
+|-----------|---------|--------|
+| `RB_DEFAULT_TP` / `SL` / `CAPITAL_PCT` | 2.0 / 1.2 / 12.5 | Initial embedded risk |
+| `RB_TP_GRID` / `RB_SL_GRID` / `RB_CAPITAL_GRID` | tuples | Risk search space |
+| `RB_RISK_OPT_PASSES` | 2 | Round-robin passes |
+| `RB_RISK_MIN_IMPROVEMENT` | 0.02 | Min score delta to accept combo |
+| `RB_MAX_TOTAL_CAPITAL` | 95.0 | Hard cap on sum capital_pct |
 
-- `direction`: `"long"` or `"short"` (lowercase)
-- `rules_set`: array of 2–5 rule objects
-- Each rule: exactly `"tp"`, `"sl"`, `"capital_pct"`, `"conditions"`
-- `tp`, `sl`: floats representing percentages (e.g., `2.5` = 2.5%)
-- `capital_pct`: float representing % of equity to allocate (e.g., `50.0` = 50%)
-- `conditions`: non-empty array of `"[feature_name] IS Fuzzy Value Name"` strings
-- At least one of `tp`, `sl`, `capital_pct` must be non-zero per rule
+#### RB symbol specialization
 
----
+| Parameter | Default | Effect |
+|-----------|---------|--------|
+| `RB_REQUIRE_SYMBOL_FILTERS` | True | Every rule needs `symbol is X` |
+| `RB_SYMBOL_USE_COMBINATIONS` | False | Multi-symbol variants |
+| `RB_SYMBOL_MAX_SYMBOLS_PER_RULE` | 1 | Max symbols per rule |
+| `RB_SYMBOL_TOP_SINGLE_SYMBOLS` | 5 | Seeds for combos |
+| `RB_SYMBOL_MAX_VARIANTS_PER_RULE` | 10 | Variants scored per rule |
+| `RB_SYMBOL_MIN_TRAIN_TRADES` / `MIN_VALID_TRADES` | 10 / 4 | Variant trade floors |
+| `RB_SYMBOL_STRICT_OUTPUT_CHECK` | True | Validate output rules |
 
-## 9. Backtest Engine Semantics
+#### RB evaluator health (mirrors Phase 3)
 
-The `CPUBacktestEngine` exactly mirrors `evaluator_v5.ipynb`'s `CapitalManagedTradeSimulator`. This alignment is critical — optimization scores during Phases 2 and 3 must match the final evaluation scores.
+| Parameter | Default | Effect |
+|-----------|---------|--------|
+| `RB_MAX_SKIPPED_SIGNAL_RATIO` | 0.20 | Max skip ratio |
+| `RB_MIN_EXECUTED_RAW_RATIO` | 0.60 | Min executed/raw |
+| `RB_SKIPPED_RATIO_PENALTY` / `RB_EXECUTED_RATIO_PENALTY` | 3500 / 2500 | Penalty weights |
+| `RB_MAX_SIMULTANEOUS_POSITIONS` | 10 | Max concurrent positions |
+| `RB_MAX_POSITIONS_PENALTY` | 120.0 | Excess position penalty |
 
-### Priority-Based Rule Assignment
+#### RB profit amplifier
 
-For each candle, the first rule in the ordered rule set whose conditions all match is assigned. Subsequent rules are skipped for that candle. This prevents duplicate entries on the same symbol/time.
+| Parameter | Default | Effect |
+|-----------|---------|--------|
+| `RB_PROFIT_AMPLIFIER_ENABLED` | True | Post-risk refinement pass |
+| `RB_PROFIT_AMP_MAX_CANDIDATES` | 60 | Candidate pool size |
+| `RB_PROFIT_AMP_MAX_RULES` | 5 | Max rules in amp stage |
+| `RB_PROFIT_AMP_MIN_OBJECTIVE_IMPROVEMENT` | 0.05 | Min objective delta |
+| `RB_PROFIT_AMP_*_WEIGHT` | — | Valid/train/balance/DD/health weights |
+| `RB_PROFIT_AMP_MONTHLY_ENABLED` | True | Monthly certificate in amp |
+| `RB_PROFIT_AMP_CAPITAL_REALLOCATION_ENABLED` | True | Capital grid after swaps |
 
-### Trade Outcome Logic
+#### RB global bank (default off)
 
-**Long direction:**
+| Parameter | Default | Effect |
+|-----------|---------|--------|
+| `RB_GLOBAL_BANK_ENABLED` | False | Cross-run rule bank |
+| `RB_GLOBAL_COMPOSE_AFTER_EACH_RUN` | False | Compose global team after run |
+| `RB_GLOBAL_*` | — | Bank dirs, grids, caps |
 
-- TP hit: `label_max_288 ≥ entry × (1 + tp/100)`
-- SL hit: `label_min_288 ≤ entry × (1 − sl/100)`
-- Both hit: `label_max_before_min == 1` → TP first; else SL first
-- Neither hit: time exit at `label_close_288`
+### 6.2 `RB_GOVERNOR_ENABLED=False` — legacy Phase 3 + 4
 
-**Short direction:**
+#### Phase 3 — `Rule_Set_Selector`
 
-- TP hit: `label_min_288 ≤ entry × (1 − tp/100)`
-- SL hit: `label_max_288 ≥ entry × (1 + sl/100)`
-- Both hit: `label_max_before_min == 1` → SL first; else TP first
-- Neither hit: time exit at `−close_ret`
+| Parameter | Default | Effect |
+|-----------|---------|--------|
+| `PHASE3_PER_SYMBOL_MAX_RULES` | 2 | Max rules per symbol |
+| `PHASE3_GLOBAL_MIN_RULES` / `MAX_RULES` | 2 / 20 | Team size bounds |
+| `PHASE3_PER_SYMBOL_GREEDY_TOP_K` | 25 | Pool rules tested per greedy round |
+| `PHASE3_PER_SYMBOL_MIN_TRADES` | 8 | Min val trades on symbol (debug-scaled) |
+| `PHASE3_PER_SYMBOL_MIN_RETURN` | 0.5 | Min val return % on symbol |
+| `PHASE3_DIAGNOSTIC_REPORT_ENABLED` | True | Write per-symbol diagnostic CSV |
+| `PHASE3_MAX_CAPITAL_PCT_PER_RULE` | 50.0 | Per-rule capital cap |
+| `PHASE3_MAX_TRAIN_VAL_GAP_PCT` | 12.0 | Overfit gap hard reject |
+| `PHASE3_USE_GPU` | False (True on Colab) | GPU team evaluation |
+| `PHASE3_BATCH_WORKERS` | min(32, cpu) | Parallel workers |
+| `PHASE3_VAL_RETURN_FLOOR_PCT` | 5.0 | Team fallback return floor |
 
-### Capital Management
+#### Phase 3 positive-good gate
 
-```
-position_notional = min(
-    equity × (capital_pct / 100) × leverage,
-    max(0, equity × MAX_TOTAL_EXPOSURE_PCT/100 × leverage − open_total_exposure)
-)
-```
+| Parameter | Default | True | False |
+|-----------|---------|------|-------|
+| `PHASE3_REQUIRE_POSITIVE_GOOD` | True | `gate_positive_good` in greedy | Legacy scoring |
+| `PHASE3_MIN_TRAIN_RETURN` / `MIN_VAL_RETURN` | 0.0 | Higher = stricter | — |
+| `PHASE3_MIN_TRAIN_PF` / `MIN_VAL_PF` | 1.0 | Higher = stricter PF | — |
+| `PHASE3_MIN_TRAIN_TRADES` / `MIN_VAL_TRADES` | 25 / 15 | Higher = stricter (purged-scaled) | — |
+| `PHASE3_GATE_EXECUTION_HEALTH` | True | Also require `execution_ok()` | Skip exec gate |
+| `PHASE3_EVAL_HEALTH_WEIGHT` | 1.0 | Full health penalty in scoring | 0 = off |
 
-Trades are skipped if `position_notional < MIN_POSITION_NOTIONAL` (1.0).
+#### Symbol specialization (Phase 3)
 
-### Exposure Reservation
+| Parameter | Default | Effect |
+|-----------|---------|--------|
+| `SYMBOL_SPECIALIZATION_USE_COMBINATIONS` | True | 2-/3-symbol variants |
+| `SYMBOL_SPECIALIZATION_MAX_SYMBOLS_PER_RULE` | 1 | Max symbols per rule |
+| `SYMBOL_SPECIALIZATION_TOP_SINGLE_SYMBOLS` | 5 | Seeds for combos |
+| `SYMBOL_SPECIALIZATION_MAX_VARIANTS_PER_RULE` | 10 | Variants scored |
+| `SYMBOL_SPECIALIZATION_MIN_TRAIN_TRADES` / `MIN_VAL_TRADES` | 10 / 6 | Variant gate floors |
 
-Each open trade reserves exposure until `entry_symbol_bar_index + MAX_HOLD_CANDLES`. PnL is realized at the conservative release point, not at entry. This prevents using future PnL to size new trades.
+#### Phase 4 — `WalkForwardRiskOptimizer`
 
-### Fee Deduction
+**Walk-forward on validation only.** `effective_phase4_wf_splits()`:
 
-```
-fee = position_notional × FEE_PCT / 100
-net_pnl = gross_pnl − fee
-```
+| `SPLIT_MODE` | Effective `PHASE4_WF_SPLITS` |
+|--------------|------------------------------|
+| `holdout_70_30` | `PHASE4_WF_SPLITS` (default 2) + optional tail holdout |
+| `purged_walk_forward` | **Forced to 1** — avoids triple WF stacking |
 
-### Account Ruin
+| Parameter | Default | Effect |
+|-----------|---------|--------|
+| `PHASE4_WF_SPLITS` | 2 | WF windows on validation (ignored count when purged) |
+| `PHASE4_INCLUDE_TAIL_HOLDOUT` | True | Reserve tail fraction as extra window |
+| `PHASE4_TAIL_HOLDOUT_FRACTION` | 0.25 | Tail holdout size |
+| `PHASE4_WORST_RETURN_WEIGHT` / `WORST_DRAWDOWN_WEIGHT` / `WORST_TURNOVER_WEIGHT` | 1.5 / 2.0 / 0.5 | Worst-fold objective weights |
+| `PHASE4_MAX_WORST_DRAWDOWN_PCT` | 15.0 | Feasibility DD cap |
+| `PHASE4_MIN_WORST_TRADES` | 20 | Min trades in worst window (purged-scaled) |
+| `PHASE4_MIN_WORST_FOLD_RETURN_PCT` | -2.0 | Worst-window return floor |
+| `PHASE4_MIN_WORST_FOLD_PF` | 1.0 | Worst-window PF floor |
+| `PHASE4_HARD_CAP_NORMALIZE` | True | Scale capital to `MAX_TOTAL_EXPOSURE_PCT` |
+| `PHASE4_GRID_TP_VALUES` / `SL_VALUES` / `CAPITAL_VALUES` | tuples | Deterministic grid |
+| `PHASE4_GRID_PASSES` | 2 | Round-robin passes |
+| `PHASE4_GRID_MIN_IMPROVEMENT` | 0.005 | Min score delta to accept |
+| `PHASE4_GRID_MAX_TOTAL_CAPITAL` | 95.0 | Skip combos above cap |
+| `PHASE4_MAX_VAL_TRAIN_GAP_PCT` | 12.0 | Reject val>>train overfit |
+| `PHASE4_USE_ROBUST_SCORE` | True | Score on min(train, val) return |
+| `PHASE4_OPTIMIZE_PER_RULE_SYMBOL` | True | Tune per rule's symbol slice |
 
-Simulation stops and marks the account as ruined when `equity ≤ 0`.
+#### Evaluator health (shared Phase 3/4)
 
-### Performance Metrics
-
-| Metric         | Formula                                                           |
-| -------------- | ----------------------------------------------------------------- |
-| Total Return % | `(final_equity / INITIAL_CAPITAL − 1) × 100`                      |
-| Win Rate       | `wins / executed_trades × 100`                                    |
-| Profit Factor  | `gross_profit_sum / gross_loss_sum` (99.0 if no losses with wins) |
-| Max Drawdown % | `max((peak_equity − equity) / peak_equity × 100)`                 |
-
----
-
-## 10. Feature Modes and Fuzzy Encoding
-
-Feature columns are not treated as continuous values. Each column is classified into one of six discrete modes, and values are mapped to human-readable fuzzy labels.
-
-### Mode Detection
-
-```python
-def detect_feature_mode(series):
-    unique_vals = series.dropna().unique()
-    n_unique = len(unique_vals)
-
-    if n_unique <= 2 and set(unique_vals).issubset({0, 1}):
-        return "binary"
-    if n_unique <= 3 and set(unique_vals).issubset({-1, 0, 1}):
-        return "ternary"
-
-    zero_ratio = (series == 0).mean()  # computed on full series including zeros
-
-    if series.min() < 0:
-        return "sparse_signed" if zero_ratio > 0.3 else "signed"
-    return "sparse_positive" if zero_ratio > 0.3 else "positive"
-```
-
-### Fuzzy Value Name Mappings
-
-| Mode                           | Gene → Fuzzy Value Name                                                                                                                                                                                        |
-| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `binary`                       | 0 → "Inactive (0)", 1 → "Active (1)"                                                                                                                                                                           |
-| `ternary`                      | 0 → "Negative (-1)", 1 → "Neutral (0)", 2 → "Positive (1)"                                                                                                                                                     |
-| `positive` / `sparse_positive` | 0 → "Very Low", 1 → "Low", 2 → "Medium", 3 → "High", 4 → "Very High"                                                                                                                                           |
-| `sparse_signed`                | 0 → "Strong Negative", 1 → "Weak Negative", 2 → "Exactly Zero", 3 → "Weak Positive", 4 → "Strong Positive"                                                                                                     |
-| `signed`                       | 0 → "Extreme Bearish", 1 → "Strong Bearish", 2 → "Bearish", 3 → "Weak Bearish", 4 → "Neutral Negative", 5 → "Neutral Positive", 6 → "Weak Bullish", 7 → "Bullish", 8 → "Strong Bullish", 9 → "Extreme Bullish" |
-
-### Don't-Care Sentinels
-
-| Mode                                           | num_classes | dont_care |
-| ---------------------------------------------- | ----------- | --------- |
-| `binary`                                       | 2           | 2         |
-| `ternary`                                      | 3           | 3         |
-| `positive`, `sparse_positive`, `sparse_signed` | 5           | 5         |
-| `signed`                                       | 10          | 10        |
-
-A gene equal to `dont_care` means that condition is inactive (the feature is not part of the rule). This allows the evolutionary algorithm to discover rules with varying numbers of active conditions.
-
-### Condition String Format
-
-All conditions follow the exact format recognized by `evaluator_v5.ipynb`'s `apply_dynamic_rule`:
-
-```
-[feature_name] IS Fuzzy Value Name
-```
-
-Examples:
-
-- `[amihud_illiquidity_20] IS Very High`
-- `[rsi_centered_14] IS Weak Bullish`
-- `[mom_tl_break_bull_30] IS Active (1)`
+| Parameter | Default | Effect |
+|-----------|---------|--------|
+| `EVAL_HEALTH_MAX_SKIPPED_RATIO` | 0.20 | Max skipped/raw before penalty |
+| `EVAL_HEALTH_MIN_EXECUTED_RATIO` | 0.60 | Min executed/raw |
+| `EVAL_HEALTH_SKIPPED_WEIGHT` / `EXECUTED_WEIGHT` | 3500 / 2500 | Penalty multipliers |
+| `EVAL_HEALTH_MAX_SIMULTANEOUS_POSITIONS` | 10 | Max concurrent positions |
+| `EVAL_HEALTH_MAX_POSITIONS_WEIGHT` | 120.0 | Excess position penalty |
 
 ---
 
-## 11. Running the Pipeline
+## 7. Monthly validation — three layers
 
-### Full Pipeline
+| Layer | Toggle | Where applied |
+|-------|--------|---------------|
+| Phase 2 admission | `PHASE2_MONTHLY_ADMISSION_ENABLED` | **Hard** gate on train months |
+| Phase 3/4 scoring | `MONTHLY_VALIDATION_ENABLED` | **Soft** penalty via `monthly_penalty()` |
+| RB profit amp | `RB_PROFIT_AMPLIFIER_ENABLED` + `RB_PROFIT_AMP_MONTHLY_*` | Certificate after risk opt |
 
-```bash
-python -m gpu_fuzzy_trader.run_pipeline
-```
+### Shared monthly knobs
 
-This runs all five phases in order and forces a fresh rebuild into `outputs/` by default. Pass `--output DIR` to write into another directory. The CLI does not skip a phase just because cached outputs already exist. Use `--phase 1` through `--phase 5` to run a single phase after its prerequisite files already exist.
+| Parameter | Default | Effect |
+|-----------|---------|--------|
+| `MONTHLY_VALIDATION_ENABLED` | True | Toggle Phase 3/4 monthly penalty |
+| `MONTHLY_WINDOW_DAYS` | 30 | Rolling window size |
+| `MONTHLY_WINDOW_MIN_ROWS` | 2500 | Skip thin windows |
+| `MONTHLY_WINDOW_MAX_WINDOWS` | 24 | Cap windows evaluated |
+| `MONTHLY_RECENCY_WEIGHT` | 2.2 | Up-weight recent windows |
+| `MONTHLY_MIN_TRADES` | 20 | Min trades per window (purged-scaled) |
+| `MONTHLY_GOOD_RETURN_MIN_PCT` | 0.5 | Min return for "good" month |
+| `MONTHLY_MIN_PROFITABLE_RATIO` | 0.60 | Target profitable fraction |
+| `MONTHLY_WORST_RETURN_FLOOR` / `WORST_PF_FLOOR` / `MAX_DD` | -1.5 / 0.85 / 8.0 | Penalty floors |
+| `MONTHLY_*_WEIGHT` | — | Penalty term weights |
+| `PHASE3_MONTHLY_PENALTY_WEIGHT` / `SCALE` / `FALLBACK` | 1.0 / 7.0 / 5.0 | Phase 3 penalty scaling |
+| `PHASE4_MONTHLY_SCORE_WEIGHT` / `SCALE` / `FALLBACK` | 0.70 / 10.0 / 5.0 | Phase 4 penalty scaling |
+| `PHASE4_MONTHLY_EVAL_EVERY_TRIAL` | True | Monthly on every grid trial |
 
-### Programmatic Usage
-
-```python
-from gpu_fuzzy_trader.run_pipeline import Pipeline_Orchestrator
-
-orchestrator = Pipeline_Orchestrator()
-results = orchestrator.run(force=True)
-
-# results keys: "data", "phase1", "phase2", "phase3", "phase4", "phase5"
-print(results["phase5"])  # OOS metrics
-```
-
-### Running Individual Phases
-
-CLI phase runs:
-
-```bash
-python -m gpu_fuzzy_trader.run_pipeline --phase 1
-python -m gpu_fuzzy_trader.run_pipeline --phase 2
-python -m gpu_fuzzy_trader.run_pipeline --phase 3
-python -m gpu_fuzzy_trader.run_pipeline --phase 4
-python -m gpu_fuzzy_trader.run_pipeline --phase 5
-```
-
-Each phase command expects its prerequisite outputs to already be present on disk. The CLI will not auto-run earlier phases for you.
-
-```python
-from gpu_fuzzy_trader.data.loader import Data_Loader
-from gpu_fuzzy_trader.data.splitter import Data_Splitter
-from gpu_fuzzy_trader.features.selector import Feature_Selector
-from gpu_fuzzy_trader.phases.phase2_rule_pool import Rule_Pool_Generator
-from gpu_fuzzy_trader.phases.phase3_rule_set import Rule_Set_Selector
-from gpu_fuzzy_trader.phases.phase4_wf_optimizer import WalkForwardRiskOptimizer
-from gpu_fuzzy_trader.phases.phase5_oos import OOS_Evaluator
-
-# Load and split data
-loader = Data_Loader()
-train_full = loader.load_dataset("data/train.csv")
-
-splitter = Data_Splitter()
-train_df, val_df = splitter.split_and_persist(train_full)
-
-# Phase 1: Feature selection
-selector = Feature_Selector()
-features = selector.run(train_df)
-# features = {"long": [...], "short": [...]}
-
-# Phase 2: Rule pool generation (long direction)
-generator = Rule_Pool_Generator(
-    train_df=train_df,
-    feature_infos=features["long"],
-    direction="long",
-)
-pool = generator.run()
-
-# Phase 3: Rule set selection
-rule_selector = Rule_Set_Selector(
-    train_df=train_df,
-    val_df=val_df,
-    pool=pool,
-    direction="long",
-)
-rule_set = rule_selector.run()
-
-# Phase 4: Walk-forward risk optimization
-optimizer = WalkForwardRiskOptimizer(
-    val_df=val_df,
-    rule_set=rule_set,
-    direction="long",
-)
-optimized = optimizer.train()
-
-# Phase 5: Out-of-sample evaluation
-evaluator = OOS_Evaluator()
-oos_results = evaluator.run()
-```
-
-### Skip Logic
-
-The `skip_if_valid()` helpers still exist for validation and programmatic use, but the default CLI run now forces a rebuild:
-
-```python
-# Check if Phase 1 can be skipped
-existing = Feature_Selector.skip_if_valid()
-if existing:
-    print("Phase 1 skipped — using existing outputs")
-
-# Check if Phase 2 pool exists
-pool = Rule_Pool_Generator.skip_if_valid("long")
-
-# Check if Phase 3 rule sets exist
-rule_sets = Rule_Set_Selector.skip_if_valid()
-
-# Check if Phase 4 outputs are within valid risk bounds
-optimized = WalkForwardRiskOptimizer.skip_if_valid("long")
-```
-
-### Pipeline Log
-
-Each run appends structured JSON lines to `outputs/pipeline.log`:
-
-```json
-{"phase": "Phase 1: Feature Selection", "start_time": "...", "end_time": "...", "elapsed_seconds": 12.4, "skipped": false, "result_summary": {"long_features": 25, "short_features": 25}}
-{"phase": "Phase 2: Rule Pool Generation [long]", "start_time": "...", "end_time": "...", "elapsed_seconds": 847.2, "skipped": false, "result_summary": {"pool_size": 43}}
-```
+**Risk:** All three layers enabled with strict ratios → rules pass Phase 2 but fail RB/Phase 3/4.
 
 ---
 
-## 12. Testing
+## 8. Phase 5 — Out-of-sample
 
-The project has comprehensive test coverage: **713 tests passing** (56 skipped — GPU-only tests that correctly skip without JAX/GPU hardware).
+Always runs on `test.csv` only.
 
-### Test Structure
+| Parameter | Default | Effect |
+|-----------|---------|--------|
+| `PHASE5_VALIDATION_RETURN_GATE_PCT` | 2.0 | Min val return for deployable flag |
+| `PHASE5_VALIDATION_PROFIT_FACTOR_GATE` | 1.05 | Min val PF for deployable flag |
+| `PHASE5_REMOVE_NEGATIVE_PNL_RULES` | True | Strip losing rules after OOS |
 
-```
-tests/
-├── unit/                          # Unit tests for each module
-│   ├── test_data_loader.py
-│   ├── test_data_splitter.py
-│   ├── test_feature_detector.py
-│   ├── test_encoder.py
-│   ├── test_feature_selector.py
-│   ├── test_cpu_engine.py
-│   ├── test_gpu_engine.py         # Skipped without JAX
-│   ├── test_phase2_rule_pool.py
-│   ├── test_phase3_rule_set.py
-│   ├── test_output_writer.py
-│   ├── test_phase4_wf_optimizer.py
-│   ├── test_phase5_oos.py
-│   ├── test_reporter.py
-│   └── test_run_pipeline.py
-│
-└── property/                      # Hypothesis property-based tests
-    ├── test_data_loader_properties.py      # Properties 1–4
-    ├── test_data_splitter_properties.py    # Property 5
-    ├── test_feature_detector_properties.py # Properties 6–7
-    ├── test_encoder_properties.py          # Properties 8–9
-    ├── test_cpu_engine_properties.py       # Properties 10–15, 28
-    ├── test_gpu_engine_properties.py       # Property 16 (skipped without JAX)
-    ├── test_feature_selector_properties.py # Properties 17–18
-    ├── test_phase2_rule_pool_properties.py # Properties 19–20
-    ├── test_phase3_rule_set_properties.py  # Properties 21–22, 29
-    ├── test_output_writer_properties.py    # Property 23
-    ├── test_phase4_wf_optimizer_properties.py   # Quantized search grid
-    └── test_phase5_oos_properties.py       # Property 27
-```
-
-### Running Tests
-
-```bash
-# Run all tests
-pytest tests/ --hypothesis-seed=42
-
-# Run only unit tests
-pytest tests/unit/
-
-# Run only property-based tests
-pytest tests/property/ --hypothesis-seed=42
-
-# Run with verbose output
-pytest tests/ --hypothesis-seed=42 -v
-
-# Run a specific test file
-pytest tests/unit/test_cpu_engine.py -v
-```
-
-### Property-Based Tests
-
-The property tests use [Hypothesis](https://hypothesis.readthedocs.io/) to verify universal correctness properties:
-
-| Property | Description                                | Validates     |
-| -------- | ------------------------------------------ | ------------- |
-| 1        | Per-symbol chronological sort              | Req 2.2       |
-| 2        | Last-288-row drop                          | Req 2.3       |
-| 3        | No NaN labels after loading                | Req 2.4       |
-| 4        | No NaN features after loading              | Req 2.5       |
-| 5        | Per-symbol split ratio and no overlap      | Req 2.6, 2.7  |
-| 6        | Feature mode classification completeness   | Req 3.1       |
-| 7        | Feature mode classification correctness    | Req 3.2       |
-| 8        | Fuzzy value name encoding round-trip       | Req 4.1, 4.2  |
-| 9        | Don't-care sentinel correctness            | Req 4.3       |
-| 10       | Priority-based rule assignment exclusivity | Req 5.1       |
-| 11       | Trade outcome correctness                  | Req 5.2       |
-| 12       | Capital-managed position sizing            | Req 5.4, 5.9  |
-| 13       | Exposure reservation invariant             | Req 5.5       |
-| 14       | Fee deduction correctness                  | Req 5.6       |
-| 15       | Equity tracking consistency                | Req 5.7       |
-| 16       | GPU-CPU numerical parity                   | Req 6.1       |
-| 17       | Label and meta column exclusion            | Req 7.2       |
-| 18       | Low-dispersion feature exclusion           | Req 7.5       |
-| 19       | Phase 2 static risk parameters             | Req 8.4       |
-| 20       | Rule condition count bounds                | Req 8.6       |
-| 21       | Rule set size bounds                       | Req 9.1, 12.8 |
-| 22       | Rule set uniqueness                        | Req 9.4       |
-| 23       | JSON output schema validity                | Req 12.1–12.9 |
-| 24       | RL action bounds                           | Req 10.3      |
-| 25       | RL state vector completeness               | Req 10.2      |
-| 26       | Elbow method correctness                   | Req 10.5      |
-| 27       | Test data preparation consistency          | Req 11.2      |
-| 28       | Per-symbol metrics consistency             | Req 15.1      |
-| 29       | Symbol coverage penalty application        | Req 9.5, 15.4 |
+No workflow branching — Phase 5 surfaces mis-tuning from earlier stacked gates.
 
 ---
 
-## 13. Design Principles
+## 9. Critical interaction matrix
 
-### Single Source of Truth
+```mermaid
+flowchart LR
+    subgraph strict [StrictStack]
+        Purged[purged_walk_forward CV worst]
+        Joint[PHASE2_JOINT_TRAIN_VAL]
+        TradeHigh[MIN_TRADE_SUPPORT 150]
+        PosGood[PHASE2_STRICT_POSITIVE_GOOD]
+        MonthlyP2[PHASE2_MONTHLY_ADMISSION]
+        MonthlyP34[MONTHLY_VALIDATION]
+        EarlyStop[PLATEAU_EARLY_STOP]
+    end
+    Purged --> Joint
+    Joint --> TradeHigh
+    TradeHigh --> PosGood
+    PosGood --> MonthlyP2
+    MonthlyP2 --> MonthlyP34
+    MonthlyP34 --> EarlyStop
+    EarlyStop --> EmptyPool[Empty pool / deployable=0]
+```
 
-All hyperparameters live in `config.py`. No module defines its own defaults that override these values. No runtime flags are used — change `config.py` to tune the pipeline.
+### Overlap map (what stacks on what)
 
-### Label Isolation
+| Layer A | Layer B | Interaction |
+|---------|---------|-------------|
+| `purged_walk_forward` | `PHASE2_JOINT_TRAIN_VAL` | Fitness uses CV aggregate; holdout for admission only — **good separation** |
+| `purged_walk_forward` | `PHASE4_WF_SPLITS` | `effective_phase4_wf_splits()` → 1; **auto-mitigated** in legacy path |
+| `purged_walk_forward` | `PURGED_WF_SCALE_TRADE_FLOORS` | Trade floors scale down on thin CV slices — **required** with high `MIN_TRADE_*` |
+| `PHASE2_ISLAND_MODE=cluster` | `PHASE2_ISLAND_SCALE_TRADE_FLOORS` | Per-island rows much smaller than universe — floors must scale |
+| `PHASE2_ISLAND_MODE=cluster` | `PHASE2_TWO_STAGE_ENABLED` | Two-stage **silently off** unless `PHASE2_ISLAND_TWO_STAGE_ENABLED` |
+| `PHASE2_JOINT_TRAIN_VAL=False` | `PHASE2_STRICT_POSITIVE_GOOD` | Evolution ignores val; admission rejects overfit rules — **empty pool** |
+| `PHASE2_MONTHLY_ADMISSION` | `MONTHLY_VALIDATION_ENABLED` | Same concept, different phases — **double regime filter** |
+| `RB_MIN_TRAIN_RETURN=2.0` | `PHASE2_VAL_RETURN_FLOOR_PCT=0.5` | RB stricter than Phase 2 evolution — rules die at governor |
+| `DEBUG_SYMBOL_SCOPE` | `PHASE2_MIN_PROFITABLE_SYMBOLS` | Capped by `effective_min_profitable_symbols()` but still tight |
+| `PHASE2_ARCHIVE_SEED_FRACTION` | `PHASE2_PLATEAU_EARLY_STOP` | Warm-start + early stop → **truncated exploration** |
+| `SUPPORT_PENALTY_MAX=0` | `MIN_TRADE_SUPPORT=150` | Support target exists but **no objective penalty** — thin-trade rules compete |
 
-Label columns (`label_*`) are used **only** for trade simulation, never as model inputs. This is enforced at every stage: feature selection explicitly excludes them, and the encoder never encodes them.
+### Conflict table
 
-### Temporal Integrity
-
-The train/validation split is per-symbol chronological (75/25). The last 288 rows per symbol are always dropped. This prevents any form of temporal leakage.
-
-### Evaluator Parity
-
-The internal `CPUBacktestEngine` exactly mirrors `evaluator_v5.ipynb`'s `CapitalManagedTradeSimulator` semantics. This means optimization scores during Phases 2 and 3 are directly comparable to final evaluation scores.
-
-### GPU-First with Transparent Fallback
-
-**Phase 2:** JAX batch backtests when available; **NSGA-III** via EvoX for survivor selection. Without EvoX, Phase 2 falls back to NumPy **NSGA-II** (same objectives and mating operators). **Phase 3** refinement still uses NSGA-II over rule-set combinations. CPU-only environments are supported; GPU/JAX tests skip automatically when JAX is not installed.
-
-### Phase Isolation
-
-Each phase produces persisted artifacts. Completed phases are skipped on re-runs. This makes long optimization runs resumable and individual phases independently inspectable.
-
-### Symbol-Aware Evaluation
-
-All backtest evaluations track per-symbol metrics. Feature selection scores features per symbol and measures cross-symbol stability. Rule set selection penalizes strategies that fail to generate trades on most symbols. The goal is rules that generalize across all 10 instruments, not rules that overfit to one.
-
-### Separation of Concerns
-
-The pipeline separates:
-
-1. **Feature mining** (Phase 1) — which features are predictive and stable
-2. **Rule generation** (Phase 2) — what individual rules look like
-3. **Ensemble selection** (Phase 3) — which combination of rules works best as a team
-4. **Risk tuning** (Phase 4) — what TP/SL/capital allocation maximizes risk-adjusted return
-5. **Out-of-sample truth** (Phase 5) — does the strategy actually generalize
-
-Each layer can be inspected independently, making it easier to diagnose where the pipeline succeeds or fails.
+| Conflict | Symptom | Mitigation |
+|----------|---------|------------|
+| Purged WF + high trade floors + island cluster | Zero rules per island | Lower `MIN_TRADE_*`; keep scaling on; relax `PHASE2_ORPHAN_*` |
+| `PHASE2_JOINT_TRAIN_VAL=False` + strict pool gates | Train-only fitness; admission rejects all | Enable joint val OR loosen `PHASE2_VAL_*` / gap gates |
+| `holdout_70_30` + `PHASE4_WF_SPLITS=4` + tail holdout | Tiny WF windows; all trials rejected | Reduce WF splits or `PHASE4_MIN_WORST_TRADES` |
+| `purged_walk_forward` + legacy Phase 4 | Triple WF if splits not forced | Trust `effective_phase4_wf_splits()`; don't raise splits manually |
+| Triple monthly gates | Rules pass P2, fail RB/P3 | Disable one layer; align `*_GOOD_RETURN_MIN_PCT` / ratios |
+| `DEBUG_SYMBOL_COUNT=2` + `PHASE2_MIN_PROFITABLE_SYMBOLS=4` | Symbol gate impossible | Lower min profitable or disable debug scope |
+| `PHASE2_TWO_STAGE` + island cluster | Two-stage never runs | Global mode or `PHASE2_ISLAND_TWO_STAGE_ENABLED=True` |
+| Early stop + low gens + archive seed 25% | Run ends before diversity recovery | Disable island early stops; raise plateau patience |
+| Stale parquet cache | Split mode change ignored | Delete parquets + `cv_folds_manifest.json` |
+| `SUPPORT_PENALTY_MAX=0` | Thin-trade rules dominate Pareto | Raise `SUPPORT_PENALTY_MAX` or `MIN_TRADE_POOL_FLOOR` |
+| `RB_MIN_TRAIN_RETURN=2.0` with thin per-symbol val | No rules pass `_filter_good_rules` | Lower RB return floors or raise Phase 2 pool quality first |
+| `PHASE2_CAPITAL_PCT=48` + single rule | Half equity per signal | Expected for search; Phase 4/RB normalizes total exposure |
 
 ---
 
-## Relationship to Previous Implementation
+## 10. Symptom → knob troubleshooting
 
-This package (`gpu_fuzzy_trader`) is a complete ground-up rewrite of the previous `bigdata_trader` package, incorporating lessons learned from that implementation:
+Extends the config.py cheat-sheet with cross-phase causes.
 
-| Aspect            | `bigdata_trader` (old)   | `gpu_fuzzy_trader` (new)                             |
-| ----------------- | ------------------------ | ---------------------------------------------------- |
-| GPU acceleration  | Optional, partial        | JAX-first, transparent CPU fallback                  |
-| Feature selection | Global, single direction | Direction-specific (long/short)                      |
-| Rule encoding     | Mixed                    | Strict chromosome encoding with don't-care sentinels |
-| Risk optimization | Static TP/SL             | RL agent with Elbow Method stopping                  |
-| Test coverage     | Limited                  | 713 tests, 29 property-based properties              |
-| Config            | Mixed flags + config     | Single `config.py`, no runtime flags                 |
-| Evaluator parity  | Approximate              | Exact mirror of `evaluator_v5.ipynb`                 |
-| Skip logic        | Basic                    | Validation helpers remain; default CLI forces rerun  |
+| Symptom | Likely cause | Knobs to try |
+|---------|--------------|--------------|
+| Empty Phase 2 pool | Trade floors too high for slice size | `MIN_TRADE_POOL_FLOOR` ↓, `PURGED_WF_SCALE_TRADE_FLOORS=True`, island scaling |
+| Empty Phase 2 pool | Strict admission stack | `PHASE2_STRICT_POSITIVE_GOOD=False`, `PHASE2_MONTHLY_ADMISSION_ENABLED=False` |
+| Empty Phase 2 pool | Purged WF produced no folds | `PURGED_WF_MIN_VALID_ROWS` ↓, `PURGED_WF_MIN_TRAIN_FRACTION` ↓ |
+| Phase 2 stops early | Plateau/early stop | `PHASE2_PLATEAU_EARLY_STOP_ENABLED=False`, `PHASE2_EARLY_STOP_ENABLED=False` |
+| Phase 2 too slow | Search budget / GPU | `PHASE2_GENERATIONS` ↓, `PHASE1_SAMPLING_TOTAL` ↓, `PHASE2_GPU_BATCH_SIZE` ↓ |
+| GPU OOM | VRAM / RAM | `PHASE1_SAMPLING_TOTAL` ↓, `PHASE2_GPU_BATCH_SIZE` ↓, `PHASE2_SCAN_UNROLL` ↓ |
+| Good train, bad val in pool | Overfit evolution | `PHASE2_JOINT_TRAIN_VAL=True`, `PHASE2_USE_ROBUST_RETURN_OBJ=True` |
+| Phase 3 finds no teams | Per-symbol gates | `PHASE3_PER_SYMBOL_MIN_TRADES` ↓, `PHASE3_PER_SYMBOL_MIN_RETURN` ↓ |
+| Phase 4 rejects all trials | WF too strict | `PHASE4_MIN_WORST_*` ↓, `PHASE4_WF_SPLITS` ↓ |
+| RB produces empty team | RB floors > pool quality | `RB_MIN_TRAIN_RETURN` ↓, `RB_MIN_VALID_RETURN` ↓ |
+| Short OOS / overfitting | Weak generalization | `PHASE2_JOINT_TRAIN_VAL`, `SPLIT_MODE=purged_walk_forward`, Phase 3 gap gates |
+| Fees / horizon mismatch vs evaluator | Constant drift | `FEE_PCT`, `TAIL_DROP_ROWS`, `MAX_HOLD_CANDLES` must match `evaluator_v5.ipynb` |
+| Split change has no effect | Stale cache | Delete `data/train_70.parquet`, `validation_30.parquet`, manifest |
+| deployable=0 throughout run | Plateau blocked + strict gates | `PHASE2_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO`, loosen pool floors |
 
-The output format (`long.json` / `short.json`) is identical between both implementations and fully compatible with `evaluator_v5.ipynb`.
+---
 
-## Recent changes
+## 11. Workflow variant appendix
 
-- **Monthly validation** (`validation/`): 30-day rolling window scoring, purged CV folds, monthly penalty (≥60% profitable months, positive equity slope) — Tasks 1-2
-- **Positive-good gate** (`gate_positive_good`): PF ≥ 1.0 on both train+val, positive returns both legs, NaN-safe — Task 3
-- **Evaluator health penalty** (`evaluator_health_penalty`): penalizes skipped signals, max positions, low exec ratio — Task 4
-- **Expanded Phase 2 pool**: relaxed per-fold thresholds (-8% return, 0.80 PF, 18% DD), 140-rule cap — Task 5
-- **Multi-symbol combinations**: 1-, 2-, 3-symbol variants per pool rule — Task 6
-- **Deterministic risk grid search** (Phase 4): TP up to 10%, SL up to 3%, capital up to 50%, 2 passes — Task 7
-- **Regime-keyword stratum init** (Phase 2): 25% of chromosomes anchored on vol/trend features — Task 8
-- **Evaluator-clean writer**: stripped `{direction, rules_set}` JSON files written to `outputs/evaluator_clean/` — Task 9
+Eight canonical configuration paths:
+
+| # | Name | `SPLIT_MODE` | `PHASE2_ISLAND_MODE` | `RB_GOVERNOR` | `JOINT_TRAIN_VAL` | Notes |
+|---|------|--------------|----------------------|---------------|-------------------|-------|
+| 1 | **Production default** | `holdout_70_30` | `global` | True | True | Current `config.py` defaults |
+| 2 | **Purged + global + RB** | `purged_walk_forward` | `global` | True | True | CV fitness; holdout admission; P4 WF=1 if legacy |
+| 3 | **Holdout + cluster + RB** | `holdout_70_30` | `cluster` | True | True | Scaled island floors; migration; orphan boost |
+| 4 | **Purged + cluster + RB** | `purged_walk_forward` | `cluster` | True | True | Strictest; watch trade floors per island |
+| 5 | **Legacy P3+P4** | `holdout_70_30` | `global` | False | True | Greedy + WF grid on validation |
+| 6 | **Purged + legacy P4** | `purged_walk_forward` | `global` | False | True | Phase 4 WF forced to 1 window |
+| 7 | **Fast exploration (risky)** | `holdout_70_30` | `global` | True | **False** | Train-only fitness; only use with loose admission |
+| 8 | **Debug scope** | any | any | any | any | `DEBUG_SYMBOL_SCOPE_ENABLED=True`; floors auto-scale |
+
+### Per-variant data flow summary
+
+**Variant 1 (default):** 70% train → evolve with joint val on 30% holdout → RB governor on same splits → test.csv OOS.
+
+**Variant 2 (purged):** ~75% prefix → K CV folds for fitness (worst aggregate) → 25% tail holdout for pool gate only → RB → OOS.
+
+**Variant 3 (cluster):** Same split as 1, but train partitioned into K symbol clusters; each island gets fraction of gens; orphans for leftover symbols; merged pool.
+
+**Variant 4:** Combines variant 2 + 3 — smallest slices; highest empty-pool risk without scaled floors.
+
+---
+
+## 12. Evaluator parity checklist
+
+These constants **must match** `evaluator_v5.ipynb` or Phase 5 scores will disagree with optimization scores:
+
+| Constant | Current default | Check in evaluator |
+|----------|-----------------|-------------------|
+| `FEE_PCT` | 0.20 | Round-trip fee % |
+| `TAIL_DROP_ROWS` | 288 | Tail drop per symbol |
+| `MAX_HOLD_CANDLES` | 288 | Force-exit horizon |
+| `INITIAL_CAPITAL` | 1000.0 | Starting equity |
+| `LEVERAGE` | 1.0 | Position multiplier |
+| `MAX_TOTAL_EXPOSURE_PCT` | 100.0 | Concurrent exposure cap |
+| `MIN_POSITION_NOTIONAL` | 1.0 | Dust trade skip |
+| Threshold-based fuzzy matching | `cpu_engine.py` | Same thresholds as notebook |
+| Rule priority order | First match in `rules_set` | Same as notebook |
+| TP/SL/capital in final JSON | Set by RB/Phase 4 | Must match evaluator inputs |
+
+**Do not modify** `evaluator_v5.ipynb` — it is the behavioral contract (per AGENTS.md).
+
+---
+
+## Related docs
+
+| Document | Focus |
+|----------|-------|
+| [phase0_shared.md](phase0_shared.md) | Data loader, splitter, backtest engine detail |
+| [phase1_feature_selection.md](phase1_feature_selection.md) | MI, stationarity algorithms |
+| [phase2_rule_pool.md](phase2_rule_pool.md) | NSGA-III, penalties, joint fitness |
+| [phase3_rule_set.md](phase3_rule_set.md) | Greedy team selection |
+| [phase4_wf_risk.md](phase4_wf_risk.md) | Walk-forward risk grid |
+| [phase5_oos.md](phase5_oos.md) | True OOS evaluation |

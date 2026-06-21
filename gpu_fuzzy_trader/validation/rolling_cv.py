@@ -67,12 +67,14 @@ def _split_symbol_segments(
     *,
     holdout_fraction: float,
     n_cv_folds: int,
+    min_train_fraction: float = 0.25,
 ) -> tuple[list[tuple[int, int]], tuple[int, int]]:
     """
     Return CV valid (start, end) bar ranges and holdout (start, end) for one symbol.
 
-    Prefix before holdout is split into ``n_cv_folds`` contiguous valid segments;
-    each CV fold uses expanding train on [0, valid_start) with purge applied later.
+    The first CV valid block starts at ``floor(n * min_train_fraction)`` so every
+    fold has at least that many training bars before it.  The remaining prefix
+    (after min_train) is divided into ``n_cv_folds`` equal contiguous segments.
     """
     g = _sort_group(group).reset_index(drop=True)
     n = len(g)
@@ -84,10 +86,13 @@ def _split_symbol_segments(
     holdout_start = prefix_n
     holdout_end = n - 1
 
+    min_train_start = max(1, int(math.floor(n * min_train_fraction)))
+
     cv_valid_ranges: list[tuple[int, int]] = []
-    if n_cv_folds > 0 and prefix_n > 0:
-        chunk_size = max(1, prefix_n // n_cv_folds)
-        start = 0
+    if n_cv_folds > 0 and prefix_n > min_train_start:
+        remaining = prefix_n - min_train_start
+        chunk_size = max(1, remaining // n_cv_folds)
+        start = min_train_start
         for i in range(n_cv_folds):
             if i == n_cv_folds - 1:
                 end = prefix_n - 1
@@ -200,7 +205,7 @@ def build_purged_walk_forward_folds(
     """
     Build purged expanding walk-forward folds on ``train.csv``.
 
-    Returns ``n_splits - 1`` CV folds plus one primary holdout fold (last).
+    Returns ``n_splits`` CV folds plus one primary holdout fold (last).
     """
     if df.empty:
         return []
@@ -224,13 +229,14 @@ def build_purged_walk_forward_folds(
     if min_valid_rows is not None:
         _ = min_valid_rows
 
-    n_cv_folds = max(0, n_splits - 1)
+    n_cv_folds = max(0, n_splits)
     per_sym: dict[str, tuple[list[tuple[int, int]], tuple[int, int]]] = {}
     for symbol, group in df.groupby("symbol", sort=True):
         per_sym[str(symbol)] = _split_symbol_segments(
             group,
             holdout_fraction=holdout_fraction,
             n_cv_folds=n_cv_folds,
+            min_train_fraction=min_train_fraction,
         )
 
     folds: list[PurgedFold] = []

@@ -3,13 +3,27 @@ Single source of truth for pipeline hyperparameters.
 
 All modules import from here; do not duplicate defaults elsewhere.
 
+File layout
+-----------
+  1. Global randomness (``GLOBAL_SEED``, ``get_seed``)
+  2. Phase 0 — paths, schema, train/val split, backtest, logging
+  3. Phase 1 — feature selection + GPU row budget (Phase 1→2 bridge)
+  4. Phase 2 — rule evolution (NSGA-III): risk, genome, gates, islands
+  5. Phase 3 — rule-team selection (legacy greedy path)
+  6. Phase 4 — walk-forward / grid risk tuning (legacy Optuna path)
+  7. Monthly windows — shared Phase 3/4 penalty knobs
+  8. Phase 5 — out-of-sample evaluation (test.csv only)
+  9. RB Governor — unified rule selection + risk tuning (replaces Phase 3+4)
+ 10. Helpers — path resolvers, trade-floor scaling, island hyperparams
+ 11. Import-time assertions + Colab runtime defaults
+
 Pipeline phases
 ---------------
   Phase 0  Paths, schema, train/val split, backtest constants
   Phase 1  Feature selection (train.csv only)
   Phase 2  NSGA-III rule-pool evolution (GPU backtests)
-  Phase 3  Greedy + NSGA-II rule-team selection
-  Phase 4  Walk-forward TP/SL/capital optimization (Optuna)
+  Phase 3  Greedy + NSGA-II rule-team selection  *(skipped when RB Governor on)*
+  Phase 4  Walk-forward TP/SL/capital optimization  *(skipped when RB Governor on)*
   Phase 5  Out-of-sample evaluation (test.csv only)
 
 Detailed behaviour and formulas: docs/phase0_shared.md … docs/phase5_oos.md
@@ -26,11 +40,13 @@ Tuning cheat-sheet (symptom → knob)
   Phase 3 finds no teams           PHASE3_*_FLOOR ↓, PHASE3_MIN_RULES ↓
   Phase 4 rejects all trials       PHASE4_MIN_WORST_* ↓, PHASE4_WF_SPLITS ↓
   Fees / horizon mismatch          FEE_PCT, TAIL_DROP_ROWS, MAX_HOLD_CANDLES
-                                   (must match evaluator_v3.ipynb)
+                                   (must match evaluator_v5.ipynb)
+  RB Governor too strict           RB_MIN_* ↓, RB_KEEP_TOP_RULES ↑
 
 Environment overrides: DATA_ROOT, TRAIN_CSV_PATH, TEST_CSV_PATH,
                        PHASE2_GPU_BATCH_SIZE, PHASE2_GPU_BATCH_SIZE_AUTO
 """
+
 
 from __future__ import annotations
 
@@ -102,15 +118,6 @@ OUTPUTS_DIR = "outputs"
 RUN_LOG_PATH = os.path.join(OUTPUTS_DIR, "run.log")
 REPORTS_DIR = "outputs/reports"
 
-# Evaluator v5 schema: rules_set must contain 2–EVALUATOR_MAX_RULES rules.
-EVALUATOR_MAX_RULES = 5
-EVALUATOR_MIN_RULES = 2
-
-# When True, Output_Writer.write also writes a stripped file containing only
-# direction and rules_set (defensive: protects against stricter evaluators
-# that reject unknown top-level keys).
-WRITE_EVALUATOR_CLEAN = True
-
 # Per-run Phase 2 artifacts (rewritten under --output).
 PHASE2_POOL_DIR = OUTPUTS_DIR
 PHASE2_POOL_PATHS = {
@@ -133,124 +140,6 @@ PHASE2_ARCHIVE_PATHS = {
 DEBUG_SYMBOL_SCOPE_ENABLED = False
 DEBUG_SYMBOL = "1"
 DEBUG_SYMBOL_COUNT = 4
-
-
-def filter_df_to_symbols(df: pd.DataFrame, symbols: list[str]) -> pd.DataFrame:
-    """Return rows for the given symbols; raises if column missing or no rows."""
-    if "symbol" not in df.columns:
-        raise ValueError(
-            "DataFrame must contain a 'symbol' column for symbol scope")
-    sym_set = {str(s) for s in symbols}
-    scoped = df[df["symbol"].astype(str).isin(sym_set)]
-    if scoped.empty:
-        raise ValueError(f"No rows for symbols {list(symbols)!r}")
-    return scoped.reset_index(drop=True)
-
-
-def resolve_debug_symbols(train_df) -> list[str] | None:
-    """Return N debug symbols starting at DEBUG_SYMBOL when scope is enabled."""
-    if not DEBUG_SYMBOL_SCOPE_ENABLED:
-        return None
-    count = int(DEBUG_SYMBOL_COUNT)
-    if count < 1:
-        raise ValueError(
-            "DEBUG_SYMBOL_SCOPE_ENABLED is True but DEBUG_SYMBOL_COUNT < 1"
-        )
-    start_symbol = str(DEBUG_SYMBOL).strip()
-    if not start_symbol:
-        raise ValueError(
-            "DEBUG_SYMBOL_SCOPE_ENABLED is True but DEBUG_SYMBOL is empty"
-        )
-    if train_df is None or getattr(train_df, "empty", True):
-        raise ValueError(
-            "DEBUG_SYMBOL_SCOPE_ENABLED but train data is empty"
-        )
-    if "symbol" not in train_df.columns:
-        raise ValueError(
-            "DEBUG_SYMBOL_SCOPE_ENABLED but train data has no 'symbol' column"
-        )
-    available = sorted(
-        train_df["symbol"].dropna().astype(str).unique().tolist())
-    if not available:
-        raise ValueError(
-            "DEBUG_SYMBOL_SCOPE_ENABLED but train data has no symbols"
-        )
-    if start_symbol not in available:
-        raise ValueError(
-            f"DEBUG_SYMBOL {start_symbol!r} not in train data; "
-            f"available symbols: {available}"
-        )
-    start_idx = available.index(start_symbol)
-    return available[start_idx:start_idx + count]
-
-
-def _debug_symbol_universe_size() -> int | None:
-    """Active symbol count when debug scope is on; None for full-universe runs."""
-    if not DEBUG_SYMBOL_SCOPE_ENABLED:
-        return None
-    return max(1, int(DEBUG_SYMBOL_COUNT))
-
-
-def effective_min_profitable_symbols(symbol_count: int | None = None) -> int:
-    """Cap cross-symbol profitability gate to the active universe size.
-
-    With DEBUG_SYMBOL_COUNT=2 and PHASE2_MIN_PROFITABLE_SYMBOLS=5, evolution
-    always pays a shortfall penalty (impossible target) and long pools collapse.
-    """
-    target = int(PHASE2_MIN_PROFITABLE_SYMBOLS)
-    universe = symbol_count if symbol_count is not None else _debug_symbol_universe_size()
-    if universe is None:
-        return target
-    return min(target, max(1, int(universe)))
-
-
-def effective_phase3_per_symbol_min_trades() -> int:
-    """Per-symbol trade floor; scaled down for thin debug universes."""
-    base = int(PHASE3_PER_SYMBOL_MIN_TRADES)
-    universe = _debug_symbol_universe_size()
-    if universe is None:
-        return base
-    # Full run assumes ~10 symbols; scale floor with active symbol count.
-    scaled = int(round(base * universe / 10.0))
-    return max(15, scaled)
-
-
-def effective_phase3_per_symbol_min_return() -> float:
-    """Per-symbol return floor; relaxed in debug scope for sparse val slices."""
-    base = float(PHASE3_PER_SYMBOL_MIN_RETURN)
-    if _debug_symbol_universe_size() is None:
-        return base
-    return min(base, 2.5)
-
-
-def effective_phase3_val_return_floor_pct() -> float:
-    """Team fallback return floor; must sit below typical Phase 2 pool returns."""
-    base = float(PHASE3_VAL_RETURN_FLOOR_PCT)
-    if _debug_symbol_universe_size() is None:
-        return base
-    return min(base, 4.0)
-
-
-def phase2_pool_path(
-    direction: str,
-    outputs_dir: str | None = None,
-) -> str:
-    """Resolve Phase 2 pool path."""
-    if outputs_dir is None:
-        return PHASE2_POOL_PATHS[direction]
-    return os.path.join(outputs_dir, f"phase2_{direction}_pool.json")
-
-
-def phase2_history_path(
-    direction: str,
-    outputs_dir: str | None = None,
-) -> str:
-    """Resolve Phase 2 history path."""
-    if outputs_dir is None:
-        return PHASE2_HISTORY_PATHS[direction]
-    return os.path.join(outputs_dir, f"phase2_{direction}_history.json")
-
-
 # =============================================================================
 # Phase 0 — Schema & labels
 # =============================================================================
@@ -281,7 +170,7 @@ TAIL_DROP_ROWS = 288
 # SPLIT_MODE — how train.csv is divided before Phase 2.
 #   holdout_70_30       → single per-symbol 70/30 chronological split (legacy).
 #   purged_walk_forward → expanding CV folds + primary tail holdout with embargo.
-SPLIT_MODE = "purged_walk_forward"
+SPLIT_MODE = "holdout_70_30"
 
 # --- Purged walk-forward (when SPLIT_MODE == purged_walk_forward) ---
 
@@ -290,13 +179,13 @@ SPLIT_MODE = "purged_walk_forward"
 PURGED_WF_N_SPLITS = 3
 
 # PURGED_WF_HOLDOUT_FRACTION — tail fraction per symbol reserved for val parquet.
-PURGED_WF_HOLDOUT_FRACTION = 0.25
+PURGED_WF_HOLDOUT_FRACTION = 0.3
 
 # PURGED_WF_EMBARGO_CANDLES — purge gap between train and valid (label horizon).
 PURGED_WF_EMBARGO_CANDLES = 288
 
 # PURGED_WF_MIN_TRAIN_FRACTION — minimum train prefix before first CV valid block.
-PURGED_WF_MIN_TRAIN_FRACTION = 0.25
+PURGED_WF_MIN_TRAIN_FRACTION = 0.3
 
 # PURGED_WF_MIN_VALID_ROWS — minimum rows in a CV valid block (holdout exempt).
 PURGED_WF_MIN_VALID_ROWS = 3000
@@ -617,7 +506,8 @@ PHASE2_MAX_TRAIN_VAL_GAP_PCT = 8.0
 # admission filtering, sorted by deployability_rank_score descending.
 #   Higher → larger pool for Phase 3 greedy selection.
 #   Lower  → smaller pool; faster Phase 3, fewer combinations.
-PHASE2_KEEP_TOP_RULES = 80
+# widened for RB Governor candidate pool (was 80 for legacy Phase 3)
+PHASE2_KEEP_TOP_RULES = 120
 
 # PHASE2_REQUIRE_LAST_FOLD_POSITIVE — in the holdout pool-admission path,
 # require the (single) validation fold to have positive total return.
@@ -774,6 +664,7 @@ PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT = 0.02
 #   False → train max return can mask val stagnation.
 PHASE2_PLATEAU_USE_ROBUST_RETURN = True
 
+# PHASE2_PLATEAU_BLOCK_WHEN_* — suppress plateau stop while front is unhealthy.
 PHASE2_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO = True
 PHASE2_PLATEAU_BLOCK_WHEN_DIVERSITY_LOW = False
 
@@ -931,17 +822,9 @@ PHASE2_STAGE_B_EARLY_STOP_MIN_GENERATION = 20
 
 # PHASE2_GPU_ENRICH_SYMBOL_METRICS — merge CPU per-symbol metrics after GPU batch eval.
 PHASE2_GPU_ENRICH_SYMBOL_METRICS = True
-
-
-def phase2_should_enrich_symbol_metrics(engine: object | None = None) -> bool:
-    """Return True when GPU batch eval should run a follow-up CPU enrichment pass."""
-    if not PHASE2_GPU_ENRICH_SYMBOL_METRICS:
-        return False
-    return True
-
-
 # =============================================================================
 # Phase 2 — NSGA-III search budget & archive
+# =============================================================================
 
 # PHASE2_POPULATION_SIZE — individuals per generation.
 #   Higher → better Pareto coverage, ~linear GPU cost per generation.
@@ -976,22 +859,32 @@ PHASE2_SEED: int = get_seed()
 # fixed total generation budget split across islands. Global knobs below stay
 # as universe bases; runtime scaling via resolve_island_hyperparams().
 
+# PHASE2_ISLAND_MODE — scoped evolution layout.
+#   "global"  → single universe-wide NSGA-III run (default).
+#   "cluster" → K symbol clusters evolved as separate islands with migration.
 PHASE2_ISLAND_MODE = "global"  # "global" | "cluster"
+# PHASE2_N_CLUSTERS — number of hybrid symbol clusters when island mode is active.
 PHASE2_N_CLUSTERS = 3
+# PHASE2_ISLAND_TOTAL_GENERATIONS — generation budget split across islands.
 PHASE2_ISLAND_TOTAL_GENERATIONS = PHASE2_GENERATIONS
+# PHASE2_ISLAND_EPOCH_GENERATIONS — generations per island epoch before migration.
 PHASE2_ISLAND_EPOCH_GENERATIONS = 25
+# Island overrides — disable two-stage / early-stop by default in cluster mode.
 PHASE2_ISLAND_TWO_STAGE_ENABLED = False
 PHASE2_ISLAND_EARLY_STOP_ENABLED = False
 PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED = False
+# PHASE2_ISLAND_SCALE_TRADE_FLOORS — scale support floors to island row count.
 PHASE2_ISLAND_SCALE_TRADE_FLOORS = True
 PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN = 10
 PHASE2_ISLAND_MONTHLY_MIN_MONTHS = 4
+# Migration — exchange top elites between islands every N epochs.
 PHASE2_MIGRATION_EPOCH_INTERVAL = 2
 PHASE2_MIGRATION_TOP_K = 5
 PHASE2_MIGRATION_REQUIRE_DEPLOYABILITY = True
 PHASE2_MIGRATION_MIN_VAL_RETURN_PCT = 0.0
 PHASE2_MIGRATION_MIN_VAL_TRADES: int | None = None
 
+# PHASE2_ORPHAN_* — relaxed hyperparams for low-row symbol slices left out of clusters.
 PHASE2_ORPHAN_ENABLED = True
 PHASE2_ORPHAN_GENERATIONS = 18
 PHASE2_ORPHAN_POPULATION_SIZE = 100
@@ -1001,23 +894,6 @@ PHASE2_ORPHAN_SORTINO_MIN_TRADE_THRESHOLD = 8
 PHASE2_ORPHAN_MIN_VAL_TRADES = 6
 PHASE2_ORPHAN_MIN_VAL_RETURN_PCT = 0.0
 PHASE2_ORPHAN_MONTHLY_MIN_PROFITABLE_RATIO = 0.4
-
-
-def phase2_cluster_archive_path(direction: str, cluster_id: str) -> str:
-    """Persistent archive for one cluster island."""
-    return os.path.join(
-        PHASE2_ARCHIVE_DIR,
-        direction,
-        f"cluster_{cluster_id}",
-        "archive.json",
-    )
-
-
-def phase2_shared_archive_path(direction: str) -> str:
-    """Cross-cluster shared archive for migration warm-start."""
-    return os.path.join(PHASE2_ARCHIVE_DIR, direction, "shared_archive.json")
-
-
 # =============================================================================
 # Phase 2 — Engine, initialization & mutation
 # =============================================================================
@@ -1075,10 +951,9 @@ PHASE3_PER_SYMBOL_MAX_RULES = 2
 
 # PHASE3_GLOBAL_MIN_RULES / MAX_RULES — total rules in the output JSON.
 #   Higher MIN → require at least this many rules across all symbols.
-#   MAX must match EVALUATOR_MAX_RULES (evaluator v5 accepts 2–5 rules).
+#   MAX caps the final strategy size written by Phase 3 / validated on load.
 PHASE3_GLOBAL_MIN_RULES = 2
-# Evaluator v5 accepts at most 5 rules; Phase 3 must not exceed this.
-PHASE3_GLOBAL_MAX_RULES = 5
+PHASE3_GLOBAL_MAX_RULES = 20
 
 # PHASE3_PER_SYMBOL_GREEDY_TOP_K — top-K pool rules tested per greedy round.
 #   Higher → more thorough search per symbol, slower.
@@ -1341,14 +1216,7 @@ PHASE4_HARD_CAP_NORMALIZE = True
 #   Higher → stricter temporal robustness; each window smaller (trade starvation).
 #   Lower  → larger windows, more trades per fold, less temporal coverage.
 PHASE4_WF_SPLITS = 2
-
-
-def effective_phase4_wf_splits() -> int:
-    """Inner validation WF windows; single window when purged CV already ran."""
-    if split_mode_is_purged_walk_forward():
-        return 1
-    return int(PHASE4_WF_SPLITS)
-
+# PHASE4_INCLUDE_TAIL_HOLDOUT — reserve a final tail window on validation data.
 PHASE4_INCLUDE_TAIL_HOLDOUT = True
 
 # PHASE4_TAIL_HOLDOUT_FRACTION — fraction of val reserved as final holdout window.
@@ -1389,7 +1257,7 @@ PHASE4_MIN_WORST_FOLD_PF = 1.0
 
 
 # =============================================================================
-# Monthly windows validation (used in Phase 3/4 scoring)
+# Monthly windows validation (Phase 3 / 4 scoring)
 # =============================================================================
 
 # MONTHLY_VALIDATION_ENABLED — toggle monthly rolling-window validation.
@@ -1398,9 +1266,13 @@ PHASE4_MIN_WORST_FOLD_PF = 1.0
 MONTHLY_VALIDATION_ENABLED = True
 
 MONTHLY_WINDOW_DAYS = 30
+# MONTHLY_WINDOW_MIN_ROWS — minimum rows per rolling window before it is skipped.
 MONTHLY_WINDOW_MIN_ROWS = 2500
+# MONTHLY_WINDOW_MAX_WINDOWS — cap on windows evaluated per backtest slice.
 MONTHLY_WINDOW_MAX_WINDOWS = 24
+# MONTHLY_RECENCY_WEIGHT — up-weight the most recent monthly windows in penalty.
 MONTHLY_RECENCY_WEIGHT = 2.2
+# MONTHLY_MIN_TRADES — minimum executed trades per window (scaled in purged WF).
 MONTHLY_MIN_TRADES = 20
 
 # MONTHLY_GOOD_RETURN_MIN_PCT — minimum total_return_pct (%) for a monthly window
@@ -1413,6 +1285,7 @@ MONTHLY_GOOD_RETURN_MIN_PCT = 0.5
 # MONTHLY_MIN_PROFITABLE_RATIO — target fraction of "good" months per
 # MONTHLY_GOOD_RETURN_MIN_PCT; monthly_penalty rises when ratio falls below this.
 MONTHLY_MIN_PROFITABLE_RATIO = 0.60
+# MONTHLY_WORST_* / MONTHLY_*_WEIGHT — penalty terms in monthly_penalty().
 MONTHLY_WORST_RETURN_FLOOR = -1.5
 MONTHLY_WORST_PF_FLOOR = 0.85
 MONTHLY_MAX_DD = 8.0
@@ -1506,291 +1379,6 @@ PHASE5_REMOVE_NEGATIVE_PNL_RULES = True
 
 
 # =============================================================================
-# Purged walk-forward helpers (trade-floor scaling)
-# =============================================================================
-
-
-def split_mode_is_purged_walk_forward() -> bool:
-    """True when the active split mode is purged walk-forward."""
-    return str(SPLIT_MODE).strip().lower() == "purged_walk_forward"
-
-
-def set_purged_wf_reference_rows(n_rows: int) -> None:
-    """Store full train.csv row count after loader prep (split time)."""
-    global _PURGED_WF_REFERENCE_ROWS
-    _PURGED_WF_REFERENCE_ROWS = max(0, int(n_rows))
-
-
-def get_purged_wf_reference_rows() -> int | None:
-    """Return reference row count for trade-floor scaling, if set."""
-    return _PURGED_WF_REFERENCE_ROWS
-
-
-def scale_trade_floor(
-    base: int,
-    n_rows: int,
-    reference_rows: int | None = None,
-) -> int:
-    """Scale an integer trade floor by slice size vs reference universe."""
-    if not split_mode_is_purged_walk_forward():
-        return int(base)
-    if not PURGED_WF_SCALE_TRADE_FLOORS:
-        return int(base)
-    ref = reference_rows if reference_rows is not None else _PURGED_WF_REFERENCE_ROWS
-    if ref is None or ref <= 0:
-        return int(base)
-    scaled = int(round(int(base) * int(n_rows) / int(ref)))
-    return max(int(PURGED_WF_MIN_TRADE_FLOOR_ABSOLUTE), scaled)
-
-
-def effective_min_trade_support(n_rows: int | None = None) -> int:
-    base = int(MIN_TRADE_SUPPORT)
-    if n_rows is None:
-        return base
-    return scale_trade_floor(base, n_rows)
-
-
-def effective_min_trade_pool_floor(n_rows: int | None = None) -> int:
-    base = int(MIN_TRADE_POOL_FLOOR)
-    if n_rows is None:
-        return base
-    return scale_trade_floor(base, n_rows)
-
-
-def effective_sortino_min_trade_threshold(n_rows: int | None = None) -> int:
-    base = int(PHASE2_SORTINO_MIN_TRADE_THRESHOLD)
-    if n_rows is None:
-        return base
-    return scale_trade_floor(base, n_rows)
-
-
-def effective_val_trade_floor_for_objectives(n_rows: int | None = None) -> int:
-    base = max(int(MIN_TRADE_POOL_FLOOR) // 4, 10)
-    if n_rows is None:
-        return base
-    return scale_trade_floor(base, n_rows)
-
-
-def effective_pool_min_val_trades(n_rows: int | None = None) -> int:
-    base = max(int(MIN_TRADE_POOL_FLOOR) // 4, 10)
-    if n_rows is None:
-        return base
-    return scale_trade_floor(base, n_rows)
-
-
-def effective_phase3_min_val_trades(n_rows: int | None = None) -> int:
-    base = int(PHASE3_MIN_VAL_TRADES)
-    if n_rows is None:
-        return base
-    return scale_trade_floor(base, n_rows)
-
-
-def effective_phase4_min_worst_trades(n_rows: int | None = None) -> int:
-    base = int(PHASE4_MIN_WORST_TRADES)
-    if n_rows is None:
-        return base
-    return scale_trade_floor(base, n_rows)
-
-
-def effective_monthly_min_trades(n_rows: int | None = None) -> int:
-    base = int(MONTHLY_MIN_TRADES)
-    if n_rows is None:
-        return base
-    return scale_trade_floor(base, n_rows)
-
-
-def scale_trade_floor_by_universe(
-    base: int,
-    n_rows: int,
-    reference_rows: int,
-    *,
-    absolute_min: int | None = None,
-) -> int:
-    """Scale integer trade floors by slice size vs full-universe reference."""
-    ref = int(reference_rows)
-    if ref <= 0:
-        return int(base)
-    floor_min = int(
-        absolute_min if absolute_min is not None else PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN
-    )
-    scaled = int(round(int(base) * int(n_rows) / ref))
-    return max(floor_min, scaled)
-
-
-@dataclass(frozen=True)
-class IslandHyperparams:
-    """Resolved Phase 2 knobs for cluster or orphan slices."""
-
-    profile: Literal["cluster", "orphan"]
-    min_trade_support: int
-    min_trade_pool_floor: int
-    sortino_min_trade_threshold: int
-    val_trade_floor: int
-    pool_min_val_trades: int
-    min_profitable_symbols: int
-    monthly_admission_min_months: int
-    monthly_admission_min_profitable_ratio: float
-    skip_symbol_robustness_penalty: bool
-    n_rows: int
-    n_symbols: int
-
-
-def resolve_island_hyperparams(
-    profile: Literal["cluster", "orphan"],
-    n_rows: int,
-    reference_rows: int,
-    n_symbols: int,
-) -> IslandHyperparams:
-    """Resolve scaled trade floors and relaxed cross-symbol gates."""
-    ref = max(1, int(reference_rows))
-    rows = max(1, int(n_rows))
-    sym_n = max(1, int(n_symbols))
-
-    if profile == "orphan":
-        min_support = int(PHASE2_ORPHAN_MIN_TRADE_SUPPORT)
-        pool_floor = int(PHASE2_ORPHAN_MIN_TRADE_POOL_FLOOR)
-        sortino_thr = int(PHASE2_ORPHAN_SORTINO_MIN_TRADE_THRESHOLD)
-        min_profitable = 1
-        monthly_months = max(2, int(PHASE2_ISLAND_MONTHLY_MIN_MONTHS) - 1)
-        monthly_ratio = float(PHASE2_ORPHAN_MONTHLY_MIN_PROFITABLE_RATIO)
-    else:
-        if PHASE2_ISLAND_SCALE_TRADE_FLOORS:
-            abs_min = int(PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN)
-            min_support = scale_trade_floor_by_universe(
-                MIN_TRADE_SUPPORT, rows, ref, absolute_min=abs_min,
-            )
-            pool_floor = scale_trade_floor_by_universe(
-                MIN_TRADE_POOL_FLOOR, rows, ref, absolute_min=abs_min,
-            )
-            sortino_thr = scale_trade_floor_by_universe(
-                PHASE2_SORTINO_MIN_TRADE_THRESHOLD, rows, ref, absolute_min=abs_min,
-            )
-        else:
-            min_support = int(MIN_TRADE_SUPPORT)
-            pool_floor = int(MIN_TRADE_POOL_FLOOR)
-            sortino_thr = int(PHASE2_SORTINO_MIN_TRADE_THRESHOLD)
-        min_profitable = min(
-            int(PHASE2_MIN_PROFITABLE_SYMBOLS),
-            max(1, sym_n // 2),
-        )
-        monthly_months = int(PHASE2_ISLAND_MONTHLY_MIN_MONTHS)
-        monthly_ratio = float(PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO)
-
-    val_floor = max(pool_floor // 4, 8)
-    val_floor = scale_trade_floor_by_universe(
-        max(int(MIN_TRADE_POOL_FLOOR) // 4, 10), rows, ref,
-        absolute_min=8,
-    )
-
-    return IslandHyperparams(
-        profile=profile,
-        min_trade_support=int(min_support),
-        min_trade_pool_floor=int(pool_floor),
-        sortino_min_trade_threshold=int(sortino_thr),
-        val_trade_floor=int(val_floor),
-        pool_min_val_trades=int(val_floor),
-        min_profitable_symbols=int(min_profitable),
-        monthly_admission_min_months=int(monthly_months),
-        monthly_admission_min_profitable_ratio=float(monthly_ratio),
-        skip_symbol_robustness_penalty=True,
-        n_rows=int(rows),
-        n_symbols=int(sym_n),
-    )
-
-
-def island_early_stop_enabled() -> bool:
-    if PHASE2_ISLAND_MODE == "cluster":
-        return bool(PHASE2_ISLAND_EARLY_STOP_ENABLED)
-    return bool(PHASE2_EARLY_STOP_ENABLED)
-
-
-def island_plateau_early_stop_enabled() -> bool:
-    if PHASE2_ISLAND_MODE == "cluster":
-        return bool(PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED)
-    return bool(PHASE2_PLATEAU_EARLY_STOP_ENABLED)
-
-
-def scoped_island_profile(island_profile: str) -> bool:
-    """True for cluster/orphan scoped runs (not the legacy global Phase 2 path)."""
-    return str(island_profile) != "global"
-
-
-def island_two_stage_enabled() -> bool:
-    if PHASE2_ISLAND_MODE == "cluster":
-        return bool(PHASE2_ISLAND_TWO_STAGE_ENABLED)
-    return bool(PHASE2_TWO_STAGE_ENABLED)
-
-
-# =============================================================================
-# Cross-parameter sanity (import-time)
-# =============================================================================
-
-assert PHASE2_PLATEAU_EARLY_STOP_MIN_GENERATION <= PHASE2_STAGE_A_GENERATIONS, (
-    "plateau min gen should not exceed Stage A budget"
-)
-assert PHASE2_STAGE_A_PLATEAU_EARLY_STOP_MIN_GENERATION <= PHASE2_STAGE_A_GENERATIONS, (
-    "Stage A plateau min gen should not exceed Stage A budget"
-)
-assert PHASE2_STAGE_B_PLATEAU_EARLY_STOP_MIN_GENERATION <= PHASE2_STAGE_B_GENERATIONS, (
-    "Stage B plateau min gen should not exceed Stage B budget"
-)
-assert PHASE2_STAGE_A_EARLY_STOP_MIN_GENERATION <= PHASE2_STAGE_A_GENERATIONS, (
-    "Stage A early-stop min gen should not exceed Stage A budget"
-)
-assert PHASE2_STAGE_B_EARLY_STOP_MIN_GENERATION <= PHASE2_STAGE_B_GENERATIONS, (
-    "Stage B early-stop min gen should not exceed Stage B budget"
-)
-assert 0.0 < PHASE2_STAGE_A_MUTATION_RATE <= 0.5
-assert 0.0 < PHASE2_STAGE_B_MUTATION_RATE <= 0.5
-assert PHASE2_STAGE_A_MUTATION_RATE >= PHASE2_STAGE_B_MUTATION_RATE, (
-    "Stage A should be at least as explorative as Stage B on mutation rate"
-)
-assert float(PHASE3_MONTHLY_PENALTY_SCALE) > 0.0, (
-    "PHASE3_MONTHLY_PENALTY_SCALE must be > 0"
-)
-assert float(PHASE4_MONTHLY_PENALTY_SCALE) > 0.0, (
-    "PHASE4_MONTHLY_PENALTY_SCALE must be > 0"
-)
-assert int(PHASE3_GLOBAL_MAX_RULES) <= int(EVALUATOR_MAX_RULES), (
-    "PHASE3_GLOBAL_MAX_RULES must not exceed evaluator schema cap"
-)
-assert int(PHASE2_ORPHAN_MIN_TRADE_SUPPORT) <= int(MIN_TRADE_SUPPORT), (
-    "orphan min trade support should not exceed global"
-)
-assert int(PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN) >= 5, (
-    "island trade floor absolute min too low"
-)
-assert PHASE1_SIGN_CONSISTENCY_MIN_FOLDS <= PHASE1_STATIONARITY_FOLDS, (
-    "sign-consistency cannot require more folds than stationarity uses"
-)
-
-
-def is_colab_runtime() -> bool:
-    """True when running on Google Colab (/content runtime)."""
-    return (
-        os.environ.get("COLAB_RELEASE_TAG") is not None
-        or os.path.isdir("/content")
-    )
-
-
-def _apply_colab_gpu_defaults() -> None:
-    """
-    Colab T4 optimizations for main.ipynb runs.
-
-    - Phase 3 uses GPUBacktestEngine (mask cache + batch eval path).
-    - VRAM auto batch sizing uses the T4-friendly 128 cap when enabled.
-    """
-    global PHASE3_USE_GPU, PHASE2_GPU_BATCH_SIZE_AUTO
-    if not is_colab_runtime():
-        return
-    PHASE3_USE_GPU = True
-    PHASE2_GPU_BATCH_SIZE_AUTO = True
-
-
-_apply_colab_gpu_defaults()
-
-
-# =============================================================================
 # RB Governor — replaces Phase 3 (rule-set selection) + Phase 4 (risk tuning)
 # =============================================================================
 # When RB_GOVERNOR_ENABLED is True, ``run_pipeline.py`` bypasses the legacy
@@ -1848,9 +1436,9 @@ RB_KEEP_TOP_RULES: int = 80
 
 # --- Team composition ---
 
-# RB_MAX_RULES — maximum rules in the composed team (hard cap, must remain
-#   ≤ EVALUATOR_MAX_RULES=5 or Phase 5 evaluator_v5 will reject the file).
-RB_MAX_RULES: int = 5
+# RB_MAX_RULES — maximum rules in the composed team (hard cap; keep aligned
+#   with PHASE3_GLOBAL_MAX_RULES).
+RB_MAX_RULES: int = 20
 
 # RB_MAX_PAIR_OVERLAP — max Hamming-style overlap between any two rules in
 #   the team. Lower = more diverse team, harder to grow.
@@ -2029,16 +1617,459 @@ RB_GLOBAL_MAX_TOTAL_CAPITAL: float = 100.0
 
 
 # =============================================================================
-# Phase 2 — Governor-friendly adjustments
+# Helpers & resolvers
 # =============================================================================
-# These tune the Phase 2 pool to feed RB Governor with enough candidates.
-# RB Governor benefits from a slightly wider pool than the legacy Phase 3
-# greedy selector, so we raise PHASE2_KEEP_TOP_RULES modestly.
-# (PHASE2_KEEP_TOP_RULES is already defined above; override here.)
-PHASE2_KEEP_TOP_RULES = 120
+# Pure functions and dataclasses. Constants live in the sections above; these
+# resolve paths, scale trade floors, and adapt gates to debug / island scope.
 
 
+def filter_df_to_symbols(df: pd.DataFrame, symbols: list[str]) -> pd.DataFrame:
+    """Return rows for the given symbols; raises if column missing or no rows."""
+    if "symbol" not in df.columns:
+        raise ValueError(
+            "DataFrame must contain a 'symbol' column for symbol scope")
+    sym_set = {str(s) for s in symbols}
+    scoped = df[df["symbol"].astype(str).isin(sym_set)]
+    if scoped.empty:
+        raise ValueError(f"No rows for symbols {list(symbols)!r}")
+    return scoped.reset_index(drop=True)
+
+
+def resolve_debug_symbols(train_df) -> list[str] | None:
+    """Return N debug symbols starting at DEBUG_SYMBOL when scope is enabled."""
+    if not DEBUG_SYMBOL_SCOPE_ENABLED:
+        return None
+    count = int(DEBUG_SYMBOL_COUNT)
+    if count < 1:
+        raise ValueError(
+            "DEBUG_SYMBOL_SCOPE_ENABLED is True but DEBUG_SYMBOL_COUNT < 1"
+        )
+    start_symbol = str(DEBUG_SYMBOL).strip()
+    if not start_symbol:
+        raise ValueError(
+            "DEBUG_SYMBOL_SCOPE_ENABLED is True but DEBUG_SYMBOL is empty"
+        )
+    if train_df is None or getattr(train_df, "empty", True):
+        raise ValueError(
+            "DEBUG_SYMBOL_SCOPE_ENABLED but train data is empty"
+        )
+    if "symbol" not in train_df.columns:
+        raise ValueError(
+            "DEBUG_SYMBOL_SCOPE_ENABLED but train data has no 'symbol' column"
+        )
+    available = sorted(
+        train_df["symbol"].dropna().astype(str).unique().tolist())
+    if not available:
+        raise ValueError(
+            "DEBUG_SYMBOL_SCOPE_ENABLED but train data has no symbols"
+        )
+    if start_symbol not in available:
+        raise ValueError(
+            f"DEBUG_SYMBOL {start_symbol!r} not in train data; "
+            f"available symbols: {available}"
+        )
+    start_idx = available.index(start_symbol)
+    return available[start_idx:start_idx + count]
+
+
+def _debug_symbol_universe_size() -> int | None:
+    """Active symbol count when debug scope is on; None for full-universe runs."""
+    if not DEBUG_SYMBOL_SCOPE_ENABLED:
+        return None
+    return max(1, int(DEBUG_SYMBOL_COUNT))
+
+
+def effective_min_profitable_symbols(symbol_count: int | None = None) -> int:
+    """Cap cross-symbol profitability gate to the active universe size.
+
+    With DEBUG_SYMBOL_COUNT=2 and PHASE2_MIN_PROFITABLE_SYMBOLS=5, evolution
+    always pays a shortfall penalty (impossible target) and long pools collapse.
+    """
+    target = int(PHASE2_MIN_PROFITABLE_SYMBOLS)
+    universe = symbol_count if symbol_count is not None else _debug_symbol_universe_size()
+    if universe is None:
+        return target
+    return min(target, max(1, int(universe)))
+
+
+def effective_phase3_per_symbol_min_trades() -> int:
+    """Per-symbol trade floor; scaled down for thin debug universes."""
+    base = int(PHASE3_PER_SYMBOL_MIN_TRADES)
+    universe = _debug_symbol_universe_size()
+    if universe is None:
+        return base
+    # Full run assumes ~10 symbols; scale floor with active symbol count.
+    scaled = int(round(base * universe / 10.0))
+    return max(15, scaled)
+
+
+def effective_phase3_per_symbol_min_return() -> float:
+    """Per-symbol return floor; relaxed in debug scope for sparse val slices."""
+    base = float(PHASE3_PER_SYMBOL_MIN_RETURN)
+    if _debug_symbol_universe_size() is None:
+        return base
+    return min(base, 2.5)
+
+
+def effective_phase3_val_return_floor_pct() -> float:
+    """Team fallback return floor; must sit below typical Phase 2 pool returns."""
+    base = float(PHASE3_VAL_RETURN_FLOOR_PCT)
+    if _debug_symbol_universe_size() is None:
+        return base
+    return min(base, 4.0)
+
+
+def phase2_pool_path(
+    direction: str,
+    outputs_dir: str | None = None,
+) -> str:
+    """Resolve Phase 2 pool path."""
+    if outputs_dir is None:
+        return PHASE2_POOL_PATHS[direction]
+    return os.path.join(outputs_dir, f"phase2_{direction}_pool.json")
+
+
+def phase2_history_path(
+    direction: str,
+    outputs_dir: str | None = None,
+) -> str:
+    """Resolve Phase 2 history path."""
+    if outputs_dir is None:
+        return PHASE2_HISTORY_PATHS[direction]
+    return os.path.join(outputs_dir, f"phase2_{direction}_history.json")
+
+
+def phase2_should_enrich_symbol_metrics(engine: object | None = None) -> bool:
+    """Return True when GPU batch eval should run a follow-up CPU enrichment pass."""
+    if not PHASE2_GPU_ENRICH_SYMBOL_METRICS:
+        return False
+    return True
+
+
+def phase2_cluster_archive_path(direction: str, cluster_id: str) -> str:
+    """Persistent archive for one cluster island."""
+    return os.path.join(
+        PHASE2_ARCHIVE_DIR,
+        direction,
+        f"cluster_{cluster_id}",
+        "archive.json",
+    )
+
+
+def phase2_shared_archive_path(direction: str) -> str:
+    """Cross-cluster shared archive for migration warm-start."""
+    return os.path.join(PHASE2_ARCHIVE_DIR, direction, "shared_archive.json")
+
+
+def effective_phase4_wf_splits() -> int:
+    """Inner validation WF windows; single window when purged CV already ran."""
+    if split_mode_is_purged_walk_forward():
+        return 1
+    return int(PHASE4_WF_SPLITS)
+
+
+
+def split_mode_is_purged_walk_forward() -> bool:
+    """True when the active split mode is purged walk-forward."""
+    return str(SPLIT_MODE).strip().lower() == "purged_walk_forward"
+
+
+
+def set_purged_wf_reference_rows(n_rows: int) -> None:
+    """Store full train.csv row count after loader prep (split time)."""
+    global _PURGED_WF_REFERENCE_ROWS
+    _PURGED_WF_REFERENCE_ROWS = max(0, int(n_rows))
+
+
+
+def get_purged_wf_reference_rows() -> int | None:
+    """Return reference row count for trade-floor scaling, if set."""
+    return _PURGED_WF_REFERENCE_ROWS
+
+
+
+def scale_trade_floor(
+    base: int,
+    n_rows: int,
+    reference_rows: int | None = None,
+) -> int:
+    """Scale an integer trade floor by slice size vs reference universe."""
+    if not split_mode_is_purged_walk_forward():
+        return int(base)
+    if not PURGED_WF_SCALE_TRADE_FLOORS:
+        return int(base)
+    ref = reference_rows if reference_rows is not None else _PURGED_WF_REFERENCE_ROWS
+    if ref is None or ref <= 0:
+        return int(base)
+    scaled = int(round(int(base) * int(n_rows) / int(ref)))
+    return max(int(PURGED_WF_MIN_TRADE_FLOOR_ABSOLUTE), scaled)
+
+
+
+def effective_min_trade_support(n_rows: int | None = None) -> int:
+    base = int(MIN_TRADE_SUPPORT)
+    if n_rows is None:
+        return base
+    return scale_trade_floor(base, n_rows)
+
+
+
+def effective_min_trade_pool_floor(n_rows: int | None = None) -> int:
+    base = int(MIN_TRADE_POOL_FLOOR)
+    if n_rows is None:
+        return base
+    return scale_trade_floor(base, n_rows)
+
+
+
+def effective_sortino_min_trade_threshold(n_rows: int | None = None) -> int:
+    base = int(PHASE2_SORTINO_MIN_TRADE_THRESHOLD)
+    if n_rows is None:
+        return base
+    return scale_trade_floor(base, n_rows)
+
+
+
+def effective_val_trade_floor_for_objectives(n_rows: int | None = None) -> int:
+    base = max(int(MIN_TRADE_POOL_FLOOR) // 4, 10)
+    if n_rows is None:
+        return base
+    return scale_trade_floor(base, n_rows)
+
+
+
+def effective_pool_min_val_trades(n_rows: int | None = None) -> int:
+    base = max(int(MIN_TRADE_POOL_FLOOR) // 4, 10)
+    if n_rows is None:
+        return base
+    return scale_trade_floor(base, n_rows)
+
+
+
+def effective_phase3_min_val_trades(n_rows: int | None = None) -> int:
+    base = int(PHASE3_MIN_VAL_TRADES)
+    if n_rows is None:
+        return base
+    return scale_trade_floor(base, n_rows)
+
+
+
+def effective_phase4_min_worst_trades(n_rows: int | None = None) -> int:
+    base = int(PHASE4_MIN_WORST_TRADES)
+    if n_rows is None:
+        return base
+    return scale_trade_floor(base, n_rows)
+
+
+
+def effective_monthly_min_trades(n_rows: int | None = None) -> int:
+    base = int(MONTHLY_MIN_TRADES)
+    if n_rows is None:
+        return base
+    return scale_trade_floor(base, n_rows)
+
+
+
+def scale_trade_floor_by_universe(
+    base: int,
+    n_rows: int,
+    reference_rows: int,
+    *,
+    absolute_min: int | None = None,
+) -> int:
+    """Scale integer trade floors by slice size vs full-universe reference."""
+    ref = int(reference_rows)
+    if ref <= 0:
+        return int(base)
+    floor_min = int(
+        absolute_min if absolute_min is not None else PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN
+    )
+    scaled = int(round(int(base) * int(n_rows) / ref))
+    return max(floor_min, scaled)
+
+@dataclass(frozen=True)
+class IslandHyperparams:
+    """Resolved Phase 2 knobs for cluster or orphan slices."""
+
+    profile: Literal["cluster", "orphan"]
+    min_trade_support: int
+    min_trade_pool_floor: int
+    sortino_min_trade_threshold: int
+    val_trade_floor: int
+    pool_min_val_trades: int
+    min_profitable_symbols: int
+    monthly_admission_min_months: int
+    monthly_admission_min_profitable_ratio: float
+    skip_symbol_robustness_penalty: bool
+    n_rows: int
+    n_symbols: int
+
+
+
+def resolve_island_hyperparams(
+    profile: Literal["cluster", "orphan"],
+    n_rows: int,
+    reference_rows: int,
+    n_symbols: int,
+) -> IslandHyperparams:
+    """Resolve scaled trade floors and relaxed cross-symbol gates."""
+    ref = max(1, int(reference_rows))
+    rows = max(1, int(n_rows))
+    sym_n = max(1, int(n_symbols))
+
+    if profile == "orphan":
+        min_support = int(PHASE2_ORPHAN_MIN_TRADE_SUPPORT)
+        pool_floor = int(PHASE2_ORPHAN_MIN_TRADE_POOL_FLOOR)
+        sortino_thr = int(PHASE2_ORPHAN_SORTINO_MIN_TRADE_THRESHOLD)
+        min_profitable = 1
+        monthly_months = max(2, int(PHASE2_ISLAND_MONTHLY_MIN_MONTHS) - 1)
+        monthly_ratio = float(PHASE2_ORPHAN_MONTHLY_MIN_PROFITABLE_RATIO)
+    else:
+        if PHASE2_ISLAND_SCALE_TRADE_FLOORS:
+            abs_min = int(PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN)
+            min_support = scale_trade_floor_by_universe(
+                MIN_TRADE_SUPPORT, rows, ref, absolute_min=abs_min,
+            )
+            pool_floor = scale_trade_floor_by_universe(
+                MIN_TRADE_POOL_FLOOR, rows, ref, absolute_min=abs_min,
+            )
+            sortino_thr = scale_trade_floor_by_universe(
+                PHASE2_SORTINO_MIN_TRADE_THRESHOLD, rows, ref, absolute_min=abs_min,
+            )
+        else:
+            min_support = int(MIN_TRADE_SUPPORT)
+            pool_floor = int(MIN_TRADE_POOL_FLOOR)
+            sortino_thr = int(PHASE2_SORTINO_MIN_TRADE_THRESHOLD)
+        min_profitable = min(
+            int(PHASE2_MIN_PROFITABLE_SYMBOLS),
+            max(1, sym_n // 2),
+        )
+        monthly_months = int(PHASE2_ISLAND_MONTHLY_MIN_MONTHS)
+        monthly_ratio = float(PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO)
+
+    val_floor = max(pool_floor // 4, 8)
+    val_floor = scale_trade_floor_by_universe(
+        max(int(MIN_TRADE_POOL_FLOOR) // 4, 10), rows, ref,
+        absolute_min=8,
+    )
+
+    return IslandHyperparams(
+        profile=profile,
+        min_trade_support=int(min_support),
+        min_trade_pool_floor=int(pool_floor),
+        sortino_min_trade_threshold=int(sortino_thr),
+        val_trade_floor=int(val_floor),
+        pool_min_val_trades=int(val_floor),
+        min_profitable_symbols=int(min_profitable),
+        monthly_admission_min_months=int(monthly_months),
+        monthly_admission_min_profitable_ratio=float(monthly_ratio),
+        skip_symbol_robustness_penalty=True,
+        n_rows=int(rows),
+        n_symbols=int(sym_n),
+    )
+
+
+
+def island_early_stop_enabled() -> bool:
+    if PHASE2_ISLAND_MODE == "cluster":
+        return bool(PHASE2_ISLAND_EARLY_STOP_ENABLED)
+    return bool(PHASE2_EARLY_STOP_ENABLED)
+
+
+
+def island_plateau_early_stop_enabled() -> bool:
+    if PHASE2_ISLAND_MODE == "cluster":
+        return bool(PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED)
+    return bool(PHASE2_PLATEAU_EARLY_STOP_ENABLED)
+
+
+
+def scoped_island_profile(island_profile: str) -> bool:
+    """True for cluster/orphan scoped runs (not the legacy global Phase 2 path)."""
+    return str(island_profile) != "global"
+
+
+
+def island_two_stage_enabled() -> bool:
+    if PHASE2_ISLAND_MODE == "cluster":
+        return bool(PHASE2_ISLAND_TWO_STAGE_ENABLED)
+    return bool(PHASE2_TWO_STAGE_ENABLED)
+
+
+# =============================================================================
+# Cross-parameter sanity (import-time)
+# =============================================================================
+
+assert PHASE2_PLATEAU_EARLY_STOP_MIN_GENERATION <= PHASE2_STAGE_A_GENERATIONS, (
+    "plateau min gen should not exceed Stage A budget"
+)
+assert PHASE2_STAGE_A_PLATEAU_EARLY_STOP_MIN_GENERATION <= PHASE2_STAGE_A_GENERATIONS, (
+    "Stage A plateau min gen should not exceed Stage A budget"
+)
+assert PHASE2_STAGE_B_PLATEAU_EARLY_STOP_MIN_GENERATION <= PHASE2_STAGE_B_GENERATIONS, (
+    "Stage B plateau min gen should not exceed Stage B budget"
+)
+assert PHASE2_STAGE_A_EARLY_STOP_MIN_GENERATION <= PHASE2_STAGE_A_GENERATIONS, (
+    "Stage A early-stop min gen should not exceed Stage A budget"
+)
+assert PHASE2_STAGE_B_EARLY_STOP_MIN_GENERATION <= PHASE2_STAGE_B_GENERATIONS, (
+    "Stage B early-stop min gen should not exceed Stage B budget"
+)
+assert 0.0 < PHASE2_STAGE_A_MUTATION_RATE <= 0.5
+assert 0.0 < PHASE2_STAGE_B_MUTATION_RATE <= 0.5
+assert PHASE2_STAGE_A_MUTATION_RATE >= PHASE2_STAGE_B_MUTATION_RATE, (
+    "Stage A should be at least as explorative as Stage B on mutation rate"
+)
+assert float(PHASE3_MONTHLY_PENALTY_SCALE) > 0.0, (
+    "PHASE3_MONTHLY_PENALTY_SCALE must be > 0"
+)
+assert float(PHASE4_MONTHLY_PENALTY_SCALE) > 0.0, (
+    "PHASE4_MONTHLY_PENALTY_SCALE must be > 0"
+)
+assert int(RB_MAX_RULES) <= int(PHASE3_GLOBAL_MAX_RULES), (
+    "RB_MAX_RULES must not exceed Phase 3 output cap"
+)
+assert int(PHASE2_ORPHAN_MIN_TRADE_SUPPORT) <= int(MIN_TRADE_SUPPORT), (
+    "orphan min trade support should not exceed global"
+)
+assert int(PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN) >= 5, (
+    "island trade floor absolute min too low"
+)
+assert PHASE1_SIGN_CONSISTENCY_MIN_FOLDS <= PHASE1_STATIONARITY_FOLDS, (
+    "sign-consistency cannot require more folds than stationarity uses"
+)
+# =============================================================================
 assert MIN_CONDITIONS <= MAX_CONDITIONS, (
     f"MIN_CONDITIONS ({MIN_CONDITIONS}) must be <= MAX_CONDITIONS ({MAX_CONDITIONS})"
 )
 assert 0.0 <= PHASE2_VIABILITY_RECOVERY_DEPLOYABLE_MUTATE_FRACTION <= 1.0
+
+# =============================================================================
+# Runtime — Colab GPU defaults
+# =============================================================================
+
+
+def is_colab_runtime() -> bool:
+    """True when running on Google Colab (/content runtime)."""
+    return (
+        os.environ.get("COLAB_RELEASE_TAG") is not None
+        or os.path.isdir("/content")
+    )
+
+
+def _apply_colab_gpu_defaults() -> None:
+    """
+    Colab T4 optimizations for main.ipynb runs.
+
+    - Phase 3 uses GPUBacktestEngine (mask cache + batch eval path).
+    - VRAM auto batch sizing uses the T4-friendly 128 cap when enabled.
+    """
+    global PHASE3_USE_GPU, PHASE2_GPU_BATCH_SIZE_AUTO
+    if not is_colab_runtime():
+        return
+    PHASE3_USE_GPU = True
+    PHASE2_GPU_BATCH_SIZE_AUTO = True
+
+
+_apply_colab_gpu_defaults()
+

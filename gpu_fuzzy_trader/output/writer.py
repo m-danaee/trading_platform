@@ -24,8 +24,8 @@ Schema (must match evaluator_v3.ipynb exactly):
 
 Constraints (Requirements 12.1–12.9):
   - direction must be "long" or "short"
-  - rules_set must contain 2–5 rule objects
-      - Truncates rules_set to EVALUATOR_MAX_RULES if needed (log WARNING).
+  - rules_set must contain PHASE3_GLOBAL_MIN_RULES–PHASE3_GLOBAL_MAX_RULES rules
+      - Truncates rules_set to PHASE3_GLOBAL_MAX_RULES if needed (log WARNING).
       - Rules must already be score-ranked (Phase 3 sorts before write).
   - Each rule must have exactly: tp, sl, capital_pct, conditions
   - tp, sl, capital_pct must be floats
@@ -223,8 +223,8 @@ def _validate_rule_set(rule_set: object) -> dict:
     Applies all schema constraints (Requirements 12.1–12.9):
       - Checks top-level keys
       - Validates direction
-      - Truncates rules_set to 5 if needed (log WARNING)
-      - Validates EVALUATOR_MIN_RULES–EVALUATOR_MAX_RULES rules after truncation
+      - Truncates rules_set to PHASE3_GLOBAL_MAX_RULES if needed (log WARNING)
+      - Validates PHASE3_GLOBAL_MIN_RULES–PHASE3_GLOBAL_MAX_RULES after truncation
       - Validates each rule object
 
     Returns a normalised dict ready for JSON serialisation.
@@ -256,9 +256,9 @@ def _validate_rule_set(rule_set: object) -> dict:
             f"'rules_set' must be a list, got {type(rules_list).__name__!r}."
         )
 
-    # Requirement 12.8: truncate to evaluator max (list must be score-ranked)
-    schema_max = int(getattr(_cfg, "EVALUATOR_MAX_RULES", 5))
-    schema_min = int(getattr(_cfg, "EVALUATOR_MIN_RULES", 2))
+    # Requirement 12.8: truncate to Phase 3 output cap (list must be score-ranked)
+    schema_max = int(_cfg.PHASE3_GLOBAL_MAX_RULES)
+    schema_min = int(_cfg.PHASE3_GLOBAL_MIN_RULES)
     if len(rules_list) > schema_max:
         logger.warning(
             "rules_set contains %d rules (max %d); truncating to top %d "
@@ -331,7 +331,7 @@ def _maybe_write_evaluator_clean(
     strategy: dict, main_path: str | Path, direction: str
 ) -> None:
     """
-    Write a stripped strategy file if ``WRITE_EVALUATOR_CLEAN`` is ``True``.
+    Write a stripped strategy file alongside the main strategy JSON.
 
     This is a convenience helper for production pipeline code that writes
     strategy files via direct ``json.dump`` (Phases 3/4/5) rather than
@@ -347,8 +347,6 @@ def _maybe_write_evaluator_clean(
     direction : str
         ``"long"`` or ``"short"`` — used to name the clean file.
     """
-    if not bool(getattr(_cfg, "WRITE_EVALUATOR_CLEAN", True)):
-        return
     main_path = Path(main_path)
     clean_path = main_path.parent / "evaluator_clean" / f"{direction}_evaluator_clean.json"
     try:
@@ -369,7 +367,7 @@ class Output_Writer:
     -------
     write(rule_set, path)
         Validate rule_set and write to JSON at path. Also writes an
-        evaluator-clean variant if ``WRITE_EVALUATOR_CLEAN`` is ``True``.
+        evaluator-clean variant with only ``direction`` and ``rules_set``.
     load_and_validate(path)
         Load JSON from path and run full schema validation.
     """
@@ -383,8 +381,7 @@ class Output_Writer:
         Validate rule_set and write to JSON at path.
 
         After the main write, also writes an evaluator-clean file
-        (``<parent>/evaluator_clean/<stem>_evaluator_clean.json``) when
-        ``WRITE_EVALUATOR_CLEAN`` is ``True``.
+        (``<parent>/evaluator_clean/<stem>_evaluator_clean.json``).
 
         Parameters
         ----------
@@ -421,11 +418,10 @@ class Output_Writer:
         )
 
         # Write evaluator-clean variant (defensive — strip extra metadata).
-        if getattr(_cfg, "WRITE_EVALUATOR_CLEAN", True):
-            direction = validated["direction"]
-            clean_dir = dest.parent / "evaluator_clean"
-            clean_path = clean_dir / f"{direction}_evaluator_clean.json"
-            write_evaluator_clean(validated, clean_path)
+        direction = validated["direction"]
+        clean_dir = dest.parent / "evaluator_clean"
+        clean_path = clean_dir / f"{direction}_evaluator_clean.json"
+        write_evaluator_clean(validated, clean_path)
 
     def load_and_validate(self, path: str | Path) -> dict:
         """

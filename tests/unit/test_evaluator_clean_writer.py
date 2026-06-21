@@ -7,21 +7,17 @@ Tests cover:
   - Strategy with no extra keys (only ``direction`` + ``rules_set``) works.
   - ``KeyError`` is raised when ``direction`` or ``rules_set`` is missing.
   - Wiring into ``Output_Writer.write`` also produces the clean file.
-  - The clean file is NOT written when ``WRITE_EVALUATOR_CLEAN`` is ``False``.
 """
 
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 import pytest
 
-from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.output.writer import (
     Output_Writer,
-    ValidationError,
     _maybe_write_evaluator_clean,
     write_evaluator_clean,
 )
@@ -134,7 +130,6 @@ class TestWriteEvaluatorCleanStandalone:
         assert set(data.keys()) == {"direction", "rules_set"}
         assert data["direction"] == "long"
         assert len(data["rules_set"]) == 2
-        # Spot-check one rule
         assert data["rules_set"][0]["tp"] == 3.0
         assert data["rules_set"][0]["sl"] == 1.5
 
@@ -168,84 +163,39 @@ class TestWriteEvaluatorCleanWired:
     """Tests that ``Output_Writer.write`` also produces the evaluator-clean file."""
 
     def test_clean_file_written_after_main(self, tmp_path: Path, strategy_with_extras: dict) -> None:
-        """
-        Output_Writer.write produces both the main file and the
-        evaluator-clean file.
-        """
-        original_value = getattr(_cfg, "WRITE_EVALUATOR_CLEAN", True)
-        try:
-            # Ensure the flag is True for this test
-            _cfg.WRITE_EVALUATOR_CLEAN = True
+        """Output_Writer.write produces both the main file and the evaluator-clean file."""
+        main_path = tmp_path / "short.json"
+        writer = Output_Writer()
+        writer.write(strategy_with_extras, main_path)
 
-            main_path = tmp_path / "short.json"
-            writer = Output_Writer()
-            writer.write(strategy_with_extras, main_path)
+        assert main_path.exists()
 
-            # Main file exists
-            assert main_path.exists()
+        clean_path = tmp_path / "evaluator_clean" / "short_evaluator_clean.json"
+        assert clean_path.exists(), f"Expected clean file at {clean_path}"
 
-            # Clean file exists in evaluator_clean subdirectory
-            clean_path = tmp_path / "evaluator_clean" / "short_evaluator_clean.json"
-            assert clean_path.exists(), f"Expected clean file at {clean_path}"
+        with clean_path.open("r") as fh:
+            clean_data = json.load(fh)
+        assert set(clean_data.keys()) == {"direction", "rules_set"}
+        assert clean_data["direction"] == "short"
 
-            # Clean file has only direction and rules_set
-            with clean_path.open("r") as fh:
-                clean_data = json.load(fh)
-            assert set(clean_data.keys()) == {"direction", "rules_set"}
-            assert clean_data["direction"] == "short"
-
-            # Main file retains extra keys (since Output_Writer.write returns
-            # the validated dict which only has direction + rules_set; extra
-            # keys in input are stripped by _validate_rule_set).
-            with main_path.open("r") as fh:
-                main_data = json.load(fh)
-            assert set(main_data.keys()) == {"direction", "rules_set"}
-        finally:
-            _cfg.WRITE_EVALUATOR_CLEAN = original_value
-
-    def test_clean_file_not_written_when_flag_false(
-        self, tmp_path: Path, strategy_with_extras: dict
-    ) -> None:
-        """
-        When ``WRITE_EVALUATOR_CLEAN`` is ``False``, the clean file is NOT
-        written.
-        """
-        original_value = getattr(_cfg, "WRITE_EVALUATOR_CLEAN", True)
-        try:
-            _cfg.WRITE_EVALUATOR_CLEAN = False
-
-            main_path = tmp_path / "short.json"
-            writer = Output_Writer()
-            writer.write(strategy_with_extras, main_path)
-
-            clean_path = tmp_path / "evaluator_clean" / "short_evaluator_clean.json"
-            assert not clean_path.exists(), (
-                f"Clean file should NOT exist when WRITE_EVALUATOR_CLEAN=False: "
-                f"{clean_path}"
-            )
-        finally:
-            _cfg.WRITE_EVALUATOR_CLEAN = original_value
+        with main_path.open("r") as fh:
+            main_data = json.load(fh)
+        assert set(main_data.keys()) == {"direction", "rules_set"}
 
     def test_clean_file_written_for_long(
         self, tmp_path: Path, minimal_strategy: dict
     ) -> None:
         """Long direction also produces the correct clean file."""
-        original_value = getattr(_cfg, "WRITE_EVALUATOR_CLEAN", True)
-        try:
-            _cfg.WRITE_EVALUATOR_CLEAN = True
+        main_path = tmp_path / "long.json"
+        writer = Output_Writer()
+        writer.write(minimal_strategy, main_path)
 
-            main_path = tmp_path / "long.json"
-            writer = Output_Writer()
-            writer.write(minimal_strategy, main_path)
-
-            clean_path = tmp_path / "evaluator_clean" / "long_evaluator_clean.json"
-            assert clean_path.exists()
-            with clean_path.open("r") as fh:
-                data = json.load(fh)
-            assert data["direction"] == "long"
-            assert len(data["rules_set"]) == 2
-        finally:
-            _cfg.WRITE_EVALUATOR_CLEAN = original_value
+        clean_path = tmp_path / "evaluator_clean" / "long_evaluator_clean.json"
+        assert clean_path.exists()
+        with clean_path.open("r") as fh:
+            data = json.load(fh)
+        assert data["direction"] == "long"
+        assert len(data["rules_set"]) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -257,78 +207,42 @@ class TestMaybeWriteEvaluatorClean:
     """Tests for ``_maybe_write_evaluator_clean`` — the helper wired into
     ``phase3_rule_set``, ``phase4_wf_optimizer``, and ``phase5_oos``."""
 
-    def test_writes_clean_file_when_flag_true(
+    def test_writes_clean_file(
         self, tmp_path: Path, strategy_with_extras: dict,
     ) -> None:
-        """When WRITE_EVALUATOR_CLEAN=True, the clean file is written next to
-        the main path in an ``evaluator_clean/`` subdirectory."""
-        original_value = getattr(_cfg, "WRITE_EVALUATOR_CLEAN", True)
-        try:
-            _cfg.WRITE_EVALUATOR_CLEAN = True
+        """The clean file is written next to the main path in evaluator_clean/."""
+        main_path = tmp_path / "short.json"
+        _maybe_write_evaluator_clean(strategy_with_extras, main_path, "short")
 
-            main_path = tmp_path / "short.json"
-            _maybe_write_evaluator_clean(strategy_with_extras, main_path, "short")
-
-            clean_path = tmp_path / "evaluator_clean" / "short_evaluator_clean.json"
-            assert clean_path.exists()
-            with clean_path.open("r") as fh:
-                data = json.load(fh)
-            assert set(data.keys()) == {"direction", "rules_set"}
-            assert data["direction"] == "short"
-        finally:
-            _cfg.WRITE_EVALUATOR_CLEAN = original_value
-
-    def test_skips_clean_file_when_flag_false(
-        self, tmp_path: Path, strategy_with_extras: dict,
-    ) -> None:
-        """When WRITE_EVALUATOR_CLEAN=False, the clean file is NOT written."""
-        original_value = getattr(_cfg, "WRITE_EVALUATOR_CLEAN", True)
-        try:
-            _cfg.WRITE_EVALUATOR_CLEAN = False
-
-            main_path = tmp_path / "short.json"
-            _maybe_write_evaluator_clean(strategy_with_extras, main_path, "short")
-
-            clean_path = tmp_path / "evaluator_clean" / "short_evaluator_clean.json"
-            assert not clean_path.exists()
-        finally:
-            _cfg.WRITE_EVALUATOR_CLEAN = original_value
+        clean_path = tmp_path / "evaluator_clean" / "short_evaluator_clean.json"
+        assert clean_path.exists()
+        with clean_path.open("r") as fh:
+            data = json.load(fh)
+        assert set(data.keys()) == {"direction", "rules_set"}
+        assert data["direction"] == "short"
 
     def test_creates_parent_directory(
         self, tmp_path: Path, minimal_strategy: dict,
     ) -> None:
         """Parent ``evaluator_clean/`` directory is auto‑created."""
-        original_value = getattr(_cfg, "WRITE_EVALUATOR_CLEAN", True)
-        try:
-            _cfg.WRITE_EVALUATOR_CLEAN = True
+        deep_main = tmp_path / "nested" / "long.json"
+        _maybe_write_evaluator_clean(minimal_strategy, deep_main, "long")
 
-            deep_main = tmp_path / "nested" / "long.json"
-            _maybe_write_evaluator_clean(minimal_strategy, deep_main, "long")
-
-            clean_path = tmp_path / "nested" / "evaluator_clean" / "long_evaluator_clean.json"
-            assert clean_path.exists()
-            with clean_path.open("r") as fh:
-                data = json.load(fh)
-            assert data["direction"] == "long"
-            assert len(data["rules_set"]) == 2
-        finally:
-            _cfg.WRITE_EVALUATOR_CLEAN = original_value
+        clean_path = tmp_path / "nested" / "evaluator_clean" / "long_evaluator_clean.json"
+        assert clean_path.exists()
+        with clean_path.open("r") as fh:
+            data = json.load(fh)
+        assert data["direction"] == "long"
+        assert len(data["rules_set"]) == 2
 
     def test_handles_missing_keys_gracefully(
         self, tmp_path: Path,
     ) -> None:
         """A strategy missing ``direction`` or ``rules_set`` logs a debug
         message but does not raise (the helper is defensive)."""
-        original_value = getattr(_cfg, "WRITE_EVALUATOR_CLEAN", True)
-        try:
-            _cfg.WRITE_EVALUATOR_CLEAN = True
+        bad = {"some_key": "some_value"}
+        main_path = tmp_path / "bad.json"
+        _maybe_write_evaluator_clean(bad, main_path, "long")
 
-            bad = {"some_key": "some_value"}
-            main_path = tmp_path / "bad.json"
-            # Should not raise
-            _maybe_write_evaluator_clean(bad, main_path, "long")
-
-            clean_path = tmp_path / "evaluator_clean" / "long_evaluator_clean.json"
-            assert not clean_path.exists()
-        finally:
-            _cfg.WRITE_EVALUATOR_CLEAN = original_value
+        clean_path = tmp_path / "evaluator_clean" / "long_evaluator_clean.json"
+        assert not clean_path.exists()
