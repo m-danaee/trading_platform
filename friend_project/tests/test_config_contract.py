@@ -1,12 +1,12 @@
 from gpu_fuzzy_trader import config as cfg
 
 
-def test_tp_sl_minimums_include_one_percent():
-    """Validate that one percent TP and SL are accepted."""
-    assert cfg.RB_MIN_TP == 1.0
+def test_tp_sl_minimums_match_config():
+    """Validate RB Governor TP/SL floors and grid lower bounds."""
+    assert cfg.RB_MIN_TP == 1.5
     assert cfg.RB_MIN_SL == 1.0
-    assert min(cfg.RB_TP_GRID) >= 1.0
-    assert min(cfg.RB_SL_GRID) >= 1.0
+    assert min(cfg.RB_TP_GRID) >= cfg.RB_MIN_TP
+    assert min(cfg.RB_SL_GRID) >= cfg.RB_MIN_SL
 
 
 def test_symbol_filters_are_required_for_rb_outputs():

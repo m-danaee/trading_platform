@@ -3,9 +3,14 @@ from __future__ import annotations
 from gpu_fuzzy_trader.phases.phase2_rule_pool import (
     _crowding_distance,
     _crossover,
+    _diversity_penalty_for_chromosome,
     _mutate,
     _non_dominated_sort,
     trade_support_penalty,
+)
+from gpu_fuzzy_trader.phases.phase2_stage import (
+    StageLabel,
+    resolve_phase2_stage_params,
 )
 
 import logging
@@ -25,9 +30,9 @@ try:
 
     _EVOX_AVAILABLE = True
 except ImportError:
-    torch = None                            
-    uniform_sampling = None                            
-    non_dominate_rank = None                            
+    torch = None
+    uniform_sampling = None
+    non_dominate_rank = None
 
 
 def _build_rank_and_crowding(
@@ -132,6 +137,7 @@ def _make_offspring_population(
     feature_infos: list[dict],
     dont_cares: np.ndarray,
     rng: np.random.Generator,
+    mutation_rate: float = 0.1,
 ) -> np.ndarray:
     """Generate pop_size offspring via binary tournament, crossover, mutation."""
     fronts = _non_dominated_sort(objectives)
@@ -143,10 +149,10 @@ def _make_offspring_population(
         pb = _binary_tournament_pick(all_indices, rank, crowding, rng)
         child_a, child_b = _crossover(population[pa], population[pb], rng)
         offspring_list.append(
-            _mutate(child_a, feature_infos, dont_cares, rng)
+            _mutate(child_a, feature_infos, dont_cares, rng, mutation_rate=mutation_rate)
         )
         offspring_list.append(
-            _mutate(child_b, feature_infos, dont_cares, rng)
+            _mutate(child_b, feature_infos, dont_cares, rng, mutation_rate=mutation_rate)
         )
     return np.stack(offspring_list[:pop_size], axis=0)
 
@@ -157,7 +163,7 @@ def _get_reference_vectors(pop_size: int, n_objs: int = 3) -> np.ndarray:
         refs = uniform_sampling(pop_size, n_objs)[0].cpu().numpy()
         while len(refs) < pop_size:
             extra, _ = uniform_sampling(
-                pop_size - len(refs), n_objs)                      
+                pop_size - len(refs), n_objs)
             refs = np.vstack([refs, extra.cpu().numpy()])
         return refs[:pop_size]
 
@@ -183,6 +189,7 @@ def _evaluate_population_indices(
     pareto_archive: list[np.ndarray],
     objectives: np.ndarray,
     metrics_cache: list[dict],
+    stage_params=None,
 ) -> None:
     """Evaluate unevaluated individuals, preferring batch simulate_rule_batch."""
     from gpu_fuzzy_trader.phases.phase2_rule_pool import _evaluate_chromosome
@@ -195,7 +202,6 @@ def _evaluate_population_indices(
         from gpu_fuzzy_trader import config as _cfg
         from gpu_fuzzy_trader.phases.phase2_rule_pool import (
             _count_active_conditions,
-            _hamming_distance,
         )
 
         chroms = population[pending]
@@ -223,14 +229,9 @@ def _evaluate_population_indices(
             executed = int(metrics.get("executed_trades", 0))
 
             support_penalty = trade_support_penalty(executed)
-
-            diversity_penalty = 0.0
-            if pareto_archive:
-                min_hamming = min(
-                    _hamming_distance(chromosome, pf) for pf in pareto_archive
-                )
-                if min_hamming == 0:
-                    diversity_penalty = 5.0
+            diversity_penalty = _diversity_penalty_for_chromosome(
+                chromosome, pareto_archive, stage_params=stage_params,
+            )
 
             pen = support_penalty + diversity_penalty + cond_penalty
             objectives[i] = np.array(
@@ -242,7 +243,8 @@ def _evaluate_population_indices(
         logger.debug("Batch eval failed, falling back to single: %s", exc)
         for i in pending:
             obj, met = _evaluate_chromosome(
-                population[i], dont_cares, engine, pareto_archive
+                population[i], dont_cares, engine, pareto_archive,
+                stage_params=stage_params,
             )
             objectives[i] = obj
             metrics_cache[i] = met
@@ -352,6 +354,8 @@ def _run_nsga2_fallback(
     rng: np.random.Generator,
     seed_chromosomes: np.ndarray | None = None,
     log_tag: str | None = None,
+    seed_fraction: float | None = None,
+    stage: StageLabel = None,
 ) -> tuple[list[dict], list[dict]]:
     """NumPy NSGA-II loop when EvoX is not installed."""
     from gpu_fuzzy_trader.phases.phase2_rule_pool import (
@@ -363,6 +367,11 @@ def _run_nsga2_fallback(
         _pareto_sortino_stats,
     )
 
+    stage_params = resolve_phase2_stage_params(stage)
+    if seed_fraction is None:
+        seed_fraction = stage_params.seed_fraction
+    mutation_rate = stage_params.mutation_rate
+
     K = len(feature_infos)
     dont_cares = _get_dont_cares(feature_infos)
     population = _init_population(
@@ -370,6 +379,7 @@ def _run_nsga2_fallback(
         feature_infos,
         rng,
         seeded_chromosomes=seed_chromosomes,
+        seed_fraction=seed_fraction,
     )
     objectives = np.full((pop_size, 3), np.inf)
     metrics_cache: list[dict] = [{} for _ in range(pop_size)]
@@ -377,15 +387,18 @@ def _run_nsga2_fallback(
     history: list[dict] = []
 
     tag = log_tag or "NSGA-II (fallback)"
-    logger.info("%s: %d features, pop=%d, gen=%d",
-                tag, K, pop_size, n_generations)
+    logger.info(
+        "%s: %d features, pop=%d, gen=%d, mutation=%.3f",
+        tag, K, pop_size, n_generations, mutation_rate,
+    )
     gen_loop_start = time.monotonic()
 
     for gen in range(n_generations):
         for i in range(pop_size):
             if np.any(np.isinf(objectives[i])):
                 obj, met = _evaluate_chromosome(
-                    population[i], dont_cares, engine, pareto_archive
+                    population[i], dont_cares, engine, pareto_archive,
+                    stage_params=stage_params,
                 )
                 objectives[i] = obj
                 metrics_cache[i] = met
@@ -416,12 +429,14 @@ def _run_nsga2_fallback(
 
         offspring = _make_offspring_population(
             population, objectives, pop_size, feature_infos, dont_cares, rng,
+            mutation_rate=mutation_rate,
         )
         off_obj = np.full((pop_size, 3), np.inf)
         off_metrics: list[dict] = [{} for _ in range(pop_size)]
         for i in range(pop_size):
             obj, met = _evaluate_chromosome(
-                offspring[i], dont_cares, engine, pareto_archive
+                offspring[i], dont_cares, engine, pareto_archive,
+                stage_params=stage_params,
             )
             off_obj[i] = obj
             off_metrics[i] = met
@@ -468,6 +483,8 @@ def _run_nsga3(
     rng: np.random.Generator,
     seed_chromosomes: np.ndarray | None = None,
     log_tag: str | None = None,
+    seed_fraction: float | None = None,
+    stage: StageLabel = None,
 ) -> tuple[list[dict], list[dict]]:
     """NSGA-III evolutionary loop for Phase 2 rule pool generation."""
     from gpu_fuzzy_trader.phases.phase2_rule_pool import (
@@ -479,6 +496,11 @@ def _run_nsga3(
         _pareto_sortino_stats,
     )
 
+    stage_params = resolve_phase2_stage_params(stage)
+    if seed_fraction is None:
+        seed_fraction = stage_params.seed_fraction
+    mutation_rate = stage_params.mutation_rate
+
     K = len(feature_infos)
     dont_cares = _get_dont_cares(feature_infos)
     population = _init_population(
@@ -486,6 +508,7 @@ def _run_nsga3(
         feature_infos,
         rng,
         seeded_chromosomes=seed_chromosomes,
+        seed_fraction=seed_fraction,
     )
     objectives = np.full((pop_size, 3), np.inf)
     metrics_cache: list[dict] = [{} for _ in range(pop_size)]
@@ -494,8 +517,10 @@ def _run_nsga3(
 
     ref_vec = _get_reference_vectors(pop_size, 3)
     tag = log_tag or "NSGA-III"
-    logger.info("%s: %d features, pop=%d, gen=%d",
-                tag, K, pop_size, n_generations)
+    logger.info(
+        "%s: %d features, pop=%d, gen=%d, mutation=%.3f",
+        tag, K, pop_size, n_generations, mutation_rate,
+    )
     gen_loop_start = time.monotonic()
 
     for gen in range(n_generations):
@@ -507,6 +532,7 @@ def _run_nsga3(
             pareto_archive,
             objectives,
             metrics_cache,
+            stage_params=stage_params,
         )
 
         fronts = _non_dominated_sort(objectives)
@@ -535,6 +561,7 @@ def _run_nsga3(
 
         offspring = _make_offspring_population(
             population, objectives, pop_size, feature_infos, dont_cares, rng,
+            mutation_rate=mutation_rate,
         )
         off_obj = np.full((pop_size, 3), np.inf)
         off_metrics: list[dict] = [{} for _ in range(pop_size)]
@@ -546,6 +573,7 @@ def _run_nsga3(
             pareto_archive,
             off_obj,
             off_metrics,
+            stage_params=stage_params,
         )
 
         merge_pop = np.vstack([population, offspring])
@@ -598,19 +626,26 @@ def run_phase2_evolution(
     rng: np.random.Generator,
     seed_chromosomes: np.ndarray | None = None,
     log_tag: str | None = None,
+    seed_fraction: float | None = None,
+    stage: StageLabel = None,
 ) -> tuple[list[dict], list[dict]]:
     """Run Phase 2 NSGA-III evolution. Returns (pareto_pool, history)."""
+    evo_kwargs = dict(
+        seed_chromosomes=seed_chromosomes,
+        log_tag=log_tag,
+        seed_fraction=seed_fraction,
+        stage=stage,
+    )
     if not _EVOX_AVAILABLE:
         logger.warning(
             "EvoX not available; falling back to NumPy NSGA-II for Phase 2.",
         )
         return _run_nsga2_fallback(
             feature_infos, engine, pop_size, n_generations, rng,
-            seed_chromosomes=seed_chromosomes,
-            log_tag=log_tag or "NSGA-II (fallback)",
+            **evo_kwargs,
         )
 
     return _run_nsga3(
         feature_infos, engine, pop_size, n_generations, rng,
-        seed_chromosomes=seed_chromosomes, log_tag=log_tag,
+        **evo_kwargs,
     )

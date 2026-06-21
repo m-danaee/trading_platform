@@ -106,12 +106,38 @@ def _sample_df(df: pd.DataFrame, total_rows: int) -> pd.DataFrame:
     return pd.concat(parts, ignore_index=True)
 
 
+def _diversity_penalty_for_chromosome(
+    chromosome: np.ndarray,
+    pareto_front: list[np.ndarray],
+    stage_params=None,
+) -> float:
+    """Crowding penalty when a chromosome is too close to the Pareto front."""
+    if not pareto_front:
+        return 0.0
+    threshold = (
+        int(stage_params.diversity_hamming_threshold)
+        if stage_params is not None
+        else int(_cfg.PHASE2_DIVERSITY_HAMMING_THRESHOLD)
+    )
+    penalty_val = (
+        float(stage_params.diversity_penalty)
+        if stage_params is not None
+        else float(_cfg.PHASE2_DIVERSITY_PENALTY)
+    )
+    min_hamming = min(
+        _hamming_distance(chromosome, pf) for pf in pareto_front
+    )
+    if min_hamming < threshold:
+        return penalty_val
+    return 0.0
+
 
 def _evaluate_chromosome(
     chromosome: np.ndarray,
     dont_cares: np.ndarray,
-    engine,                                          
+    engine,
     pareto_front: list[np.ndarray],
+    stage_params=None,
 ) -> tuple[np.ndarray, dict]:
     """
     Evaluate a single chromosome and return (objectives, metrics).
@@ -152,12 +178,9 @@ def _evaluate_chromosome(
 
     support_penalty = trade_support_penalty(executed)
 
-    diversity_penalty = 0.0
-    if pareto_front:
-        min_hamming = min(_hamming_distance(chromosome, pf)
-                          for pf in pareto_front)
-        if min_hamming == 0:
-            diversity_penalty = 5.0                                   
+    diversity_penalty = _diversity_penalty_for_chromosome(
+        chromosome, pareto_front, stage_params=stage_params,
+    )
 
     f1 = -sortino_ratio + support_penalty + diversity_penalty + cond_penalty
     f2 = max_dd + support_penalty + diversity_penalty + cond_penalty
@@ -768,6 +791,33 @@ def _pool_seed_chromosomes(pool: list[dict]) -> np.ndarray | None:
     return np.vstack(rows)
 
 
+def _stage_b_seed_chromosomes(
+    stage_a_pool: list[dict],
+    base_seeds: np.ndarray | None,
+    top_k: int,
+) -> np.ndarray | None:
+    """Pick top Stage A deployable rules and merge with optional base seeds."""
+    if not stage_a_pool and base_seeds is None:
+        return None
+
+    ranked = _merge_archive_entries(stage_a_pool, max_size=max(1, int(top_k)))
+    stage_seeds = _pool_seed_chromosomes(ranked)
+    if base_seeds is None:
+        return stage_seeds
+    if stage_seeds is None:
+        return base_seeds
+
+    rows: list[np.ndarray] = [row.copy() for row in stage_seeds]
+    seen = {tuple(row.tolist()) for row in rows}
+    for row in base_seeds:
+        key = tuple(int(v) for v in row.tolist())
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append(row.copy())
+    return np.vstack(rows)
+
+
 def _validate_archive_payload(
     payload: object,
     path: str,
@@ -1043,15 +1093,84 @@ class Rule_Pool_Generator:
             )
 
         progress_tag = "Phase 2 [%s] NSGA-III" % self.direction
-        new_pool, history = run_phase2_evolution(
+        evo_kwargs = dict(
             feature_infos=self.feature_infos,
             engine=self._engine,
             pop_size=self.pop_size,
-            n_generations=self.n_generations,
             rng=rng,
-            log_tag=progress_tag,
             seed_chromosomes=seed_chromosomes,
         )
+        use_two_stage = (
+            bool(getattr(_cfg, "PHASE2_TWO_STAGE_ENABLED", False))
+            and self.n_generations == _cfg.PHASE2_GENERATIONS
+            and self.pop_size == _cfg.PHASE2_POPULATION_SIZE
+        )
+
+        if use_two_stage:
+            stage_a_gens = int(_cfg.PHASE2_STAGE_A_GENERATIONS)
+            stage_b_gens = int(_cfg.PHASE2_STAGE_B_GENERATIONS)
+            stage_b_top_k = int(_cfg.PHASE2_STAGE_B_SEED_TOP_K)
+            logger.info(
+                "Phase 2 [%s]: two-stage search enabled "
+                "(Stage A=%d gen, Stage B=%d gen, seed_top_k=%d)",
+                self.direction,
+                stage_a_gens,
+                stage_b_gens,
+                stage_b_top_k,
+            )
+            new_pool_a, history_a = run_phase2_evolution(
+                n_generations=stage_a_gens,
+                log_tag=f"{progress_tag} Stage A",
+                stage="A",
+                seed_fraction=float(_cfg.PHASE2_STAGE_A_ARCHIVE_SEED_FRACTION),
+                **evo_kwargs,
+            )
+            stage_b_seeds = _stage_b_seed_chromosomes(
+                list(new_pool_a),
+                seed_chromosomes,
+                stage_b_top_k,
+            )
+            if stage_b_seeds is not None:
+                logger.info(
+                    "Phase 2 [%s]: Stage B seeding from %d chromosomes "
+                    "(top %d Stage A + archive seeds)",
+                    self.direction,
+                    stage_b_seeds.shape[0],
+                    stage_b_top_k,
+                )
+
+            import gc as _gc
+            _gc.collect()
+            try:
+                import jax as _jax
+                _jax.clear_caches()
+            except Exception:
+                pass
+            _gc.collect()
+            logger.info(
+                "Phase 2 [%s]: Stage A memory released — starting Stage B",
+                self.direction,
+            )
+
+            new_pool_b, history_b = run_phase2_evolution(
+                n_generations=stage_b_gens,
+                log_tag=f"{progress_tag} Stage B",
+                stage="B",
+                seed_fraction=float(_cfg.PHASE2_STAGE_B_SEED_FRACTION),
+                **{**evo_kwargs, "seed_chromosomes": stage_b_seeds},
+            )
+            for entry in history_a:
+                entry["stage"] = "A"
+            for entry in history_b:
+                entry["stage"] = "B"
+            new_pool = list(new_pool_a) + list(new_pool_b)
+            history = history_a + history_b
+        else:
+            new_pool, history = run_phase2_evolution(
+                n_generations=self.n_generations,
+                log_tag=progress_tag,
+                **evo_kwargs,
+            )
 
         pool = _merge_archive_entries(previous_pool + list(new_pool))
         try:
