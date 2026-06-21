@@ -1053,11 +1053,11 @@ class TestRulePoolGeneratorRun:
             assert seeds.shape == (2, max_slots(), 2)
             assert np.array_equal(
                 sparse_to_dense(seeds[0], dc),
-                np.array([0, 1, 2, 5], dtype=np.int32),
+                np.array([0, 1, 2, 3], dtype=np.int32),
             )
             assert np.array_equal(
                 sparse_to_dense(seeds[1], dc),
-                np.array([1, 2, 3, 5], dtype=np.int32),
+                np.array([1, 2, 3, 4], dtype=np.int32),
             )
             chromosomes = {tuple(entry["chromosome"]) for entry in result}
             assert (0, 1, 2, 3) in chromosomes
@@ -1361,8 +1361,8 @@ class TestEvaluateChromosome:
             _cfg.MIN_TRADE_SUPPORT = 5
             _cfg.PHASE2_USE_TOTAL_RETURN_OBJ = True
             
-            chromosome = np.array([1, 2, 3, 4, 5], dtype=np.int32)
-            dont_cares = np.ones(5, dtype=np.int32) * 5
+            chromosome = np.array([1, 2, 3, 4, 5, 6], dtype=np.int32)
+            dont_cares = np.ones(6, dtype=np.int32) * 7
             
             class MockEngine:
                 def simulate_rule_batch(self, chromosomes, **kwargs):
@@ -1384,14 +1384,14 @@ class TestEvaluateChromosome:
             
             # Case 2: pareto_front contains a different chromosome that is within Hamming distance of 4
             # (diff by 1 gene -> Hamming dist = 1)
-            similar_chrom = np.array([1, 2, 3, 4, 9], dtype=np.int32)
+            similar_chrom = np.array([1, 2, 3, 4, 5, 9], dtype=np.int32)
             objectives_similar, _ = _evaluate_chromosome(
                 chromosome, dont_cares, engine, [similar_chrom]
             )
             
             # objectives[2] is -f3_val + penalties
             # f3_val is total_return = 15.0 since PHASE2_USE_TOTAL_RETURN_OBJ is True.
-            # cond_penalty is 10.0 because chromosome has 4 active conditions while MAX_CONDITIONS is 3.
+            # cond_penalty is 10.0 because chromosome has 6 active conditions while MAX_CONDITIONS is 5.
             # Without diversity penalty: -15.0 + 10.0 = -5.0
             # With diversity penalty: -15.0 + 10.0 + 10.0 = 5.0
             assert np.isclose(objectives_self[2], -5.0)
@@ -1778,12 +1778,12 @@ class TestArchiveMetadata:
         assert "robust_score" in annotated[0]
 
 
-class TestMinConditionsThree:
-    def test_config_allows_three_active_conditions(self):
+class TestConditionBounds:
+    def test_config_allows_bounded_conditions(self):
         assert _cfg.MIN_CONDITIONS == 3
-        assert _cfg.MAX_CONDITIONS == 3
+        assert _cfg.MAX_CONDITIONS == 5
 
-    def test_mutation_repair_preserves_three_condition_chromosome(self):
+    def test_mutation_repair_preserves_condition_bounds(self):
         from gpu_fuzzy_trader.phases.phase2_rule_pool import _mutate
 
         fi = _make_feature_infos(["positive"] * 6)
