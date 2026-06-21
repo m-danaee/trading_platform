@@ -791,6 +791,16 @@ class Pipeline_Orchestrator:
         start_ts = _now_iso()
         t0 = time.monotonic()
 
+        # Log Phase 2 GPU runtime config at the start of Phase 2.
+        if _cfg.PHASE2_USE_GPU:
+            try:
+                from gpu_fuzzy_trader._gpu_runtime import log_gpu_runtime_config
+                log_gpu_runtime_config()
+            except Exception as exc:
+                logger.warning(
+                    "Phase 2 GPU runtime config log failed (non-fatal): %s", exc,
+                )
+
         pools: dict[str, list[dict]] = {}
 
         for direction in self._directions:

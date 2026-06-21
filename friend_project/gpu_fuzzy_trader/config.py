@@ -65,6 +65,32 @@ PHASE2_ARCHIVE_MAX_SIZE = 500
 PHASE2_ARCHIVE_SEED_FRACTION = 0.35
 PHASE2_ALGORITHM = "NSGA3"
 
+# PHASE2_GPU_BATCH_SIZE — chromosomes per JAX vmap chunk in simulate_rule_batch.
+# Used directly when PHASE2_GPU_BATCH_SIZE_AUTO is False; otherwise VRAM/RAM-
+# tiers clamp the value at runtime (see _gpu_runtime.resolve_phase2_gpu_batch_size).
+PHASE2_GPU_BATCH_SIZE = 198
+
+# PHASE2_GPU_BATCH_SIZE_AUTO — cap batch size by detected GPU VRAM and host RAM.
+#   True  → apply tiers in _gpu_runtime (12 GiB RAM → 32; T4 ≤16 GiB VRAM → 128).
+#   False → use PHASE2_GPU_BATCH_SIZE exactly (env PHASE2_GPU_BATCH_SIZE still overrides).
+PHASE2_GPU_BATCH_SIZE_AUTO = True
+
+# PHASE2_SCAN_UNROLL — lax.scan unroll for equity simulation.
+# Higher values increase compile time but reduce loop overhead at runtime.
+PHASE2_SCAN_UNROLL = 32
+
+# PHASE2_GPU_USE_FP32 — float32 on GPU for Phase 2 ranking (CPU stays reference).
+PHASE2_GPU_USE_FP32 = True
+
+# PHASE2_GPU_DATA_INT8 — store discretized feature matrix as int8 on GPU.
+PHASE2_GPU_DATA_INT8 = True
+
+# PHASE2_GPU_ENRICH_SYMBOL_METRICS — merge CPU per-symbol metrics after GPU batch eval.
+PHASE2_GPU_ENRICH_SYMBOL_METRICS = True
+
+# PHASE2_USE_GPU — enable JAX GPU backtest during Phase 2 evolution.
+PHASE2_USE_GPU = True
+
 PHASE3_MIN_RULES = 1
 PHASE3_MAX_RULES = 5
 PHASE3_MIN_SYMBOL_COVERAGE = 7
@@ -359,4 +385,28 @@ RB_SYMBOL_USE_COMBINATIONS = True
 RB_SYMBOL_STRICT_OUTPUT_CHECK = True
 
 RB_USE_EVALUATOR_V5_FILES = True
-RB_USE_EVALUATOR_V5_FILES = True
+
+
+def is_colab_runtime() -> bool:
+    """True when running on Google Colab (/content runtime)."""
+    return (
+        os.environ.get("COLAB_RELEASE_TAG") is not None
+        or os.path.isdir("/content")
+    )
+
+
+def _apply_colab_gpu_defaults() -> None:
+    """
+    Colab T4 optimizations for notebook runs.
+
+    - Phase 3 uses GPUBacktestEngine (mask cache + batch eval path).
+    - VRAM auto batch sizing uses the T4-friendly 128 cap when enabled.
+    """
+    global PHASE3_USE_GPU, PHASE2_GPU_BATCH_SIZE_AUTO
+    if not is_colab_runtime():
+        return
+    PHASE3_USE_GPU = True
+    PHASE2_GPU_BATCH_SIZE_AUTO = True
+
+
+_apply_colab_gpu_defaults()
