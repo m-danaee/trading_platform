@@ -346,6 +346,94 @@ def _print_run_summary(results: dict[str, Any], phase: int | None, log_path: str
         print(f"  No OOS results (check {log_path} for details)")
 
 
+def _merge_per_symbol_strategies(
+    per_symbol_strategies: dict[str, list[dict]],
+    directions: tuple[str, ...],
+) -> dict[str, dict]:
+    """Merge per-symbol RB Governor strategies into combined strategies.
+
+    Parameters
+    ----------
+    per_symbol_strategies : dict[str, list[dict]]
+        Mapping of symbol -> list of per-direction strategy dicts returned by
+        ``run_rb_governor_pipeline`` (one entry per direction that succeeded).
+    directions : tuple[str, ...]
+        Active directions (e.g., ``("long", "short")``).
+
+    Returns
+    -------
+    dict[str, dict]
+        Merged strategies keyed by direction, with capital distributed evenly.
+    """
+    max_total = float(getattr(_cfg, "PHASE4_MAX_TOTAL_CAPITAL", 35.0))
+    max_per_rule = float(getattr(_cfg, "RB_DEFAULT_CAPITAL_PCT", 12.5))
+
+    merged: dict[str, dict] = {}
+
+    for direction in directions:
+        all_rules: list[dict] = []
+        metadata: dict = {}
+
+        for symbol, strategies in per_symbol_strategies.items():
+            for strategy in strategies:
+                if strategy.get("direction") != direction:
+                    continue
+                rules = strategy.get("rules_set", [])
+                for r in rules:
+                    r_copy = dict(r)
+                    all_rules.append(r_copy)
+                # Collect metadata from the first successful strategy
+                if not metadata:
+                    for key, value in strategy.items():
+                        if key not in ("rules_set", "direction"):
+                            try:
+                                json.dumps(value)
+                                metadata[key] = value
+                            except (TypeError, ValueError):
+                                pass
+
+        if not all_rules:
+            logger.warning(
+                "_merge_per_symbol_strategies: no rules for direction %s; "
+                "writing empty strategy.", direction,
+            )
+            empty = {"direction": direction, "rules_set": []}
+            output_path = os.path.join(_cfg.OUTPUTS_DIR, f"{direction}.json")
+            os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+            with open(output_path, "w", encoding="utf-8") as fh:
+                json.dump(empty, fh, indent=2)
+            merged[direction] = empty
+            continue
+
+        # Distribute capital evenly across all merged rules
+        n_rules = len(all_rules)
+        capital_each = min(max_per_rule, max_total / n_rules)
+        for rule in all_rules:
+            rule["capital_pct"] = capital_each
+
+        merged_strategy = {
+            "direction": direction,
+            "rules_set": all_rules,
+            **metadata,
+        }
+
+        # Write final outputs/{direction}.json
+        output_path = os.path.join(_cfg.OUTPUTS_DIR, f"{direction}.json")
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+        with open(output_path, "w", encoding="utf-8") as fh:
+            json.dump(merged_strategy, fh, indent=2)
+
+        logger.info(
+            "Merged per-symbol strategies for %s: %d rules from %d symbols, "
+            "capital_pct=%.2f each (total=%.2f ≤ %.2f)",
+            direction, n_rules, len(per_symbol_strategies),
+            capital_each, capital_each * n_rules, max_total,
+        )
+
+        merged[direction] = merged_strategy
+
+    return merged
+
 
 class Pipeline_Orchestrator:
     """
@@ -435,10 +523,23 @@ class Pipeline_Orchestrator:
                     results["phase3"] = {}
                     results["phase4"] = {}
                 elif bool(getattr(_cfg, "RB_ENGINE_ENABLED", False)):
-                    logger.info("Running RB governor selection and risk optimization.")
-                    rb_result = run_rb_governor_pipeline(
-                        train_df, val_df, phase2_result, self._directions, output_dir=_cfg.OUTPUTS_DIR
-                    )
+                    per_symbol_phase2 = bool(getattr(_cfg, "PER_SYMBOL_PHASE2", False))
+
+                    if per_symbol_phase2:
+                        logger.info(
+                            "Running per-symbol RB governor selection and risk optimization."
+                        )
+                        rb_result = self._run_per_symbol_rb_governor(
+                            train_df, val_df, phase2_result,
+                        )
+                    else:
+                        logger.info(
+                            "Running RB governor selection and risk optimization."
+                        )
+                        rb_result = run_rb_governor_pipeline(
+                            train_df, val_df, phase2_result, self._directions,
+                            output_dir=_cfg.OUTPUTS_DIR,
+                        )
                     results["phase3"] = rb_result
                     results["phase4"] = rb_result
                 else:
@@ -518,8 +619,23 @@ class Pipeline_Orchestrator:
                     "val_rows": len(val_df),
                 }
                 phase2_result = self._load_phase2_outputs()
-                results["phase3"] = self._run_phase3(
-                    train_df, val_df, phase2_result, force=True)
+                if bool(getattr(_cfg, "RB_ENGINE_ENABLED", False)):
+                    per_symbol_phase2 = bool(getattr(_cfg, "PER_SYMBOL_PHASE2", False))
+                    if per_symbol_phase2:
+                        results["phase3"] = self._run_per_symbol_rb_governor(
+                            train_df, val_df, phase2_result,
+                        )
+                        results["phase4"] = results["phase3"]
+                    else:
+                        rb_result = run_rb_governor_pipeline(
+                            train_df, val_df, phase2_result, self._directions,
+                            output_dir=_cfg.OUTPUTS_DIR,
+                        )
+                        results["phase3"] = rb_result
+                        results["phase4"] = rb_result
+                else:
+                    results["phase3"] = self._run_phase3(
+                        train_df, val_df, phase2_result, force=True)
 
             elif phase == 4:
                 train_df, val_df = self._load_and_split_data()
@@ -527,9 +643,23 @@ class Pipeline_Orchestrator:
                     "train_rows": len(train_df),
                     "val_rows": len(val_df),
                 }
-                phase3_result = self._load_phase3_outputs()
-                results["phase4"] = self._run_phase4(
-                    train_df, val_df, phase3_result, force=True)
+                if bool(getattr(_cfg, "RB_ENGINE_ENABLED", False)):
+                    phase2_result = self._load_phase2_outputs()
+                    per_symbol_phase2 = bool(getattr(_cfg, "PER_SYMBOL_PHASE2", False))
+                    if per_symbol_phase2:
+                        results["phase4"] = self._run_per_symbol_rb_governor(
+                            train_df, val_df, phase2_result,
+                        )
+                    else:
+                        rb_result = run_rb_governor_pipeline(
+                            train_df, val_df, phase2_result, self._directions,
+                            output_dir=_cfg.OUTPUTS_DIR,
+                        )
+                        results["phase4"] = rb_result
+                else:
+                    phase3_result = self._load_phase3_outputs()
+                    results["phase4"] = self._run_phase4(
+                        train_df, val_df, phase3_result, force=True)
 
             else:
                 self._ensure_phase5_inputs()
@@ -540,6 +670,165 @@ class Pipeline_Orchestrator:
             logger.info("Phase %d complete in %.2fs", phase, total_elapsed)
             logger.info("=" * 60)
             return results
+
+
+    def _run_per_symbol_rb_governor(
+        self,
+        train_df: pd.DataFrame,
+        val_df: pd.DataFrame,
+        phase2_result: dict[str, list[dict]],
+    ) -> dict[str, dict]:
+        """Run RB Governor per symbol when ``PER_SYMBOL_PHASE2=True``.
+
+        Each symbol uses its own pool (saved by Phase 2 per-symbol mode) and
+        filtered data.  Results are merged via ``_merge_per_symbol_strategies``.
+
+        Returns merged result dict in the same format as
+        ``run_rb_governor_pipeline``.
+        """
+        import glob as _glob
+
+        per_symbol_strategies: dict[str, list[dict]] = {}
+        per_symbol_dir = _cfg.PHASE2_PER_SYMBOL_POOL_DIR
+        directions = self._directions
+
+        # Discover symbols from per-symbol pool files
+        pool_pattern = os.path.join(per_symbol_dir, f"phase2_*_pool.json")
+        pool_files = sorted(_glob.glob(str(pool_pattern)))
+        symbols: set[str] = set()
+        for pf in pool_files:
+            basename = os.path.basename(pf)
+            # format: phase2_{direction}_{symbol}_pool.json
+            parts = basename.replace("phase2_", "").replace("_pool.json", "").split("_", 1)
+            if len(parts) == 2:
+                symbols.add(parts[1])
+
+        if not symbols:
+            logger.warning(
+                "No per-symbol Phase 2 pools found in %s. "
+                "Falling back to single RB Governor call.",
+                per_symbol_dir,
+            )
+            return run_rb_governor_pipeline(
+                train_df, val_df, phase2_result, directions,
+                output_dir=_cfg.OUTPUTS_DIR,
+            )
+
+        symbols = sorted(symbols)
+        logger.info(
+            "Per-symbol RB Governor: processing %d symbols: %s",
+            len(symbols), symbols,
+        )
+
+        # Save original RB_REQUIRE_SYMBOL_FILTERS and temporarily disable it
+        # (rules already have "symbol is S" conditions from Phase 2)
+        orig_rb_require = getattr(_cfg, "RB_REQUIRE_SYMBOL_FILTERS", True)
+        _cfg.RB_REQUIRE_SYMBOL_FILTERS = False
+
+        try:
+            for symbol in symbols:
+                symbol_pools: dict[str, list[dict]] = {}
+                for direction in directions:
+                    pool_path = os.path.join(
+                        per_symbol_dir,
+                        f"phase2_{direction}_{symbol}_pool.json",
+                    )
+                    if not os.path.exists(pool_path):
+                        logger.info(
+                            "Per-symbol RB [%s]: no pool for symbol %s; skipping direction.",
+                            direction, symbol,
+                        )
+                        symbol_pools[direction] = []
+                        continue
+                    try:
+                        with open(pool_path, "r", encoding="utf-8") as fh:
+                            pool = json.load(fh)
+                        symbol_pools[direction] = pool
+                    except Exception as exc:
+                        logger.warning(
+                            "Per-symbol RB [%s]: failed to load pool for symbol %s: %s",
+                            direction, symbol, exc,
+                        )
+                        symbol_pools[direction] = []
+
+                # Check if any direction has rules
+                if not any(symbol_pools.get(d) for d in directions):
+                    logger.info(
+                        "Per-symbol RB: no pools for symbol %s; skipping.",
+                        symbol,
+                    )
+                    continue
+
+                # Filter data to this symbol only
+                sym_train = train_df[train_df["symbol"] == symbol].copy()
+                sym_val = val_df[val_df["symbol"] == symbol].copy()
+
+                if len(sym_train) < 100 or len(sym_val) < 50:
+                    logger.warning(
+                        "Per-symbol RB: insufficient data for symbol %s "
+                        "(train=%d, val=%d); skipping.",
+                        symbol, len(sym_train), len(sym_val),
+                    )
+                    continue
+
+                # Per-symbol output directory
+                sym_output_dir = os.path.join(
+                    _cfg.OUTPUTS_DIR, "per_symbol", symbol,
+                )
+                os.makedirs(sym_output_dir, exist_ok=True)
+
+                logger.info(
+                    "Per-symbol RB [%s]: train=%d rows, val=%d rows, "
+                    "pool sizes: %s",
+                    symbol, len(sym_train), len(sym_val),
+                    {d: len(symbol_pools.get(d, [])) for d in directions},
+                )
+
+                # Run RB Governor for this symbol (exception-isolated)
+                try:
+                    sym_result = run_rb_governor_pipeline(
+                        sym_train, sym_val, symbol_pools, directions,
+                        output_dir=sym_output_dir,
+                    )
+                    per_symbol_strategies[symbol] = [
+                        sym_result[d] for d in directions if d in sym_result
+                    ]
+                    logger.info(
+                        "Per-symbol RB [%s]: succeeded — strategies: %s",
+                        symbol,
+                        {d: len(sym_result.get(d, {}).get("rules_set", []))
+                         for d in sym_result},
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "Per-symbol RB [%s] failed: %s",
+                        symbol, exc, exc_info=True,
+                    )
+                    continue
+
+        finally:
+            _cfg.RB_REQUIRE_SYMBOL_FILTERS = orig_rb_require
+
+        if not per_symbol_strategies:
+            logger.warning(
+                "Per-symbol RB Governor: all symbols failed. "
+                "Returning empty result."
+            )
+            return {}
+
+        logger.info(
+            "Merging per-symbol strategies from %d symbols …",
+            len(per_symbol_strategies),
+        )
+        merged = _merge_per_symbol_strategies(
+            per_symbol_strategies, directions,
+        )
+        logger.info(
+            "Per-symbol RB Governor complete: merged %s",
+            {d: len(merged.get(d, {}).get("rules_set", []))
+             for d in merged},
+        )
+        return merged
 
 
     def _attach_run_log_handler(self) -> logging.FileHandler:
