@@ -161,10 +161,12 @@ def _now_iso() -> str:
 def _log_pipeline_config() -> None:
     """Log key hyperparameters at pipeline start."""
     logger.info(
-        "Pipeline config: PHASE1 top_k=%d | PHASE2 algo=%s pop=%d gen=%d | "
+        "Pipeline config: PHASE1 top_k=%d | "
+        "PHASE2 per_symbol=%s algo=%s pop=%d gen=%d | "
         "PHASE3 refine pop=%d gen=%d gpu_batch=%s | "
         "PHASE4 algo=%s timesteps=%d elbow_window=%d",
         _cfg.PHASE1_TOP_K_FEATURES,
+        getattr(_cfg, "PER_SYMBOL_PHASE2", False),
         _cfg.PHASE2_ALGORITHM,
         _cfg.PHASE2_POPULATION_SIZE,
         _cfg.PHASE2_GENERATIONS,
