@@ -330,7 +330,7 @@ PHASE1_SAMPLING_TOTAL = 701_000
 # Used directly when PHASE2_GPU_BATCH_SIZE_AUTO is False; otherwise VRAM/RAM-capped.
 #   Higher → faster throughput until OOM; 64–128 is fine on Colab T4 with headroom.
 #   Lower  → safer on small GPUs / 12 GiB RAM hosts, more kernel launches, slower.
-PHASE2_GPU_BATCH_SIZE = 198
+PHASE2_GPU_BATCH_SIZE = 128
 
 # PHASE2_GPU_BATCH_SIZE_AUTO — cap batch size by detected GPU VRAM and host RAM.
 #   True  → apply tiers in _gpu_runtime (12 GiB RAM → 32; T4 ≤16 GiB VRAM → 128).
@@ -390,7 +390,7 @@ PHASE2_SL = 1.0
 # PHASE2_CAPITAL_PCT — % of equity allocated per rule signal in Phase 2.
 #   Higher → larger simulated positions; drawdown and return scale up.
 #   Lower  → conservative sizing; may understate overlap effects until Phase 4.
-PHASE2_CAPITAL_PCT = 48.0
+PHASE2_CAPITAL_PCT = 30.0
 
 
 # =============================================================================
@@ -526,7 +526,7 @@ PHASE2_REQUIRE_LAST_FOLD_POSITIVE: bool = False
 # PHASE2_MONTHLY_ADMISSION_ENABLED — toggle the monthly-window gate.
 #   True  → rules must pass the monthly profitable-ratio filter to enter the pool.
 #   False → skip the gate (zero behaviour change vs. pre-Task-13 code).
-PHASE2_MONTHLY_ADMISSION_ENABLED = False
+PHASE2_MONTHLY_ADMISSION_ENABLED = True
 
 # PHASE2_MONTHLY_GOOD_RETURN_MIN_PCT — minimum total_return_pct (%) for a monthly
 # window to count as "good" in the pool-admission gate.
@@ -824,12 +824,12 @@ PHASE2_GPU_ENRICH_SYMBOL_METRICS = True
 # PHASE2_POPULATION_SIZE — individuals per generation.
 #   Higher → better Pareto coverage, ~linear GPU cost per generation.
 #   Lower  → faster gens, risk of premature convergence.
-PHASE2_POPULATION_SIZE = 200
+PHASE2_POPULATION_SIZE = 350
 
 # PHASE2_GENERATIONS — total evolutionary generations (before early stop).
 #   Higher → more search budget; diminishing returns after plateau.
 #   Lower  → faster runs; may under-explore gene space.
-PHASE2_GENERATIONS = 150
+PHASE2_GENERATIONS = 195
 
 PHASE2_ALGORITHM = "NSGA3"
 
@@ -857,13 +857,13 @@ PHASE2_SEED: int = get_seed()
 # PHASE2_ISLAND_MODE — scoped evolution layout.
 #   "global"  → single universe-wide NSGA-III run (default).
 #   "cluster" → K symbol clusters evolved as separate islands with migration.
-PHASE2_ISLAND_MODE = "global"  # "global" | "cluster"
+PHASE2_ISLAND_MODE = "cluster"  # "global" | "cluster"
 # PHASE2_N_CLUSTERS — number of hybrid symbol clusters when island mode is active.
 PHASE2_N_CLUSTERS = 3
 # PHASE2_ISLAND_TOTAL_GENERATIONS — generation budget split across islands.
 PHASE2_ISLAND_TOTAL_GENERATIONS = PHASE2_GENERATIONS
 # PHASE2_ISLAND_EPOCH_GENERATIONS — generations per island epoch before migration.
-PHASE2_ISLAND_EPOCH_GENERATIONS = 25
+PHASE2_ISLAND_EPOCH_GENERATIONS = 10
 # Island overrides — disable two-stage / early-stop by default in cluster mode.
 PHASE2_ISLAND_TWO_STAGE_ENABLED = False
 PHASE2_ISLAND_EARLY_STOP_ENABLED = False
@@ -877,12 +877,12 @@ PHASE2_MIGRATION_EPOCH_INTERVAL = 2
 PHASE2_MIGRATION_TOP_K = 5
 PHASE2_MIGRATION_REQUIRE_DEPLOYABILITY = True
 PHASE2_MIGRATION_MIN_VAL_RETURN_PCT = 0.0
-PHASE2_MIGRATION_MIN_VAL_TRADES: int | None = None
+PHASE2_MIGRATION_MIN_VAL_TRADES = 5
 
 # PHASE2_ORPHAN_* — relaxed hyperparams for low-row symbol slices left out of clusters.
 PHASE2_ORPHAN_ENABLED = True
 PHASE2_ORPHAN_GENERATIONS = 18
-PHASE2_ORPHAN_POPULATION_SIZE = 100
+PHASE2_ORPHAN_POPULATION_SIZE = 150
 PHASE2_ORPHAN_MIN_TRADE_SUPPORT = 8
 PHASE2_ORPHAN_MIN_TRADE_POOL_FLOOR = 8
 PHASE2_ORPHAN_SORTINO_MIN_TRADE_THRESHOLD = 8
@@ -1584,7 +1584,7 @@ RB_PROFIT_AMP_MAX_TRAIN_DD: float = 18.0
 RB_PROFIT_AMP_MONTHLY_ENABLED: bool = True
 RB_PROFIT_AMP_MIN_MONTHLY_WINDOWS: int = 2
 RB_PROFIT_AMP_MIN_MONTHLY_PROFITABLE_RATIO: float = 0.55
-RB_PROFIT_AMP_WORST_MONTHLY_RETURN_FLOOR: float = -2.0
+RB_PROFIT_AMP_WORST_MONTHLY_RETURN_FLOOR: float = 0.0
 RB_PROFIT_AMP_WORST_MONTHLY_PF_FLOOR: float = 0.80
 RB_PROFIT_AMP_MAX_MONTHLY_DD: float = 10.0
 RB_PROFIT_AMP_CAPITAL_REALLOCATION_ENABLED: bool = True
@@ -1891,7 +1891,6 @@ class IslandHyperparams:
     min_trade_pool_floor: int
     sortino_min_trade_threshold: int
     val_trade_floor: int
-    pool_min_val_trades: int
     min_profitable_symbols: int
     monthly_admission_min_months: int
     monthly_admission_min_profitable_ratio: float
@@ -1942,7 +1941,6 @@ def resolve_island_hyperparams(
         monthly_months = int(PHASE2_ISLAND_MONTHLY_MIN_MONTHS)
         monthly_ratio = float(PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO)
 
-    val_floor = max(pool_floor // 4, 8)
     val_floor = scale_trade_floor_by_universe(
         max(int(MIN_TRADE_POOL_FLOOR) // 4, 10), rows, ref,
         absolute_min=8,
@@ -1954,7 +1952,6 @@ def resolve_island_hyperparams(
         min_trade_pool_floor=int(pool_floor),
         sortino_min_trade_threshold=int(sortino_thr),
         val_trade_floor=int(val_floor),
-        pool_min_val_trades=int(val_floor),
         min_profitable_symbols=int(min_profitable),
         monthly_admission_min_months=int(monthly_months),
         monthly_admission_min_profitable_ratio=float(monthly_ratio),

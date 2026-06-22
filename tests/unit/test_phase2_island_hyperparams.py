@@ -15,6 +15,7 @@ def test_cluster_k4_scaling(monkeypatch):
     assert hp.min_trade_support == 11
     assert hp.min_trade_pool_floor >= 8
     assert hp.min_profitable_symbols <= 2
+    assert hp.monthly_admission_min_months == cfg.PHASE2_ISLAND_MONTHLY_MIN_MONTHS
 
 
 def test_orphan_floors(monkeypatch):
@@ -24,6 +25,9 @@ def test_orphan_floors(monkeypatch):
     )
     assert hp.min_trade_support == 8
     assert hp.min_profitable_symbols == 1
+    assert hp.monthly_admission_min_months == max(
+        2, int(cfg.PHASE2_ISLAND_MONTHLY_MIN_MONTHS) - 1,
+    )
 
 
 def test_scale_trade_floor_absolute_min():

@@ -1739,13 +1739,15 @@ def _apply_monthly_admission_gate(
     pool: list[dict],
     monthly_windows: list[pd.DataFrame],
     direction: str,
+    island_hyperparams: _cfg.IslandHyperparams | None = None,
 ) -> list[dict]:
     """Apply the monthly-window shadow-test gate to a pool of rules.
 
     Each rule is evaluated on every monthly window via
     ``_evaluate_rule_on_window``.  Only rules whose good-month ratio
     (per ``PHASE2_MONTHLY_GOOD_RETURN_MIN_PCT``) meets or exceeds
-    ``PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO`` are kept.
+    ``PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO`` (or the island-specific
+    threshold when ``island_hyperparams`` is provided) are kept.
 
     Graceful degradation: if the gate would empty the pool, the **original**
     pool is returned and a warning is logged.
@@ -1759,12 +1761,20 @@ def _apply_monthly_admission_gate(
         ``build_monthly_windows``.
     direction:
         ``"long"`` or ``"short"`` (used for logging only).
+    island_hyperparams:
+        Optional island-specific hyperparams. When provided, uses its
+        ``monthly_admission_min_profitable_ratio`` instead of the global config.
 
     Returns
     -------
     list[dict]
         Filtered pool (or original pool if graceful-degradation path is hit).
     """
+    min_profitable_ratio = (
+        island_hyperparams.monthly_admission_min_profitable_ratio
+        if island_hyperparams is not None
+        else _cfg.PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO
+    )
     pre_filter_count = len(pool)
     profitable_ratios: list[float] = []
     keep: list[dict] = []
@@ -1782,7 +1792,7 @@ def _apply_monthly_admission_gate(
         )
         ratio = profitable / max(1, len(ret_pcts))
         profitable_ratios.append(ratio)
-        if ratio >= _cfg.PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO:
+        if ratio >= min_profitable_ratio:
             keep.append(entry)
 
     post_filter_count = len(keep)
@@ -1804,12 +1814,13 @@ def _apply_monthly_admission_gate(
 
     logger.info(
         "Phase 2 [%s]: monthly-admission gate %d → %d rules "
-        "(median_profitable_ratio=%.3f, p10=%.3f)",
+        "(median_profitable_ratio=%.3f, p10=%.3f, min_ratio=%.3f)",
         direction,
         pre_filter_count,
         post_filter_count,
         median_ratio,
         p10_ratio,
+        min_profitable_ratio,
     )
     return keep
 
@@ -2340,17 +2351,23 @@ class Rule_Pool_Generator:
         # bleed on test are rejected early.
         if _cfg.PHASE2_MONTHLY_ADMISSION_ENABLED:
             monthly_windows = build_monthly_windows(self._train_df)
-            if len(monthly_windows) < _cfg.PHASE2_MONTHLY_ADMISSION_MIN_MONTHS:
+            min_months = (
+                self.island_hyperparams.monthly_admission_min_months
+                if self.island_hyperparams is not None
+                else _cfg.PHASE2_MONTHLY_ADMISSION_MIN_MONTHS
+            )
+            if len(monthly_windows) < min_months:
                 logger.warning(
                     "Phase 2 [%s]: only %d monthly windows (< MIN_MONTHS=%d); "
                     "skipping monthly-admission gate",
                     self.direction,
                     len(monthly_windows),
-                    _cfg.PHASE2_MONTHLY_ADMISSION_MIN_MONTHS,
+                    min_months,
                 )
             else:
                 pool = _apply_monthly_admission_gate(
                     pool, monthly_windows, self.direction,
+                    island_hyperparams=self.island_hyperparams,
                 )
 
         if self.island_id is not None:
@@ -2759,6 +2776,29 @@ class Rule_Pool_Generator:
         new_pool = result[0] if isinstance(result, tuple) else []
         if self.island_id is not None:
             pool = _filter_pool_by_admission(list(new_pool))
+
+            # --- Monthly-window gate for islands ---
+            if _cfg.PHASE2_MONTHLY_ADMISSION_ENABLED:
+                monthly_windows = build_monthly_windows(self._train_df)
+                min_months = (
+                    self.island_hyperparams.monthly_admission_min_months
+                    if self.island_hyperparams is not None
+                    else _cfg.PHASE2_MONTHLY_ADMISSION_MIN_MONTHS
+                )
+                if len(monthly_windows) < min_months:
+                    logger.warning(
+                        "Phase 2 [%s]: only %d monthly windows (< MIN_MONTHS=%d); "
+                        "skipping monthly-admission gate",
+                        self.direction,
+                        len(monthly_windows),
+                        min_months,
+                    )
+                else:
+                    pool = _apply_monthly_admission_gate(
+                        pool, monthly_windows, self.direction,
+                        island_hyperparams=self.island_hyperparams,
+                    )
+
             pool = Rule_Pool_Generator._annotate_archive_entries(
                 pool,
                 source_symbols=self.source_symbols or None,

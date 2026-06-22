@@ -24,7 +24,6 @@ from gpu_fuzzy_trader.features.symbol_cluster import (
 )
 from gpu_fuzzy_trader.phases.phase2_rule_pool import (
     Rule_Pool_Generator,
-    _filter_pool_by_admission,
     _get_dont_cares,
     _merge_archive_entries,
     _sample_df,
@@ -405,8 +404,7 @@ def _run_cluster_islands(
         )
         cluster_pools.extend(annotated)
 
-    merged = _merge_archive_entries(cluster_pools)
-    return _filter_pool_by_admission(merged)
+    return _merge_archive_entries(cluster_pools)
 
 
 def run_cluster_phase2(

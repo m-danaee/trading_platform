@@ -35,7 +35,11 @@
       "Bash(PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/ -x -q 2>&1 | tail -10)",
       "Bash(PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_feature_selector.py tests/unit/test_rolling_cv.py tests/unit/test_data_splitter.py -x -q 2>&1 | tail -10)",
       "Bash(PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/property/test_output_writer_properties.py::test_property_23b_oversized_rule_set_truncated_to_5 -x -v 2>&1 | tail -30)",
-      "Bash(git stash && PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/property/test_output_writer_properties.py::test_property_23b_oversized_rule_set_truncated_to_5 -x -q 2>&1 | tail -5 && git stash pop)"
+      "Bash(git stash && PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/property/test_output_writer_properties.py::test_property_23b_oversized_rule_set_truncated_to_5 -x -q 2>&1 | tail -5 && git stash pop)",
+      "Bash(.venv/bin/python -c \"from gpu_fuzzy_trader.phases.phase2_rule_pool import _apply_monthly_admission_gate; print\\('OK'\\)\")",
+      "Bash(.venv/bin/python -c \"from gpu_fuzzy_trader.phases.phase2_rule_pool import Rule_Pool_Generator; print\\('OK'\\)\")",
+      "Bash(grep -n \"build_monthly_windows\" /home/danaee/trading_platform/gpu_fuzzy_trader/phases/phase2_rule_pool.py | head -20)",
+      "Bash(.venv/bin/python -c \"from gpu_fuzzy_trader.phases.phase2_rule_pool import Rule_Pool_Generator; print\\('Syntax OK'\\)\")"
     ]
   }
 }
