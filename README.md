@@ -310,9 +310,6 @@ Runs on **train split only** (no validation labels for ranking).
 | `PHASE2_USE_ROBUST_RETURN_OBJ` | True | f3 = min(train, val) return |
 | `SORTINO_CAP` | 10.0 | Max saturated Sortino on f1 |
 | `SORTINO_SCALE` | 5.0 | Tanh compression divisor |
-| `PHASE2_RECENCY_WEIGHT_ENABLED` | True | Up-weight recent train bars in return |
-| `PHASE2_RECENCY_WEIGHT_FRACTION` | 0.25 | Tail fraction boosted |
-| `PHASE2_RECENCY_WEIGHT_MULTIPLIER` | 2.0 | Boost multiplier on recency fraction |
 
 ### 5.5 Trade support & pool admission (stacked gates)
 

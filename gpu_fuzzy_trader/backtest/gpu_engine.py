@@ -329,10 +329,6 @@ def _jax_simulate_equity_batch(
     sortino_cap = _JXF(_cfg.SORTINO_CAP)
 
     N = price_returns_all.shape[0]
-    recency_weights = jnp.ones(N, dtype=_JXF)
-    if _cfg.PHASE2_RECENCY_WEIGHT_ENABLED:
-        cutoff = int(N * (1.0 - _cfg.PHASE2_RECENCY_WEIGHT_FRACTION))
-        recency_weights = recency_weights.at[cutoff:].set(_cfg.PHASE2_RECENCY_WEIGHT_MULTIPLIER)
 
     max_slots = int(max_open_slots)
     init_slot_release = jnp.full(max_slots, -1, dtype=jnp.int32)
@@ -342,8 +338,7 @@ def _jax_simulate_equity_batch(
     def simulate_one(signal_mask):
         is_signal = signal_mask.astype(_JXF)
         scan_xs = jnp.stack(
-            [is_signal, price_returns_all, recency_weights,
-             row_indices.astype(_JXF)],
+            [is_signal, price_returns_all, row_indices.astype(_JXF)],
             axis=-1,
         )
 
@@ -375,8 +370,7 @@ def _jax_simulate_equity_batch(
 
             is_sig = x[0]
             price_return_pct = x[1]
-            w = x[2]
-            current_row = x[3].astype(jnp.int32)
+            current_row = x[2].astype(jnp.int32)
 
             slot_release, slot_notional, open_exposure = _jax_release_open_slots(
                 slot_release, slot_notional, open_exposure, current_row)
@@ -394,12 +388,11 @@ def _jax_simulate_equity_batch(
             gross_pnl = position_notional * (price_return_pct / 100.0)
             fee = position_notional * fee_rate_f
             net_pnl = gross_pnl - fee
-            weighted_net_pnl = net_pnl * w
 
             trade_ret = jnp.where(
-                can_trade & (equity > 0.0), weighted_net_pnl / equity, 0.0)
+                can_trade & (equity > 0.0), net_pnl / equity, 0.0)
 
-            new_equity = jnp.where(can_trade, equity + weighted_net_pnl, equity)
+            new_equity = jnp.where(can_trade, equity + net_pnl, equity)
             new_peak = jnp.maximum(peak_equity, new_equity)
             dd = jnp.where(
                 new_peak > 0.0,
@@ -795,10 +788,12 @@ class GPUBacktestEngine:
 
         if chromosomes.ndim == 1:
             chromosomes = chromosomes[None, :]
-        if is_sparse_batch(chromosomes) and chromosomes.ndim == 2:
+
+        n_features = len(self._feature_names)
+        if is_sparse_batch(chromosomes, n_features=n_features) and chromosomes.ndim == 2:
             chromosomes = chromosomes[None, :, :]
 
-        sparse_batch = is_sparse_batch(chromosomes)
+        sparse_batch = is_sparse_batch(chromosomes, n_features=n_features)
         if sparse_batch:
             B = chromosomes.shape[0]
             expected_k = len(self._feature_names)

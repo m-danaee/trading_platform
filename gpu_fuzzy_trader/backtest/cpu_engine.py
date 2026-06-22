@@ -1149,10 +1149,12 @@ class CPUBacktestEngine:
 
         if chromosomes.ndim == 1:
             chromosomes = chromosomes[None, :]
-        if is_sparse_batch(chromosomes) and chromosomes.ndim == 2:
+
+        n_features = len(self.feature_modes)
+        if is_sparse_batch(chromosomes, n_features=n_features) and chromosomes.ndim == 2:
             chromosomes = chromosomes[None, :, :]
 
-        sparse_batch = is_sparse_batch(chromosomes)
+        sparse_batch = is_sparse_batch(chromosomes, n_features=n_features)
         if not sparse_batch:
             B, K = chromosomes.shape
         else:

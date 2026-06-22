@@ -13,7 +13,8 @@ Property 23: JSON Output Schema Validity
     5. Each condition matches `[feature_name] IS Fuzzy Value Name` pattern
     6. The file can be loaded back with load_and_validate() without errors
 
-  For any rule set with > 5 rules, the output must have exactly 5 rules (truncation).
+  For any rule set with > PHASE3_GLOBAL_MAX_RULES rules, the output must be
+  truncated to PHASE3_GLOBAL_MAX_RULES rules.
 
   For any rule set with all-zero tp/sl/capital_pct in any rule, write() must raise
   ValidationError.
@@ -32,6 +33,7 @@ from hypothesis import strategies as st
 
 from tests.property.hypothesis_config import prop_settings
 
+from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.backtest.symbol_conditions import parse_symbol_condition
 from gpu_fuzzy_trader.output.writer import Output_Writer, ValidationError
 
@@ -131,11 +133,13 @@ def valid_rule_set_st(draw: st.DrawFn, min_rules: int = 2, max_rules: int = 5) -
 @st.composite
 def oversized_rule_set_st(draw: st.DrawFn) -> dict:
     """
-    Generate a rule_set with 6-10 rules (more than the allowed maximum of 5).
+    Generate a rule_set with more than PHASE3_GLOBAL_MAX_RULES rules.
     Used to test truncation behaviour.
     """
+    schema_max = int(_cfg.PHASE3_GLOBAL_MAX_RULES)
     direction = draw(st.sampled_from(["long", "short"]))
-    n_rules = draw(st.integers(min_value=6, max_value=10))
+    n_rules = draw(st.integers(min_value=schema_max +
+                   1, max_value=schema_max + 5))
     rules = draw(st.lists(valid_rule_st(), min_size=n_rules, max_size=n_rules))
     return {"direction": direction, "rules_set": rules}
 
@@ -289,7 +293,7 @@ def test_property_23a_valid_rule_set_schema(rule_set: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Property 23b: Oversized rule sets are truncated to exactly 5 rules
+# Property 23b: Oversized rule sets are truncated to PHASE3_GLOBAL_MAX_RULES
 # Validates: Requirement 12.8
 # ---------------------------------------------------------------------------
 
@@ -298,17 +302,20 @@ def test_property_23a_valid_rule_set_schema(rule_set: dict) -> None:
     max_examples=30,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture],
 )
-def test_property_23b_oversized_rule_set_truncated_to_5(rule_set: dict) -> None:
+def test_property_23b_oversized_rule_set_truncated_to_global_max(rule_set: dict) -> None:
     """
     **Property 23: JSON Output Schema Validity**
     **Validates: Requirements 12.8**
 
-    For any rule set with > 5 rules, Output_Writer.write() must truncate
-    the output to exactly 5 rules (the first 5 in order).
+    For any rule set with > PHASE3_GLOBAL_MAX_RULES rules, Output_Writer.write()
+    must truncate the output to exactly PHASE3_GLOBAL_MAX_RULES rules (first in order).
     """
+    schema_max = int(_cfg.PHASE3_GLOBAL_MAX_RULES)
     writer = Output_Writer()
     original_rules = rule_set["rules_set"]
-    assert len(original_rules) > 5, "Precondition: input must have > 5 rules."
+    assert len(original_rules) > schema_max, (
+        f"Precondition: input must have > {schema_max} rules."
+    )
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         out_path = Path(tmp_dir) / f"{rule_set['direction']}.json"
@@ -319,14 +326,12 @@ def test_property_23b_oversized_rule_set_truncated_to_5(rule_set: dict) -> None:
         with out_path.open("r", encoding="utf-8") as fh:
             data = json.load(fh)
 
-        # Must have exactly 5 rules after truncation
-        assert len(data["rules_set"]) == 5, (
-            f"Expected exactly 5 rules after truncation, got {len(data['rules_set'])}"
+        assert len(data["rules_set"]) == schema_max, (
+            f"Expected exactly {schema_max} rules after truncation, "
+            f"got {len(data['rules_set'])}"
         )
 
-        # The 5 rules must be the first 5 from the original input
-        # (after validation/normalisation, tp/sl/capital_pct are cast to float)
-        for i in range(5):
+        for i in range(schema_max):
             assert float(data["rules_set"][i]["tp"]) == float(original_rules[i]["tp"]), (
                 f"Truncated rule {i}: tp mismatch."
             )
@@ -339,9 +344,8 @@ def test_property_23b_oversized_rule_set_truncated_to_5(rule_set: dict) -> None:
                 f"Truncated rule {i}: capital_pct mismatch."
             )
 
-        # load_and_validate() must also succeed on the truncated file
         loaded = writer.load_and_validate(out_path)
-        assert len(loaded["rules_set"]) == 5
+        assert len(loaded["rules_set"]) == schema_max
 
 
 # ---------------------------------------------------------------------------

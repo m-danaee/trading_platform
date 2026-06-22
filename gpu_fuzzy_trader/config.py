@@ -419,29 +419,29 @@ PHASE2_ENCODING = "sparse_slots"
 # MIN_TRADE_SUPPORT — target executed trades before support penalty vanishes.
 #   Higher → penalize low-frequency rules harder; pool favors robust sample size.
 #   Lower  → allow rare-pattern rules; noisier Sortino/return estimates.
-MIN_TRADE_SUPPORT = 150
+MIN_TRADE_SUPPORT = 55
 
 # SUPPORT_PENALTY_MAX — cap on quadratic support shortfall penalty.
 #   Higher → stronger push away from under-supported rules on all objectives.
 #   Lower  → evolution tolerates thin trade counts longer.
-SUPPORT_PENALTY_MAX = 0.0
+SUPPORT_PENALTY_MAX = 5.0
 
 # MIN_TRADE_POOL_FLOOR — hard reject below this executed trade count.
 #   Higher → archive/pool never keeps very rare rules.
 #   Lower  → extremely sparse rules can survive if other metrics excel.
-MIN_TRADE_POOL_FLOOR = 38
+MIN_TRADE_POOL_FLOOR = 25
 
 # PHASE2_SUPPORT_PENALTY_WEIGHT_F1/F2/F3 — per-objective support penalty scale.
 #   Higher → that objective punishes low support more (steer Sortino vs DD vs return).
 #   Lower  → support matters less for that objective.
-PHASE2_SUPPORT_PENALTY_WEIGHT_F1 = 0.8  # Sortino objective
+PHASE2_SUPPORT_PENALTY_WEIGHT_F1 = 0.0  # Sortino objective
 PHASE2_SUPPORT_PENALTY_WEIGHT_F2 = 0.6  # drawdown objective
-PHASE2_SUPPORT_PENALTY_WEIGHT_F3 = 0.5  # return / win-rate objective
+PHASE2_SUPPORT_PENALTY_WEIGHT_F3 = 0.6  # return / win-rate objective
 
 # PHASE2_USE_TOTAL_RETURN_OBJ — f3 uses return instead of win rate.
 #   True  → optimize deployable return; aligns with PnL goals.
 #   False → optimize win rate; may favor many small wins over net PnL.
-PHASE2_USE_TOTAL_RETURN_OBJ = True
+PHASE2_USE_TOTAL_RETURN_OBJ = False
 
 # PHASE2_USE_ROBUST_RETURN_OBJ — f3 uses min(train_return, val_return).
 #   True  → penalizes train-only return spikes (recommended with val/CV).
@@ -557,7 +557,7 @@ PHASE2_MONTHLY_ADMISSION_MIN_MONTHS = 4
 # SORTINO_CAP — maximum saturated Sortino after tanh compression.
 #   Higher → more differentiation among top Sortino rules on f1.
 #   Lower  → flatter f1 landscape; diversity across other objectives easier.
-SORTINO_CAP = 10.0
+SORTINO_CAP = 5.0
 
 # SORTINO_SCALE — divisor inside tanh(raw_sortino / scale); controls saturation.
 #   Higher → less compression; extreme Sortino values still differentiate f1.
@@ -568,23 +568,6 @@ SORTINO_SCALE = 5.0
 #   True  → slower (eval val every gen) but aligned with deployment; less overfit.
 #   False → train-only fitness; faster but val-blind during evolution.
 PHASE2_JOINT_TRAIN_VAL = True
-
-# --- Recency weighting (train bars in last fraction count more) ---
-
-# PHASE2_RECENCY_WEIGHT_ENABLED — up-weight recent train bars in return objective.
-#   True  → rules must work in latest market structure, not only old regimes.
-#   False → uniform weight across train history.
-PHASE2_RECENCY_WEIGHT_ENABLED: bool = True
-
-# PHASE2_RECENCY_WEIGHT_FRACTION — tail fraction of train bars that get boosted.
-#   Higher → more bars double-counted; stronger recency bias.
-#   Lower  → narrower recent window matters.
-PHASE2_RECENCY_WEIGHT_FRACTION: float = 0.25
-
-# PHASE2_RECENCY_WEIGHT_MULTIPLIER — weight multiplier on recency fraction bars.
-#   Higher → recent performance dominates fitness; may ignore older seasons.
-#   Lower  → mild recency nudge (1.0 = no boost within enabled fraction).
-PHASE2_RECENCY_WEIGHT_MULTIPLIER: float = 2.0
 
 
 # =============================================================================
@@ -883,7 +866,7 @@ PHASE2_MIGRATION_MIN_VAL_TRADES = 5
 PHASE2_ORPHAN_ENABLED = True
 PHASE2_ORPHAN_GENERATIONS = 18
 PHASE2_ORPHAN_POPULATION_SIZE = 150
-PHASE2_ORPHAN_MIN_TRADE_SUPPORT = 8
+PHASE2_ORPHAN_MIN_TRADE_SUPPORT = 15
 PHASE2_ORPHAN_MIN_TRADE_POOL_FLOOR = 8
 PHASE2_ORPHAN_SORTINO_MIN_TRADE_THRESHOLD = 8
 PHASE2_ORPHAN_MIN_VAL_TRADES = 6

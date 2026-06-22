@@ -49,11 +49,36 @@ if jax_available:
         _jax_compute_trade_outcomes,
     )
     from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
+    from gpu_fuzzy_trader import config as cfg
 
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def disable_skip_optimization():
+    """Disable signal skip optimization for all GPU engine tests.
+    
+    The skip optimization requires MIN_TRADE_POOL_FLOOR (38) raw signals
+    before running full scan, but unit tests use small DataFrames (n=10-20).
+    """
+    original_skip_zero = cfg.PHASE2_SKIP_ZERO_SIGNAL_SCAN
+    original_skip_infeasible = cfg.PHASE2_SKIP_INFEASIBLE_SIGNAL_SCAN
+    original_batch_size = cfg.PHASE2_GPU_BATCH_SIZE
+    original_batch_size_auto = cfg.PHASE2_GPU_BATCH_SIZE_AUTO
+    original_global_cache = cfg.PHASE2_EVAL_GLOBAL_CACHE
+    cfg.PHASE2_SKIP_ZERO_SIGNAL_SCAN = False
+    cfg.PHASE2_SKIP_INFEASIBLE_SIGNAL_SCAN = False
+    cfg.PHASE2_GPU_BATCH_SIZE = 1  # Process one chromosome at a time to avoid padding issues
+    cfg.PHASE2_GPU_BATCH_SIZE_AUTO = False  # Disable auto-tuning to enforce batch_size=1
+    cfg.PHASE2_EVAL_GLOBAL_CACHE = False  # Disable deduplication for identical chromosomes
+    yield
+    cfg.PHASE2_SKIP_ZERO_SIGNAL_SCAN = original_skip_zero
+    cfg.PHASE2_SKIP_INFEASIBLE_SIGNAL_SCAN = original_skip_infeasible
+    cfg.PHASE2_GPU_BATCH_SIZE = original_batch_size
+    cfg.PHASE2_GPU_BATCH_SIZE_AUTO = original_batch_size_auto
+    cfg.PHASE2_EVAL_GLOBAL_CACHE = original_global_cache
 
 def _make_df(
     n: int = 20,

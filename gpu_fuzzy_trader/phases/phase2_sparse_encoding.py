@@ -35,7 +35,11 @@ def is_sparse_chromosome(chrom: np.ndarray) -> bool:
     return chrom.ndim == 2 and chrom.shape == (max_slots(), 2)
 
 
-def is_sparse_batch(chromosomes: np.ndarray) -> bool:
+def is_sparse_batch(
+    chromosomes: np.ndarray,
+    *,
+    n_features: int | None = None,
+) -> bool:
     if not use_sparse_slots():
         return False
     chromosomes = np.asarray(chromosomes)
@@ -43,7 +47,14 @@ def is_sparse_batch(chromosomes: np.ndarray) -> bool:
     if chromosomes.ndim == 3:
         return chromosomes.shape[1:] == slot_shape
     if chromosomes.ndim == 2:
-        return chromosomes.shape == slot_shape
+        if chromosomes.shape != slot_shape:
+            return False
+        # Ambiguous: single sparse (S, 2) vs dense batch (B=max_slots, K=n_features)
+        if np.any(chromosomes[:, 0] == INACTIVE_FEAT_IDX):
+            return True
+        if n_features is not None and chromosomes.shape[1] == n_features:
+            return False
+        return True
     return False
 
 

@@ -12,8 +12,10 @@ from gpu_fuzzy_trader.phases.phase2_rule_pool import (
     _init_population,
 )
 from gpu_fuzzy_trader.phases.phase2_sparse_encoding import (
+    INACTIVE_FEAT_IDX,
     canonicalize_slots,
     dense_to_sparse,
+    is_sparse_batch,
     max_slots,
     sparse_hamming,
     sparse_to_dense,
@@ -93,3 +95,21 @@ def test_canonicalize_sorts_and_dedupes():
     assert out[0, 0] == 1
     assert out[1, 0] == 3
     assert out[2, 0] == -1
+
+
+def test_is_sparse_batch_dense_batch_disambiguation():
+    """(max_slots, 2) with n_features=2 is a dense batch, not sparse."""
+    dense_batch = np.zeros((max_slots(), 2), dtype=np.int32)
+    assert is_sparse_batch(dense_batch, n_features=2) is False
+
+
+def test_is_sparse_batch_sparse_single_with_inactive_slots():
+    slots = np.full((max_slots(), 2), INACTIVE_FEAT_IDX, dtype=np.int32)
+    slots[0] = [0, 1]
+    assert is_sparse_batch(slots) is True
+    assert is_sparse_batch(slots, n_features=2) is True
+
+
+def test_is_sparse_batch_sparse_population_3d():
+    pop = np.zeros((50, max_slots(), 2), dtype=np.int32)
+    assert is_sparse_batch(pop) is True

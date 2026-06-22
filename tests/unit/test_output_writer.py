@@ -141,13 +141,13 @@ class TestWriteHappyPath:
 
 class TestWriteTruncation:
     def test_exceeds_max_truncated(self):
-        max_rules = 5
+        max_rules = int(_cfg.PHASE3_GLOBAL_MAX_RULES)
         rule_set = _make_rule_set(n_rules=max_rules + 1)
         data = _write_and_reload(rule_set)
         assert len(data["rules_set"]) == max_rules
 
     def test_truncation_keeps_first_max_rules(self):
-        max_rules = 5
+        max_rules = int(_cfg.PHASE3_GLOBAL_MAX_RULES)
         n_rules = max_rules + 3
         rules = [
             _make_rule(tp=float(i), sl=1.0, capital_pct=10.0,
