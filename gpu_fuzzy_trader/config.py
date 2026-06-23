@@ -462,12 +462,12 @@ PHASE2_RETURN_FLOOR_PCT = 0
 # PHASE2_VAL_RETURN_FLOOR_PCT — min validation return % for feasibility.
 #   Higher → stricter OOS alignment during evolution.
 #   Lower  → allow negative val return during search (gates may still catch later).
-PHASE2_VAL_RETURN_FLOOR_PCT = 0.5
+PHASE2_VAL_RETURN_FLOOR_PCT = 1.0
 
 # PHASE2_PROFIT_FACTOR_FLOOR — min profit factor for feasibility.
 #   Higher → require gross wins >> losses; fewer rules pass.
 #   Lower  → allow marginal PF; more rules in Pareto set.
-PHASE2_PROFIT_FACTOR_FLOOR = 1.05
+PHASE2_PROFIT_FACTOR_FLOOR = 1.2
 
 # PHASE2_SYMBOL_MEDIAN_RETURN_FLOOR_PCT — min median return across symbols.
 #   Higher → rules must work on typical symbols, not one outlier.
@@ -482,7 +482,7 @@ PHASE2_MIN_PROFITABLE_SYMBOLS = 4
 # PHASE2_MAX_DRAWDOWN_GATE — hard DD % cap; above this all objectives penalized.
 #   Lower  → Pareto front pushed toward low-drawdown rules; may cut high return.
 #   Higher → allow aggressive rules with large equity swings.
-PHASE2_MAX_DRAWDOWN_GATE = 25.0
+PHASE2_MAX_DRAWDOWN_GATE = 20.0
 
 # PHASE2_POOL_REQUIRE_POSITIVE_SPLITS — require non-negative train & val returns.
 #   True  → infeasible penalty on negative-split rules during evolution.
@@ -495,7 +495,7 @@ PHASE2_POOL_VAL_RETURN_MIN_PCT = 0.0
 # val return by more than this threshold (classic overfit signal).
 #   Higher → more lenient; only extreme train>>val gaps rejected.
 #   Lower  → stricter alignment between train and val required.
-PHASE2_MAX_TRAIN_VAL_GAP_PCT = 8.0
+PHASE2_MAX_TRAIN_VAL_GAP_PCT = 16.0
 
 # PHASE2_KEEP_TOP_RULES — max rules kept in the final Phase 2 pool after
 # admission filtering, sorted by deployability_rank_score descending.
@@ -577,21 +577,32 @@ PHASE2_JOINT_TRAIN_VAL = True
 # PHASE2_DIVERSITY_HAMMING_THRESHOLD — min Hamming distance for "unique" rule.
 #   Higher → demand more genetic distance; wider Pareto spread, slower convergence.
 #   Lower  → allow near-duplicate rules; risk of niche collapse.
-PHASE2_DIVERSITY_HAMMING_THRESHOLD = 3
+# Raised 3→4: 4/20 genes (20%) is a meaningful feature-mix change; the phenotype
+# OR check already catches behaviorally-identical rules, so this can be looser
+# on the Hamming axis than on the phenotype axis.
+PHASE2_DIVERSITY_HAMMING_THRESHOLD = 4
 
 # PHASE2_DIVERSITY_PENALTY — objective penalty when crowding near existing rules.
 #   Higher → stronger push toward novel chromosomes.
 #   Lower  → convergence to similar high performers allowed.
-PHASE2_DIVERSITY_PENALTY = 8.0
+# Lowered 8→3: with compressed Sortino living in 0–3, 8.0 was 2–8× the natural
+# f1 scale and dominated the Pareto front; 3.0 still kills true duplicates but
+# allows slightly-improved clones through for refinement.
+PHASE2_DIVERSITY_PENALTY = 3.0
 
 # PHASE2_PHENOTYPE_SORTINO_STEP — Sortino bucket width for behavioral diversity.
-PHASE2_PHENOTYPE_SORTINO_STEP = 0.5
+# Tightened 0.5→0.3: with Sortino (compressed) in 0–3 and pop 200, 0.5 gave
+# only ~6 buckets → high collision; 0.3 gives ~10 buckets for finer Pareto spread.
+PHASE2_PHENOTYPE_SORTINO_STEP = 0.3
 
 # PHASE2_PHENOTYPE_DD_STEP — drawdown % bucket width for behavioral diversity.
-PHASE2_PHENOTYPE_DD_STEP = 5.0
+# Tightened 5→4: DD typically lives in 5–25%; 5.0 gave ~4 buckets, 4.0 gives ~5.
+PHASE2_PHENOTYPE_DD_STEP = 4.0
 
 # PHASE2_PHENOTYPE_F3_STEP — f3-axis bucket width (win rate % or return %).
-PHASE2_PHENOTYPE_F3_STEP = 10.0
+# Tightened 10→5: f3 (return) rarely exceeds ±15%; 10.0 was effectively a single
+# bucket; 5.0 gives 4–6 buckets across the typical return range.
+PHASE2_PHENOTYPE_F3_STEP = 5.0
 
 # PHASE2_EARLY_STOP_ENABLED — stop evolution on poor mean/median return trend.
 #   True  → save generations when search is clearly failing.
@@ -649,18 +660,28 @@ PHASE2_PLATEAU_BLOCK_WHEN_DIVERSITY_LOW = False
 # PHASE2_FEASIBILITY_VIOLATION_WEIGHT — scales soft penalty for floor violations.
 #   Higher → infeasible rules pushed far down on all objectives.
 #   Lower  → borderline rules compete with feasible ones longer.
-PHASE2_FEASIBILITY_VIOLATION_WEIGHT = 25.0
+# Lowered 25→15: this is multiplied into support_penalty which is then re-weighted
+# by PHASE2_SUPPORT_PENALTY_WEIGHT_F2/F3 (=0.6), so one violation becomes
+# 0.6×25=15 added to f2/f3 — i.e. 60-300% of natural DD scale, too harsh.
+# 15.0 yields an effective 0.6×15=9 per violation: meaningful but not crushing.
+PHASE2_FEASIBILITY_VIOLATION_WEIGHT = 15.0
 
 # PHASE2_INFEASIBLE_OBJECTIVE_PENALTY — flat penalty added when hard infeasible.
 #   Higher → clear separation feasible vs infeasible on Pareto front.
 #   Lower  → infeasible rules may linger in ranking.
-PHASE2_INFEASIBLE_OBJECTIVE_PENALTY = 100.0
+# Lowered 100→50: with compressed Sortino in 0–3, 100 was 30× the natural f1
+# scale — overkill. 50 is 15× Sortino which still buries any hard-infeasible
+# rule on the Pareto front. Note: the hardcoded trade_penalty=50 (below
+# MIN_TRADE_POOL_FLOOR) is the actual death sentence in the current code.
+PHASE2_INFEASIBLE_OBJECTIVE_PENALTY = 50.0
 
 # PHASE2_DEPLOYABLE_ARCHIVE_MAX_SIZE — cap on stored deployable-elite archive.
 #   Higher → more warm-start diversity across runs; more disk/RAM.
 #   Lower  → smaller cross-run memory.
-# Lowered from 200 → 100 to reduce RAM on Colab (12.7 GiB host).
-PHASE2_DEPLOYABLE_ARCHIVE_MAX_SIZE = 100
+# History: 200 → 100 (Colab RAM) → 75 (debug-scope economy). With ~9 symbols
+# and 2 directions, 75 deployable elites provide enough warm-start diversity
+# while saving ~25% RAM on the 12.7 GiB Colab host.
+PHASE2_DEPLOYABLE_ARCHIVE_MAX_SIZE = 75
 
 # --- Diversity recovery (inject randomness when unique ratio collapses) ---
 
@@ -871,7 +892,7 @@ PHASE2_ORPHAN_MIN_TRADE_POOL_FLOOR = 8
 PHASE2_ORPHAN_SORTINO_MIN_TRADE_THRESHOLD = 8
 PHASE2_ORPHAN_MIN_VAL_TRADES = 6
 PHASE2_ORPHAN_MIN_VAL_RETURN_PCT = 0.0
-PHASE2_ORPHAN_MONTHLY_MIN_PROFITABLE_RATIO = 0.4
+PHASE2_ORPHAN_MONTHLY_MIN_PROFITABLE_RATIO = 0.5
 # =============================================================================
 # Phase 2 — Engine, initialization & mutation
 # =============================================================================
