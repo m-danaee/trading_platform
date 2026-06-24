@@ -170,7 +170,7 @@ TAIL_DROP_ROWS = 288
 # SPLIT_MODE — how train.csv is divided before Phase 2.
 #   holdout_70_30       → single per-symbol 70/30 chronological split (legacy).
 #   purged_walk_forward → expanding CV folds + primary tail holdout with embargo.
-SPLIT_MODE = "holdout_70_30"
+SPLIT_MODE = "purged_walk_forward"
 
 # --- Purged walk-forward (when SPLIT_MODE == purged_walk_forward) ---
 
