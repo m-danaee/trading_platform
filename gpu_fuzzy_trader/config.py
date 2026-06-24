@@ -828,12 +828,12 @@ PHASE2_GPU_ENRICH_SYMBOL_METRICS = True
 # PHASE2_POPULATION_SIZE — individuals per generation.
 #   Higher → better Pareto coverage, ~linear GPU cost per generation.
 #   Lower  → faster gens, risk of premature convergence.
-PHASE2_POPULATION_SIZE = 350
+PHASE2_POPULATION_SIZE = 200
 
 # PHASE2_GENERATIONS — total evolutionary generations (before early stop).
 #   Higher → more search budget; diminishing returns after plateau.
 #   Lower  → faster runs; may under-explore gene space.
-PHASE2_GENERATIONS = 195
+PHASE2_GENERATIONS = 150
 
 PHASE2_ALGORITHM = "NSGA3"
 
@@ -841,7 +841,7 @@ PHASE2_ALGORITHM = "NSGA3"
 #   Higher → richer elite memory; more memory, slower non-dominated sorting.
 #   Lower  → leaner archive; may lose good rules found early.
 # Lowered from 400 → 200 to reduce RAM on Colab (12.7 GiB host).
-PHASE2_ARCHIVE_MAX_SIZE = 200
+PHASE2_ARCHIVE_MAX_SIZE = 250
 
 # PHASE2_ARCHIVE_SEED_FRACTION — fraction of initial pop from cross-run archive.
 #   Higher → more warm-start from past runs; less fresh random exploration.
