@@ -420,13 +420,12 @@ class TestBuildMultiSymbolMergedRules:
 
 
 class TestConfigKeys:
-    """All 6 SYMBOL_SPECIALIZATION_* keys are present in config."""
+    """All SYMBOL_SPECIALIZATION_* keys are present in config."""
 
     def test_all_config_keys_exist(self) -> None:
         expected_keys = [
             "SYMBOL_SPECIALIZATION_USE_COMBINATIONS",
             "SYMBOL_SPECIALIZATION_MAX_SYMBOLS_PER_RULE",
-            "SYMBOL_SPECIALIZATION_TOP_SINGLE_SYMBOLS",
             "SYMBOL_SPECIALIZATION_MAX_VARIANTS_PER_RULE",
             "SYMBOL_SPECIALIZATION_MIN_TRAIN_TRADES",
             "SYMBOL_SPECIALIZATION_MIN_VAL_TRADES",
@@ -446,10 +445,6 @@ class TestConfigKeys:
         assert (
             getattr(_cfg, "SYMBOL_SPECIALIZATION_MAX_SYMBOLS_PER_RULE", None)
             == 1
-        )
-        assert (
-            getattr(_cfg, "SYMBOL_SPECIALIZATION_TOP_SINGLE_SYMBOLS", None)
-            == 5
         )
         assert (
             getattr(_cfg, "SYMBOL_SPECIALIZATION_MAX_VARIANTS_PER_RULE", None)

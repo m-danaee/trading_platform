@@ -914,19 +914,19 @@ PHASE2_INIT_STRATEGY = "stratified_sparse"
 # PHASE2_INIT_STRATUM_FRACTIONS — mix of init strata (explore vs exploit seeds).
 #   Shift toward first fraction → more random sparse rules.
 #   Shift toward second → more archive-biased / structured seeds.
-PHASE2_INIT_STRATUM_FRACTIONS = (0.67, 0.33)
+PHASE2_INIT_STRATUM_FRACTIONS = (0.4, 0.6)
 
 # PHASE2_INIT_SOFTMAX_TEMP — temperature for weighted feature activation in init.
 #   Higher → more uniform random feature picks.
 #   Lower  → strongly favor high-MI features in initial conditions.
-PHASE2_INIT_SOFTMAX_TEMP = 1.5
+PHASE2_INIT_SOFTMAX_TEMP = 2.0
 
 PHASE2_INIT_SCORE_EPS = 1e-6
 
 # PHASE2_INIT_UNIFORM_MIX — probability of uniform random gene vs structured init.
 #   Higher → more random chromosomes in initial population.
 #   Lower  → more MI-guided structured rules at gen 0.
-PHASE2_INIT_UNIFORM_MIX = 0.05
+PHASE2_INIT_UNIFORM_MIX = 0.1
 
 # PHASE2_MUTATION_RATE — per-gene mutation probability.
 #   Higher → more exploration, noisier convergence, better escape local optima.
@@ -936,7 +936,7 @@ PHASE2_MUTATION_RATE = 0.22
 # PHASE2_MUTATION_WEIGHTED_ACTIVATE_PROB — bias mutations toward activating genes.
 #   Higher → mutations tend to add conditions rather than dont_care.
 #   Lower  → mutations more often deactivate or flip existing conditions.
-PHASE2_MUTATION_WEIGHTED_ACTIVATE_PROB = 0.45
+PHASE2_MUTATION_WEIGHTED_ACTIVATE_PROB = 0.4
 
 
 # =============================================================================
@@ -1119,8 +1119,8 @@ PHASE3_GATE_EXECUTION_HEALTH = True
 # diversification.  The friend's defaults are used (from rb_governor.py).
 
 # SYMBOL_SPECIALIZATION_USE_COMBINATIONS — when True, also try 2- and 3-symbol
-#   combinations of the top single-symbol variants per rule.  When False, only
-#   single-symbol variants are produced (legacy behaviour).
+#   combinations of every single-symbol variant that passes trade floors.
+#   When False, only single-symbol variants are produced (legacy behaviour).
 #   Higher → richer symbol combinations, broader search, slower evaluation.
 #   Lower  → only single-symbol specialisation (original Phase 3 behaviour).
 SYMBOL_SPECIALIZATION_USE_COMBINATIONS = True
@@ -1131,12 +1131,6 @@ SYMBOL_SPECIALIZATION_USE_COMBINATIONS = True
 #   Higher → more symbols per rule, potential overfitting to specific baskets.
 #   Lower  → simpler rules, easier to interpret.
 SYMBOL_SPECIALIZATION_MAX_SYMBOLS_PER_RULE = 1
-
-# SYMBOL_SPECIALIZATION_TOP_SINGLE_SYMBOLS — number of top-ranked single-symbol
-#   variants used as the seed set for generating 2- and 3-symbol combinations.
-#   Higher → more 2/3-symbol candidates, slower evaluation.
-#   Lower  → fewer candidates, faster but may miss good cross-symbol combos.
-SYMBOL_SPECIALIZATION_TOP_SINGLE_SYMBOLS = 5
 
 # SYMBOL_SPECIALIZATION_MAX_VARIANTS_PER_RULE — maximum number of scored variants
 #   returned per pool rule, sorted by score descending.  Only the best variant
@@ -1286,7 +1280,7 @@ MONTHLY_GOOD_RETURN_MIN_PCT = 0.5
 MONTHLY_MIN_PROFITABLE_RATIO = 0.60
 # MONTHLY_WORST_* / MONTHLY_*_WEIGHT — penalty terms in monthly_penalty().
 MONTHLY_WORST_RETURN_FLOOR = -1.5
-MONTHLY_WORST_PF_FLOOR = 0.85
+MONTHLY_WORST_PF_FLOOR = 1.0
 MONTHLY_MAX_DD = 8.0
 MONTHLY_WORST_RETURN_WEIGHT = 1.2
 MONTHLY_WORST_PF_WEIGHT = 8.0
@@ -1398,8 +1392,8 @@ RB_GOVERNOR_ENABLED: bool = True
 #   heavy score penalty is applied to a candidate rule.
 #   Higher → only clearly profitable single rules pass the gate.
 #   Lower  → allow marginal rules into the candidate pool.
-RB_MIN_TRAIN_RETURN: float = 2.0
-RB_MIN_VALID_RETURN: float = 2.0
+RB_MIN_TRAIN_RETURN: float = 0.5
+RB_MIN_VALID_RETURN: float = 0.5
 
 # RB_MIN_TRAIN_PF / RB_MIN_VALID_PF — minimum profit factor for each split.
 #   1.0 = break-even before fees.
@@ -1416,8 +1410,8 @@ RB_MIN_VALID_TRADES: int = 6
 # RB_RULESET_MIN_* — trade-count floors applied to the composed team (all
 #   rules together).  Should be larger than the per-rule floors because the
 #   combined team fires more frequently than any single rule.
-RB_RULESET_MIN_TRAIN_TRADES: int = 20
-RB_RULESET_MIN_VALID_TRADES: int = 12
+RB_RULESET_MIN_TRAIN_TRADES: int = 8
+RB_RULESET_MIN_VALID_TRADES: int = 4
 
 
 # --- Pool & candidate limits ---
@@ -1443,11 +1437,11 @@ RB_MAX_RULES: int = 20
 #   the team. Lower = more diverse team, harder to grow.
 #   Set slightly higher than the friend's 0.24 because the incoming pool is
 #   already symbol-specialized and therefore more likely to share conditions.
-RB_MAX_PAIR_OVERLAP: float = 0.30
+RB_MAX_PAIR_OVERLAP: float = 0.35
 
 # RB_RULESET_MUST_BEAT_SUBSETS — a candidate team must beat both its parent
 #   subset and the standalone candidate on both train and val return.
-RB_RULESET_MUST_BEAT_SUBSETS: bool = True
+RB_RULESET_MUST_BEAT_SUBSETS: bool = False
 
 # RB_MIN_SCORE_IMPROVEMENT — minimum delta in the governor score to add a
 #   new rule in ``_compose_ruleset``.
@@ -1478,10 +1472,10 @@ RB_TRAIN_VALID_RETURN_GAP_WEIGHT: float = 0.25
 # RB_RULE_ADD_BY_RETURN_ONLY — add rules purely on combined-return uplift
 #   (skips the stricter subset-beat and overlap checks when paired with
 #   RB_RULE_ADD_IGNORE_OVERLAP=True).  Profit amplifier still re-checks.
-RB_RULE_ADD_BY_RETURN_ONLY: bool = True
-RB_RULE_ADD_IGNORE_OVERLAP: bool = True
+RB_RULE_ADD_BY_RETURN_ONLY: bool = False
+RB_RULE_ADD_IGNORE_OVERLAP: bool = False
 RB_RULE_ADD_IGNORE_SUBSET_BEAT: bool = True
-RB_MIN_COMBINED_RETURN_IMPROVEMENT: float = 0.05
+RB_MIN_COMBINED_RETURN_IMPROVEMENT: float = 2.0  # min combined return-% uplift to add a new rule
 
 
 # --- Train-valid shape prior (anti-overfit) ---
@@ -1504,7 +1498,7 @@ RB_TRAIN_VALID_SHAPE_BONUS: float = 160.0
 
 RB_DEFAULT_TP: float = 2.0
 RB_DEFAULT_SL: float = 1.2
-RB_DEFAULT_CAPITAL_PCT: float = 12.5
+RB_DEFAULT_CAPITAL_PCT: float = 20.0
 RB_REQUIRE_TP_SL_ABOVE_ONE: bool = True
 RB_MIN_TP: float = 1.0
 RB_MIN_SL: float = 1.0
@@ -1526,7 +1520,7 @@ RB_RISK_OPT_PASSES: int = 2
 RB_RISK_MIN_IMPROVEMENT: float = 0.02
 
 # RB_MAX_TOTAL_CAPITAL — hard cap on sum(capital_pct) across all rules.
-RB_MAX_TOTAL_CAPITAL: float = 95.0
+RB_MAX_TOTAL_CAPITAL: float = 100.0
 
 
 # --- Symbol specialization (per-rule ``symbol is X`` conditions) ---
@@ -1542,9 +1536,6 @@ RB_SYMBOL_USE_COMBINATIONS: bool = False  # pool is already symbol-specialized
 # RB_SYMBOL_MAX_SYMBOLS_PER_RULE — max ``symbol is X`` conditions per rule.
 RB_SYMBOL_MAX_SYMBOLS_PER_RULE: int = 1
 
-# RB_SYMBOL_TOP_SINGLE_SYMBOLS — top-ranked single-symbol variants kept as
-#   seeds for multi-symbol combinations.
-RB_SYMBOL_TOP_SINGLE_SYMBOLS: int = 5
 RB_SYMBOL_MAX_VARIANTS_PER_RULE: int = 10
 RB_SYMBOL_MIN_TRAIN_TRADES: int = 10
 RB_SYMBOL_MIN_VALID_TRADES: int = 4  # per-symbol val slices are thin
@@ -1569,28 +1560,27 @@ RB_MAX_POSITIONS_PENALTY: float = 120.0
 #   maximum performance; disable for faster but slightly weaker results.
 RB_PROFIT_AMPLIFIER_ENABLED: bool = True
 
-RB_PROFIT_AMP_MAX_CANDIDATES: int = 60
-RB_PROFIT_AMP_MAX_RULES: int = 5
+RB_PROFIT_AMP_MAX_CANDIDATES: int = 50
+RB_PROFIT_AMP_MAX_RULES: int = 8
 # RB_PROFIT_AMP_MIN_OBJECTIVE_IMPROVEMENT — minimum objective delta to
-#   accept a profit-amplifier candidate.  Lowered from friend's 0.10 because
-#   our governor scores are typically smaller in magnitude.
-RB_PROFIT_AMP_MIN_OBJECTIVE_IMPROVEMENT: float = 0.05
-RB_PROFIT_AMP_MIN_RETURN_IMPROVEMENT: float = 0.02
-RB_PROFIT_AMP_VALID_WEIGHT: float = 1.55
+#   accept a profit-amplifier candidate.  Tuned for thin per-symbol returns.
+RB_PROFIT_AMP_MIN_OBJECTIVE_IMPROVEMENT: float = 0.02
+RB_PROFIT_AMP_MIN_RETURN_IMPROVEMENT: float = 0.005
+RB_PROFIT_AMP_VALID_WEIGHT: float = 1.60
 RB_PROFIT_AMP_TRAIN_WEIGHT: float = 1.00
-RB_PROFIT_AMP_BALANCE_WEIGHT: float = 0.20
-RB_PROFIT_AMP_DD_WEIGHT: float = 0.02
-RB_PROFIT_AMP_HEALTH_WEIGHT: float = 0.030
-RB_PROFIT_AMP_OVERLAP_PENALTY: float = 2.5
-RB_PROFIT_AMP_MAX_PAIR_OVERLAP: float = 0.55
-RB_PROFIT_AMP_MAX_VALID_DD: float = 12.0
-RB_PROFIT_AMP_MAX_TRAIN_DD: float = 18.0
+RB_PROFIT_AMP_BALANCE_WEIGHT: float = 0.30
+RB_PROFIT_AMP_DD_WEIGHT: float = 0.04
+RB_PROFIT_AMP_HEALTH_WEIGHT: float = 0.06
+RB_PROFIT_AMP_OVERLAP_PENALTY: float = 2.0
+RB_PROFIT_AMP_MAX_PAIR_OVERLAP: float = 0.45
+RB_PROFIT_AMP_MAX_VALID_DD: float = 20.0
+RB_PROFIT_AMP_MAX_TRAIN_DD: float = 30.0
 RB_PROFIT_AMP_MONTHLY_ENABLED: bool = True
 RB_PROFIT_AMP_MIN_MONTHLY_WINDOWS: int = 2
-RB_PROFIT_AMP_MIN_MONTHLY_PROFITABLE_RATIO: float = 0.55
-RB_PROFIT_AMP_WORST_MONTHLY_RETURN_FLOOR: float = 0.0
-RB_PROFIT_AMP_WORST_MONTHLY_PF_FLOOR: float = 0.80
-RB_PROFIT_AMP_MAX_MONTHLY_DD: float = 10.0
+RB_PROFIT_AMP_MIN_MONTHLY_PROFITABLE_RATIO: float = 0.50
+RB_PROFIT_AMP_WORST_MONTHLY_RETURN_FLOOR: float = -1.5
+RB_PROFIT_AMP_WORST_MONTHLY_PF_FLOOR: float = 0.75
+RB_PROFIT_AMP_MAX_MONTHLY_DD: float = 15.0
 RB_PROFIT_AMP_CAPITAL_REALLOCATION_ENABLED: bool = True
 RB_PROFIT_AMP_CAPITAL_PASSES: int = 2
 RB_PROFIT_AMP_CAPITAL_GRID: tuple[float, ...] = RB_CAPITAL_GRID

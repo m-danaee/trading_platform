@@ -336,7 +336,6 @@ def _symbol_specialized_variants(
 
     base_conditions = _strip_symbol_conditions(list(base.get("conditions", [])))
     max_symbols = max(1, int(getattr(_cfg, "RB_SYMBOL_MAX_SYMBOLS_PER_RULE", 3)))
-    top_single = max(1, int(getattr(_cfg, "RB_SYMBOL_TOP_SINGLE_SYMBOLS", 5)))
     max_variants = max(1, int(getattr(_cfg, "RB_SYMBOL_MAX_VARIANTS_PER_RULE", 10)))
     min_train_trades = int(getattr(_cfg, "RB_SYMBOL_MIN_TRAIN_TRADES", 10))
     min_valid_trades = int(getattr(_cfg, "RB_SYMBOL_MIN_VALID_TRADES", 6))
@@ -356,12 +355,12 @@ def _symbol_specialized_variants(
         scored_singles.append((score, sym, tr, te))
 
     scored_singles.sort(key=lambda x: x[0], reverse=True)
-    candidate_symbol_sets: list[tuple[str, ...]] = [(sym,) for _score, sym, _tr, _te in scored_singles[:top_single]]
+    eligible_syms = [sym for _score, sym, _tr, _te in scored_singles]
+    candidate_symbol_sets: list[tuple[str, ...]] = [(sym,) for sym in eligible_syms]
 
     if bool(getattr(_cfg, "RB_SYMBOL_USE_COMBINATIONS", True)):
-        top_syms = [sym for _score, sym, _tr, _te in scored_singles[:top_single]]
-        for k in range(2, min(max_symbols, len(top_syms)) + 1):
-            for combo in combinations(top_syms, k):
+        for k in range(2, min(max_symbols, len(eligible_syms)) + 1):
+            for combo in combinations(eligible_syms, k):
                 candidate_symbol_sets.append(tuple(combo))
 
     if not candidate_symbol_sets:

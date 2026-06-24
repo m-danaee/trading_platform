@@ -173,8 +173,8 @@ def _build_symbol_specialized_variants(
     ``min(train_return, val_return)``.
 
     When ``SYMBOL_SPECIALIZATION_USE_COMBINATIONS=True``, also generate all
-    2- and 3-symbol combinations of the top-``TOP_SINGLE_SYMBOLS`` symbols
-    and score them similarly.
+    2- and 3-symbol combinations of every single-symbol variant that passes
+    the trade floors, and score them similarly.
 
     Returns at most ``MAX_VARIANTS_PER_RULE`` variants, sorted descending by
     score.  Each variant has the *rule*'s original conditions (without any
@@ -204,8 +204,6 @@ def _build_symbol_specialized_variants(
         getattr(_cfg, "SYMBOL_SPECIALIZATION_USE_COMBINATIONS", True))
     max_symbols = max(
         1, int(getattr(_cfg, "SYMBOL_SPECIALIZATION_MAX_SYMBOLS_PER_RULE", 3)))
-    top_single = max(
-        1, int(getattr(_cfg, "SYMBOL_SPECIALIZATION_TOP_SINGLE_SYMBOLS", 5)))
     max_variants = max(
         1, int(getattr(_cfg, "SYMBOL_SPECIALIZATION_MAX_VARIANTS_PER_RULE", 10)))
     min_train_trades = int(
@@ -264,24 +262,24 @@ def _build_symbol_specialized_variants(
         scored_singles.append((score, sym))
 
     scored_singles.sort(key=lambda x: x[0], reverse=True)
-    top_syms = [sym for _, sym in scored_singles[:top_single]]
+    eligible_syms = [sym for _, sym in scored_singles]
 
     # ---- 2. Build candidate symbol sets ----
-    candidate_sets: list[tuple[str, ...]] = [(sym,) for sym in top_syms]
+    candidate_sets: list[tuple[str, ...]] = [(sym,) for sym in eligible_syms]
 
-    if use_combinations and len(top_syms) >= 2:
+    if use_combinations and len(eligible_syms) >= 2:
         from itertools import combinations
 
-        for k in range(2, min(max_symbols, len(top_syms)) + 1):
-            for combo in combinations(top_syms, k):
+        for k in range(2, min(max_symbols, len(eligible_syms)) + 1):
+            for combo in combinations(eligible_syms, k):
                 candidate_sets.append(tuple(combo))
 
     if not candidate_sets:
         # Fallback: return a single variant with one symbol or the original rule.
-        if top_syms:
+        if eligible_syms:
             variant = dict(rule)
             variant["conditions"] = base_conditions + [
-                f"symbol is {top_syms[0]}"]
+                f"symbol is {eligible_syms[0]}"]
             return [variant]
         return [dict(rule)]
 
