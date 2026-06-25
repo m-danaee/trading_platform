@@ -588,7 +588,7 @@ PHASE2_DIVERSITY_HAMMING_THRESHOLD = 7
 # Lowered 8→3: with compressed Sortino living in 0–3, 8.0 was 2–8× the natural
 # f1 scale and dominated the Pareto front; 3.0 still kills true duplicates but
 # allows slightly-improved clones through for refinement.
-PHASE2_DIVERSITY_PENALTY = 1.0
+PHASE2_DIVERSITY_PENALTY = 0.5
 
 # PHASE2_PHENOTYPE_SORTINO_STEP — Sortino bucket width for behavioral diversity.
 # Tightened 0.5→0.3: with Sortino (compressed) in 0–3 and pop 200, 0.5 gave
@@ -842,15 +842,15 @@ PHASE2_POPULATION_SIZE = 200
 # PHASE2_GENERATIONS — total evolutionary generations (before early stop).
 #   Higher → more search budget; diminishing returns after plateau.
 #   Lower  → faster runs; may under-explore gene space.
-PHASE2_GENERATIONS = 200
+PHASE2_GENERATIONS = 132
 
 PHASE2_ALGORITHM = "NSGA3"
 
 # PHASE2_ARCHIVE_MAX_SIZE — max stored non-dominated solutions across gens.
 #   Higher → richer elite memory; more memory, slower non-dominated sorting.
 #   Lower  → leaner archive; may lose good rules found early.
-# Lowered from 400 → 200 to reduce RAM on Colab (12.7 GiB host).
-PHASE2_ARCHIVE_MAX_SIZE = 250
+# Lowered from 400 → 300 to reduce RAM on Colab (12.7 GiB host).
+PHASE2_ARCHIVE_MAX_SIZE = 300
 
 # PHASE2_ARCHIVE_SEED_FRACTION — fraction of initial pop from cross-run archive.
 #   Higher → more warm-start from past runs; less fresh random exploration.
@@ -872,11 +872,11 @@ PHASE2_SEED: int = get_seed()
 #   "cluster" → K symbol clusters evolved as separate islands with migration.
 PHASE2_ISLAND_MODE = "cluster"  # "global" | "cluster"
 # PHASE2_N_CLUSTERS — number of hybrid symbol clusters when island mode is active.
-PHASE2_N_CLUSTERS = 4
+PHASE2_N_CLUSTERS = 3
 # PHASE2_ISLAND_TOTAL_GENERATIONS — generation budget split across islands.
 PHASE2_ISLAND_TOTAL_GENERATIONS = PHASE2_GENERATIONS
 # PHASE2_ISLAND_EPOCH_GENERATIONS — generations per island epoch before migration.
-PHASE2_ISLAND_EPOCH_GENERATIONS = 15
+PHASE2_ISLAND_EPOCH_GENERATIONS = 10
 # Island overrides — disable two-stage / early-stop by default in cluster mode.
 PHASE2_ISLAND_TWO_STAGE_ENABLED = False
 PHASE2_ISLAND_EARLY_STOP_ENABLED = False
@@ -956,7 +956,7 @@ PHASE2_INIT_UNIFORM_MIX = 0.1
 # PHASE2_MUTATION_RATE — per-gene mutation probability.
 #   Higher → more exploration, noisier convergence, better escape local optima.
 #   Lower  → finer local search, risk of premature convergence.
-PHASE2_MUTATION_RATE = 0.22
+PHASE2_MUTATION_RATE = 0.3
 
 # PHASE2_MUTATION_WEIGHTED_ACTIVATE_PROB — bias mutations toward activating genes.
 #   Higher → mutations tend to add conditions rather than dont_care.
