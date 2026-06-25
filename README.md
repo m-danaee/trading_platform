@@ -133,8 +133,8 @@ flowchart TD
 
 | Mode | Train block | Validation block | CV folds | Phase 2 fitness val | Pool admission val |
 |------|-------------|------------------|----------|---------------------|-------------------|
-| **`holdout_70_30`** (default) | First 70% per symbol | Last 30% per symbol | `None` | `validation_30` if joint val on | Same holdout |
-| **`purged_walk_forward`** | Prefix minus holdout + embargo-purged CV trains | Tail `PURGED_WF_HOLDOUT_FRACTION` (30%) | K CV + holdout fold | **CV folds aggregated** if joint val on | **Holdout only** |
+| **`holdout_70_30`** | First 70% per symbol | Last 30% per symbol | `None` | `validation_30` if joint val on | Same holdout |
+| **`purged_walk_forward`** (default) | Prefix minus holdout + embargo-purged CV trains | Tail `PURGED_WF_HOLDOUT_FRACTION` (30%) | K CV + holdout fold | **CV folds aggregated** if joint val on | **Holdout only** |
 
 **Purged-mode fitness switch** (`phase2_rule_pool.py`):
 
@@ -149,7 +149,7 @@ flowchart TD
 | `PURGED_WF_N_SPLITS` | 3 | More CV folds; smaller valid blocks | Fewer folds |
 | `PURGED_WF_HOLDOUT_FRACTION` | 0.3 | Larger holdout (less CV prefix) | More CV data |
 | `PURGED_WF_EMBARGO_CANDLES` | 288 | Wider purge gap; less train per fold | Leakage risk if &lt; label horizon |
-| `PURGED_WF_MIN_TRAIN_FRACTION` | 0.25 | More history required before first CV | Too high → no folds → **fallback to holdout_70_30** |
+| `PURGED_WF_MIN_TRAIN_FRACTION` | 0.3 | More history required before first CV | Too high → no folds → **fallback to holdout_70_30** |
 | `PURGED_WF_MIN_VALID_ROWS` | 3000 | Stricter fold sizes; fewer folds | More/smaller folds |
 | `PURGED_WF_AGGREGATION` | `worst` | Stricter fitness (`mean` = looser) | N/A (enum) |
 | `PURGED_WF_REQUIRE_ALL_CV_FOLDS` | False | Pool gate also checks every CV fold | Holdout-only admission |
@@ -222,7 +222,7 @@ Runs on **train split only** (no validation labels for ranking).
 | Parameter | Default | Effect |
 |-----------|---------|--------|
 | `PHASE1_SAMPLING_TOTAL` | 701_000 | Max rows for Phase 2 GPU backtests; **largest VRAM lever** |
-| `PHASE2_GPU_BATCH_SIZE` | 198 | Chromosomes per JAX chunk when auto off |
+| `PHASE2_GPU_BATCH_SIZE` | 128 | Chromosomes per JAX chunk when auto off |
 | `PHASE2_GPU_BATCH_SIZE_AUTO` | True | Cap batch by VRAM/RAM tiers |
 | `PHASE2_SCAN_UNROLL` | 32 | Higher = fewer launches, more compile/VRAM |
 | `PHASE2_EVAL_BATCH_DEDUP` | True | Skip duplicate chromosomes per batch |
@@ -306,9 +306,9 @@ Runs on **train split only** (no validation labels for ranking).
 | Parameter | Default | Effect |
 |-----------|---------|--------|
 | `PHASE2_JOINT_TRAIN_VAL` | True | Joint train/val fitness |
-| `PHASE2_USE_TOTAL_RETURN_OBJ` | True | f3 = return (not win rate) |
+| `PHASE2_USE_TOTAL_RETURN_OBJ` | False | f3 = win rate when False |
 | `PHASE2_USE_ROBUST_RETURN_OBJ` | True | f3 = min(train, val) return |
-| `SORTINO_CAP` | 10.0 | Max saturated Sortino on f1 |
+| `SORTINO_CAP` | 5.0 | Max saturated Sortino on f1 |
 | `SORTINO_SCALE` | 5.0 | Tanh compression divisor |
 
 ### 5.5 Trade support & pool admission (stacked gates)
@@ -324,21 +324,21 @@ Runs on **train split only** (no validation labels for ranking).
 
 | Parameter | Default | Higher → | Lower → |
 |-----------|---------|----------|---------|
-| `MIN_TRADE_SUPPORT` | 150 | Stronger support penalty | Thin-sample rules survive |
-| `SUPPORT_PENALTY_MAX` | 0.0 | Stronger quadratic penalty | **0 = no support penalty on objectives** |
-| `MIN_TRADE_POOL_FLOOR` | 38 | Hard reject rare rules | Sparse rules in pool |
-| `PHASE2_SUPPORT_PENALTY_WEIGHT_F1/F2/F3` | 0.8/0.6/0.5 | Per-objective support scale | — |
+| `MIN_TRADE_SUPPORT` | 55 | Stronger support penalty | Thin-sample rules survive |
+| `SUPPORT_PENALTY_MAX` | 5.0 | Stronger quadratic penalty | Weaker push away from thin trades |
+| `MIN_TRADE_POOL_FLOOR` | 25 | Hard reject rare rules | Sparse rules in pool |
+| `PHASE2_SUPPORT_PENALTY_WEIGHT_F1/F2/F3` | 0.0/0.6/0.6 | Per-objective support scale | — |
 | `PHASE2_SORTINO_MIN_TRADE_THRESHOLD` | 50 | Sortino scaled down below this | — |
 | `PHASE2_RETURN_FLOOR_PCT` | 0 | Stricter train feasibility | More exploration |
-| `PHASE2_VAL_RETURN_FLOOR_PCT` | 0.5 | Stricter val feasibility | — |
-| `PHASE2_PROFIT_FACTOR_FLOOR` | 1.05 | Fewer feasible rules | — |
+| `PHASE2_VAL_RETURN_FLOOR_PCT` | 1.0 | Stricter val feasibility | — |
+| `PHASE2_PROFIT_FACTOR_FLOOR` | 1.2 | Fewer feasible rules | — |
 | `PHASE2_SYMBOL_MEDIAN_RETURN_FLOOR_PCT` | -0.5 | Stricter cross-symbol median | — |
 | `PHASE2_MIN_PROFITABLE_SYMBOLS` | 4 | Broad cross-symbol edge required | Niche specialists OK |
-| `PHASE2_MAX_DRAWDOWN_GATE` | 25.0 | Stricter DD on objectives | Aggressive rules stay |
+| `PHASE2_MAX_DRAWDOWN_GATE` | 20.0 | Stricter DD on objectives | Aggressive rules stay |
 | `PHASE2_POOL_REQUIRE_POSITIVE_SPLITS` | True | Infeasible if negative train/val | — |
 | `PHASE2_POOL_TRAIN_RETURN_MIN_PCT` | 0.0 | Pool train return floor | — |
 | `PHASE2_POOL_VAL_RETURN_MIN_PCT` | 0.0 | Pool val return floor | — |
-| `PHASE2_MAX_TRAIN_VAL_GAP_PCT` | 8.0 | Stricter train>>val rejection | — |
+| `PHASE2_MAX_TRAIN_VAL_GAP_PCT` | 16.0 | Stricter train>>val rejection | — |
 | `PHASE2_KEEP_TOP_RULES` | 120 | Larger downstream pool | Smaller, faster |
 | `PHASE2_REQUIRE_LAST_FOLD_POSITIVE` | False | Reject val_return ≤ 0 at admission | — |
 | `PHASE2_STRICT_POSITIVE_GOOD` | True | Pool must pass positive-good gate | Legacy pool floors only |
@@ -442,7 +442,7 @@ Island mode uses `island_early_stop_enabled()` / `island_plateau_early_stop_enab
 |-----------|---------|----------|---------|
 | `PHASE2_POPULATION_SIZE` | 200 | Better Pareto coverage; linear GPU cost | Faster gens; convergence risk |
 | `PHASE2_GENERATIONS` | 150 | More search budget | Faster; under-explore |
-| `PHASE2_ARCHIVE_MAX_SIZE` | 200 | Richer elite memory | Leaner archive |
+| `PHASE2_ARCHIVE_MAX_SIZE` | 250 | Richer elite memory | Leaner archive |
 | `PHASE2_ARCHIVE_SEED_FRACTION` | 0.25 | More warm-start; less fresh exploration | More random init |
 | `PHASE2_SEED` | `get_seed()` | Process seed for evolution | — |
 | `PHASE2_ALGORITHM` | `NSGA3` | — | — |
@@ -479,10 +479,10 @@ Skips legacy Phase 3 and Phase 4; runs `rb_governor.py`:
 
 | Parameter | Default | Effect |
 |-----------|---------|--------|
-| `RB_MIN_TRAIN_RETURN` / `RB_MIN_VALID_RETURN` | 2.0 | Score penalty below these |
+| `RB_MIN_TRAIN_RETURN` / `RB_MIN_VALID_RETURN` | 0.5 | Score penalty below these |
 | `RB_MIN_TRAIN_PF` / `RB_MIN_VALID_PF` | 1.00 | PF floors |
 | `RB_MIN_TRAIN_TRADES` / `RB_MIN_VALID_TRADES` | 10 / 6 | Per-rule trade floors |
-| `RB_RULESET_MIN_TRAIN_TRADES` / `RB_RULESET_MIN_VALID_TRADES` | 20 / 12 | Team-level trade floors |
+| `RB_RULESET_MIN_TRAIN_TRADES` / `RB_RULESET_MIN_VALID_TRADES` | 8 / 4 | Team-level trade floors |
 | `RB_MAX_POOL_RULES_TO_EVALUATE` | 200 | Cap on pool rules filtered |
 | `RB_KEEP_TOP_RULES` | 80 | Candidates after ranking |
 | `RB_MAX_RULES` | 20 | Hard team size cap |
@@ -523,7 +523,7 @@ Skips legacy Phase 3 and Phase 4; runs `rb_governor.py`:
 
 | Parameter | Default | Effect |
 |-----------|---------|--------|
-| `RB_DEFAULT_TP` / `SL` / `CAPITAL_PCT` | 2.0 / 1.2 / 12.5 | Initial embedded risk |
+| `RB_DEFAULT_TP` / `SL` / `CAPITAL_PCT` | 2.0 / 1.2 / 20.0 | Initial embedded risk |
 | `RB_REQUIRE_TP_SL_ABOVE_ONE` | True | Reject combo where TP or SL ≤ 1.0 |
 | `RB_MIN_TP` / `RB_MIN_SL` | 1.0 / 1.0 | Per-rule TP/SL floor before grid eval |
 | `RB_TP_GRID` | `(1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0)` | TP search space |
@@ -531,7 +531,7 @@ Skips legacy Phase 3 and Phase 4; runs `rb_governor.py`:
 | `RB_CAPITAL_GRID` | `(15.0, 20.0, 25.0, 35.0)` | Capital search space |
 | `RB_RISK_OPT_PASSES` | 2 | Round-robin passes |
 | `RB_RISK_MIN_IMPROVEMENT` | 0.02 | Min score delta to accept combo |
-| `RB_MAX_TOTAL_CAPITAL` | 95.0 | Hard cap on sum capital_pct |
+| `RB_MAX_TOTAL_CAPITAL` | 100.0 | Hard cap on sum capital_pct |
 
 #### RB symbol specialization
 
@@ -819,10 +819,10 @@ Eight canonical configuration paths:
 
 | # | Name | `SPLIT_MODE` | `PHASE2_ISLAND_MODE` | `RB_GOVERNOR` | `JOINT_TRAIN_VAL` | Notes |
 |---|------|--------------|----------------------|---------------|-------------------|-------|
-| 1 | **Production default** | `holdout_70_30` | `global` | True | True | Current `config.py` defaults |
+| 1 | **Holdout + global + RB** | `holdout_70_30` | `global` | True | True | Legacy production path |
 | 2 | **Purged + global + RB** | `purged_walk_forward` | `global` | True | True | CV fitness; holdout admission; P4 WF=1 if legacy |
 | 3 | **Holdout + cluster + RB** | `holdout_70_30` | `cluster` | True | True | Scaled island floors; migration; orphan boost |
-| 4 | **Purged + cluster + RB** | `purged_walk_forward` | `cluster` | True | True | Strictest; watch trade floors per island |
+| 4 | **Production default** | `purged_walk_forward` | `cluster` | True | True | Current `config.py` defaults; strictest; watch trade floors per island |
 | 5 | **Legacy P3+P4** | `holdout_70_30` | `global` | False | True | Greedy + WF grid on validation |
 | 6 | **Purged + legacy P4** | `purged_walk_forward` | `global` | False | True | Phase 4 WF forced to 1 window |
 | 7 | **Fast exploration (risky)** | `holdout_70_30` | `global` | True | **False** | Train-only fitness; only use with loose admission |
@@ -830,13 +830,13 @@ Eight canonical configuration paths:
 
 ### Per-variant data flow summary
 
-**Variant 1 (default):** 70% train → evolve with joint val on 30% holdout → RB governor on same splits → test.csv OOS.
+**Variant 1 (holdout global):** 70% train → evolve with joint val on 30% holdout → RB governor on same splits → test.csv OOS.
 
-**Variant 2 (purged):** ~75% prefix → K CV folds for fitness (worst aggregate) → 25% tail holdout for pool gate only → RB → OOS.
+**Variant 2 (purged global):** ~70–75% prefix → K CV folds for fitness (worst aggregate) → 25–30% tail holdout for pool gate only → RB → OOS.
 
-**Variant 3 (cluster):** Same split as 1, but train partitioned into K symbol clusters; each island gets fraction of gens; orphans for leftover symbols; merged pool.
+**Variant 3 (holdout cluster):** Same split as 1, but train partitioned into K symbol clusters; each island gets fraction of gens; orphans for leftover symbols; merged pool.
 
-**Variant 4:** Combines variant 2 + 3 — smallest slices; highest empty-pool risk without scaled floors.
+**Variant 4 (production default):** Combines variant 2 + 3 — purged CV + symbol clusters; smallest per-island slices; highest empty-pool risk without scaled floors.
 
 ---
 
