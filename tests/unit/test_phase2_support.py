@@ -40,7 +40,7 @@ class TestPoolAdmissionGate:
             "executed_trades": _cfg.MIN_TRADE_POOL_FLOOR,
         }
         val = {"total_return_pct": 2.0,
-               "profit_factor": 1.1, "executed_trades": 50}
+               "profit_factor": 1.21, "executed_trades": 50}
         assert passes_pool_admission_gate(train, val) is True
 
     def test_requires_validation_even_when_joint_train_val_disabled(
@@ -96,7 +96,7 @@ class TestPoolAdmissionGate:
         }
         val = {
             "total_return_pct": 8.0,
-            "profit_factor": 1.1,
+            "profit_factor": 1.21,
             "executed_trades": 50,
         }
         assert passes_pool_admission_gate(train, val) is True
@@ -133,7 +133,7 @@ class TestDeployabilityHelpers:
         }
         val = {
             "total_return_pct": 1.0,
-            "profit_factor": 1.1,
+            "profit_factor": 1.21,
             "executed_trades": 50,
         }
         assert feasibility_violation_score(train, val) == 0.0
