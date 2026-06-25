@@ -969,7 +969,7 @@ class TestRulePoolGeneratorRun:
                     "val_objectives": {
                         "sortino_ratio": 6.0,
                         "total_return_pct": 6.0,
-                        "profit_factor": 1.1,
+                        "profit_factor": 1.21,
                         "max_drawdown_pct": 3.0,
                         "win_rate": 58.0,
                     },
@@ -1002,7 +1002,7 @@ class TestRulePoolGeneratorRun:
                 },
                 "val_objectives": {
                     "total_return_pct": 8.0,
-                    "profit_factor": 1.15,
+                    "profit_factor": 1.21,
                     "max_drawdown_pct": 2.0,
                     "win_rate": 59.0,
                     "sortino_ratio": 8.0,
@@ -1022,7 +1022,7 @@ class TestRulePoolGeneratorRun:
                 },
                 "val_objectives": {
                     "total_return_pct": 7.0,
-                    "profit_factor": 1.1,
+                    "profit_factor": 1.21,
                     "max_drawdown_pct": 2.5,
                     "win_rate": 58.0,
                     "sortino_ratio": 7.0,
@@ -1562,7 +1562,7 @@ class TestJointValF2F3:
             "sortino_ratio": 0.8,
             "max_drawdown_pct": 12.0,
             "win_rate": 45.0,
-            "profit_factor": 1.1,
+            "profit_factor": 1.21,
         }
         objectives, _ = compute_phase2_objectives_from_metrics(
             chrom, dont_cares, metrics, [], val_metrics=val_metrics,
@@ -1597,7 +1597,7 @@ class TestJointValF2F3:
             "sortino_ratio": 0.8,
             "max_drawdown_pct": 1.0,
             "win_rate": 40.0,
-            "profit_factor": 1.1,
+            "profit_factor": 1.21,
         }
         objectives, _ = compute_phase2_objectives_from_metrics(
             chrom, dont_cares, metrics, [], val_metrics=val_metrics,
