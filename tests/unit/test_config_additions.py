@@ -37,7 +37,8 @@ def test_new_config_parameters_exist():
     assert hasattr(c, 'PHASE2_ISLAND_EPOCH_GENERATIONS')
     assert c.PHASE2_ISLAND_EPOCH_GENERATIONS == 10
     assert c.PHASE2_ISLAND_MODE in ("global", "cluster")
-    assert hasattr(c, 'PHASE2_MIGRATION_SEED_FRACTION') is False or 'PHASE2_MIGRATION_SEED_FRACTION' not in dir(c)
+    assert hasattr(c, 'PHASE2_MIGRATION_SEED_FRACTION')
+    assert c.PHASE2_MIGRATION_SEED_FRACTION == 0.05
     assert hasattr(c, 'PHASE2_SHARED_ARCHIVE_MIN_SYMBOLS') is False or 'PHASE2_SHARED_ARCHIVE_MIN_SYMBOLS' not in dir(c)
     assert c.PHASE1_REQUIRE_SIGN_CONSISTENCY is True
     assert c.PHASE1_SIGN_CONSISTENCY_MIN_FOLDS == 2

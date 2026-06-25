@@ -360,7 +360,8 @@ def _run_cluster_islands(
             epoch_counter += 1
 
         if (
-            epoch_counter % int(_cfg.PHASE2_MIGRATION_EPOCH_INTERVAL) == 0
+            _cfg.PHASE2_MIGRATION_ENABLED
+            and epoch_counter % int(_cfg.PHASE2_MIGRATION_EPOCH_INTERVAL) == 0
             and n_clusters > 1
         ):
             from gpu_fuzzy_trader.evolution.evox_runner import (

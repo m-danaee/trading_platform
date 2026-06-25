@@ -877,11 +877,25 @@ PHASE2_ISLAND_SCALE_TRADE_FLOORS = True
 PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN = 10
 PHASE2_ISLAND_MONTHLY_MIN_MONTHS = 4
 # Migration — exchange top elites between islands every N epochs.
+# PHASE2_MIGRATION_ENABLED — master switch for inter-island elite exchange.
+#   False (default) → migration block in _run_cluster_islands is skipped entirely;
+#                     islands still run independently and the final pool merge is unchanged.
+#   True            → guarded migration every PHASE2_MIGRATION_EPOCH_INTERVAL epochs.
+# History: migration was on by default but degraded locally-adapted elites
+# (foreign rules rarely match the receiver's symbol slice; the loose gates
+# admitted near-zero-return migrants that displaced up to 25% of converged locals).
+PHASE2_MIGRATION_ENABLED: bool = False
 PHASE2_MIGRATION_EPOCH_INTERVAL = 2
-PHASE2_MIGRATION_TOP_K = 5
+PHASE2_MIGRATION_TOP_K = 2              # was 5 → shrink displacement footprint
 PHASE2_MIGRATION_REQUIRE_DEPLOYABILITY = True
-PHASE2_MIGRATION_MIN_VAL_RETURN_PCT = 0.0
-PHASE2_MIGRATION_MIN_VAL_TRADES = 5
+PHASE2_MIGRATION_MIN_VAL_RETURN_PCT = 2.0       # was 0.0 → only genuinely-transferable rules
+PHASE2_MIGRATION_MIN_VAL_TRADES = 15            # was 5   → stronger evidence bar
+
+# PHASE2_MIGRATION_SEED_FRACTION — fraction of the live population overwritten by
+# migrants at epoch boundaries. Decoupled from PHASE2_ARCHIVE_SEED_FRACTION (which
+# governs cross-run warm-start and stays 0.25). 0.05 = 10 of 200 slots, so
+# migrants displace ≤5% of converged locals rather than ≤25%.
+PHASE2_MIGRATION_SEED_FRACTION: float = 0.05
 
 # PHASE2_ORPHAN_* — relaxed hyperparams for low-row symbol slices left out of clusters.
 PHASE2_ORPHAN_ENABLED = True

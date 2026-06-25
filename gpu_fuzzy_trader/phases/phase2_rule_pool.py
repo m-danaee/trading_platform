@@ -2694,22 +2694,42 @@ class Rule_Pool_Generator:
             seed_entries: list[dict] = []
             if first_epoch:
                 seed_entries.extend(self._assemble_epoch_seed_entries())
+            migrant_seeds_present = bool(self._pending_migrant_seeds)
             if self._pending_migrant_seeds:
                 seed_entries.extend(self._pending_migrant_seeds)
                 self._pending_migrant_seeds = []
             if seed_entries:
-                local_cap = max(
-                    1,
-                    int(round(self.pop_size * float(_cfg.PHASE2_ARCHIVE_SEED_FRACTION))),
-                )
-                local_seeds = _merge_archive_entries(seed_entries)[:local_cap]
-                seed_chromosomes = _pool_seed_chromosomes(
-                    local_seeds, dont_cares)
-                seed_fraction = (
-                    float(_cfg.PHASE2_STAGE_A_ARCHIVE_SEED_FRACTION)
-                    if stage_plan.two_stage_active
-                    else float(_cfg.PHASE2_ARCHIVE_SEED_FRACTION)
-                )
+                if migrant_seeds_present:
+                    migrant_cap = max(
+                        1,
+                        int(round(self.pop_size * float(_cfg.PHASE2_MIGRATION_SEED_FRACTION))),
+                    )
+                    migrant_entries = [
+                        e for e in seed_entries
+                        if e.get("migrant_rank_score") is not None
+                    ]
+                    archive_entries = [
+                        e for e in seed_entries
+                        if e.get("migrant_rank_score") is None
+                    ]
+                    local_seeds = _merge_archive_entries(
+                        migrant_entries[:migrant_cap] + archive_entries,
+                    )
+                    seed_chromosomes = _pool_seed_chromosomes(local_seeds, dont_cares)
+                    seed_fraction = float(_cfg.PHASE2_MIGRATION_SEED_FRACTION)
+                else:
+                    local_cap = max(
+                        1,
+                        int(round(self.pop_size * float(_cfg.PHASE2_ARCHIVE_SEED_FRACTION))),
+                    )
+                    local_seeds = _merge_archive_entries(seed_entries)[:local_cap]
+                    seed_chromosomes = _pool_seed_chromosomes(
+                        local_seeds, dont_cares)
+                    seed_fraction = (
+                        float(_cfg.PHASE2_STAGE_A_ARCHIVE_SEED_FRACTION)
+                        if stage_plan.two_stage_active
+                        else float(_cfg.PHASE2_ARCHIVE_SEED_FRACTION)
+                    )
                 apply_seeds = True
 
         rng = np.random.default_rng(self.seed)
