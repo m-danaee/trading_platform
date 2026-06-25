@@ -578,7 +578,11 @@ def _should_plateau_early_stop_phase2(
     )
     if gen + 1 < min_gen:
         return False
-    if bool(getattr(_cfg, "PHASE2_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO", True)):
+    if _cfg.scoped_island_profile(island_profile):
+        if bool(getattr(_cfg, "PHASE2_ISLAND_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO", False)):
+            if deployable_count <= 0:
+                return False
+    elif bool(getattr(_cfg, "PHASE2_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO", True)):
         if deployable_count <= 0:
             return False
     if bool(getattr(_cfg, "PHASE2_PLATEAU_BLOCK_WHEN_DIVERSITY_LOW", True)):
@@ -589,11 +593,18 @@ def _should_plateau_early_stop_phase2(
         )
         if diversity_ratio < _diversity_recovery_min_unique_ratio(stage_params):
             return False
-    patience = (
-        int(stage_params.plateau_early_stop_patience)
-        if stage_params is not None
-        else int(_cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE)
-    )
+    if _cfg.scoped_island_profile(island_profile):
+        patience = (
+            int(stage_params.plateau_early_stop_patience)
+            if stage_params is not None and getattr(stage_params, "plateau_early_stop_patience", None) is not None
+            else int(getattr(_cfg, "PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE", _cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE))
+        )
+    else:
+        patience = (
+            int(stage_params.plateau_early_stop_patience)
+            if stage_params is not None
+            else int(_cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE)
+        )
     return streak >= patience
 
 

@@ -244,7 +244,7 @@ Runs on **train split only** (no validation labels for ranking).
 | `PHASE2_GENERATIONS` × full pop | Budget: `PHASE2_ISLAND_TOTAL_GENERATIONS` across epochs of `PHASE2_ISLAND_EPOCH_GENERATIONS` |
 | Global trade floors | `PHASE2_ISLAND_SCALE_TRADE_FLOORS` scales per island |
 | `PHASE2_TWO_STAGE_ENABLED` respected | Default off: `PHASE2_ISLAND_TWO_STAGE_ENABLED=False` |
-| Global early/plateau stop | Default off: `PHASE2_ISLAND_*_EARLY_STOP_ENABLED=False` |
+| Global early/plateau stop | Default on: `PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED=True`, dead islands allowed (`BLOCK_WHEN_DEPLOYABLE_ZERO=False`), patience=8 |
 | Symbol robustness penalty on | **Skipped** on islands |
 | Migration disabled by default (`PHASE2_MIGRATION_ENABLED=False`) | Elite migration every `PHASE2_MIGRATION_EPOCH_INTERVAL` epochs (opt-in) |
 
@@ -266,6 +266,9 @@ Runs on **train split only** (no validation labels for ranking).
 | `PHASE2_MIGRATION_MIN_VAL_RETURN_PCT` | 2.0 | Migration val return floor (raised from 0.0) |
 | `PHASE2_MIGRATION_MIN_VAL_TRADES` | 15 | Migration trade floor (raised from 5) |
 | `PHASE2_MIGRATION_SEED_FRACTION` | 0.05 | Fraction of pop overwritten by migrants (decoupled from 0.25 archive fraction) |
+| `PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED` | True | Island plateau early-stop enabled (was False) |
+| `PHASE2_ISLAND_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO` | False | Dead islands can still early-stop at plateau |
+| `PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE` | 8 | Plateau patience (longer than global's 5 for smaller island datasets) |
 
 #### Orphan boost (`PHASE2_ORPHAN_ENABLED=True`)
 
