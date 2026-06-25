@@ -1679,6 +1679,12 @@ def _run_nsga2_fallback(
         )
         metrics_cache = [merge_metrics[i] for i in sel_idx]
 
+        # --- elite preservation ---
+        _preserve_deployable_elites(
+            population, objectives, deployable_archive, metrics_cache,
+            _cfg, gen,
+        )
+
     metrics_by_chrom = _metrics_dict_from_population(
         population, metrics_cache
     )
@@ -2179,6 +2185,12 @@ def _run_nsga3(
 
         n_alive = len(population)
         metrics_cache = [merge_metrics[int(i)] for i in sel_idx[:n_alive]]
+
+        # --- elite preservation ---
+        _preserve_deployable_elites(
+            population, objectives, deployable_archive, metrics_cache,
+            _cfg, gen,
+        )
         # #region agent log
         next_pop_keys = {chromosome_key(population[i]) for i in range(n_alive)}
         _agent_debug_log(
@@ -2236,6 +2248,86 @@ def _run_nsga3(
     if return_state:
         return pareto_pool, history, final_state
     return pareto_pool, history
+
+
+def _preserve_deployable_elites(
+    population: np.ndarray,
+    objectives: np.ndarray,
+    deployable_archive: dict[tuple[int, ...], dict],
+    metrics_cache: list[dict],
+    cfg,
+    current_gen: int,
+) -> None:
+    """Force-preserve top-K deployable-archive elites in the live population.
+
+    Guarantees a non-dominated elite at gen N survives to gen N+k unless
+    a genuinely Pareto-dominating rule appears — preventing mid-epoch
+    erosion from recomputed dynamic penalties (diversity/support drift).
+    """
+    if not cfg.PHASE2_ELITE_PRESERVATION_ENABLED:
+        return
+    if current_gen < cfg.PHASE2_ELITE_PRESERVATION_MIN_GEN:
+        return
+    if not deployable_archive:
+        return
+
+    top_k = min(cfg.PHASE2_ELITE_PRESERVATION_TOP_K, len(deployable_archive))
+    if top_k == 0:
+        return
+
+    # Rank deployable_archive by rank_score desc, take top-K
+    sorted_elites = sorted(
+        deployable_archive.values(),
+        key=lambda e: float(e.get("rank_score", 0) or 0),
+        reverse=True,
+    )[:top_k]
+
+    pop_size = population.shape[0]
+
+    # Track slots already overwritten in this call so multiple elites
+    # don't compete for the same slot.
+    used_slots: set[int] = set()
+
+    for elite_entry in sorted_elites:
+        chrom = elite_entry["chromosome"]
+        if not isinstance(chrom, np.ndarray):
+            chrom = np.array(chrom, dtype=population.dtype)
+
+        # Check if already present (by exact chromosome match)
+        already_present = False
+        for i in range(pop_size):
+            if np.array_equal(population[i], chrom):
+                already_present = True
+                break
+        if already_present:
+            continue
+
+        # Evict the most-crowded survivor (highest rank, lowest crowding)
+        # among slots not already used by a prior elite in this call.
+        fronts = non_dominated_sort(objectives)
+        ranks, crowding = _build_rank_and_crowding(objectives, fronts)
+        max_rank = int(np.max(ranks))
+        # Candidates: worst-rank individuals, excluding already-used slots
+        max_rank_indices = [
+            i for i in range(pop_size)
+            if ranks[i] == max_rank and i not in used_slots
+        ]
+        if not max_rank_indices:
+            # Fallback: any remaining slot
+            max_rank_indices = [
+                i for i in range(pop_size) if i not in used_slots
+            ]
+            if not max_rank_indices:
+                break  # all slots already used
+        worst_idx = int(min(max_rank_indices, key=lambda i: crowding[i]))
+
+        used_slots.add(worst_idx)
+
+        # Overwrite the slot
+        population[worst_idx] = chrom.copy()
+        objectives[worst_idx] = np.full(objectives.shape[1], np.inf)
+        if metrics_cache is not None:
+            metrics_cache[worst_idx] = {}
 
 
 def extract_deployable_migrants(
