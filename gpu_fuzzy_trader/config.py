@@ -467,7 +467,7 @@ PHASE2_VAL_RETURN_FLOOR_PCT = 1.0
 # PHASE2_PROFIT_FACTOR_FLOOR — min profit factor for feasibility.
 #   Higher → require gross wins >> losses; fewer rules pass.
 #   Lower  → allow marginal PF; more rules in Pareto set.
-PHASE2_PROFIT_FACTOR_FLOOR = 1.2
+PHASE2_PROFIT_FACTOR_FLOOR = 1.15
 
 # PHASE2_SYMBOL_MEDIAN_RETURN_FLOOR_PCT — min median return across symbols.
 #   Higher → rules must work on typical symbols, not one outlier.
@@ -580,7 +580,7 @@ PHASE2_JOINT_TRAIN_VAL = True
 # Raised 3→4: 4/20 genes (20%) is a meaningful feature-mix change; the phenotype
 # OR check already catches behaviorally-identical rules, so this can be looser
 # on the Hamming axis than on the phenotype axis.
-PHASE2_DIVERSITY_HAMMING_THRESHOLD = 4
+PHASE2_DIVERSITY_HAMMING_THRESHOLD = 7
 
 # PHASE2_DIVERSITY_PENALTY — objective penalty when crowding near existing rules.
 #   Higher → stronger push toward novel chromosomes.
@@ -588,7 +588,7 @@ PHASE2_DIVERSITY_HAMMING_THRESHOLD = 4
 # Lowered 8→3: with compressed Sortino living in 0–3, 8.0 was 2–8× the natural
 # f1 scale and dominated the Pareto front; 3.0 still kills true duplicates but
 # allows slightly-improved clones through for refinement.
-PHASE2_DIVERSITY_PENALTY = 3.0
+PHASE2_DIVERSITY_PENALTY = 1.0
 
 # PHASE2_PHENOTYPE_SORTINO_STEP — Sortino bucket width for behavioral diversity.
 # Tightened 0.5→0.3: with Sortino (compressed) in 0–3 and pop 200, 0.5 gave
@@ -876,7 +876,7 @@ PHASE2_N_CLUSTERS = 3
 # PHASE2_ISLAND_TOTAL_GENERATIONS — generation budget split across islands.
 PHASE2_ISLAND_TOTAL_GENERATIONS = PHASE2_GENERATIONS
 # PHASE2_ISLAND_EPOCH_GENERATIONS — generations per island epoch before migration.
-PHASE2_ISLAND_EPOCH_GENERATIONS = 10
+PHASE2_ISLAND_EPOCH_GENERATIONS = 15
 # Island overrides — disable two-stage / early-stop by default in cluster mode.
 PHASE2_ISLAND_TWO_STAGE_ENABLED = False
 PHASE2_ISLAND_EARLY_STOP_ENABLED = False
@@ -976,7 +976,7 @@ PHASE3_PER_SYMBOL_MAX_RULES = 2
 # PHASE3_GLOBAL_MIN_RULES / MAX_RULES — total rules in the output JSON.
 #   Higher MIN → require at least this many rules across all symbols.
 #   MAX caps the final strategy size written by Phase 3 / validated on load.
-PHASE3_GLOBAL_MIN_RULES = 2
+PHASE3_GLOBAL_MIN_RULES = 1
 PHASE3_GLOBAL_MAX_RULES = 20
 
 # PHASE3_PER_SYMBOL_GREEDY_TOP_K — top-K pool rules tested per greedy round.
@@ -1417,8 +1417,8 @@ RB_GOVERNOR_ENABLED: bool = True
 #   heavy score penalty is applied to a candidate rule.
 #   Higher → only clearly profitable single rules pass the gate.
 #   Lower  → allow marginal rules into the candidate pool.
-RB_MIN_TRAIN_RETURN: float = 0.5
-RB_MIN_VALID_RETURN: float = 0.5
+RB_MIN_TRAIN_RETURN: float = 0.2
+RB_MIN_VALID_RETURN: float = 0.2
 
 # RB_MIN_TRAIN_PF / RB_MIN_VALID_PF — minimum profit factor for each split.
 #   1.0 = break-even before fees.
@@ -1449,7 +1449,7 @@ RB_MAX_POOL_RULES_TO_EVALUATE: int = 200
 # RB_KEEP_TOP_RULES — how many positive-good candidates survive the
 #   single-rule ranking to feed ``_compose_ruleset``.
 #   Should be comfortably larger than PHASE2_KEEP_TOP_RULES.
-RB_KEEP_TOP_RULES: int = 80
+RB_KEEP_TOP_RULES: int = 120
 
 
 # --- Team composition ---
