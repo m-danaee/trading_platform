@@ -403,7 +403,7 @@ PHASE2_CAPITAL_PCT = 30.0
 #   Higher MAX → allow complex rules (if encoding supports variable count).
 #   Lower MAX → force simplicity; more generalization, less specificity.
 MIN_CONDITIONS = 3
-MAX_CONDITIONS = 5
+MAX_CONDITIONS = 4
 
 # PHASE2_ENCODING — chromosome memory layout during evolution.
 #   "dense"        — length-K vector with per-feature dont_care (legacy).
@@ -419,7 +419,7 @@ PHASE2_ENCODING = "sparse_slots"
 # MIN_TRADE_SUPPORT — target executed trades before support penalty vanishes.
 #   Higher → penalize low-frequency rules harder; pool favors robust sample size.
 #   Lower  → allow rare-pattern rules; noisier Sortino/return estimates.
-MIN_TRADE_SUPPORT = 55
+MIN_TRADE_SUPPORT = 75
 
 # SUPPORT_PENALTY_MAX — cap on quadratic support shortfall penalty.
 #   Higher → stronger push away from under-supported rules on all objectives.
@@ -842,7 +842,7 @@ PHASE2_POPULATION_SIZE = 200
 # PHASE2_GENERATIONS — total evolutionary generations (before early stop).
 #   Higher → more search budget; diminishing returns after plateau.
 #   Lower  → faster runs; may under-explore gene space.
-PHASE2_GENERATIONS = 150
+PHASE2_GENERATIONS = 200
 
 PHASE2_ALGORITHM = "NSGA3"
 
@@ -872,7 +872,7 @@ PHASE2_SEED: int = get_seed()
 #   "cluster" → K symbol clusters evolved as separate islands with migration.
 PHASE2_ISLAND_MODE = "cluster"  # "global" | "cluster"
 # PHASE2_N_CLUSTERS — number of hybrid symbol clusters when island mode is active.
-PHASE2_N_CLUSTERS = 3
+PHASE2_N_CLUSTERS = 4
 # PHASE2_ISLAND_TOTAL_GENERATIONS — generation budget split across islands.
 PHASE2_ISLAND_TOTAL_GENERATIONS = PHASE2_GENERATIONS
 # PHASE2_ISLAND_EPOCH_GENERATIONS — generations per island epoch before migration.
