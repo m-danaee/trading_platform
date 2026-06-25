@@ -246,7 +246,7 @@ Runs on **train split only** (no validation labels for ranking).
 | `PHASE2_TWO_STAGE_ENABLED` respected | Default off: `PHASE2_ISLAND_TWO_STAGE_ENABLED=False` |
 | Global early/plateau stop | Default off: `PHASE2_ISLAND_*_EARLY_STOP_ENABLED=False` |
 | Symbol robustness penalty on | **Skipped** on islands |
-| No migration | Elite migration every `PHASE2_MIGRATION_EPOCH_INTERVAL` epochs |
+| Migration disabled by default (`PHASE2_MIGRATION_ENABLED=False`) | Elite migration every `PHASE2_MIGRATION_EPOCH_INTERVAL` epochs (opt-in) |
 
 #### Island / cluster parameters
 
@@ -259,11 +259,13 @@ Runs on **train split only** (no validation labels for ranking).
 | `PHASE2_ISLAND_SCALE_TRADE_FLOORS` | True | Scale support floors to island rows |
 | `PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN` | 10 | Floor after island scaling |
 | `PHASE2_ISLAND_MONTHLY_MIN_MONTHS` | 4 | Monthly gate min windows on islands |
+| `PHASE2_MIGRATION_ENABLED` | False | Master switch (opt-in); default off to avoid degrading locally-adapted elites |
 | `PHASE2_MIGRATION_EPOCH_INTERVAL` | 2 | Epochs between elite exchange |
-| `PHASE2_MIGRATION_TOP_K` | 5 | Elites migrated per island |
+| `PHASE2_MIGRATION_TOP_K` | 2 | Elites migrated per island (reduced from 5 to shrink displacement) |
 | `PHASE2_MIGRATION_REQUIRE_DEPLOYABILITY` | True | Only deployable elites migrate |
-| `PHASE2_MIGRATION_MIN_VAL_RETURN_PCT` | 0.0 | Migration val return floor |
-| `PHASE2_MIGRATION_MIN_VAL_TRADES` | None | Optional migration trade floor |
+| `PHASE2_MIGRATION_MIN_VAL_RETURN_PCT` | 2.0 | Migration val return floor (raised from 0.0) |
+| `PHASE2_MIGRATION_MIN_VAL_TRADES` | 15 | Migration trade floor (raised from 5) |
+| `PHASE2_MIGRATION_SEED_FRACTION` | 0.05 | Fraction of pop overwritten by migrants (decoupled from 0.25 archive fraction) |
 
 #### Orphan boost (`PHASE2_ORPHAN_ENABLED=True`)
 
