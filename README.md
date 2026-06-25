@@ -437,6 +437,9 @@ Island mode uses `island_early_stop_enabled()` / `island_plateau_early_stop_enab
 | `PHASE2_FEASIBILITY_VIOLATION_WEIGHT` | 25.0 | Soft floor violation scale |
 | `PHASE2_INFEASIBLE_OBJECTIVE_PENALTY` | 100.0 | Flat infeasible penalty |
 | `PHASE2_DEPLOYABLE_ARCHIVE_MAX_SIZE` | 100 | Cross-run deployable elite cap |
+| `PHASE2_ELITE_PRESERVATION_ENABLED` | True | Force-preserve top-K elites each gen to prevent mid-epoch erosion |
+| `PHASE2_ELITE_PRESERVATION_TOP_K` | 5 | Number of deployable-archive elites preserved per generation |
+| `PHASE2_ELITE_PRESERVATION_MIN_GEN` | 1 | First generation at which elite-preservation activates |
 
 ### 5.8 NSGA-III search budget
 

@@ -683,6 +683,15 @@ PHASE2_INFEASIBLE_OBJECTIVE_PENALTY = 50.0
 # while saving ~25% RAM on the 12.7 GiB Colab host.
 PHASE2_DEPLOYABLE_ARCHIVE_MAX_SIZE = 75
 
+# --- elite-preservation guard (prevents mid-epoch erosion) ---
+# When enabled, the top-K deployable-archive elites are force-preserved in
+# the live population each generation under (μ+λ) selection. This prevents
+# a non-dominated elite from being evicted purely by recomputed dynamic
+# diversity/support penalties as hall_of_fame and pareto_archive grow.
+PHASE2_ELITE_PRESERVATION_ENABLED: bool = True
+PHASE2_ELITE_PRESERVATION_TOP_K: int = 5
+PHASE2_ELITE_PRESERVATION_MIN_GEN: int = 1
+
 # --- Diversity recovery (inject randomness when unique ratio collapses) ---
 
 PHASE2_DIVERSITY_RECOVERY_ENABLED = True
