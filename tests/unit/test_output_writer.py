@@ -223,7 +223,7 @@ class TestWriteRulesSetSize:
                 os.unlink(tmp_path)
 
     def test_one_rule_raises_validation_error(self):
-        rule_set = {"direction": "long", "rules_set": [_make_rule()]}
+        rule_set = {"direction": "long", "rules_set": []}  # empty — below min
         writer = Output_Writer()
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
             tmp_path = f.name
@@ -600,7 +600,7 @@ class TestLoadAndValidateErrors:
             os.unlink(tmp_path)
 
     def test_too_few_rules_in_file_raises_validation_error(self):
-        bad_data = {"direction": "long", "rules_set": [_make_rule()]}
+        bad_data = {"direction": "long", "rules_set": []}  # empty — below min
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".json", delete=False, encoding="utf-8"
         ) as f:

@@ -160,8 +160,8 @@ class TestValidateRuleSetSchema:
 
     def test_too_few_rules_raises(self):
         data = self._valid_data()
-        data["rules_set"] = data["rules_set"][:1]
-        with pytest.raises(ValueError, match="must have 2"):
+        data["rules_set"] = []  # empty — below PHASE3_GLOBAL_MIN_RULES (1)
+        with pytest.raises(ValueError, match="must have 1"):
             _validate_rule_set_schema(data, "test.json")
 
     def test_too_many_rules_raises(self):
