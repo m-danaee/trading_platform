@@ -59,9 +59,10 @@ Two regressions observed in the 2026-06-25 cluster-mode run log must be fixed:
 
 ---
 
-## task-1 — Migration safety (config + small code)
+## task-1 — Migration safety (config + small code) ✅ COMPLETE
 
 **Branch:** `fix/migration-safety`
+**Status:** both reviews APPROVED. Ready for merge.
 
 ### Changes
 
@@ -138,10 +139,11 @@ PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_migration*.py \
 
 ---
 
-## task-2 — Elite preservation under (μ+λ) selection (code + config)
+## task-2 — Elite preservation under (μ+λ) selection (code + config) ✅ COMPLETE
 
 **Branch:** `fix/elite-preservation`
-**Depends on:** task-1 (lands first so review diffs are clean).
+**Status:** both reviews APPROVED. Ready for merge.
+**Depends on:** task-1 (merged to main).
 
 ### Changes
 
@@ -208,12 +210,11 @@ PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest \
 
 ---
 
-## task-3 — Island early-stop safety net (config + small code)
+## task-3 — Island early-stop safety net (config + small code) ✅ COMPLETE
 
 **Branch:** `fix/island-early-stop`
-**Depends on:** task-2 (elite preservation makes early-stop safe — a dead
-island that stops won't lose its deployable archive, which task-2 guarantees
-is re-injected on resume / final pool merge).
+**Status:** both reviews APPROVED. Merged to main.
+**Depends on:** task-2 (elite preservation makes early-stop safe).
 
 ### Changes
 

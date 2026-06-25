@@ -1,38 +1,16 @@
 {
-  "task": "task-3-per-symbol-rb-governor",
-  "status": "DONE",
-  "commit": "c46e27c",
-  "branch": "feature/task-3-per-symbol-rb-governor",
+  "task_id": "task-3",
+  "title": "Island early-stop safety net",
+  "status": "IMPLEMENTED",
+  "commit": "e6c6de8",
+  "branch": "fix/island-early-stop",
+  "base_branch": "main",
   "files_changed": [
-    "friend_project/gpu_fuzzy_trader/run_pipeline.py"
+    "gpu_fuzzy_trader/config.py",
+    "gpu_fuzzy_trader/evolution/evox_runner.py",
+    "tests/unit/test_island_early_stop.py",
+    "README.md"
   ],
-  "acceptance_criteria": {
-    "RB Governor runs per symbol when PER_SYMBOL_PHASE2=True": true,
-    "Per-symbol train/val data filtered correctly": true,
-    "RB_REQUIRE_SYMBOL_FILTERS=False set temporarily (rules already tagged)": true,
-    "Per-symbol RB Governor output saved to outputs/per_symbol/{symbol}/": true,
-    "_merge_per_symbol_strategies() combines all per-symbol rule sets": true,
-    "Final outputs/{direction}.json contains merged strategy": true,
-    "Capital distributed evenly across merged rules (≤ PHASE4_MAX_TOTAL_CAPITAL)": true,
-    "Exception isolation: one symbol failure doesn't abort others": true,
-    "PER_SYMBOL_PHASE2=False restores original single RB Governor call": true,
-    "Existing tests still pass (8 tests)": true,
-    "rb_governor.py needs NO code changes (config override only)": true
-  },
-  "summary": "Implemented per-symbol RB Governor validation mode in run_pipeline.py. Added _merge_per_symbol_strategies() module-level function and _run_per_symbol_rb_governor() method on Pipeline_Orchestrator. The per-symbol mode loads individual per-symbol pools from pools/per_symbol/, filters train/val data per symbol, temporarily disables RB_REQUIRE_SYMBOL_FILTERS, runs RB Governor per symbol with exception isolation, and merges results with even capital distribution. Both the full pipeline (run()) and single-phase (run_phase()) paths support per-symbol mode. No changes to rb_governor.py.",
-  "notes_for_reviewer": [
-    "The _run_per_symbol_rb_governor() method discovers symbols by globbing pools/per_symbol/phase2_*_pool.json rather than reading the merged pool, per the task spec",
-    "RB_REQUIRE_SYMBOL_FILTERS is temporarily set to False via try/finally to ensure restoration, since per-symbol rules already have 'symbol is S' conditions from Phase 2",
-    "Capital is distributed evenly: each rule gets min(RB_DEFAULT_CAPITAL_PCT, PHASE4_MAX_TOTAL_CAPITAL / n_rules)",
-    "Data filtering uses df[df['symbol'] == symbol].copy() to avoid SettingWithCopyWarning",
-    "Exception isolation: each symbol's run_rb_governor_pipeline() call is wrapped in try/except; failures log a warning and continue to the next symbol",
-    "Added RB Governor support to run_phase() for phases 3 and 4 (single-phase mode) — this was missing in the original code for RB-enabled runs",
-    "All 8 existing tests pass unchanged",
-    "Also updated handoffs for tasks 1 and 2 that were stale (unrelated diff noise) — only run_pipeline.py was intentionally modified"
-  ],
-  "test_results": {
-    "pytest tests/ -x -q": "8/8 passed",
-    "import check": "from gpu_fuzzy_trader.run_pipeline import Pipeline_Orchestrator, _merge_per_symbol_strategies: OK",
-    "merge function verification": "Capital distribution correct (35.0 total cap, evenly split across merged rules)"
-  }
+  "test_results": "14 passed (11 new + 3 existing)",
+  "next_stage": "spec-review"
 }

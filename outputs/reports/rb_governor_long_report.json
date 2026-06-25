@@ -1,6 +1,6 @@
 {
   "direction": "long",
-  "rb_score": -9103.432288553866,
+  "rb_score": -7541.631973841342,
   "train_metrics": {
     "direction": "long",
     "total_return_pct": "0.9000063",
@@ -59,7 +59,7 @@
     {
       "step": 1,
       "action": "seed",
-      "score": -9103.432288553866,
+      "score": -7541.631973841342,
       "train_return_pct": 0.9000062942504883,
       "valid_return_pct": 0.9000062942504883,
       "rules": 1
@@ -69,7 +69,7 @@
     {
       "pass": 0,
       "rule_index": -1,
-      "score": -9103.432288553866,
+      "score": -7541.631973841342,
       "train_return_pct": 0.9000062942504883,
       "valid_return_pct": 0.9000062942504883,
       "train_pf": 3.500000238418579,
@@ -79,7 +79,7 @@
   "profit_amplifier": {
     "enabled": true,
     "accepted": false,
-    "baseline_profit_amp_objective": -222.05343960559227,
+    "baseline_profit_amp_objective": -446.4468955762358,
     "baseline_certificate": {
       "passed": false,
       "reasons": [
@@ -100,7 +100,7 @@
   "top_single_rules": [
     {
       "rank": 1,
-      "score": -9090.132288553867,
+      "score": -7545.131973841342,
       "train_return_pct": 0.9000062942504883,
       "valid_return_pct": 0.9000062942504883,
       "train_pf": 3.500000238418579,

@@ -1,0 +1,18 @@
+{
+  "task": "task-3",
+  "branch": "fix/island-early-stop",
+  "status": "complete",
+  "stages": {
+    "implement": "DONE (commit e6c6de8, 14 tests pass)",
+    "spec-review": "APPROVED (4/4 criteria pass, both blocks follow island/global pattern, 11 tests pass)",
+    "code-review": "APPROVED (branching correct, config fallbacks safe, global path byte-for-byte identical, tests deterministic, README accurate)"
+  },
+  "verdict": "READY_TO_MERGE",
+  "files_changed": [
+    "gpu_fuzzy_trader/config.py",
+    "gpu_fuzzy_trader/evolution/evox_runner.py",
+    "tests/unit/test_island_early_stop.py",
+    "README.md"
+  ],
+  "code_review_notes": "3 non-blocking observations: (1) no test for stage_params getattr guard on island path, (2) fixture opportunity for DRY, (3) 4 scoped_island_profile calls could be collapsed. All style, no correctness issues."
+}

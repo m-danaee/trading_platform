@@ -1,98 +1,126 @@
-# Task 3: Suppress JAX import crash in gpu_engine.py module level
+# task-3: Island early-stop safety net
 
-**File:** `gpu_fuzzy_trader/backtest/gpu_engine.py`
+**Branch:** `fix/island-early-stop`
+**Depends on:** task-2 (merged to main — elite preservation ensures stopped island's good rules survive in `deployable_archive`)
 
-## Change
+## Goal
 
-Replace the module-level `try/except ImportError` block (lines 44-65) to catch `Exception` and set JAX globals to `None` instead of re-raising.
+Let dead islands (deployable=0, plateaued) early-stop instead of churning for the full generation budget. Currently `PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED=False` and `PHASE2_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO=True` traps thin islands that have produced zero deployable rules — they keep evolving, eroding their few viable elites across the entire epoch (as seen on cluster_2: 6.64% → 0.87%).
 
-**Current (lines 44-65):**
+## Changes
+
+### 1. `gpu_fuzzy_trader/config.py` — flip island early-stop defaults
+
+In the island block (~line 883):
+
 ```python
-configure_jax_env()
+# BEFORE:
+PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED = False
 
-try:
-    import jax
-    import jax.numpy as jnp
-    from jax import jit, vmap
-    import jax.lax as lax
-
-    def _resolve_jax_float_dtype():
-        use_fp32 = bool(getattr(_cfg, "PHASE2_GPU_USE_FP32", True))
-        if use_fp32:
-            jax.config.update("jax_enable_x64", False)
-            return jnp.float32
-        jax.config.update("jax_enable_x64", True)
-        return jnp.float64
-
-    _JXF = _resolve_jax_float_dtype()
-    _JX_INT = jnp.int8 if bool(
-        getattr(_cfg, "PHASE2_GPU_DATA_INT8", True)) else jnp.int32
-except ImportError as _jax_err:
-    raise ImportError(
-        "JAX is required for GPUBacktestEngine but could not be imported. "
-        "Install it with: pip install jax jaxlib\n"
-        f"Original error: {_jax_err}"
-    ) from _jax_err
+# AFTER — add these lines:
+PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED = True
+PHASE2_ISLAND_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO: bool = False
+PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE: int = 8
 ```
 
-**Target:**
+Notes:
+- `PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED`: flip from `False` → `True`
+- `PHASE2_ISLAND_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO`: new — island-scoped override. `False` means a dead island (0 deployable) CAN still early-stop on plateau. The global `PHASE2_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO=True` stays as-is for global mode.
+- `PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE`: new — island patience of 8 gens (longer than global's 5, since islands have less data and need more slack to recover).
+
+### 2. `gpu_fuzzy_trader/evolution/evox_runner.py` — `_should_plateau_early_stop_phase2`
+
+In `_should_plateau_early_stop_phase2` (~line 559), modify two blocks:
+
+**Block A: deployable-zero guard (~line 581)**
+
 ```python
-configure_jax_env()
+# BEFORE:
+if bool(getattr(_cfg, "PHASE2_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO", True)):
+    if deployable_count <= 0:
+        return False
 
-_jax_import_error = None
-
-try:
-    import jax
-    import jax.numpy as jnp
-    from jax import jit, vmap
-    import jax.lax as lax
-
-    def _resolve_jax_float_dtype():
-        use_fp32 = bool(getattr(_cfg, "PHASE2_GPU_USE_FP32", True))
-        if use_fp32:
-            jax.config.update("jax_enable_x64", False)
-            return jnp.float32
-        jax.config.update("jax_enable_x64", True)
-        return jnp.float64
-
-    _JXF = _resolve_jax_float_dtype()
-    _JX_INT = jnp.int8 if bool(
-        getattr(_cfg, "PHASE2_GPU_DATA_INT8", True)) else jnp.int32
-except Exception as _jax_err:
-    jax = jnp = jit = vmap = lax = None
-    _JXF = _JX_INT = None
-    _jax_import_error = str(_jax_err)
+# AFTER:
+if scoped_island_profile(island_profile):
+    if bool(getattr(_cfg, "PHASE2_ISLAND_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO", False)):
+        if deployable_count <= 0:
+            return False
+elif bool(getattr(_cfg, "PHASE2_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO", True)):
+    if deployable_count <= 0:
+        return False
 ```
 
-Then add a guard function:
+**Block B: patience (~line 590)**
+
 ```python
-def _require_jax():
-    """Raise RuntimeError if JAX failed to import at module level."""
-    if jax is None:
-        raise RuntimeError(
-            "JAX could not be imported (required for GPUBacktestEngine). "
-            f"Original error: {_jax_import_error}"
-        )
+# BEFORE:
+patience = (
+    int(stage_params.plateau_early_stop_patience)
+    if stage_params is not None
+    else int(_cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE)
+)
+
+# AFTER:
+if scoped_island_profile(island_profile):
+    patience = (
+        int(stage_params.plateau_early_stop_patience)
+        if stage_params is not None and getattr(stage_params, "plateau_early_stop_patience", None) is not None
+        else int(getattr(_cfg, "PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE", _cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE))
+    )
+else:
+    patience = (
+        int(stage_params.plateau_early_stop_patience)
+        if stage_params is not None
+        else int(_cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE)
+    )
 ```
 
-And call `_require_jax()` at the top of `GPUBacktestEngine.__init__()` (or `simulate_rule_batch`, whichever is the primary entry point).
+### 3. `tests/unit/test_island_early_stop.py` — new test file
 
-## Why
+Write tests that:
 
-Currently, `gpu_engine.py` re-raises `ImportError` when JAX fails — which propagates through `jax_compat.py`'s try/except (since `ImportError` IS caught). BUT the problem is that `jax_compat.py` catches `_GPU_ENGINE_ERRORS` which was `(ImportError, RuntimeError, OSError)` BEFORE task-1. The original error (`AttributeError`) was NOT in that tuple.
+- **AC-T3.1**: A synthetic island with `deployable=0` for `patience=8` gens and no robust-return improvement stops at gen 8 (assert `history` length == 8 and log contains "plateau early stop"). Pre-fix behavior: runs full `n_generations` (mock `PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED=False` and assert history length == n_generations).
 
-After task-1, `_GPU_ENGINE_ERRORS` includes `AttributeError` too. But `gpu_engine.py` catches only `ImportError` and re-raises it. If JAX fails with `AttributeError`, it's NOT caught by `gpu_engine.py`'s try/except (which only catches `ImportError`). The `AttributeError` would propagate to `jax_compat.py` which NOW catches it (after task-1).
+- **AC-T3.2**: A healthy island (`deployable>0`, still improving robust-return) does NOT stop early (assert history length == n_generations).
 
-So actually, after task-1, the pipeline SHOULD work! But task-3 provides additional defense-in-depth by:
-1. Catching ALL exception types (not just `ImportError`) at gpu_engine.py's module level
-2. Providing a clear error message when GPU functions are actually called (lazy error, not import-time crash)
-3. Allowing `gpu_engine.py` to be imported safely even when JAX is completely broken
+- **AC-T3.3**: Global mode (`island_profile="global"`) early-stop behavior is unchanged — `PHASE2_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO=True` still blocks plateau stop when deployable=0.
 
-## Acceptance Criteria
+- **AC-T3.4**: The island patience knob is respected (stops at gen 8 when `PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE=8`, not gen 5).
 
-1. Module-level `try/except ImportError` replaced with `try/except Exception`
-2. JAX globals set to `None` on failure instead of re-raising
-3. `_require_jax()` guard function added, called at `GPUBacktestEngine.__init__()` entry
-4. When JAX is available: all existing behavior preserved
-5. When JAX is broken: importing gpu_engine.py does not crash; using it raises clear RuntimeError
-6. All existing tests pass: `PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_gpu_engine.py -v`
+### 4. `README.md` — update §5.1 island table
+
+Update the island early-stop row to reflect `PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED=True`. Add rows for the two new knobs.
+
+## Acceptance criteria
+
+- AC-T3.1: Dead island (deployable=0, plateaued) stops at gen 8 instead of running full budget.
+- AC-T3.2: Healthy island (deployable>0, improving) does NOT stop early.
+- AC-T3.3: Global mode unchanged — `PHASE2_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO=True` still blocks.
+- AC-T3.4: `PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE=8` is respected (not global's 5).
+
+## Verification
+
+```bash
+cd /home/danaee/trading_platform && source .venv/bin/activate && \
+  PYTEST_LOW_MEMORY=1 python -m pytest \
+    tests/unit/test_island_early_stop.py \
+    -x -v --tb=short
+```
+
+Also verify config:
+```bash
+python -c "
+from gpu_fuzzy_trader import config as c
+assert c.PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED is True
+assert c.PHASE2_ISLAND_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO is False
+assert c.PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE == 8
+print('config OK')
+"
+```
+
+## Files to modify
+
+- `gpu_fuzzy_trader/config.py` — 1 flip + 2 new keys
+- `gpu_fuzzy_trader/evolution/evox_runner.py` — 2 blocks in `_should_plateau_early_stop_phase2`
+- `tests/unit/test_island_early_stop.py` — new test file
+- `README.md` — island early-stop table update

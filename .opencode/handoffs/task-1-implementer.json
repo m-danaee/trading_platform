@@ -1,33 +1,33 @@
 {
   "task_id": "task-1",
+  "title": "Migration safety (config + small code)",
   "status": "DONE",
-  "commit_hash": "ea079d4",
-  "branch": "feature/task-1-gpu-runtime",
-  "summary": "Added GPU Runtime Support for friend_project",
+  "commit": "33c8846",
+  "branch": "fix/migration-safety",
+  "base_branch": "main",
   "files_changed": [
-    "friend_project/gpu_fuzzy_trader/_gpu_runtime.py (NEW)",
-    "friend_project/gpu_fuzzy_trader/_jax_env.py",
-    "friend_project/gpu_fuzzy_trader/config.py",
-    "friend_project/gpu_fuzzy_trader/phases/phase2_rule_pool.py",
-    "friend_project/gpu_fuzzy_trader/run_pipeline.py"
+    "gpu_fuzzy_trader/config.py",
+    "gpu_fuzzy_trader/phases/phase2_island_scheduler.py",
+    "gpu_fuzzy_trader/phases/phase2_rule_pool.py",
+    "README.md",
+    "tests/unit/test_migration_safety.py",
+    "tests/unit/test_island_scheduler_migration.py",
+    "tests/unit/test_config_additions.py"
   ],
-  "acceptance_criteria": {
-    "1": "PASS: _gpu_runtime.py exists and imports without errors (no sparse_encoding refs)",
-    "2": "PASS: config.py has all 6 GPU knobs with correct defaults",
-    "3": "PASS: is_colab_runtime() returns False locally, would return True on Colab",
-    "4": "PASS: _apply_colab_gpu_defaults() autodetects and configures PHASE3_USE_GPU and PHASE2_GPU_BATCH_SIZE_AUTO",
-    "5": "PASS: _jax_env.py has Colab JAX cache path (/content/jax_cache)",
-    "6": "PASS: run_pipeline.py calls log_gpu_runtime_config() when PHASE2_USE_GPU is True",
-    "7": "PASS: phase2_rule_pool.py calls configure_phase2_gpu_runtime() in _build_engine",
-    "8": "PASS: No import errors from sparse_encoding references",
-    "9": "PASS: Existing tests pass (8/8 in friend_project)"
+  "tests": {
+    "new_migration_safety": "17 passed",
+    "new_island_scheduler_migration": "passed",
+    "existing_evox_runner_nsga": "24 passed",
+    "config_sanity": "config OK"
   },
-  "notes": [
-    "Adapted _gpu_runtime.py from main project, removing phase2_sparse_encoding references",
-    "Kept dense-only path in _warmup_signature and _warmup_engine (no sparse branch)",
-    "resolve_phase2_gpu_batch_size default caps at 16 on non-GPU machine (unknown VRAM path)",
-    "configure_phase2_gpu_runtime() is called in phase2_rule_pool.py __init__ after engine build",
-    "run_pipeline.py calls log_gpu_runtime_config() at start of _run_phase2 when GPU enabled",
-    "Pre-existing test failure in main project (test_feature_order_follows_feature_modes) is unrelated"
+  "preexisting_failures_on_main": [
+    "tests/unit/test_phase2_support.py (3 failures)",
+    "tests/unit/test_phase2_rule_pool.py::test_run_uses_pool_seeds (1 failure)",
+    "TestJointValF2F3 floating-point issues"
+  ],
+  "notes_for_reviewer": [
+    "AC-T1.1 through AC-T1.4 all covered by unit tests.",
+    "Implementation follows suggested code in task-1.md exactly.",
+    "migrant_rank_score key (already present from extract_deployable_migrants) used to separate migrant entries from archive seeds in run_epoch."
   ]
 }

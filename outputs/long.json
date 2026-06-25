@@ -12,7 +12,7 @@
     }
   ],
   "risk_optimized": true,
-  "rb_score": -9103.432288553866,
+  "rb_score": -7541.631973841342,
   "rb_train_return_pct": 0.9000062942504883,
   "rb_valid_return_pct": 0.9000062942504883,
   "rb_valid_profit_factor": 3.500000238418579,
@@ -20,6 +20,6 @@
   "rb_valid_executed_trades": 4,
   "rb_train_minus_valid_return_pct": 0.0,
   "rb_train_valid_ratio": 1.0,
-  "rb_profit_amp_objective": -222.05343960559227,
+  "rb_profit_amp_objective": -446.4468955762358,
   "rb_profit_amp_accepted": false
 }

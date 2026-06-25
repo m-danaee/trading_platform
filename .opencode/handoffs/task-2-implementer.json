@@ -1,37 +1,16 @@
 {
-  "task": "task-2-per-symbol-phase2",
-  "status": "DONE",
-  "commit": "da8a2e1",
+  "task_id": "task-2",
+  "title": "Elite preservation under (μ+λ) selection",
+  "status": "IMPLEMENTED",
+  "commit": "9b1f942",
+  "branch": "fix/elite-preservation",
+  "base_branch": "main",
   "files_changed": [
-    "friend_project/gpu_fuzzy_trader/config.py",
-    "friend_project/gpu_fuzzy_trader/run_pipeline.py"
+    "gpu_fuzzy_trader/config.py",
+    "gpu_fuzzy_trader/evolution/evox_runner.py",
+    "tests/unit/test_elite_preservation.py",
+    "README.md"
   ],
-  "acceptance_criteria": {
-    "PER_SYMBOL_PHASE2 = True in config.py (default)": true,
-    "PHASE2_PER_SYMBOL_POOL_DIR path exists in config": true,
-    "_run_phase2() loops over symbols when PER_SYMBOL_PHASE2=True": true,
-    "Per-symbol pools saved to pools/per_symbol/phase2_{direction}_{symbol}_pool.json": true,
-    "Each rule in per-symbol pool has 'symbol is S' condition": true,
-    "Merged pool saved to pools/phase2_{direction}_pool.json (backward compat)": true,
-    "Purged CV disabled for per-symbol runs (runtime override)": true,
-    "Symbols with too few rows are skipped with warning": true,
-    "Log messages indicate per-symbol progress": true,
-    "PER_SYMBOL_PHASE2=False restores original behavior (single combined run)": true,
-    "No changes to data splitter, Phase 1, or feature selection": true,
-    "Existing tests still pass": true
-  },
-  "notes_for_reviewer": [
-    "The acceptance criteria mention dict-based symbol conditions ({\"feature\": \"symbol\", ...}), but the actual codebase uses string-based conditions ('symbol is S'). This implementation matches the codebase convention (consistent with rb_governor._symbol_condition() and cpu_engine.parse_symbol_condition()).",
-    "Purged CV is disabled via `_cfg.PHASE2_CV_FILTER_ENABLED = False` inside a try/finally block to ensure restoration.",
-    "The `_tag_pool_with_symbol` helper uses `'symbol is {symbol}'` string format (not dict format) to match the existing project convention.",
-    "No changes to phase2_rule_pool.py — the purged CV override is done at the pipeline level in run_pipeline.py.",
-    "All 8 existing tests pass.",
-    "Backward compat verified: PER_SYMBOL_PHASE2=False restores original single combined behavior via the else branch."
-  ],
-  "test_results": {
-    "pytest tests/": "8/8 passed",
-    "import check": "from gpu_fuzzy_trader.run_pipeline import Pipeline_Orchestrator: OK",
-    "helper functions verification": "_tag_pool_with_symbol, _merge_pools: OK",
-    "config verification": "PER_SYMBOL_PHASE2=True, PER_SYMBOL_MIN_ROWS=1000, PHASE2_PER_SYMBOL_POOL_DIR set: OK"
-  }
+  "test_results": "30 passed (9 elite preservation + 21 evox_runner)",
+  "next_stage": "spec-review"
 }
