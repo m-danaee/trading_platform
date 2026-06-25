@@ -212,10 +212,10 @@ class TestConflict07TwoStageIslandCluster:
 class TestConflict08EarlyStopArchiveSeed:
   """Early stop + archive seed 25% can truncate exploration before diversity recovery."""
 
-  def test_global_mode_has_early_stop_on_island_defaults_off(self):
+  def test_island_plateau_early_stop_enabled_by_default(self):
       assert _cfg.PHASE2_ISLAND_MODE == "cluster"
       assert _cfg.island_early_stop_enabled() is False
-      assert _cfg.island_plateau_early_stop_enabled() is False
+      assert _cfg.island_plateau_early_stop_enabled() is True
 
   def test_global_mode_enables_early_stop_when_not_cluster(self, monkeypatch):
       monkeypatch.setattr(_cfg, "PHASE2_ISLAND_MODE", "global")
