@@ -1978,7 +1978,7 @@ def resolve_island_hyperparams(
             sortino_thr = int(PHASE2_SORTINO_MIN_TRADE_THRESHOLD)
         min_profitable = min(
             int(PHASE2_MIN_PROFITABLE_SYMBOLS),
-            max(1, sym_n // 2),
+            max(1, (sym_n + 1) // 2),
         )
         monthly_months = int(PHASE2_ISLAND_MONTHLY_MIN_MONTHS)
         monthly_ratio = float(PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from gpu_fuzzy_trader import config as cfg
 
 
@@ -33,3 +35,54 @@ def test_orphan_floors(monkeypatch):
 def test_scale_trade_floor_absolute_min():
     assert cfg.scale_trade_floor_by_universe(
         45, 1000, 10000, absolute_min=8) == 8
+
+
+# ── min_profitable_symbols scaling tests (Fix E2) ──────────────────────
+
+@pytest.mark.parametrize("n_symbols,expected_min_profitable", [
+    (1, 1),   # orphan-like: max(1, round(0.5)) = 1
+    (2, 1),   # max(1, round(1.0)) = 1
+    (3, 2),   # max(1, round(1.5)) = 2
+    (4, 2),   # max(1, round(2.0)) = 2
+    (5, 3),   # max(1, round(2.5)) = 3
+    (6, 3),   # max(1, round(3.0)) = 3
+    (7, 4),   # max(1, round(3.5)) = 4
+])
+def test_min_profitable_symbols_scales_with_cluster_size(
+    monkeypatch, n_symbols, expected_min_profitable,
+):
+    """Verify the scaling formula: max(1, round(n_symbols * 0.5))."""
+    # Ensure PHASE2_MIN_PROFITABLE_SYMBOLS is high enough not to cap
+    monkeypatch.setattr(cfg, "PHASE2_MIN_PROFITABLE_SYMBOLS", 99)
+    hp = cfg.resolve_island_hyperparams(
+        "cluster",
+        n_rows=100_000,
+        reference_rows=500_000,
+        n_symbols=n_symbols,
+    )
+    assert hp.min_profitable_symbols == expected_min_profitable, (
+        f"n_symbols={n_symbols}: expected {expected_min_profitable}, "
+        f"got {hp.min_profitable_symbols}"
+    )
+
+
+def test_min_profitable_symbols_capped_by_config(monkeypatch):
+    """The config constant PHASE2_MIN_PROFITABLE_SYMBOLS is the upper bound."""
+    monkeypatch.setattr(cfg, "PHASE2_MIN_PROFITABLE_SYMBOLS", 2)
+    hp = cfg.resolve_island_hyperparams(
+        "cluster",
+        n_rows=100_000,
+        reference_rows=500_000,
+        n_symbols=10,
+    )
+    # round(10 * 0.5) = 5, capped by PHASE2_MIN_PROFITABLE_SYMBOLS = 2
+    assert hp.min_profitable_symbols == 2
+
+
+def test_orphan_min_profitable_unchanged(monkeypatch):
+    """Orphan profile always has min_profitable_symbols=1."""
+    monkeypatch.setattr(cfg, "PHASE2_ORPHAN_MIN_TRADE_SUPPORT", 8)
+    hp = cfg.resolve_island_hyperparams(
+        "orphan", n_rows=70_000, reference_rows=700_000, n_symbols=1,
+    )
+    assert hp.min_profitable_symbols == 1
