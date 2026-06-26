@@ -218,18 +218,39 @@ def _log_pipeline_config() -> None:
             f" | DEBUG start={_cfg.DEBUG_SYMBOL!r} "
             f"count={_cfg.DEBUG_SYMBOL_COUNT}"
         )
-    logger.info(
-        "Pipeline config: PHASE1 top_k=%d | "
-        "PHASE2 algo=%s pop=%d gen=%d joint_train_val=%s | "
-        "PHASE3 per-symbol greedy | "
-        "PHASE4 grid_search=True | %s",
-            _cfg.PHASE1_TOP_K_FEATURES,
+    if _cfg.PHASE2_ISLAND_MODE == "cluster":
+        total_gens = int(_cfg.PHASE2_ISLAND_TOTAL_GENERATIONS)
+        n_clusters = max(1, int(_cfg.PHASE2_N_CLUSTERS))
+        gens_per_cluster = max(1, total_gens // n_clusters)
+        epoch_gens = int(_cfg.PHASE2_ISLAND_EPOCH_GENERATIONS)
+        phase2_fmt = (
+            "PHASE2 algo=%s pop=%d island_total=%d per_cluster=%d epoch=%d "
+            "joint_train_val=%s"
+        )
+        phase2_args = (
+            _cfg.PHASE2_ALGORITHM,
+            _cfg.PHASE2_POPULATION_SIZE,
+            total_gens,
+            gens_per_cluster,
+            epoch_gens,
+            _cfg.PHASE2_JOINT_TRAIN_VAL,
+        )
+    else:
+        phase2_fmt = "PHASE2 algo=%s pop=%d gen=%d joint_train_val=%s"
+        phase2_args = (
             _cfg.PHASE2_ALGORITHM,
             _cfg.PHASE2_POPULATION_SIZE,
             _cfg.PHASE2_GENERATIONS,
             _cfg.PHASE2_JOINT_TRAIN_VAL,
-            debug_suffix,
         )
+    logger.info(
+        "Pipeline config: PHASE1 top_k=%d | "
+        + phase2_fmt
+        + " | PHASE3 per-symbol greedy | PHASE4 grid_search=True | %s",
+        _cfg.PHASE1_TOP_K_FEATURES,
+        *phase2_args,
+        debug_suffix,
+    )
 
 
 class _NumpyJSONEncoder(json.JSONEncoder):
