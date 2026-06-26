@@ -2669,7 +2669,13 @@ class Rule_Pool_Generator:
         first_epoch = self._evolution_state is None
         entering_stage_b = stage_plan.entering_stage_b
         apply_seeds = first_epoch or entering_stage_b
-        reset_plateau = entering_stage_b
+        # Each island epoch is a fresh plateau context: carrying the prior
+        # epoch's best/streak makes every subsequent epoch instantly plateau
+        # at min_gen because the streak is already 5-17 from epoch 1.
+        # Reset unconditionally — Stage B seeding (below) is independent.
+        # NOTE: a global "island fully converged" kill-switch, if ever needed,
+        # should be a SEPARATE counter, NOT the per-epoch streak.
+        reset_plateau = True
 
         seed_chromosomes = None
         seed_fraction = None
@@ -2762,7 +2768,10 @@ class Rule_Pool_Generator:
             if stage_plan.two_stage_active and stage_plan.stage is not None:
                 entry["stage"] = stage_plan.stage
         self._island_history.extend(epoch_history)
-        self._island_generations_done += epoch_gens
+        # Charge actual generations run (epoch_history length), not the
+        # requested epoch_gens, because the evolution loop may early-stop
+        # before exhausting the full budget.
+        self._island_generations_done += len(epoch_history)
         return extract_deployable_migrants(self._evolution_state)
 
     def finalize_island(self) -> list[dict]:
