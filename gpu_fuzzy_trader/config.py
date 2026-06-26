@@ -566,8 +566,9 @@ SORTINO_SCALE = 5.0
 
 # PHASE2_JOINT_TRAIN_VAL — fitness uses min(train, val) Sortino/return where applicable.
 #   True  → slower (eval val every gen) but aligned with deployment; less overfit.
-#   False → train-only fitness; faster but val-blind during evolution.
-PHASE2_JOINT_TRAIN_VAL = True
+#   False → train-only fitness; faster; holdout remains clean for model selection
+#           (Phase 3) & OOS (Phase 5). Robustness via purged 4-fold CV evaluator.
+PHASE2_JOINT_TRAIN_VAL = False
 
 
 # =============================================================================

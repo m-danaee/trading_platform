@@ -517,6 +517,7 @@ class TestDeployableArchive:
 
     def test_plateau_progress_uses_robust_return(self, monkeypatch):
         monkeypatch.setattr(_cfg, "PHASE2_PLATEAU_USE_ROBUST_RETURN", True)
+        monkeypatch.setattr(_cfg, "PHASE2_JOINT_TRAIN_VAL", True)
         metrics_cache = [
             {
                 "total_return_pct": 10.0,
@@ -624,7 +625,8 @@ class TestDuplicateSuppression:
 
 
 class TestParetoRobustStats:
-    def test_uses_min_train_val_return(self):
+    def test_uses_min_train_val_return(self, monkeypatch):
+        monkeypatch.setattr(_cfg, "PHASE2_JOINT_TRAIN_VAL", True)
         metrics_cache = [{
             "total_return_pct": 5.0,
             "sortino_ratio": 2.0,

@@ -140,7 +140,7 @@ flowchart TD
 
 - `holdout_70_30` + `PHASE2_JOINT_TRAIN_VAL=True` → fitness uses the 30% holdout.
 - `purged_walk_forward` + `PHASE2_JOINT_TRAIN_VAL=True` → fitness uses CV fold aggregate (`worst` or `mean`); holdout never enters fitness.
-- `PHASE2_JOINT_TRAIN_VAL=False` → train-only fitness in **both** modes; holdout checked only at pool admission.
+- `PHASE2_JOINT_TRAIN_VAL=False` (default) → train-only fitness in **both** modes; holdout preserved for Phase 3 selection & Phase 5 OOS. Robustness during evolution comes from purged 4-fold CV evaluator.
 
 #### Purged-only parameters (ignored when `SPLIT_MODE=holdout_70_30`)
 
@@ -310,7 +310,7 @@ Runs on **train split only** (no validation labels for ranking).
 
 | Parameter | Default | Effect |
 |-----------|---------|--------|
-| `PHASE2_JOINT_TRAIN_VAL` | True | Joint train/val fitness |
+| `PHASE2_JOINT_TRAIN_VAL` | False | Train-only fitness; holdout preserved for Phase 3 selection & Phase 5 OOS |
 | `PHASE2_USE_TOTAL_RETURN_OBJ` | False | f3 = win rate when False |
 | `PHASE2_USE_ROBUST_RETURN_OBJ` | True | f3 = min(train, val) return |
 | `SORTINO_CAP` | 5.0 | Max saturated Sortino on f1 |
