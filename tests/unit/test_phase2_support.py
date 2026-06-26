@@ -123,7 +123,16 @@ class TestDeployabilityHelpers:
     def test_robust_return_uses_min_train_val(self) -> None:
         train = {"total_return_pct": 5.0}
         val = {"total_return_pct": 2.0}
-        assert robust_return_pct(train, val) == pytest.approx(2.0)
+        # Explicit joint=True: returns min(train, val) = 2.0.
+        assert robust_return_pct(train, val, joint=True) == pytest.approx(2.0)
+
+    def test_robust_return_joint_false_returns_train_only(self) -> None:
+        train = {"total_return_pct": 5.0}
+        val = {"total_return_pct": 2.0}
+        # With joint=False, val must NOT pull return down — train-only is used.
+        assert robust_return_pct(train, val, joint=False) == pytest.approx(5.0)
+        # Also confirm it works without val_metrics (e.g. CV mode).
+        assert robust_return_pct(train, None, joint=False) == pytest.approx(5.0)
 
     def test_feasibility_violation_zero_when_metrics_ok(self) -> None:
         train = {

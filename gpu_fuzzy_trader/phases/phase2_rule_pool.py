@@ -719,6 +719,11 @@ def _evaluate_chromosome(
 
     val_metrics: dict | None = None
     if val_engine is not None:
+        # TODO(task-2): When _cfg.PHASE2_JOINT_TRAIN_VAL is False, the val
+        # simulation still runs for pool admission / deployability checks but
+        # does NOT affect objectives.  Guard behind `if _cfg.PHASE2_JOINT_TRAIN_VAL`
+        # to save GPU time — verify downstream consumers (pool gates, archive)
+        # work without val_metrics when JOINT is False.
         try:
             val_list = val_engine.simulate_rule_batch(
                 chromosomes=_chromosome_batch(chromosome),

@@ -1166,6 +1166,12 @@ def _evaluate_population_indices(
             capital_pct=_cfg.PHASE2_CAPITAL_PCT,
         )
 
+        # TODO(task-2): When _cfg.PHASE2_JOINT_TRAIN_VAL is False, the val
+        # simulation below still runs for reporting / pool admission but does
+        # NOT affect objectives.  Guard behind `if _cfg.PHASE2_JOINT_TRAIN_VAL`
+        # to save GPU time — but only after confirming downstream consumers
+        # (_assign_eval_result, pool admission gates) behave correctly without
+        # val_metrics when JOINT=True callers exist.
         val_metrics_list = None
         if val_engine is not None:
             try:
