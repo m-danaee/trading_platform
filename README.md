@@ -418,6 +418,10 @@ Runs on **train split only** (no validation labels for ranking).
 | `PHASE2_PLATEAU_USE_ROBUST_RETURN` | True | Score plateau on `min(train, val)` return |
 | `PHASE2_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO` | True | Block plateau stop while deployable=0 | — |
 | `PHASE2_PLATEAU_BLOCK_WHEN_DIVERSITY_LOW` | False | Also block plateau stop if unique ratio is low | — |
+| `PHASE2_PLATEAU_DIVERSITY_RESTART_ENABLED` | True | Reinit part of pop on first plateau instead of break | Requires `PHASE2_PLATEAU_MAX_RESTARTS ≥ 1` |
+| `PHASE2_PLATEAU_DIVERSITY_RESTART_FRACTION` | 0.40 | Share of population reinitialised on restart | Higher = more fresh chromosomes |
+| `PHASE2_PLATEAU_DIVERSITY_RESTART_MUTATION_BOOST` | 1.6 | Mutation-rate multiplier for one gen after restart | Capped at 0.6 |
+| `PHASE2_PLATEAU_MAX_RESTARTS` | 1 | Restarts per epoch before final break | 0 disables restart regardless of ENABLED flag |
 | `PHASE2_DIVERSITY_RECOVERY_ENABLED` | True | Inject random when unique ratio low | Counteracts early stop |
 | `PHASE2_DIVERSITY_RECOVERY_MIN_UNIQUE_RATIO` | 0.30 | Unique-ratio floor that triggers recovery |
 | `PHASE2_DIVERSITY_RECOVERY_INJECT_FRACTION` | 0.30 | Fraction of pop replaced during recovery |

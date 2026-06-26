@@ -658,6 +658,28 @@ PHASE2_PLATEAU_USE_ROBUST_RETURN = True
 PHASE2_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO = True
 PHASE2_PLATEAU_BLOCK_WHEN_DIVERSITY_LOW = False
 
+# PHASE2_PLATEAU_DIVERSITY_RESTART_ENABLED — reinit part of the pop on first plateau
+#   instead of immediately breaking. Breaks on the second plateau instead.
+#   True  → first plateau injects diversity, second plateau breaks.
+#   False → immediate break on first plateau (original behaviour).
+PHASE2_PLATEAU_DIVERSITY_RESTART_ENABLED = True
+
+# PHASE2_PLATEAU_DIVERSITY_RESTART_FRACTION — share of pop reinitialised on restart.
+#   Higher  → more fresh chromosomes; may lose more elite progress.
+#   Lower   → gentler restart; may not escape attractor.
+PHASE2_PLATEAU_DIVERSITY_RESTART_FRACTION = 0.40
+
+# PHASE2_PLATEAU_DIVERSITY_RESTART_MUTATION_BOOST — multiplier for mutation rate
+#   for one generation after restart. Capped at 0.6.
+#   Higher  → more aggressive exploration after restart.
+#   Lower   → keep mutation close to normal after restart.
+PHASE2_PLATEAU_DIVERSITY_RESTART_MUTATION_BOOST = 1.6
+
+# PHASE2_PLATEAU_MAX_RESTARTS — restarts per epoch before final break.
+#   1       → one restart, then break on second plateau.
+#   0       → immediately break (disables restart regardless of ENABLED flag).
+PHASE2_PLATEAU_MAX_RESTARTS = 1
+
 # PHASE2_FEASIBILITY_VIOLATION_WEIGHT — scales soft penalty for floor violations.
 #   Higher → infeasible rules pushed far down on all objectives.
 #   Lower  → borderline rules compete with feasible ones longer.
