@@ -738,8 +738,6 @@ def _plateau_diversity_restart(
     *,
     pareto_indices: list[int],
     pop_size: int,
-    stage_params: Phase2StageParams | None = None,
-    feature_probs: np.ndarray | None = None,
     init_strategy: str | None = None,
     stratum_fractions: tuple[float, float] | None = None,
 ) -> int:
@@ -1540,6 +1538,8 @@ def _run_nsga2_fallback(
         plateau_streak = 0
     mutation_rate = _stage_mutation_rate(stage_params)
     weighted_activate_prob = _stage_weighted_activate_prob(stage_params)
+    # restart_count is per-stage (Stage A and Stage B each have their own),
+    # deliberately more lenient than per-epoch.
     restart_count = 0
     _plateau_restart_boost: float | None = None
 
@@ -1685,8 +1685,6 @@ def _run_nsga2_fallback(
                         feature_infos, rng,
                         pareto_indices=pareto_indices,
                         pop_size=pop_size,
-                        stage_params=stage_params,
-                        feature_probs=feature_probs,
                         init_strategy=init_strategy,
                         stratum_fractions=stratum_fractions,
                     )
@@ -1899,6 +1897,8 @@ def _run_nsga3(
         mutation_rate = _stage_mutation_rate(stage_params)
         weighted_activate_prob = _stage_weighted_activate_prob(stage_params)
         generation_offset = 0
+        # restart_count is per-stage (Stage A and Stage B each have their own),
+        # deliberately more lenient than per-epoch.
         restart_count = 0
         _plateau_restart_boost: float | None = None
     else:
@@ -1920,6 +1920,8 @@ def _run_nsga3(
             if state.mutation_rate is not None
             else _stage_mutation_rate(stage_params)
         )
+        # restart_count is per-stage — each stage gets its own count, which is
+        # deliberately more lenient than sharing a single count per epoch.
         restart_count = 0
         _plateau_restart_boost = None
         weighted_activate_prob = (
@@ -2311,8 +2313,6 @@ def _run_nsga3(
                         feature_infos, rng,
                         pareto_indices=pareto_indices,
                         pop_size=pop_size,
-                        stage_params=stage_params,
-                        feature_probs=feature_probs,
                         init_strategy=init_strategy,
                         stratum_fractions=stratum_fractions,
                     )

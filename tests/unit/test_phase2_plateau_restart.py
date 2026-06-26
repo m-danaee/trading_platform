@@ -173,6 +173,122 @@ def test_mutation_boost_capped_at_0_6():
 
 
 # ---------------------------------------------------------------------------
+# Integration-style test: mutation boost applied to offspring + streak reset
+# ---------------------------------------------------------------------------
+
+class TestMutationBoostIntegration:
+    """Verify AC3 (mutation boost applied to offspring) and AC4 (streak reset).
+
+    Runs the full evolution loop with mocked plateau detection, captures the
+    ``mutation_rate`` argument passed to ``_make_offspring_population``, and
+    tracks ``plateau_streak`` via the plateau-check mock.
+    """
+
+    def test_boost_applied_and_streak_reset(self):
+        """Mutation boost is applied to offspring after restart, then reverts;
+        plateau_streak resets to 0 after restart."""
+        from gpu_fuzzy_trader.evolution.evox_runner import (
+            _make_offspring_population,
+        )
+
+        mutation_rates: list[float] = []
+        plateau_streak_at_gen: dict[int, int] = {}
+
+        orig_make_offspring = _make_offspring_population
+
+        def tracking_make_offspring(
+            population, objectives, pop_size, feature_infos,
+            dont_cares, rng, **kwargs,
+        ):
+            mutation_rates.append(kwargs.get("mutation_rate"))
+            return orig_make_offspring(
+                population, objectives, pop_size, feature_infos,
+                dont_cares, rng, **kwargs,
+            )
+
+        def controlled_plateau_check(gen, streak, **kwargs):
+            plateau_streak_at_gen[gen] = streak
+            # Trigger restart only at gen 2; otherwise no plateau
+            return gen == 2
+
+        with mock.patch(
+            "gpu_fuzzy_trader.evolution.evox_runner"
+            "._should_plateau_early_stop_phase2",
+            side_effect=controlled_plateau_check,
+        ), mock.patch(
+            "gpu_fuzzy_trader.evolution.evox_runner"
+            "._plateau_diversity_restart",
+            return_value=5,
+        ), mock.patch(
+            "gpu_fuzzy_trader.evolution.evox_runner"
+            "._make_offspring_population",
+            side_effect=tracking_make_offspring,
+        ), mock.patch.object(
+            cfg, "PHASE2_PLATEAU_DIVERSITY_RESTART_ENABLED", True,
+        ), mock.patch.object(
+            cfg, "PHASE2_PLATEAU_MAX_RESTARTS", 10,
+        ), mock.patch.object(
+            cfg, "PHASE2_DIVERSITY_RECOVERY_ENABLED", False,
+        ), mock.patch.object(
+            cfg, "PHASE2_EARLY_STOP_ENABLED", False,
+        ), mock.patch.object(
+            cfg, "PHASE2_EARLY_STOP_MIN_GENERATION", 999,
+        ):
+            rng = np.random.default_rng(0)
+            feature_infos = [
+                {"name": "f0", "mode": "binary", "score": 0.5},
+                {"name": "f1", "mode": "binary", "score": 0.5},
+            ]
+            with mock.patch(
+                "gpu_fuzzy_trader.evolution.evox_runner._EVOX_AVAILABLE",
+                False,
+            ):
+                run_phase2_evolution(
+                    feature_infos=feature_infos,
+                    engine=FakeEngine(),
+                    pop_size=10,
+                    n_generations=15,
+                    rng=rng,
+                )
+
+        # ---- AC3: mutation boost ----
+        # Offspring calls happen each gen except gen 2 (continue after restart)
+        #   [0]=gen0, [1]=gen1, [2]=gen3(boosted), [3]=gen4(default)
+        assert len(mutation_rates) >= 4, (
+            f"Expected >=4 offspring calls, got {len(mutation_rates)}"
+        )
+
+        base_mr = _stage_mutation_rate(None)  # 0.3 from config
+        boost_factor = float(
+            getattr(cfg, "PHASE2_PLATEAU_DIVERSITY_RESTART_MUTATION_BOOST", 1.6)
+        )
+        expected_boosted = min(0.6, base_mr * boost_factor)
+
+        gen3_rate = mutation_rates[2]  # first offspring call after restart
+        assert gen3_rate == pytest.approx(expected_boosted), (
+            f"Gen 3 mutation_rate {gen3_rate} != boosted {expected_boosted} "
+            f"(base={base_mr}, boost={boost_factor})"
+        )
+
+        gen4_rate = mutation_rates[3]  # second offspring call after restart
+        assert gen4_rate == pytest.approx(base_mr), (
+            f"Gen 4 mutation_rate {gen4_rate} != default {base_mr}"
+        )
+
+        # ---- AC4: plateau_streak reset ----
+        # The restart at gen 2 resets plateau_streak to 0.
+        # At gen 3's plateau check, streak should be low (1 after one
+        # _update_max_return_plateau increment from 0).
+        assert 3 in plateau_streak_at_gen, (
+            "No plateau_streak recorded for gen 3"
+        )
+        assert plateau_streak_at_gen[3] <= 1, (
+            f"Expected plateau_streak <= 1 at gen 3 (after restart), "
+            f"got {plateau_streak_at_gen[3]}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Plateau early-stop trigger (should_plateau_early_stop_phase2)
 # ---------------------------------------------------------------------------
 
