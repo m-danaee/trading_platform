@@ -1,39 +1,41 @@
-# Nexus Context — Phase 2 Island-Mode Fixes
+# Nexus Context — Phase 2 Island Plateau & OOS Leakage Fixes
 
-**Updated:** 2026-06-25 (ALL TASKS COMPLETE)
+**Updated:** 2026-06-26
 **base_branch:** `main`
 **branch_policy:** isolated
-**execution_mode:** checkpoint
+**execution_mode:** auto-continue
 
-## Final State
+## Active Objective
 
-All 3 tasks completed, reviewed, and merged to main:
+Fix the premature-convergence cascade diagnosed from the 2026-06-26 run log.
+Root cause: plateau state (`plateau_best_progress`, `plateau_streak`) leaks across
+island epochs because `reset_plateau = entering_stage_b` and
+`PHASE2_ISLAND_TWO_STAGE_ENABLED=False` makes `entering_stage_b` always False.
+Compounded by: holdout val folded into Phase 2 fitness (`JOINT_TRAIN_VAL=True`),
+frozen-elite attractor (no diversity restart), imbalanced K=3 clusters, and
+over-twitchy plateau config (patience=5, min_gen=3, min_delta=0.02).
 
-| Task | Branch | Status |
-|------|--------|--------|
-| task-1 | `fix/migration-safety` | ✅ MERGED — Migration off by default, stricter gates, separate seed fraction |
-| task-2 | `fix/elite-preservation` | ✅ MERGED — Force-preserve top-K deployable elites each gen |
-| task-3 | `fix/island-early-stop` | ✅ MERGED — Dead islands stop at plateau instead of churning |
+## Task Summary (5 tasks, sequential, isolated branches)
 
-## Total changes across all tasks
+| # | Branch | Fixes | Status |
+|---|--------|-------|--------|
+| 1 | `fix/plateau-state-leak` | A (reset plateau per epoch) + B (charge actual gens) | pending |
+| 2 | `fix/holdout-fitness-leak` | C (`JOINT_TRAIN_VAL=False`, verify Phase 3/4 reuse) | pending |
+| 3 | `fix/diversity-restart-on-plateau` | D (diversity restart instead of immediate break) | pending |
+| 4 | `fix/cluster-balancing` | E (balanced clustering + relax large-cluster gates) | pending |
+| 5 | `fix/plateau-config-tuning-and-banner` | F (banner) + config knobs | pending |
 
-- `gpu_fuzzy_trader/config.py` — 5 new keys + several updated defaults
-- `gpu_fuzzy_trader/evolution/evox_runner.py` — elite preservation helper + island early-stop branching
-- `gpu_fuzzy_trader/phases/phase2_island_scheduler.py` — migration gate
-- `gpu_fuzzy_trader/phases/phase2_rule_pool.py` — migrant seed fraction cap
-- `README.md` — config table updates across all 3 tasks
-- `tests/unit/test_migration_safety.py` — 7 tests
-- `tests/unit/test_island_scheduler_migration.py` — 7 tests
-- `tests/unit/test_elite_preservation.py` — 9 tests
-- `tests/unit/test_island_early_stop.py` — 11 tests
+## Hard Rules (from AGENTS.md)
 
-## Current Branch
+- Always use `.venv` for running commands.
+- Run tests with `PYTEST_LOW_MEMORY=1` (OOM risk on local/WSL).
+- Do NOT run the full pipeline locally (runs on Colab GPU).
+- Do NOT modify `evaluator_v5.ipynb`.
+- After changing code, remove wasted/old implementation to keep project clean.
 
-`main` — ahead 5 commits. Feature branches awaiting cleanup: `fix/migration-safety`, `fix/elite-preservation`, `fix/island-early-stop`.
+## Workflow
 
-## Recommendations for user
-
-Run the pipeline on Colab GPU to verify:
-1. No `Phase 2 migration: … accepted` lines (migration off by default)
-2. cluster_1-style islands hold their peak across epochs (elite preservation)
-3. cluster_2-style dead islands early-stop instead of churning (island early-stop)
+- Dispatch ONE implementer at a time per task.
+- Two-stage review: spec-reviewer → code-reviewer.
+- Branch from latest `main` (rebase after each merge).
+- At completion, delegate branch cleanup to implementer (never delete branches directly).

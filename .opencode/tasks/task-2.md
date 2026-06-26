@@ -1,141 +1,69 @@
-# task-2: Elite preservation under (μ+λ) selection
+# Task 2 — `fix/holdout-fitness-leak` (Fix C)
 
-**Branch:** `fix/elite-preservation`
-**Depends on:** task-1 (merged to main)
+## Branch
+`fix/holdout-fitness-leak` (from latest `main`, after task-1 merge).
 
-## Goal
+## Problem
+`PHASE2_JOINT_TRAIN_VAL=True` (`config.py:570`) folds the holdout `val`
+(209590 rows) into Phase 2 evolution fitness via
+`robust_return_pct = min(train, val)` (`phase2_support.py:314-330`). The
+holdout is meant for model selection (Phase 3) — using it in Phase 2 fitness
+means evolution optimizes against it, so it stops being an honest holdout and
+`test.csv` (Phase 5 OOS) suffers.
 
-Prevent mid-epoch elite erosion: a non-dominated rule present at generation N must survive to generation N+k unless a genuinely Pareto-dominating rule appears. This applies in both island and global mode.
+## Required Changes
 
-## Root cause
-
-Recomputed dynamic diversity/support penalties drift upward as `hall_of_fame` and `pareto_archive` grow. Under (μ+λ) NSGA-III selection, a non-dominated elite can be evicted purely by penalty growth — not because a better rule was found.
-
-## Changes
-
-### 1. `gpu_fuzzy_trader/config.py` — new elite preservation block
-
-Add after `PHASE2_DEPLOYABLE_ARCHIVE_MAX_SIZE` (~line 868):
-
+### Primary fix — disable joint train+val fitness
+**File:** `gpu_fuzzy_trader/config.py` (line 570)
 ```python
-# --- elite-preservation guard (prevents mid-epoch erosion) ---
-PHASE2_ELITE_PRESERVATION_ENABLED: bool = True
-PHASE2_ELITE_PRESERVATION_TOP_K: int = 5
-PHASE2_ELITE_PRESERVATION_MIN_GEN: int = 1
+# BEFORE
+PHASE2_JOINT_TRAIN_VAL = True
+# AFTER
+PHASE2_JOINT_TRAIN_VAL = False
 ```
+With `joint=False`, `robust_return_pct` returns train-only return (the val
+simulation still runs for reporting metrics like `max_robust_return` in logs —
+this is acceptable but see optional optimization below). Robustness during
+evolution comes from the already-wired purged 4-fold CV evaluator
+(`cv_fold_evaluator`, logged as "purged CV fitness evaluator (3 folds)").
 
-### 2. `gpu_fuzzy_trader/evolution/evox_runner.py` — `_preserve_deployable_elites` helper
+### Verification of val reuse (no code change unless a leak is found)
+- Confirm `val_df` / `val_engine` in Phase 3 (`phase3_rule_set.py`,
+  `phase3_cache.py`) is used for *rule-set selection* — this is the PROPER use
+  of a holdout and should be KEPT.
+- Confirm Phase 4 (`phase4_wf_optimizer.py`) does not use `val_df` for tuning
+  in a way that would make val a third training set. If it does, report it but
+  do NOT change Phase 4 behavior in this task (out of scope — flag to user).
+- Confirm `test.csv` is consumed ONLY in Phase 5 (`phase5_oos.py`).
 
-Add a new function (before `run_phase2_evolution`):
+### Optional optimization (only if low-risk and clearly isolated)
+When `PHASE2_JOINT_TRAIN_VAL=False`, the per-chromosome `val_engine.simulate_*`
+calls in `evox_runner.py` (~lines 1172, 1485, 1676) still run purely for
+reporting. If straightforward, guard them behind `if _cfg.PHASE2_JOINT_TRAIN_VAL:`
+to save GPU time. If this risks changing reported metrics or breaks tests, SKIP
+it and leave a `# TODO` comment instead. Do not over-engineer.
 
-```python
-def _preserve_deployable_elites(
-    state,
-    cfg,
-    current_gen: int,
-):
-    """Force-preserve top-K deployable-archive elites in the live population.
-    
-    Guarantees a non-dominated elite at gen N survives to gen N+k unless
-    a genuinely Pareto-dominating rule appears — preventing mid-epoch
-    erosion from recomputed dynamic penalties (diversity/support drift).
-    """
-    if not cfg.PHASE2_ELITE_PRESERVATION_ENABLED:
-        return
-    if current_gen < cfg.PHASE2_ELITE_PRESERVATION_MIN_GEN:
-        return
-    archive = getattr(state, "deployable_archive", None)
-    if not archive:
-        return
-    
-    top_k = min(cfg.PHASE2_ELITE_PRESERVATION_TOP_K, len(archive))
-    if top_k == 0:
-        return
-    
-    # Rank deployable_archive by rank_score desc, take top-K
-    sorted_elites = sorted(
-        archive.values() if isinstance(archive, dict) else archive,
-        key=lambda e: (getattr(e, "rank_score", 0) or 0),
-        reverse=True,
-    )[:top_k]
-    
-    pop_size = state.population.shape[0]
-    
-    for elite_entry in sorted_elites:
-        chrom = elite_entry.chromosome if hasattr(elite_entry, "chromosome") else elite_entry
-        if not isinstance(chrom, np.ndarray):
-            chrom = np.array(chrom, dtype=state.population.dtype)
-        
-        # Check if already present (by exact chromosome match)
-        already_present = False
-        for i in range(pop_size):
-            if np.array_equal(state.population[i], chrom):
-                already_present = True
-                break
-        if already_present:
-            continue
-        
-        # Evict the most-crowded survivor (least-crowded = last in crowding sort)
-        # Use the existing _build_rank_and_crowding helper
-        ranks, crowding = _build_rank_and_crowding(state.objectives)
-        # Find the worst (highest rank, or lowest crowding within highest rank)
-        max_rank = int(np.max(ranks))
-        worst_idx = -1
-        worst_crowding = float("inf")
-        for i in range(pop_size):
-            if ranks[i] == max_rank:
-                if crowding[i] < worst_crowding:
-                    worst_crowding = crowding[i]
-                    worst_idx = i
-        if worst_idx == -1:
-            worst_idx = pop_size - 1  # fallback: replace last
-        
-        # Overwrite the slot
-        state.population[worst_idx] = chrom.copy()
-        state.objectives[worst_idx] = np.full(state.objectives.shape[1], np.inf)
-        if hasattr(state, "metrics_cache") and state.metrics_cache is not None:
-            state.metrics_cache[worst_idx] = {}
-```
+### Docs
+Update `README.md` config table entry for `PHASE2_JOINT_TRAIN_VAL` to reflect
+the new default and the rationale (holdout must stay clean for OOS).
 
-### 3. Wire into `run_phase2_evolution` (NSGA-III path)
+## Acceptance Criteria
+1. `PHASE2_JOINT_TRAIN_VAL == False`.
+2. Unit test: `robust_return_pct(train_m, val_m, joint=False)` returns
+   `train_m["total_return_pct"]` (train-only) — i.e. val does not pull it down.
+3. Phase 3 still uses `val_engine` for selection (no regression in phase3 tests).
+4. `test.csv` referenced only in Phase 5 (grep verification, documented in PR).
+5. `PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit -q` passes.
 
-In `run_phase2_evolution`, right after the `_nsga3_environmental_selection` call (~line 2177), before `metrics_cache = [merge_metrics[int(i)] for i in sel_idx[:n_alive]]`, add:
-
-```python
-# --- elite preservation ---
-_preserve_deployable_elites(state, cfg, gen)
-```
-
-### 4. Wire into `_run_nsga2_fallback` (NSGA-II path)
-
-In `_run_nsga2_fallback`, after the environmental selection step (find the corresponding point after `merge_pop` is trimmed to `pop_size`), add the same call.
-
-### 5. `README.md` — §5.2 evolution table
-
-Add rows for the three new config keys, plus a note that elite preservation prevents mid-epoch erosion under growing archives.
-
-## Acceptance criteria
-
-- **AC-T2.1**: Build a `Phase2EvolutionState` with 20 unique chromosomes, place one "champion" in `deployable_archive` with high `rank_score`, run the selection+preservation step for 15 generations with a growing `hall_of_fame` (simulating penalty drift). Assert the champion is present in `state.population` at every generation. Without the fix (disabled), assert the champion is evicted by gen ~8.
-
-- **AC-T2.2**: Preservation never exceeds `PHASE2_ELITE_PRESERVATION_TOP_K` slots and never evicts a chromosome that is itself in the top-K of the live Pareto front (rank 1 members).
-
-- **AC-T2.3**: With `PHASE2_ELITE_PRESERVATION_ENABLED=False`, evolution loop byte-for-byte identical to pre-task behavior (snapshot test: 2-gen run with fixed seed → identical `history`).
-
-- **AC-T2.4**: Preserved elite's `objectives` are reset to `inf` (forces re-eval with current penalties) — assert no stale objectives survive across generations.
+## Target Files
+- `gpu_fuzzy_trader/config.py`
+- `gpu_fuzzy_trader/phases/phase2_support.py` (optional guard) — only if safe
+- `README.md`
+- `tests/unit/test_phase2_support.py` (add joint=False test) or new test file.
 
 ## Verification
-
-```bash
-cd /home/danaee/trading_platform && source .venv/bin/activate && \
-  PYTEST_LOW_MEMORY=1 python -m pytest \
-    tests/unit/test_elite_preservation.py \
-    tests/unit/test_evox_runner.py -x -q --tb=short
 ```
-
-## Files to modify
-
-- `gpu_fuzzy_trader/config.py` — 3 new keys
-- `gpu_fuzzy_trader/evolution/evox_runner.py` — new helper + 2 call sites
-- `README.md` — config table update
-- `tests/unit/test_elite_preservation.py` — new test file
+PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit -q
+grep -rnE "test\.csv|load_test|OOS_Evaluator" gpu_fuzzy_trader/   # confirm test.csv scope
+```
+Do NOT run the full pipeline.

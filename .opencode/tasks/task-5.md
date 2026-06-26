@@ -1,112 +1,80 @@
-# Task 5 — Expand Phase 2 pool admission
+# Task 5 — `fix/plateau-config-tuning-and-banner` (Fix F + config)
 
-## Why
-My current Phase 2 produces only 5 long + 8 short rules in the
-final pool (run log shows "pool=5, saved to ...phase2_long_pool.json"
-and "pool=8, saved to ...phase2_short_pool.json"). This is the
-*post-archive* size after `_build_pool_from_archive` filters by the
-20% gap-reject threshold. The friend keeps ~140 candidate rules
-after filtering, which gives Phase 3 a much larger and more diverse
-pool to choose from. With only 5-8 rules, Phase 3's per-symbol
-greedy has nothing to combine, which is why my final output is just
-2 rules per direction with thin coverage.
+## Branch
+`fix/plateau-config-tuning-and-banner` (from latest `main`, after task-4 merge).
 
-The friend does this through:
-1. Relaxed pool-admission thresholds (`PHASE2_CV_MIN_WORST_RETURN=-8%`, `PHASE2_CV_MAX_WORST_DD=18%`, `PHASE2_CV_MIN_WORST_PF=0.80`).
-2. Turning on `PHASE2_STRICT_POSITIVE_GOOD` (the optional flag added in Task 3) as a *secondary* check, not a hard reject.
-3. `PHASE2_KEEP_TOP_RULES=140` cap to bound the pool.
-4. `PHASE2_ARCHIVE_MAX_SIZE=500` (mine is already 500; no change needed).
+## Problem
+(a) The pipeline banner advertises `gen=132` but actual per-run gen is 10/4 —
+misleading. (b) Plateau config is over-twitchy: patience=5, min_gen=3,
+min_delta=0.02 — combined with the (now-fixed) leak this killed runs at gen 3.
+Now that the leak and behavior are fixed (tasks 1-4), tune the knobs against
+correct behavior.
 
-## Required reading
-- `.opencode/plans/PLAN.md`
-- `.opencode/CONTEXT.md` (JSON output contract)
-- The friend's reference: `friend_project/gpu_fuzzy_trader/config.py` lines 145-152 (`PHASE2_CV_*` keys) and `PHASE2_KEEP_TOP_RULES=140` line 269. Also `_filter_good_rules` in `friend_project/gpu_fuzzy_trader/rb_governor.py` lines 535-578.
-- My existing `gpu_fuzzy_trader/phases/phase2_support.py` (`_passes_pool_admission_impl`, `_raw_feasibility_violation_score`, `deployability_rank_score`).
-- My existing `gpu_fuzzy_trader/phases/phase2_rule_pool.py` (`_build_pool_from_archive` — this is where the final pool size is set).
+## Required Changes
 
-## Behavior changes
+### Fix F — Honest banner
+**File:** `gpu_fuzzy_trader/run_pipeline.py` (line ~223, the
+`"PHASE2 algo=%s pop=%d gen=%d ..."` format string).
 
-### Step 1 — Add new pool-admission config keys
-
+Surface the real island budget when island mode is active:
 ```python
-# Phase 2 pool admission thresholds (relaxed from the 20% gap-reject)
-PHASE2_CV_MIN_WORST_RETURN = -8.0
-PHASE2_CV_MIN_WORST_PF = 0.80
-PHASE2_CV_MAX_WORST_DD = 18.0
-PHASE2_CV_MIN_FOLD_TRADES = 10
-
-# Pool size cap (friend's value)
-PHASE2_KEEP_TOP_RULES = 140
-
-# Optional: enable the Task 3 positive-good gate for Phase 2 pool admission
-# Default OFF; will turn on in this task to demonstrate the larger pool size.
-PHASE2_STRICT_POSITIVE_GOOD = True
+# When island mode:
+"PHASE2 algo=%s pop=%d island_total=%d per_cluster=%d epoch=%d joint_train_val=%s | "
+# When single-island:
+"PHASE2 algo=%s pop=%d gen=%d joint_train_val=%s | "
 ```
+Use `PHASE2_ISLAND_TOTAL_GENERATIONS`, `gens_per_cluster = total // n_clusters`,
+and `PHASE2_ISLAND_EPOCH_GENERATIONS`. Compute `gens_per_cluster` the same way
+`_run_cluster_islands` does (`max(1, total // max(1, n_clusters))`). Keep the
+existing surrounding log format; only the labeled fields change.
 
-### Step 2 — Use the new thresholds in `_passes_pool_admission_impl`
+### Config tuning
+**File:** `gpu_fuzzy_trader/config.py`
 
-In `phases/phase2_support.py`, modify the per-fold pool admission to
-use the new `PHASE2_CV_MIN_WORST_RETURN`, `PHASE2_CV_MIN_WORST_PF`,
-`PHASE2_CV_MAX_WORST_DD` thresholds INSTEAD of the strict
-`PHASE2_MAX_TRAIN_VAL_GAP_PCT` 20% gap-reject.
+| Key | Current | New | Rationale |
+|-----|---------|-----|-----------|
+| `PHASE2_PLATEAU_EARLY_STOP_PATIENCE` | 5 | 8 | Let epochs explore before stopping |
+| `PHASE2_PLATEAU_EARLY_STOP_MIN_GENERATION` | 3 | 6 | Avoid stopping in transient |
+| `PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT` | 0.02 | 0.05 | 0.02% is below noise floor |
+| `PHASE2_ISLAND_EPOCH_GENERATIONS` | 10 | 15 | Fewer, longer epochs = less migration overhead, more convergence headroom per epoch |
 
-The friend does this by computing the *worst* metrics across CV folds
-and applying these floors:
-- worst_return >= PHASE2_CV_MIN_WORST_RETURN (-8%)
-- worst_pf >= PHASE2_CV_MIN_WORST_PF (0.80)
-- worst_dd <= PHASE2_CV_MAX_WORST_DD (18%)
-- min_fold_trades >= PHASE2_CV_MIN_FOLD_TRADES (10)
+Note: `PHASE2_ISLAND_TOTAL_GENERATIONS = PHASE2_GENERATIONS` (132) stays, so
+`gens_per_cluster = 132 // 3 = 44`, run in epochs of 15 (→ 3 epochs per cluster,
+last one short). Verify the `assert` statements at the bottom of `config.py`
+(e.g. `PHASE2_PLATEAU_EARLY_STOP_MIN_GENERATION <= PHASE2_STAGE_A_GENERATIONS`)
+still hold — `PHASE2_STAGE_A_GENERATIONS=85` so `6 <= 85` ✓. If any assert
+would break, adjust the *asserted constant* consistently, not the knob.
 
-Note: this is the *per-fold* admission. The aggregated `passes_pool_admission`
-function (used for the final `deployable` flag) keeps the stricter criteria.
+### Docs
+Update `README.md` config table for all four changed keys + the banner.
 
-### Step 3 — Apply `PHASE2_KEEP_TOP_RULES` cap in `_build_pool_from_archive`
+## Acceptance Criteria
+1. Banner shows `island_total=132 per_cluster=44 epoch=15` (when island mode) —
+   not the misleading `gen=132`.
+2. The four config keys have the new values.
+3. `config.py` asserts at import still pass (run
+   `.venv/bin/python -c "import gpu_fuzzy_trader.config"`).
+4. `PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit -q` passes — fix
+   any test that hard-coded the old values (update to new values, do not weaken
+   assertions incorrectly).
 
-After the per-rule admission filter, sort rules by `deployability_rank_score`
-(or equivalent) and keep the top `PHASE2_KEEP_TOP_RULES` (140). Currently
-mine keeps all admitted rules.
+## Target Files
+- `gpu_fuzzy_trader/run_pipeline.py`
+- `gpu_fuzzy_trader/config.py`
+- `README.md`
+- any test hard-coding old values.
 
-### Step 4 — Turn on `PHASE2_STRICT_POSITIVE_GOOD`
+## Verification
+```
+PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit -q
+.venv/bin/python -c "import gpu_fuzzy_trader.config; print('config OK')"
+```
+Do NOT run the full pipeline.
 
-In `config.py`, set `PHASE2_STRICT_POSITIVE_GOOD = True` (the Task 3
-flag). The Task 3 implementation in `phases/phase2_support.py` already
-handles the gate. Confirm it works and does not crash.
-
-### Step 5 — Verify the pool size on a small synthetic run
-
-Run a small Phase 2 dry-run (e.g., 50 generations, 50 population) on
-a 10k-row synthetic DataFrame and confirm the final pool has ≥ 30
-rules. This is an integration test, not a unit test.
-
-## Out of scope
-- Do NOT change the JSON output format.
-- Do NOT modify `evaluator_v5.ipynb`.
-- Do NOT touch the GPU engine or EvoX runner.
-- Do NOT change the per-symbol greedy logic in Phase 3.
-- Do NOT change the risk optimization in Phase 4.
-- Do NOT add Tasks 6-9 features.
-
-## Acceptance criteria
-1. All 6 new config keys (`PHASE2_CV_MIN_WORST_RETURN`, `PHASE2_CV_MIN_WORST_PF`, `PHASE2_CV_MAX_WORST_DD`, `PHASE2_CV_MIN_FOLD_TRADES`, `PHASE2_KEEP_TOP_RULES`, `PHASE2_STRICT_POSITIVE_GOOD=True`) are present and accessible.
-2. `_passes_pool_admission_impl` uses the new thresholds; the old `PHASE2_MAX_TRAIN_VAL_GAP_PCT=40.0` is no longer the only path to rejection.
-3. `_build_pool_from_archive` caps the pool at `PHASE2_KEEP_TOP_RULES` (140 by default).
-4. A new unit test `tests/unit/test_phase2_pool_admission.py` exercises the new thresholds:
-   - A rule with `worst_return=-5%`, `worst_pf=0.85`, `worst_dd=15%` passes.
-   - A rule with `worst_return=-15%` fails.
-   - A rule with `worst_dd=25%` fails.
-   - A rule with `worst_pf=0.50` fails.
-5. **(OPTIONAL — skipped per RAM constraint)** A small integration test runs a 50-gen Phase 2 on a 10k-row synthetic DataFrame and confirms the final pool has ≥ 30 rules. The user can verify this on a real run later; this is a smoke test, not a hard acceptance criterion.
-6. All existing tests pass.
-7. No changes to `evaluator_v5.ipynb`, the GPU engine, or the JSON output contract.
-
-## Constraints
-- Stay on `feature/task-5-expand-phase2-pool` (off `main` after task-4 is merged).
-- 12.7 GiB RAM total.
-- PEP 8, type hints, module logger.
-- Use only existing third-party deps.
-
-## Files I will touch
-- `gpu_fuzzy_trader/config.py` — 5 new `PHASE2_CV_*` keys + `PHASE2_KEEP_TOP_RULES` + flip `PHASE2_STRICT_POSITIVE_GOOD` to True
-- `gpu_fuzzy_trader/phases/phase2_support.py` — modify `_passes_pool_admission_impl` to use the new thresholds
-- `gpu_fuzzy_trader/phases/phase2_rule_pool.py` — modify `_build_pool_from_archive` to cap at `PHASE2_KEEP_TOP_RULES`
-- `tests/unit/test_phase2_pool_admission.py` (new) — ≥ 4 cases
+## Notes
+- This task is intentionally last: tuning must be measured against the corrected
+  behavior from tasks 1-4, not the leaky behavior.
+- If a test legitimately encodes the old twitchy threshold as a *correctness*
+  expectation (not a hard-coded value), discuss before changing — prefer
+  updating the value to match the new tuned default.
+- Clean up dead code after changes (per AGENTS.md).

@@ -1,126 +1,84 @@
-# task-3: Island early-stop safety net
+# Task 3 — `fix/diversity-restart-on-plateau` (Fix D)
 
-**Branch:** `fix/island-early-stop`
-**Depends on:** task-2 (merged to main — elite preservation ensures stopped island's good rules survive in `deployable_archive`)
+## Branch
+`fix/diversity-restart-on-plateau` (from latest `main`, after task-2 merge).
 
-## Goal
+## Problem
+On intra-epoch plateau the evolution loop `break`s immediately
+(`evox_runner.py:2138-2155`). Despite `pop_unique=1.00`, `max_return` freezes at
+identical values across gens/epochs → frozen-elite attractor that mutation=0.30
++ elitism cannot escape. A `_inject_diversity_recovery` helper exists
+(`evox_runner.py:747`) but is only used to reinit on collapse, not to extend the
+run past a plateau.
 
-Let dead islands (deployable=0, plateaued) early-stop instead of churning for the full generation budget. Currently `PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED=False` and `PHASE2_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO=True` traps thin islands that have produced zero deployable rules — they keep evolving, eroding their few viable elites across the entire epoch (as seen on cluster_2: 6.64% → 0.87%).
+## Required Changes
 
-## Changes
+### Diversity restart on first plateau (instead of break)
+**File:** `gpu_fuzzy_trader/evolution/evox_runner.py` — the plateau early-stop
+branch around line 2138 (`_should_plateau_early_stop_phase2` true branch).
 
-### 1. `gpu_fuzzy_trader/config.py` — flip island early-stop defaults
+Replace the immediate `break` with a restart-then-continue policy:
+1. On the FIRST plateau in an epoch: call a new helper
+   `_plateau_diversity_restart(population, objectives, metrics_cache, rng, ...)`
+   that:
+   - Preserves the current Pareto elite (top-K deployable, e.g. K=min(5, pareto_size)).
+   - Reinitializes a configurable fraction
+     (`PHASE2_PLATEAU_DIVERSITY_RESTART_FRACTION`, default 0.40) of the
+     remaining population via `_init_population` (existing function).
+   - Resets those slots' `objectives` to `inf` and `metrics_cache` to `{}`.
+   - Bumps `mutation_rate` by a boost factor for ONE generation
+     (`PHASE2_PLATEAU_DIVERSITY_RESTART_MUTATION_BOOST`, default 1.6×, capped at
+     e.g. 0.6) to kick the search off the elite — restore original rate next gen.
+   - Increments a per-epoch `restart_count`.
+   - Resets `plateau_streak = 0` (so the restarted phase can plateau again).
+2. On the SECOND plateau (i.e. `restart_count >= PHASE2_PLATEAU_MAX_RESTARTS`,
+   default 1) in the same epoch: `break` as before (genuinely converged).
+3. If the restart would exceed remaining generations, just `break`.
 
-In the island block (~line 883):
+The existing `_should_plateau_early_stop_phase2` stays as the trigger; the new
+behavior is in the *response* branch. Add a log line:
+`"%s: plateau restart at gen %d (restart %d/%d, reinit %.0f%%, elite_kept=%d)"`.
 
+### New config keys
+**File:** `gpu_fuzzy_trader/config.py`
 ```python
-# BEFORE:
-PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED = False
-
-# AFTER — add these lines:
-PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED = True
-PHASE2_ISLAND_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO: bool = False
-PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE: int = 8
+PHASE2_PLATEAU_DIVERSITY_RESTART_ENABLED = True
+PHASE2_PLATEAU_DIVERSITY_RESTART_FRACTION = 0.40   # share of pop reinitialized
+PHASE2_PLATEAU_DIVERSITY_RESTART_MUTATION_BOOST = 1.6
+PHASE2_PLATEAU_MAX_RESTARTS = 1                    # restarts before final break
 ```
+Add doc comments matching the existing config style. Gate the whole feature
+behind `PHASE2_PLATEAU_DIVERSITY_RESTART_ENABLED`.
 
-Notes:
-- `PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED`: flip from `False` → `True`
-- `PHASE2_ISLAND_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO`: new — island-scoped override. `False` means a dead island (0 deployable) CAN still early-stop on plateau. The global `PHASE2_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO=True` stays as-is for global mode.
-- `PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE`: new — island patience of 8 gens (longer than global's 5, since islands have less data and need more slack to recover).
+### Respect `island_profile`
+The restart must respect the existing `_cfg.scoped_island_profile(island_profile)`
+guarding pattern used in `_should_plateau_early_stop_phase2` (don't restart if
+plateau early-stop is disabled for the profile).
 
-### 2. `gpu_fuzzy_trader/evolution/evox_runner.py` — `_should_plateau_early_stop_phase2`
+## Acceptance Criteria
+1. First plateau triggers a diversity restart (not a break) when enabled and
+   `restart_count < MAX_RESTARTS`; second plateau breaks.
+2. Pareto elite is preserved across the restart (test: elite chromosomes survive).
+3. `mutation_rate` is boosted for one gen then restored (test).
+4. `plateau_streak` resets to 0 after a restart (test).
+5. When `PHASE2_PLATEAU_DIVERSITY_RESTART_ENABLED=False`, behavior is identical
+   to current (immediate break) — no regression.
+6. `PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit -q` passes.
 
-In `_should_plateau_early_stop_phase2` (~line 559), modify two blocks:
-
-**Block A: deployable-zero guard (~line 581)**
-
-```python
-# BEFORE:
-if bool(getattr(_cfg, "PHASE2_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO", True)):
-    if deployable_count <= 0:
-        return False
-
-# AFTER:
-if scoped_island_profile(island_profile):
-    if bool(getattr(_cfg, "PHASE2_ISLAND_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO", False)):
-        if deployable_count <= 0:
-            return False
-elif bool(getattr(_cfg, "PHASE2_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO", True)):
-    if deployable_count <= 0:
-        return False
-```
-
-**Block B: patience (~line 590)**
-
-```python
-# BEFORE:
-patience = (
-    int(stage_params.plateau_early_stop_patience)
-    if stage_params is not None
-    else int(_cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE)
-)
-
-# AFTER:
-if scoped_island_profile(island_profile):
-    patience = (
-        int(stage_params.plateau_early_stop_patience)
-        if stage_params is not None and getattr(stage_params, "plateau_early_stop_patience", None) is not None
-        else int(getattr(_cfg, "PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE", _cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE))
-    )
-else:
-    patience = (
-        int(stage_params.plateau_early_stop_patience)
-        if stage_params is not None
-        else int(_cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE)
-    )
-```
-
-### 3. `tests/unit/test_island_early_stop.py` — new test file
-
-Write tests that:
-
-- **AC-T3.1**: A synthetic island with `deployable=0` for `patience=8` gens and no robust-return improvement stops at gen 8 (assert `history` length == 8 and log contains "plateau early stop"). Pre-fix behavior: runs full `n_generations` (mock `PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED=False` and assert history length == n_generations).
-
-- **AC-T3.2**: A healthy island (`deployable>0`, still improving robust-return) does NOT stop early (assert history length == n_generations).
-
-- **AC-T3.3**: Global mode (`island_profile="global"`) early-stop behavior is unchanged — `PHASE2_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO=True` still blocks plateau stop when deployable=0.
-
-- **AC-T3.4**: The island patience knob is respected (stops at gen 8 when `PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE=8`, not gen 5).
-
-### 4. `README.md` — update §5.1 island table
-
-Update the island early-stop row to reflect `PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED=True`. Add rows for the two new knobs.
-
-## Acceptance criteria
-
-- AC-T3.1: Dead island (deployable=0, plateaued) stops at gen 8 instead of running full budget.
-- AC-T3.2: Healthy island (deployable>0, improving) does NOT stop early.
-- AC-T3.3: Global mode unchanged — `PHASE2_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO=True` still blocks.
-- AC-T3.4: `PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE=8` is respected (not global's 5).
+## Target Files
+- `gpu_fuzzy_trader/evolution/evox_runner.py` (new helper + branch change)
+- `gpu_fuzzy_trader/config.py` (4 new keys)
+- `README.md` (config table)
+- `tests/unit/test_phase2_plateau_restart.py` (new) or extend `test_island_early_stop.py`.
 
 ## Verification
-
-```bash
-cd /home/danaee/trading_platform && source .venv/bin/activate && \
-  PYTEST_LOW_MEMORY=1 python -m pytest \
-    tests/unit/test_island_early_stop.py \
-    -x -v --tb=short
 ```
-
-Also verify config:
-```bash
-python -c "
-from gpu_fuzzy_trader import config as c
-assert c.PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED is True
-assert c.PHASE2_ISLAND_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO is False
-assert c.PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE == 8
-print('config OK')
-"
+PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit -q
 ```
+Do NOT run the full pipeline.
 
-## Files to modify
-
-- `gpu_fuzzy_trader/config.py` — 1 flip + 2 new keys
-- `gpu_fuzzy_trader/evolution/evox_runner.py` — 2 blocks in `_should_plateau_early_stop_phase2`
-- `tests/unit/test_island_early_stop.py` — new test file
-- `README.md` — island early-stop table update
+## Notes
+- Reuse `_init_population` and `_inject_diversity_recovery` patterns; do not
+  duplicate logic. If `_inject_diversity_recovery` can be generalized to serve
+  this, refactor it — but keep its existing call sites working.
+- Clean up dead code after the change (per AGENTS.md).
