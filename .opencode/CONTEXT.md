@@ -19,11 +19,11 @@ over-twitchy plateau config (patience=5, min_gen=3, min_delta=0.02).
 
 | # | Branch | Fixes | Status |
 |---|--------|-------|--------|
-| 1 | `fix/plateau-state-leak` | A (reset plateau per epoch) + B (charge actual gens) | pending |
-| 2 | `fix/holdout-fitness-leak` | C (`JOINT_TRAIN_VAL=False`, verify Phase 3/4 reuse) | pending |
-| 3 | `fix/diversity-restart-on-plateau` | D (diversity restart instead of immediate break) | pending |
-| 4 | `fix/cluster-balancing` | E (balanced clustering + relax large-cluster gates) | pending |
-| 5 | `fix/plateau-config-tuning-and-banner` | F (banner) + config knobs | pending |
+| 1 | `fix/plateau-state-leak` | A (reset plateau per epoch) + B (charge actual gens) | ✅ MERGED |
+| 2 | `fix/holdout-fitness-leak` | C (`JOINT_TRAIN_VAL=False`, verify Phase 3/4 reuse) | ✅ MERGED |
+| 3 | `fix/diversity-restart-on-plateau` | D (diversity restart instead of immediate break) | ✅ MERGED |
+| 4 | `fix/cluster-balancing` | E (balanced clustering + relax large-cluster gates) | ✅ MERGED |
+| 5 | `fix/plateau-config-tuning-and-banner` | F (banner) + config knobs + task-4 README | ✅ MERGED |
 
 ## Hard Rules (from AGENTS.md)
 
