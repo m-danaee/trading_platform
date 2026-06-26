@@ -729,6 +729,62 @@ def _population_unique_chromosome_ratio(population: np.ndarray) -> float:
     return float(len(keys) / n)
 
 
+def _plateau_diversity_restart(
+    population: np.ndarray,
+    objectives: np.ndarray,
+    metrics_cache: list[dict],
+    feature_infos: list[dict],
+    rng: np.random.Generator,
+    *,
+    pareto_indices: list[int],
+    pop_size: int,
+    stage_params: Phase2StageParams | None = None,
+    feature_probs: np.ndarray | None = None,
+    init_strategy: str | None = None,
+    stratum_fractions: tuple[float, float] | None = None,
+) -> int:
+    """Reinit a fraction of the population on plateau, preserving Pareto elite.
+
+    Keeps the first K = min(5, len(pareto_indices)) elite chromosomes from the
+    Pareto front, then reinitialises a configurable fraction of the remaining
+    slots via ``_init_population``.  Resets those slots' objectives to ``inf``
+    and ``metrics_cache`` to ``{}``.
+
+    Returns the number of elite chromosomes kept.
+    """
+    from gpu_fuzzy_trader.phases.phase2_rule_pool import _init_population
+
+    n_elite = min(5, max(1, len(pareto_indices)))
+    fraction = float(
+        getattr(_cfg, "PHASE2_PLATEAU_DIVERSITY_RESTART_FRACTION", 0.40)
+    )
+    # Determine which slots to reinit: all non-elite slots
+    elite_positions = set(pareto_indices[:n_elite])
+    all_slots = list(range(pop_size))
+    reinit_slots = [i for i in all_slots if i not in elite_positions]
+    n_reinit = max(0, min(len(reinit_slots), int(round(pop_size * fraction))))
+    # Pick a random subset of non-elite slots
+    chosen = list(
+        rng.choice(reinit_slots, size=n_reinit, replace=False)
+    ) if n_reinit > 0 else []
+
+    if n_reinit > 0:
+        seeds = _init_population(
+            n_reinit,
+            feature_infos,
+            rng,
+            init_strategy=init_strategy,
+            stratum_fractions=stratum_fractions,
+            feature_probs=None,
+        )
+        for idx, pos in enumerate(chosen):
+            population[pos] = seeds[idx]
+            objectives[pos] = np.full(3, np.inf)
+            metrics_cache[pos] = {}
+
+    return n_elite
+
+
 def _diversity_recovery_min_unique_ratio(
     stage_params: Phase2StageParams | None = None,
 ) -> float:
@@ -1484,6 +1540,8 @@ def _run_nsga2_fallback(
         plateau_streak = 0
     mutation_rate = _stage_mutation_rate(stage_params)
     weighted_activate_prob = _stage_weighted_activate_prob(stage_params)
+    restart_count = 0
+    _plateau_restart_boost: float | None = None
 
     for gen in range(n_generations):
         for i in range(pop_size):
@@ -1608,6 +1666,55 @@ def _run_nsga2_fallback(
             stage_params=stage_params,
             island_profile=island_profile,
         ):
+            # --- diversity restart on first plateau, break on second ---
+            restart_enabled = bool(getattr(
+                _cfg, "PHASE2_PLATEAU_DIVERSITY_RESTART_ENABLED", True,
+            ))
+            max_restarts = int(getattr(
+                _cfg, "PHASE2_PLATEAU_MAX_RESTARTS", 1,
+            ))
+            if (
+                restart_enabled
+                and max_restarts > 0
+                and restart_count < max_restarts
+            ):
+                remaining_gens = n_generations - gen - 1
+                if remaining_gens > 0:
+                    elite_kept = _plateau_diversity_restart(
+                        population, objectives, metrics_cache,
+                        feature_infos, rng,
+                        pareto_indices=pareto_indices,
+                        pop_size=pop_size,
+                        stage_params=stage_params,
+                        feature_probs=feature_probs,
+                        init_strategy=init_strategy,
+                        stratum_fractions=stratum_fractions,
+                    )
+                    base_mr = _stage_mutation_rate(stage_params)
+                    boost_factor = float(getattr(
+                        _cfg,
+                        "PHASE2_PLATEAU_DIVERSITY_RESTART_MUTATION_BOOST",
+                        1.6,
+                    ))
+                    boosted = min(0.6, base_mr * boost_factor)
+                    _plateau_restart_boost = boosted
+                    restart_count += 1
+                    plateau_streak = 0
+                    logger.info(
+                        "%s: plateau restart at gen %d "
+                        "(restart %d/%d, reinit %.0f%%, elite_kept=%d)",
+                        tag,
+                        gen + 1,
+                        restart_count,
+                        max_restarts,
+                        float(getattr(
+                            _cfg,
+                            "PHASE2_PLATEAU_DIVERSITY_RESTART_FRACTION",
+                            0.40,
+                        )) * 100,
+                        elite_kept,
+                    )
+                    continue  # skip env selection; go to next gen
             logger.info(
                 "%s: plateau early stop at gen %d (progress=%.2f%% unchanged "
                 "for %d gens, patience=%d, min_delta=%.2f%%, "
@@ -1666,6 +1773,9 @@ def _run_nsga2_fallback(
             mutation_rate = _stage_mutation_rate(
                 stage_params, diversity_recovery=True,
             )
+        elif _plateau_restart_boost is not None:
+            mutation_rate = _plateau_restart_boost
+            _plateau_restart_boost = None  # one-shot; restore next gen
         else:
             mutation_rate = _stage_mutation_rate(stage_params)
 
@@ -1789,6 +1899,8 @@ def _run_nsga3(
         mutation_rate = _stage_mutation_rate(stage_params)
         weighted_activate_prob = _stage_weighted_activate_prob(stage_params)
         generation_offset = 0
+        restart_count = 0
+        _plateau_restart_boost: float | None = None
     else:
         population = state.population
         objectives = state.objectives
@@ -1808,6 +1920,8 @@ def _run_nsga3(
             if state.mutation_rate is not None
             else _stage_mutation_rate(stage_params)
         )
+        restart_count = 0
+        _plateau_restart_boost = None
         weighted_activate_prob = (
             state.weighted_activate_prob
             if state.weighted_activate_prob is not None
@@ -2067,6 +2181,9 @@ def _run_nsga3(
                 mutation_rate = _stage_mutation_rate(
                     stage_params, diversity_recovery=True,
                 )
+            elif _plateau_restart_boost is not None:
+                mutation_rate = _plateau_restart_boost
+                _plateau_restart_boost = None  # one-shot; restore next gen
             else:
                 mutation_rate = _stage_mutation_rate(stage_params)
 
@@ -2174,6 +2291,57 @@ def _run_nsga3(
             stage_params=stage_params,
             island_profile=island_profile,
         ):
+            # --- diversity restart on first plateau, break on second ---
+            restart_enabled = bool(getattr(
+                _cfg, "PHASE2_PLATEAU_DIVERSITY_RESTART_ENABLED", True,
+            ))
+            max_restarts = int(getattr(
+                _cfg, "PHASE2_PLATEAU_MAX_RESTARTS", 1,
+            ))
+            if (
+                restart_enabled
+                and max_restarts > 0
+                and restart_count < max_restarts
+            ):
+                # If restart would exceed remaining generations, just break.
+                remaining_gens = n_generations - gen - 1
+                if remaining_gens > 0:
+                    elite_kept = _plateau_diversity_restart(
+                        population, objectives, metrics_cache,
+                        feature_infos, rng,
+                        pareto_indices=pareto_indices,
+                        pop_size=pop_size,
+                        stage_params=stage_params,
+                        feature_probs=feature_probs,
+                        init_strategy=init_strategy,
+                        stratum_fractions=stratum_fractions,
+                    )
+                    base_mr = _stage_mutation_rate(stage_params)
+                    boost_factor = float(getattr(
+                        _cfg,
+                        "PHASE2_PLATEAU_DIVERSITY_RESTART_MUTATION_BOOST",
+                        1.6,
+                    ))
+                    boosted = min(0.6, base_mr * boost_factor)
+                    _plateau_restart_boost = boosted
+                    restart_count += 1
+                    plateau_streak = 0
+                    logger.info(
+                        "%s: plateau restart at gen %d "
+                        "(restart %d/%d, reinit %.0f%%, elite_kept=%d)",
+                        tag,
+                        gen + 1,
+                        restart_count,
+                        max_restarts,
+                        float(getattr(
+                            _cfg,
+                            "PHASE2_PLATEAU_DIVERSITY_RESTART_FRACTION",
+                            0.40,
+                        )) * 100,
+                        elite_kept,
+                    )
+                    continue  # skip env selection; go to next gen
+                # else fall through to break
             logger.info(
                 "%s: plateau early stop at gen %d (progress=%.2f%% unchanged "
                 "for %d gens, patience=%d, min_delta=%.2f%%, "
