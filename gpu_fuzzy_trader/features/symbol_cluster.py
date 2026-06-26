@@ -12,6 +12,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans
+from sklearn.metrics import pairwise_distances
 from sklearn.preprocessing import StandardScaler
 
 from gpu_fuzzy_trader import config
@@ -61,9 +62,14 @@ def build_hybrid_symbol_clusters(
     feature_infos_short: list[dict],
     n_clusters: int | None = None,
     random_state: int | None = None,
+    balance: bool = True,
 ) -> dict[str, Any]:
     """
     Cluster symbols by feature profile embedding.
+
+    When ``balance=True`` (default), symbols are greedily assigned to K clusters
+    so that no cluster exceeds ``ceil(n_symbols / k)`` symbols.  This prevents
+    the degenerate 1-symbol cluster that overfits (Fix E1).
 
     Returns dict with keys ``clusters`` (id -> symbol list), ``method``, ``n_clusters``.
     """
@@ -102,12 +108,47 @@ def build_hybrid_symbol_clusters(
 
     scaled = StandardScaler().fit_transform(embedding)
     seed = int(random_state if random_state is not None else config.PHASE2_SEED)
-    labels = KMeans(n_clusters=k, random_state=seed,
-                    n_init=10).fit_predict(scaled)
+    kmeans = KMeans(n_clusters=k, random_state=seed, n_init=10).fit(scaled)
 
-    clusters: dict[str, list[str]] = {str(i): [] for i in range(k)}
-    for sym, lab in zip(symbols, labels):
-        clusters[str(int(lab))].append(sym)
+    if balance:
+        # ── Balanced greedy assignment ──────────────────────────────────
+        # Compute distance from each symbol to each centroid.
+        centroids = kmeans.cluster_centers_
+        dists = pairwise_distances(scaled, centroids)  # (n_symbols, k)
+
+        # Compute the most balanced possible per-cluster target sizes.
+        # E.g. 10 symbols, K=3 → targets [4, 3, 3] → min cluster = 3.
+        n_sym = len(symbols)
+        base = n_sym // k
+        remainder = n_sym % k
+        targets = [base + 1 if i < remainder else base for i in range(k)]
+
+        # Sort symbols by their minimum distance to any centroid (certainty).
+        min_dists = dists.min(axis=1)
+        sorted_indices = np.argsort(min_dists)
+
+        cluster_counts: list[int] = [0] * k
+        clusters: dict[str, list[str]] = {str(i): [] for i in range(k)}
+
+        for idx in sorted_indices:
+            sym = symbols[idx]
+            # Try clusters in order of increasing distance.
+            for ci in np.argsort(dists[idx]):
+                if cluster_counts[int(ci)] < targets[int(ci)]:
+                    clusters[str(int(ci))].append(sym)
+                    cluster_counts[int(ci)] += 1
+                    break
+            else:
+                # All clusters at target — assign to the nearest anyway.
+                ci = int(np.argmin(dists[idx]))
+                clusters[str(ci)].append(sym)
+                cluster_counts[ci] += 1
+    else:
+        labels = kmeans.predict(scaled)
+        clusters: dict[str, list[str]] = {str(i): [] for i in range(k)}
+        for sym, lab in zip(symbols, labels):
+            clusters[str(int(lab))].append(sym)
+
     # Drop empty keys from bad fits
     clusters = {cid: syms for cid, syms in clusters.items() if syms}
 
