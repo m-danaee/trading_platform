@@ -254,7 +254,7 @@ Runs on **train split only** (no validation labels for ranking).
 |-----------|---------|--------|
 | `PHASE2_N_CLUSTERS` | 3 | Number of hybrid symbol clusters |
 | `PHASE2_ISLAND_TOTAL_GENERATIONS` | = `PHASE2_GENERATIONS` | Total gen budget across islands |
-| `PHASE2_ISLAND_EPOCH_GENERATIONS` | 25 | Gens per epoch before migration |
+| `PHASE2_ISLAND_EPOCH_GENERATIONS` | 15 | Gens per epoch before migration |
 | `PHASE2_ISLAND_TWO_STAGE_ENABLED` | False | Two-stage in cluster mode |
 | `PHASE2_ISLAND_SCALE_TRADE_FLOORS` | True | Scale support floors to island rows |
 | `PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN` | 10 | Floor after island scaling |
@@ -269,6 +269,8 @@ Runs on **train split only** (no validation labels for ranking).
 | `PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED` | True | Island plateau early-stop enabled (was False) |
 | `PHASE2_ISLAND_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO` | False | Dead islands can still early-stop at plateau |
 | `PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE` | 8 | Plateau patience (longer than global's 5 for smaller island datasets) |
+| `PHASE2_N_CLUSTERS_BALANCED` | `balance=True` | Clustering uses greedy balanced assignment: no cluster exceeds `ceil(n_symbols / K)`, preventing degenerate 1-symbol clusters |
+| `PHASE2_MIN_PROFITABLE_SYMBOLS` (island override) | `min(PHASE2_MIN_PROFITABLE_SYMBOLS, ceil(n/2))` | Cross-symbol profitability gate scaled via `ceil(n_symbols / 2)` on each island, so sparse clusters aren't penalised for lacking enough symbols |
 
 #### Orphan boost (`PHASE2_ORPHAN_ENABLED=True`)
 
@@ -412,9 +414,9 @@ Runs on **train split only** (no validation labels for ranking).
 | `PHASE2_EARLY_STOP_USE_MEDIAN_RETURN` | True | Use median (vs mean) for the threshold check |
 | `PHASE2_EARLY_STOP_MIN_VALID_RULES` | 3 | Min number of valid rules required to keep going |
 | `PHASE2_PLATEAU_EARLY_STOP_ENABLED` | True | Stop if no robust return improvement | Interacts with `PHASE2_PLATEAU_USE_ROBUST_RETURN` |
-| `PHASE2_PLATEAU_EARLY_STOP_MIN_GENERATION` | 3 | Min gen before plateau stop |
-| `PHASE2_PLATEAU_EARLY_STOP_PATIENCE` | 5 | Gens of no improvement before plateau stop |
-| `PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT` | 0.02 | Min improvement (%) to reset patience |
+| `PHASE2_PLATEAU_EARLY_STOP_MIN_GENERATION` | 6 | Min gen before plateau stop (tuned up from 3 to avoid stopping in transient) |
+| `PHASE2_PLATEAU_EARLY_STOP_PATIENCE` | 8 | Gens of no improvement before plateau stop (tuned up from 5 to let epochs explore) |
+| `PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT` | 0.05 | Min improvement (%) to reset patience (tuned up from 0.02 — below noise floor) |
 | `PHASE2_PLATEAU_USE_ROBUST_RETURN` | True | Score plateau on `min(train, val)` return |
 | `PHASE2_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO` | True | Block plateau stop while deployable=0 | — |
 | `PHASE2_PLATEAU_BLOCK_WHEN_DIVERSITY_LOW` | False | Also block plateau stop if unique ratio is low | — |
