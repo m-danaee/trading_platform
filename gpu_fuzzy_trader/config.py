@@ -1383,7 +1383,9 @@ PHASE4_MAX_VAL_TRAIN_GAP_PCT = 12.0
 PHASE4_USE_ROBUST_SCORE = True
 
 # PHASE4_GRID_MAX_TOTAL_CAPITAL — hard cap on sum(capital_pct) across all rules.
-#   Combinations that push the total above this cap are skipped.
+#   Portfolio-level grid trials skip combos above this cap. Per-rule symbol
+#   trials score one rule in isolation, so this cap is enforced only when
+#   writing the final ruleset (see PHASE4_HARD_CAP_NORMALIZE).
 PHASE4_GRID_MAX_TOTAL_CAPITAL = 95.0
 
 # PHASE4_GRID_PASSES — number of round-robin passes through all rules.
@@ -1416,7 +1418,7 @@ PHASE5_VALIDATION_PROFIT_FACTOR_GATE = 1.05
 # PHASE5_REMOVE_NEGATIVE_PNL_RULES — remove rules with negative PnL on test.
 #   True  → clean up losing rules after OOS evaluation.
 #   False → keep all rules regardless of test performance.
-PHASE5_REMOVE_NEGATIVE_PNL_RULES = True
+PHASE5_REMOVE_NEGATIVE_PNL_RULES = False
 
 
 # =============================================================================
@@ -1614,7 +1616,7 @@ RB_PROFIT_AMP_MAX_RULES: int = 8
 #   accept a profit-amplifier candidate.  Tuned for thin per-symbol returns.
 RB_PROFIT_AMP_MIN_OBJECTIVE_IMPROVEMENT: float = 0.02
 RB_PROFIT_AMP_MIN_RETURN_IMPROVEMENT: float = 0.005
-RB_PROFIT_AMP_VALID_WEIGHT: float = 1.60
+RB_PROFIT_AMP_VALID_WEIGHT: float = 1.00
 RB_PROFIT_AMP_TRAIN_WEIGHT: float = 1.00
 RB_PROFIT_AMP_BALANCE_WEIGHT: float = 0.30
 RB_PROFIT_AMP_DD_WEIGHT: float = 0.04
@@ -1630,7 +1632,7 @@ RB_PROFIT_AMP_WORST_MONTHLY_RETURN_FLOOR: float = -1.5
 RB_PROFIT_AMP_WORST_MONTHLY_PF_FLOOR: float = 0.75
 RB_PROFIT_AMP_MAX_MONTHLY_DD: float = 15.0
 RB_PROFIT_AMP_CAPITAL_REALLOCATION_ENABLED: bool = True
-RB_PROFIT_AMP_CAPITAL_PASSES: int = 2
+RB_PROFIT_AMP_CAPITAL_PASSES: int = 1
 RB_PROFIT_AMP_CAPITAL_GRID: tuple[float, ...] = RB_CAPITAL_GRID
 RB_PROFIT_AMP_KEEP_BASELINE_UNLESS_BETTER: bool = True
 

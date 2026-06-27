@@ -578,7 +578,7 @@ Skips legacy Phase 3 and Phase 4; runs `rb_governor.py`:
 | `RB_PROFIT_AMP_MAX_RULES` | 5 | Max rules in amp stage |
 | `RB_PROFIT_AMP_MIN_OBJECTIVE_IMPROVEMENT` | 0.05 | Min objective delta to accept amp |
 | `RB_PROFIT_AMP_MIN_RETURN_IMPROVEMENT` | 0.02 | Min per-candidate return delta |
-| `RB_PROFIT_AMP_VALID_WEIGHT` | 1.55 | Weight on validation return in objective |
+| `RB_PROFIT_AMP_VALID_WEIGHT` | 1.00 | Equal-weight train+val in amp objective; stop val-fitting bias |
 | `RB_PROFIT_AMP_TRAIN_WEIGHT` | 1.00 | Weight on train return |
 | `RB_PROFIT_AMP_BALANCE_WEIGHT` | 0.20 | Weight on train/valid balance |
 | `RB_PROFIT_AMP_DD_WEIGHT` | 0.02 | Weight on drawdown |
@@ -594,7 +594,7 @@ Skips legacy Phase 3 and Phase 4; runs `rb_governor.py`:
 | `RB_PROFIT_AMP_WORST_MONTHLY_PF_FLOOR` | 0.80 | Worst-month PF floor |
 | `RB_PROFIT_AMP_MAX_MONTHLY_DD` | 10.0 | Worst-month DD ceiling |
 | `RB_PROFIT_AMP_CAPITAL_REALLOCATION_ENABLED` | True | Re-run capital grid after rule swaps |
-| `RB_PROFIT_AMP_CAPITAL_PASSES` | 2 | Capital reallocation passes |
+| `RB_PROFIT_AMP_CAPITAL_PASSES` | 1 | Single capital pass; less aggressive val-driven capital pushing |
 | `RB_PROFIT_AMP_CAPITAL_GRID` | `= RB_CAPITAL_GRID` | Grid used for reallocation |
 | `RB_PROFIT_AMP_KEEP_BASELINE_UNLESS_BETTER` | True | Never replace baseline with worse result |
 
@@ -741,7 +741,7 @@ Always runs on `test.csv` only.
 |-----------|---------|--------|
 | `PHASE5_VALIDATION_RETURN_GATE_PCT` | 2.0 | Min val return for deployable flag |
 | `PHASE5_VALIDATION_PROFIT_FACTOR_GATE` | 1.05 | Min val PF for deployable flag |
-| `PHASE5_REMOVE_NEGATIVE_PNL_RULES` | True | Strip losing rules after OOS |
+| `PHASE5_REMOVE_NEGATIVE_PNL_RULES` | False | Keep all rules; Phase 5 evaluates only, never selects OOS |
 
 No workflow branching — Phase 5 surfaces mis-tuning from earlier stacked gates.
 
