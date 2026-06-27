@@ -543,7 +543,7 @@ Skips legacy Phase 3 and Phase 4; runs `rb_governor.py`:
 | `RB_TP_GRID` | `(1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0)` | TP search space |
 | `RB_SL_GRID` | `(1.0, 1.2, 1.5, 2.0, 2.5)` | SL search space |
 | `RB_CAPITAL_GRID` | `(15.0, 20.0, 25.0, 35.0)` | Capital search space |
-| `RB_RISK_OPT_PASSES` | 2 | Round-robin passes |
+| `RB_RISK_OPT_PASSES` | 1 | Round-robin passes (halved from 2 to reduce val-fitting) |
 | `RB_RISK_MIN_IMPROVEMENT` | 0.02 | Min score delta to accept combo |
 | `RB_MAX_TOTAL_CAPITAL` | 100.0 | Hard cap on sum capital_pct |
 
@@ -573,12 +573,12 @@ Skips legacy Phase 3 and Phase 4; runs `rb_governor.py`:
 
 | Parameter | Default | Effect |
 |-----------|---------|--------|
-| `RB_PROFIT_AMPLIFIER_ENABLED` | True | Post-risk refinement pass |
+| `RB_PROFIT_AMPLIFIER_ENABLED` | False | Post-risk refinement pass (disabled — largest val-overfit source) |
 | `RB_PROFIT_AMP_MAX_CANDIDATES` | 60 | Candidate pool size |
 | `RB_PROFIT_AMP_MAX_RULES` | 5 | Max rules in amp stage |
 | `RB_PROFIT_AMP_MIN_OBJECTIVE_IMPROVEMENT` | 0.05 | Min objective delta to accept amp |
 | `RB_PROFIT_AMP_MIN_RETURN_IMPROVEMENT` | 0.02 | Min per-candidate return delta |
-| `RB_PROFIT_AMP_VALID_WEIGHT` | 1.00 | Equal-weight train+val in amp objective; stop val-fitting bias |
+| `RB_PROFIT_AMP_VALID_WEIGHT` | 1.60 | Amp objective val-weight (1.00 backfired — reverted to 1.60 for coherence; dormant when amplifier disabled) |
 | `RB_PROFIT_AMP_TRAIN_WEIGHT` | 1.00 | Weight on train return |
 | `RB_PROFIT_AMP_BALANCE_WEIGHT` | 0.20 | Weight on train/valid balance |
 | `RB_PROFIT_AMP_DD_WEIGHT` | 0.02 | Weight on drawdown |
@@ -610,7 +610,7 @@ Skips legacy Phase 3 and Phase 4; runs `rb_governor.py`:
 | `RB_GLOBAL_MAX_RULES` | 12 | Max rules in global team |
 | `RB_GLOBAL_MIN_COMBINED_RETURN_IMPROVEMENT` | 0.05 | Min combined return uplift to add a global rule |
 | `RB_GLOBAL_REQUIRE_POSITIVE_TRAIN_VALID` | True | Reject if train or valid ≤ 0 |
-| `RB_GLOBAL_RISK_OPT_PASSES` | 2 | Risk-opt passes for global team |
+| `RB_GLOBAL_RISK_OPT_PASSES` | 1 | Risk-opt passes for global team (halved from 2 to reduce val-fitting) |
 | `RB_GLOBAL_BEST_DIRNAME` | `"best_global"` | Subdir for tracked best-global strategy |
 | `RB_GLOBAL_TP_GRID` | `(1.5, 2.0, 3.0, 5.0, 8.0)` | Global TP search space |
 | `RB_GLOBAL_SL_GRID` | `(1.2, 1.5, 2.0, 2.5)` | Global SL search space |
