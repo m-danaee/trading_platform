@@ -79,7 +79,7 @@
   "profit_amplifier": {
     "enabled": true,
     "accepted": false,
-    "baseline_profit_amp_objective": -443.1795575114227,
+    "baseline_profit_amp_objective": -443.71956128797297,
     "baseline_certificate": {
       "passed": false,
       "reasons": [

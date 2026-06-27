@@ -1,115 +1,100 @@
-# Task 6 — Add multi-symbol combinations in Phase 3
+# Task 6 — `fix/oos-honesty-and-amplifier-tune` (OOS honesty + conservative amplifier de-tune)
 
-## Why
-My current Phase 3 produces rules with single-symbol filters like
-`"symbol is 5"` or `"symbol is 1, symbol is 5"` (the latter only
-because the SAME rule was independently selected for two different
-symbols in the per-symbol greedy and then merged by
-`_merge_per_symbol_rules`). The friend does explicit 2- and
-3-symbol combinations: every pool rule is evaluated as
-`symbol is X`, `symbol is Y`, `symbol is X AND symbol is Y`,
-`symbol is X AND symbol is Y AND symbol is Z`, etc. The best
-combination is kept.
+## Branch
+`fix/oos-honesty-and-amplifier-tune` (from latest `main`).
 
-This expands the search space significantly. A rule that doesn't
-work for `symbol 5` alone might work great for `symbol 1, 5` because
-the cross-symbol diversification reduces volatility.
+## Problem
+Two issues found in the 2026-06-27 completed run:
 
-## Required reading
-- `.opencode/plans/PLAN.md`
-- `.opencode/CONTEXT.md` (JSON output contract)
-- The friend's reference: `friend_project/gpu_fuzzy_trader/rb_governor.py` lines 386-465 (`_symbol_specialized_variants`).
-- My existing `gpu_fuzzy_trader/phases/phase3_rule_set.py` (`_merge_per_symbol_rules` merges identical rules across symbols; `_score_pool_rule_on_symbol` scores per-symbol).
+1. **Phase 5 test-set leakage (CRITICAL):** `PHASE5_REMOVE_NEGATIVE_PNL_RULES=True`
+   removes rules with negative PnL **on the test trade log**, then re-evaluates on
+   test. This is post-hoc selection on the OOS set — the reported 6.21%/6.53% are
+   inflated. Log evidence: "removed 2 negative-PnL rules, kept 6" (long) and
+   "removed 6 negative-PnL rules, kept 2" (short) — both decided using test PnL.
 
-## Behavior changes
+2. **RB Governor amplifier over-fits LONG to val (HIGH):** The profit amplifier
+   weights val 1.6× over train (`RB_PROFIT_AMP_VALID_WEIGHT=1.60`) and runs 2
+   capital-reallocation passes (`RB_PROFIT_AMP_CAPITAL_PASSES=2`), pushing
+   capital_pct to 25-35%. Result: LONG val=14.9% → test=6.2% (8.7% gap) while
+   SHORT val=6.5% → test=6.5% (0% gap). The asymmetry shows LONG rules were
+   val-fitted by the amplifier.
 
-### Step 1 — Add config keys
+## Required Changes (all config-only, no code changes)
 
+### Change 1 — Stop Phase 5 test leakage (CRITICAL)
+**File:** `gpu_fuzzy_trader/config.py` (line ~1419)
 ```python
-# Multi-symbol combinations in Phase 3 symbol specialization
-SYMBOL_SPECIALIZATION_USE_COMBINATIONS = True
-SYMBOL_SPECIALIZATION_MAX_SYMBOLS_PER_RULE = 3
-SYMBOL_SPECIALIZATION_TOP_SINGLE_SYMBOLS = 5
-SYMBOL_SPECIALIZATION_MAX_VARIANTS_PER_RULE = 10
-SYMBOL_SPECIALIZATION_MIN_TRAIN_TRADES = 10
-SYMBOL_SPECIALIZATION_MIN_VAL_TRADES = 6
+# BEFORE
+PHASE5_REMOVE_NEGATIVE_PNL_RULES = True
+# AFTER
+PHASE5_REMOVE_NEGATIVE_PNL_RULES = False
 ```
+Rule removal already happens upstream (RB Governor selects on train+val). Phase 5
+must ONLY evaluate — never select. With this off, the reported test metrics are
+honest OOS (no post-hoc cleanup).
 
-These are the friend's defaults. I already have
-`SYMBOL_SPECIALIZATION_MAX_SYMBOLS_PER_RULE=3` in my config (from
-the previous owner); verify and update if needed.
+NOTE: Verify that when `False`, Phase 5 still reports all rules and does NOT
+crash on the `cleaned` flag path. Read `phase5_oos.py:167-180` — if `cleaned`
+is False, the re-evaluation block is skipped (correct). Confirm no test fails.
 
-### Step 2 — Add `_build_symbol_specialized_variants` to `phase3_rule_set.py`
-
-Port the friend's function. Signature:
+### Change 2 — Stop over-weighting val in amplifier (HIGH)
+**File:** `gpu_fuzzy_trader/config.py` (line ~1619)
 ```python
-def _build_symbol_specialized_variants(
-    rule: dict,
-    train_engine: CPUBacktestEngine,
-    val_engine: CPUBacktestEngine,
-    symbols: list[str],
-) -> list[dict]:
-    """Build top-K 1-, 2-, and 3-symbol variants of *rule*.
-    
-    Returns a list of `dict` rules with `symbol is X`, `symbol is X,Y`,
-    or `symbol is X,Y,Z` conditions appended. Each variant is
-    evaluated on train + val; only those passing
-    `gate_positive_good` (Task 3) with `min_train_trades` and
-    `min_val_trades` trades are kept.
-    """
+# BEFORE
+RB_PROFIT_AMP_VALID_WEIGHT: float = 1.60
+# AFTER
+RB_PROFIT_AMP_VALID_WEIGHT: float = 1.00
 ```
+Equal-weight train and val in the amplifier objective. This stops the amplifier
+from greedily fitting val at the expense of train robustness. Train and val are
+both holdouts from Phase 2 (after the JOINT_TRAIN_VAL=False fix), so equal
+weighting is the honest choice.
 
-Algorithm:
-1. For each of the top-K best single-symbol variants of `rule`, evaluate and rank by `_score_metrics` or similar.
-2. Take the top-`SYMBOL_SPECIALIZATION_TOP_SINGLE_SYMBOLS=5` symbols.
-3. Generate all 2- and 3-symbol combinations of those 5 (10 + 10 = 20 candidates).
-4. For each combination, build a rule with `symbol is X,Y` and evaluate.
-5. Sort by score, take top-`SYMBOL_SPECIALIZATION_MAX_VARIANTS_PER_RULE=10`.
-6. Return the variants.
+### Change 3 — Reduce capital amplification passes (HIGH)
+**File:** `gpu_fuzzy_trader/config.py` (line ~1635)
+```python
+# BEFORE
+RB_PROFIT_AMP_CAPITAL_PASSES: int = 2
+# AFTER
+RB_PROFIT_AMP_CAPITAL_PASSES: int = 1
+```
+One capital-reallocation pass instead of two. This caps how aggressively
+capital_pct gets pushed up based on val. The amplifier still selects rules and
+does one reallocation pass — just less aggressive.
 
-If `SYMBOL_SPECIALIZATION_USE_COMBINATIONS=False`, only return single-symbol variants (the existing behavior).
+### Docs
+Update `README.md` config table for all three changed keys with new values +
+rationale.
 
-### Step 3 — Wire into `_merge_per_symbol_rules` (or its successor)
+## Acceptance Criteria
+1. `PHASE5_REMOVE_NEGATIVE_PNL_RULES == False`.
+2. `RB_PROFIT_AMP_VALID_WEIGHT == 1.00`.
+3. `RB_PROFIT_AMP_CAPITAL_PASSES == 1`.
+4. `config.py` asserts at import still pass (`.venv/bin/python -c "import gpu_fuzzy_trader.config"`).
+5. `PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit -q` passes (no NEW failures beyond the 2 pre-existing MAX_CONDITIONS ones).
+6. If any test hard-codes the old values (1.60, 2, True), update them to the new values — do NOT weaken correctness assertions.
+7. README config table updated for all 3 keys.
 
-The current `_merge_per_symbol_rules` is called from the per-symbol
-greedy path. Replace (or augment) it so:
-- For each pool rule, build the multi-symbol variants.
-- Pick the best variant.
-- Use that variant in the final merged rule set.
+## Verification Commands
+```
+cd /home/danaee/trading_platform
+.venv/bin/python -c "from gpu_fuzzy_trader import config as c; print('P5_REMOVE=',c.PHASE5_REMOVE_NEGATIVE_PNL_RULES); print('AMP_VAL_W=',c.RB_PROFIT_AMP_VALID_WEIGHT); print('AMP_CAP_PASSES=',c.RB_PROFIT_AMP_CAPITAL_PASSES)"
+.venv/bin/python -c "import gpu_fuzzy_trader.config; print('config asserts OK')"
+PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit -q 2>&1 | tail -5
+```
+Do NOT run the full pipeline.
 
-This is the only behavior change in Phase 3. The per-symbol greedy
-itself (which decides how many rules each symbol gets) stays the same.
+## Target Files
+- `gpu_fuzzy_trader/config.py` (3 values)
+- `README.md` (config table)
+- any test hard-coding old values.
 
-## Out of scope
-- Do NOT change the JSON output format.
-- Do NOT modify `evaluator_v5.ipynb`.
-- Do NOT touch the GPU engine or EvoX runner.
-- Do NOT change the per-symbol greedy logic for rule selection (the *number* of rules per symbol).
-- Do NOT add Tasks 7-9 features.
-
-## Acceptance criteria
-1. All 6 new config keys are present and accessible (some may already exist; verify).
-2. `_build_symbol_specialized_variants` is importable from `phase3_rule_set.py`.
-3. The function returns a list of dicts, each with `conditions` ending in `symbol is X[, Y, Z]` conditions.
-4. When `SYMBOL_SPECIALIZATION_USE_COMBINATIONS=False`, the function returns at most single-symbol variants.
-5. When `SYMBOL_SPECIALIZATION_USE_COMBINATIONS=True`, the function returns a mix of 1-, 2-, and 3-symbol variants sorted by score.
-6. The variants all pass `gate_positive_good` (Task 3) on train+val (or are filtered out).
-7. The new function is wired into the per-symbol greedy result-merging step.
-8. New unit test `tests/unit/test_multi_symbol_combinations.py` with ≥ 4 cases:
-   - Single-symbol variant is kept when it's the only one passing the gate.
-   - 2-symbol variant is preferred over single-symbol when both pass the gate.
-   - 3-symbol variants are generated when `MAX_SYMBOLS_PER_RULE=3`.
-   - The `USE_COMBINATIONS=False` flag disables 2/3-symbol generation.
-9. All existing tests pass.
-10. No changes to `evaluator_v5.ipynb` or the GPU engine.
-
-## Constraints
-- Stay on `feature/task-6-multi-symbol-combinations` (off `main` after task-5 is merged).
-- 12.7 GiB RAM total.
-- PEP 8, type hints, module logger.
-- Use only existing third-party deps.
-
-## Files I will touch
-- `gpu_fuzzy_trader/config.py` — verify/add 6 `SYMBOL_SPECIALIZATION_*` keys
-- `gpu_fuzzy_trader/phases/phase3_rule_set.py` — add `_build_symbol_specialized_variants`; wire it into the per-symbol greedy result path
-- `tests/unit/test_multi_symbol_combinations.py` (new) — ≥ 4 cases
+## Notes
+- All three changes are config-only — no production code changes.
+- This is intentionally conservative: the amplifier stays enabled (it does
+  valuable rule selection + monthly certificate), just less aggressive on val.
+- After this, the user should re-run on Colab and compare:
+  (a) test returns are now HONEST (no post-hoc rule removal)
+  (b) LONG val→test gap should shrink (less val-fitting)
+- Symbol-pinning (rules have "symbol is X" conditions) is deferred to a future
+  round — wait to see if these 3 changes are enough first.

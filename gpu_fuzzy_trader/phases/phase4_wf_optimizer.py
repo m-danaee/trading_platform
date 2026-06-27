@@ -515,6 +515,43 @@ def _evaluate_single_rule(
     )
 
 
+def _phase4_gate_positive_good(
+    train_m: dict,
+    val_m: dict,
+    *,
+    per_rule: bool,
+) -> bool:
+    """Gate grid trials with trade floors matched to the scoring scope."""
+    from gpu_fuzzy_trader.phases.phase3_rule_set import gate_positive_good
+
+    if per_rule:
+        return gate_positive_good(
+            train_m,
+            val_m,
+            min_train_trades=int(
+                getattr(_cfg, "SYMBOL_SPECIALIZATION_MIN_TRAIN_TRADES", 10)
+            ),
+            min_val_trades=int(
+                getattr(_cfg, "SYMBOL_SPECIALIZATION_MIN_VAL_TRADES", 6)
+            ),
+        )
+    return gate_positive_good(
+        train_m,
+        val_m,
+        min_train_trades=int(getattr(_cfg, "PHASE3_MIN_TRAIN_TRADES", 25)),
+        min_val_trades=int(getattr(_cfg, "PHASE3_MIN_VAL_TRADES", 15)),
+    )
+
+
+def _scale_rules_capital_to_cap(rules: list[dict], max_total: float) -> None:
+    """Scale rule capital_pct in place so the sum is <= *max_total*."""
+    total = sum(float(r.get("capital_pct", 0.0)) for r in rules)
+    if total > max_total and total > 0.0:
+        scale = max_total / total
+        for rule in rules:
+            rule["capital_pct"] = float(rule.get("capital_pct", 0.0)) * scale
+
+
 def _optimize_risk_grid(
     rules: list[dict],
     train_engine: CPUBacktestEngine,
@@ -554,12 +591,25 @@ def _optimize_risk_grid(
     tuple[list[dict], dict, dict, float, list[dict]]
         (optimized_rules, train_metrics, val_metrics, score, history)
     """
-    from gpu_fuzzy_trader.phases.phase3_rule_set import gate_positive_good
-
     per_rule_symbols = rule_contexts is not None and len(
         rule_contexts) == len(rules)
 
     best_rules = [dict(r) for r in rules]
+
+    tp_grid = tuple(float(x) for x in getattr(
+        _cfg, "PHASE4_GRID_TP_VALUES",
+        (1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 8.0, 10.0)))
+    sl_grid = tuple(float(x) for x in getattr(
+        _cfg, "PHASE4_GRID_SL_VALUES",
+        (1.0, 1.2, 1.5, 2.0, 2.5, 3.0)))
+    cap_grid = tuple(float(x) for x in getattr(
+        _cfg, "PHASE4_GRID_CAPITAL_VALUES",
+        (5.0, 7.5, 10.0, 12.5, 15.0, 20.0, 25.0, 35.0, 50.0)))
+    max_total_cap = float(getattr(_cfg, "PHASE4_GRID_MAX_TOTAL_CAPITAL", 95.0))
+    passes = int(getattr(_cfg, "PHASE4_GRID_PASSES", 2))
+
+    if not per_rule_symbols:
+        _scale_rules_capital_to_cap(best_rules, max_total_cap)
 
     # Initial evaluation (full ruleset on full universe for deployment metrics)
     cur_train, cur_val, cur_score = _evaluate_ruleset(
@@ -575,18 +625,6 @@ def _optimize_risk_grid(
         "train_pf": float(cur_train.get("profit_factor", 0.0)),
         "valid_pf": float(cur_val.get("profit_factor", 0.0)),
     }]
-
-    tp_grid = tuple(float(x) for x in getattr(
-        _cfg, "PHASE4_GRID_TP_VALUES",
-        (1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 8.0, 10.0)))
-    sl_grid = tuple(float(x) for x in getattr(
-        _cfg, "PHASE4_GRID_SL_VALUES",
-        (1.0, 1.2, 1.5, 2.0, 2.5, 3.0)))
-    cap_grid = tuple(float(x) for x in getattr(
-        _cfg, "PHASE4_GRID_CAPITAL_VALUES",
-        (5.0, 7.5, 10.0, 12.5, 15.0, 20.0, 25.0, 35.0, 50.0)))
-    max_total_cap = float(getattr(_cfg, "PHASE4_GRID_MAX_TOTAL_CAPITAL", 95.0))
-    passes = int(getattr(_cfg, "PHASE4_GRID_PASSES", 2))
 
     n_rules = len(best_rules)
     total_trials = n_rules * passes * len(tp_grid) * len(sl_grid) * len(cap_grid)
@@ -623,11 +661,13 @@ def _optimize_risk_grid(
                         trial[idx]["sl"] = sl
                         trial[idx]["capital_pct"] = cap
 
-                        # Skip if total capital exceeds the cap
-                        total_cap = sum(
-                            float(r.get("capital_pct", 0.0)) for r in trial)
-                        if total_cap > max_total_cap:
-                            continue
+                        # Portfolio-level scoring must respect total exposure;
+                        # per-rule symbol trials score one rule in isolation.
+                        if not per_rule_symbols:
+                            total_cap = sum(
+                                float(r.get("capital_pct", 0.0)) for r in trial)
+                            if total_cap > max_total_cap:
+                                continue
 
                         try:
                             if per_rule_symbols and rule_ctx is not None:
@@ -644,8 +684,9 @@ def _optimize_risk_grid(
                                 tp, sl, cap, exc)
                             continue
 
-                        # Must pass gate_positive_good
-                        if not gate_positive_good(train_m, val_m):
+                        if not _phase4_gate_positive_good(
+                            train_m, val_m, per_rule=per_rule_symbols,
+                        ):
                             continue
 
                         train_ret = float(train_m.get("total_return_pct", 0.0))

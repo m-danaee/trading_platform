@@ -139,3 +139,56 @@ class TestPerSymbolGridOptimization:
         assert rule_contexts[0].symbols == ["1"]
         assert rule_contexts[1].symbols == ["9"]
         assert len(history) >= 1
+
+    def test_grid_runs_when_ruleset_exceeds_total_capital_cap(
+        self, monkeypatch,
+    ) -> None:
+        """Per-rule symbol tuning must not skip all trials when sum(cap) > 95%."""
+        from gpu_fuzzy_trader import config as _cfg
+
+        monkeypatch.setattr(_cfg, "PHASE4_GRID_TP_VALUES", (2.0, 5.0))
+        monkeypatch.setattr(_cfg, "PHASE4_GRID_SL_VALUES", (1.0, 1.5))
+        monkeypatch.setattr(_cfg, "PHASE4_GRID_CAPITAL_VALUES", (10.0, 30.0))
+        monkeypatch.setattr(_cfg, "PHASE4_GRID_PASSES", 1)
+        monkeypatch.setattr(_cfg, "PHASE4_GRID_MIN_IMPROVEMENT", 0.0)
+        monkeypatch.setattr(_cfg, "PHASE4_GRID_MAX_TOTAL_CAPITAL", 95.0)
+        monkeypatch.setattr(_cfg, "PHASE4_OPTIMIZE_PER_RULE_SYMBOL", True)
+        monkeypatch.setattr(_cfg, "MONTHLY_VALIDATION_ENABLED", False)
+        monkeypatch.setattr(_cfg, "SYMBOL_SPECIALIZATION_MIN_TRAIN_TRADES", 1)
+        monkeypatch.setattr(_cfg, "SYMBOL_SPECIALIZATION_MIN_VAL_TRADES", 1)
+
+        train_df = _make_df(["1", "2", "3", "4", "5", "6"])
+        val_df = _make_df(["1", "2", "3", "4", "5", "6"], seed=11)
+        rules = [
+            _rule("1"),
+            _rule("2", feat_val="High"),
+            _rule("3"),
+            _rule("4", feat_val="High"),
+            _rule("5"),
+            _rule("6", feat_val="High"),
+        ]
+        for rule in rules:
+            rule["capital_pct"] = 20.0
+
+        rule_contexts = _build_rule_opt_contexts(
+            rules, train_df, val_df, "long")
+        train_engine = CPUBacktestEngine(train_df, {}, "long")
+        val_engine = CPUBacktestEngine(val_df, {}, "long")
+
+        optimized, _, _, _, history = _optimize_risk_grid(
+            rules,
+            train_engine,
+            val_engine,
+            rule_contexts=rule_contexts,
+            min_improvement=0.0,
+        )
+
+        assert sum(float(r["capital_pct"]) for r in rules) > 95.0
+        assert len(history) > 1
+        assert any(h.get("pass", 0) > 0 for h in history)
+        assert any(
+            optimized[i].get("tp") != rules[i].get("tp")
+            or optimized[i].get("sl") != rules[i].get("sl")
+            or optimized[i].get("capital_pct") != rules[i].get("capital_pct")
+            for i in range(len(rules))
+        )

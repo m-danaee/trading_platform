@@ -744,16 +744,13 @@ class Pipeline_Orchestrator:
                     "train_rows": len(train_df),
                     "val_rows": len(val_df),
                 }
-                if bool(getattr(_cfg, "RB_GOVERNOR_ENABLED", False)):
-                    phase2_result = self._load_phase2_outputs()
-                    rb_result = self._run_rb_governor(
-                        train_df, val_df, phase2_result)
-                    results["phase3"] = rb_result
-                    results["phase4"] = rb_result
-                else:
-                    phase3_result = self._load_phase3_outputs()
-                    results["phase4"] = self._run_phase4(
-                        train_df, val_df, phase3_result, force=True)
+                # Standalone Phase 4 always uses the legacy walk-forward grid
+                # optimizer on existing outputs/{long,short}.json rule
+                # conditions (TP/SL/capital only). RB Governor is not used
+                # here — it would re-select rules from the Phase 2 pool.
+                phase3_result = self._load_phase3_outputs()
+                results["phase4"] = self._run_phase4(
+                    train_df, val_df, phase3_result, force=True)
 
             else:
                 self._ensure_phase5_inputs()

@@ -154,6 +154,8 @@ python -m gpu_fuzzy_trader.run_pipeline --phase 4
 python -m gpu_fuzzy_trader.run_pipeline --phase 5
 ```
 
+`--phase 4` always runs the **legacy walk-forward grid optimizer** on existing `outputs/long.json` and `outputs/short.json` (rule conditions frozen; only TP / SL / `capital_pct` tuned). It does **not** invoke RB Governor, even when `RB_GOVERNOR_ENABLED=True`.
+
 ### What it does
 
 Runs all five phases in order:

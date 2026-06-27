@@ -953,6 +953,37 @@ class TestSinglePhaseDispatch:
         assert orch._run_phase2.call_args.kwargs["force"] is True
         assert result["phase2"] == phase2_result
 
+    def test_run_phase4_uses_legacy_optimizer_even_with_rb_governor(
+        self, tmp_path, monkeypatch,
+    ):
+        """Standalone --phase 4 tunes TP/SL/capital on existing rule JSONs."""
+        monkeypatch.setattr(_cfg, "RB_GOVERNOR_ENABLED", True)
+        train_df = _make_df()
+        val_df = _make_df()
+        orch = self._make_orch(tmp_path)
+        orch._create_output_dirs = MagicMock()
+        orch._load_and_split_data = MagicMock(return_value=(train_df, val_df))
+        phase3_result = {
+            "long": _make_rule_set("long"),
+            "short": _make_rule_set("short"),
+        }
+        orch._load_phase3_outputs = MagicMock(return_value=phase3_result)
+        phase4_result = {
+            "long": _make_rule_set("long"),
+            "short": _make_rule_set("short"),
+        }
+        orch._run_phase4 = MagicMock(return_value=phase4_result)
+        orch._run_rb_governor = MagicMock()
+
+        result = orch.run_phase(4)
+
+        orch._load_phase3_outputs.assert_called_once()
+        orch._run_phase4.assert_called_once_with(
+            train_df, val_df, phase3_result, force=True,
+        )
+        orch._run_rb_governor.assert_not_called()
+        assert result["phase4"] == phase4_result
+
     def test_run_phase5_requires_optimized_strategies(self, tmp_path):
         orch = self._make_orch(tmp_path)
         orch._create_output_dirs = MagicMock()
