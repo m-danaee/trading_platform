@@ -1564,7 +1564,7 @@ RB_SL_GRID: tuple[float, ...] = (1.0, 1.2, 1.5, 2.0, 2.5)
 RB_CAPITAL_GRID: tuple[float, ...] = (15.0, 20.0, 25.0, 35.0)
 
 # RB_RISK_OPT_PASSES — round-robin passes through all rules.
-RB_RISK_OPT_PASSES: int = 2
+RB_RISK_OPT_PASSES: int = 1
 
 # RB_RISK_MIN_IMPROVEMENT — min score delta to accept a new TP/SL/cap combo.
 RB_RISK_MIN_IMPROVEMENT: float = 0.02
@@ -1608,7 +1608,7 @@ RB_MAX_POSITIONS_PENALTY: float = 120.0
 #   refinement pass swaps/adds rules from the candidate pool and reallocates
 #   capital to maximize a blended valid-return objective.  Keep enabled for
 #   maximum performance; disable for faster but slightly weaker results.
-RB_PROFIT_AMPLIFIER_ENABLED: bool = True
+RB_PROFIT_AMPLIFIER_ENABLED: bool = False
 
 RB_PROFIT_AMP_MAX_CANDIDATES: int = 50
 RB_PROFIT_AMP_MAX_RULES: int = 8
@@ -1616,7 +1616,7 @@ RB_PROFIT_AMP_MAX_RULES: int = 8
 #   accept a profit-amplifier candidate.  Tuned for thin per-symbol returns.
 RB_PROFIT_AMP_MIN_OBJECTIVE_IMPROVEMENT: float = 0.02
 RB_PROFIT_AMP_MIN_RETURN_IMPROVEMENT: float = 0.005
-RB_PROFIT_AMP_VALID_WEIGHT: float = 1.00
+RB_PROFIT_AMP_VALID_WEIGHT: float = 1.60
 RB_PROFIT_AMP_TRAIN_WEIGHT: float = 1.00
 RB_PROFIT_AMP_BALANCE_WEIGHT: float = 0.30
 RB_PROFIT_AMP_DD_WEIGHT: float = 0.04
@@ -1647,7 +1647,7 @@ RB_GLOBAL_BANK_IMPORT_TOP_SINGLE_RULES: int = 80
 RB_GLOBAL_MAX_RULES: int = 12
 RB_GLOBAL_MIN_COMBINED_RETURN_IMPROVEMENT: float = 0.05
 RB_GLOBAL_REQUIRE_POSITIVE_TRAIN_VALID: bool = True
-RB_GLOBAL_RISK_OPT_PASSES: int = 2
+RB_GLOBAL_RISK_OPT_PASSES: int = 1
 RB_GLOBAL_BEST_DIRNAME: str = "best_global"
 RB_GLOBAL_TP_GRID: tuple[float, ...] = (1.5, 2.0, 3.0, 5.0, 8.0)
 RB_GLOBAL_SL_GRID: tuple[float, ...] = (1.2, 1.5, 2.0, 2.5)
