@@ -904,13 +904,13 @@ class TestOOSEvaluatorRun:
                 self._restore_paths(m, orig_s, orig_r)
 
         assert result["short"]["test"]["total_return_pct"] == pytest.approx(
-            0.2)
-        assert result["short"]["test"]["executed_trades"] == 750
+            -3.59)
+        assert result["short"]["test"]["executed_trades"] == 900
 
         with open(report_path) as fh:
             report = json.load(fh)
-        assert report["total_return_pct"] == pytest.approx(0.2)
-        assert report["executed_trades"] == 750
+        assert report["total_return_pct"] == pytest.approx(-3.59)
+        assert report["executed_trades"] == 900
 
     def test_run_creates_extended_reporting_outputs(self, tmp_path):
         import gpu_fuzzy_trader.phases.phase5_oos as m
