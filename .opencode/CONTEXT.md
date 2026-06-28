@@ -14,21 +14,21 @@ Pipeline summary: LONG test=−4.45%, SHORT test=−0.00%. Validation overfittin
 rules, degenerate win-rate objective, disabled migration, and premature
 convergence. 27 fixes across 6 tasks.
 
-## Pre-flight Blocker
+## Pre-flight — ✅ COMPLETE
 
-Uncommitted changes on `main`:
-- `gpu_fuzzy_trader/config.py` — 3 tuning lines (MIN_TRADE_SUPPORT 75→120,
-  MIN_TRADE_POOL_FLOOR 25→40, PHASE2_ORPHAN_MIN_TRADE_SUPPORT 15→20).
-  These are legitimate task-8 tuning remnants. **Commit to `main` before
-  branching task-14.**
-- `outputs/**` — pipeline output artifacts (reports, JSONs, PNGs). Safe to
-  commit or `.gitignore` — they are run outputs, not source.
+- `.opencode/` plan files + `outputs/` artifacts committed on `main` (6f75c7d).
+- `gpu_fuzzy_trader/config.py` task-8 tuning (3 lines) stashed, restored on feature branch.
+
+## Current Task
+
+**task-14: RB Governor rebalance** — branch `fix/rb-governor-rebalance`
+Status: dispatching implementer
 
 ## Task Summary (6 tasks, sequential, isolated branches)
 
 | # | Branch | Fixes | Priority | Status |
 |---|--------|-------|----------|--------|
-| 14 | `fix/rb-governor-rebalance` | C1,C2,C3,C4,M7 — val overfit, CV folds, gap penalty | 🔴 Critical | pending |
+| 14 | `fix/rb-governor-rebalance` | C1,C2,C3,C4,M7 — val overfit, CV folds, gap penalty | 🔴 Critical | **in_progress** |
 | 15 | `fix/fitness-objective-redesign` | C5,C6,C7,H1,H2,M3 — symbol-lock, f1/f3, Sortino sat, val leak | 🔴 Critical | pending |
 | 16 | `fix/evolution-convergence` | H3,H5,M4,M5 — restart, state carry-over, normalization | 🟠 High | pending |
 | 17 | `fix/island-migration-rule-structure` | H4,H6 — migration enable, MIN/MAX_CONDITIONS | 🟠 High | pending |
