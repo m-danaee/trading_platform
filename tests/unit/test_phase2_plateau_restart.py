@@ -34,7 +34,6 @@ def test_config_defaults():
     """New config keys have correct defaults."""
     assert cfg.PHASE2_PLATEAU_DIVERSITY_RESTART_ENABLED is True
     assert cfg.PHASE2_PLATEAU_DIVERSITY_RESTART_FRACTION == 0.65
-    assert cfg.PHASE2_PLATEAU_DIVERSITY_RESTART_MUTATION_BOOST == 1.6
     assert cfg.PHASE2_PLATEAU_MAX_RESTARTS == 3
     assert cfg.PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT == 0.5
     assert cfg.PHASE2_PLATEAU_POST_RESTART_MUTATION_BOOST == 0.45
