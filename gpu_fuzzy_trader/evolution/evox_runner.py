@@ -751,6 +751,8 @@ def _select_diverse_subset(
     Returns up to *k* chromosomes from *chromosomes* that maximise pairwise
     Hamming distance.  If *k* >= len(chromosomes), returns a copy of the input.
     """
+    if k <= 0:
+        return []
     if len(chromosomes) <= k:
         return list(chromosomes)
     chosen = [chromosomes[0]]

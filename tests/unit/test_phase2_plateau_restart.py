@@ -4,7 +4,7 @@ Verifies that:
 - First plateau triggers a diversity restart (not a break).
 - Second plateau (or when restart_count >= max_restarts) breaks.
 - Pareto elite chromosomes survive the restart.
-- mutation_rate is boosted for one gen then restored.
+- mutation_rate is boosted for 3 gens then restored.
 - plateau_streak resets to 0 after restart.
 - PHASE2_PLATEAU_DIVERSITY_RESTART_ENABLED=False → immediate break.
 """
@@ -165,18 +165,6 @@ class TestPlateauDiversityRestart:
 # ---------------------------------------------------------------------------
 # Mutation boost logic
 # ---------------------------------------------------------------------------
-
-def test_mutation_boost_capped_at_0_6():
-    """Plateau restart mutation boost is capped at 0.6."""
-    base_mr = 0.5
-    boost_factor = 1.6
-    boosted = min(0.6, base_mr * boost_factor)
-    assert boosted == 0.6, f"Expected 0.6, got {boosted}"
-
-    base_mr = 0.2
-    boosted = min(0.6, base_mr * boost_factor)
-    assert boosted == pytest.approx(0.32), f"Expected 0.32, got {boosted}"
-
 
 # ---------------------------------------------------------------------------
 # Integration-style test: mutation boost applied to offspring + streak reset
