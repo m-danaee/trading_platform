@@ -636,11 +636,16 @@ def compute_phase2_objectives_from_metrics(
             seen_keys.add(key)
             merged_refs.append(ref)
         diversity_refs = merged_refs
-    diversity_hamming_threshold = (
-        int(stage_params.diversity_hamming_threshold)
-        if stage_params is not None
-        else int(_cfg.PHASE2_DIVERSITY_HAMMING_THRESHOLD)
-    )
+    diversity_hamming_threshold: int
+    if bool(getattr(_cfg, "PHASE2_DIVERSITY_HAMMING_THRESHOLD_AUTO", True)):
+        k_active = _count_active_conditions(chromosome, dont_cares)
+        diversity_hamming_threshold = max(3, k_active // 5)
+    else:
+        diversity_hamming_threshold = (
+            int(stage_params.diversity_hamming_threshold)
+            if stage_params is not None
+            else int(_cfg.PHASE2_DIVERSITY_HAMMING_THRESHOLD)
+        )
     diversity_penalty_weight = (
         float(stage_params.diversity_penalty)
         if stage_params is not None
@@ -2819,6 +2824,23 @@ class Rule_Pool_Generator:
                         else float(_cfg.PHASE2_ARCHIVE_SEED_FRACTION)
                     )
                 apply_seeds = True
+
+        # --- H5: Clear global_metrics_cache for seeded keys; cap HoF carry-over ---
+        if not first_epoch and self._evolution_state is not None and seed_chromosomes is not None:
+            from gpu_fuzzy_trader.phases.phase2_sparse_encoding import chromosome_key
+            seeded_keys = {chromosome_key(c) for c in seed_chromosomes}
+            cache = self._evolution_state.global_metrics_cache
+            for key in list(cache.keys()):
+                if key in seeded_keys:
+                    cache.pop(key, None)
+            # Cap hall-of-fame carry-over to PHASE2_HOF_EPOCH_CARRYOVER entries
+            hof = self._evolution_state.hall_of_fame
+            max_carry = int(getattr(_cfg, "PHASE2_HOF_EPOCH_CARRYOVER", 10))
+            if len(hof) > max_carry:
+                keys = list(hof.keys())[:max_carry]
+                self._evolution_state.hall_of_fame = {
+                    k: hof[k] for k in keys
+                }
 
         rng = np.random.default_rng(self.seed)
         feature_probs = build_feature_sampling_probs(self.feature_infos)

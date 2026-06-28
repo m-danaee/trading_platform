@@ -4,7 +4,7 @@ Verifies that:
 - First plateau triggers a diversity restart (not a break).
 - Second plateau (or when restart_count >= max_restarts) breaks.
 - Pareto elite chromosomes survive the restart.
-- mutation_rate is boosted for one gen then restored.
+- mutation_rate is boosted for 3 gens then restored.
 - plateau_streak resets to 0 after restart.
 - PHASE2_PLATEAU_DIVERSITY_RESTART_ENABLED=False → immediate break.
 """
@@ -33,9 +33,15 @@ from gpu_fuzzy_trader.phases.phase2_rule_pool import _init_population
 def test_config_defaults():
     """New config keys have correct defaults."""
     assert cfg.PHASE2_PLATEAU_DIVERSITY_RESTART_ENABLED is True
-    assert cfg.PHASE2_PLATEAU_DIVERSITY_RESTART_FRACTION == 0.40
+    assert cfg.PHASE2_PLATEAU_DIVERSITY_RESTART_FRACTION == 0.65
     assert cfg.PHASE2_PLATEAU_DIVERSITY_RESTART_MUTATION_BOOST == 1.6
-    assert cfg.PHASE2_PLATEAU_MAX_RESTARTS == 1
+    assert cfg.PHASE2_PLATEAU_MAX_RESTARTS == 3
+    assert cfg.PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT == 0.5
+    assert cfg.PHASE2_PLATEAU_POST_RESTART_MUTATION_BOOST == 0.45
+    assert cfg.PHASE2_PLATEAU_POST_RESTART_BOOST_GENS == 3
+    assert cfg.PHASE2_HOF_EPOCH_CARRYOVER == 10
+    assert cfg.PHASE2_DIVERSITY_HAMMING_THRESHOLD_AUTO is True
+    assert cfg.PHASE2_DIVERSITY_HAMMING_THRESHOLD == 0
 
 
 # ---------------------------------------------------------------------------
@@ -56,9 +62,9 @@ class TestPlateauDiversityRestart:
         pop_size = 20
         # Use _init_population to get correct sparse format
         population = _init_population(pop_size, feature_infos, rng)
-        # Elite = indices 0..4 (first 5 Pareto front indices)
-        elite_indices = list(range(5))
-        pareto_indices = elite_indices + [10, 11, 12]
+        # Elite = indices 0..4 (first 5 Pareto front indices, but n_elite caps at 2)
+        elite_indices = list(range(2))
+        pareto_indices = list(range(5)) + [10, 11, 12]
 
         objectives = np.full((pop_size, 3), 0.5)
         metrics_cache = [{"total_return_pct": float(i)} for i in range(pop_size)]
@@ -132,7 +138,7 @@ class TestPlateauDiversityRestart:
         )
 
     def test_n_elite_at_most_5(self):
-        """Even with large Pareto front, at most 5 elite are preserved."""
+        """Even with large Pareto front, at most 2 elite are preserved (was 5)."""
         rng = np.random.default_rng(42)
         feature_infos = [
             {"name": "f0", "mode": "binary", "score": 0.5},
@@ -153,24 +159,12 @@ class TestPlateauDiversityRestart:
             pareto_indices=pareto_indices,
             pop_size=pop_size,
         )
-        assert n_elite == 5, f"Expected 5 elite, got {n_elite}"
+        assert n_elite == 2, f"Expected 2 elite, got {n_elite}"
 
 
 # ---------------------------------------------------------------------------
 # Mutation boost logic
 # ---------------------------------------------------------------------------
-
-def test_mutation_boost_capped_at_0_6():
-    """Plateau restart mutation boost is capped at 0.6."""
-    base_mr = 0.5
-    boost_factor = 1.6
-    boosted = min(0.6, base_mr * boost_factor)
-    assert boosted == 0.6, f"Expected 0.6, got {boosted}"
-
-    base_mr = 0.2
-    boosted = min(0.6, base_mr * boost_factor)
-    assert boosted == pytest.approx(0.32), f"Expected 0.32, got {boosted}"
-
 
 # ---------------------------------------------------------------------------
 # Integration-style test: mutation boost applied to offspring + streak reset
@@ -218,7 +212,7 @@ class TestMutationBoostIntegration:
         ), mock.patch(
             "gpu_fuzzy_trader.evolution.evox_runner"
             "._plateau_diversity_restart",
-            return_value=5,
+            return_value=2,
         ), mock.patch(
             "gpu_fuzzy_trader.evolution.evox_runner"
             "._make_offspring_population",
@@ -251,28 +245,29 @@ class TestMutationBoostIntegration:
                     rng=rng,
                 )
 
-        # ---- AC3: mutation boost ----
+        # ---- AC3: multi-gen mutation boost ----
         # Offspring calls happen each gen except gen 2 (continue after restart)
-        #   [0]=gen0, [1]=gen1, [2]=gen3(boosted), [3]=gen4(default)
-        assert len(mutation_rates) >= 4, (
-            f"Expected >=4 offspring calls, got {len(mutation_rates)}"
+        #   [0]=gen0, [1]=gen1, [2]=gen3(boosted), [3]=gen4(boosted), [4]=gen5(boosted)
+        assert len(mutation_rates) >= 5, (
+            f"Expected >=5 offspring calls, got {len(mutation_rates)}"
         )
 
-        base_mr = _stage_mutation_rate(None)  # 0.3 from config
-        boost_factor = float(
-            getattr(cfg, "PHASE2_PLATEAU_DIVERSITY_RESTART_MUTATION_BOOST", 1.6)
-        )
-        expected_boosted = min(0.6, base_mr * boost_factor)
-
-        gen3_rate = mutation_rates[2]  # first offspring call after restart
-        assert gen3_rate == pytest.approx(expected_boosted), (
-            f"Gen 3 mutation_rate {gen3_rate} != boosted {expected_boosted} "
-            f"(base={base_mr}, boost={boost_factor})"
+        expected_boosted = float(
+            getattr(cfg, "PHASE2_PLATEAU_POST_RESTART_MUTATION_BOOST", 0.45)
         )
 
-        gen4_rate = mutation_rates[3]  # second offspring call after restart
-        assert gen4_rate == pytest.approx(base_mr), (
-            f"Gen 4 mutation_rate {gen4_rate} != default {base_mr}"
+        # After restart at gen 2, next 3 offspring calls use boosted mutation rate
+        for i in range(2, 5):
+            assert mutation_rates[i] == pytest.approx(expected_boosted), (
+                f"Gen {i+1} mutation_rate {mutation_rates[i]} != boosted "
+                f"{expected_boosted}"
+            )
+
+        # After 3 boosted gens, it should revert to normal mutation rate
+        gen6_rate = mutation_rates[5]
+        base_mr = _stage_mutation_rate(None)
+        assert gen6_rate == pytest.approx(base_mr), (
+            f"Gen 6 mutation_rate {gen6_rate} != default {base_mr}"
         )
 
         # ---- AC4: plateau_streak reset ----

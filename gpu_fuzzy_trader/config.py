@@ -600,7 +600,17 @@ PHASE2_VAL_IN_FITNESS_PENALTY = False
 # Raised 3→4: 4/20 genes (20%) is a meaningful feature-mix change; the phenotype
 # OR check already catches behaviorally-identical rules, so this can be looser
 # on the Hamming axis than on the phenotype axis.
-PHASE2_DIVERSITY_HAMMING_THRESHOLD = 7
+PHASE2_DIVERSITY_HAMMING_THRESHOLD = 0
+
+# PHASE2_DIVERSITY_HAMMING_THRESHOLD_AUTO — auto-scale Hamming threshold.
+#   True  → threshold = max(3, k_active // 5) computed at runtime.
+#   False → use PHASE2_DIVERSITY_HAMMING_THRESHOLD value directly.
+PHASE2_DIVERSITY_HAMMING_THRESHOLD_AUTO = True
+
+# PHASE2_HOF_EPOCH_CARRYOVER — max hall-of-fame entries carried across epochs.
+#   Higher → more prior-generation chromosomes kept for diversity reference.
+#   Lower  → epoch boundary acts as harder reset of the diversity reference set.
+PHASE2_HOF_EPOCH_CARRYOVER = 10
 
 # PHASE2_DIVERSITY_PENALTY — objective penalty when crowding near existing rules.
 #   Higher → stronger push toward novel chromosomes.
@@ -666,7 +676,7 @@ PHASE2_PLATEAU_EARLY_STOP_PATIENCE = 8
 # PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT — min return improvement to reset patience.
 #   Higher → need larger gains to count as progress.
 #   Lower  → tiny improvements reset plateau counter.
-PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT = 0.05
+PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT = 0.5
 
 # PHASE2_PLATEAU_USE_ROBUST_RETURN — track min(train,val) return for plateau.
 #   True  → plateau reflects deployable return, not train-only spikes.
@@ -686,7 +696,7 @@ PHASE2_PLATEAU_DIVERSITY_RESTART_ENABLED = True
 # PHASE2_PLATEAU_DIVERSITY_RESTART_FRACTION — share of pop reinitialised on restart.
 #   Higher  → more fresh chromosomes; may lose more elite progress.
 #   Lower   → gentler restart; may not escape attractor.
-PHASE2_PLATEAU_DIVERSITY_RESTART_FRACTION = 0.40
+PHASE2_PLATEAU_DIVERSITY_RESTART_FRACTION = 0.65
 
 # PHASE2_PLATEAU_DIVERSITY_RESTART_MUTATION_BOOST — multiplier for mutation rate
 #   for one generation after restart. Capped at 0.6.
@@ -694,10 +704,23 @@ PHASE2_PLATEAU_DIVERSITY_RESTART_FRACTION = 0.40
 #   Lower   → keep mutation close to normal after restart.
 PHASE2_PLATEAU_DIVERSITY_RESTART_MUTATION_BOOST = 1.6
 
+# PHASE2_PLATEAU_POST_RESTART_MUTATION_BOOST — mutation rate (not multiplier) used
+#   for PHASE2_PLATEAU_POST_RESTART_BOOST_GENS after a plateau restart, then
+#   anneals back to the stage mutation rate.
+#   Higher → more exploration in the gens immediately after restart.
+#   Lower  → gentler post-restart mutation; less disruptive to surviving elites.
+PHASE2_PLATEAU_POST_RESTART_MUTATION_BOOST = 0.45
+
+# PHASE2_PLATEAU_POST_RESTART_BOOST_GENS — number of generations to hold the
+#   post-restart mutation boost before decaying to the normal stage rate.
+#   Higher → longer boosted exploration after restart.
+#   Lower  → quicker return to normal mutation; less search diversity.
+PHASE2_PLATEAU_POST_RESTART_BOOST_GENS = 3
+
 # PHASE2_PLATEAU_MAX_RESTARTS — restarts per epoch before final break.
 #   1       → one restart, then break on second plateau.
 #   0       → immediately break (disables restart regardless of ENABLED flag).
-PHASE2_PLATEAU_MAX_RESTARTS = 1
+PHASE2_PLATEAU_MAX_RESTARTS = 3
 
 # PHASE2_FEASIBILITY_VIOLATION_WEIGHT — scales soft penalty for floor violations.
 #   Higher → infeasible rules pushed far down on all objectives.
