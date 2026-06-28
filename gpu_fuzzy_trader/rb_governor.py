@@ -509,6 +509,33 @@ def _evaluate_ruleset(train_engine: CPUBacktestEngine, valid_engine: CPUBacktest
     return train_m, valid_m, score
 
 
+def _eval_cv_fold_returns(
+    rule: dict,
+    fold_engines: list[CPUBacktestEngine] | None,
+) -> list[float] | None:
+    """Evaluate *rule* on each CV fold engine and return per-fold returns.
+
+    Each fold is simulated independently so a single failing fold does not
+    drop the entire CV signal.  Returns ``None`` when *fold_engines* is
+    ``None``, empty, or all folds fail.
+    """
+    if not fold_engines:
+        return None
+    returns: list[float] = []
+    for idx, fold_engine in enumerate(fold_engines):
+        try:
+            m = fold_engine.simulate_rule_set([rule])
+            ret = _f(m, "total_return_pct")
+            returns.append(ret)
+        except Exception:
+            logger.warning(
+                "CV fold %d simulation failed for rule %s; skipping fold.",
+                idx, _rule_key(rule),
+            )
+            continue
+    return returns if returns else None
+
+
 def _filter_good_rules(
     pool: list[dict],
     train_like_df: pd.DataFrame,
@@ -538,15 +565,7 @@ def _filter_good_rules(
             if not _is_positive_good(train_m, valid_m):
                 continue
             # Evaluate on CV folds if available (C4)
-            cv_fold_returns = None
-            if fold_engines:
-                try:
-                    cv_fold_returns = [
-                        _f(fold_engine.simulate_rule_set([rule]), "total_return_pct")
-                        for fold_engine in fold_engines
-                    ]
-                except Exception:
-                    cv_fold_returns = None
+            cv_fold_returns = _eval_cv_fold_returns(rule, fold_engines)
             score = _score_metrics(train_m, valid_m, cv_fold_returns=cv_fold_returns)
             rec = CandidateRecord(rule=rule, train_metrics=train_m, valid_metrics=valid_m, score=score)
             rec.mask = _mask_for(rule, train_like_df, valid_df)
@@ -1192,15 +1211,7 @@ def run_rb_governor_pipeline(
                     except Exception:
                         continue
                     # Evaluate on CV folds if available (C4)
-                    cv_fold_returns = None
-                    if fold_engines:
-                        try:
-                            cv_fold_returns = [
-                                _f(fold_engine.simulate_rule_set([rule]), "total_return_pct")
-                                for fold_engine in fold_engines
-                            ]
-                        except Exception:
-                            cv_fold_returns = None
+                    cv_fold_returns = _eval_cv_fold_returns(rule, fold_engines)
                     rec = CandidateRecord(rule=rule, train_metrics=tr, valid_metrics=te, score=_score_metrics(tr, te, cv_fold_returns=cv_fold_returns))
                     rec.mask = _mask_for(rule, train_like, valid_df)
                     candidates.append(rec)

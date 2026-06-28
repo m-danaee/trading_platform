@@ -525,7 +525,7 @@ class Pipeline_Orchestrator:
                     phase5_directions: frozenset[str] = frozenset()
                 elif bool(getattr(_cfg, "RB_GOVERNOR_ENABLED", False)):
                     rb_result = self._run_rb_governor(
-                        train_df, val_df, phase2_result)
+                        train_df, val_df, phase2_result, cv_folds=self._cv_folds)
                     results["phase3"] = rb_result
                     results["phase4"] = rb_result
                     phase5_directions = frozenset(rb_result.keys())
@@ -645,7 +645,7 @@ class Pipeline_Orchestrator:
                     phase5_directions: frozenset[str] = frozenset()
                 elif bool(getattr(_cfg, "RB_GOVERNOR_ENABLED", False)):
                     rb_result = self._run_rb_governor(
-                        train_df, val_df, phase2_result)
+                        train_df, val_df, phase2_result, cv_folds=self._cv_folds)
                     results["phase3"] = rb_result
                     results["phase4"] = rb_result
                     phase5_directions = frozenset(rb_result.keys())
@@ -731,7 +731,7 @@ class Pipeline_Orchestrator:
                 phase2_result = self._load_phase2_outputs()
                 if bool(getattr(_cfg, "RB_GOVERNOR_ENABLED", False)):
                     rb_result = self._run_rb_governor(
-                        train_df, val_df, phase2_result)
+                        train_df, val_df, phase2_result, cv_folds=self._cv_folds)
                     results["phase3"] = rb_result
                     results["phase4"] = rb_result
                 else:
@@ -1570,6 +1570,8 @@ class Pipeline_Orchestrator:
         train_df: pd.DataFrame,
         val_df: pd.DataFrame,
         phase2_result: dict[str, list[dict]],
+        *,
+        cv_folds: list | None = None,
     ) -> dict[str, dict]:
         """Run the RB Governor pipeline (Phase 3 + Phase 4 replacement).
 
@@ -1599,6 +1601,7 @@ class Pipeline_Orchestrator:
                 pools=phase2_result,
                 directions=directions,
                 output_dir=_cfg.OUTPUTS_DIR,
+                cv_folds=cv_folds,
             )
         except Exception as exc:
             logger.error("RB Governor failed: %s", exc, exc_info=True)
