@@ -734,6 +734,18 @@ PHASE2_PLATEAU_POST_RESTART_BOOST_GENS = 3
 #   0       → immediately break (disables restart regardless of ENABLED flag).
 PHASE2_PLATEAU_MAX_RESTARTS = 3
 
+# PHASE2_VIABILITY_COLLAPSE_THRESHOLD — pop_viable fraction below which viability
+#   is considered collapsed (triggers forced restart after streak).
+#   Higher → more sensitive to viable-population shrinkage.
+#   Lower  → tolerate very small viable populations before restart.
+PHASE2_VIABILITY_COLLAPSE_THRESHOLD = 0.5
+
+# PHASE2_VIABILITY_COLLAPSE_STREAK — consecutive generations of viability collapse
+#   before a forced diversity restart is triggered.
+#   Higher → more tolerance before restart; may stall longer.
+#   Lower  → aggressive restart on any prolonged viability dip.
+PHASE2_VIABILITY_COLLAPSE_STREAK = 3
+
 # PHASE2_FEASIBILITY_VIOLATION_WEIGHT — scales soft penalty for floor violations.
 #   Higher → infeasible rules pushed far down on all objectives.
 #   Lower  → borderline rules compete with feasible ones longer.

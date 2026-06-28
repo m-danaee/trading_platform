@@ -319,15 +319,19 @@ def _sample_df(
     total_rows: int,
     random_state: int | np.random.Generator | None = None,
 ) -> pd.DataFrame:
-    """
-    Sample up to *total_rows* rows from *df*, distributed equally across symbols.
+    """Sample up to *total_rows* rows, distributed equally across symbols.
 
     Rows are taken in chronological order per symbol (deterministic stride
     downsampling). Random sampling is intentionally avoided because backtest
-    engines rely on row order and ``_symbol_bar_index`` for exposure release,
-    matching ``evaluator_v3.ipynb`` semantics.
+    engines rely on row order and ``_symbol_bar_index`` for exposure release.
 
-    *random_state* is accepted for API compatibility but ignored.
+    Args:
+        df: Input DataFrame.
+        total_rows: Target row count.
+        random_state: **Intentionally ignored.** Accepted only for API
+            compatibility with callers that pass a seed. Sampling is
+            chronologically deterministic; do not rely on this for
+            reproducibility — set ``PHASE2_SEED`` upstream instead.
     """
     del random_state  # chronology-preserving sampling is deterministic
     if "symbol" not in df.columns:
