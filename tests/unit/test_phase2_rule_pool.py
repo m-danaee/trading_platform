@@ -1411,11 +1411,11 @@ class TestEvaluateChromosome:
             
             # objectives[2] is -f3_val + penalties
             # f3_val is total_return = 15.0 since PHASE2_USE_TOTAL_RETURN_OBJ is True.
-            # cond_penalty is 20.0 because chromosome has 6 active conditions while MAX_CONDITIONS is 4.
-            # Without diversity penalty: -15.0 + 20.0 = 5.0
-            # With diversity penalty: -15.0 + 20.0 + 10.0 = 15.0
-            assert np.isclose(objectives_self[2], 5.0)
-            assert np.isclose(objectives_similar[2], 15.0)
+            # cond_penalty is 10.0 because chromosome has 6 active conditions while MAX_CONDITIONS is 5.
+            # Without diversity penalty: -15.0 + 10.0 = -5.0
+            # With diversity penalty: -15.0 + 10.0 + 10.0 = 5.0
+            assert np.isclose(objectives_self[2], -5.0)
+            assert np.isclose(objectives_similar[2], 5.0)
             
         finally:
             _cfg.PHASE2_DIVERSITY_PENALTY = orig_penalty

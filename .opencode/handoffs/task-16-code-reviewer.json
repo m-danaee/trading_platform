@@ -1,0 +1,74 @@
+{
+  "task": "task-16",
+  "verdict": "REQUEST_CHANGES",
+  "reviewer": "code-reviewer",
+  "branch": "fix/evolution-convergence",
+  "commit": "05f6399",
+  "base_branch": "main",
+  "reviewed_at": "2026-06-28",
+  "files_changed": [
+    "gpu_fuzzy_trader/config.py",
+    "gpu_fuzzy_trader/evolution/evox_runner.py",
+    "gpu_fuzzy_trader/phases/phase2_rule_pool.py",
+    "tests/unit/test_phase2_plateau_restart.py"
+  ],
+  "tests_run": {
+    "command": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/ -x -q -k 'plateau or evox or restart or diversity or normalize'",
+    "result": "55 passed, 1175 deselected in 17.54s"
+  },
+  "findings": [
+    {
+      "severity": "high",
+      "issue": "Dead test `test_mutation_boost_capped_at_0_6` violates AGENTS.md 'no dead code' rule",
+      "location": "tests/unit/test_phase2_plateau_restart.py:187-198",
+      "detail": "The test asserts `min(0.6, base_mr * boost_factor)` — the OLD multiplier-based boost formula. The new code (evox_runner.py:1826-1832) uses an absolute rate (0.45) with no multiplier and no 0.6 cap. The test exercises only Python's `min()` builtin; it doesn't test any code path that exists in the project. The implementer's own handoff acknowledges this is a vestigial test that 'tests the old multiplier-based boost formula.' Per AGENTS.md: 'After changing sections of my code, remove additional(wasted) parts from old implementation to get clean my project.'",
+      "fix": "Delete `test_mutation_boost_capped_at_0_6` (lines 187-198 of test_phase2_plateau_restart.py)."
+    },
+    {
+      "severity": "medium",
+      "issue": "`_select_diverse_subset` has a k=0 edge case bug",
+      "location": "gpu_fuzzy_trader/evolution/evox_runner.py:748-766",
+      "detail": "When `k=0` and `chromosomes` is non-empty, the function returns `[chromosomes[0]]` instead of `[]`. The early-return guard `if len(chromosomes) <= k` is `len(chromosomes) <= 0`, which is False for non-empty lists. Then `chosen = [chromosomes[0]]` is set, the while loop condition `len(chosen) < 0` is False, and the function returns `[chromosomes[0]]`. This propagates to `_inject_diversity_recovery` at line 679: if `n_inject=1, fresh_fraction=1.0` (so `n_mutate=0`) and the archive is non-empty, the subsequent for loop injects one spurious mutated chromosome when zero were requested. Narrow but real.",
+      "fix": "Change the early-return to also handle k=0:\n```python\nif k <= 0:\n    return []\nif len(chromosomes) <= k:\n    return list(chromosomes)\n```"
+    },
+    {
+      "severity": "low",
+      "issue": "Cross-stage `post_restart_gens_remaining` not propagated in `final_state`",
+      "location": "gpu_fuzzy_trader/evolution/evox_runner.py:2454-2471",
+      "detail": "The `Phase2EvolutionState` dataclass declares `post_restart_gens_remaining: int = 0` and Stage B init reads it from the previous state (line 1983: `post_restart_gens_remaining = int(state.post_restart_gens_remaining)`). However, the `final_state` construction at line 2454 never sets this field. If the loop exits (early-stop break or completion of n_generations) while a boost is still active, the next stage's boost counter is silently lost (defaults to 0). The spec review flagged this as 'minor behavioral' and the AC was technically met, so this is non-blocking. Recommend fixing for behavioral completeness: add `post_restart_gens_remaining=post_restart_gens_remaining` to the final_state kwargs.",
+      "fix": "Add `post_restart_gens_remaining=post_restart_gens_remaining` to the `final_state` constructor call at line 2454-2471."
+    },
+    {
+      "severity": "low",
+      "issue": "Stale docstring in test_phase2_plateau_restart.py:7",
+      "location": "tests/unit/test_phase2_plateau_restart.py:7",
+      "detail": "Docstring says 'mutation_rate is boosted for one gen then restored' but actual (and tested) behavior is 3 gens. The integration test at line 230+ asserts the 3-gen behavior correctly; only the module docstring summary is stale.",
+      "fix": "Update line 7 to read 'mutation_rate is boosted for 3 gens then restored'."
+    },
+    {
+      "severity": "low",
+      "issue": "Test coverage gap for new H5/M4/M5 behaviors",
+      "location": "tests/unit/",
+      "detail": "New behaviors have no direct tests beyond config-default assertions:\n- HoF trimming in `run_epoch` (no test for the cap-at-10 behavior)\n- `global_metrics_cache` clearing for seeded keys (no test for key matching / non-key preservation)\n- `_select_diverse_subset` (no test at all — not even edge cases k=0, k=1, k>len, all-equal Hamming)\n- `_normalize_for_association` with all-equal values (only the inf-objective case is tested; the spec review noted this works but no test pins it)\n- Hamming threshold auto-scaling (no test for `max(3, k_active // 5)` formula)\n\nThe spec said tests must pass for the listed keyword filter, and they do, but functional coverage of the new code paths is shallow. A future regression (e.g., a typo in the cap formula) would not be caught.",
+      "fix": "Add at least:\n- 1 test for HoF trim (e.g., set HoF to 15 entries, run_epoch, assert len == 10)\n- 1 test for cache clearing (e.g., pre-populate cache with seeded + unseeded keys, run_epoch, assert only seeded keys removed)\n- 2-3 tests for `_select_diverse_subset` (k=0, k>len, max-min property on a hand-constructed example)\n- 1 test for all-equal rank normalization (no NaN/Inf, output magnitude bounded)\n- 1 test for `max(3, k_active // 5)` Hamming threshold auto-scaling"
+    }
+  ],
+  "verifications_passed": [
+    "No remnants of `_plateau_restart_boost` (grep returns no matches)",
+    "All config values match spec (PHASE2_PLATEAU_MAX_RESTARTS=3, MIN_DELTA_PCT=0.5, DIVERSITY_RESTART_FRACTION=0.65, POST_RESTART_MUTATION_BOOST=0.45, POST_RESTART_BOOST_GENS=3, HOF_EPOCH_CARRYOVER=10, DIVERSITY_HAMMING_THRESHOLD_AUTO=True)",
+    "`Phase2EvolutionState.post_restart_gens_remaining: int = 0` added at line 58",
+    "`_run_nsga2_fallback` (line 1826) and `_run_nsga3` (line 2243) both apply boost for `post_restart_gens_remaining` gens then anneal",
+    "`n_elite = min(2, max(1, len(pareto_indices)))` at line 792 (was min(5))",
+    "`max_restarts` read from config via getattr at lines 1728 and 2362 (both loops)",
+    "Cache clearing only removes keys in `seeded_keys` set, computed from same `chromosome_key` as cache keys (phase2_rule_pool.py:2828-2835)",
+    "HoF trimming guarded by `if len(hof) > max_carry` (safe for empty HoF)",
+    "Rank normalization handles all-equal: `sorted_fit[j_tie] == sorted_fit[i]` triggers `j_tie - i > 1` branch, sets avg_rank = (n+1)/2, all entries become 1/(2n)... wait, ranks become (n+1)/2 / n, unit-norm → 1/sqrt(K), no division by zero",
+    "Rank normalization handles inf: replaced with 1e12 BEFORE ranking (line 1350) — inf/nan can't break argsort",
+    "Performance: argsort is O(n log n) per objective × 3 objectives = acceptable for pop_size=200",
+    "Performance: `_select_diverse_subset` is O(k² · n_features) — for k=50, n=75: ~187K comparisons per restart call, acceptable",
+    "Performance: rank normalization recomputes per-generation but is ~3·n log n = 3·200·8 = 4800 comparisons per gen",
+    "AGENTS.md compliance: `.venv` used for test run; no `evaluator_v5.ipynb` modification"
+  ],
+  "verdict_rationale": "Spec is met and the 55 unit tests pass. Core implementation is correct: rank normalization handles all-equal values without division by zero, inf values are scrubbed before ranking, the boost counter decrements correctly for exactly 3 generations, the cache clearing targets only seeded keys via matching chromosome_key, and the HoF trim is safe on empty HoF. No remnants of the dead `_plateau_restart_boost` variable. However, three issues require changes before approval: (1) a clear AGENTS.md violation — a test for the old multiplier-based boost formula must be removed; (2) a real but narrow bug in `_select_diverse_subset` with k=0 that can spuriously inject one chromosome when zero were requested; (3) test coverage is shallow for the new H5/M4/M5 behaviors. The cross-stage `post_restart_gens_remaining` not being persisted in `final_state` is a minor non-blocking observation already accepted by the spec review.",
+  "next_step": "Implementer: remove dead test, fix k=0 edge case, add minimal test coverage for new behaviors."
+}

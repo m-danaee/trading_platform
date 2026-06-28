@@ -1,0 +1,91 @@
+{
+  "task": "task-18",
+  "reviewer": "code-reviewer",
+  "verdict": "APPROVED",
+  "commit": "aa34636",
+  "branch": "fix/admission-gates-robustness",
+  "base_branch": "main",
+  "reviewed_at": "2026-06-28",
+  "summary": "Implementation is correct, minimal, and well-scoped. All 5 specific checks (M1, M1-zero, M1-both-paths, M6-log-level, M8-comparison) pass. 243 tests pass; M1 fix verified empirically with all-wins/all-losses/mixed-wins/empty fixtures. Minor cosmetic and test-coverage notes are non-blocking.",
+  "checks": {
+    "M1_win_condition": {
+      "status": "PASS",
+      "evidence": [
+        "cpu_engine.py:648: `if pos[\"net_pnl\"] > 0:` increments `sym_wins[sym]`. Win = profit > 0 at close (release time), not signal. Correct semantics.",
+        "0-PnL (breakeven) trades are correctly excluded from both wins and losses."
+      ]
+    },
+    "M1_zero_trades_safety": {
+      "status": "PASS",
+      "evidence": [
+        "cpu_engine.py:1111: `s_win_rate = (s_wins / s_trades * 100.0) if s_trades > 0 else 0.0` — no division-by-zero.",
+        "Loop is `for sym in sym_trades:`, so `s_trades` is always >= 1 in iteration; the `> 0` guard is defensive but harmless.",
+        "Empirical: empty entry list returns `per_symbol_metrics={}` with no error."
+      ]
+    },
+    "M1_both_paths_covered": {
+      "status": "PASS",
+      "evidence": [
+        "Both `simulate_rule_set` (line 753) and `simulate_rule_set_slice` (line 751) call `_simulate_rule_set_entries(..., return_logs=False, ...)` — the path that had the bug.",
+        "`simulate_rule_batch` (line 1220) also funnels through the same `_simulate_rule_set_entries`. Single-rule path = batch path = rule-set path for the per-symbol metrics computation.",
+        "Both `_release_due_positions` call sites (lines 934 and 1070) now pass `sym_wins=sym_wins`.",
+        "`_release_due_positions` keeps `sym_wins: dict[str, int] | None = None` default so external callers without the dict don't break."
+      ]
+    },
+    "M6_cache_log_level": {
+      "status": "PASS",
+      "evidence": [
+        "evox_runner.py:1233 and 1290 use `logger.debug(...)` for the new cache-size log lines. NOT `logger.info`. Will not spam the info log.",
+        "Spec said 'at gen 0 (or first eval)'; implementer added the log in BOTH branches of `_evaluate_population_indices` (cache-only path and GPU-batch path). This is slightly more verbose than spec but provides visibility regardless of which path runs. Still debug-level, so non-spammy.",
+        "Test ran at log level INFO — no cache lines appeared in test output. Confirmed debug-level only."
+      ]
+    },
+    "M8_ratio_comparison": {
+      "status": "PASS",
+      "evidence": [
+        "phase2_rule_pool.py:1883: `if ratio >= min_profitable_ratio:` — correct boundary inclusion (ratio == min_ratio passes, as expected).",
+        "M8 config flag `PHASE2_MONTHLY_ADMISSION_MIN_RATIO = 0.667` is the new default for the non-island path (line 572).",
+        "Island path (line 1860-1863) uses `island_hyperparams.monthly_admission_min_profitable_ratio` (default 0.667 fallback). Island path is unchanged from prior behavior.",
+        "Empirical test: a rule with 3/6 = 0.5 profitable months is correctly REJECTED under the new 0.667 threshold; graceful degradation returns the original pool (verified by direct call to `_apply_monthly_admission_gate`)."
+      ]
+    },
+    "M1_empirical_verification": {
+      "status": "PASS",
+      "evidence": [
+        "All-winning dataset: per_symbol_metrics = {A: win_rate=100.00, B: win_rate=100.00} (was 0.0 in pre-fix).",
+        "All-losing dataset: per_symbol_metrics = {LOSE: win_rate=0.00}.",
+        "Mixed dataset: {WINNER: win_rate=100.00, LOSER: win_rate=0.00} — per-symbol win_rate correctly reflects per-symbol outcomes.",
+        "Empty dataset: per_symbol_metrics = {} (no error, no division by zero)."
+      ]
+    },
+    "test_adequacy": {
+      "status": "PASS_WITH_NOTES",
+      "evidence": [
+        "243/243 relevant tests pass in 84s (1 pre-existing unrelated deselect).",
+        "M8 test updates correctly model the new 0.667 threshold: boundary cases (0.5, 0.33) now expected to fail; graceful degradation is exercised.",
+        "M1 fix has NO new direct unit test. Existing `test_property_28_per_symbol_metrics_consistency` only checks trade_count and net_pnl, not win_rate. The bug is structurally unlikely to regress now (the if/else branch is straightforward and `sym_wins` is now plumbed through), so a dedicated regression test is nice-to-have, not a blocker. Recommend adding one in a follow-up cleanup task.",
+        "M8 tests rely on the actual config value (0.667) and don't monkeypatch the new flag. A future revert of the config flag would silently pass the tests. Recommend adding `monkeypatch.setattr(_cfg, 'PHASE2_MONTHLY_ADMISSION_MIN_RATIO', 0.667)` for explicitness. Non-blocking."
+      ]
+    },
+    "dead_code_AGENTS_compliance": {
+      "status": "PASS",
+      "evidence": [
+        "Diff is 115 ins / 42 del across 7 files — no dead code added.",
+        "AGENTS.md 'remove wasted/old implementation' rule satisfied: old hardcoded 0.500 was replaced (not duplicated), old comment 'cannot compute without per-trade outcome tracking' was removed (not preserved alongside the new code).",
+        "evaluator_v5.ipynb confirmed unchanged (not in diff).",
+        "data/splitter.py confirmed unchanged (not in diff, M2 was investigation-only)."
+      ]
+    }
+  },
+  "out_of_scope_check": {
+    "status": "PASS",
+    "notes": "Diff matches the 7 files in the implementer handoff exactly. No unrelated refactors, no scope creep."
+  },
+  "minor_notes": [
+    "[LOW] Stale docstring: `_apply_monthly_admission_gate` (phase2_rule_pool.py:1836) still references `PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO` in the docstring, but the actual code now uses the new `PHASE2_MONTHLY_ADMISSION_MIN_RATIO` for the non-island path. Docstring is slightly stale. Cosmetic only — does not affect behavior.",
+    "[LOW] Stale comment: cpu_engine.py:1106 says 'Approximate from accumulated counters' — net_pnl and wins are now exact, not approximate. Suggest rewording to 'Built from accumulated counters' for clarity. Cosmetic only.",
+    "[LOW] M1 regression test gap: no dedicated unit test that calls `simulate_rule_set(..., return_logs=False)` and asserts `per_symbol_metrics[sym]['win_rate'] > 0`. The property test (`test_property_28_per_symbol_metrics_consistency`) only checks trade_count and net_pnl. Recommend adding a focused regression test (e.g., test_per_symbol_win_rate_non_log_path) in a follow-up to lock in the fix. Non-blocking — the code path is now structurally simple.",
+    "[LOW] M6 cache log is added on every generation (in both branches of _evaluate_population_indices) rather than only at gen 0 as suggested by the spec. At debug level this is fine; if the spec's gen-0-only intent was important, recommend wrapping in `if generation == 0:`. Non-blocking."
+  ],
+  "verdict_rationale": "All 5 specific checks (M1 win-condition, M1 zero-safety, M1 both-paths, M6 debug-level, M8 ratio-comparison) PASS. Empirical M1 verification confirms per-symbol win_rate is correctly computed in the non-log path. M2 investigation is well-documented with split boundaries, regime-flip table, and a clear recommendation. M6 cache log is at debug level (not info) so won't spam. M8 0.667 threshold is correctly enforced with graceful degradation. The 4 minor notes are all LOW severity (stale docstring/comment, missing regression test, log-every-gen vs gen-0) and non-blocking. Implementation matches the spec, all tests pass, evaluator_v5 and data/splitter.py untouched."
+}

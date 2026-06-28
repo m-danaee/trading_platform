@@ -21,13 +21,14 @@ convergence. 27 fixes across 6 tasks.
 
 ## Current Task
 
-**task-18: Admission Gates & Robustness** — branch `fix/admission-gates-robustness`
-Status: dispatching implementer
+**task-19: Cleanup & Observability** — branch `fix/cleanup-observability`
+Status: dispatching implementer (FINAL TASK)
 
 ### task-14 — ✅ MERGED (f240490)
 ### task-15 — ✅ MERGED (eb5bf05)
 ### task-16 — ✅ MERGED (3326146)
 ### task-17 — ✅ MERGED (e350d03)
+### task-18 — ✅ MERGED (c2d9f2f)
 
 ## Task Summary (6 tasks, sequential, isolated branches)
 
@@ -37,8 +38,8 @@ Status: dispatching implementer
 | 15 | `fix/fitness-objective-redesign` | C5,C6,C7,H1,H2,M3 — symbol-lock, f1/f3, Sortino sat, val leak | 🔴 Critical | ✅ MERGED |
 | 16 | `fix/evolution-convergence` | H3,H5,M4,M5 — restart, state carry-over, normalization | 🟠 High | ✅ MERGED |
 | 17 | `fix/island-migration-rule-structure` | H4,H6 — migration enable, MIN/MAX_CONDITIONS | 🟠 High | ✅ MERGED |
-| 18 | `fix/admission-gates-robustness` | M1,M2,M6,M8 — per-symbol WR bug, cache, monthly gate | 🟡 Medium | **in_progress** |
-| 19 | `fix/cleanup-observability` | L1–L6 — dead code, EvoX warn, Das-Dennis, viability trigger | 🟢 Low | pending |
+| 18 | `fix/admission-gates-robustness` | M1,M2,M6,M8 — per-symbol WR bug, cache, monthly gate | 🟡 Medium | ✅ MERGED |
+| 19 | `fix/cleanup-observability` | L1–L6 — dead code, EvoX warn, Das-Dennis, viability trigger | 🟢 Low | **in_progress** |
 
 ## Execution Order
 

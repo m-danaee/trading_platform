@@ -1,0 +1,58 @@
+{
+  "task": "task-19",
+  "reviewer": "spec-reviewer",
+  "status": "APPROVED",
+  "branch": "fix/cleanup-observability",
+  "base_branch": "main",
+  "commit": "5c8dcf4",
+  "review_date": "2026-06-28",
+  "summary": "All 6 cleanup & observability items (L1-L6) faithfully implemented per task spec. Tests pass, evaluator_v5.ipynb untouched, no dead code remaining.",
+  "criteria_verification": {
+    "L1_agent_debug_log_removed": {
+      "status": "PASS",
+      "evidence": "grep -rn \"_agent_debug_log\" gpu_fuzzy_trader/ returns no matches. Diff shows function definition and # #region agent log comment block removed. No call sites remain."
+    },
+    "L2_evox_warning_once_per_process": {
+      "status": "PASS",
+      "evidence": "_EVOX_WARNED module-level flag (evox_runner.py:74). _warn_evox_unavailable() emits logger.warning(\"EvoX unavailable (%s); falling back to NSGA-II. Pipeline config may specify NSGA3 — verify evox/torch installation.\", _EVOX_IMPORT_ERROR) exactly once. Called at start of _nsga3_environmental_selection (line 1471) and _run_nsga2_fallback (line 1594). Spec match: ✓."
+    },
+    "L3_plateau_restart_log": {
+      "status": "PASS",
+      "evidence": "Both NSGA-II and EvoX paths use log format \"(restart %d/%d, reinit %.0f%%, elite_kept=%d, mutation=%.2f)\" (lines 1845, 2416). Generation log lines include restarts=\"%d/%d\" (lines 1776, 2346) via updated log_progress.py which accepts restarts parameter. Spec match: ✓."
+    },
+    "L4_viability_collapse_trigger": {
+      "status": "PASS",
+      "evidence": "Config flags PHASE2_VIABILITY_COLLAPSE_THRESHOLD=0.5 and PHASE2_VIABILITY_COLLAPSE_STREAK=3 added at config.py:737-747 with explanatory comments. Trigger implemented in both NSGA-II fallback (lines 1715-1760) and EvoX paths (lines 2185-2230). Includes streak counter, threshold comparison, restart invocation, counter reset, and post-restart boost. Log message format matches spec: \"Phase 2 [%s]: viability-collapse restart at gen %d (pop_viable=%d < %d, streak=%d)\"."
+    },
+    "L5_sample_df_docstring": {
+      "status": "PASS",
+      "evidence": "_sample_df docstring now has Args section with random_state entry prefixed by '**Intentionally ignored.**' and full explanation about chronology-preserving deterministic sampling. del random_state comment retained. Spec match: ✓."
+    },
+    "L6_das_dennis_fallback": {
+      "status": "PASS",
+      "evidence": "_das_dennis(n_partitions, n_objs) function added at line 1074 using itertools.product and sum-filter over simplex. _get_reference_vectors fallback path increases n_partitions from n_objs until len(refs) >= pop_size (with safety cap at 100). Random simplex padding replaces the previously biased [t, (1-t)/2, (1-t)/2] fill. Uniform simplex coverage achieved."
+    },
+    "no_dead_code": {
+      "status": "PASS",
+      "evidence": "Only previously dead symbol was _agent_debug_log (now removed). No other obvious dead code introduced. Net +50 lines in evox_runner.py are all functional: viability trigger blocks (~50 lines × 2 paths), _das_dennis helper, _warn_evox_unavailable, expanded log messages."
+    },
+    "tests_pass": {
+      "status": "PASS",
+      "evidence": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_evox_runner.py -x -q → 21 passed in 8.96s. Full filter: tests/unit/ -k 'evox or reference_vector' → 21 passed, 1234 deselected in 9.64s."
+    },
+    "evaluator_v5_not_modified": {
+      "status": "PASS",
+      "evidence": "evaluator_v5.ipynb not in commit file list. git diff main...fix/cleanup-observability does not include it."
+    }
+  },
+  "out_of_scope_additions": {
+    "status": "NONE",
+    "details": "No out-of-scope changes. Modified files are exactly the four spec-listed files (evox_runner.py, config.py, phase2_rule_pool.py) plus log_progress.py which was necessarily touched to thread the restarts={n}/{max} through the gen-log pipeline (implementer documented this)."
+  },
+  "spec_fidelity_notes": [
+    "L3 plateau log variables: spec used n_elite_kept/effective_mutation_rate; implementation uses elite_kept/mutation_rate matching actual code variable names. Format string and semantics identical. Acceptable naming alignment.",
+    "L4: getatrr defaults for both THRESHOLD (0.5) and STREAK (3) preserved as defensive fallback in case config flag is missing — extends spec safely.",
+    "log_progress.py change (5 lines): adds restarts kwarg to log_generation and maybe_log_generation to surface restart counter in gen log. Required plumbing for L3 generation log criterion; not an out-of-scope addition."
+  ],
+  "verdict": "APPROVED"
+}

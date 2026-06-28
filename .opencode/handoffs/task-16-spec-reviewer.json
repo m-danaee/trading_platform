@@ -1,0 +1,80 @@
+{
+  "task": "task-16",
+  "verdict": "APPROVED",
+  "reviewer": "spec-reviewer",
+  "branch": "fix/evolution-convergence",
+  "commit": "05f6399",
+  "base_branch": "main",
+  "reviewed_at": "2026-06-28",
+  "files_changed": [
+    "gpu_fuzzy_trader/config.py",
+    "gpu_fuzzy_trader/evolution/evox_runner.py",
+    "gpu_fuzzy_trader/phases/phase2_rule_pool.py",
+    "tests/unit/test_phase2_plateau_restart.py"
+  ],
+  "spec_compliance": {
+    "h3_plateau_restart": {
+      "PHASE2_PLATEAU_MAX_RESTARTS_=3": "✓ config.py:723",
+      "evox_runner_reads_max_restarts": "✓ uses getattr(_cfg, 'PHASE2_PLATEAU_MAX_RESTARTS', 1) at lines 1728, 2362",
+      "PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT_=0.5": "✓ config.py:679",
+      "PHASE2_PLATEAU_DIVERSITY_RESTART_FRACTION_=0.65": "✓ config.py:699",
+      "PHASE2_PLATEAU_POST_RESTART_MUTATION_BOOST_=0.45": "✓ config.py:712",
+      "PHASE2_PLATEAU_POST_RESTART_BOOST_GENS_=3": "✓ config.py:718",
+      "post_restart_gens_remaining_in_State": "✓ evox_runner.py:58 (dataclass field added)",
+      "boost_lasts_3_gens_then_anneals": "✓ verified by test_phase2_plateau_restart integration test — gens 3,4,5 boosted; gen 6 reverts to base rate",
+      "n_elite_=min(2,...)": "✓ evox_runner.py:792 (was min(5))"
+    },
+    "h5_epoch_state_carryover": {
+      "global_metrics_cache_cleared_for_seeded_keys": "✓ phase2_rule_pool.py:2828-2835 — uses chromosome_key for both seed encoding and cache lookup, only clears matching keys",
+      "PHASE2_HOF_EPOCH_CARRYOVER_=10": "✓ config.py:613",
+      "hall_of_fame_trimmed_at_epoch_start": "✓ phase2_rule_pool.py:2837-2843 — caps to first N by insertion order (matches spec's 'Simplest' comment)",
+      "_select_diverse_subset_implemented": "✓ evox_runner.py:745 — greedy max-min Hamming (sparse-aware via is_sparse_chromosome/sparse_hamming)",
+      "_select_diverse_subset_used": "✓ evox_runner.py:679 in _inject_diversity_recovery (replaces top-K selection)"
+    },
+    "m4_hamming_threshold_auto": {
+      "PHASE2_DIVERSITY_HAMMING_THRESHOLD_AUTO_=True": "✓ config.py:608",
+      "threshold_=_max(3,_k_active_//_5)": "✓ phase2_rule_pool.py:639-640"
+    },
+    "m5_rank_based_normalization": {
+      "_normalize_for_association_rank_based": "✓ evox_runner.py:1347-1375 — manual average-rank with tie grouping (np.argsort mergesort + tie group averaging, no scipy dependency)"
+    },
+    "tests": {
+      "command": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/ -x -q -k 'plateau or evox or restart or diversity or normalize'",
+      "result": "55 passed, 1175 deselected in 17.18s"
+    },
+    "evaluator_v5_untouched": "✓ not in diff",
+    "out_of_scope_additions": "none — diff is focused on the four declared files"
+  },
+  "verification_details": {
+    "post_restart_boost_3_gens": "Test asserts mutation_rates[2,3,4] == 0.45 (boosted) and mutation_rates[5] == base_mr (annealed). 3 boosted gens confirmed.",
+    "max_restarts_from_config": "Both _run_nsga2_fallback (line 1728) and _run_nsga3 (line 2362) read PHASE2_PLATEAU_MAX_RESTARTS via getattr. No hardcoded comparison against literal 1 in restart gate logic — only the getattr default is 1.",
+    "cache_clearing_targets_deployable_keys": "The cache is keyed by chromosome_key() tuples. The clear loop computes seeded_keys from the same chromosome_key() of seed_chromosomes and pops only exact matches — other cache entries are preserved.",
+    "hof_trimming_strategy": "Implementation keeps first N by insertion order. Spec explicitly accepted this as a 'Simplest' fallback (insertion order ≈ discovery order). NOTE: insertion order is not a strict rank-by-deployability cut — if HoF entries are inserted out of rank order, the trim is approximate. This is a known limitation noted in the spec, not a regression.",
+    "rank_normalization_ties": "Manual average-rank with tied groups: after argsort+arange, the loop identifies runs of equal sorted_fit values and replaces ranks[order[i:j_tie]] with mean(ranks[order[i:j_tie]]). Handles ties correctly without scipy.",
+    "_select_diverse_subset_maxmin": "Greedy farthest-point traversal: starts with chromosomes[0], then repeatedly picks argmax of min(Hamming to chosen). This is a correct max-min diversity sampling. Uses sparse_hamming for sparse chromosomes."
+  },
+  "minor_observations": [
+    {
+      "issue": "Test docstring at tests/unit/test_phase2_plateau_restart.py:7 is outdated",
+      "detail": "Docstring says 'mutation_rate is boosted for one gen then restored' but the actual (and tested) behavior is 3 gens.",
+      "severity": "cosmetic",
+      "blocking": false,
+      "note": "The test assertions themselves are correct (verify 3 boosted gens); only the docstring summary is stale."
+    },
+    {
+      "issue": "post_restart_gens_remaining not stored in final_state",
+      "detail": "The boost counter is a local variable in _run_nsga2_fallback / _run_nsga3. The final_state at line 2454 does NOT include post_restart_gens_remaining. If Stage A is interrupted by Stage B transition while a boost is in progress, the remaining boost gens are lost.",
+      "severity": "minor behavioral",
+      "blocking": false,
+      "note": "Spec only required (1) the dataclass field and (2) the 3-gen behavior. It did not explicitly mandate Stage-A→Stage-B carry-over for the boost. The local-variable approach is functionally complete for the documented AC. If cross-stage persistence is later required, add post_restart_gens_remaining=post_restart_gens_remaining to the final_state construction."
+    },
+    {
+      "issue": "Stage B seeding path does not call _select_diverse_subset",
+      "detail": "Spec said 'In _inject_diversity_recovery and Stage B seeding paths: replace top-K selection with _select_diverse_subset.' Stage B seeds (line 1995-2000) come from external caller and are applied directly with no internal top-K selection to replace — the spec's prescription is therefore not applicable here. _inject_diversity_recovery does use it.",
+      "severity": "spec interpretation",
+      "blocking": false
+    }
+  ],
+  "verdict_rationale": "All hard acceptance criteria from task-16 are met. The 55 unit tests for plateau/evox/restart/diversity/normalize pass. Config values match spec exactly. evox_runner reads max_restarts from config (no hardcoded 1 in restart gate). Boost lasts exactly 3 gens (verified). n_elite cap is 2. Cache clearing uses chromosome_key correctly. HoF is capped to 10. _select_diverse_subset is implemented with max-min Hamming and used in _inject_diversity_recovery. Hamming threshold auto-scales as max(3, k//5). Rank-based normalization handles ties. evaluator_v5.ipynb untouched. Out-of-scope changes: none. The three minor observations are non-blocking and either cosmetic or fall outside the strict spec scope.",
+  "next_step": "Dispatch @code-reviewer for behavioral review."
+}
