@@ -1778,6 +1778,152 @@ class TestArchiveMetadata:
         assert "robust_score" in annotated[0]
 
 
+class TestIslandAwareTradeFloor:
+    """Tests for island-aware hard reject floor and config constant usage."""
+
+    def test_island_floor_respected_when_provided(self, monkeypatch):
+        """When island_hyperparams.min_trade_pool_floor=15 and executed=20,
+        no hard-reject penalty should fire (20 >= 15), even though global
+        MIN_TRADE_POOL_FLOOR=25 would normally reject 20."""
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+            compute_phase2_objectives_from_metrics,
+        )
+
+        monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 25)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
+        monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
+        monkeypatch.setattr(_cfg, "PHASE2_RETURN_FLOOR_PCT", -100.0)
+        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR", 0.0)
+        monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", False)
+        monkeypatch.setattr(_cfg, "PHASE2_MAX_DRAWDOWN_GATE", 200.0)
+        monkeypatch.setattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ", False)
+
+        island = _cfg.IslandHyperparams(
+            profile="cluster",
+            min_trade_support=10,
+            min_trade_pool_floor=15,
+            sortino_min_trade_threshold=10,
+            val_trade_floor=5,
+            min_profitable_symbols=2,
+            monthly_admission_min_months=3,
+            monthly_admission_min_profitable_ratio=0.5,
+            skip_symbol_robustness_penalty=True,
+            n_rows=1000,
+            n_symbols=5,
+        )
+
+        dont_cares = np.full(4, 5, dtype=np.int32)
+        chrom = np.array([0, 1, 2, 3], dtype=np.int32)
+        metrics = {
+            "executed_trades": 20,  # >= 15 (island floor) but < 25 (global floor)
+            "total_return_pct": 5.0,
+            "sortino_ratio": 1.0,
+            "max_drawdown_pct": 2.0,
+            "win_rate": 50.0,
+            "profit_factor": 1.2,
+        }
+
+        # With island_hyperparams: 20 >= 15 → no hard reject penalty
+        objectives_with, _ = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, metrics, [],
+            island_hyperparams=island,
+        )
+        # f2 = dd_for_obj(2.0) + 0 support + 0 dd_gate + 0 trade = 2.0
+        assert np.isclose(objectives_with[1], 2.0, atol=0.1), (
+            f"Expected f2 ≈ 2.0 (no trade penalty), got {objectives_with[1]}"
+        )
+
+        # Without island_hyperparams: 20 < 25 → hard reject penalty on f2
+        objectives_without, _ = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, metrics, [],
+            island_hyperparams=None,
+        )
+        # f2 = dd_for_obj(100) + 0 support + 0 dd_gate(100<200) + trade(50) = 150.0
+        assert np.isclose(objectives_without[1], 150.0, atol=0.1), (
+            f"Expected f2 ≈ 150 (100 dd + 50 penalty), got {objectives_without[1]}"
+        )
+
+    def test_penalty_uses_config_constant(self, monkeypatch):
+        """When the trade floor is triggered, trade_penalty should equal
+        PHASE2_INFEASIBLE_OBJECTIVE_PENALTY, not a hardcoded 50.0."""
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+            compute_phase2_objectives_from_metrics,
+        )
+
+        monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 100)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
+        monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
+        monkeypatch.setattr(_cfg, "PHASE2_INFEASIBLE_OBJECTIVE_PENALTY", 99.9)
+        monkeypatch.setattr(_cfg, "PHASE2_RETURN_FLOOR_PCT", -100.0)
+        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR", 0.0)
+        monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", False)
+        monkeypatch.setattr(_cfg, "PHASE2_MAX_DRAWDOWN_GATE", 200.0)
+        monkeypatch.setattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ", False)
+
+        dont_cares = np.full(4, 5, dtype=np.int32)
+        chrom = np.array([0, 1, 2, 3], dtype=np.int32)
+        metrics = {
+            "executed_trades": 10,  # < 100 → hard reject
+            "total_return_pct": 5.0,
+            "sortino_ratio": 1.0,
+            "max_drawdown_pct": 2.0,
+            "win_rate": 50.0,
+            "profit_factor": 1.2,
+        }
+
+        objectives, _ = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, metrics, [],
+        )
+        # f2 = dd_for_obj(100) + 0 support + 0 dd_gate(100<200) + trade(99.9) = 199.9
+        assert np.isclose(objectives[1], 199.9, atol=0.1), (
+            f"Expected f2 ≈ 199.9 (100 dd + 99.9 penalty), got {objectives[1]}"
+        )
+        # f3 = -f3_val(0) + 0 support + 0 diversity + 0 cond + trade(99.9) = 99.9
+        assert np.isclose(objectives[2], 99.9, atol=0.1), (
+            f"Expected f3 ≈ 99.9 (0 + 99.9 penalty), got {objectives[2]}"
+        )
+
+    def test_fallback_to_effective_floor(self, monkeypatch):
+        """When island_hyperparams is None, trade_floor falls back to
+        effective_min_trade_pool_floor(n_valid_rows)."""
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+            compute_phase2_objectives_from_metrics,
+        )
+
+        monkeypatch.setattr(_cfg, "SPLIT_MODE", "holdout_70_30")
+        monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 25)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
+        monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
+        monkeypatch.setattr(_cfg, "PHASE2_RETURN_FLOOR_PCT", -100.0)
+        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR", 0.0)
+        monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", False)
+        monkeypatch.setattr(_cfg, "PHASE2_MAX_DRAWDOWN_GATE", 200.0)
+        monkeypatch.setattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ", False)
+
+        dont_cares = np.full(4, 5, dtype=np.int32)
+        chrom = np.array([0, 1, 2, 3], dtype=np.int32)
+        metrics = {
+            "executed_trades": 20,  # < 25 → hard reject
+            "total_return_pct": 5.0,
+            "sortino_ratio": 1.0,
+            "max_drawdown_pct": 2.0,
+            "win_rate": 50.0,
+            "profit_factor": 1.2,
+        }
+
+        # Without island, with n_valid_rows: effective_min_trade_pool_floor(500)
+        # will return MIN_TRADE_POOL_FLOOR=25 (since not in purged WF mode).
+        # So 20 < 25 → penalty fires → f2 = 100 + 50 = 150
+        objectives, _ = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, metrics, [],
+            n_valid_rows=500,
+            island_hyperparams=None,
+        )
+        assert np.isclose(objectives[1], 150.0, atol=0.1), (
+            f"Expected f2 ≈ 150 (100 dd + 50 penalty), got {objectives[1]}"
+        )
+
+
 class TestConditionBounds:
     def test_config_allows_bounded_conditions(self):
         assert _cfg.MIN_CONDITIONS == 3

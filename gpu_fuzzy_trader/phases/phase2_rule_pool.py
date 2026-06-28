@@ -637,12 +637,15 @@ def compute_phase2_objectives_from_metrics(
             )
 
     trade_penalty = 0.0
-    trade_floor = _cfg.MIN_TRADE_POOL_FLOOR
+    if island_hyperparams is not None:
+        trade_floor = int(island_hyperparams.min_trade_pool_floor)
+    else:
+        trade_floor = _cfg.effective_min_trade_pool_floor(n_valid_rows)
     if executed < trade_floor:
         dd_for_obj = 100.0
         sortino_for_obj = 0.0
         f3_val = 0.0
-        trade_penalty = 50.0
+        trade_penalty = float(_cfg.PHASE2_INFEASIBLE_OBJECTIVE_PENALTY)
 
     metrics["phenotype_bucket"] = _phenotype_bucket_key(
         sortino_for_obj, dd_for_obj, f3_val,
