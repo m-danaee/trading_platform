@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -65,23 +65,6 @@ def resolve_evolution_floors(
             stage_params.pool_require_positive_splits
         ),
     )
-
-
-def to_host_numpy(
-    x: Any,
-    *,
-    dtype: np.dtype | type | None = None,
-) -> np.ndarray | None:
-    """Coerce JAX/DeviceArray or sequences to a host NumPy array."""
-    if x is None:
-        return None
-    if isinstance(x, np.ndarray):
-        arr = x
-    else:
-        arr = np.asarray(x)
-    if dtype is not None:
-        arr = arr.astype(dtype, copy=False)
-    return np.asarray(arr)
 
 
 def _static_support_penalty(

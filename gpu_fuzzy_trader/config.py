@@ -118,8 +118,6 @@ OUTPUTS_DIR = "outputs"
 RUN_LOG_PATH = os.path.join(OUTPUTS_DIR, "run.log")
 REPORTS_DIR = "outputs/reports"
 
-# Per-run Phase 2 artifacts (rewritten under --output).
-PHASE2_POOL_DIR = OUTPUTS_DIR
 PHASE2_POOL_PATHS = {
     "long": os.path.join(OUTPUTS_DIR, "phase2_long_pool.json"),
     "short": os.path.join(OUTPUTS_DIR, "phase2_short_pool.json"),
@@ -1302,13 +1300,6 @@ PHASE4_MIN_TP_SL_RATIO = 1.2
 PHASE4_CAPITAL_PCT_MIN = 10.0
 PHASE4_CAPITAL_PCT_MAX = 30.0
 
-# PHASE4_TP_STEP / SL_STEP / CAPITAL_STEP — Optuna discretization granularity.
-#   Smaller steps → finer search, more trials needed to explore space.
-#   Larger steps → coarser optimum, faster convergence per trial.
-PHASE4_TP_STEP = 0.5
-PHASE4_SL_STEP = 0.5
-PHASE4_CAPITAL_STEP = 5.0
-
 # --- Optuna budget ---
 
 
@@ -1330,14 +1321,6 @@ PHASE4_INCLUDE_TAIL_HOLDOUT = True
 #   Higher → more recent data held out; fewer trades in WF folds.
 #   Lower  → more data in WF folds; less independent tail check.
 PHASE4_TAIL_HOLDOUT_FRACTION = 0.25
-
-# Worst-fold objective weights (emphasize tail risk across WF windows).
-#   Higher WORST_RETURN_WEIGHT → optimizer prioritizes worst-window return.
-#   Higher WORST_DRAWDOWN_WEIGHT → penalize strategies that blow up in one window.
-#   Higher WORST_TURNOVER_WEIGHT → penalize fee-heavy params in worst window.
-PHASE4_WORST_RETURN_WEIGHT = 1.5
-PHASE4_WORST_DRAWDOWN_WEIGHT = 2.0
-PHASE4_WORST_TURNOVER_WEIGHT = 0.5
 
 # --- Feasibility filters (trial rejected if any fail) ---
 
@@ -1706,7 +1689,6 @@ RB_PROFIT_AMP_KEEP_BASELINE_UNLESS_BETTER: bool = True
 # --- Cross-run global bank (disabled by default to keep runs isolated) ---
 
 RB_GLOBAL_BANK_ENABLED: bool = False
-RB_GLOBAL_COMPOSE_AFTER_EACH_RUN: bool = False
 RB_GLOBAL_BANK_DIRNAME: str = "rb_bank"
 RB_GLOBAL_BANK_MAX_RULES_PER_DIRECTION: int = 700
 RB_GLOBAL_BANK_IMPORT_TOP_SINGLE_RULES: int = 80

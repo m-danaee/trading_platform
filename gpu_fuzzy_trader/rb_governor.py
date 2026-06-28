@@ -133,14 +133,6 @@ def _evaluator_health_penalty(metrics: dict, *, role: str = "valid") -> float:
     return float(penalty)
 
 
-def _rule_risk_ok(rule: dict) -> bool:
-    if not bool(getattr(_cfg, "RB_REQUIRE_TP_SL_ABOVE_ONE", True)):
-        return True
-    tp = float(rule.get("tp", getattr(_cfg, "RB_DEFAULT_TP", 2.0)))
-    sl = float(rule.get("sl", getattr(_cfg, "RB_DEFAULT_SL", 1.2)))
-    return tp >= float(getattr(_cfg, "RB_MIN_TP", 1.0)) and sl >= float(getattr(_cfg, "RB_MIN_SL", 1.0))
-
-
 def _rule_to_engine(rule: dict) -> dict:
     tp = float(rule.get("tp", getattr(_cfg, "RB_DEFAULT_TP", 2.0)))
     sl = float(rule.get("sl", getattr(_cfg, "RB_DEFAULT_SL", 1.2)))
@@ -433,12 +425,6 @@ def _is_positive_good(train_m: dict, valid_m: dict, *, min_train_trades: int | N
         and execution_ok(train_m)
         and execution_ok(valid_m)
     )
-
-
-def _combined_train_df(train_df: pd.DataFrame, val_df: pd.DataFrame | None) -> pd.DataFrame:
-    if val_df is None or len(val_df) == 0:
-        return train_df
-    return downcast_numeric_df(pd.concat([train_df, val_df], ignore_index=True, sort=False))
 
 
 def _prepare_scoring_frame(df: pd.DataFrame) -> pd.DataFrame:
