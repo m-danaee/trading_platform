@@ -1,0 +1,35 @@
+{
+  "task": "task-19",
+  "status": "DONE",
+  "branch": "fix/cleanup-observability",
+  "summary": "Implemented all 6 cleanup & observability items (L1–L6).",
+  "changes": [
+    {
+      "file": "gpu_fuzzy_trader/evolution/evox_runner.py",
+      "description": "Removed dead _agent_debug_log function and all 6 call sites. Added _EVOX_WARNED flag and _warn_evox_unavailable() called at start of _run_nsga2_fallback and _nsga3_environmental_selection. Updated plateau restart log to include mutation rate. Added restarts={n}/{max} to generation log lines. Added viability-collapse trigger (PHASE2_VIABILITY_COLLAPSE_THRESHOLD/STREAK) in both main loops. Replaced biased reference-vector fallback with proper Das-Dennis uniform simplex."
+    },
+    {
+      "file": "gpu_fuzzy_trader/config.py",
+      "description": "Added PHASE2_VIABILITY_COLLAPSE_THRESHOLD=0.5 and PHASE2_VIABILITY_COLLAPSE_STREAK=3 config flags."
+    },
+    {
+      "file": "gpu_fuzzy_trader/log_progress.py",
+      "description": "Added restarts parameter to log_generation() and maybe_log_generation() for restarts={n}/{max} in gen log."
+    },
+    {
+      "file": "gpu_fuzzy_trader/phases/phase2_rule_pool.py",
+      "description": "Updated _sample_df docstring to clarify random_state is intentionally ignored."
+    }
+  ],
+  "acceptance_criteria": {
+    "L1": "PASS - _agent_debug_log deleted, no call sites remain",
+    "L2": "PASS - _warn_evox_unavailable logged at WARNING once per process",
+    "L3": "PASS - plateau restart logs restart n/max, mutation rate, elite count; gen log includes restarts=n/max",
+    "L4": "PASS - viability-collapse trigger with PHASE2_VIABILITY_COLLAPSE_THRESHOLD=0.5, STREAK=3",
+    "L5": "PASS - _sample_df docstring clarifies random_state is intentionally ignored",
+    "L6": "PASS - _get_reference_vectors fallback uses Das-Dennis uniform simplex coverage",
+    "tests": "PASS - 21 passed in ~9s",
+    "evaluator_v5.ipynb": "PASS - not modified"
+  },
+  "commit_message": "task-19: cleanup & observability (L1–L6) — dead code, EvoX warn, restart logs, viability trigger, Das-Dennis"
+}

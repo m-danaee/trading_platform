@@ -71,18 +71,18 @@ def trim_evolution_state_memory(
     _trim_global_metrics_cache(state.global_metrics_cache, max_cache)
 
 
-# #region agent log
+_EVOX_WARNED = False
 
 
-def _agent_debug_log(
-    hypothesis_id: str,
-    location: str,
-    message: str,
-    data: dict,
-    *,
-    run_id: str = "pre-fix",
-) -> None:
-    return
+def _warn_evox_unavailable() -> None:
+    global _EVOX_WARNED
+    if not _EVOX_AVAILABLE and not _EVOX_WARNED:
+        logger.warning(
+            "EvoX unavailable (%s); falling back to NSGA-II. "
+            "Pipeline config may specify NSGA3 — verify evox/torch installation.",
+            _EVOX_IMPORT_ERROR,
+        )
+        _EVOX_WARNED = True
 
 
 _EVOX_AVAILABLE = False
@@ -1056,6 +1056,17 @@ def _make_offspring_population(
     return np.stack(offspring_list[:pop_size], axis=0)
 
 
+def _das_dennis(n_partitions: int, n_objs: int) -> np.ndarray:
+    """Das-Dennis reference vectors on the unit simplex."""
+    from itertools import product
+
+    points: list[list[float]] = []
+    for combo in product(range(n_partitions + 1), repeat=n_objs):
+        if sum(combo) == n_partitions:
+            points.append([c / n_partitions for c in combo])
+    return np.array(points, dtype=np.float64)
+
+
 def _get_reference_vectors(
     pop_size: int,
     n_objs: int = 3,
@@ -1070,18 +1081,22 @@ def _get_reference_vectors(
             refs = np.vstack([refs, extra.cpu().numpy()])
         return refs[:pop_size]
 
-    refs = np.array(
-        [
-            [1.0, 1e-6, 1e-6],
-            [1e-6, 1.0, 1e-6],
-            [1e-6, 1e-6, 1.0],
-        ],
-        dtype=np.float64,
-    )
+    # Das-Dennis fallback: increase partitions until >= pop_size
+    n_partitions = n_objs  # start small
+    while True:
+        refs = _das_dennis(n_partitions, n_objs)
+        if len(refs) >= pop_size:
+            return refs[:pop_size]
+        n_partitions += 1
+        if n_partitions > 100:  # safety
+            break
+    # Pad with random simplex points if still short
     fallback_rng = rng if rng is not None else np.random.default_rng()
     while len(refs) < pop_size:
-        t = fallback_rng.random()
-        refs = np.vstack([refs, np.array([t, (1 - t) / 2, (1 - t) / 2])])
+        r = fallback_rng.random(n_objs - 1)
+        r = np.sort(r)
+        last = np.concatenate([[r[0]], np.diff(r), [1 - r[-1]]])
+        refs = np.vstack([refs, last])
     return refs[:pop_size]
 
 
@@ -1438,6 +1453,7 @@ def _nsga3_environmental_selection(
     dont_cares: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """NSGA-III environmental selection (rank + niche on last front)."""
+    _warn_evox_unavailable()
     if not _EVOX_AVAILABLE or non_dominate_rank is None:
         pop, fit, selected = environmental_selection_nsga2(
             merge_pop, merge_fit, pop_size)
@@ -1560,6 +1576,7 @@ def _run_nsga2_fallback(
     island_hyperparams: _cfg.IslandHyperparams | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """NumPy NSGA-II loop when EvoX is not installed."""
+    _warn_evox_unavailable()
     from gpu_fuzzy_trader.phases.phase2_rule_pool import (
         _build_pool_from_archive,
         _evaluate_chromosome,
@@ -1608,6 +1625,10 @@ def _run_nsga2_fallback(
     # restart_count is per-stage (Stage A and Stage B each have their own),
     # deliberately more lenient than per-epoch.
     restart_count = 0
+    viability_collapse_streak = 0
+    max_restarts = int(getattr(
+        _cfg, "PHASE2_PLATEAU_MAX_RESTARTS", 1,
+    ))
     post_restart_gens_remaining: int = 0
 
     for gen in range(n_generations):
@@ -1683,6 +1704,46 @@ def _run_nsga2_fallback(
             pop_size,
             metrics_cache,
         )
+        # --- viability-collapse trigger: forced restart when viable pop is
+        #     persistently below threshold ---
+        pop_size_for_viability = max(pop_size, 1)
+        viability_threshold = int(
+            getattr(_cfg, "PHASE2_VIABILITY_COLLAPSE_THRESHOLD", 0.5)
+            * pop_size_for_viability
+        )
+        if pop_viable_count < viability_threshold:
+            viability_collapse_streak += 1
+        else:
+            viability_collapse_streak = 0
+        viability_collapse_patience = int(
+            getattr(_cfg, "PHASE2_VIABILITY_COLLAPSE_STREAK", 3)
+        )
+        if (
+            viability_collapse_streak >= viability_collapse_patience
+            and restart_count < max_restarts
+        ):
+            n_elite_kept = _plateau_diversity_restart(
+                population, objectives, metrics_cache,
+                feature_infos, rng,
+                pareto_indices=pareto_indices,
+                pop_size=pop_size,
+                init_strategy=init_strategy,
+                stratum_fractions=stratum_fractions,
+            )
+            restart_count += 1
+            pre_reset_streak = viability_collapse_streak
+            viability_collapse_streak = 0
+            post_restart_gens_remaining = int(getattr(
+                _cfg,
+                "PHASE2_PLATEAU_POST_RESTART_BOOST_GENS",
+                3,
+            ))
+            logger.info(
+                "Phase 2 [%s]: viability-collapse restart at gen %d "
+                "(pop_viable=%d < %d, streak=%d)",
+                tag, gen + 1, pop_viable_count, viability_threshold,
+                pre_reset_streak,
+            )
         plateau_best_progress, plateau_streak = _update_max_return_plateau(
             plateau_metric, plateau_best_progress, plateau_streak,
         )
@@ -1698,6 +1759,7 @@ def _run_nsga2_fallback(
             deployable_count=deployable_count,
             pop_viable_count=pop_viable_count,
             plateau_streak=plateau_streak,
+            restarts="%d/%d" % (restart_count, max_restarts),
             loop_start=gen_loop_start,
         )
 
@@ -1765,18 +1827,15 @@ def _run_nsga2_fallback(
                     restart_count += 1
                     plateau_streak = 0
                     logger.info(
-                        "%s: plateau restart at gen %d "
-                        "(restart %d/%d, reinit %.0f%%, elite_kept=%d)",
+                        "Phase 2 [%s]: plateau restart at gen %d "
+                        "(restart %d/%d, reinit %.0f%%, elite_kept=%d, mutation=%.2f)",
                         tag,
                         gen + 1,
                         restart_count,
                         max_restarts,
-                        float(getattr(
-                            _cfg,
-                            "PHASE2_PLATEAU_DIVERSITY_RESTART_FRACTION",
-                            0.40,
-                        )) * 100,
+                        float(_cfg.PHASE2_PLATEAU_DIVERSITY_RESTART_FRACTION) * 100,
                         elite_kept,
+                        mutation_rate,
                     )
                     continue  # skip env selection; go to next gen
             logger.info(
@@ -1971,6 +2030,10 @@ def _run_nsga3(
         # restart_count is per-stage (Stage A and Stage B each have their own),
         # deliberately more lenient than per-epoch.
         restart_count = 0
+        viability_collapse_streak = 0
+        max_restarts = int(getattr(
+            _cfg, "PHASE2_PLATEAU_MAX_RESTARTS", 1,
+        ))
         post_restart_gens_remaining: int = 0
     else:
         population = state.population
@@ -1994,6 +2057,10 @@ def _run_nsga3(
         # restart_count is per-stage — each stage gets its own count, which is
         # deliberately more lenient than sharing a single count per epoch.
         restart_count = 0
+        viability_collapse_streak = 0
+        max_restarts = int(getattr(
+            _cfg, "PHASE2_PLATEAU_MAX_RESTARTS", 1,
+        ))
         post_restart_gens_remaining = int(state.post_restart_gens_remaining)
         weighted_activate_prob = (
             state.weighted_activate_prob
@@ -2109,74 +2176,46 @@ def _run_nsga3(
             metrics_cache,
         )
 
-        # #region agent log
-        from gpu_fuzzy_trader.phases.phase2_sparse_encoding import chromosome_key
-
-        pop_keys = {chromosome_key(population[i]) for i in range(pop_size)}
-        trade_floor = int(_cfg.MIN_TRADE_POOL_FLOOR)
-        n_below_trade_floor = sum(
-            1
-            for i in range(pop_size)
-            if int(metrics_cache[i].get("executed_trades", 0)) < trade_floor
+        # --- viability-collapse trigger: forced restart when viable pop is
+        #     persistently below threshold ---
+        pop_size_for_viability = max(pop_size, 1)
+        viability_threshold = int(
+            getattr(_cfg, "PHASE2_VIABILITY_COLLAPSE_THRESHOLD", 0.5)
+            * pop_size_for_viability
         )
-        n_inf_obj = int(np.sum(np.any(np.isinf(objectives), axis=1)))
-        _agent_debug_log(
-            "A",
-            "evox_runner.py:_run_nsga3:pareto_diag",
-            "population vs pareto diversity",
-            {
-                "gen": gen,
-                "pop_size": pop_size,
-                "pareto_size": len(pareto_indices),
-                "pareto_unique_ratio": unique_ratio,
-                "pop_unique_ratio": pop_unique_ratio,
-                "pop_unique_count": len(pop_keys),
-                "mean_ret": mean_ret,
-                "max_ret": max_ret,
-                "valid_rules": val_count,
-                "deployable_count": deployable_count,
-                "diversity_recovery_would_trigger": (
-                    _should_inject_diversity_recovery(
-                        pop_unique_ratio,
-                        stage_params=stage_params,
-                        pareto_size=len(pareto_indices),
-                        plateau_streak=plateau_streak,
-                        pop_size=pop_size,
-                        valid_count=val_count,
-                    )
-                ),
-            },
-            run_id="post-fix",
+        if pop_viable_count < viability_threshold:
+            viability_collapse_streak += 1
+        else:
+            viability_collapse_streak = 0
+        viability_collapse_patience = int(
+            getattr(_cfg, "PHASE2_VIABILITY_COLLAPSE_STREAK", 3)
         )
-        _agent_debug_log(
-            "B",
-            "evox_runner.py:_run_nsga3:objective_health",
-            "population objective and trade-floor health",
-            {
-                "gen": gen,
-                "n_below_trade_floor": n_below_trade_floor,
-                "trade_floor": trade_floor,
-                "n_inf_objectives": n_inf_obj,
-                "obj_std_f1": float(pareto_diag.get("objective_std_f1", 0.0)),
-                "obj_std_f2": float(pareto_diag.get("objective_std_f2", 0.0)),
-                "obj_std_f3": float(pareto_diag.get("objective_std_f3", 0.0)),
-                "median_pairwise_hamming": float(
-                    pareto_diag.get("median_pairwise_hamming", 0.0)
-                ),
-            },
-        )
-        _agent_debug_log(
-            "C",
-            "evox_runner.py:_run_nsga3:parent_eval",
-            "parent evaluation cache stats",
-            {
-                "gen": gen,
-                "parent_pending": int(parent_stats.get("pending", 0)),
-                "parent_cache_hits": int(parent_stats.get("cache_hits", 0)),
-                "global_cache_size": len(global_metrics_cache),
-            },
-        )
-        # #endregion
+        if (
+            viability_collapse_streak >= viability_collapse_patience
+            and restart_count < max_restarts
+        ):
+            n_elite_kept = _plateau_diversity_restart(
+                population, objectives, metrics_cache,
+                feature_infos, rng,
+                pareto_indices=pareto_indices,
+                pop_size=pop_size,
+                init_strategy=init_strategy,
+                stratum_fractions=stratum_fractions,
+            )
+            restart_count += 1
+            pre_reset_streak = viability_collapse_streak
+            viability_collapse_streak = 0
+            post_restart_gens_remaining = int(getattr(
+                _cfg,
+                "PHASE2_PLATEAU_POST_RESTART_BOOST_GENS",
+                3,
+            ))
+            logger.info(
+                "Phase 2 [%s]: viability-collapse restart at gen %d "
+                "(pop_viable=%d < %d, streak=%d)",
+                tag, gen + 1, pop_viable_count, viability_threshold,
+                pre_reset_streak,
+            )
 
         plateau_best_progress, plateau_streak = _update_max_return_plateau(
             plateau_metric, plateau_best_progress, plateau_streak,
@@ -2232,25 +2271,6 @@ def _run_nsga3(
                     diversity_metrics_by_key=diversity_metrics_by_key,
                     stage_params=stage_params,
                 )
-                # #region agent log
-                _agent_debug_log(
-                    "F",
-                    "evox_runner.py:_run_nsga3:inject_reeval",
-                    "diversity injection re-evaluation",
-                    {
-                        "gen": gen,
-                        "injected_count": len(injected_positions),
-                        "inject_pending": int(inject_stats.get("pending", 0)),
-                        "inject_cache_hits": int(
-                            inject_stats.get("cache_hits", 0)
-                        ),
-                        "remaining_inf": int(
-                            np.sum(np.any(np.isinf(objectives), axis=1))
-                        ),
-                    },
-                    run_id="post-fix",
-                )
-                # #endregion
                 mutation_rate = _stage_mutation_rate(
                     stage_params, diversity_recovery=True,
                 )
@@ -2287,28 +2307,6 @@ def _run_nsga3(
                 diversity_metrics_by_key=diversity_metrics_by_key,
                 stage_params=stage_params,
             )
-            # #region agent log
-            off_keys = {chromosome_key(offspring[i]) for i in range(pop_size)}
-            _agent_debug_log(
-                "D",
-                "evox_runner.py:_run_nsga3:offspring",
-                "offspring diversity after eval",
-                {
-                    "gen": gen,
-                    "offspring_unique_count": len(off_keys),
-                    "offspring_unique_ratio": float(
-                        len(off_keys) / max(pop_size, 1)
-                    ),
-                    "offspring_pending": int(off_stats.get("pending", 0)),
-                    "offspring_cache_hits": int(off_stats.get("cache_hits", 0)),
-                    "mutation_rate": mutation_rate,
-                    "diversity_injection": _should_inject_diversity_recovery(
-                        pop_unique_ratio, stage_params=stage_params,
-                    ),
-                },
-                run_id="post-fix",
-            )
-            # #endregion
 
         gen_eval_stats = _merge_gen_eval_stats(
             parent_stats, inject_stats, off_stats,
@@ -2332,6 +2330,7 @@ def _run_nsga3(
             deployable_count=deployable_count,
             pop_viable_count=pop_viable_count,
             plateau_streak=plateau_streak,
+            restarts="%d/%d" % (restart_count, max_restarts),
             loop_start=gen_loop_start,
         )
 
@@ -2400,18 +2399,15 @@ def _run_nsga3(
                     restart_count += 1
                     plateau_streak = 0
                     logger.info(
-                        "%s: plateau restart at gen %d "
-                        "(restart %d/%d, reinit %.0f%%, elite_kept=%d)",
+                        "Phase 2 [%s]: plateau restart at gen %d "
+                        "(restart %d/%d, reinit %.0f%%, elite_kept=%d, mutation=%.2f)",
                         tag,
                         gen + 1,
                         restart_count,
                         max_restarts,
-                        float(getattr(
-                            _cfg,
-                            "PHASE2_PLATEAU_DIVERSITY_RESTART_FRACTION",
-                            0.40,
-                        )) * 100,
+                        float(_cfg.PHASE2_PLATEAU_DIVERSITY_RESTART_FRACTION) * 100,
                         elite_kept,
+                        mutation_rate,
                     )
                     continue  # skip env selection; go to next gen
                 # else fall through to break
@@ -2449,21 +2445,6 @@ def _run_nsga3(
             population, objectives, deployable_archive, metrics_cache,
             _cfg, gen,
         )
-        # #region agent log
-        next_pop_keys = {chromosome_key(population[i]) for i in range(n_alive)}
-        _agent_debug_log(
-            "E",
-            "evox_runner.py:_run_nsga3:env_selection",
-            "post-selection population diversity",
-            {
-                "gen": gen,
-                "next_pop_unique_count": len(next_pop_keys),
-                "next_pop_unique_ratio": float(
-                    len(next_pop_keys) / max(n_alive, 1)
-                ),
-            },
-        )
-        # #endregion
 
     final_state = Phase2EvolutionState(
         population=population,

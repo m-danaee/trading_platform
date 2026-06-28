@@ -71,6 +71,7 @@ def log_generation(
     deployable_count: int | None = None,
     pop_viable_count: int | None = None,
     plateau_streak: int | None = None,
+    restarts: str | None = None,
     elapsed_s: float | None = None,
 ) -> None:
     """Emit a consistent INFO line for one evolutionary generation."""
@@ -104,6 +105,8 @@ def log_generation(
         msg += " pop_viable=%d" % pop_viable_count
     if plateau_streak is not None:
         msg += " plateau_streak=%d" % plateau_streak
+    if restarts is not None:
+        msg += " restarts=%s" % restarts
     if elapsed_s is not None:
         msg += " elapsed=%.1fs" % elapsed_s
     logger.info(msg)
@@ -162,6 +165,7 @@ def maybe_log_generation(
     deployable_count: int | None = None,
     pop_viable_count: int | None = None,
     plateau_streak: int | None = None,
+    restarts: str | None = None,
     loop_start: float | None = None,
     interval: int | None = None,
 ) -> None:
@@ -195,6 +199,7 @@ def maybe_log_generation(
         deployable_count=deployable_count,
         pop_viable_count=pop_viable_count,
         plateau_streak=plateau_streak,
+        restarts=restarts,
         elapsed_s=elapsed,
     )
 
