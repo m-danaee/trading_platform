@@ -1857,11 +1857,12 @@ def _apply_monthly_admission_gate(
     list[dict]
         Filtered pool (or original pool if graceful-degradation path is hit).
     """
-    min_profitable_ratio = (
-        island_hyperparams.monthly_admission_min_profitable_ratio
-        if island_hyperparams is not None
-        else _cfg.PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO
-    )
+    if island_hyperparams is not None:
+        min_profitable_ratio = float(
+            getattr(island_hyperparams, "monthly_admission_min_profitable_ratio", 0.667))
+    else:
+        min_profitable_ratio = float(
+            getattr(_cfg, "PHASE2_MONTHLY_ADMISSION_MIN_RATIO", 0.667))
     pre_filter_count = len(pool)
     profitable_ratios: list[float] = []
     keep: list[dict] = []

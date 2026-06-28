@@ -120,20 +120,58 @@ PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/ -x -q -k "monthly or 
 
 ## M2 Investigation Writeup (append after investigation)
 
-*(To be filled by implementer after reading `data/splitter.py` and `generalization_diagnostics_long.json`)*
-
 ### Val/Test Regime Mismatch Investigation
 
-**Split boundaries:**
-- Train: [dates]
-- Validation: [dates]
-- Test: [dates]
+**Split mechanism (from `data/splitter.py` + `rolling_cv.py`):**
 
-**Observed regime flip:**
-- Features with opposite top-buckets between val and test: `amihud_illiquidity_20`, `roc_10`, `rsi_centered_14`, `body_signed_to_tr`.
+The pipeline uses `SPLIT_MODE=purged_walk_forward` with `PURGED_WF_N_SPLITS=3` (2 CV folds + 1 primary holdout) and `PURGED_WF_HOLDOUT_FRACTION=0.3`. The CV folds are expanding (each fold trains on progressively more data), and the tail is reserved as a primary holdout validation set. Each symbol is split chronologically with per-symbol bar index alignment.
+
+**Split boundaries (from `data/cv_folds_manifest.json` + actual parquet data):**
+
+| Split | Bar Range | Approx Dates | Rows | Source |
+|-------|-----------|-------------|------|--------|
+| Train (holdout fold) | [0, 48904] | 2024-01-01 → 2024-06-18 | 486,170 | `train_70.parquet` |
+| Validation (holdout fold) | [48905, 69863] | 2024-06-19 → 2024-08-30 | 209,590 | `validation_30.parquet` |
+| Test (holdout unseen) | N/A | 2024-09-01 → 2024-10-05 | ~363K | `data/test.csv` |
+
+The CV folds within the training span:
+- Fold 0: train bars [0, 20958], valid bars [20959, 30273]
+- Fold 1: train bars [0, 30273], valid bars [30274, 39588]
+- Fold 2: train bars [0, 39588], valid bars [39589, 48904]
+
+**Observed regime flip (train → validation):**
+
+From `generalization_diagnostics_long.json → feature_bucket_concentration`:
+
+| Feature | Train top bucket | Validation top bucket | Flip type |
+|---------|-----------------|----------------------|-----------|
+| `amihud_illiquidity_20` | Very Low (45.5%) | Very High (51.5%) | Liquidity regime shift |
+| `roc_10` | Extreme Bullish (24.7%) | Extreme Bearish (24.3%) | Momentum direction |
+| `rsi_centered_14` | Extreme Bullish (25.3%) | Extreme Bearish (25.2%) | RSI regime |
+| `body_signed_to_tr` | Extreme Bullish (26.9%) | Extreme Bearish (27.1%) | Candle body direction |
+| `ret_vol_corr_30` | Extreme Bullish (25.9%) | Extreme Bearish (27.4%) | Return-vol correlation |
+| `dmi_balance_14` | Extreme Bearish (25.3%) | Extreme Bullish (26.4%) | DMI trend direction (opposite) |
+| `return_skew_30` | Extreme Bearish (25.2%) | Extreme Bullish (26.1%) | Skew direction (opposite) |
+
+The test split's feature_bucket_concentration is empty in the diagnostics (possibly too few rows or generator issue), so we cannot cross-reference test regime there.
+
+**Interpretation:**
+
+There was a clear market regime shift around mid-June 2024:
+- **Jan–Jun (train):** Bullish momentum, low volatility, high liquidity, positive return skew.
+- **Jun–Aug (validation):** Bearish momentum, high volatility, low liquidity (illiquidity spike), negative return skew.
+- **Sep–Oct (test, external):** Likely continues the post-shift regime or transitions further.
+
+This is a **real structural break**, not a split artifact. The 70/30 chronological boundary happens to land right at this regime change, making the validation set a "regime island" that differs substantially from train.
 
 **Feasibility of 3-way walk-forward:**
-- [analysis]
+
+A 3-way expanding scheme (trainA → val → trainB → test) could be implemented by partitioning the existing CV folds into an additional test holdout stage. However, the current purged WF already provides 3 CV folds for cross-validation plus a primary holdout. Adding a third stage would require splitting the already-small validation set further, reducing statistical power.
+
+**Nested CV assessment:**
+
+Nested CV (inner CV for hyperparam selection, outer for evaluation) would be more robust but is high-risk for implementation: it doubles the simulation cost and requires architectural changes to the Phase 2 loop. The existing purged WF with 3 CV folds + worst-case aggregation already provides conservative fold-level signal.
 
 **Recommendation:**
-- [one of: keep current split + rely on CV-fold consistency / switch to nested CV / switch to 3-way WF]
+
+**Keep the current split + rely on CV-fold consistency (task-14/C4).** The purged walk-forward with 3 CV folds and worst-case aggregation already guards against fold-specific overfitting. Task-14/C4's CV-fold consistency penalty penalizes rules that perform well on only one fold, which is the correct mitigation for regime-specific overfitting. A split redesign would require a full pipeline re-run and risks breaking the existing validation chain. The regime shift itself is real market structure — no split can eliminate it; the strategy must be robust across regimes.

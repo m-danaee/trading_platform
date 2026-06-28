@@ -1137,8 +1137,7 @@ def _store_global_metrics_cache(
         entry["_cached_val_metrics"] = _metrics_snapshot(val_metrics)
     global_metrics_cache[key] = entry
     if _cfg.PHASE2_EVAL_GLOBAL_CACHE:
-        max_cache = max(
-            200, int(getattr(_cfg, "PHASE2_POPULATION_SIZE", 200)))
+        max_cache = int(getattr(_cfg, "PHASE2_EVAL_GLOBAL_CACHE_MAX_SIZE", 575))
         _trim_global_metrics_cache(global_metrics_cache, max_cache)
 
 
@@ -1229,6 +1228,12 @@ def _evaluate_population_indices(
 
     if not gpu_pending:
         if cache_hits:
+            max_cache = int(getattr(_cfg, "PHASE2_EVAL_GLOBAL_CACHE_MAX_SIZE", 575))
+            cache_hit_rate = cache_hits / max(1, len(pending))
+            logger.debug(
+                "Phase 2 eval cache: size=%d capacity=%d (hit_rate this gen: %.3f)",
+                len(global_metrics_cache), max_cache, cache_hit_rate,
+            )
             logger.debug(
                 "Phase 2 eval: %d cache hits, 0 GPU pending",
                 cache_hits,
@@ -1282,6 +1287,13 @@ def _evaluate_population_indices(
                 val_metrics_list = None
 
         unique_count = len(unique_chroms)
+        max_cache = int(getattr(_cfg, "PHASE2_EVAL_GLOBAL_CACHE_MAX_SIZE", 575))
+        cache_hit_rate = cache_hits / max(1, len(pending))
+        logger.debug(
+            "Phase 2 eval cache: size=%d capacity=%d (hit_rate this gen: %.3f)",
+            len(global_metrics_cache) if global_metrics_cache is not None else 0,
+            max_cache, cache_hit_rate,
+        )
         logger.debug(
             "Phase 2 eval: %d cache hits, %d GPU pending, %d unique chromosomes",
             cache_hits,
