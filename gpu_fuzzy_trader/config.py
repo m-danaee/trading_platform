@@ -478,7 +478,7 @@ PHASE2_SORTINO_MIN_TRADE_THRESHOLD = 50
 # PHASE2_RETURN_FLOOR_PCT — min train return % to avoid feasibility penalty.
 #   Higher → only profitable-on-train rules stay feasible; emptier search.
 #   Lower  → more exploration; weak rules linger until other gates remove them.
-PHASE2_RETURN_FLOOR_PCT = 0
+PHASE2_RETURN_FLOOR_PCT = 0.5
 
 # PHASE2_VAL_RETURN_FLOOR_PCT — min validation return % for feasibility.
 #   Higher → stricter OOS alignment during evolution.
@@ -607,9 +607,7 @@ PHASE2_VAL_IN_FITNESS_PENALTY = False
 # PHASE2_DIVERSITY_HAMMING_THRESHOLD — min Hamming distance for "unique" rule.
 #   Higher → demand more genetic distance; wider Pareto spread, slower convergence.
 #   Lower  → allow near-duplicate rules; risk of niche collapse.
-# Raised 3→4: 4/20 genes (20%) is a meaningful feature-mix change; the phenotype
-# OR check already catches behaviorally-identical rules, so this can be looser
-# on the Hamming axis than on the phenotype axis.
+#   0 = auto-scale via PHASE2_DIVERSITY_HAMMING_THRESHOLD_AUTO (max(3, k_active // 5)).
 PHASE2_DIVERSITY_HAMMING_THRESHOLD = 0
 
 # PHASE2_DIVERSITY_HAMMING_THRESHOLD_AUTO — auto-scale Hamming threshold.
@@ -625,9 +623,9 @@ PHASE2_HOF_EPOCH_CARRYOVER = 10
 # PHASE2_DIVERSITY_PENALTY — objective penalty when crowding near existing rules.
 #   Higher → stronger push toward novel chromosomes.
 #   Lower  → convergence to similar high performers allowed.
-# Lowered 8→3: with compressed Sortino living in 0–3, 8.0 was 2–8× the natural
-# f1 scale and dominated the Pareto front; 3.0 still kills true duplicates but
-# allows slightly-improved clones through for refinement.
+#   0.5 kills true duplicates but allows slightly-improved clones through for
+#   refinement. With compressed Sortino in 0–3, 0.5 is a meaningful but not
+#   dominant penalty on the Pareto front.
 PHASE2_DIVERSITY_PENALTY = 0.5
 
 # PHASE2_PHENOTYPE_SORTINO_STEP — Sortino bucket width for behavioral diversity.
@@ -707,12 +705,6 @@ PHASE2_PLATEAU_DIVERSITY_RESTART_ENABLED = True
 #   Higher  → more fresh chromosomes; may lose more elite progress.
 #   Lower   → gentler restart; may not escape attractor.
 PHASE2_PLATEAU_DIVERSITY_RESTART_FRACTION = 0.65
-
-# PHASE2_PLATEAU_DIVERSITY_RESTART_MUTATION_BOOST — multiplier for mutation rate
-#   for one generation after restart. Capped at 0.6.
-#   Higher  → more aggressive exploration after restart.
-#   Lower   → keep mutation close to normal after restart.
-PHASE2_PLATEAU_DIVERSITY_RESTART_MUTATION_BOOST = 1.6
 
 # PHASE2_PLATEAU_POST_RESTART_MUTATION_BOOST — mutation rate (not multiplier) used
 #   for PHASE2_PLATEAU_POST_RESTART_BOOST_GENS after a plateau restart, then
@@ -991,8 +983,8 @@ PHASE2_MIGRATION_MIN_VAL_TRADES = None          # None = use island trade floor
 
 # PHASE2_MIGRATION_SEED_FRACTION — fraction of the live population overwritten by
 # migrants at epoch boundaries. Decoupled from PHASE2_ARCHIVE_SEED_FRACTION (which
-# governs cross-run warm-start and stays 0.25). 0.05 = 10 of 200 slots, so
-# migrants displace ≤5% of converged locals rather than ≤25%.
+# governs cross-run warm-start and stays 0.25). 0.10 = 20 of 200 slots, so
+# migrants displace ≤10% of converged locals.
 PHASE2_MIGRATION_SEED_FRACTION: float = 0.10
 
 # PHASE2_ORPHAN_* — relaxed hyperparams for low-row symbol slices left out of clusters.
@@ -1491,13 +1483,13 @@ RB_GOVERNOR_ENABLED: bool = True
 #   heavy score penalty is applied to a candidate rule.
 #   Higher → only clearly profitable single rules pass the gate.
 #   Lower  → allow marginal rules into the candidate pool.
-RB_MIN_TRAIN_RETURN: float = 0.2
-RB_MIN_VALID_RETURN: float = 0.2
+RB_MIN_TRAIN_RETURN: float = 0.5
+RB_MIN_VALID_RETURN: float = 0.5
 
 # RB_MIN_TRAIN_PF / RB_MIN_VALID_PF — minimum profit factor for each split.
 #   1.0 = break-even before fees.
-RB_MIN_TRAIN_PF: float = 1.00
-RB_MIN_VALID_PF: float = 1.00
+RB_MIN_TRAIN_PF: float = 1.05
+RB_MIN_VALID_PF: float = 1.05
 
 # RB_MIN_TRAIN_TRADES / RB_MIN_VALID_TRADES — per-rule trade-count floors
 #   used by ``gate_positive_good`` and ``_score_metrics`` for single rules.
@@ -2031,7 +2023,7 @@ def resolve_island_hyperparams(
             max(1, (sym_n + 1) // 2),
         )
         monthly_months = int(PHASE2_ISLAND_MONTHLY_MIN_MONTHS)
-        monthly_ratio = float(PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO)
+        monthly_ratio = float(PHASE2_MONTHLY_ADMISSION_MIN_RATIO)
 
     val_floor = scale_trade_floor_by_universe(
         max(int(MIN_TRADE_POOL_FLOOR) // 4, 10), rows, ref,
