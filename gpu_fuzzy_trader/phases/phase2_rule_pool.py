@@ -1184,10 +1184,12 @@ def _mutate(
     child = chromosome.copy()
     K = len(child)
     # C5: Symbol gene dont_care bias
+    # Note: "symbol" is in META_COLUMNS and rarely in feature_infos, so this
+    # bias may silently do nothing if no symbol-named feature exists.
     symbol_gene_prob = float(getattr(_cfg, "PHASE2_SYMBOL_GENE_DONT_CARE_PROB", 0.4))
     for k in range(K):
         # If this gene is a symbol gene, force dont_care with probability
-        if str(feature_infos[k].get("name", "")).lower() == "symbol":
+        if "symbol" in str(feature_infos[k].get("name", "")).lower():
             if rng.random() < symbol_gene_prob:
                 child[k] = int(dont_cares[k])
                 continue

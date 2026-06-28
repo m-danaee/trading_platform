@@ -1996,3 +1996,352 @@ class TestConditionBounds:
         child = _mutate(parent, fi, dc, rng, mutation_rate=0.5)
         active = _count_active_conditions(child, dc)
         assert _cfg.MIN_CONDITIONS <= active <= _cfg.MAX_CONDITIONS
+
+
+# ---------------------------------------------------------------------------
+# Tests: C5 Symbol gene dont_care bias (F2)
+# ---------------------------------------------------------------------------
+
+class TestSymbolGeneBias:
+    """C5 mutation bias: force symbol-gene to dont_care / inactive with
+    probability PHASE2_SYMBOL_GENE_DONT_CARE_PROB."""
+
+    # ------------------------------------------------------------------
+    # Dense path tests
+    # ------------------------------------------------------------------
+
+    def _make_fi_with_symbol(self, modes: list[str], symbol_idx: int = 0) -> list[dict]:
+        """Create feature_infos with a feature whose name contains 'symbol'."""
+        fi = _make_feature_infos(modes)
+        fi[symbol_idx] = {**fi[symbol_idx], "name": "symbol_cluster"}
+        return fi
+
+    def test_symbol_gene_bias_dense_force(self, monkeypatch):
+        """PHASE2_SYMBOL_GENE_DONT_CARE_PROB=1.0: symbol gene always forced to dont_care."""
+        monkeypatch.setattr(_cfg, "PHASE2_ENCODING", "dense")
+        monkeypatch.setattr(_cfg, "PHASE2_SYMBOL_GENE_DONT_CARE_PROB", 1.0)
+        monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
+        monkeypatch.setattr(_cfg, "MIN_CONDITIONS", 1)
+
+        fi = self._make_fi_with_symbol(["positive", "positive", "positive"])
+        dc = _get_dont_cares(fi)
+        rng = np.random.default_rng(42)
+
+        # Symbol feature at index 0, active (not dont_care)
+        chrom = np.array([0, 1, 2], dtype=np.int32)
+        for _ in range(50):
+            child = _mutate(chrom, fi, dc, rng, mutation_rate=0.0)
+            # Symbol gene (index 0) should always be forced to dont_care
+            assert child[0] == int(dc[0]), (
+                f"Symbol gene should be dont_care({dc[0]}), got {child[0]}"
+            )
+
+    def test_symbol_gene_bias_dense_disabled(self, monkeypatch):
+        """PHASE2_SYMBOL_GENE_DONT_CARE_PROB=0.0: symbol gene never force-set."""
+        monkeypatch.setattr(_cfg, "PHASE2_ENCODING", "dense")
+        monkeypatch.setattr(_cfg, "PHASE2_SYMBOL_GENE_DONT_CARE_PROB", 0.0)
+        monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
+        monkeypatch.setattr(_cfg, "MIN_CONDITIONS", 1)
+
+        fi = self._make_fi_with_symbol(["positive", "positive", "positive"])
+        dc = _get_dont_cares(fi)
+        rng = np.random.default_rng(42)
+
+        chrom = np.array([0, 1, 2], dtype=np.int32)
+        symbol_gene_was_active = False
+        for _ in range(200):
+            child = _mutate(chrom, fi, dc, rng, mutation_rate=0.0)
+            # With prob=0, symbol gene should NEVER be force-set
+            if child[0] != int(dc[0]):
+                symbol_gene_was_active = True
+                break
+        assert symbol_gene_was_active, (
+            "Symbol gene should remain active when bias is disabled"
+        )
+
+    def test_symbol_gene_bias_dense_partial(self, monkeypatch):
+        """With probability ~0.5, about half of calls force symbol to dont_care."""
+        monkeypatch.setattr(_cfg, "PHASE2_ENCODING", "dense")
+        monkeypatch.setattr(_cfg, "PHASE2_SYMBOL_GENE_DONT_CARE_PROB", 0.5)
+        monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
+        monkeypatch.setattr(_cfg, "MIN_CONDITIONS", 1)
+
+        fi = self._make_fi_with_symbol(["positive", "positive", "positive"])
+        dc = _get_dont_cares(fi)
+        rng = np.random.default_rng(12345)
+
+        chrom = np.array([0, 1, 2], dtype=np.int32)
+        n_trials = 200
+        forced_count = 0
+        for _ in range(n_trials):
+            child = _mutate(chrom, fi, dc, rng, mutation_rate=0.0)
+            if child[0] == int(dc[0]):
+                forced_count += 1
+        # Should be ~50%; allow ±20% tolerance
+        assert 0.20 <= forced_count / n_trials <= 0.80, (
+            f"Expected ~50% forced, got {forced_count}/{n_trials}"
+        )
+
+    def test_symbol_gene_bias_dense_no_symbol_feature(self, monkeypatch):
+        """No symbol feature in feature_infos: bias silently does nothing (no crash)."""
+        monkeypatch.setattr(_cfg, "PHASE2_ENCODING", "dense")
+        monkeypatch.setattr(_cfg, "PHASE2_SYMBOL_GENE_DONT_CARE_PROB", 1.0)
+        monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
+        monkeypatch.setattr(_cfg, "MIN_CONDITIONS", 1)
+
+        fi = _make_feature_infos(["positive", "positive", "positive"])
+        dc = _get_dont_cares(fi)
+        rng = np.random.default_rng(42)
+        chrom = np.array([0, 1, 2], dtype=np.int32)
+
+        for _ in range(50):
+            child = _mutate(chrom, fi, dc, rng, mutation_rate=0.0)
+            # Normal mutation (mutation_rate=0.0) should not change anything
+            assert np.array_equal(child, chrom), (
+                f"Without symbol feature, bias should not affect chromosome"
+            )
+
+    # ------------------------------------------------------------------
+    # Sparse path tests (production code path)
+    # ------------------------------------------------------------------
+
+    def test_symbol_gene_bias_sparse_force(self, monkeypatch):
+        """Sparse path: PHASE2_SYMBOL_GENE_DONT_CARE_PROB=1.0 forces symbol slot to inactive."""
+        from gpu_fuzzy_trader.phases.phase2_sparse_encoding import mutate_sparse
+
+        monkeypatch.setattr(_cfg, "PHASE2_SYMBOL_GENE_DONT_CARE_PROB", 1.0)
+        monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
+        monkeypatch.setattr(_cfg, "MIN_CONDITIONS", 1)
+
+        fi = self._make_fi_with_symbol(["positive", "positive", "positive", "positive"])
+        dc = _get_dont_cares(fi)
+        rng = np.random.default_rng(42)
+
+        # Create sparse chromosome: slot 0 = symbol feature (idx 0, class 2)
+        sparse_chrom = np.array([
+            [0, 2],   # symbol feature active
+            [1, 1],   # non-symbol feature
+            [2, 3],   # non-symbol feature
+            [-1, 0],  # inactive
+        ], dtype=np.int32)
+
+        for _ in range(30):
+            child = mutate_sparse(sparse_chrom, fi, dc, rng, mutation_rate=0.0)
+            # Symbol slot (idx 0) should be forced to INACTIVE by the bias
+            # With mutation_rate=0.0 and MIN_CONDITIONS=1, repair won't reactivate
+            assert not np.any(child[:, 0] == 0), (
+                f"Symbol feature slot should be inactive (INACTIVE_FEAT_IDX={INACTIVE_FEAT_IDX}), "
+                f"but found active symbol slot(s)"
+            )
+
+    def test_symbol_gene_bias_sparse_disabled(self, monkeypatch):
+        """Sparse path: PHASE2_SYMBOL_GENE_DONT_CARE_PROB=0.0, symbol slot stays active."""
+        from gpu_fuzzy_trader.phases.phase2_sparse_encoding import mutate_sparse
+
+        monkeypatch.setattr(_cfg, "PHASE2_SYMBOL_GENE_DONT_CARE_PROB", 0.0)
+        monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
+        monkeypatch.setattr(_cfg, "MIN_CONDITIONS", 1)
+
+        fi = self._make_fi_with_symbol(["positive", "positive", "positive", "positive"])
+        dc = _get_dont_cares(fi)
+        rng = np.random.default_rng(42)
+
+        sparse_chrom = np.array([
+            [0, 2],
+            [1, 1],
+            [2, 3],
+            [-1, 0],
+        ], dtype=np.int32)
+
+        # With prob=0 and mutation_rate=0, symbol slot should never be deactivated
+        for _ in range(50):
+            child = mutate_sparse(sparse_chrom, fi, dc, rng, mutation_rate=0.0)
+            assert np.any(child[:, 0] == 0), (
+                "Symbol slot should remain active when bias is disabled"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Tests: C6 Val-leak gate (F2)
+# ---------------------------------------------------------------------------
+
+class TestValLeakGate:
+    """C6: Val-derived penalties must be gated behind JOINT_TRAIN_VAL or
+    VAL_IN_FITNESS_PENALTY."""
+
+    @staticmethod
+    def _base_objective_kwargs():
+        """Return standard monkeypatching for clean baseline metrics."""
+        return {
+            "PHASE2_JOINT_TRAIN_VAL": False,
+            "PHASE2_VAL_IN_FITNESS_PENALTY": False,
+            "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS": False,
+            "PHASE2_USE_TOTAL_RETURN_OBJ": False,
+            "PHASE2_F3_OBJECTIVE": "profit_factor",
+            "MIN_TRADE_SUPPORT": 1,
+            "MIN_TRADE_POOL_FLOOR": 1,
+            "PHASE2_RETURN_FLOOR_PCT": -100.0,
+            "PHASE2_PROFIT_FACTOR_FLOOR": 0.0,
+            "PHASE2_VAL_RETURN_FLOOR_PCT": -100.0,
+            "PHASE2_MAX_DRAWDOWN_GATE": 200.0,
+            "PHASE2_MIN_PROFITABLE_SYMBOLS_PENALTY": 1,
+            "MAX_CONDITIONS": 4,
+        }
+
+    def _apply_settings(self, monkeypatch, **overrides):
+        """Apply base settings with optional overrides."""
+        settings = dict(self._base_objective_kwargs())
+        settings.update(overrides)
+        for key, val in settings.items():
+            monkeypatch.setattr(_cfg, key, val)
+
+    def _make_clean_metrics(self) -> dict:
+        """Metrics that trigger no train-side penalties."""
+        return {
+            "executed_trades": 100,
+            "total_return_pct": 10.0,
+            "sortino_ratio": 2.0,
+            "max_drawdown_pct": 5.0,
+            "win_rate": 60.0,
+            "profit_factor": 1.5,
+            "per_symbol_metrics": {
+                "SYM1": {"net_pnl": 100.0},
+                "SYM2": {"net_pnl": 200.0},
+                "SYM3": {"net_pnl": 150.0},
+            },
+        }
+
+    def _make_bad_val_metrics(self) -> dict:
+        """Val metrics that WOULD trigger penalties if the gate were open."""
+        return {
+            "executed_trades": 3,  # below val_trade_floor → triggers trade-floor cap
+            "total_return_pct": -15.0,  # below VAL_RETURN_FLOOR_PCT (0.0)
+            "sortino_ratio": -1.0,
+            "max_drawdown_pct": 25.0,
+            "win_rate": 20.0,
+            "profit_factor": 0.3,  # below PROFIT_FACTOR_FLOOR (0.0→falls through anyway)
+            # Note: symbol_robustness uses per_symbol_metrics which bad val doesn't have → 0
+        }
+
+    def test_val_penalties_gated_closed(self, monkeypatch):
+        """When both JOINT_TRAIN_VAL and VAL_IN_FITNESS_PENALTY are False,
+        val-derived penalties must NOT enter objectives."""
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+            compute_phase2_objectives_from_metrics,
+        )
+
+        self._apply_settings(monkeypatch,
+            PHASE2_JOINT_TRAIN_VAL=False,
+            PHASE2_VAL_IN_FITNESS_PENALTY=False,
+            # Set tight val floors to trigger penalties
+            PHASE2_VAL_RETURN_FLOOR_PCT=0.0,
+            PHASE2_PROFIT_FACTOR_FLOOR=1.0,
+        )
+
+        dont_cares = np.full(4, 5, dtype=np.int32)
+        chrom = np.array([0, 1, 2, 3], dtype=np.int32)
+        metrics = self._make_clean_metrics()
+        val_metrics = self._make_bad_val_metrics()
+
+        # Without val_metrics
+        obj_no_val, _ = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, metrics, [],
+        )
+        # With val_metrics, gate closed
+        obj_val_closed, _ = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, metrics, [],
+            val_metrics=val_metrics,
+        )
+        # Objectives should be identical (val penalties gated out)
+        assert np.allclose(obj_no_val, obj_val_closed, atol=1e-6), (
+            f"With gate closed, val should not affect objectives.\n"
+            f"  no_val:  {obj_no_val}\n"
+            f"  val_closed: {obj_val_closed}"
+        )
+
+    def test_val_penalties_gated_open(self, monkeypatch):
+        """When VAL_IN_FITNESS_PENALTY=True, val-derived penalties DO enter objectives."""
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+            compute_phase2_objectives_from_metrics,
+        )
+
+        self._apply_settings(monkeypatch,
+            PHASE2_JOINT_TRAIN_VAL=False,
+            PHASE2_VAL_IN_FITNESS_PENALTY=True,
+            # Set tight val floors to trigger penalties
+            PHASE2_VAL_RETURN_FLOOR_PCT=0.0,
+            PHASE2_PROFIT_FACTOR_FLOOR=1.0,
+        )
+
+        dont_cares = np.full(4, 5, dtype=np.int32)
+        chrom = np.array([0, 1, 2, 3], dtype=np.int32)
+        metrics = self._make_clean_metrics()
+        val_metrics = self._make_bad_val_metrics()
+
+        # Without val_metrics
+        obj_no_val, _ = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, metrics, [],
+        )
+        # With val_metrics, gate OPEN
+        obj_val_open, _ = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, metrics, [],
+            val_metrics=val_metrics,
+        )
+        # With gate open, val penalties should make objectives WORSE
+        # f2 = dd + support_penalty + dd_gate + trade_penalty
+        # support_penalty should include val_floor_penalty and val trade-floor cap
+        assert obj_val_open[1] > obj_no_val[1] + 1.0, (
+            f"With gate open, f2 should be worse due to val penalties.\n"
+            f"  no_val:  {obj_no_val}\n"
+            f"  val_open: {obj_val_open}"
+        )
+        # f3 = -f3_val + diversity + trade + cond
+        # trade_penalty might fire if val_trade_floor is > 0 and val_executed=3
+        # But val_trade_floor for 300 rows with 70/30 split will be ~6
+        # Actually val_trade_floor uses _val_trade_floor_for_objectives
+        # which is based on n_valid_rows. Since we pass no n_valid_rows,
+        # and no island_hyperparams, it may use a default
+        # Let's just check that f3 is also worse (trade_penalty adds to all objs)
+        assert obj_val_open[2] >= obj_no_val[2], (
+            f"With gate open, f3 should be >= (worse/equal) no-val case.\n"
+            f"  no_val:  {obj_no_val}\n"
+            f"  val_open: {obj_val_open}"
+        )
+
+    def test_val_penalties_gate_open_vs_closed(self, monkeypatch):
+        """Direct comparison: gate open produces strictly worse objectives than gate closed."""
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+            compute_phase2_objectives_from_metrics,
+        )
+
+        self._apply_settings(monkeypatch,
+            PHASE2_JOINT_TRAIN_VAL=False,
+            PHASE2_VAL_IN_FITNESS_PENALTY=False,
+            PHASE2_VAL_RETURN_FLOOR_PCT=0.0,
+            PHASE2_PROFIT_FACTOR_FLOOR=1.0,
+        )
+
+        dont_cares = np.full(4, 5, dtype=np.int32)
+        chrom = np.array([0, 1, 2, 3], dtype=np.int32)
+        metrics = self._make_clean_metrics()
+        val_metrics = self._make_bad_val_metrics()
+
+        # Gate closed
+        obj_closed, _ = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, metrics, [],
+            val_metrics=val_metrics,
+        )
+
+        # Gate open
+        monkeypatch.setattr(_cfg, "PHASE2_VAL_IN_FITNESS_PENALTY", True)
+        obj_open, _ = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, metrics, [],
+            val_metrics=val_metrics,
+        )
+
+        # f2 should be strictly worse with gate open (val penalties added to support_penalty)
+        assert obj_open[1] > obj_closed[1] + 0.5, (
+            f"Gate open should produce worse f2 than gate closed.\n"
+            f"  closed: {obj_closed}\n"
+            f"  open:   {obj_open}"
+        )
