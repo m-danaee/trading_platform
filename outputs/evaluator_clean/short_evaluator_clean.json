@@ -3,12 +3,95 @@
   "rules_set": [
     {
       "conditions": [
-        "[feat_1] IS Very High",
-        "symbol is SYM_A"
+        "[log_range_over_vol_100] IS High",
+        "[return_skew_30] IS Neutral Negative",
+        "[atr_ratio_14_63] IS Low",
+        "symbol is 2"
       ],
       "tp": 2.0,
-      "sl": 1.0,
-      "capital_pct": 30.0
+      "sl": 1.2,
+      "capital_pct": 20.0
+    },
+    {
+      "conditions": [
+        "[drawdown_from_peak_60] IS Medium",
+        "[absret_ema_ratio_20_100] IS Very High",
+        "[tr_to_atr_14] IS Very High",
+        "[ret_vol_corr_30] IS Extreme Bearish",
+        "symbol is 7"
+      ],
+      "tp": 2.0,
+      "sl": 1.2,
+      "capital_pct": 20.0
+    },
+    {
+      "conditions": [
+        "[dmi_balance_14] IS Bullish",
+        "[log_range_over_vol_100] IS Low",
+        "[efficiency_ratio_20] IS Very High",
+        "[ret_vol_corr_30] IS Extreme Bearish",
+        "symbol is 6"
+      ],
+      "tp": 2.0,
+      "sl": 1.2,
+      "capital_pct": 20.0
+    },
+    {
+      "conditions": [
+        "[drawdown_from_peak_60] IS Very High",
+        "[lower_wick_to_tr] IS Very Low",
+        "[atr_ratio_14_63] IS Very High",
+        "[ret_vol_corr_30] IS Neutral Negative",
+        "symbol is 5"
+      ],
+      "tp": 2.0,
+      "sl": 1.2,
+      "capital_pct": 20.0
+    },
+    {
+      "conditions": [
+        "[dmi_balance_14] IS Extreme Bullish",
+        "[return_skew_30] IS Extreme Bullish",
+        "[efficiency_ratio_20] IS Low",
+        "[ret_vol_corr_30] IS Strong Bearish",
+        "symbol is 5"
+      ],
+      "tp": 2.0,
+      "sl": 1.2,
+      "capital_pct": 20.0
+    },
+    {
+      "conditions": [
+        "[downside_semivol_20] IS Very High",
+        "[return_skew_30] IS Strong Bullish",
+        "[lower_wick_to_tr] IS High",
+        "symbol is 2"
+      ],
+      "tp": 2.0,
+      "sl": 1.2,
+      "capital_pct": 20.0
+    },
+    {
+      "conditions": [
+        "[return_skew_30] IS Weak Bullish",
+        "[absret_ema_ratio_20_100] IS High",
+        "[atr_ratio_14_63] IS Very Low",
+        "symbol is 2"
+      ],
+      "tp": 2.0,
+      "sl": 1.2,
+      "capital_pct": 20.0
+    },
+    {
+      "conditions": [
+        "[dmi_balance_14] IS Bullish",
+        "[vol_regime_pct_120] IS Medium",
+        "[ret_vol_corr_30] IS Strong Bearish",
+        "symbol is 10"
+      ],
+      "tp": 2.0,
+      "sl": 1.2,
+      "capital_pct": 20.0
     }
   ]
 }

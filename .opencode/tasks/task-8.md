@@ -1,122 +1,105 @@
-# Task 8 — Add `regime_feature_keyword` stratum initialization
+# Task 8 — `fix/trade-floor-island-aware` (make hard reject floor island-aware + use config constant)
 
-## Why
-The friend uses a "regime" stratum in their NSGA-III population
-initialization: 25% of new chromosomes are forced to have their
-**first active gene** be a "regime/volatility/trend" feature (vol,
-atr, bb_width, compression, adx, dmi, semivol, etc.). This is a
-feature-space proxy for regime-aware rules.
+## Branch
+`fix/trade-floor-island-aware` (from latest `main`).
 
-My project ALREADY has a bar-level regime detector (Task 1 didn't
-add this; the regime_cluster.py has been here for a while). It
-assigns a per-bar `regime` label (0=sideways, 1=bear, 2=bull) and
-the Phase 2 evolution uses this in the per-regime objective. So I
-have a stronger regime signal than the friend.
+## Problem
+The hard-reject trade floor (`MIN_TRADE_POOL_FLOOR=25`) in
+`compute_phase2_objectives_from_metrics` is hardcoded and does NOT respect
+island mode. The `IslandHyperparams` object already has a correctly-scaled
+`min_trade_pool_floor` (set at island creation via
+`scale_trade_floor_by_universe`), but line 640 reads the global default
+directly, ignoring it.
 
-What the friend has that I lack: the *initialization* bias toward
-regime-related features. This ensures that even if the bar-level
-regime label is noisy, the chromosomes are anchored on features
-that the literature associates with market regime (volatility,
-trends, breakouts). The two signals (bar-level regime + feature
-keywords) are complementary.
+This means for smaller islands (cluster_1, cluster_2 with `min_trade_support=22`):
+- The graduated penalty target is 22 (island-aware ✅)
+- But the hard reject floor is 25 (hardcoded, NOT island-aware ❌)
+- So a rule with 22 trades passes the graduated target but gets HARD-KILLED
+  by the hardcoded floor (22 < 25)
 
-## Required reading
-- `.opencode/plans/PLAN.md`
-- `.opencode/CONTEXT.md` (JSON output contract)
-- The friend's reference: `friend_project/gpu_fuzzy_trader/phases/phase2_rule_pool.py` lines 286-345 (`_softmax_feature_probs`, `_regime_feature_indices`, `_sample_active_indices`, `_sample_stratified_chromosome`); and `friend_project/gpu_fuzzy_trader/config.py` lines 154-160 (`PHASE2_REGIME_FEATURE_KEYWORDS`, `PHASE2_STRATA_REGIME_FRAC=0.25`).
-- My existing `gpu_fuzzy_trader/phases/phase2_init.py` (the existing `Stratum = Literal["elite", "explorer"]` enum and the `assign_strata_to_indices` function).
-- My existing `gpu_fuzzy_trader/phases/phase2_rule_pool.py` (the population initialization call site).
+Additionally, the inline magic number `50.0` at line 644 should use the
+existing config constant `PHASE2_INFEASIBLE_OBJECTIVE_PENALTY` (defined at
+config.py:699 but never referenced anywhere — dead config).
 
-## Behavior changes
+## Required Changes
 
-### Step 1 — Add new config keys
+### Fix 1 — Make the hard reject floor island-aware
+**File:** `gpu_fuzzy_trader/phases/phase2_rule_pool.py` (line ~640)
 
+Current:
 ```python
-# Phase 2 regime stratum initialization (complements the bar-level regime label)
-PHASE2_REGIME_STRATUM_ENABLED = True
-PHASE2_REGIME_STRATUM_FRAC = 0.25
-PHASE2_REGIME_FEATURE_KEYWORDS = (
-    "vol", "atr", "bb_width", "compression", "range", "trend", "regime",
-    "breakout", "drawdown", "channel", "adx", "dmi", "semivol",
-)
+trade_floor = _cfg.MIN_TRADE_POOL_FLOOR
 ```
 
-### Step 2 — Extend the `Stratum` literal to include "regime"
-
-In `gpu_fuzzy_trader/phases/phase2_init.py`:
+Change to use the island's scaled pool floor when available, falling back to
+the existing scaling function for non-island mode:
 ```python
-Stratum = Literal["elite", "explorer", "regime"]
+if island_hyperparams is not None:
+    trade_floor = int(island_hyperparams.min_trade_pool_floor)
+else:
+    trade_floor = _cfg.effective_min_trade_pool_floor(n_valid_rows)
 ```
 
-### Step 3 — Add `_regime_feature_indices` helper
+This makes the hard reject coherent with the graduated penalty (which already
+uses `floors.min_trade_support` from `resolve_evolution_floors`, which in turn
+reads `island_hyperparams.min_trade_support`). Both paths now respect island
+scaling.
 
-Port the friend's helper. Signature:
+### Fix 2 — Use config constant instead of inline magic number
+**File:** `gpu_fuzzy_trader/phases/phase2_rule_pool.py` (line ~644)
+
+Current:
 ```python
-def _regime_feature_indices(feature_infos: list[dict]) -> list[int]:
-    """Return indices of features whose names look regime/volatility/trend related.
-    
-    Matches feature names (case-insensitive) against
-    PHASE2_REGIME_FEATURE_KEYWORDS from config.
-    """
+trade_penalty = 50.0
 ```
 
-### Step 4 — Extend `assign_strata_to_indices` to support 3 strata
+Change to:
+```python
+trade_penalty = float(_cfg.PHASE2_INFEASIBLE_OBJECTIVE_PENALTY)
+```
 
-In `gpu_fuzzy_trader/phases/phase2_init.py`, modify the function to
-take a 3-tuple of fractions (elite, explorer, regime) instead of a
-2-tuple (elite, explorer). When `PHASE2_REGIME_STRATUM_ENABLED=True`,
-the new third fraction is `PHASE2_REGIME_STRATUM_FRAC=0.25`. When
-False, falls back to the 2-stratum behavior (regime frac=0).
+This wires up the dead `PHASE2_INFEASIBLE_OBJECTIVE_PENALTY` config constant
+(defined at config.py:699 but never referenced). Now it's tunable.
 
-Add a new helper function `assign_three_strata_to_indices` that
-returns a list of `"elite" | "explorer" | "regime"` strings. The
-existing `assign_strata_to_indices` stays for backward compat.
+### No other changes needed
+- The `island_hyperparams` parameter is already in scope (it's a function
+  parameter at line 479).
+- `n_valid_rows` is also in scope (line 478).
+- The `effective_min_trade_pool_floor` function already exists (config.py:1856)
+  and calls `scale_trade_floor` correctly.
+- `IslandHyperparams.min_trade_pool_floor` is already set correctly at island
+  creation time via `resolve_island_hyperparams`.
 
-### Step 5 — Add a `regime` stratum sampling function
+## Acceptance Criteria
+1. When `island_hyperparams is not None`, `trade_floor` equals
+   `island_hyperparams.min_trade_pool_floor` (not the global 25).
+2. When `island_hyperparams is None`, `trade_floor` equals
+   `_cfg.effective_min_trade_pool_floor(n_valid_rows)` (scales by rows).
+3. `trade_penalty` uses `_cfg.PHASE2_INFEASIBLE_OBJECTIVE_PENALTY` (not inline 50.0).
+4. `config.py` asserts at import still pass.
+5. `PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit -q` passes (no NEW failures beyond the 2 pre-existing MAX_CONDITIONS ones).
+6. Add or update a unit test that verifies the hard reject floor respects
+   `island_hyperparams.min_trade_pool_floor` when provided. Use the established
+   mocking pattern from existing Phase 2 tests.
 
-In `phase2_init.py`, add `sample_regime_stratum_chromosome` that
-returns a chromosome whose first active gene is a regime-feature
-index. The remaining active genes are sampled uniformly (or
-softmax-weighted) from the rest.
+## Verification Commands
+```
+cd /home/danaee/trading_platform
+.venv/bin/python -c "import gpu_fuzzy_trader.config; print('asserts OK')"
+PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_phase2_rule_pool.py tests/unit/test_evox_runner.py -q 2>&1 | tail -10
+PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit -q 2>&1 | tail -5
+```
+Do NOT run the full pipeline.
 
-### Step 6 — Wire into the population initialization
+## Target Files
+- `gpu_fuzzy_trader/phases/phase2_rule_pool.py` (2 lines changed)
+- `tests/unit/test_phase2_rule_pool.py` (add 1-2 tests for island-aware floor)
+- `README.md` — no config table change needed (PHASE2_INFEASIBLE_OBJECTIVE_PENALTY already documented; MIN_TRADE_POOL_FLOOR already documented)
 
-In `phase2_rule_pool.py`'s `_init_population` (or wherever
-initialization happens), check `PHASE2_REGIME_STRATUM_ENABLED`. If
-True, use `assign_three_strata_to_indices` and call
-`sample_regime_stratum_chromosome` for the "regime" rows. If False,
-use the existing 2-stratum behavior.
-
-## Out of scope
-- Do NOT change the JSON output format.
-- Do NOT modify `evaluator_v5.ipynb`.
-- Do NOT touch the GPU engine or EvoX runner's NSGA-III environmental selection (the stratum affects initialization only).
-- Do NOT change the bar-level regime detection (Task 1 didn't add it; it was pre-existing).
-- Do NOT add Task 9 features.
-
-## Acceptance criteria
-1. All 4 new config keys are present and accessible.
-2. `Stratum` literal includes "regime" (3 options).
-3. `_regime_feature_indices` is importable and returns the right indices for a synthetic `feature_infos` list with regime/non-regime features.
-4. `assign_three_strata_to_indices` is importable and returns a list of `"elite" | "explorer" | "regime"` strings, with the right fractions.
-5. `sample_regime_stratum_chromosome` is importable and returns a chromosome whose first active gene is a regime feature.
-6. The wire-in into `_init_population` is correct: 25% of non-seeded rows have their first active gene from the regime-keyword list.
-7. New unit test `tests/unit/test_regime_keyword_stratum.py` with ≥ 4 cases:
-   - `_regime_feature_indices` returns the right indices for a mix of regime and non-regime features.
-   - `assign_three_strata_to_indices` returns the right fractions.
-   - `sample_regime_stratum_chromosome` always picks a regime feature for the first active gene.
-   - When `PHASE2_REGIME_STRATUM_ENABLED=False`, the existing 2-stratum behavior is preserved.
-8. All existing tests pass.
-9. No changes to `evaluator_v5.ipynb` or the GPU engine.
-
-## Constraints
-- Stay on `feature/task-8-regime-keyword-stratum` (off `main` after task-7 is merged).
-- 12.7 GiB RAM total.
-- PEP 8, type hints, module logger.
-- Use only existing third-party deps.
-
-## Files I will touch
-- `gpu_fuzzy_trader/config.py` — 4 new `PHASE2_REGIME_STRATUM_*` keys
-- `gpu_fuzzy_trader/phases/phase2_init.py` — add "regime" to Stratum literal; add helpers
-- `gpu_fuzzy_trader/phases/phase2_rule_pool.py` — wire the new stratum into `_init_population`
-- `tests/unit/test_regime_keyword_stratum.py` (new) — ≥ 4 cases
+## Notes
+- This is a coherence/correctness fix, not a tuning change.
+- The island's `min_trade_pool_floor` is already correctly scaled at creation
+  time — this fix just makes the hard reject READ it.
+- `PHASE2_INFEASIBLE_OBJECTIVE_PENALTY` is no longer dead config after this.
+- Do NOT change the default value of MIN_TRADE_POOL_FLOOR (25) or
+  PHASE2_INFEASIBLE_OBJECTIVE_PENALTY (50.0) — just wire them correctly.

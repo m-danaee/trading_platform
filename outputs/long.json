@@ -3,23 +3,86 @@
   "rules_set": [
     {
       "conditions": [
-        "[feat_0] IS Very High",
-        "symbol is SYM_A"
+        "[drawdown_from_peak_60] IS Very High",
+        "[log_range_over_vol_100] IS Very Low",
+        "[vol_ratio_20_100] IS Medium",
+        "[ret_vol_corr_30] IS Strong Bullish",
+        "symbol is 2"
       ],
       "tp": 2.0,
-      "sl": 1.0,
-      "capital_pct": 30.0
+      "sl": 1.2,
+      "capital_pct": 20.0
+    },
+    {
+      "conditions": [
+        "[amihud_illiquidity_20] IS Very High",
+        "[rsi_centered_14] IS Neutral Positive",
+        "[vol_ratio_20_100] IS Medium",
+        "[vol_over_ema20] IS Low",
+        "symbol is 9"
+      ],
+      "tp": 2.0,
+      "sl": 1.2,
+      "capital_pct": 20.0
+    },
+    {
+      "conditions": [
+        "[downside_semivol_20] IS Very High",
+        "[open_gap_atr_14] IS Weak Negative",
+        "[close_location_value] IS High",
+        "[rsi_hidden_div_flag] IS Positive (1)",
+        "symbol is 3"
+      ],
+      "tp": 2.0,
+      "sl": 1.2,
+      "capital_pct": 20.0
+    },
+    {
+      "conditions": [
+        "[downside_semivol_20] IS Very High",
+        "[return_skew_30] IS Extreme Bearish",
+        "[vol_ratio_20_100] IS Low",
+        "[ret_vol_corr_30] IS Bullish",
+        "symbol is 2"
+      ],
+      "tp": 2.0,
+      "sl": 1.2,
+      "capital_pct": 20.0
+    },
+    {
+      "conditions": [
+        "[inside_bar_compression] IS Very Low",
+        "[mom_stoch_rsi_14_14_3] IS High",
+        "[vol_ratio_20_100] IS Medium",
+        "[rsi_hidden_div_flag] IS Positive (1)",
+        "symbol is 5"
+      ],
+      "tp": 2.0,
+      "sl": 1.2,
+      "capital_pct": 20.0
+    },
+    {
+      "conditions": [
+        "[roc_10] IS Extreme Bearish",
+        "[body_signed_to_tr] IS Strong Bullish",
+        "[inside_bar_compression] IS Very Low",
+        "[ret_vol_corr_30] IS Bullish",
+        "symbol is 8"
+      ],
+      "tp": 2.0,
+      "sl": 1.2,
+      "capital_pct": 20.0
     }
   ],
   "risk_optimized": true,
-  "rb_score": -7541.631973841342,
-  "rb_train_return_pct": 0.9000062942504883,
-  "rb_valid_return_pct": 0.9000062942504883,
-  "rb_valid_profit_factor": 3.500000238418579,
-  "rb_valid_max_drawdown_pct": 0.3580639958381653,
-  "rb_valid_executed_trades": 4,
-  "rb_train_minus_valid_return_pct": 0.0,
-  "rb_train_valid_ratio": 1.0,
-  "rb_profit_amp_objective": -446.9868993527861,
+  "rb_score": 3115.3463136422424,
+  "rb_train_return_pct": 20.534347534179688,
+  "rb_valid_return_pct": 16.254222869873047,
+  "rb_valid_profit_factor": 4.265252113342285,
+  "rb_valid_max_drawdown_pct": 0.9575783014297485,
+  "rb_valid_executed_trades": 73,
+  "rb_train_minus_valid_return_pct": 4.280124664306641,
+  "rb_train_valid_ratio": 1.2633238573490824,
+  "rb_profit_amp_objective": 51.32095543789863,
   "rb_profit_amp_accepted": false
 }
