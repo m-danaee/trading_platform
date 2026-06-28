@@ -21,21 +21,21 @@ convergence. 27 fixes across 6 tasks.
 
 ## Current Task
 
-**task-15: Fitness & Objective Redesign** — branch `fix/fitness-objective-redesign`
+**task-17: Island Migration & Rule Structure** — branch `fix/island-migration-rule-structure`
 Status: dispatching implementer
 
-### task-14 — ✅ MERGED
-- Branch `fix/rb-governor-rebalance` merged (f240490) and deleted.
-- All 5 fixes (C1,C2,C3,C4,M7) verified, 21 tests pass.
+### task-14 — ✅ MERGED (f240490)
+### task-15 — ✅ MERGED (eb5bf05)
+### task-16 — ✅ MERGED (3326146)
 
 ## Task Summary (6 tasks, sequential, isolated branches)
 
 | # | Branch | Fixes | Priority | Status |
 |---|--------|-------|----------|--------|
 | 14 | `fix/rb-governor-rebalance` | C1,C2,C3,C4,M7 — val overfit, CV folds, gap penalty | 🔴 Critical | ✅ MERGED |
-| 15 | `fix/fitness-objective-redesign` | C5,C6,C7,H1,H2,M3 — symbol-lock, f1/f3, Sortino sat, val leak | 🔴 Critical | **in_progress** |
-| 16 | `fix/evolution-convergence` | H3,H5,M4,M5 — restart, state carry-over, normalization | 🟠 High | pending |
-| 17 | `fix/island-migration-rule-structure` | H4,H6 — migration enable, MIN/MAX_CONDITIONS | 🟠 High | pending |
+| 15 | `fix/fitness-objective-redesign` | C5,C6,C7,H1,H2,M3 — symbol-lock, f1/f3, Sortino sat, val leak | 🔴 Critical | ✅ MERGED |
+| 16 | `fix/evolution-convergence` | H3,H5,M4,M5 — restart, state carry-over, normalization | 🟠 High | ✅ MERGED |
+| 17 | `fix/island-migration-rule-structure` | H4,H6 — migration enable, MIN/MAX_CONDITIONS | 🟠 High | **in_progress** |
 | 18 | `fix/admission-gates-robustness` | M1,M2,M6,M8 — per-symbol WR bug, cache, monthly gate | 🟡 Medium | pending |
 | 19 | `fix/cleanup-observability` | L1–L6 — dead code, EvoX warn, Das-Dennis, viability trigger | 🟢 Low | pending |
 
