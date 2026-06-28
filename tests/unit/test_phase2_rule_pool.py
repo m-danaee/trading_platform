@@ -1304,6 +1304,7 @@ class TestEvaluateChromosome:
         has_orig = hasattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ")
         orig_val = getattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ", False)
         orig_floor = _cfg.MIN_TRADE_SUPPORT
+        orig_f3_obj = str(getattr(_cfg, "PHASE2_F3_OBJECTIVE", "profit_factor"))
         
         try:
             _cfg.PHASE2_USE_TOTAL_RETURN_OBJ = True
@@ -1321,6 +1322,11 @@ class TestEvaluateChromosome:
                         "max_drawdown_pct": 2.0,
                         "win_rate": 50.0,
                         "profit_factor": 5.0,
+                        "per_symbol_metrics": {
+                            "SYM1": {"net_pnl": 100.0},
+                            "SYM2": {"net_pnl": 200.0},
+                            "SYM3": {"net_pnl": 300.0},
+                        },
                     }]
             
             engine = MockEngine()
@@ -1331,8 +1337,16 @@ class TestEvaluateChromosome:
             # With total return obj enabled: f3 = -total_return_pct = -15.0 (plus penalties)
             assert np.isclose(objectives[2], -15.0)
             
-            # Disable it -> should use win_rate = 50.0
+            # Disable it -> should use default PHASE2_F3_OBJECTIVE (profit_factor = 5.0)
             _cfg.PHASE2_USE_TOTAL_RETURN_OBJ = False
+            objectives, metrics = _evaluate_chromosome(
+                chromosome, dont_cares, engine, []
+            )
+            # With profit_factor default: f3 = -profit_factor = -5.0 (plus penalties)
+            assert np.isclose(objectives[2], -5.0)
+
+            # Set PHASE2_F3_OBJECTIVE to "win_rate" -> should use win_rate = 50.0
+            _cfg.PHASE2_F3_OBJECTIVE = "win_rate"
             objectives, metrics = _evaluate_chromosome(
                 chromosome, dont_cares, engine, []
             )
@@ -1345,6 +1359,7 @@ class TestEvaluateChromosome:
             else:
                 if hasattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ"):
                     delattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ")
+            _cfg.PHASE2_F3_OBJECTIVE = orig_f3_obj
 
     def test_evaluate_chromosome_diversity_penalty_avoids_self_penalization(self):
         from gpu_fuzzy_trader.phases.phase2_rule_pool import _evaluate_chromosome
@@ -1373,6 +1388,11 @@ class TestEvaluateChromosome:
                         "max_drawdown_pct": 2.0,
                         "win_rate": 50.0,
                         "profit_factor": 5.0,
+                        "per_symbol_metrics": {
+                            "SYM1": {"net_pnl": 100.0},
+                            "SYM2": {"net_pnl": 200.0},
+                            "SYM3": {"net_pnl": 300.0},
+                        },
                     }]
             
             engine = MockEngine()
@@ -1391,11 +1411,11 @@ class TestEvaluateChromosome:
             
             # objectives[2] is -f3_val + penalties
             # f3_val is total_return = 15.0 since PHASE2_USE_TOTAL_RETURN_OBJ is True.
-            # cond_penalty is 10.0 because chromosome has 6 active conditions while MAX_CONDITIONS is 5.
-            # Without diversity penalty: -15.0 + 10.0 = -5.0
-            # With diversity penalty: -15.0 + 10.0 + 10.0 = 5.0
-            assert np.isclose(objectives_self[2], -5.0)
-            assert np.isclose(objectives_similar[2], 5.0)
+            # cond_penalty is 20.0 because chromosome has 6 active conditions while MAX_CONDITIONS is 4.
+            # Without diversity penalty: -15.0 + 20.0 = 5.0
+            # With diversity penalty: -15.0 + 20.0 + 10.0 = 15.0
+            assert np.isclose(objectives_self[2], 5.0)
+            assert np.isclose(objectives_similar[2], 15.0)
             
         finally:
             _cfg.PHASE2_DIVERSITY_PENALTY = orig_penalty
@@ -1433,6 +1453,11 @@ class TestRobustReturnObjective:
             "max_drawdown_pct": 2.0,
             "win_rate": 50.0,
             "profit_factor": 1.2,
+            "per_symbol_metrics": {
+                "SYM1": {"net_pnl": 100.0},
+                "SYM2": {"net_pnl": 200.0},
+                "SYM3": {"net_pnl": 300.0},
+            },
         }
         val_metrics = {
             "executed_trades": 50,
@@ -1463,6 +1488,7 @@ class TestPhenotypeDiversityPenalty:
         monkeypatch.setattr(_cfg, "PHASE2_DIVERSITY_PENALTY", 10.0)
         monkeypatch.setattr(_cfg, "PHASE2_DIVERSITY_HAMMING_THRESHOLD", 0)
         monkeypatch.setattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ", False)
+        monkeypatch.setattr(_cfg, "PHASE2_F3_OBJECTIVE", "win_rate")
         monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
 
         dont_cares = np.full(5, 5, dtype=np.int32)
@@ -1475,6 +1501,11 @@ class TestPhenotypeDiversityPenalty:
             "max_drawdown_pct": 8.0,
             "win_rate": 50.0,
             "profit_factor": 1.2,
+            "per_symbol_metrics": {
+                "SYM1": {"net_pnl": 100.0},
+                "SYM2": {"net_pnl": 200.0},
+                "SYM3": {"net_pnl": 300.0},
+            },
         }
         sortino_sat = _saturating_sortino(2.0)
         bucket = _phenotype_bucket_key(sortino_sat, 8.0, 50.0)
@@ -1555,6 +1586,11 @@ class TestJointValF2F3:
             "max_drawdown_pct": 5.0,
             "win_rate": 50.0,
             "profit_factor": 1.2,
+            "per_symbol_metrics": {
+                "SYM1": {"net_pnl": 100.0},
+                "SYM2": {"net_pnl": 200.0},
+                "SYM3": {"net_pnl": 300.0},
+            },
         }
         val_metrics = {
             "executed_trades": 50,
@@ -1575,6 +1611,7 @@ class TestJointValF2F3:
         )
 
         monkeypatch.setattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ", False)
+        monkeypatch.setattr(_cfg, "PHASE2_F3_OBJECTIVE", "win_rate")
         monkeypatch.setattr(_cfg, "PHASE2_JOINT_TRAIN_VAL", True)
         monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", False)
         monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
@@ -1590,6 +1627,11 @@ class TestJointValF2F3:
             "max_drawdown_pct": 2.0,
             "win_rate": 55.0,
             "profit_factor": 1.2,
+            "per_symbol_metrics": {
+                "SYM1": {"net_pnl": 100.0},
+                "SYM2": {"net_pnl": 200.0},
+                "SYM3": {"net_pnl": 300.0},
+            },
         }
         val_metrics = {
             "executed_trades": 50,
@@ -1821,6 +1863,11 @@ class TestIslandAwareTradeFloor:
             "max_drawdown_pct": 2.0,
             "win_rate": 50.0,
             "profit_factor": 1.2,
+            "per_symbol_metrics": {
+                "SYM1": {"net_pnl": 100.0},
+                "SYM2": {"net_pnl": 200.0},
+                "SYM3": {"net_pnl": 300.0},
+            },
         }
 
         # With island_hyperparams: 20 >= 15 → no hard reject penalty
@@ -1869,6 +1916,11 @@ class TestIslandAwareTradeFloor:
             "max_drawdown_pct": 2.0,
             "win_rate": 50.0,
             "profit_factor": 1.2,
+            "per_symbol_metrics": {
+                "SYM1": {"net_pnl": 100.0},
+                "SYM2": {"net_pnl": 200.0},
+                "SYM3": {"net_pnl": 300.0},
+            },
         }
 
         objectives, _ = compute_phase2_objectives_from_metrics(
@@ -1909,6 +1961,11 @@ class TestIslandAwareTradeFloor:
             "max_drawdown_pct": 2.0,
             "win_rate": 50.0,
             "profit_factor": 1.2,
+            "per_symbol_metrics": {
+                "SYM1": {"net_pnl": 100.0},
+                "SYM2": {"net_pnl": 200.0},
+                "SYM3": {"net_pnl": 300.0},
+            },
         }
 
         # Without island, with n_valid_rows: effective_min_trade_pool_floor(500)
@@ -1927,7 +1984,7 @@ class TestIslandAwareTradeFloor:
 class TestConditionBounds:
     def test_config_allows_bounded_conditions(self):
         assert _cfg.MIN_CONDITIONS == 3
-        assert _cfg.MAX_CONDITIONS == 5
+        assert _cfg.MAX_CONDITIONS == 4
 
     def test_mutation_repair_preserves_condition_bounds(self):
         from gpu_fuzzy_trader.phases.phase2_rule_pool import _mutate

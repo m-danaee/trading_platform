@@ -1550,6 +1550,7 @@ def _run_nsga2_fallback(
                     population[i], dont_cares, engine, pareto_archive,
                     val_engine=val_engine,
                     stage_params=stage_params,
+                    cv_fold_evaluator=cv_fold_evaluator,
                 )
                 objectives[i] = obj
                 metrics_cache[i] = metrics
@@ -1791,6 +1792,7 @@ def _run_nsga2_fallback(
                 offspring[i], dont_cares, engine, pareto_archive,
                 val_engine=val_engine,
                 stage_params=stage_params,
+                cv_fold_evaluator=cv_fold_evaluator,
             )
             off_obj[i] = obj
             off_metrics[i] = metrics

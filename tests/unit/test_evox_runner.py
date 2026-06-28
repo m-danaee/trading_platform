@@ -232,6 +232,11 @@ def test_phase2_use_total_return_obj():
                     "max_drawdown_pct": 2.0,
                     "win_rate": 50.0,
                     "profit_factor": 5.0,
+                    "per_symbol_metrics": {
+                        "SYM1": {"net_pnl": 100.0},
+                        "SYM2": {"net_pnl": 200.0},
+                        "SYM3": {"net_pnl": 300.0},
+                    },
                 }]
                 
         engine = MockEngine()
@@ -244,14 +249,23 @@ def test_phase2_use_total_return_obj():
         # Sortino obj should be -0.5 + pen, DD should be 2.0 + pen, F3 should be -15.0 + pen
         assert np.isclose(objectives[0, 2], -15.0)
         
-        # Disable it -> should use win_rate = 50.0
+        # Disable it -> should use default PHASE2_F3_OBJECTIVE (profit_factor = 5.0)
         _cfg.PHASE2_USE_TOTAL_RETURN_OBJ = False
         objectives[0] = np.inf
         _evaluate_population_indices(
             pop, [0], dont_cares, engine, [], objectives, metrics_cache
         )
+        # With profit_factor default: f3 = -profit_factor = -5.0 (plus penalties)
+        assert np.isclose(objectives[0, 2], -5.0)
+
+        # Set PHASE2_F3_OBJECTIVE to "win_rate" -> should use win_rate = 50.0
+        _cfg.PHASE2_F3_OBJECTIVE = "win_rate"
+        objectives[0] = np.inf
+        _evaluate_population_indices(
+            pop, [0], dont_cares, engine, [], objectives, metrics_cache
+        )
         assert np.isclose(objectives[0, 2], -50.0)
-        
+
     finally:
         _cfg.MIN_TRADE_SUPPORT = orig_floor
         if has_orig:
@@ -259,6 +273,9 @@ def test_phase2_use_total_return_obj():
         else:
             if hasattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ"):
                 delattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ")
+        # Restore PHASE2_F3_OBJECTIVE if it was modified
+        if hasattr(_cfg, "PHASE2_F3_OBJECTIVE"):
+            _cfg.PHASE2_F3_OBJECTIVE = "profit_factor"
 
 
 def _default_eval_metrics(executed_trades: int = 25) -> dict:

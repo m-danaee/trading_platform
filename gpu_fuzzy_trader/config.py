@@ -434,7 +434,7 @@ MIN_TRADE_POOL_FLOOR = 40
 # PHASE2_SUPPORT_PENALTY_WEIGHT_F1/F2/F3 — per-objective support penalty scale.
 #   Higher → that objective punishes low support more (steer Sortino vs DD vs return).
 #   Lower  → support matters less for that objective.
-PHASE2_SUPPORT_PENALTY_WEIGHT_F1 = 0.0  # Sortino objective
+PHASE2_SUPPORT_PENALTY_WEIGHT_F1 = 0.4  # Sortino objective
 PHASE2_SUPPORT_PENALTY_WEIGHT_F2 = 0.6  # drawdown objective
 PHASE2_SUPPORT_PENALTY_WEIGHT_F3 = 0.6  # return / win-rate objective
 
@@ -442,6 +442,23 @@ PHASE2_SUPPORT_PENALTY_WEIGHT_F3 = 0.6  # return / win-rate objective
 #   True  → optimize deployable return; aligns with PnL goals.
 #   False → optimize win rate; may favor many small wins over net PnL.
 PHASE2_USE_TOTAL_RETURN_OBJ = False
+
+# PHASE2_F3_OBJECTIVE — third objective: "profit_factor" (default),
+# "cv_fold_min" (min of CV fold returns), or "win_rate" (legacy).
+#   profit_factor → f3 = -profit_factor (aligns with edge quality over noise).
+#   cv_fold_min  → f3 = -min(CV fold returns); requires CvFoldValEvaluator.
+#   win_rate     → f3 = -win_rate (degenerate, not recommended).
+PHASE2_F3_OBJECTIVE = "profit_factor"
+
+# PHASE2_MIN_PROFITABLE_SYMBOLS_PENALTY — min profitable symbols before penalty.
+#   When n_profitable_symbols < this, a penalty is added to support_penalty
+#   to discourage symbol-locked rules that only work on one symbol.
+PHASE2_MIN_PROFITABLE_SYMBOLS_PENALTY = 3
+
+# PHASE2_SYMBOL_GENE_DONT_CARE_PROB — probability of forcing a symbol gene to
+#   dont_care during mutation. Higher → more cross-symbol rules; prevents
+#   symbol-locked evolution.
+PHASE2_SYMBOL_GENE_DONT_CARE_PROB = 0.4
 
 # PHASE2_USE_ROBUST_RETURN_OBJ — f3 uses min(train_return, val_return).
 #   True  → penalizes train-only return spikes (recommended with val/CV).
@@ -557,12 +574,12 @@ PHASE2_MONTHLY_ADMISSION_MIN_MONTHS = 4
 # SORTINO_CAP — maximum saturated Sortino after tanh compression.
 #   Higher → more differentiation among top Sortino rules on f1.
 #   Lower  → flatter f1 landscape; diversity across other objectives easier.
-SORTINO_CAP = 5.0
+SORTINO_CAP = 20.0
 
 # SORTINO_SCALE — divisor inside tanh(raw_sortino / scale); controls saturation.
 #   Higher → less compression; extreme Sortino values still differentiate f1.
 #   Lower  → aggressive compression; reduces Sortino-driven dominance.
-SORTINO_SCALE = 5.0
+SORTINO_SCALE = 10.0
 
 # PHASE2_JOINT_TRAIN_VAL — fitness uses min(train, val) Sortino/return where applicable.
 #   True  → slower (eval val every gen) but aligned with deployment; less overfit.
@@ -570,10 +587,12 @@ SORTINO_SCALE = 5.0
 #           (Phase 3) & OOS (Phase 5). Robustness via purged 4-fold CV evaluator.
 PHASE2_JOINT_TRAIN_VAL = False
 
-
-# =============================================================================
-# Phase 2 — Diversity, early stop & two-stage search
-# =============================================================================
+# PHASE2_VAL_IN_FITNESS_PENALTY — when False (default), val-derived penalties
+#   (val_floor_penalty, val symbol_robustness, val trade-floor support cap) are
+#   excluded from fitness computation. Val metrics are still stored on the metrics
+#   dict for reporting and pool admission, but do NOT affect NSGA-III objectives.
+#   When True, val penalties enter fitness even when PHASE2_JOINT_TRAIN_VAL=False.
+PHASE2_VAL_IN_FITNESS_PENALTY = False
 
 # PHASE2_DIVERSITY_HAMMING_THRESHOLD — min Hamming distance for "unique" rule.
 #   Higher → demand more genetic distance; wider Pareto spread, slower convergence.
