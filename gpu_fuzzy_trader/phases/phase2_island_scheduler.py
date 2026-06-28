@@ -442,6 +442,14 @@ def run_cluster_phase2(
         len(cluster_map),
         reference_rows,
     )
+    logger.info(
+        "Phase 2 [%s]: island mode migration=%s (interval=%d, top_k=%d, seed_frac=%.2f)",
+        direction,
+        "enabled" if _cfg.PHASE2_MIGRATION_ENABLED else "disabled (independent islands)",
+        int(_cfg.PHASE2_MIGRATION_EPOCH_INTERVAL),
+        int(_cfg.PHASE2_MIGRATION_TOP_K),
+        float(_cfg.PHASE2_MIGRATION_SEED_FRACTION),
+    )
 
     pool = _run_cluster_islands(
         train_df,

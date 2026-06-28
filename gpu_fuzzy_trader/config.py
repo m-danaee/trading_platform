@@ -402,8 +402,8 @@ PHASE2_CAPITAL_PCT = 30.0
 #   Lower MIN → broader rules, more trades, risk of weak patterns.
 #   Higher MAX → allow complex rules (if encoding supports variable count).
 #   Lower MAX → force simplicity; more generalization, less specificity.
-MIN_CONDITIONS = 3
-MAX_CONDITIONS = 4
+MIN_CONDITIONS = 4
+MAX_CONDITIONS = 5
 
 # PHASE2_ENCODING — chromosome memory layout during evolution.
 #   "dense"        — length-K vector with per-feature dont_care (legacy).
@@ -960,18 +960,18 @@ PHASE2_ISLAND_MONTHLY_MIN_MONTHS = 4
 # History: migration was on by default but degraded locally-adapted elites
 # (foreign rules rarely match the receiver's symbol slice; the loose gates
 # admitted near-zero-return migrants that displaced up to 25% of converged locals).
-PHASE2_MIGRATION_ENABLED: bool = False
-PHASE2_MIGRATION_EPOCH_INTERVAL = 2
-PHASE2_MIGRATION_TOP_K = 2              # was 5 → shrink displacement footprint
+PHASE2_MIGRATION_ENABLED: bool = True
+PHASE2_MIGRATION_EPOCH_INTERVAL = 1
+PHASE2_MIGRATION_TOP_K = 5
 PHASE2_MIGRATION_REQUIRE_DEPLOYABILITY = True
-PHASE2_MIGRATION_MIN_VAL_RETURN_PCT = 2.0       # was 0.0 → only genuinely-transferable rules
-PHASE2_MIGRATION_MIN_VAL_TRADES = 15            # was 5   → stronger evidence bar
+PHASE2_MIGRATION_MIN_VAL_RETURN_PCT = 1.0
+PHASE2_MIGRATION_MIN_VAL_TRADES = None          # None = use island trade floor
 
 # PHASE2_MIGRATION_SEED_FRACTION — fraction of the live population overwritten by
 # migrants at epoch boundaries. Decoupled from PHASE2_ARCHIVE_SEED_FRACTION (which
 # governs cross-run warm-start and stays 0.25). 0.05 = 10 of 200 slots, so
 # migrants displace ≤5% of converged locals rather than ≤25%.
-PHASE2_MIGRATION_SEED_FRACTION: float = 0.05
+PHASE2_MIGRATION_SEED_FRACTION: float = 0.10
 
 # PHASE2_ORPHAN_* — relaxed hyperparams for low-row symbol slices left out of clusters.
 PHASE2_ORPHAN_ENABLED = True

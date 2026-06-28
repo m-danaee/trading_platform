@@ -24,15 +24,15 @@ from gpu_fuzzy_trader.phases.phase2_island_scheduler import filter_migrants_for_
 # ============================================================================
 
 
-class TestMigrationDisabledByDefault:
-    """Verify that with PHASE2_MIGRATION_ENABLED=False (the default) no migration occurs."""
+class TestMigrationEnabledByDefault:
+    """Verify that with PHASE2_MIGRATION_ENABLED=True (the new default) migration is active."""
 
-    def test_config_default_is_false(self):
-        """Config ships with migration disabled."""
-        assert _cfg.PHASE2_MIGRATION_ENABLED is False
+    def test_config_default_is_true(self):
+        """Config ships with migration enabled."""
+        assert _cfg.PHASE2_MIGRATION_ENABLED is True
 
-    def test_guard_prevents_migration_block(self):
-        """The guard condition `PHASE2_MIGRATION_ENABLED and ...` is False."""
+    def test_guard_allows_migration_block(self, monkeypatch):
+        """The guard condition `PHASE2_MIGRATION_ENABLED and ...` is True by default."""
         enabled = _cfg.PHASE2_MIGRATION_ENABLED
         epoch_counter = 2
         interval = int(_cfg.PHASE2_MIGRATION_EPOCH_INTERVAL)
@@ -42,9 +42,24 @@ class TestMigrationDisabledByDefault:
             and epoch_counter % interval == 0
             and n_clusters > 1
         )
-        assert guard is False, (
-            "Guard should be False when PHASE2_MIGRATION_ENABLED is False"
+        assert guard is True, (
+            "Guard should be True when PHASE2_MIGRATION_ENABLED is True"
         )
+
+    def test_guard_prevents_migration_when_disabled(self, monkeypatch):
+        """With PHASE2_MIGRATION_ENABLED=False, guard is False even when epoch aligns."""
+        monkeypatch.setattr(_cfg, "PHASE2_MIGRATION_ENABLED", False)
+
+        enabled = _cfg.PHASE2_MIGRATION_ENABLED
+        epoch_counter = 2
+        interval = int(_cfg.PHASE2_MIGRATION_EPOCH_INTERVAL)
+        n_clusters = 3
+        guard = (
+            enabled
+            and epoch_counter % interval == 0
+            and n_clusters > 1
+        )
+        assert guard is False
 
     def test_set_pending_migrant_seeds_not_called_when_disabled(self, monkeypatch):
         """set_pending_migrant_seeds should never be called when migration is off."""
@@ -259,8 +274,8 @@ class TestMigrationSeedFraction:
     """Verify that migrant injection uses PHASE2_MIGRATION_SEED_FRACTION, not ARCHIVE."""
 
     def test_seed_fraction_config_default(self):
-        """PHASE2_MIGRATION_SEED_FRACTION defaults to 0.05."""
-        assert _cfg.PHASE2_MIGRATION_SEED_FRACTION == 0.05
+        """PHASE2_MIGRATION_SEED_FRACTION defaults to 0.10."""
+        assert _cfg.PHASE2_MIGRATION_SEED_FRACTION == 0.10
 
     def test_migration_seed_fraction_decoupled_from_archive(self):
         """Ensure the migration fraction is not the same as archive fraction."""

@@ -1983,8 +1983,8 @@ class TestIslandAwareTradeFloor:
 
 class TestConditionBounds:
     def test_config_allows_bounded_conditions(self):
-        assert _cfg.MIN_CONDITIONS == 3
-        assert _cfg.MAX_CONDITIONS == 4
+        assert _cfg.MIN_CONDITIONS == 4
+        assert _cfg.MAX_CONDITIONS == 5
 
     def test_mutation_repair_preserves_condition_bounds(self):
         from gpu_fuzzy_trader.phases.phase2_rule_pool import _mutate
