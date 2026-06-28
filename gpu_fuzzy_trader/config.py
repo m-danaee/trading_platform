@@ -352,6 +352,12 @@ PHASE2_EVAL_BATCH_DEDUP = True
 #   False → always re-simulate; use when debugging cache staleness.
 PHASE2_EVAL_GLOBAL_CACHE = True
 
+# PHASE2_EVAL_GLOBAL_CACHE_MAX_SIZE — hard cap on the global eval cache.
+#   575 = 200 (population) + 75 (seeded elites) + 300 (archive margin).
+#   Higher → more cache hits; less RAM.
+#   Lower  → less RAM; more re-evaluations.
+PHASE2_EVAL_GLOBAL_CACHE_MAX_SIZE = 575
+
 # PHASE2_SKIP_ZERO_SIGNAL_SCAN — skip equity scan when rule matches 0 bars.
 #   True  → faster; infeasible rules get penalty without full scan.
 #   False → full scan always; slightly slower, easier to debug.
@@ -558,6 +564,12 @@ PHASE2_MONTHLY_GOOD_RETURN_MIN_PCT = 0.0
 #   Lower  → more lenient; rules that work on a minority of windows survive.
 #   0.50 means the rule must pass on at least half the windows.
 PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO = 0.5
+
+# PHASE2_MONTHLY_ADMISSION_MIN_RATIO — fraction of monthly windows that must
+# be profitable for a rule to be admitted.  Replaces the default 0.500 from
+# PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO for the non-island path.
+#   0.667 → rule must be profitable in 4 of 6 months; tighter time-stability.
+PHASE2_MONTHLY_ADMISSION_MIN_RATIO = 0.667
 
 # PHASE2_MONTHLY_ADMISSION_MIN_MONTHS — minimum number of monthly windows
 # required before the gate is applied.  When the train split is shorter than

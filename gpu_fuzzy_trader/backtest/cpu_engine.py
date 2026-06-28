@@ -622,6 +622,7 @@ class CPUBacktestEngine:
         return_logs: bool,
         logs: list,
         stats: dict,
+        sym_wins: dict[str, int] | None = None,
     ) -> tuple:
         """
         Release all positions whose release_index <= current_index.
@@ -645,6 +646,9 @@ class CPUBacktestEngine:
 
                 if pos["net_pnl"] > 0:
                     stats["wins"] += 1
+                    if sym_wins is not None:
+                        sym = pos["symbol"]
+                        sym_wins[sym] = sym_wins.get(sym, 0) + 1
                     stats["gross_profit_sum"] += pos["net_pnl"]
                 elif pos["net_pnl"] < 0:
                     stats["loss_count"] += 1
@@ -927,6 +931,7 @@ class CPUBacktestEngine:
                 return_logs=return_logs,
                 logs=logs,
                 stats=stats,
+                sym_wins=sym_wins,
             )
 
             if stats["account_ruined"]:
@@ -1062,6 +1067,7 @@ class CPUBacktestEngine:
             return_logs=return_logs,
             logs=logs,
             stats=stats,
+            sym_wins=sym_wins,
         )
 
         # --- Summary metrics ---
@@ -1097,13 +1103,15 @@ class CPUBacktestEngine:
                     "net_pnl": s_net_pnl,
                 }
         else:
-            # Approximate from accumulated counters (net_pnl is exact; wins not tracked per-symbol without logs)
+            # Approximate from accumulated counters (net_pnl is exact; wins tracked per-symbol via sym_wins)
             for sym in sym_trades:
                 s_trades = sym_trades[sym]
+                s_wins = sym_wins.get(sym, 0)
                 s_net_pnl = sym_net_pnl.get(sym, 0.0)
+                s_win_rate = (s_wins / s_trades * 100.0) if s_trades > 0 else 0.0
                 per_symbol_metrics[sym] = {
                     "trade_count": s_trades,
-                    "win_rate": 0.0,  # cannot compute without per-trade outcome tracking
+                    "win_rate": s_win_rate,
                     "net_pnl": s_net_pnl,
                 }
 
