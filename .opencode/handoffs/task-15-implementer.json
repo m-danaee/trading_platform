@@ -1,0 +1,28 @@
+{
+  "task": "task-15",
+  "status": "DONE",
+  "branch": "fix/fitness-objective-redesign",
+  "fixes": ["C5", "C6", "C7", "H1", "H2", "M3"],
+  "config_changes": {
+    "PHASE2_SUPPORT_PENALTY_WEIGHT_F1": "0.0 → 0.4",
+    "SORTINO_CAP": "5.0 → 20.0",
+    "SORTINO_SCALE": "5.0 → 10.0",
+    "PHASE2_F3_OBJECTIVE": "new flag, default 'profit_factor'",
+    "PHASE2_MIN_PROFITABLE_SYMBOLS_PENALTY": "new flag, default 3",
+    "PHASE2_SYMBOL_GENE_DONT_CARE_PROB": "new flag, default 0.4",
+    "PHASE2_VAL_IN_FITNESS_PENALTY": "new flag, default False"
+  },
+  "notes_for_reviewer": "Chose 'profit_factor' as default PHASE2_F3_OBJECTIVE (instead of 'cv_fold_min'). Rationale: wiring CV fold returns into per-chromosome evaluation would require evaluating each individual on 3 CV folds (3× GPU cost), and the cv_fold_min path requires significant plumbing through _evaluate_chromosome and _evaluate_population_indices. 'profit_factor' is a meaningful improvement over 'win_rate' (the degenerate legacy objective), and the 'cv_fold_min' code path is fully implemented — just change the config flag and pass cv_fold_evaluator to enable it. The _evaluate_chromosome function accepts an optional cv_fold_evaluator parameter that computes _cv_fold_returns when the flag is 'cv_fold_min'. Key callers in _run_nsga2_fallback pass cv_fold_evaluator through.",
+  "test_results": {
+    "targeted": "218 passed (phase2/objective/rule_pool/mutate tests)",
+    "broader": "1124 passed, 1 skipped, 96 deselected (all unit tests)"
+  },
+  "files_modified": [
+    "gpu_fuzzy_trader/config.py",
+    "gpu_fuzzy_trader/phases/phase2_rule_pool.py",
+    "gpu_fuzzy_trader/evolution/evox_runner.py",
+    "tests/unit/test_evox_runner.py",
+    "tests/unit/test_phase2_rule_pool.py"
+  ],
+  "evaluator_v5_modified": false
+}

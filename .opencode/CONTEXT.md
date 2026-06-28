@@ -21,22 +21,19 @@ convergence. 27 fixes across 6 tasks.
 
 ## Current Task
 
-**task-14: RB Governor rebalance** — branch `fix/rb-governor-rebalance`
-Status: ✅ COMPLETED — awaiting user confirmation to merge and proceed to task-15
+**task-15: Fitness & Objective Redesign** — branch `fix/fitness-objective-redesign`
+Status: dispatching implementer
 
-### task-14 Review Summary
-- **Commits:** `9d82755` (initial) + `8815f41` (review fixes)
-- **Spec review:** APPROVED (all 10 acceptance criteria verified)
-- **Code review:** REQUEST_CHANGES → fixed (F1 critical cv_folds wiring, F2 tests, F3/F4 cleanup)
-- **Tests:** 21 passed (incl. 9 new), 1124 broader passed, no regressions
-- **evaluator_v5.ipynb:** NOT modified ✓
+### task-14 — ✅ MERGED
+- Branch `fix/rb-governor-rebalance` merged (f240490) and deleted.
+- All 5 fixes (C1,C2,C3,C4,M7) verified, 21 tests pass.
 
 ## Task Summary (6 tasks, sequential, isolated branches)
 
 | # | Branch | Fixes | Priority | Status |
 |---|--------|-------|----------|--------|
-| 14 | `fix/rb-governor-rebalance` | C1,C2,C3,C4,M7 — val overfit, CV folds, gap penalty | 🔴 Critical | **in_progress** |
-| 15 | `fix/fitness-objective-redesign` | C5,C6,C7,H1,H2,M3 — symbol-lock, f1/f3, Sortino sat, val leak | 🔴 Critical | pending |
+| 14 | `fix/rb-governor-rebalance` | C1,C2,C3,C4,M7 — val overfit, CV folds, gap penalty | 🔴 Critical | ✅ MERGED |
+| 15 | `fix/fitness-objective-redesign` | C5,C6,C7,H1,H2,M3 — symbol-lock, f1/f3, Sortino sat, val leak | 🔴 Critical | **in_progress** |
 | 16 | `fix/evolution-convergence` | H3,H5,M4,M5 — restart, state carry-over, normalization | 🟠 High | pending |
 | 17 | `fix/island-migration-rule-structure` | H4,H6 — migration enable, MIN/MAX_CONDITIONS | 🟠 High | pending |
 | 18 | `fix/admission-gates-robustness` | M1,M2,M6,M8 — per-symbol WR bug, cache, monthly gate | 🟡 Medium | pending |

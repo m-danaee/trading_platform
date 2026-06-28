@@ -328,10 +328,25 @@ def mutate_sparse(
         if child[i, 0] >= 0
     }
 
+    # C5: Symbol gene dont_care bias — force symbol-gene slots to inactive
+    symbol_gene_prob = float(getattr(_cfg, "PHASE2_SYMBOL_GENE_DONT_CARE_PROB", 0.4))
+    symbol_feat_idxs = frozenset(
+        fi_idx for fi_idx, fi in enumerate(feature_infos)
+        if "symbol" in str(fi.get("name", "")).lower()
+    )
+
     for slot_i in range(max_slots()):
+        fi = int(child[slot_i, 0])
+        # C5 bias: if active slot is a symbol feature, force inactive with probability
+        if fi >= 0 and fi in symbol_feat_idxs:
+            if rng.random() < symbol_gene_prob:
+                child[slot_i, 0] = INACTIVE_FEAT_IDX
+                child[slot_i, 1] = 0
+                used.discard(fi)
+                continue
+
         if rng.random() >= mutation_rate:
             continue
-        fi = int(child[slot_i, 0])
         if fi < 0:
             available = [i for i in range(k_features) if i not in used]
             if not available:

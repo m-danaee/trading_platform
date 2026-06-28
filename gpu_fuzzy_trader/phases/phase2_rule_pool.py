@@ -539,12 +539,14 @@ def compute_phase2_objectives_from_metrics(
                 sortino_for_obj = min(sortino_train, 0.0)
             else:
                 sortino_for_obj = min(sortino_train, sortino_val)
-        if val_total_return < _cfg.PHASE2_VAL_RETURN_FLOOR_PCT:
-            val_floor_penalty += _cfg.SUPPORT_PENALTY_MAX
-        if val_profit_factor < _cfg.PHASE2_PROFIT_FACTOR_FLOOR:
-            val_floor_penalty += (
-                _cfg.PHASE2_PROFIT_FACTOR_FLOOR - val_profit_factor
-            ) * 5.0
+        # C6: Gate val-derived floor penalties behind JOINT_TRAIN_VAL or VAL_IN_FITNESS_PENALTY
+        if _cfg.PHASE2_JOINT_TRAIN_VAL or getattr(_cfg, "PHASE2_VAL_IN_FITNESS_PENALTY", False):
+            if val_total_return < _cfg.PHASE2_VAL_RETURN_FLOOR_PCT:
+                val_floor_penalty += _cfg.SUPPORT_PENALTY_MAX
+            if val_profit_factor < _cfg.PHASE2_PROFIT_FACTOR_FLOOR:
+                val_floor_penalty += (
+                    _cfg.PHASE2_PROFIT_FACTOR_FLOOR - val_profit_factor
+                ) * 5.0
 
     support_penalty, _, _ = compute_support_penalty_and_specialist(
         metrics,
@@ -554,7 +556,9 @@ def compute_phase2_objectives_from_metrics(
         val_metrics is not None
         and int(val_metrics.get("executed_trades", 0)) < val_trade_floor
     ):
-        support_penalty = max(support_penalty, _cfg.SUPPORT_PENALTY_MAX)
+        # C6: Gate val trade-floor support cap behind JOINT_TRAIN_VAL or VAL_IN_FITNESS_PENALTY
+        if _cfg.PHASE2_JOINT_TRAIN_VAL or getattr(_cfg, "PHASE2_VAL_IN_FITNESS_PENALTY", False):
+            support_penalty = max(support_penalty, _cfg.SUPPORT_PENALTY_MAX)
         if _cfg.PHASE2_JOINT_TRAIN_VAL:
             sortino_for_obj = min(sortino_train, 0.0)
 
@@ -563,10 +567,22 @@ def compute_phase2_objectives_from_metrics(
     if profit_factor < _cfg.PHASE2_PROFIT_FACTOR_FLOOR:
         support_penalty += (_cfg.PHASE2_PROFIT_FACTOR_FLOOR - profit_factor) * 5.0
 
+    # C5: Symbol-spread penalty — penalize when few symbols are profitable
+    per_sym = metrics.get("per_symbol_metrics", {}) or {}
+    n_profitable_symbols = sum(
+        1 for v in per_sym.values()
+        if isinstance(v, dict) and float(v.get("net_pnl", 0.0)) > 0.0
+    )
+    min_symbols = int(getattr(_cfg, "PHASE2_MIN_PROFITABLE_SYMBOLS_PENALTY", 3))
+    if n_profitable_symbols < min_symbols:
+        support_penalty += float(min_symbols - n_profitable_symbols) * 2.0
+
     if not (island_hyperparams is not None and island_hyperparams.skip_symbol_robustness_penalty):
         support_penalty += _symbol_robustness_penalty(metrics)
         if val_metrics is not None:
-            support_penalty += _symbol_robustness_penalty(val_metrics)
+            # C6: Gate val symbol_robustness behind JOINT_TRAIN_VAL or VAL_IN_FITNESS_PENALTY
+            if _cfg.PHASE2_JOINT_TRAIN_VAL or getattr(_cfg, "PHASE2_VAL_IN_FITNESS_PENALTY", False):
+                support_penalty += _symbol_robustness_penalty(val_metrics)
     support_penalty += val_floor_penalty
 
     dd_gate = getattr(_cfg, "PHASE2_MAX_DRAWDOWN_GATE", 20.0)
@@ -575,13 +591,28 @@ def compute_phase2_objectives_from_metrics(
         excess = dd_for_obj - dd_gate
         drawdown_gate_penalty = excess * 2.0
 
-    f3_val = win_rate
-    if val_metrics is not None and _cfg.PHASE2_JOINT_TRAIN_VAL:
-        val_wr = float(val_metrics.get("win_rate", 0.0))
-        if int(val_metrics.get("executed_trades", 0)) < val_trade_floor:
-            f3_val = min(win_rate, 0.0)
+    # H2: f3_val based on PHASE2_F3_OBJECTIVE
+    f3_objective = str(getattr(_cfg, "PHASE2_F3_OBJECTIVE", "profit_factor"))
+    if f3_objective == "cv_fold_min":
+        cv_fold_returns = metrics.get("_cv_fold_returns", [])
+        if cv_fold_returns:
+            f3_val = min(cv_fold_returns)
         else:
-            f3_val = min(win_rate, val_wr)
+            # Fallback when CV not available: use profit_factor
+            f3_val = profit_factor
+    elif f3_objective == "profit_factor":
+        f3_val = profit_factor
+    else:  # "win_rate" legacy
+        f3_val = win_rate
+        if val_metrics is not None and _cfg.PHASE2_JOINT_TRAIN_VAL:
+            val_wr = float(val_metrics.get("win_rate", 0.0))
+            if int(val_metrics.get("executed_trades", 0)) < val_trade_floor:
+                f3_val = min(win_rate, 0.0)
+            else:
+                f3_val = min(win_rate, val_wr)
+
+    # PHASE2_USE_TOTAL_RETURN_OBJ override (backward compat): when True,
+    # f3 uses robust return instead of the F3_OBJECTIVE-based value.
     if _cfg.PHASE2_USE_TOTAL_RETURN_OBJ:
         joint_return = (
             bool(_cfg.PHASE2_JOINT_TRAIN_VAL)
@@ -655,6 +686,7 @@ def compute_phase2_objectives_from_metrics(
         -sortino_for_obj
         + (_cfg.PHASE2_SUPPORT_PENALTY_WEIGHT_F1 * support_penalty)
         + diversity_penalty
+        + trade_penalty
     )
     f2 = (
         dd_for_obj
@@ -692,6 +724,7 @@ def _evaluate_chromosome(
     diversity_metrics_by_key: dict[tuple[int, ...], dict] | None = None,
     stage_params=None,
     island_hyperparams: _cfg.IslandHyperparams | None = None,
+    cv_fold_evaluator: CvFoldValEvaluator | None = None,
 ) -> tuple[np.ndarray, dict]:
     """
     Evaluate a single chromosome and return (objectives, metrics).
@@ -701,6 +734,9 @@ def _evaluate_chromosome(
     When PHASE2_JOINT_TRAIN_VAL is enabled and *val_engine* is provided, f1 uses
     min(saturated_train_sortino, saturated_val_sortino) so the search prefers
     rules that hold up out-of-sample.
+
+    When *cv_fold_evaluator* is provided and PHASE2_F3_OBJECTIVE is "cv_fold_min",
+    per-fold returns are computed and stored as "_cv_fold_returns" in metrics.
     """
     try:
         metrics_list = engine.simulate_rule_batch(
@@ -738,6 +774,35 @@ def _evaluate_chromosome(
         except Exception as exc:
             logger.warning("val simulate_rule_batch failed for chromosome %s: %s", key_suffix, exc)
             val_metrics = None
+
+    # H2: Compute CV fold returns for cv_fold_min objective
+    if (
+        cv_fold_evaluator is not None
+        and str(getattr(_cfg, "PHASE2_F3_OBJECTIVE", "profit_factor")) == "cv_fold_min"
+    ):
+        try:
+            # Access internal fold engines to get per-fold returns
+            # Use the same pattern as CvFoldValEvaluator.simulate_rule_batch
+            engines = cv_fold_evaluator._ensure_fold_engines()
+            chrom_batch = _chromosome_batch(chromosome)
+            cv_returns: list[float] = []
+            for fe in engines:
+                fold_metrics_list = fe.simulate_rule_batch(
+                    chromosomes=chrom_batch,
+                    tp=_cfg.PHASE2_TP,
+                    sl=_cfg.PHASE2_SL,
+                    capital_pct=_cfg.PHASE2_CAPITAL_PCT,
+                )
+                cv_returns.append(
+                    float(fold_metrics_list[0].get("total_return_pct", 0.0))
+                )
+            metrics["_cv_fold_returns"] = cv_returns
+        except Exception as exc:
+            logger.debug(
+                "CV fold evaluation failed for chromosome %s: %s",
+                key_suffix, exc,
+            )
+            metrics["_cv_fold_returns"] = []
 
     if island_hyperparams is None:
         island_hyperparams = getattr(engine, "_island_hyperparams", None)
@@ -1118,7 +1183,16 @@ def _mutate(
 
     child = chromosome.copy()
     K = len(child)
+    # C5: Symbol gene dont_care bias
+    # Note: "symbol" is in META_COLUMNS and rarely in feature_infos, so this
+    # bias may silently do nothing if no symbol-named feature exists.
+    symbol_gene_prob = float(getattr(_cfg, "PHASE2_SYMBOL_GENE_DONT_CARE_PROB", 0.4))
     for k in range(K):
+        # If this gene is a symbol gene, force dont_care with probability
+        if "symbol" in str(feature_infos[k].get("name", "")).lower():
+            if rng.random() < symbol_gene_prob:
+                child[k] = int(dont_cares[k])
+                continue
         if rng.random() < mutation_rate:
             dc = int(dont_cares[k])
             num_classes = dc
