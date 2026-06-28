@@ -55,6 +55,7 @@ class Phase2EvolutionState:
     mutation_rate: float | None = None
     weighted_activate_prob: float | None = None
     stage: StageLabel = None
+    post_restart_gens_remaining: int = 0
 
 
 def trim_evolution_state_memory(
@@ -673,8 +674,10 @@ def _inject_diversity_recovery(
             reverse=True,
         )
         archive_chroms = [entry["chromosome"] for entry in ranked]
-        for i in range(n_mutate):
-            parent = archive_chroms[i % len(archive_chroms)]
+        # Select a diverse subset from the top-ranked archive entries
+        # to maximise genetic diversity in the injected seeds
+        diverse_archive = _select_diverse_subset(archive_chroms, n_mutate)
+        for parent in diverse_archive:
             seeds.append(
                 _mutate(
                     parent,
@@ -729,6 +732,40 @@ def _population_unique_chromosome_ratio(population: np.ndarray) -> float:
     return float(len(keys) / n)
 
 
+def _hamming_distance(a: np.ndarray, b: np.ndarray) -> int:
+    """Hamming distance between two chromosomes (sparse-aware)."""
+    from gpu_fuzzy_trader.phases.phase2_sparse_encoding import (
+        is_sparse_chromosome, sparse_hamming,
+    )
+    if is_sparse_chromosome(a) or is_sparse_chromosome(b):
+        return sparse_hamming(a, b)
+    return int(np.sum(a != b))
+
+
+def _select_diverse_subset(
+    chromosomes: list[np.ndarray],
+    k: int,
+) -> list[np.ndarray]:
+    """Max-min Hamming diversity sampling: greedy pick farthest from chosen.
+
+    Returns up to *k* chromosomes from *chromosomes* that maximise pairwise
+    Hamming distance.  If *k* >= len(chromosomes), returns a copy of the input.
+    """
+    if len(chromosomes) <= k:
+        return list(chromosomes)
+    chosen = [chromosomes[0]]
+    remaining = list(chromosomes[1:])
+    while len(chosen) < k and remaining:
+        best_idx = max(
+            range(len(remaining)),
+            key=lambda i: min(
+                _hamming_distance(remaining[i], c) for c in chosen
+            ),
+        )
+        chosen.append(remaining.pop(best_idx))
+    return chosen
+
+
 def _plateau_diversity_restart(
     population: np.ndarray,
     objectives: np.ndarray,
@@ -752,7 +789,7 @@ def _plateau_diversity_restart(
     """
     from gpu_fuzzy_trader.phases.phase2_rule_pool import _init_population
 
-    n_elite = min(5, max(1, len(pareto_indices)))
+    n_elite = min(2, max(1, len(pareto_indices)))
     fraction = float(
         getattr(_cfg, "PHASE2_PLATEAU_DIVERSITY_RESTART_FRACTION", 0.40)
     )
@@ -1309,15 +1346,31 @@ def _normalize_for_association(
     merge_fit: np.ndarray,
     ref: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Min-max normalize objectives; unit-normalize rows for association."""
+    """Rank-based normalization (robust to outliers like trade_penalty=50)."""
     fit = np.asarray(merge_fit, dtype=np.float64)
     # Unevaluated (inf) or corrupt rows must not reach NSGA-III association.
     fit = np.where(np.isfinite(fit), fit, 1e12)
-    norm_fit = fit - fit.min(axis=0)
-    norm_fit = norm_fit / np.maximum(norm_fit.max(axis=0), 1e-6)
+    n = len(fit)
+    rank_fit = np.empty_like(fit)
+    for j in range(fit.shape[1]):
+        # Average-rank normalisation (robust to ties, no scipy dependency)
+        order = np.argsort(fit[:, j], kind="mergesort")
+        ranks = np.empty(n, dtype=np.float64)
+        ranks[order] = np.arange(1, n + 1, dtype=np.float64)
+        # Adjust ties: replace equal values with mean rank
+        sorted_fit = fit[order, j]
+        i = 0
+        while i < n:
+            j_tie = i + 1
+            while j_tie < n and sorted_fit[j_tie] == sorted_fit[i]:
+                j_tie += 1
+            if j_tie - i > 1:
+                avg_rank = float(np.mean(ranks[order[i:j_tie]]))
+                ranks[order[i:j_tie]] = avg_rank
+            i = j_tie
+        rank_fit[:, j] = ranks / n  # normalise to [0, 1]
     ref_n = ref / np.linalg.norm(ref, axis=1, keepdims=True).clip(1e-10)
-    fit_n = norm_fit / \
-        np.linalg.norm(norm_fit, axis=1, keepdims=True).clip(1e-10)
+    fit_n = rank_fit / np.linalg.norm(rank_fit, axis=1, keepdims=True).clip(1e-10)
     return fit_n, ref_n
 
 
@@ -1541,7 +1594,7 @@ def _run_nsga2_fallback(
     # restart_count is per-stage (Stage A and Stage B each have their own),
     # deliberately more lenient than per-epoch.
     restart_count = 0
-    _plateau_restart_boost: float | None = None
+    post_restart_gens_remaining: int = 0
 
     for gen in range(n_generations):
         for i in range(pop_size):
@@ -1689,14 +1742,12 @@ def _run_nsga2_fallback(
                         init_strategy=init_strategy,
                         stratum_fractions=stratum_fractions,
                     )
-                    base_mr = _stage_mutation_rate(stage_params)
-                    boost_factor = float(getattr(
+                    # Set multi-generation mutation boost instead of one-shot
+                    post_restart_gens_remaining = int(getattr(
                         _cfg,
-                        "PHASE2_PLATEAU_DIVERSITY_RESTART_MUTATION_BOOST",
-                        1.6,
+                        "PHASE2_PLATEAU_POST_RESTART_BOOST_GENS",
+                        3,
                     ))
-                    boosted = min(0.6, base_mr * boost_factor)
-                    _plateau_restart_boost = boosted
                     restart_count += 1
                     plateau_streak = 0
                     logger.info(
@@ -1772,9 +1823,13 @@ def _run_nsga2_fallback(
             mutation_rate = _stage_mutation_rate(
                 stage_params, diversity_recovery=True,
             )
-        elif _plateau_restart_boost is not None:
-            mutation_rate = _plateau_restart_boost
-            _plateau_restart_boost = None  # one-shot; restore next gen
+        elif post_restart_gens_remaining > 0:
+            mutation_rate = float(getattr(
+                _cfg,
+                "PHASE2_PLATEAU_POST_RESTART_MUTATION_BOOST",
+                0.45,
+            ))
+            post_restart_gens_remaining -= 1
         else:
             mutation_rate = _stage_mutation_rate(stage_params)
 
@@ -1902,7 +1957,7 @@ def _run_nsga3(
         # restart_count is per-stage (Stage A and Stage B each have their own),
         # deliberately more lenient than per-epoch.
         restart_count = 0
-        _plateau_restart_boost: float | None = None
+        post_restart_gens_remaining: int = 0
     else:
         population = state.population
         objectives = state.objectives
@@ -1925,7 +1980,7 @@ def _run_nsga3(
         # restart_count is per-stage — each stage gets its own count, which is
         # deliberately more lenient than sharing a single count per epoch.
         restart_count = 0
-        _plateau_restart_boost = None
+        post_restart_gens_remaining = int(state.post_restart_gens_remaining)
         weighted_activate_prob = (
             state.weighted_activate_prob
             if state.weighted_activate_prob is not None
@@ -2185,9 +2240,13 @@ def _run_nsga3(
                 mutation_rate = _stage_mutation_rate(
                     stage_params, diversity_recovery=True,
                 )
-            elif _plateau_restart_boost is not None:
-                mutation_rate = _plateau_restart_boost
-                _plateau_restart_boost = None  # one-shot; restore next gen
+            elif post_restart_gens_remaining > 0:
+                mutation_rate = float(getattr(
+                    _cfg,
+                    "PHASE2_PLATEAU_POST_RESTART_MUTATION_BOOST",
+                    0.45,
+                ))
+                post_restart_gens_remaining -= 1
             else:
                 mutation_rate = _stage_mutation_rate(stage_params)
 
@@ -2318,14 +2377,12 @@ def _run_nsga3(
                         init_strategy=init_strategy,
                         stratum_fractions=stratum_fractions,
                     )
-                    base_mr = _stage_mutation_rate(stage_params)
-                    boost_factor = float(getattr(
+                    # Set multi-generation mutation boost instead of one-shot
+                    post_restart_gens_remaining = int(getattr(
                         _cfg,
-                        "PHASE2_PLATEAU_DIVERSITY_RESTART_MUTATION_BOOST",
-                        1.6,
+                        "PHASE2_PLATEAU_POST_RESTART_BOOST_GENS",
+                        3,
                     ))
-                    boosted = min(0.6, base_mr * boost_factor)
-                    _plateau_restart_boost = boosted
                     restart_count += 1
                     plateau_streak = 0
                     logger.info(
