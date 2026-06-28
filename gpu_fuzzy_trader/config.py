@@ -419,7 +419,7 @@ PHASE2_ENCODING = "sparse_slots"
 # MIN_TRADE_SUPPORT — target executed trades before support penalty vanishes.
 #   Higher → penalize low-frequency rules harder; pool favors robust sample size.
 #   Lower  → allow rare-pattern rules; noisier Sortino/return estimates.
-MIN_TRADE_SUPPORT = 75
+MIN_TRADE_SUPPORT = 120
 
 # SUPPORT_PENALTY_MAX — cap on quadratic support shortfall penalty.
 #   Higher → stronger push away from under-supported rules on all objectives.
@@ -429,7 +429,7 @@ SUPPORT_PENALTY_MAX = 5.0
 # MIN_TRADE_POOL_FLOOR — hard reject below this executed trade count.
 #   Higher → archive/pool never keeps very rare rules.
 #   Lower  → extremely sparse rules can survive if other metrics excel.
-MIN_TRADE_POOL_FLOOR = 25
+MIN_TRADE_POOL_FLOOR = 40
 
 # PHASE2_SUPPORT_PENALTY_WEIGHT_F1/F2/F3 — per-objective support penalty scale.
 #   Higher → that objective punishes low support more (steer Sortino vs DD vs return).
@@ -935,7 +935,7 @@ PHASE2_MIGRATION_SEED_FRACTION: float = 0.05
 PHASE2_ORPHAN_ENABLED = True
 PHASE2_ORPHAN_GENERATIONS = 18
 PHASE2_ORPHAN_POPULATION_SIZE = 150
-PHASE2_ORPHAN_MIN_TRADE_SUPPORT = 15
+PHASE2_ORPHAN_MIN_TRADE_SUPPORT = 20
 PHASE2_ORPHAN_MIN_TRADE_POOL_FLOOR = 8
 PHASE2_ORPHAN_SORTINO_MIN_TRADE_THRESHOLD = 8
 PHASE2_ORPHAN_MIN_VAL_TRADES = 6
@@ -1513,8 +1513,8 @@ RB_TRADE_PENALTY: float = 0.70
 
 # RB_TRAIN_VALID_RATIO_GAP_WEIGHT / RB_TRAIN_VALID_RETURN_GAP_WEIGHT —
 #   overfit penalties applied to the train>>val gap in the score.
-RB_TRAIN_VALID_RATIO_GAP_WEIGHT: float = 6.0
-RB_TRAIN_VALID_RETURN_GAP_WEIGHT: float = 0.25
+RB_TRAIN_VALID_RATIO_GAP_WEIGHT: float = 30.0
+RB_TRAIN_VALID_RETURN_GAP_WEIGHT: float = 4.0
 
 
 # --- Lenient-add mode (friend's recommended path) ---
@@ -1533,7 +1533,7 @@ RB_MIN_COMBINED_RETURN_IMPROVEMENT: float = 2.0  # min combined return-% uplift 
 # RB_REQUIRE_TRAIN_SLIGHTLY_ABOVE_VALID — when True, apply a shape
 #   bonus/penalty so that train return is slightly above val return (a
 #   healthy sign) but not wildly above (overfit sign).
-RB_REQUIRE_TRAIN_SLIGHTLY_ABOVE_VALID: bool = True
+RB_REQUIRE_TRAIN_SLIGHTLY_ABOVE_VALID: bool = False
 RB_TRAIN_VALID_MIN_RATIO: float = 1.03
 RB_TRAIN_VALID_MAX_RATIO: float = 1.35
 RB_TRAIN_VALID_MIN_ABS_GAP: float = 0.20

@@ -167,8 +167,8 @@ def _strategy(direction: str, rules: list[dict], *, risk_optimized: bool = False
     return out
 
 
-def _score_metrics(train_m: dict, valid_m: dict, *, min_train_trades: int | None = None, min_valid_trades: int | None = None) -> float:
-    """Dominant objective: return/DD with train-valid balance."""
+def _score_metrics(train_m: dict, valid_m: dict, *, min_train_trades: int | None = None, min_valid_trades: int | None = None, cv_fold_returns: list[float] | None = None) -> float:
+    """Dominant objective: return/DD with train-valid balance, plus CV-fold consistency."""
     min_train_trades = int(min_train_trades if min_train_trades is not None else getattr(_cfg, "RB_MIN_TRAIN_TRADES", 25))
     min_valid_trades = int(min_valid_trades if min_valid_trades is not None else getattr(_cfg, "RB_MIN_VALID_TRADES", 15))
     dd_floor = float(getattr(_cfg, "RB_RETURN_DD_FLOOR", 0.50))
@@ -190,10 +190,10 @@ def _score_metrics(train_m: dict, valid_m: dict, *, min_train_trades: int | None
     shape_ok, shape_bonus, shape_penalty = _train_valid_shape(train_ret, valid_ret)
 
     score = (
-        120.0 * valid_ratio
-        + 45.0 * train_ratio
-        + 4.5 * valid_ret
-        + 1.2 * train_ret
+        60.0 * valid_ratio
+        + 60.0 * train_ratio
+        + 3.0 * valid_ret
+        + 3.0 * train_ret
         + 14.0 * profit_factor_term(valid_pf, 5.0)
         + 5.0 * profit_factor_term(train_pf, 5.0)
         + 0.06 * valid_wr
@@ -222,23 +222,41 @@ def _score_metrics(train_m: dict, valid_m: dict, *, min_train_trades: int | None
     if bool(getattr(_cfg, "RB_REQUIRE_TRAIN_SLIGHTLY_ABOVE_VALID", False)) and not shape_ok:
         score -= 250.0
 
-    score -= max(0.0, train_ratio - valid_ratio) * float(getattr(_cfg, "RB_TRAIN_VALID_RATIO_GAP_WEIGHT", 12.0))
-    score -= max(0.0, train_ret - valid_ret) * float(getattr(_cfg, "RB_TRAIN_VALID_RETURN_GAP_WEIGHT", 0.55))
+    score -= max(0.0, train_ratio - valid_ratio) * float(getattr(_cfg, "RB_TRAIN_VALID_RATIO_GAP_WEIGHT", 30.0))
+    score -= max(0.0, train_ret - valid_ret) * float(getattr(_cfg, "RB_TRAIN_VALID_RETURN_GAP_WEIGHT", 4.0))
+
+    # CV-fold consistency term
+    if cv_fold_returns:
+        cv_min = min(cv_fold_returns)
+        cv_std = float(np.std(cv_fold_returns))
+        score += 8.0 * cv_min
+        score -= 3.0 * cv_std
+
     return float(score)
 
 
 
 
-def _combined_return_score(train_m: dict, valid_m: dict) -> float:
+def _combined_return_score(train_m: dict, valid_m: dict, *, prev_pf: float | None = None, prev_dd: float | None = None) -> float:
     """Profit objective for lenient rule addition, but now evaluator_v5 aware.
 
     A new rule can still be added mainly when it increases profit, but it must
     not create the  failure mode where most raw signals are skipped by the
     evaluator.  Therefore the score subtracts execution-health penalties.
+
+    When prev_pf and prev_dd are provided, penalties are applied for
+    profit-factor degradation and drawdown increase (M7 fix).
     """
     train_ret = _f(train_m, "total_return_pct")
     valid_ret = _f(valid_m, "total_return_pct")
     score = train_ret + valid_ret
+    # Penalize edge-quality erosion (M7)
+    if prev_pf is not None:
+        new_pf = _f(valid_m, "profit_factor", 0.0)
+        score -= 2.0 * max(0.0, prev_pf - new_pf)
+    if prev_dd is not None:
+        new_dd = _f(valid_m, "max_drawdown_pct", 0.0)
+        score -= 3.0 * max(0.0, new_dd - prev_dd)
     score -= _evaluator_health_penalty(train_m, role="train") / 35.0
     score -= _evaluator_health_penalty(valid_m, role="valid") / 35.0
     return float(score)
@@ -491,11 +509,39 @@ def _evaluate_ruleset(train_engine: CPUBacktestEngine, valid_engine: CPUBacktest
     return train_m, valid_m, score
 
 
+def _eval_cv_fold_returns(
+    rule: dict,
+    fold_engines: list[CPUBacktestEngine] | None,
+) -> list[float] | None:
+    """Evaluate *rule* on each CV fold engine and return per-fold returns.
+
+    Each fold is simulated independently so a single failing fold does not
+    drop the entire CV signal.  Returns ``None`` when *fold_engines* is
+    ``None``, empty, or all folds fail.
+    """
+    if not fold_engines:
+        return None
+    returns: list[float] = []
+    for idx, fold_engine in enumerate(fold_engines):
+        try:
+            m = fold_engine.simulate_rule_set([rule])
+            ret = _f(m, "total_return_pct")
+            returns.append(ret)
+        except Exception:
+            logger.warning(
+                "CV fold %d simulation failed for rule %s; skipping fold.",
+                idx, _rule_key(rule),
+            )
+            continue
+    return returns if returns else None
+
+
 def _filter_good_rules(
     pool: list[dict],
     train_like_df: pd.DataFrame,
     valid_df: pd.DataFrame,
     direction: str,
+    fold_engines: list[CPUBacktestEngine] | None = None,
 ) -> list[CandidateRecord]:
     train_engine = CPUBacktestEngine(train_like_df, {}, direction)
     valid_engine = CPUBacktestEngine(valid_df, {}, direction)
@@ -518,7 +564,9 @@ def _filter_good_rules(
                 continue
             if not _is_positive_good(train_m, valid_m):
                 continue
-            score = _score_metrics(train_m, valid_m)
+            # Evaluate on CV folds if available (C4)
+            cv_fold_returns = _eval_cv_fold_returns(rule, fold_engines)
+            score = _score_metrics(train_m, valid_m, cv_fold_returns=cv_fold_returns)
             rec = CandidateRecord(rule=rule, train_metrics=train_m, valid_metrics=valid_m, score=score)
             rec.mask = _mask_for(rule, train_like_df, valid_df)
             records.append(rec)
@@ -562,7 +610,7 @@ def _compose_ruleset(
     ignore_overlap = bool(getattr(_cfg, "RB_RULE_ADD_IGNORE_OVERLAP", False))
     if return_only_add:
         require_subset_improve = False if bool(getattr(_cfg, "RB_RULE_ADD_IGNORE_SUBSET_BEAT", True)) else require_subset_improve
-        cur_return_score = _combined_return_score(cur_train, cur_valid)
+        cur_return_score = _combined_return_score(cur_train, cur_valid, prev_pf=None, prev_dd=None)
         min_return_improve = float(getattr(_cfg, "RB_MIN_COMBINED_RETURN_IMPROVEMENT", 0.05))
 
     used = {_rule_key(r.rule) for r in selected}
@@ -581,7 +629,9 @@ def _compose_ruleset(
             if return_only_add:
                 if not _positive_returns(train_m, valid_m):
                     continue
-                ret_score = _combined_return_score(train_m, valid_m)
+                prev_pf = _f(cur_valid, "profit_factor", 0.0)
+                prev_dd = _f(cur_valid, "max_drawdown_pct", 0.0)
+                ret_score = _combined_return_score(train_m, valid_m, prev_pf=prev_pf, prev_dd=prev_dd)
                 if ret_score <= cur_return_score + min_return_improve:
                     continue
                 choose_score = ret_score
@@ -616,7 +666,7 @@ def _compose_ruleset(
             min_valid_trades=int(getattr(_cfg, "RB_RULESET_MIN_VALID_TRADES", getattr(_cfg, "RB_MIN_VALID_TRADES", 15))),
         )
         if return_only_add:
-            cur_return_score = _combined_return_score(cur_train, cur_valid)
+            cur_return_score = _combined_return_score(cur_train, cur_valid, prev_pf=None, prev_dd=None)
         selected.append(chosen)
         used.add(_rule_key(chosen.rule))
         history.append({
@@ -630,7 +680,7 @@ def _compose_ruleset(
             "train_dd": _f(cur_train, "max_drawdown_pct"),
             "valid_dd": _f(cur_valid, "max_drawdown_pct"),
             "rules": len(selected),
-            "combined_return_score": _combined_return_score(cur_train, cur_valid),
+            "combined_return_score": _combined_return_score(cur_train, cur_valid, prev_pf=None, prev_dd=None),
         })
         logger.info(
             "RB [%s]: grew to %d rules | score=%.2f train_ret=%.2f%% valid_ret=%.2f%%",
@@ -1116,6 +1166,7 @@ def run_rb_governor_pipeline(
     directions: list[str] | tuple[str, ...],
     *,
     output_dir: str | os.PathLike[str] | None = None,
+    cv_folds: list | None = None,
 ) -> dict[str, dict]:
     """Build and optimize rb strategies for each direction and write outputs."""
     out_dir = Path(output_dir or _cfg.OUTPUTS_DIR)
@@ -1132,7 +1183,21 @@ def run_rb_governor_pipeline(
             continue
         train_engine = CPUBacktestEngine(train_like, {}, direction)
         valid_engine = CPUBacktestEngine(valid_df, {}, direction)
-        candidates = _filter_good_rules(pool, train_like, valid_df, direction)
+
+        # Build per-fold engines for CV-fold consistency (C4)
+        fold_engines: list[CPUBacktestEngine] | None = None
+        if cv_folds:
+            from gpu_fuzzy_trader.validation.rolling_cv import cv_folds_only
+            try:
+                fold_engines = [
+                    CPUBacktestEngine(fold.valid_df, {}, direction)
+                    for fold in cv_folds_only(cv_folds)
+                ]
+            except Exception:
+                logger.warning("RB [%s]: failed to build CV-fold engines; skipping CV term.", direction)
+                fold_engines = None
+
+        candidates = _filter_good_rules(pool, train_like, valid_df, direction, fold_engines=fold_engines)
         if not candidates:
             logger.warning("RB [%s]: no single rules positive on both training and validation; falling back to best raw governor score.", direction)
             candidates = []
@@ -1145,7 +1210,9 @@ def run_rb_governor_pipeline(
                         te = valid_engine.simulate_rule_set([rule])
                     except Exception:
                         continue
-                    rec = CandidateRecord(rule=rule, train_metrics=tr, valid_metrics=te, score=_score_metrics(tr, te))
+                    # Evaluate on CV folds if available (C4)
+                    cv_fold_returns = _eval_cv_fold_returns(rule, fold_engines)
+                    rec = CandidateRecord(rule=rule, train_metrics=tr, valid_metrics=te, score=_score_metrics(tr, te, cv_fold_returns=cv_fold_returns))
                     rec.mask = _mask_for(rule, train_like, valid_df)
                     candidates.append(rec)
             candidates.sort(key=lambda r: r.score, reverse=True)
@@ -1415,7 +1482,7 @@ def _compose_ruleset_return_only(
         raise ValueError("No bank candidates available")
     selected = [candidates[0]]
     cur_train, cur_valid, _ = _evaluate_ruleset(train_engine, valid_engine, [selected[0].rule])
-    cur_score = _combined_return_score(cur_train, cur_valid)
+    cur_score = _combined_return_score(cur_train, cur_valid, prev_pf=None, prev_dd=None)
     used = {_rule_key(selected[0].rule)}
     history = [{
         "step": 1,
@@ -1435,7 +1502,9 @@ def _compose_ruleset_return_only(
             train_m, valid_m, _ = _evaluate_ruleset(train_engine, valid_engine, rules)
             if not _positive_returns(train_m, valid_m):
                 continue
-            ret_score = _combined_return_score(train_m, valid_m)
+            prev_pf = _f(cur_valid, "profit_factor", 0.0)
+            prev_dd = _f(cur_valid, "max_drawdown_pct", 0.0)
+            ret_score = _combined_return_score(train_m, valid_m, prev_pf=prev_pf, prev_dd=prev_dd)
             if ret_score <= cur_score + min_improve:
                 continue
             if best is None or ret_score > best[0]:
@@ -1472,7 +1541,7 @@ def _optimize_risk_return_only(
 ) -> tuple[list[dict], dict, dict, float, list[dict]]:
     best_rules = [_rule_to_engine(r) for r in rules]
     cur_train, cur_valid, _ = _evaluate_ruleset(train_engine, valid_engine, best_rules)
-    cur_score = _combined_return_score(cur_train, cur_valid)
+    cur_score = _combined_return_score(cur_train, cur_valid, prev_pf=None, prev_dd=None)
     hist = [{
         "pass": 0,
         "rule_index": -1,
@@ -1502,7 +1571,9 @@ def _optimize_risk_return_only(
                         train_m, valid_m, _ = _evaluate_ruleset(train_engine, valid_engine, trial)
                         if not _positive_returns(train_m, valid_m):
                             continue
-                        ret_score = _combined_return_score(train_m, valid_m)
+                        prev_pf = _f(cur_valid, "profit_factor", 0.0)
+                        prev_dd = _f(cur_valid, "max_drawdown_pct", 0.0)
+                        ret_score = _combined_return_score(train_m, valid_m, prev_pf=prev_pf, prev_dd=prev_dd)
                         if local is None or ret_score > local[0]:
                             local = (ret_score, trial, train_m, valid_m)
             if local is not None and local[0] > cur_score + min_improve:
