@@ -1,0 +1,8 @@
+{
+  "task": "task-14",
+  "branch": "fix/rb-governor-rebalance",
+  "action": "deleted",
+  "method": "git branch -d",
+  "merged_commit": "f240490",
+  "status": "DONE"
+}
