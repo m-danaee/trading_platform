@@ -1,1078 +1,147 @@
 {
   "direction": "short",
-  "rb_score": 2528.9185704632496,
+  "rb_score": -7137.909269631665,
   "train_metrics": {
     "direction": "short",
-    "total_return_pct": "22.888124",
-    "sortino_ratio": 0.43572346509579274,
-    "max_drawdown_pct": "2.2820046",
-    "win_rate": 56.60377358490566,
+    "total_return_pct": "0.9000063",
+    "sortino_ratio": 0.10000000517401439,
+    "max_drawdown_pct": "0.3561511",
+    "win_rate": 75.0,
     "account_ruined": false,
-    "loss_count": 115,
+    "loss_count": 1,
     "time_closed_count": 0,
-    "raw_signal_count": 307,
-    "executed_trades": 265,
-    "final_equity": "1228.8812",
-    "profit_factor": "1.6708753",
-    "avg_position_notional": "215.47443",
-    "skipped_min_notional_count": 42,
-    "max_simultaneous_positions": 7,
-    "max_total_open_exposure": "1204.5083",
+    "raw_signal_count": 41,
+    "executed_trades": 4,
+    "final_equity": "1009.00006",
+    "profit_factor": "3.5000002",
+    "avg_position_notional": 250.0,
+    "skipped_min_notional_count": 37,
+    "max_simultaneous_positions": 4,
+    "max_total_open_exposure": 1000.0,
     "per_symbol_metrics": {
-      "10": {
-        "trade_count": 20,
+      "SYM_A": {
+        "trade_count": 4,
         "win_rate": 0.0,
-        "net_pnl": "-2.4652495"
-      },
-      "2": {
-        "trade_count": 116,
-        "win_rate": 0.0,
-        "net_pnl": "72.32197"
-      },
-      "7": {
-        "trade_count": 51,
-        "win_rate": 0.0,
-        "net_pnl": "60.6786"
-      },
-      "5": {
-        "trade_count": 66,
-        "win_rate": 0.0,
-        "net_pnl": "80.36454"
-      },
-      "6": {
-        "trade_count": 12,
-        "win_rate": 0.0,
-        "net_pnl": "17.980434"
+        "net_pnl": "9.0"
       }
     }
   },
   "valid_metrics": {
     "direction": "short",
-    "total_return_pct": "17.510532",
-    "sortino_ratio": 0.8760913708662117,
-    "max_drawdown_pct": "1.1168572",
-    "win_rate": 67.24137931034483,
+    "total_return_pct": "0.9000063",
+    "sortino_ratio": 0.10000000517401439,
+    "max_drawdown_pct": "0.3561511",
+    "win_rate": 75.0,
     "account_ruined": false,
-    "loss_count": 38,
+    "loss_count": 1,
     "time_closed_count": 0,
-    "raw_signal_count": 132,
-    "executed_trades": 116,
-    "final_equity": "1175.1053",
-    "profit_factor": "2.5009594",
-    "avg_position_notional": "215.38785",
-    "skipped_min_notional_count": 16,
-    "max_simultaneous_positions": 6,
-    "max_total_open_exposure": "1152.975",
+    "raw_signal_count": 41,
+    "executed_trades": 4,
+    "final_equity": "1009.00006",
+    "profit_factor": "3.5000002",
+    "avg_position_notional": 250.0,
+    "skipped_min_notional_count": 37,
+    "max_simultaneous_positions": 4,
+    "max_total_open_exposure": 1000.0,
     "per_symbol_metrics": {
-      "5": {
-        "trade_count": 38,
+      "SYM_A": {
+        "trade_count": 4,
         "win_rate": 0.0,
-        "net_pnl": "63.05822"
-      },
-      "7": {
-        "trade_count": 29,
-        "win_rate": 0.0,
-        "net_pnl": "42.34336"
-      },
-      "10": {
-        "trade_count": 6,
-        "win_rate": 0.0,
-        "net_pnl": "3.5411983"
-      },
-      "2": {
-        "trade_count": 37,
-        "win_rate": 0.0,
-        "net_pnl": "50.10411"
-      },
-      "6": {
-        "trade_count": 6,
-        "win_rate": 0.0,
-        "net_pnl": "16.058672"
+        "net_pnl": "9.0"
       }
     }
   },
-  "train_minus_valid_return_pct": 5.377592086791992,
-  "train_valid_ratio": 1.3071061444822223,
-  "n_positive_single_rules": 28,
-  "selected_rules": 8,
+  "train_minus_valid_return_pct": 0.0,
+  "train_valid_ratio": 1.0,
+  "n_positive_single_rules": 2,
+  "selected_rules": 1,
   "compose_history": [
     {
       "step": 1,
       "action": "seed",
-      "score": 849.1587100653184,
-      "train_return_pct": 3.231370449066162,
-      "valid_return_pct": 2.7870655059814453,
+      "score": -7137.909269631665,
+      "train_return_pct": 0.9000062942504883,
+      "valid_return_pct": 0.9000062942504883,
       "rules": 1
-    },
-    {
-      "step": 2,
-      "action": "add_rule",
-      "score": 1227.5453476766115,
-      "train_return_pct": 8.699453353881836,
-      "valid_return_pct": 7.383847236633301,
-      "train_pf": 1.7138861417770386,
-      "valid_pf": 3.095554828643799,
-      "train_dd": 2.110382080078125,
-      "valid_dd": 1.1168725490570068,
-      "rules": 2,
-      "combined_return_score": 16.083300590515137
-    },
-    {
-      "step": 3,
-      "action": "add_rule",
-      "score": 1497.1258329776795,
-      "train_return_pct": 10.614931106567383,
-      "valid_return_pct": 9.014463424682617,
-      "train_pf": 1.7879700660705566,
-      "valid_pf": 3.3392016887664795,
-      "train_dd": 1.7888367176055908,
-      "valid_dd": 1.1168725490570068,
-      "rules": 3,
-      "combined_return_score": 19.62939453125
-    },
-    {
-      "step": 4,
-      "action": "add_rule",
-      "score": 1809.0943161954076,
-      "train_return_pct": 14.941823959350586,
-      "valid_return_pct": 12.784683227539062,
-      "train_pf": 1.6859617233276367,
-      "valid_pf": 2.923218011856079,
-      "train_dd": 1.5130736827850342,
-      "valid_dd": 1.393751859664917,
-      "rules": 4,
-      "combined_return_score": 27.72650718688965
-    },
-    {
-      "step": 5,
-      "action": "add_rule",
-      "score": 2013.3237394690675,
-      "train_return_pct": 17.307233810424805,
-      "valid_return_pct": 14.27818489074707,
-      "train_pf": 1.7563953399658203,
-      "valid_pf": 2.881875991821289,
-      "train_dd": 1.5130736827850342,
-      "valid_dd": 1.3937487602233887,
-      "rules": 5,
-      "combined_return_score": 31.585418701171875
-    },
-    {
-      "step": 6,
-      "action": "add_rule",
-      "score": 2074.7863682890447,
-      "train_return_pct": 19.745302200317383,
-      "valid_return_pct": 16.655492782592773,
-      "train_pf": 1.6469061374664307,
-      "valid_pf": 2.6211748123168945,
-      "train_dd": 2.3595542907714844,
-      "valid_dd": 1.432777762413025,
-      "rules": 6,
-      "combined_return_score": 36.400794982910156
-    },
-    {
-      "step": 7,
-      "action": "add_rule",
-      "score": 2418.093396623976,
-      "train_return_pct": 21.771394729614258,
-      "valid_return_pct": 16.930747985839844,
-      "train_pf": 1.6867197751998901,
-      "valid_pf": 2.5179402828216553,
-      "train_dd": 2.2664833068847656,
-      "valid_dd": 1.1465773582458496,
-      "rules": 7,
-      "combined_return_score": 38.7021427154541
-    },
-    {
-      "step": 8,
-      "action": "add_rule",
-      "score": 2528.9185704632496,
-      "train_return_pct": 22.888124465942383,
-      "valid_return_pct": 17.51053237915039,
-      "train_pf": 1.6708753108978271,
-      "valid_pf": 2.5009593963623047,
-      "train_dd": 2.2820045948028564,
-      "valid_dd": 1.1168571710586548,
-      "rules": 8,
-      "combined_return_score": 40.39865684509277
     }
   ],
   "risk_history": [
     {
       "pass": 0,
       "rule_index": -1,
-      "score": 2528.9185704632496,
-      "train_return_pct": 22.888124465942383,
-      "valid_return_pct": 17.51053237915039,
-      "train_pf": 1.6708753108978271,
-      "valid_pf": 2.5009593963623047
+      "score": -7137.909269631665,
+      "train_return_pct": 0.9000062942504883,
+      "valid_return_pct": 0.9000062942504883,
+      "train_pf": 3.500000238418579,
+      "valid_pf": 3.500000238418579
     }
   ],
   "profit_amplifier": {
     "enabled": false,
     "accepted": false,
-    "baseline_profit_amp_objective": 56.00654551529885,
+    "baseline_profit_amp_objective": -443.1795575114227,
     "baseline_certificate": {
-      "passed": true,
-      "reasons": [],
-      "train_return_pct": 22.888124465942383,
-      "valid_return_pct": 17.51053237915039,
-      "train_profit_factor": 1.6708753108978271,
-      "valid_profit_factor": 2.5009593963623047,
-      "train_drawdown_pct": 2.2820045948028564,
-      "valid_drawdown_pct": 1.1168571710586548,
-      "train_trades": 265,
-      "valid_trades": 116,
-      "monthly": {
-        "windows": 3,
-        "profitable_windows": 3,
-        "profitable_ratio": 1.0,
-        "mean_return_pct": 5.5982309977213545,
-        "median_return_pct": 5.229341983795166,
-        "worst_return_pct": 0.9984850883483887,
-        "latest_return_pct": 0.9984850883483887,
-        "recency_weighted_return_pct": 5.069373885790506,
-        "mean_profit_factor": 2.3627904653549194,
-        "worst_profit_factor": 1.4446874856948853,
-        "worst_drawdown_pct": 1.1168571710586548,
-        "min_trades": 17,
-        "mean_trades": 38.666666666666664,
-        "equity_slope": 6.140584375150165,
-        "max_equity_dip_pct": 0.0,
-        "score": 27.47169452123914
-      }
+      "passed": false,
+      "reasons": [
+        "full_sample_positive_good_failed"
+      ],
+      "train_return_pct": 0.9000062942504883,
+      "valid_return_pct": 0.9000062942504883,
+      "train_profit_factor": 3.500000238418579,
+      "valid_profit_factor": 3.500000238418579,
+      "train_drawdown_pct": 0.35615110397338867,
+      "valid_drawdown_pct": 0.35615110397338867,
+      "train_trades": 4,
+      "valid_trades": 4
     },
-    "baseline_monthly_metrics": [
-      {
-        "direction": "short",
-        "total_return_pct": "5.229342",
-        "sortino_ratio": 0.6187604732009707,
-        "max_drawdown_pct": "1.1168572",
-        "win_rate": 64.44444444444444,
-        "account_ruined": false,
-        "loss_count": 16,
-        "time_closed_count": 0,
-        "raw_signal_count": 55,
-        "executed_trades": 45,
-        "final_equity": "1052.2935",
-        "profit_factor": "2.128945",
-        "avg_position_notional": "205.10756",
-        "skipped_min_notional_count": 10,
-        "max_simultaneous_positions": 5,
-        "max_total_open_exposure": "1041.3737",
-        "per_symbol_metrics": {
-          "5": {
-            "trade_count": 15,
-            "win_rate": 0.0,
-            "net_pnl": "20.759626"
-          },
-          "7": {
-            "trade_count": 17,
-            "win_rate": 0.0,
-            "net_pnl": "29.476456"
-          },
-          "10": {
-            "trade_count": 4,
-            "win_rate": 0.0,
-            "net_pnl": "-4.7798033"
-          },
-          "2": {
-            "trade_count": 9,
-            "win_rate": 0.0,
-            "net_pnl": "6.837366"
-          }
-        }
-      },
-      {
-        "direction": "short",
-        "total_return_pct": "10.566866",
-        "sortino_ratio": 1.3146477039198576,
-        "max_drawdown_pct": "1.1129125",
-        "win_rate": 74.07407407407408,
-        "account_ruined": false,
-        "loss_count": 14,
-        "time_closed_count": 0,
-        "raw_signal_count": 60,
-        "executed_trades": 54,
-        "final_equity": "1105.6687",
-        "profit_factor": "3.5147388",
-        "avg_position_notional": "207.52502",
-        "skipped_min_notional_count": 6,
-        "max_simultaneous_positions": 6,
-        "max_total_open_exposure": "1095.6782",
-        "per_symbol_metrics": {
-          "2": {
-            "trade_count": 22,
-            "win_rate": 0.0,
-            "net_pnl": "52.643764"
-          },
-          "6": {
-            "trade_count": 6,
-            "win_rate": 0.0,
-            "net_pnl": "15.260641"
-          },
-          "5": {
-            "trade_count": 17,
-            "win_rate": 0.0,
-            "net_pnl": "23.398598"
-          },
-          "7": {
-            "trade_count": 7,
-            "win_rate": 0.0,
-            "net_pnl": "6.458471"
-          },
-          "10": {
-            "trade_count": 2,
-            "win_rate": 0.0,
-            "net_pnl": "7.9074917"
-          }
-        }
-      },
-      {
-        "direction": "short",
-        "total_return_pct": "0.9984851",
-        "sortino_ratio": 0.10412411405201165,
-        "max_drawdown_pct": "1.1166527",
-        "win_rate": 52.94117647058824,
-        "account_ruined": false,
-        "loss_count": 8,
-        "time_closed_count": 0,
-        "raw_signal_count": 17,
-        "executed_trades": 17,
-        "final_equity": "1009.9848",
-        "profit_factor": "1.4446875",
-        "avg_position_notional": "200.34937",
-        "skipped_min_notional_count": 0,
-        "max_simultaneous_positions": 4,
-        "max_total_open_exposure": "799.5191",
-        "per_symbol_metrics": {
-          "2": {
-            "trade_count": 6,
-            "win_rate": 0.0,
-            "net_pnl": "-10.425499"
-          },
-          "7": {
-            "trade_count": 5,
-            "win_rate": 0.0,
-            "net_pnl": "5.217664"
-          },
-          "5": {
-            "trade_count": 6,
-            "win_rate": 0.0,
-            "net_pnl": "15.1926"
-          }
-        }
-      }
-    ],
+    "baseline_monthly_metrics": [],
     "reason": "disabled"
   },
   "top_single_rules": [
     {
       "rank": 1,
-      "score": 849.1587100653184,
-      "train_return_pct": 3.231370449066162,
-      "valid_return_pct": 2.7870655059814453,
-      "train_pf": 1.4943058490753174,
-      "valid_pf": 4.252310276031494,
-      "valid_dd": 0.5562264919281006,
-      "valid_trades": 13,
+      "score": -7141.409269631665,
+      "train_return_pct": 0.9000062942504883,
+      "valid_return_pct": 0.9000062942504883,
+      "train_pf": 3.500000238418579,
+      "valid_pf": 3.500000238418579,
+      "valid_dd": 0.35615110397338867,
+      "valid_trades": 4,
       "conditions": [
-        "[log_range_over_vol_100] IS High",
-        "[return_skew_30] IS Neutral Negative",
-        "[atr_ratio_14_63] IS Low",
-        "symbol is 2"
+        "[feat_1] IS Very High",
+        "symbol is SYM_A"
       ],
       "rule": {
         "conditions": [
-          "[log_range_over_vol_100] IS High",
-          "[return_skew_30] IS Neutral Negative",
-          "[atr_ratio_14_63] IS Low",
-          "symbol is 2"
+          "[feat_1] IS Very High",
+          "symbol is SYM_A"
         ],
         "tp": 2.0,
-        "sl": 1.2,
-        "capital_pct": 20.0
+        "sl": 1.0,
+        "capital_pct": 30.0
       }
     },
     {
       "rank": 2,
-      "score": 755.1938569977975,
-      "train_return_pct": 4.783368110656738,
-      "valid_return_pct": 4.47307825088501,
-      "train_pf": 1.7576172351837158,
-      "valid_pf": 2.7195773124694824,
-      "valid_dd": 1.0379868745803833,
-      "valid_trades": 30,
+      "score": -9128.924320357297,
+      "train_return_pct": -0.29999613761901855,
+      "valid_return_pct": -0.29999613761901855,
+      "train_pf": 0.6428571939468384,
+      "valid_pf": 0.6428571939468384,
+      "valid_dd": 0.47913631796836853,
+      "valid_trades": 4,
       "conditions": [
-        "[drawdown_from_peak_60] IS Medium",
-        "[absret_ema_ratio_20_100] IS Very High",
-        "[tr_to_atr_14] IS Very High",
-        "[ret_vol_corr_30] IS Extreme Bearish",
-        "symbol is 7"
+        "[feat_0] IS Very High",
+        "symbol is SYM_A"
       ],
       "rule": {
         "conditions": [
-          "[drawdown_from_peak_60] IS Medium",
-          "[absret_ema_ratio_20_100] IS Very High",
-          "[tr_to_atr_14] IS Very High",
-          "[ret_vol_corr_30] IS Extreme Bearish",
-          "symbol is 7"
+          "[feat_0] IS Very High",
+          "symbol is SYM_A"
         ],
         "tp": 2.0,
-        "sl": 1.2,
-        "capital_pct": 20.0
-      }
-    },
-    {
-      "rank": 3,
-      "score": 749.7113174845932,
-      "train_return_pct": 4.2343854904174805,
-      "valid_return_pct": 3.9316892623901367,
-      "train_pf": 1.4857137203216553,
-      "valid_pf": 2.3739640712738037,
-      "valid_dd": 0.8384339809417725,
-      "valid_trades": 29,
-      "conditions": [
-        "[drawdown_from_peak_60] IS Very High",
-        "[lower_wick_to_tr] IS Very Low",
-        "[atr_ratio_14_63] IS Very High",
-        "[ret_vol_corr_30] IS Neutral Negative",
-        "symbol is 5"
-      ],
-      "rule": {
-        "conditions": [
-          "[drawdown_from_peak_60] IS Very High",
-          "[lower_wick_to_tr] IS Very Low",
-          "[atr_ratio_14_63] IS Very High",
-          "[ret_vol_corr_30] IS Neutral Negative",
-          "symbol is 5"
-        ],
-        "tp": 2.0,
-        "sl": 1.2,
-        "capital_pct": 20.0
-      }
-    },
-    {
-      "rank": 4,
-      "score": 640.1874646605477,
-      "train_return_pct": 1.757979393005371,
-      "valid_return_pct": 1.5201210975646973,
-      "train_pf": 2.5515992641448975,
-      "valid_pf": 6.332767963409424,
-      "valid_dd": 0.2799980342388153,
-      "valid_trades": 6,
-      "conditions": [
-        "[dmi_balance_14] IS Bullish",
-        "[log_range_over_vol_100] IS Low",
-        "[efficiency_ratio_20] IS Very High",
-        "[ret_vol_corr_30] IS Extreme Bearish",
-        "symbol is 6"
-      ],
-      "rule": {
-        "conditions": [
-          "[dmi_balance_14] IS Bullish",
-          "[log_range_over_vol_100] IS Low",
-          "[efficiency_ratio_20] IS Very High",
-          "[ret_vol_corr_30] IS Extreme Bearish",
-          "symbol is 6"
-        ],
-        "tp": 2.0,
-        "sl": 1.2,
-        "capital_pct": 20.0
-      }
-    },
-    {
-      "rank": 5,
-      "score": 597.9497476836775,
-      "train_return_pct": 3.3902764320373535,
-      "valid_return_pct": 2.8145432472229004,
-      "train_pf": 1.805411458015442,
-      "valid_pf": 2.2301249504089355,
-      "valid_dd": 1.3174071311950684,
-      "valid_trades": 22,
-      "conditions": [
-        "[drawdown_from_peak_60] IS Very High",
-        "[absret_ema_ratio_20_100] IS Medium",
-        "[efficiency_ratio_20] IS Very High",
-        "[ret_vol_corr_30] IS Neutral Positive",
-        "symbol is 5"
-      ],
-      "rule": {
-        "conditions": [
-          "[drawdown_from_peak_60] IS Very High",
-          "[absret_ema_ratio_20_100] IS Medium",
-          "[efficiency_ratio_20] IS Very High",
-          "[ret_vol_corr_30] IS Neutral Positive",
-          "symbol is 5"
-        ],
-        "tp": 2.0,
-        "sl": 1.2,
-        "capital_pct": 20.0
-      }
-    },
-    {
-      "rank": 6,
-      "score": 583.3125673510527,
-      "train_return_pct": 3.6368727684020996,
-      "valid_return_pct": 2.935957908630371,
-      "train_pf": 1.7948205471038818,
-      "valid_pf": 2.4096128940582275,
-      "valid_dd": 1.3952908515930176,
-      "valid_trades": 22,
-      "conditions": [
-        "[log_range_over_vol_100] IS Very High",
-        "[rsi_centered_14] IS Weak Bearish",
-        "[macd_hist_atr] IS Bullish",
-        "symbol is 7"
-      ],
-      "rule": {
-        "conditions": [
-          "[log_range_over_vol_100] IS Very High",
-          "[rsi_centered_14] IS Weak Bearish",
-          "[macd_hist_atr] IS Bullish",
-          "symbol is 7"
-        ],
-        "tp": 2.0,
-        "sl": 1.2,
-        "capital_pct": 20.0
-      }
-    },
-    {
-      "rank": 7,
-      "score": 518.082483287527,
-      "train_return_pct": 1.7687082290649414,
-      "valid_return_pct": 1.322317123413086,
-      "train_pf": 2.5674500465393066,
-      "valid_pf": 2.5635759830474854,
-      "valid_dd": 0.5592182874679565,
-      "valid_trades": 9,
-      "conditions": [
-        "[return_skew_30] IS Weak Bullish",
-        "[absret_ema_ratio_20_100] IS High",
-        "[atr_ratio_14_63] IS Very Low",
-        "symbol is 2"
-      ],
-      "rule": {
-        "conditions": [
-          "[return_skew_30] IS Weak Bullish",
-          "[absret_ema_ratio_20_100] IS High",
-          "[atr_ratio_14_63] IS Very Low",
-          "symbol is 2"
-        ],
-        "tp": 2.0,
-        "sl": 1.2,
-        "capital_pct": 20.0
-      }
-    },
-    {
-      "rank": 8,
-      "score": 490.6812672577347,
-      "train_return_pct": 3.354001045227051,
-      "valid_return_pct": 2.988004684448242,
-      "train_pf": 1.3617072105407715,
-      "valid_pf": 2.040820837020874,
-      "valid_dd": 1.1168686151504517,
-      "valid_trades": 26,
-      "conditions": [
-        "[downside_semivol_20] IS Very High",
-        "[return_skew_30] IS Strong Bullish",
-        "[lower_wick_to_tr] IS High",
-        "symbol is 2"
-      ],
-      "rule": {
-        "conditions": [
-          "[downside_semivol_20] IS Very High",
-          "[return_skew_30] IS Strong Bullish",
-          "[lower_wick_to_tr] IS High",
-          "symbol is 2"
-        ],
-        "tp": 2.0,
-        "sl": 1.2,
-        "capital_pct": 20.0
-      }
-    },
-    {
-      "rank": 9,
-      "score": 443.6563820933392,
-      "train_return_pct": 1.767122745513916,
-      "valid_return_pct": 1.484358310699463,
-      "train_pf": 2.5702619552612305,
-      "valid_pf": 2.0596566200256348,
-      "valid_dd": 1.116857886314392,
-      "valid_trades": 13,
-      "conditions": [
-        "[dmi_balance_14] IS Extreme Bullish",
-        "[return_skew_30] IS Extreme Bullish",
-        "[efficiency_ratio_20] IS Low",
-        "[ret_vol_corr_30] IS Strong Bearish",
-        "symbol is 5"
-      ],
-      "rule": {
-        "conditions": [
-          "[dmi_balance_14] IS Extreme Bullish",
-          "[return_skew_30] IS Extreme Bullish",
-          "[efficiency_ratio_20] IS Low",
-          "[ret_vol_corr_30] IS Strong Bearish",
-          "symbol is 5"
-        ],
-        "tp": 2.0,
-        "sl": 1.2,
-        "capital_pct": 20.0
-      }
-    },
-    {
-      "rank": 10,
-      "score": 420.3156648075197,
-      "train_return_pct": 2.093672752380371,
-      "valid_return_pct": 1.6721129417419434,
-      "train_pf": 1.9213234186172485,
-      "valid_pf": 1.7302128076553345,
-      "valid_dd": 1.3999922275543213,
-      "valid_trades": 20,
-      "conditions": [
-        "[amihud_illiquidity_20] IS Medium",
-        "[downside_semivol_20] IS Very High",
-        "[efficiency_ratio_20] IS Low",
-        "[vol_ratio_20_100] IS Medium",
-        "symbol is 10"
-      ],
-      "rule": {
-        "conditions": [
-          "[amihud_illiquidity_20] IS Medium",
-          "[downside_semivol_20] IS Very High",
-          "[efficiency_ratio_20] IS Low",
-          "[vol_ratio_20_100] IS Medium",
-          "symbol is 10"
-        ],
-        "tp": 2.0,
-        "sl": 1.2,
-        "capital_pct": 20.0
-      }
-    },
-    {
-      "rank": 11,
-      "score": 398.4193975422459,
-      "train_return_pct": 1.0723352432250977,
-      "valid_return_pct": 0.833439826965332,
-      "train_pf": 1.4254180192947388,
-      "valid_pf": 1.4951238632202148,
-      "valid_dd": 0.559216320514679,
-      "valid_trades": 13,
-      "conditions": [
-        "[downside_semivol_20] IS High",
-        "[return_skew_30] IS Neutral Negative",
-        "[upper_wick_to_tr] IS High",
-        "symbol is 5"
-      ],
-      "rule": {
-        "conditions": [
-          "[downside_semivol_20] IS High",
-          "[return_skew_30] IS Neutral Negative",
-          "[upper_wick_to_tr] IS High",
-          "symbol is 5"
-        ],
-        "tp": 2.0,
-        "sl": 1.2,
-        "capital_pct": 20.0
-      }
-    },
-    {
-      "rank": 12,
-      "score": 391.8319605615151,
-      "train_return_pct": 1.1544466018676758,
-      "valid_return_pct": 0.8791923522949219,
-      "train_pf": 1.4088377952575684,
-      "valid_pf": 2.560899496078491,
-      "valid_dd": 0.279998779296875,
-      "valid_trades": 6,
-      "conditions": [
-        "[log_range_over_vol_100] IS Low",
-        "[return_skew_30] IS Strong Bullish",
-        "[absret_ema_ratio_20_100] IS Very Low",
-        "[tr_to_atr_14] IS Low",
-        "symbol is 6"
-      ],
-      "rule": {
-        "conditions": [
-          "[log_range_over_vol_100] IS Low",
-          "[return_skew_30] IS Strong Bullish",
-          "[absret_ema_ratio_20_100] IS Very Low",
-          "[tr_to_atr_14] IS Low",
-          "symbol is 6"
-        ],
-        "tp": 2.0,
-        "sl": 1.2,
-        "capital_pct": 20.0
-      }
-    },
-    {
-      "rank": 13,
-      "score": 338.4620793224699,
-      "train_return_pct": 1.378023624420166,
-      "valid_return_pct": 1.1183619499206543,
-      "train_pf": 1.3787366151809692,
-      "valid_pf": 1.7982707023620605,
-      "valid_dd": 0.7600993514060974,
-      "valid_trades": 12,
-      "conditions": [
-        "[range_compression_20_100] IS Very High",
-        "[dmi_balance_14] IS Weak Bullish",
-        "[atr_ratio_14_63] IS Low",
-        "[ret_vol_corr_30] IS Extreme Bearish",
-        "symbol is 1"
-      ],
-      "rule": {
-        "conditions": [
-          "[range_compression_20_100] IS Very High",
-          "[dmi_balance_14] IS Weak Bullish",
-          "[atr_ratio_14_63] IS Low",
-          "[ret_vol_corr_30] IS Extreme Bearish",
-          "symbol is 1"
-        ],
-        "tp": 2.0,
-        "sl": 1.2,
-        "capital_pct": 20.0
-      }
-    },
-    {
-      "rank": 14,
-      "score": 317.07292711643464,
-      "train_return_pct": 0.8820533752441406,
-      "valid_return_pct": 0.41081905364990234,
-      "train_pf": 1.4408400058746338,
-      "valid_pf": 1.5716423988342285,
-      "valid_dd": 0.43374836444854736,
-      "valid_trades": 7,
-      "conditions": [
-        "[downside_semivol_20] IS High",
-        "[vol_over_median20] IS Very Low",
-        "[atr_ratio_14_63] IS Low",
-        "[ret_vol_corr_30] IS Bearish",
-        "symbol is 4"
-      ],
-      "rule": {
-        "conditions": [
-          "[downside_semivol_20] IS High",
-          "[vol_over_median20] IS Very Low",
-          "[atr_ratio_14_63] IS Low",
-          "[ret_vol_corr_30] IS Bearish",
-          "symbol is 4"
-        ],
-        "tp": 2.0,
-        "sl": 1.2,
-        "capital_pct": 20.0
-      }
-    },
-    {
-      "rank": 15,
-      "score": 298.6319795367835,
-      "train_return_pct": 1.1126041412353516,
-      "valid_return_pct": 0.5534648895263672,
-      "train_pf": 1.2826610803604126,
-      "valid_pf": 1.281743049621582,
-      "valid_dd": 0.5599946975708008,
-      "valid_trades": 14,
-      "conditions": [
-        "[return_skew_30] IS Bullish",
-        "[close_location_value] IS High",
-        "[up_close_ratio_5] IS Very High",
-        "[efficiency_ratio_20] IS Low",
-        "symbol is 8"
-      ],
-      "rule": {
-        "conditions": [
-          "[return_skew_30] IS Bullish",
-          "[close_location_value] IS High",
-          "[up_close_ratio_5] IS Very High",
-          "[efficiency_ratio_20] IS Low",
-          "symbol is 8"
-        ],
-        "tp": 2.0,
-        "sl": 1.2,
-        "capital_pct": 20.0
-      }
-    },
-    {
-      "rank": 16,
-      "score": 296.83394871138466,
-      "train_return_pct": 1.0715484619140625,
-      "valid_return_pct": 0.8347153663635254,
-      "train_pf": 1.4217580556869507,
-      "valid_pf": 1.492459774017334,
-      "valid_dd": 1.1150827407836914,
-      "valid_trades": 13,
-      "conditions": [
-        "[downside_semivol_20] IS Very Low",
-        "[drawdown_from_peak_60] IS Very High",
-        "[inside_bar_compression] IS Low",
-        "symbol is 1"
-      ],
-      "rule": {
-        "conditions": [
-          "[downside_semivol_20] IS Very Low",
-          "[drawdown_from_peak_60] IS Very High",
-          "[inside_bar_compression] IS Low",
-          "symbol is 1"
-        ],
-        "tp": 2.0,
-        "sl": 1.2,
-        "capital_pct": 20.0
-      }
-    },
-    {
-      "rank": 17,
-      "score": 281.3462102551672,
-      "train_return_pct": 0.8196592330932617,
-      "valid_return_pct": 0.4086017608642578,
-      "train_pf": 1.4805083274841309,
-      "valid_pf": 1.1808654069900513,
-      "valid_dd": 0.8805687427520752,
-      "valid_trades": 16,
-      "conditions": [
-        "[downside_semivol_20] IS Very Low",
-        "[drawdown_from_peak_60] IS Very High",
-        "[inside_bar_compression] IS Low",
-        "symbol is 7"
-      ],
-      "rule": {
-        "conditions": [
-          "[downside_semivol_20] IS Very Low",
-          "[drawdown_from_peak_60] IS Very High",
-          "[inside_bar_compression] IS Low",
-          "symbol is 7"
-        ],
-        "tp": 2.0,
-        "sl": 1.2,
-        "capital_pct": 20.0
-      }
-    },
-    {
-      "rank": 18,
-      "score": 277.1328486460851,
-      "train_return_pct": 0.822913646697998,
-      "valid_return_pct": 0.4563450813293457,
-      "train_pf": 1.1962414979934692,
-      "valid_pf": 1.5949429273605347,
-      "valid_dd": 0.43151405453681946,
-      "valid_trades": 8,
-      "conditions": [
-        "[drawdown_from_peak_60] IS Very High",
-        "[close_location_value] IS Very Low",
-        "[atr_ratio_14_63] IS High",
-        "[ret_vol_corr_30] IS Weak Bearish",
-        "symbol is 3"
-      ],
-      "rule": {
-        "conditions": [
-          "[drawdown_from_peak_60] IS Very High",
-          "[close_location_value] IS Very Low",
-          "[atr_ratio_14_63] IS High",
-          "[ret_vol_corr_30] IS Weak Bearish",
-          "symbol is 3"
-        ],
-        "tp": 2.0,
-        "sl": 1.2,
-        "capital_pct": 20.0
-      }
-    },
-    {
-      "rank": 19,
-      "score": 266.7604520720085,
-      "train_return_pct": 0.753319263458252,
-      "valid_return_pct": 0.3150463104248047,
-      "train_pf": 1.5336543321609497,
-      "valid_pf": 1.280962586402893,
-      "valid_dd": 0.837653398513794,
-      "valid_trades": 8,
-      "conditions": [
-        "[amihud_illiquidity_20] IS High",
-        "[range_compression_20_100] IS Low",
-        "[tr_to_atr_14] IS High",
-        "[atr_ratio_14_63] IS Very Low",
-        "symbol is 6"
-      ],
-      "rule": {
-        "conditions": [
-          "[amihud_illiquidity_20] IS High",
-          "[range_compression_20_100] IS Low",
-          "[tr_to_atr_14] IS High",
-          "[atr_ratio_14_63] IS Very Low",
-          "symbol is 6"
-        ],
-        "tp": 2.0,
-        "sl": 1.2,
-        "capital_pct": 20.0
-      }
-    },
-    {
-      "rank": 20,
-      "score": 236.4192097033768,
-      "train_return_pct": 0.6295084953308105,
-      "valid_return_pct": 0.23586750030517578,
-      "train_pf": 1.2793073654174805,
-      "valid_pf": 1.2789080142974854,
-      "valid_dd": 0.5592189431190491,
-      "valid_trades": 6,
-      "conditions": [
-        "[drawdown_from_peak_60] IS High",
-        "[log_range_over_vol_100] IS Very High",
-        "[vol_over_median20] IS Low",
-        "[ret_vol_corr_30] IS Strong Bearish",
-        "symbol is 10"
-      ],
-      "rule": {
-        "conditions": [
-          "[drawdown_from_peak_60] IS High",
-          "[log_range_over_vol_100] IS Very High",
-          "[vol_over_median20] IS Low",
-          "[ret_vol_corr_30] IS Strong Bearish",
-          "symbol is 10"
-        ],
-        "tp": 2.0,
-        "sl": 1.2,
-        "capital_pct": 20.0
-      }
-    },
-    {
-      "rank": 21,
-      "score": 228.04414405974993,
-      "train_return_pct": 0.9434700012207031,
-      "valid_return_pct": 0.5493879318237305,
-      "train_pf": 1.3410061597824097,
-      "valid_pf": 1.2463629245758057,
-      "valid_dd": 1.386094331741333,
-      "valid_trades": 18,
-      "conditions": [
-        "[drawdown_from_peak_60] IS Very High",
-        "[log_range_over_vol_100] IS Very High",
-        "[vol_over_median20] IS Medium",
-        "[ret_vol_corr_30] IS Bullish",
-        "symbol is 9"
-      ],
-      "rule": {
-        "conditions": [
-          "[drawdown_from_peak_60] IS Very High",
-          "[log_range_over_vol_100] IS Very High",
-          "[vol_over_median20] IS Medium",
-          "[ret_vol_corr_30] IS Bullish",
-          "symbol is 9"
-        ],
-        "tp": 2.0,
-        "sl": 1.2,
-        "capital_pct": 20.0
-      }
-    },
-    {
-      "rank": 22,
-      "score": 193.72009230298593,
-      "train_return_pct": 0.654900074005127,
-      "valid_return_pct": 0.31734704971313477,
-      "train_pf": 1.222340703010559,
-      "valid_pf": 1.282252311706543,
-      "valid_dd": 0.7583181262016296,
-      "valid_trades": 8,
-      "conditions": [
-        "[drawdown_from_peak_60] IS Very High",
-        "[close_location_value] IS Very High",
-        "[atr_ratio_14_63] IS High",
-        "[ret_vol_corr_30] IS Neutral Positive",
-        "symbol is 6"
-      ],
-      "rule": {
-        "conditions": [
-          "[drawdown_from_peak_60] IS Very High",
-          "[close_location_value] IS Very High",
-          "[atr_ratio_14_63] IS High",
-          "[ret_vol_corr_30] IS Neutral Positive",
-          "symbol is 6"
-        ],
-        "tp": 2.0,
-        "sl": 1.2,
-        "capital_pct": 20.0
-      }
-    },
-    {
-      "rank": 23,
-      "score": 185.6961086444552,
-      "train_return_pct": 0.5866289138793945,
-      "valid_return_pct": 0.2043604850769043,
-      "train_pf": 1.1897335052490234,
-      "valid_pf": 1.080500602722168,
-      "valid_dd": 0.9603732228279114,
-      "valid_trades": 17,
-      "conditions": [
-        "[range_compression_20_100] IS Very High",
-        "[channel_pos_20] IS Medium",
-        "[atr_ratio_14_63] IS Very High",
-        "[ret_vol_corr_30] IS Weak Bearish",
-        "symbol is 3"
-      ],
-      "rule": {
-        "conditions": [
-          "[range_compression_20_100] IS Very High",
-          "[channel_pos_20] IS Medium",
-          "[atr_ratio_14_63] IS Very High",
-          "[ret_vol_corr_30] IS Weak Bearish",
-          "symbol is 3"
-        ],
-        "tp": 2.0,
-        "sl": 1.2,
-        "capital_pct": 20.0
-      }
-    },
-    {
-      "rank": 24,
-      "score": 175.61577346101555,
-      "train_return_pct": 0.791013240814209,
-      "valid_return_pct": 0.46786069869995117,
-      "train_pf": 1.2782806158065796,
-      "valid_pf": 1.2790809869766235,
-      "valid_dd": 1.395288109779358,
-      "valid_trades": 12,
-      "conditions": [
-        "[downside_semivol_20] IS Very High",
-        "[channel_pos_20] IS Very High",
-        "[return_skew_30] IS Weak Bullish",
-        "[vol_ratio_20_100] IS Medium",
-        "symbol is 10"
-      ],
-      "rule": {
-        "conditions": [
-          "[downside_semivol_20] IS Very High",
-          "[channel_pos_20] IS Very High",
-          "[return_skew_30] IS Weak Bullish",
-          "[vol_ratio_20_100] IS Medium",
-          "symbol is 10"
-        ],
-        "tp": 2.0,
-        "sl": 1.2,
-        "capital_pct": 20.0
-      }
-    },
-    {
-      "rank": 25,
-      "score": 157.56101308320214,
-      "train_return_pct": 0.8551716804504395,
-      "valid_return_pct": 0.23636817932128906,
-      "train_pf": 1.2770986557006836,
-      "valid_pf": 1.281922459602356,
-      "valid_dd": 0.8384338617324829,
-      "valid_trades": 6,
-      "conditions": [
-        "[dmi_balance_14] IS Bullish",
-        "[vol_regime_pct_120] IS Medium",
-        "[ret_vol_corr_30] IS Strong Bearish",
-        "symbol is 10"
-      ],
-      "rule": {
-        "conditions": [
-          "[dmi_balance_14] IS Bullish",
-          "[vol_regime_pct_120] IS Medium",
-          "[ret_vol_corr_30] IS Strong Bearish",
-          "symbol is 10"
-        ],
-        "tp": 2.0,
-        "sl": 1.2,
-        "capital_pct": 20.0
+        "sl": 1.0,
+        "capital_pct": 30.0
       }
     }
   ]

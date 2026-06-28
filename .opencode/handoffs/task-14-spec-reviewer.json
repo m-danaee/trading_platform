@@ -1,0 +1,94 @@
+{
+  "task": "task-14",
+  "branch": "fix/rb-governor-rebalance",
+  "base_branch": "main",
+  "reviewer": "spec-reviewer",
+  "verdict": "APPROVED",
+  "commit": "9d82755",
+  "diff_scope": {
+    "files_modified": [
+      "gpu_fuzzy_trader/config.py",
+      "gpu_fuzzy_trader/rb_governor.py",
+      ".opencode/CONTEXT.md (status update only)",
+      ".opencode/handoffs/task-14-implementer.json (handoff artifact)"
+    ],
+    "evaluator_v5_modified": false,
+    "out_of_scope_code_changes": false
+  },
+  "acceptance_criteria": {
+    "C1_score_metrics_weights_balanced": {
+      "status": "PASS",
+      "evidence": "rb_governor.py lines 193-196: 60.0*valid_ratio + 60.0*train_ratio + 3.0*valid_ret + 3.0*train_ret",
+      "spec_match": "exact"
+    },
+    "C2_train_above_valid_disabled": {
+      "status": "PASS",
+      "evidence": "config.py line 1536: RB_REQUIRE_TRAIN_SLIGHTLY_ABOVE_VALID: bool = False",
+      "spec_match": "exact"
+    },
+    "C3_gap_weights_tuned": {
+      "status": "PASS",
+      "evidence": "config.py lines 1516-1517: RB_TRAIN_VALID_RATIO_GAP_WEIGHT=30.0, RB_TRAIN_VALID_RETURN_GAP_WEIGHT=4.0",
+      "spec_match": "exact"
+    },
+    "C4_cv_fold_min_term": {
+      "status": "PASS",
+      "evidence": "rb_governor.py lines 230-232: score += 8.0*cv_min - 3.0*cv_std (k_cv=8.0, k_std=3.0 match spec)",
+      "spec_match": "exact"
+    },
+    "C4_cv_fold_evaluation_per_candidate": {
+      "status": "PASS",
+      "evidence": "_filter_good_rules and fallback path build per-fold CPUBacktestEngine instances and call simulate_rule_set per fold; this is functionally equivalent to CvFoldValEvaluator pattern (evaluates each rule dict on each fold's valid_df).",
+      "spec_match": "functionally equivalent (acceptable per reviewer note)"
+    },
+    "C4_fold_in_pipeline": {
+      "status": "PASS",
+      "evidence": "run_rb_governor_pipeline accepts cv_folds kwarg, builds fold_engines via cv_folds_only(), threads to _filter_good_rules and fallback",
+      "spec_match": "exact"
+    },
+    "M7_pf_dd_penalties": {
+      "status": "PASS",
+      "evidence": "rb_governor.py lines 254-258: score -= 2.0*max(0.0, prev_pf - new_pf); score -= 3.0*max(0.0, new_dd - prev_dd) (k_pf=2.0, k_dd=3.0 match spec)",
+      "spec_match": "exact"
+    },
+    "M7_composition_callers_updated": {
+      "status": "PASS",
+      "evidence": "All callers in _compose_ruleset (lines 594, 615, 650, 664) and _compose_ruleset_return_only (lines 1474, 1496) plus _optimize_risk_return_only (lines 1533, 1565) pass prev_pf/prev_dd. Non-composition callers (_evaluate_bank_rule line 1377, sort key line 1457, final profit_score line 1652) have no prior ruleset to compare against — defaults of None are semantically correct.",
+      "spec_match": "exact for composition path; defaults appropriate for the rest"
+    },
+    "pre_existing_config_tuning_included": {
+      "status": "PASS",
+      "evidence": "MIN_TRADE_SUPPORT 75→120, MIN_TRADE_POOL_FLOOR 25→40, PHASE2_ORPHAN_MIN_TRADE_SUPPORT 15→20 all in the commit diff",
+      "spec_match": "exact"
+    },
+    "evaluator_v5_not_modified": {
+      "status": "PASS",
+      "evidence": "git diff --name-only does not list evaluator_v5.ipynb",
+      "spec_match": "exact"
+    },
+    "no_out_of_scope_source_changes": {
+      "status": "PASS",
+      "evidence": "Only rb_governor.py and config.py source files modified. .opencode/CONTEXT.md status update and handoff JSON are workflow artifacts, not source code.",
+      "spec_match": "exact"
+    }
+  },
+  "signature_compatibility": {
+    "_score_metrics": "Added cv_fold_returns kwarg (default None) — backward compatible",
+    "_combined_return_score": "Added prev_pf/prev_dd kwargs (default None) — backward compatible",
+    "_filter_good_rules": "Added fold_engines kwarg (default None) — backward compatible",
+    "run_rb_governor_pipeline": "Added cv_folds kwarg (default None) — backward compatible",
+    "tests_passing": "11 passed in 'rb_governor or scoring' target; 34 passed in broader test_conflict_table_validation/test_rb_compose_gates/test_phase4_robust/test_monthly_wired set"
+  },
+  "functional_verification": {
+    "cv_fold_injection_works": "Manual test: score_with_cv - score_no_cv = 4.646 with cv_fold_returns=[2,4,1,3] — matches 8*1.0 - 3*std(1.118) = 4.646",
+    "pf_dd_penalty_works": "Manual test: with prev_pf=3.0, prev_dd=2.0, new_pf=2.0, new_dd=5.0 — penalty = 2*(3-2) + 3*(5-2) = 11.0 ✓",
+    "imports_resolve": "All new symbols (_score_metrics, _combined_return_score, _filter_good_rules, _compose_ruleset, _compose_ruleset_return_only, run_rb_governor_pipeline) import cleanly"
+  },
+  "notes": [
+    "Pre-existing config.py tuning (MIN_TRADE_SUPPORT, MIN_TRADE_POOL_FLOOR, PHASE2_ORPHAN_MIN_TRADE_SUPPORT) was stashed from main and re-applied on the feature branch per the pre-flight note in CONTEXT.md.",
+    "Implementation chose per-fold CPUBacktestEngine instances over CvFoldValEvaluator because rb_governor works with rule dicts not chromosomes — equivalent semantics for the singleton scoring path.",
+    "CV-fold evaluation is only applied to singleton candidates (via _filter_good_rules and the fallback path), not during multi-rule composition. This matches the implementer's documented decision (composition too expensive for per-fold evaluation).",
+    "_score_metrics default for gap weights updated to 30.0/4.0 to match the new config values (previously 12.0/0.55).",
+    "Default values in getattrs are defensive — config.py is the source of truth."
+  ]
+}

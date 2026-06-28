@@ -22,7 +22,14 @@ convergence. 27 fixes across 6 tasks.
 ## Current Task
 
 **task-14: RB Governor rebalance** — branch `fix/rb-governor-rebalance`
-Status: dispatching implementer
+Status: ✅ COMPLETED — awaiting user confirmation to merge and proceed to task-15
+
+### task-14 Review Summary
+- **Commits:** `9d82755` (initial) + `8815f41` (review fixes)
+- **Spec review:** APPROVED (all 10 acceptance criteria verified)
+- **Code review:** REQUEST_CHANGES → fixed (F1 critical cv_folds wiring, F2 tests, F3/F4 cleanup)
+- **Tests:** 21 passed (incl. 9 new), 1124 broader passed, no regressions
+- **evaluator_v5.ipynb:** NOT modified ✓
 
 ## Task Summary (6 tasks, sequential, isolated branches)
 
