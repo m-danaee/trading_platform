@@ -120,21 +120,6 @@ def _build_rank_and_crowding(
                 crowding[i] = cd[j]
     return rank, crowding
 
-    n = len(objectives)
-    rank = np.full(n, np.inf, dtype=np.float64)
-    crowding = np.zeros(n, dtype=np.float64)
-    for r, front in enumerate(fronts):
-        for i in front:
-            rank[i] = r
-        if len(front) <= 2:
-            for i in front:
-                crowding[i] = np.inf
-        else:
-            cd = crowding_distance(objectives, front)
-            for j, i in enumerate(front):
-                crowding[i] = cd[j]
-    return rank, crowding
-
 
 def _binary_tournament_pick(
     indices: list[int],
@@ -1746,6 +1731,7 @@ def _run_nsga2_fallback(
                 stratum_fractions=stratum_fractions,
             )
             restart_count += 1
+            pre_reset_streak = viability_collapse_streak
             viability_collapse_streak = 0
             post_restart_gens_remaining = int(getattr(
                 _cfg,
@@ -1756,7 +1742,7 @@ def _run_nsga2_fallback(
                 "Phase 2 [%s]: viability-collapse restart at gen %d "
                 "(pop_viable=%d < %d, streak=%d)",
                 tag, gen + 1, pop_viable_count, viability_threshold,
-                viability_collapse_streak,
+                pre_reset_streak,
             )
         plateau_best_progress, plateau_streak = _update_max_return_plateau(
             plateau_metric, plateau_best_progress, plateau_streak,
@@ -2217,6 +2203,7 @@ def _run_nsga3(
                 stratum_fractions=stratum_fractions,
             )
             restart_count += 1
+            pre_reset_streak = viability_collapse_streak
             viability_collapse_streak = 0
             post_restart_gens_remaining = int(getattr(
                 _cfg,
@@ -2227,7 +2214,7 @@ def _run_nsga3(
                 "Phase 2 [%s]: viability-collapse restart at gen %d "
                 "(pop_viable=%d < %d, streak=%d)",
                 tag, gen + 1, pop_viable_count, viability_threshold,
-                viability_collapse_streak,
+                pre_reset_streak,
             )
 
         plateau_best_progress, plateau_streak = _update_max_return_plateau(
