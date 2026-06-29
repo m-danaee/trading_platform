@@ -21,7 +21,7 @@
     "per_symbol_metrics": {
       "SYM_A": {
         "trade_count": 4,
-        "win_rate": 0.0,
+        "win_rate": 75.0,
         "net_pnl": "9.0"
       }
     }
@@ -46,7 +46,7 @@
     "per_symbol_metrics": {
       "SYM_A": {
         "trade_count": 4,
-        "win_rate": 0.0,
+        "win_rate": 75.0,
         "net_pnl": "9.0"
       }
     }
@@ -123,7 +123,7 @@
     },
     {
       "rank": 2,
-      "score": -9128.924320357297,
+      "score": -9137.924320357297,
       "train_return_pct": -0.29999613761901855,
       "valid_return_pct": -0.29999613761901855,
       "train_pf": 0.6428571939468384,

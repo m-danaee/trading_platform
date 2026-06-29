@@ -42,6 +42,8 @@ restarts happen sooner (more post-restart evaluation room).
 
 ## Current Task
 
-**task-1** — post-restart early stop — ✅ IMPLEMENTED + SPEC-REVIEW APPROVED + CODE-REVIEW APPROVED
-- Branch: `feature/task-1-post-restart-early-stop` (commit `ad2708e`, not merged)
-- Awaiting user confirmation to finalize/merge (execution_mode: checkpoint).
+**task-1** — post-restart early stop — ✅ COMPLETE (merged + branch cleaned)
+- Merged into `main` (fast-forward, commits `ad2708e` + `ac6a7d8`).
+- Feature branch `feature/task-1-post-restart-early-stop` deleted (safe `-d`).
+- Verified on `main`: imports clean, 18/18 targeted tests pass.
+- Ready for next Colab run to confirm runtime reduction.
