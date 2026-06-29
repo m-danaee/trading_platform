@@ -21,7 +21,7 @@ def test_config_defaults():
     """PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED=True by default."""
     assert cfg.PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED is True
     assert cfg.PHASE2_ISLAND_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO is False
-    assert cfg.PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE == 8
+    assert cfg.PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE == 6
 
 
 # ---------------------------------------------------------------------------

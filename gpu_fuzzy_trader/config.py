@@ -719,6 +719,27 @@ PHASE2_PLATEAU_POST_RESTART_MUTATION_BOOST = 0.45
 #   Lower  → quicker return to normal mutation; less search diversity.
 PHASE2_PLATEAU_POST_RESTART_BOOST_GENS = 3
 
+# PHASE2_PLATEAU_POST_RESTART_STOP_ENABLED — break the epoch when the best
+#   metric fails to improve for PHASE2_PLATEAU_POST_RESTART_STOP_PATIENCE gens
+#   AFTER a plateau restart.  A restart already signals a stall; if fresh blood
+#   + boosted mutation yields no progress within the boost window, further gens
+#   are very unlikely to help.  Cuts only provably-unproductive generations.
+#   True  → stop after a failed restart (default; safe runtime win).
+#   False → always run the full epoch budget after a restart (original behaviour).
+PHASE2_PLATEAU_POST_RESTART_STOP_ENABLED = True
+
+# PHASE2_PLATEAU_POST_RESTART_STOP_PATIENCE — gens of no improvement after a
+#   restart before breaking.  Should be >= PHASE2_PLATEAU_POST_RESTART_BOOST_GENS
+#   so the boosted-mutation window gets a full chance to recover.
+#   Higher → more conservative (give restart more time); slower.
+#   Lower  → stop sooner after a failed restart; faster, tiny risk of cutting a
+#            late breakthrough (an improvement resets the streak, so no false stop).
+PHASE2_PLATEAU_POST_RESTART_STOP_PATIENCE = 3
+
+# Island-scoped variants (mirror PHASE2_ISLAND_PLATEAU_EARLY_STOP_* scoping).
+PHASE2_ISLAND_PLATEAU_POST_RESTART_STOP_ENABLED = True
+PHASE2_ISLAND_PLATEAU_POST_RESTART_STOP_PATIENCE = 3
+
 # PHASE2_PLATEAU_MAX_RESTARTS — restarts per epoch before final break.
 #   1       → one restart, then break on second plateau.
 #   0       → immediately break (disables restart regardless of ENABLED flag).
@@ -961,7 +982,7 @@ PHASE2_ISLAND_TWO_STAGE_ENABLED = False
 PHASE2_ISLAND_EARLY_STOP_ENABLED = False
 PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED = True
 PHASE2_ISLAND_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO: bool = False
-PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE: int = 8
+PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE: int = 6
 # PHASE2_ISLAND_SCALE_TRADE_FLOORS — scale support floors to island row count.
 PHASE2_ISLAND_SCALE_TRADE_FLOORS = True
 PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN = 10

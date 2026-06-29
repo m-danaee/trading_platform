@@ -226,6 +226,8 @@ class TestMutationBoostIntegration:
             cfg, "PHASE2_EARLY_STOP_ENABLED", False,
         ), mock.patch.object(
             cfg, "PHASE2_EARLY_STOP_MIN_GENERATION", 999,
+        ), mock.patch.object(
+            cfg, "PHASE2_PLATEAU_POST_RESTART_STOP_ENABLED", False,
         ):
             rng = np.random.default_rng(0)
             feature_infos = [
@@ -355,6 +357,8 @@ class TestPlateauBranchDecision:
             cfg, "PHASE2_EARLY_STOP_ENABLED", False,
         ), mock.patch.object(
             cfg, "PHASE2_EARLY_STOP_MIN_GENERATION", 999,
+        ), mock.patch.object(
+            cfg, "PHASE2_PLATEAU_POST_RESTART_STOP_ENABLED", False,
         ):
             rng = np.random.default_rng(0)
             feature_infos = [
@@ -404,6 +408,8 @@ class TestPlateauBranchDecision:
             cfg, "PHASE2_EARLY_STOP_ENABLED", False,
         ), mock.patch.object(
             cfg, "PHASE2_EARLY_STOP_MIN_GENERATION", 999,
+        ), mock.patch.object(
+            cfg, "PHASE2_PLATEAU_POST_RESTART_STOP_ENABLED", False,
         ):
             rng = np.random.default_rng(0)
             feature_infos = [
@@ -454,6 +460,8 @@ class TestPlateauBranchDecision:
             cfg, "PHASE2_EARLY_STOP_ENABLED", False,
         ), mock.patch.object(
             cfg, "PHASE2_EARLY_STOP_MIN_GENERATION", 999,
+        ), mock.patch.object(
+            cfg, "PHASE2_PLATEAU_POST_RESTART_STOP_ENABLED", False,
         ):
             rng = np.random.default_rng(0)
             feature_infos = [

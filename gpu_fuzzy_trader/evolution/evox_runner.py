@@ -56,6 +56,8 @@ class Phase2EvolutionState:
     weighted_activate_prob: float | None = None
     stage: StageLabel = None
     post_restart_gens_remaining: int = 0
+    post_restart_no_improve_streak: int = 0
+    post_restart_best_progress: float = -np.inf
 
 
 def trim_evolution_state_memory(
@@ -607,6 +609,38 @@ def _should_plateau_early_stop_phase2(
             else int(_cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE)
         )
     return streak >= patience
+
+
+def _should_post_restart_early_stop_phase2(
+    post_restart_streak: int,
+    *,
+    island_profile: str = "global",
+    stage_params: Phase2StageParams | None = None,
+) -> bool:
+    """Break the epoch when a plateau restart yields no improvement.
+
+    Independent of the main plateau streak/patience so it never interferes
+    with the restart decision itself — it only fires on generations AFTER a
+    restart, measuring whether the restart produced any progress.
+    """
+    if _cfg.scoped_island_profile(island_profile):
+        if not bool(getattr(
+            _cfg, "PHASE2_ISLAND_PLATEAU_POST_RESTART_STOP_ENABLED", True,
+        )):
+            return False
+        patience = int(getattr(
+            _cfg, "PHASE2_ISLAND_PLATEAU_POST_RESTART_STOP_PATIENCE",
+            getattr(_cfg, "PHASE2_PLATEAU_POST_RESTART_STOP_PATIENCE", 3),
+        ))
+    else:
+        if not bool(getattr(
+            _cfg, "PHASE2_PLATEAU_POST_RESTART_STOP_ENABLED", True,
+        )):
+            return False
+        patience = int(getattr(
+            _cfg, "PHASE2_PLATEAU_POST_RESTART_STOP_PATIENCE", 3,
+        ))
+    return post_restart_streak >= patience
 
 
 def _should_viability_recovery(
@@ -1630,8 +1664,11 @@ def _run_nsga2_fallback(
         _cfg, "PHASE2_PLATEAU_MAX_RESTARTS", 1,
     ))
     post_restart_gens_remaining: int = 0
+    post_restart_no_improve_streak: int = 0
+    post_restart_best_progress: float = -np.inf
 
     for gen in range(n_generations):
+        just_restarted = False
         for i in range(pop_size):
             if np.any(np.isinf(objectives[i])):
                 obj, metrics = _evaluate_chromosome(
@@ -1738,6 +1775,9 @@ def _run_nsga2_fallback(
                 "PHASE2_PLATEAU_POST_RESTART_BOOST_GENS",
                 3,
             ))
+            post_restart_best_progress = plateau_best_progress
+            post_restart_no_improve_streak = 0
+            just_restarted = True
             logger.info(
                 "Phase 2 [%s]: viability-collapse restart at gen %d "
                 "(pop_viable=%d < %d, streak=%d)",
@@ -1747,6 +1787,14 @@ def _run_nsga2_fallback(
         plateau_best_progress, plateau_streak = _update_max_return_plateau(
             plateau_metric, plateau_best_progress, plateau_streak,
         )
+        if restart_count > 0 and not just_restarted:
+            post_restart_best_progress, post_restart_no_improve_streak = (
+                _update_max_return_plateau(
+                    plateau_metric,
+                    post_restart_best_progress,
+                    post_restart_no_improve_streak,
+                )
+            )
         maybe_log_generation(
             logger, tag, gen, n_generations, len(pareto_indices), mean_ret,
             max_return_pct=max_ret,
@@ -1826,6 +1874,9 @@ def _run_nsga2_fallback(
                     ))
                     restart_count += 1
                     plateau_streak = 0
+                    post_restart_best_progress = plateau_best_progress
+                    post_restart_no_improve_streak = 0
+                    just_restarted = True
                     logger.info(
                         "Phase 2 [%s]: plateau restart at gen %d "
                         "(restart %d/%d, reinit %.0f%%, elite_kept=%d, mutation=%.2f)",
@@ -1850,6 +1901,28 @@ def _run_nsga2_fallback(
                 float(_cfg.PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT),
                 deployable_count,
                 pop_unique_ratio,
+            )
+            break
+
+        if (
+            restart_count > 0
+            and _should_post_restart_early_stop_phase2(
+                post_restart_no_improve_streak,
+                stage_params=stage_params,
+                island_profile=island_profile,
+            )
+        ):
+            logger.info(
+                "%s: post-restart early stop at gen %d "
+                "(no improvement for %d gens after restart %d/%d, "
+                "best_progress=%.2f%%, deployable_preview=%d)",
+                tag,
+                gen + 1,
+                post_restart_no_improve_streak,
+                restart_count,
+                max_restarts,
+                plateau_best_progress,
+                deployable_count,
             )
             break
 
@@ -2035,6 +2108,8 @@ def _run_nsga3(
             _cfg, "PHASE2_PLATEAU_MAX_RESTARTS", 1,
         ))
         post_restart_gens_remaining: int = 0
+        post_restart_no_improve_streak: int = 0
+        post_restart_best_progress: float = -np.inf
     else:
         population = state.population
         objectives = state.objectives
@@ -2062,6 +2137,12 @@ def _run_nsga3(
             _cfg, "PHASE2_PLATEAU_MAX_RESTARTS", 1,
         ))
         post_restart_gens_remaining = int(state.post_restart_gens_remaining)
+        post_restart_no_improve_streak = int(
+            getattr(state, "post_restart_no_improve_streak", 0)
+        )
+        post_restart_best_progress = float(
+            getattr(state, "post_restart_best_progress", -np.inf)
+        )
         weighted_activate_prob = (
             state.weighted_activate_prob
             if state.weighted_activate_prob is not None
@@ -2092,6 +2173,7 @@ def _run_nsga3(
 
     hist_before_loop = len(history)
     for gen in range(n_generations):
+        just_restarted = False
         diversity_reference = _build_diversity_reference(
             hall_of_fame, pareto_archive,
         )
@@ -2210,6 +2292,9 @@ def _run_nsga3(
                 "PHASE2_PLATEAU_POST_RESTART_BOOST_GENS",
                 3,
             ))
+            post_restart_best_progress = plateau_best_progress
+            post_restart_no_improve_streak = 0
+            just_restarted = True
             logger.info(
                 "Phase 2 [%s]: viability-collapse restart at gen %d "
                 "(pop_viable=%d < %d, streak=%d)",
@@ -2220,6 +2305,14 @@ def _run_nsga3(
         plateau_best_progress, plateau_streak = _update_max_return_plateau(
             plateau_metric, plateau_best_progress, plateau_streak,
         )
+        if restart_count > 0 and not just_restarted:
+            post_restart_best_progress, post_restart_no_improve_streak = (
+                _update_max_return_plateau(
+                    plateau_metric,
+                    post_restart_best_progress,
+                    post_restart_no_improve_streak,
+                )
+            )
 
         # Periodically reclaim stale Python objects (metric dicts, offspring
         # arrays) to reduce peak RSS on memory-constrained hosts (Colab 12 GiB).
@@ -2398,6 +2491,9 @@ def _run_nsga3(
                     ))
                     restart_count += 1
                     plateau_streak = 0
+                    post_restart_best_progress = plateau_best_progress
+                    post_restart_no_improve_streak = 0
+                    just_restarted = True
                     logger.info(
                         "Phase 2 [%s]: plateau restart at gen %d "
                         "(restart %d/%d, reinit %.0f%%, elite_kept=%d, mutation=%.2f)",
@@ -2423,6 +2519,28 @@ def _run_nsga3(
                 float(_cfg.PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT),
                 deployable_count,
                 pop_unique_ratio,
+            )
+            break
+
+        if (
+            restart_count > 0
+            and _should_post_restart_early_stop_phase2(
+                post_restart_no_improve_streak,
+                stage_params=stage_params,
+                island_profile=island_profile,
+            )
+        ):
+            logger.info(
+                "%s: post-restart early stop at gen %d "
+                "(no improvement for %d gens after restart %d/%d, "
+                "best_progress=%.2f%%, deployable_preview=%d)",
+                tag,
+                gen + 1,
+                post_restart_no_improve_streak,
+                restart_count,
+                max_restarts,
+                plateau_best_progress,
+                deployable_count,
             )
             break
 
@@ -2458,6 +2576,8 @@ def _run_nsga3(
         generation_offset=generation_offset + (len(history) - hist_before_loop),
         plateau_best_progress=plateau_best_progress,
         plateau_streak=plateau_streak,
+        post_restart_no_improve_streak=post_restart_no_improve_streak,
+        post_restart_best_progress=post_restart_best_progress,
         ref_vec=ref_vec,
         mutation_rate=mutation_rate,
         weighted_activate_prob=weighted_activate_prob,
