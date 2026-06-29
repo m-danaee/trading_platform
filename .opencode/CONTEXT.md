@@ -1,87 +1,47 @@
-# Nexus Context — OOS Generalization Fixes (27-item plan)
+# Nexus Context — Phase 2 Runtime Reduction (post-restart early stop)
 
-**Updated:** 2026-06-28
+**Updated:** 2026-06-29
 **base_branch:** `main`
 **branch_policy:** isolated
 **execution_mode:** checkpoint
-**plan:** `.opencode/plans/PLAN.md` (tasks 14–19)
+**plan:** `.opencode/plans/PLAN.md` (1 task)
 
 ## Active Objective
 
-Fix the out-of-sample equity collapse diagnosed from the 2026-06-28 run log.
-Pipeline summary: LONG test=−4.45%, SHORT test=−0.00%. Validation overfitting
-(val Sortino 1.20 > train 0.65; val→test Δ=−17.6%) compounded by symbol-locked
-rules, degenerate win-rate objective, disabled migration, and premature
-convergence. 27 fixes across 6 tasks.
+Reduce Phase 2 (rule-pool evolution) wall-clock time by cutting
+provably-unproductive generations that run *after a plateau restart fails to
+yield any improvement*.  No reduction to search budget, population, or epoch
+count — only to generations that produce zero improvement.
 
-## Pre-flight — ✅ COMPLETE
+## Diagnosis (from 2026-06-29 run log)
 
-- `.opencode/` plan files + `outputs/` artifacts committed on `main` (6f75c7d).
-- `gpu_fuzzy_trader/config.py` task-8 tuning (3 lines) stashed, restored on feature branch.
+- Phase 2 island epochs are 15 gens each, ~80–280 s/gen.
+- `PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE = 8` ⇒ restart fires late in an
+  epoch (gen 10–14).  After restart, `plateau_streak` resets and needs 8 more
+  no-improvement gens to stop — but only 1–5 gens remain, so the stop **never
+  fires** and dead generations run to the end of the epoch.
+- Example (epoch 3, long cluster_2): restart at gen 10, then gens 11–15 stuck
+  at 6.11% return = ~5 min wasted.
+
+## Approach
+
+Add a **post-restart no-improvement early stop**: a separate, short patience
+(default 3 gens, == existing `PHASE2_PLATEAU_POST_RESTART_BOOST_GENS`) that
+activates *only* after a plateau restart.  If the restart + boosted mutation
+yields no improvement beyond the pre-restart best within the patience window,
+break the epoch.  Plus lower `PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE` 8→6 so
+restarts happen sooner (more post-restart evaluation room).
+
+## Constraints (AGENTS.md)
+
+- Use `.venv` for all commands.
+- Run tests with `PYTEST_LOW_MEMORY=1` only — never plain `pytest` (OOM risk).
+- Do NOT run the full pipeline (OOM on local; user runs on Colab GPU).
+- Do NOT modify `evaluator_v5.ipynb`.
+- Remove dead/obsolete code after edits.
 
 ## Current Task
 
-**ALL 6 TASKS COMPLETE** ✅
-
-### task-14 — ✅ MERGED (f240490) — RB Governor rebalance
-### task-15 — ✅ MERGED (eb5bf05) — Fitness & objective redesign
-### task-16 — ✅ MERGED (3326146) — Evolution convergence tuning
-### task-17 — ✅ MERGED (e350d03) — Island migration & rule structure
-### task-18 — ✅ MERGED (c2d9f2f) — Admission gates & robustness
-### task-19 — ✅ MERGED (0762509) — Cleanup & observability
-
-All 27 fixes (C1-C7, H1-H6, M1-M8, L1-L6) implemented, reviewed (spec+code), and merged.
-487 unit tests pass. `evaluator_v5.ipynb` NOT modified.
-
-## Next Step
-
-Run the full pipeline on Colab GPU to validate OOS improvement:
-```bash
-python -m gpu_fuzzy_trader.run_pipeline --output /content/trading_platform_outputs
-```
-Compare `test_long_report.json` and `test_short_report.json` returns vs baseline (−4.45% / −0.00%).
-**Success:** test return ≥ 0% (breakeven). **Stretch:** ≥ +3%, PF ≥ 1.2.
-
-## Task Summary (6 tasks, sequential, isolated branches)
-
-| # | Branch | Fixes | Priority | Status |
-|---|--------|-------|----------|--------|
-| 14 | `fix/rb-governor-rebalance` | C1,C2,C3,C4,M7 — val overfit, CV folds, gap penalty | 🔴 Critical | ✅ MERGED |
-| 15 | `fix/fitness-objective-redesign` | C5,C6,C7,H1,H2,M3 — symbol-lock, f1/f3, Sortino sat, val leak | 🔴 Critical | ✅ MERGED |
-| 16 | `fix/evolution-convergence` | H3,H5,M4,M5 — restart, state carry-over, normalization | 🟠 High | ✅ MERGED |
-| 17 | `fix/island-migration-rule-structure` | H4,H6 — migration enable, MIN/MAX_CONDITIONS | 🟠 High | ✅ MERGED |
-| 18 | `fix/admission-gates-robustness` | M1,M2,M6,M8 — per-symbol WR bug, cache, monthly gate | 🟡 Medium | ✅ MERGED |
-| 19 | `fix/cleanup-observability` | L1–L6 — dead code, EvoX warn, Das-Dennis, viability trigger | 🟢 Low | ✅ MERGED |
-
-## Execution Order
-
-```
-task-14 (RB Governor)  ──► task-15 (Fitness) ──► task-16 (Evolution)
-                                                  │
-task-17 (Migration)  ◄─────────────────────────────┤
-                                                  │
-task-18 (Admission) ◄─────────────────────────────┤
-                                                  ▼
-task-19 (Cleanup)  ◄──────────────────────────────┘
-```
-
-- task-14 first: highest leverage, config+scoring only, no evolution code.
-- task-15 second: touches `compute_phase2_objectives_from_metrics` — must land
-  before task-16 to avoid merge conflicts in the same function.
-- task-16/17/18 can run in parallel after 15 (different files mostly).
-- task-19 last (pure cleanup, no behavioral risk).
-
-## Hard Rules (from AGENTS.md)
-
-- Always use `.venv` for running commands.
-- Run tests with `PYTEST_LOW_MEMORY=1` (OOM risk on local/WSSL).
-- Do NOT run the full pipeline locally (runs on Colab GPU).
-- Do NOT modify `evaluator_v5.ipynb`.
-- After changing code, remove wasted/old implementation to keep project clean.
-
-## Verification
-
-- Unit tests: `PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/ -x -q`
-- OOS validation: run pipeline on Colab GPU, compare test_long/short_report.json
-  return vs baseline (−4.45% / −0.00%).
-- Do NOT run `run_pipeline.py` locally (OOM).
+**task-1** — post-restart early stop — ✅ IMPLEMENTED + SPEC-REVIEW APPROVED + CODE-REVIEW APPROVED
+- Branch: `feature/task-1-post-restart-early-stop` (commit `ad2708e`, not merged)
+- Awaiting user confirmation to finalize/merge (execution_mode: checkpoint).
