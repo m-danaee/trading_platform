@@ -597,11 +597,14 @@ def _should_plateau_early_stop_phase2(
         if diversity_ratio < _diversity_recovery_min_unique_ratio(stage_params):
             return False
     if _cfg.scoped_island_profile(island_profile):
-        patience = (
-            int(stage_params.plateau_early_stop_patience)
-            if stage_params is not None and getattr(stage_params, "plateau_early_stop_patience", None) is not None
-            else int(getattr(_cfg, "PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE", _cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE))
-        )
+        # Islands run single-stage (stage=None); the stage_params patience is
+        # the GLOBAL default baked into the None profile, NOT the island knob.
+        # Use the island-scoped config directly so
+        # PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE actually takes effect.
+        patience = int(getattr(
+            _cfg, "PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE",
+            _cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE,
+        ))
     else:
         patience = (
             int(stage_params.plateau_early_stop_patience)
