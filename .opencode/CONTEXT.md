@@ -1,49 +1,31 @@
-# Nexus Context — Phase 2 Runtime Reduction (post-restart early stop)
+# Nexus Context — Phase 2 Priority A Runtime Fixes (Path 1: safe ~30%)
 
-**Updated:** 2026-06-29
+**Updated:** 2026-06-30
 **base_branch:** `main`
 **branch_policy:** isolated
 **execution_mode:** checkpoint
-**plan:** `.opencode/plans/PLAN.md` (1 task)
+**plan:** `.opencode/plans/PLAN.md` (3 tasks)
 
 ## Active Objective
+Path 1 (user-chosen, safe ~30% runtime win): A1 (consistency, done) + A2
+(periodic val sim) + A3 (patience bug fix). No generation-budget cut.
 
-Reduce Phase 2 (rule-pool evolution) wall-clock time by cutting
-provably-unproductive generations that run *after a plateau restart fails to
-yield any improvement*.  No reduction to search budget, population, or epoch
-count — only to generations that produce zero improvement.
-
-## Diagnosis (from 2026-06-29 run log)
-
-- Phase 2 island epochs are 15 gens each, ~80–280 s/gen.
-- `PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE = 8` ⇒ restart fires late in an
-  epoch (gen 10–14).  After restart, `plateau_streak` resets and needs 8 more
-  no-improvement gens to stop — but only 1–5 gens remain, so the stop **never
-  fires** and dead generations run to the end of the epoch.
-- Example (epoch 3, long cluster_2): restart at gen 10, then gens 11–15 stuck
-  at 6.11% return = ~5 min wasted.
-
-## Approach
-
-Add a **post-restart no-improvement early stop**: a separate, short patience
-(default 3 gens, == existing `PHASE2_PLATEAU_POST_RESTART_BOOST_GENS`) that
-activates *only* after a plateau restart.  If the restart + boosted mutation
-yields no improvement beyond the pre-restart best within the patience window,
-break the epoch.  Plus lower `PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE` 8→6 so
-restarts happen sooner (more post-restart evaluation room).
+## IMPORTANT DIAGNOSTIC CORRECTION
+- `_run_nsga3` (production path used on Colab) ALREADY batches offspring via
+  `_evaluate_population_indices`. A1 was a consistency fix for the fallback
+  path only — ~0% production runtime win, but clean tested code worth merging.
+- Real production per-gen cost is genuine batched backtest compute (~50-120s).
+- A2 (skip val most gens) is the real ~25-30% win. A3 is a correctness fix.
 
 ## Constraints (AGENTS.md)
-
-- Use `.venv` for all commands.
-- Run tests with `PYTEST_LOW_MEMORY=1` only — never plain `pytest` (OOM risk).
-- Do NOT run the full pipeline (OOM on local; user runs on Colab GPU).
-- Do NOT modify `evaluator_v5.ipynb`.
+- Use `.venv` for all commands; tests with `PYTEST_LOW_MEMORY=1` only.
+- Do NOT run the pipeline. Do NOT touch `evaluator_v5.ipynb`.
 - Remove dead/obsolete code after edits.
 
-## Current Task
+## Tasks
+- **A1** ✅ MERGED — batched offspring eval (fallback path consistency + test)
+- **A2** — periodic val sim (the real win, ~25-30%)
+- **A3** — fix island patience dead-code bug (correctness)
 
-**task-1** — post-restart early stop — ✅ COMPLETE (merged + branch cleaned)
-- Merged into `main` (fast-forward, commits `ad2708e` + `ac6a7d8`).
-- Feature branch `feature/task-1-post-restart-early-stop` deleted (safe `-d`).
-- Verified on `main`: imports clean, 18/18 targeted tests pass.
-- Ready for next Colab run to confirm runtime reduction.
+## Current Task
+**A2** — in progress

@@ -1228,6 +1228,7 @@ def _evaluate_population_indices(
     diversity_reference: list[np.ndarray] | None = None,
     diversity_metrics_by_key: dict[tuple[int, ...], dict] | None = None,
     stage_params: Phase2StageParams | None = None,
+    run_val: bool = True,
 ) -> dict[str, int]:
     """Evaluate unevaluated individuals, preferring batch simulate_rule_batch."""
     from gpu_fuzzy_trader.phases.phase2_rule_pool import (
@@ -1313,14 +1314,8 @@ def _evaluate_population_indices(
             capital_pct=_cfg.PHASE2_CAPITAL_PCT,
         )
 
-        # TODO(task-2): When _cfg.PHASE2_JOINT_TRAIN_VAL is False, the val
-        # simulation below still runs for reporting / pool admission but does
-        # NOT affect objectives.  Guard behind `if _cfg.PHASE2_JOINT_TRAIN_VAL`
-        # to save GPU time — but only after confirming downstream consumers
-        # (_assign_eval_result, pool admission gates) behave correctly without
-        # val_metrics when JOINT=True callers exist.
         val_metrics_list = None
-        if val_engine is not None:
+        if val_engine is not None and run_val:
             try:
                 val_metrics_list = val_engine.simulate_rule_batch(
                     chromosomes=unique_chroms,
@@ -1451,6 +1446,7 @@ def _reevaluate_infinite_objectives(
     diversity_reference: list[np.ndarray] | None = None,
     diversity_metrics_by_key: dict[tuple[int, ...], dict] | None = None,
     stage_params: Phase2StageParams | None = None,
+    run_val: bool = True,
 ) -> dict[str, int]:
     """Evaluate any individuals still marked with inf objectives."""
     if indices is None:
@@ -1475,6 +1471,7 @@ def _reevaluate_infinite_objectives(
         diversity_reference=diversity_reference,
         diversity_metrics_by_key=diversity_metrics_by_key,
         stage_params=stage_params,
+        run_val=run_val,
     )
 
 
@@ -1669,6 +1666,12 @@ def _run_nsga2_fallback(
 
     for gen in range(n_generations):
         just_restarted = False
+        is_last_gen = gen == n_generations - 1
+        run_val_this_gen = (
+            is_last_gen
+            or bool(_cfg.PHASE2_JOINT_TRAIN_VAL)
+            or (gen % int(_cfg.PHASE2_VAL_SIM_INTERVAL) == 0)
+        )
         for i in range(pop_size):
             if np.any(np.isinf(objectives[i])):
                 obj, metrics = _evaluate_chromosome(
@@ -1676,6 +1679,7 @@ def _run_nsga2_fallback(
                     val_engine=val_engine,
                     stage_params=stage_params,
                     cv_fold_evaluator=cv_fold_evaluator,
+                    run_val=run_val_this_gen,
                 )
                 objectives[i] = obj
                 metrics_cache[i] = metrics
@@ -1684,12 +1688,13 @@ def _run_nsga2_fallback(
         pareto_indices = fronts[0]
         pareto_archive = [population[i].copy() for i in pareto_indices]
         _update_hall_of_fame(hall_of_fame, population, pareto_indices)
-        _update_deployable_archive(
-            deployable_archive,
-            population,
-            list(range(pop_size)),
-            metrics_cache,
-        )
+        if run_val_this_gen:
+            _update_deployable_archive(
+                deployable_archive,
+                population,
+                list(range(pop_size)),
+                metrics_cache,
+            )
 
         pareto_obj = objectives[pareto_indices]
         pareto_diag = _pareto_diagnostics(
@@ -1965,6 +1970,7 @@ def _run_nsga2_fallback(
                 pareto_archive,
                 val_engine=val_engine,
                 stage_params=stage_params,
+                run_val=run_val_this_gen,
             )
             mutation_rate = _stage_mutation_rate(
                 stage_params, diversity_recovery=True,
@@ -2005,6 +2011,7 @@ def _run_nsga2_fallback(
             off_metrics,
             val_engine=val_engine,
             stage_params=stage_params,
+            run_val=run_val_this_gen,
         )
 
         merge_pop = np.vstack([population, offspring])
@@ -2183,6 +2190,12 @@ def _run_nsga3(
     hist_before_loop = len(history)
     for gen in range(n_generations):
         just_restarted = False
+        is_last_gen = gen == n_generations - 1
+        run_val_this_gen = (
+            is_last_gen
+            or bool(_cfg.PHASE2_JOINT_TRAIN_VAL)
+            or (gen % int(_cfg.PHASE2_VAL_SIM_INTERVAL) == 0)
+        )
         diversity_reference = _build_diversity_reference(
             hall_of_fame, pareto_archive,
         )
@@ -2200,6 +2213,7 @@ def _run_nsga3(
             diversity_reference=diversity_reference,
             diversity_metrics_by_key=diversity_metrics_by_key,
             stage_params=stage_params,
+            run_val=run_val_this_gen,
         )
 
         # Compute fronts once — reused for logging, offspring, and archive.
@@ -2207,12 +2221,13 @@ def _run_nsga3(
         pareto_indices = fronts[0]
         pareto_archive = [population[i].copy() for i in pareto_indices]
         _update_hall_of_fame(hall_of_fame, population, pareto_indices)
-        _update_deployable_archive(
-            deployable_archive,
-            population,
-            list(range(pop_size)),
-            metrics_cache,
-        )
+        if run_val_this_gen:
+            _update_deployable_archive(
+                deployable_archive,
+                population,
+                list(range(pop_size)),
+                metrics_cache,
+            )
 
         pareto_obj = objectives[pareto_indices]
         pareto_diag = _pareto_diagnostics(
@@ -2372,6 +2387,7 @@ def _run_nsga3(
                     diversity_reference=diversity_reference,
                     diversity_metrics_by_key=diversity_metrics_by_key,
                     stage_params=stage_params,
+                    run_val=run_val_this_gen,
                 )
                 mutation_rate = _stage_mutation_rate(
                     stage_params, diversity_recovery=True,
@@ -2415,6 +2431,7 @@ def _run_nsga3(
                 diversity_reference=diversity_reference,
                 diversity_metrics_by_key=diversity_metrics_by_key,
                 stage_params=stage_params,
+                run_val=run_val_this_gen,
             )
 
         gen_eval_stats = _merge_gen_eval_stats(

@@ -1,348 +1,211 @@
-# Task 1 — Post-Restart No-Improvement Early Stop
+# Task 1 (A1) — Batch Offspring Evaluation
 
-**Branch:** `feature/task-1-post-restart-early-stop` (from `main`)
+**Branch:** `feature/task-1-offspring-batch` (from `main`)
 **Skill:** implementer
 
 ## Goal
-Cut Phase 2 wall-clock by breaking island epochs when a plateau restart fails
-to yield improvement.  Surgical: only cuts generations that produce zero
-improvement after a stall was already declared.
-
-## Files to edit
-1. `gpu_fuzzy_trader/config.py`
-2. `gpu_fuzzy_trader/evolution/evox_runner.py`
-3. `tests/unit/test_phase2_post_restart_stop.py` (NEW)
-4. `tests/unit/test_island_early_stop.py` (1 assertion update)
+Replace the per-chromosome offspring evaluation loop (200 individual GPU
+dispatches/gen) with a single batched call, reusing the existing
+`_evaluate_population_indices` helper. Expected 5-10x per-gen speedup.
 
 ## Hard constraints (AGENTS.md)
-- Use `.venv` for all commands.
-- Run tests ONLY with `PYTEST_LOW_MEMORY=1` env var set (OOM risk otherwise).
-- Do NOT run the full pipeline. Do NOT touch `evaluator_v5.ipynb`.
+- Use `.venv` for all commands (`.venv/bin/python`).
+- Run tests ONLY with `PYTEST_LOW_MEMORY=1` (OOM risk).
+- Do NOT run the pipeline. Do NOT touch `evaluator_v5.ipynb`.
 - Remove dead/obsolete code after edits.
 
----
+## Files
+1. `gpu_fuzzy_trader/evolution/evox_runner.py` — BOTH generation loops.
+2. `tests/unit/test_phase2_offspring_batch.py` (NEW).
 
-## EDIT 1 — config.py
+## EDIT 1 — `_run_nsga3` offspring eval (~line 1996)
 
-### 1a. Change island plateau patience 8 → 6
-Find:
+Find this exact block inside `_run_nsga3` (after `_make_offspring_population(...)`):
 ```python
-PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE: int = 8
-```
-Change to:
-```python
-PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE: int = 6
-```
-(Rationale: 6 gens of <0.5% improvement is a clear stall; restarts fire sooner
-so the new post-restart stop has more gens to evaluate.)
-
-### 1b. Add 4 new knobs
-Insert immediately AFTER the `PHASE2_PLATEAU_POST_RESTART_BOOST_GENS = 3`
-block (which sits before `PHASE2_PLATEAU_MAX_RESTARTS`).  Use this exact text:
-
-```python
-# PHASE2_PLATEAU_POST_RESTART_STOP_ENABLED — break the epoch when the best
-#   metric fails to improve for PHASE2_PLATEAU_POST_RESTART_STOP_PATIENCE gens
-#   AFTER a plateau restart.  A restart already signals a stall; if fresh blood
-#   + boosted mutation yields no progress within the boost window, further gens
-#   are very unlikely to help.  Cuts only provably-unproductive generations.
-#   True  → stop after a failed restart (default; safe runtime win).
-#   False → always run the full epoch budget after a restart (original behaviour).
-PHASE2_PLATEAU_POST_RESTART_STOP_ENABLED = True
-
-# PHASE2_PLATEAU_POST_RESTART_STOP_PATIENCE — gens of no improvement after a
-#   restart before breaking.  Should be >= PHASE2_PLATEAU_POST_RESTART_BOOST_GENS
-#   so the boosted-mutation window gets a full chance to recover.
-#   Higher → more conservative (give restart more time); slower.
-#   Lower  → stop sooner after a failed restart; faster, tiny risk of cutting a
-#            late breakthrough (an improvement resets the streak, so no false stop).
-PHASE2_PLATEAU_POST_RESTART_STOP_PATIENCE = 3
-
-# Island-scoped variants (mirror PHASE2_ISLAND_PLATEAU_EARLY_STOP_* scoping).
-PHASE2_ISLAND_PLATEAU_POST_RESTART_STOP_ENABLED = True
-PHASE2_ISLAND_PLATEAU_POST_RESTART_STOP_PATIENCE = 3
-```
-
----
-
-## EDIT 2 — evox_runner.py
-
-### 2a. Phase2EvolutionState dataclass
-Add two fields immediately AFTER the existing `post_restart_gens_remaining: int = 0`
-field (around line 58):
-```python
-    post_restart_no_improve_streak: int = 0
-    post_restart_best_progress: float = -np.inf
-```
-
-### 2b. New helper
-Add this function immediately AFTER `_should_plateau_early_stop_phase2`
-(its `return streak >= patience` is the last line of that function, ~line 600):
-```python
-def _should_post_restart_early_stop_phase2(
-    post_restart_streak: int,
-    *,
-    island_profile: str = "global",
-    stage_params: Phase2StageParams | None = None,
-) -> bool:
-    """Break the epoch when a plateau restart yields no improvement.
-
-    Independent of the main plateau streak/patience so it never interferes
-    with the restart decision itself — it only fires on generations AFTER a
-    restart, measuring whether the restart produced any progress.
-    """
-    if _cfg.scoped_island_profile(island_profile):
-        if not bool(getattr(
-            _cfg, "PHASE2_ISLAND_PLATEAU_POST_RESTART_STOP_ENABLED", True,
-        )):
-            return False
-        patience = int(getattr(
-            _cfg, "PHASE2_ISLAND_PLATEAU_POST_RESTART_STOP_PATIENCE",
-            getattr(_cfg, "PHASE2_PLATEAU_POST_RESTART_STOP_PATIENCE", 3),
-        ))
-    else:
-        if not bool(getattr(
-            _cfg, "PHASE2_PLATEAU_POST_RESTART_STOP_ENABLED", True,
-        )):
-            return False
-        patience = int(getattr(
-            _cfg, "PHASE2_PLATEAU_POST_RESTART_STOP_PATIENCE", 3,
-        ))
-    return post_restart_streak >= patience
-```
-
-### 2c. BOTH generation loops — identical pattern
-
-There are TWO loops with the same restart/stop structure:
-- `_run_nsga2_fallback` — loop starts ~line 1634 (`for gen in range(n_generations):`)
-- `_run_nsga3` — loop starts ~line 2094 (`for gen in range(n_generations):`)
-
-Apply ALL of the following to BOTH loops:
-
-**(i) Init** — next to the existing `post_restart_gens_remaining: int = 0`
-declaration (which sits just before the `for gen in range(n_generations):` line):
-```python
-    post_restart_no_improve_streak: int = 0
-    post_restart_best_progress: float = -np.inf
-```
-
-**(ii) `just_restarted` flag** — at the very top of the loop body (the first
-statement inside `for gen in range(n_generations):`), add:
-```python
-        just_restarted = False
-```
-
-**(iii) Viability-collapse restart block** — find the block:
-```python
-            n_elite_kept = _plateau_diversity_restart(
-                population, objectives, metrics_cache,
-                feature_infos, rng,
-                pareto_indices=pareto_indices,
-                pop_size=pop_size,
-                init_strategy=init_strategy,
-                stratum_fractions=stratum_fractions,
-            )
-            restart_count += 1
-            pre_reset_streak = viability_collapse_streak
-            viability_collapse_streak = 0
-            post_restart_gens_remaining = int(getattr(
-                _cfg,
-                "PHASE2_PLATEAU_POST_RESTART_BOOST_GENS",
-                3,
-            ))
-```
-After the `post_restart_gens_remaining = int(...)` assignment inside this
-viability block, add:
-```python
-            post_restart_best_progress = plateau_best_progress
-            post_restart_no_improve_streak = 0
-            just_restarted = True
-```
-(This block does NOT `continue`, so the `just_restarted` guard below prevents a
-spurious +1 on the restart generation itself.)
-
-**(iv) After the main `_update_max_return_plateau` call** — find:
-```python
-        plateau_best_progress, plateau_streak = _update_max_return_plateau(
-            plateau_metric, plateau_best_progress, plateau_streak,
-        )
-```
-Immediately AFTER it, add:
-```python
-        if restart_count > 0 and not just_restarted:
-            post_restart_best_progress, post_restart_no_improve_streak = (
-                _update_max_return_plateau(
-                    plateau_metric,
-                    post_restart_best_progress,
-                    post_restart_no_improve_streak,
-                )
-            )
-```
-
-**(v) Plateau restart block (the one with `continue`)** — find the block that
-logs `"Phase 2 [%s]: plateau restart at gen %d"`.  After the line
-`plateau_streak = 0` (which sits before the `logger.info(...)` for the restart),
-add:
-```python
-                    post_restart_best_progress = plateau_best_progress
-                    post_restart_no_improve_streak = 0
-                    just_restarted = True
-```
-This block ends with `continue  # skip env selection; go to next gen`, so the
-new stop check below is correctly skipped on the restart generation.
-
-**(vi) New post-restart stop check** — locate the `_should_plateau_early_stop_phase2`
-block (the `if _should_plateau_early_stop_phase2(...):` ... `break` block).  Place
-the new check IMMEDIATELY AFTER that entire block closes (after its `break`),
-and BEFORE the `if gen == n_generations - 1: break` line (in `_run_nsga2_fallback`)
-or the `if is_last_gen: break` line (in `_run_nsga3`):
-```python
-        if (
-            restart_count > 0
-            and _should_post_restart_early_stop_phase2(
-                post_restart_no_improve_streak,
+        off_obj = np.full((pop_size, 3), np.inf)
+        off_metrics: list[dict] = [{} for _ in range(pop_size)]
+        for i in range(pop_size):
+            obj, metrics = _evaluate_chromosome(
+                offspring[i], dont_cares, engine, pareto_archive,
+                val_engine=val_engine,
                 stage_params=stage_params,
-                island_profile=island_profile,
+                cv_fold_evaluator=cv_fold_evaluator,
             )
-        ):
-            logger.info(
-                "%s: post-restart early stop at gen %d "
-                "(no improvement for %d gens after restart %d/%d, "
-                "best_progress=%.2f%%, deployable_preview=%d)",
-                tag,
-                gen + 1,
-                post_restart_no_improve_streak,
-                restart_count,
-                max_restarts,
-                plateau_best_progress,
-                deployable_count,
-            )
-            break
+            off_obj[i] = obj
+            off_metrics[i] = metrics
 ```
 
-### 2d. `_run_nsga3` ONLY — resumable state read/write
-- On resume (where it reads `plateau_streak = int(state.plateau_streak)` etc.),
-  add right after reading `post_restart_gens_remaining`:
-  ```python
-        post_restart_no_improve_streak = int(
-            getattr(state, "post_restart_no_improve_streak", 0)
-        )
-        post_restart_best_progress = float(
-            getattr(state, "post_restart_best_progress", -np.inf)
-        )
-  ```
-  (Use `getattr` — `test_plateau_state_leak._mock_evolution_state` constructs the
-  state via `__new__` without these fields.)
-- In the `final_state = Phase2EvolutionState(...)` constructor call, add:
-  ```python
-        post_restart_no_improve_streak=post_restart_no_improve_streak,
-        post_restart_best_progress=post_restart_best_progress,
-  ```
-
----
-
-## EDIT 3 — tests/unit/test_phase2_post_restart_stop.py (NEW)
-Create with these tests:
+Replace with:
 ```python
-"""Unit tests for post-restart no-improvement early stop (Phase 2 runtime)."""
+        off_obj = np.full((pop_size, 3), np.inf)
+        off_metrics: list[dict] = [{} for _ in range(pop_size)]
+        # Batched offspring eval: a single simulate_rule_batch over all 200
+        # offspring (vs 200 batch=1 dispatches). Reuses the same helper as the
+        # initial-population eval path. NOTE: this path does not compute CV
+        # fold returns; with PHASE2_F3_OBJECTIVE="profit_factor" (active
+        # config) this matches the existing initial-pop behaviour. cv_fold_min
+        # would need separate batched CV handling (pre-existing limitation).
+        _evaluate_population_indices(
+            offspring,
+            list(range(pop_size)),
+            dont_cares,
+            engine,
+            pareto_archive,
+            off_obj,
+            off_metrics,
+            val_engine=val_engine,
+            global_metrics_cache=global_metrics_cache,
+            diversity_reference=diversity_reference,
+            diversity_metrics_by_key=diversity_metrics_by_key,
+            stage_params=stage_params,
+        )
+```
+
+All referenced vars (`global_metrics_cache`, `diversity_reference`,
+`diversity_metrics_by_key`) are in scope in `_run_nsga3` — they are set up
+before the `for gen in range(n_generations):` loop begins. Verify by grep if
+unsure; do NOT add new variable declarations.
+
+## EDIT 2 — `_run_nsga2_fallback` offspring eval (~line 1678)
+
+Find the SAME per-chromosome loop pattern inside `_run_nsga2_fallback`
+(after `_make_offspring_population(...)`):
+```python
+        off_obj = np.full((pop_size, 3), np.inf)
+        off_metrics: list[dict] = [{} for _ in range(pop_size)]
+        for i in range(pop_size):
+            obj, metrics = _evaluate_chromosome(
+                offspring[i], dont_cares, engine, pareto_archive,
+                val_engine=val_engine,
+                stage_params=stage_params,
+                cv_fold_evaluator=cv_fold_evaluator,
+            )
+            off_obj[i] = obj
+            off_metrics[i] = metrics
+```
+
+Replace with the same `_evaluate_population_indices` call. IMPORTANT: the
+fallback loop may NOT have `global_metrics_cache`, `diversity_reference`, or
+`diversity_metrics_by_key` in scope. CHECK first (grep the function body). If
+any are absent, OMIT those kwargs (they default to `None` in
+`_evaluate_population_indices`). Keep `val_engine=val_engine` and
+`stage_params=stage_params` (these are in scope). For example, if
+`global_metrics_cache` is not in scope, the call becomes:
+```python
+        _evaluate_population_indices(
+            offspring,
+            list(range(pop_size)),
+            dont_cares,
+            engine,
+            pareto_archive,
+            off_obj,
+            off_metrics,
+            val_engine=val_engine,
+            stage_params=stage_params,
+        )
+```
+(Only include the kwargs for vars that ARE in scope in that function.)
+
+## EDIT 3 — Tests `tests/unit/test_phase2_offspring_batch.py` (NEW)
+
+Create a test that proves offspring are evaluated in a SINGLE batch call per
+generation (train), not pop_size individual calls. Use the fallback path
+(`_EVOX_AVAILABLE=False`) with a stub engine that records call count + batch
+sizes.
+
+```python
+"""Unit tests for batched offspring evaluation (Phase 2 runtime A1)."""
 
 from __future__ import annotations
 
+from unittest import mock
+
+import numpy as np
+import pytest
+
 from gpu_fuzzy_trader import config as cfg
-from gpu_fuzzy_trader.evolution.evox_runner import (
-    _should_post_restart_early_stop_phase2,
-)
+from gpu_fuzzy_trader.evolution.evox_runner import run_phase2_evolution
+from gpu_fuzzy_trader.phases.phase2_rule_pool import _init_population
 
 
-def test_config_defaults():
-    assert cfg.PHASE2_PLATEAU_POST_RESTART_STOP_ENABLED is True
-    assert cfg.PHASE2_PLATEAU_POST_RESTART_STOP_PATIENCE == 3
-    assert cfg.PHASE2_ISLAND_PLATEAU_POST_RESTART_STOP_ENABLED is True
-    assert cfg.PHASE2_ISLAND_PLATEAU_POST_RESTART_STOP_PATIENCE == 3
-    assert cfg.PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE == 6
+class CountingEngine:
+    """Stub engine recording every simulate_rule_batch call's batch size."""
+
+    def __init__(self):
+        self.train_calls: list[int] = []
+
+    def simulate_rule_batch(self, chromosomes, tp=None, sl=None, capital_pct=None):
+        B = int(chromosomes.shape[0])
+        self.train_calls.append(B)
+        return [
+            {
+                "sortino_ratio": 1.0,
+                "total_return_pct": 1.0,
+                "max_drawdown_pct": 2.0,
+                "win_rate": 50.0,
+                "executed_trades": 50,
+            }
+            for _ in range(B)
+        ]
 
 
-def test_island_streak_below_patience_no_stop():
-    assert not _should_post_restart_early_stop_phase2(
-        2, island_profile="cluster_0",
-    )
+def test_offspring_evaluated_in_single_batch_per_gen():
+    """Offspring should be evaluated via ONE simulate_rule_batch call per gen,
+    not pop_size individual calls."""
+    engine = CountingEngine()
 
+    with mock.patch(
+        "gpu_fuzzy_trader.evolution.evox_runner._EVOX_AVAILABLE", False,
+    ), mock.patch.object(cfg, "PHASE2_EARLY_STOP_ENABLED", False), \
+         mock.patch.object(cfg, "PHASE2_EARLY_STOP_MIN_GENERATION", 999), \
+         mock.patch.object(cfg, "PHASE2_PLATEAU_EARLY_STOP_ENABLED", False), \
+         mock.patch.object(cfg, "PHASE2_PLATEAU_POST_RESTART_STOP_ENABLED", False), \
+         mock.patch.object(cfg, "PHASE2_DIVERSITY_RECOVERY_ENABLED", False):
+        rng = np.random.default_rng(0)
+        feature_infos = [
+            {"name": "f0", "mode": "binary", "score": 0.5},
+            {"name": "f1", "mode": "binary", "score": 0.5},
+        ]
+        run_phase2_evolution(
+            feature_infos=feature_infos,
+            engine=engine,
+            pop_size=10,
+            n_generations=3,
+            rng=rng,
+        )
 
-def test_island_streak_at_patience_stops():
-    assert _should_post_restart_early_stop_phase2(
-        3, island_profile="cluster_0",
-    )
-
-
-def test_island_disabled_no_stop(monkeypatch):
-    monkeypatch.setattr(
-        cfg, "PHASE2_ISLAND_PLATEAU_POST_RESTART_STOP_ENABLED", False,
-    )
-    assert not _should_post_restart_early_stop_phase2(
-        10, island_profile="cluster_0",
-    )
-
-
-def test_global_uses_global_knobs(monkeypatch):
-    monkeypatch.setattr(cfg, "PHASE2_PLATEAU_POST_RESTART_STOP_ENABLED", True)
-    monkeypatch.setattr(cfg, "PHASE2_PLATEAU_POST_RESTART_STOP_PATIENCE", 2)
-    assert not _should_post_restart_early_stop_phase2(1, island_profile="global")
-    assert _should_post_restart_early_stop_phase2(2, island_profile="global")
-
-
-def test_global_disabled_no_stop(monkeypatch):
-    monkeypatch.setattr(cfg, "PHASE2_PLATEAU_POST_RESTART_STOP_ENABLED", False)
-    assert not _should_post_restart_early_stop_phase2(
-        10, island_profile="global",
-    )
-
-
-def test_orphan_uses_island_knobs():
-    assert not _should_post_restart_early_stop_phase2(
-        2, island_profile="orphan",
-    )
-    assert _should_post_restart_early_stop_phase2(
-        3, island_profile="orphan",
+    # Each generation should produce exactly ONE train batch call for offspring.
+    # (The initial population also uses one batch call at gen 0.)
+    # Assert that no batch of size 1 was used for offspring — all offspring
+    # batches should be size pop_size (10).
+    batch_sizes = engine.train_calls
+    # There must be at least one batch of size == pop_size (the offspring batch).
+    assert pop_size_batch := any(
+        b == 10 for b in batch_sizes
+    ), f"Expected a batch of size 10 (offspring), got sizes {batch_sizes}"
+    # And there must NOT be 10 separate calls of size 1 (the old behaviour).
+    size_1_calls = sum(1 for b in batch_sizes if b == 1)
+    # Allow at most a couple of size-1 fallback calls (error paths), but not 10/gen.
+    assert size_1_calls < 10, (
+        f"Too many size-1 batch calls ({size_1_calls}); offspring not batched. "
+        f"Sizes: {batch_sizes}"
     )
 ```
 
-## EDIT 4 — tests/unit/test_island_early_stop.py
-In `test_config_defaults`, change:
-```python
-    assert cfg.PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE == 8
-```
-to:
-```python
-    assert cfg.PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE == 6
-```
+(Adjust the assertion logic if the stub needs `val_engine` handling — pass
+`val_engine=None` to `run_phase2_evolution` so no val calls occur, keeping
+the test focused on train batches.)
 
----
+## Verification (run from repo root)
+1. `.venv/bin/python -c "import gpu_fuzzy_trader.evolution.evox_runner"`
+2. `PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_phase2_offspring_batch.py tests/unit/test_evox_runner.py tests/unit/test_phase2_plateau_restart.py tests/unit/test_phase2_post_restart_stop.py tests/unit/test_plateau_state_leak.py tests/unit/test_island_early_stop.py tests/unit/test_phase2_island_early_stop.py -q`
+3. `PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/ -q` (full regression)
 
 ## Acceptance criteria
-1. This exact command passes (all green):
-   ```
-   PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest \
-     tests/unit/test_phase2_post_restart_stop.py \
-     tests/unit/test_island_early_stop.py \
-     tests/unit/test_phase2_island_early_stop.py \
-     tests/unit/test_phase2_plateau_restart.py \
-     tests/unit/test_plateau_state_leak.py \
-     tests/unit/test_evox_runner.py -q
-   ```
-2. Full unit suite passes (no regressions):
-   ```
-   PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/ -q
-   ```
-3. `cd /home/danaee/trading_platform && .venv/bin/python -c "import gpu_fuzzy_trader.evolution.evox_runner; import gpu_fuzzy_trader.config"` exits 0.
-4. New config knobs have doc comments; no dead/obsolete code left behind.
-5. Commit on `feature/task-1-post-restart-early-stop` with a clear message.
-
-## Verification commands (run from repo root)
-```
-git checkout -b feature/task-1-post-restart-early-stop
-# ...edits...
-.venv/bin/python -c "import gpu_fuzzy_trader.evolution.evox_runner"
-PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_phase2_post_restart_stop.py tests/unit/test_island_early_stop.py tests/unit/test_phase2_island_early_stop.py tests/unit/test_phase2_plateau_restart.py tests/unit/test_plateau_state_leak.py tests/unit/test_evox_runner.py -q
-PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/ -q
-git add -A && git commit -m "feat(phase2): post-restart no-improvement early stop"
-```
+1. New test passes; offspring are evaluated in batch (no 200 size-1 calls).
+2. All targeted + full unit tests pass (no regressions).
+3. Import check exits 0.
+4. Old per-chromosome offspring loop fully REMOVED from both functions (not
+   commented out, not left as fallback).
+5. Single commit on `feature/task-1-offspring-batch`:
+   `perf(phase2): batch offspring evaluation`.

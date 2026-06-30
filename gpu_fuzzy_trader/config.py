@@ -604,6 +604,16 @@ PHASE2_JOINT_TRAIN_VAL = False
 #   When True, val penalties enter fitness even when PHASE2_JOINT_TRAIN_VAL=False.
 PHASE2_VAL_IN_FITNESS_PENALTY = False
 
+# PHASE2_VAL_SIM_INTERVAL — run val backtest every N generations during
+# evolution (1 = every gen, original behaviour).  Only matters when
+# PHASE2_JOINT_TRAIN_VAL=False (val doesn't affect objectives then); val
+# metrics feed deployable_archive tracking + pool admission.  Val ALWAYS runs
+# on the epoch's last gen regardless of this setting (pool-admission freshness).
+#   1 → val every gen (original, 2x GPU work for no objective benefit).
+#   3 → val every 3rd gen; deployable_archive refreshes every 3 gens (default).
+PHASE2_VAL_SIM_INTERVAL = 3
+assert PHASE2_VAL_SIM_INTERVAL >= 1, "PHASE2_VAL_SIM_INTERVAL must be >= 1"
+
 # PHASE2_DIVERSITY_HAMMING_THRESHOLD — min Hamming distance for "unique" rule.
 #   Higher → demand more genetic distance; wider Pareto spread, slower convergence.
 #   Lower  → allow near-duplicate rules; risk of niche collapse.
