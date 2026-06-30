@@ -23,9 +23,10 @@ Path 1 (user-chosen, safe ~30% runtime win): A1 (consistency, done) + A2
 - Remove dead/obsolete code after edits.
 
 ## Tasks
-- **A1** ✅ MERGED — batched offspring eval (fallback path consistency + test)
-- **A2** — periodic val sim (the real win, ~25-30%)
-- **A3** — fix island patience dead-code bug (correctness)
+- **A1** ✅ MERGED (96e8c08) — batched offspring eval (fallback path consistency + test)
+- **A2** ✅ MERGED (ed4f183) — periodic val sim (~25-30% win) + JOINT contract fix + interval guard
+- **A3** ✅ MERGED (ce3706a) — island patience dead-code fix (restarts fire at streak 6, not 8)
 
-## Current Task
-**A2** — in progress
+## Current State
+**ALL PRIORITY A TASKS COMPLETE + MERGED to main.**
+Ready for next Colab run to confirm runtime reduction.
