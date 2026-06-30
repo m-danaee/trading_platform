@@ -1988,15 +1988,24 @@ def _run_nsga2_fallback(
         )
         off_obj = np.full((pop_size, 3), np.inf)
         off_metrics: list[dict] = [{} for _ in range(pop_size)]
-        for i in range(pop_size):
-            obj, metrics = _evaluate_chromosome(
-                offspring[i], dont_cares, engine, pareto_archive,
-                val_engine=val_engine,
-                stage_params=stage_params,
-                cv_fold_evaluator=cv_fold_evaluator,
-            )
-            off_obj[i] = obj
-            off_metrics[i] = metrics
+        # Batched offspring eval: a single simulate_rule_batch over all
+        # pop_size offspring (vs pop_size batch=1 dispatches). Reuses the same
+        # helper as the initial-population eval path. NOTE: this path does not
+        # compute CV fold returns; with PHASE2_F3_OBJECTIVE="profit_factor"
+        # (active config) this matches the existing initial-pop behaviour.
+        # cv_fold_min would need separate batched CV handling (pre-existing
+        # limitation).
+        _evaluate_population_indices(
+            offspring,
+            list(range(pop_size)),
+            dont_cares,
+            engine,
+            pareto_archive,
+            off_obj,
+            off_metrics,
+            val_engine=val_engine,
+            stage_params=stage_params,
+        )
 
         merge_pop = np.vstack([population, offspring])
         merge_fit = np.vstack([objectives, off_obj])
@@ -2386,6 +2395,13 @@ def _run_nsga3(
             )
             off_obj = np.full((pop_size, 3), np.inf)
             off_metrics: list[dict] = [{} for _ in range(pop_size)]
+            # Batched offspring eval: a single simulate_rule_batch over all
+            # pop_size offspring (vs pop_size batch=1 dispatches). Reuses the
+            # same helper as the initial-population eval path. NOTE: this path
+            # does not compute CV fold returns; with
+            # PHASE2_F3_OBJECTIVE="profit_factor" (active config) this matches
+            # the existing initial-pop behaviour. cv_fold_min would need
+            # separate batched CV handling (pre-existing limitation).
             off_stats = _evaluate_population_indices(
                 offspring,
                 list(range(pop_size)),
