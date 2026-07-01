@@ -90,8 +90,8 @@ class TestMonthlyAdmissionGate:
     # ------------------------------------------------------------------
 
     def test_keeps_profitable_and_half_profitable(self, monkeypatch):
-        """Rule 0 profitable on all 6 months (ratio=1.0) passes at >=0.667;
-        rule 1 on half (ratio=0.5) is below threshold; rule 2 (ratio=0.0) is
+        """Rule 0 profitable on all 6 months (ratio=1.0) passes at >=0.5;
+        rule 1 on half (ratio=0.5) also passes at >=0.5; rule 2 (ratio=0.0)
         dropped."""
         returns = [
             [1.0, 0.5, 2.0, 1.5, 0.8, 1.2],    # rule 0: 6/6 = 1.0
@@ -104,9 +104,10 @@ class TestMonthlyAdmissionGate:
         )
 
         result = _apply_monthly_admission_gate(POOL_THREE, list(range(6)), "long")
-        # Rule 0 (1.0) passes >=0.667; rule 1 (0.5) and rule 2 (0.0) dropped.
-        assert len(result) == 1
+        # Rule 0 (1.0) passes >=0.5; rule 1 (0.5) passes >=0.5; rule 2 (0.0) dropped.
+        assert len(result) == 2
         assert result[0]["conditions"] == POOL_THREE[0]["conditions"]
+        assert result[1]["conditions"] == POOL_THREE[1]["conditions"]
 
     # ------------------------------------------------------------------
     # Test 2: all rules just below threshold are rejected,
@@ -136,9 +137,9 @@ class TestMonthlyAdmissionGate:
     # ------------------------------------------------------------------
 
     def test_boundary_exact_half_profitable(self, monkeypatch):
-        """Rule with exactly 3/6 = 0.5 is below 0.667; graceful degradation."""
+        """Rule with exactly 3/6 = 0.5 passes at >=0.5 threshold."""
         returns = [
-            [1.0, -1.0, 1.0, -1.0, 1.0, -1.0],  # rule 0: 3/6 = 0.5 (fails)
+            [1.0, -1.0, 1.0, -1.0, 1.0, -1.0],  # rule 0: 3/6 = 0.5 (passes)
             [-1.0, -2.0, -3.0, -4.0, -5.0, -6.0],  # rule 1: 0/6
             [-0.1, -0.2, -0.3, -0.4, -0.5, -0.6],  # rule 2: 0/6
         ]
@@ -148,19 +149,19 @@ class TestMonthlyAdmissionGate:
         )
 
         result = _apply_monthly_admission_gate(POOL_THREE, list(range(6)), "long")
-        # All rules below 0.667 → graceful degradation → original pool
-        assert len(result) == 3
-        assert result == POOL_THREE
+        # Rule 0 (0.5) passes at >=0.5; rules 1+2 rejected.
+        assert len(result) == 1
+        assert result[0]["conditions"] == POOL_THREE[0]["conditions"]
 
     # ------------------------------------------------------------------
     # Test 4: boundary — ratio just below 0.5 threshold
     # ------------------------------------------------------------------
 
     def test_boundary_just_below_threshold(self, monkeypatch):
-        """Rule with 2/6 ≈ 0.33 and 3/6 = 0.5 are both below 0.667; graceful deg."""
+        """Rule with 2/6 ≈ 0.33 is below 0.5 threshold; rule with 3/6 = 0.5 passes."""
         returns = [
             [1.0, -1.0, 1.0, -1.0, -1.0, -1.0],  # rule 0: 2/6 ≈ 0.33 (rejected)
-            [1.0, -1.0, 1.0, -1.0, 1.0, -1.0],   # rule 1: 3/6 = 0.5 (rejected)
+            [1.0, -1.0, 1.0, -1.0, 1.0, -1.0],   # rule 1: 3/6 = 0.5 (passes)
             [-1.0, -2.0, -3.0, -4.0, -5.0, -6.0],  # rule 2: 0/6
         ]
         monkeypatch.setattr(
@@ -169,9 +170,9 @@ class TestMonthlyAdmissionGate:
         )
 
         result = _apply_monthly_admission_gate(POOL_THREE, list(range(6)), "long")
-        # All below 0.667 → graceful degradation → original pool
-        assert len(result) == 3
-        assert result == POOL_THREE
+        # Rule 1 (0.5) passes; rule 0 rejected; rule 2 rejected.
+        assert len(result) == 1
+        assert result[0]["conditions"] == POOL_THREE[1]["conditions"]
 
     def test_zero_threshold_strict_profit_excludes_flat_months(
         self, monkeypatch,
@@ -213,10 +214,10 @@ class TestMonthlyAdmissionGate:
         assert result[0]["conditions"] == POOL_THREE[0]["conditions"]
 
     def test_multiple_rules_pass_gate(self, monkeypatch):
-        """Only rules with >= 0.667 ratio are kept; one below threshold dropped."""
+        """Rules with >= 0.5 ratio are kept; rule below 0.5 threshold dropped."""
         returns = [
             [1.0, 0.5, 2.0, 1.5, 0.8, 1.2],    # rule 0: 6/6 = 1.0 (passes)
-            [1.0, -0.5, 2.0, -1.0, 0.5, -1.0],  # rule 1: 3/6 = 0.5 (rejected)
+            [1.0, -0.5, 2.0, -1.0, 0.5, -1.0],  # rule 1: 3/6 = 0.5 (passes)
             [1.0, -0.5, -2.0, -1.0, -0.5, -0.3],  # rule 2: 1/6 ≈ 0.17 (rejected)
         ]
         monkeypatch.setattr(
@@ -225,5 +226,6 @@ class TestMonthlyAdmissionGate:
         )
 
         result = _apply_monthly_admission_gate(POOL_THREE, list(range(6)), "long")
-        assert len(result) == 1
+        assert len(result) == 2
         assert result[0]["conditions"] == POOL_THREE[0]["conditions"]
+        assert result[1]["conditions"] == POOL_THREE[1]["conditions"]

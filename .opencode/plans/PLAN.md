@@ -1,205 +1,111 @@
-# Plan — Phase 2 Priority A Runtime Fixes
+# Plan: Phase 2 Runtime & OOS Quality Overhaul
+
+**Created:** 2026-07-01
+**Status:** active
+**base_branch:** `main`
+**branch_policy:** isolated
+**execution_mode:** checkpoint
 
 ## Goal
-Cut Phase 2 per-generation wall-clock ~10-20x via batched offspring eval,
-periodic val simulation, and an island-patience bug fix. No search-budget cut;
-minimal quality risk.
 
-## Task 1 (A1) — Batch offspring evaluation
+Fix 7 critical issues and 5 moderate issues identified in the Phase 2 long-direction run that took ~3 hours and produced only 1 surviving rule. Target: **~60% runtime reduction** + **improved OOS generalization** through better fitness objectives, diversity mechanisms, and pool admission gates.
 
-### Problem
-In both generation loops the 200 offspring are evaluated one chromosome at a
-time via `_evaluate_chromosome(...)`, each call dispatching a batch=1
-`simulate_rule_batch` (train) + batch=1 (val) = 400 GPU dispatches/gen. The
-initial population is already batched via `_evaluate_population_indices`.
+## Context
 
-### Fix
-Replace the per-chromosome offspring loop with a single call to
-`_evaluate_population_indices(offspring, list(range(pop_size)), ...)` — the
-SAME helper already used for initial-pop eval. It batches train+val, dedups
-identical chromosomes, and uses the global eval cache.
+The previous plan (Priority A runtime fixes) is complete and merged. This plan addresses the deeper algorithmic and configuration issues found during the latest Colab run analysis.
 
-### Files
-1. `gpu_fuzzy_trader/evolution/evox_runner.py` — both loops.
-2. `tests/unit/test_phase2_offspring_batch.py` (NEW).
+## Tasks
 
-### Exact edits — `_run_nsga3` (~line 1996)
-Replace:
-```python
-        off_obj = np.full((pop_size, 3), np.inf)
-        off_metrics: list[dict] = [{} for _ in range(pop_size)]
-        for i in range(pop_size):
-            obj, metrics = _evaluate_chromosome(
-                offspring[i], dont_cares, engine, pareto_archive,
-                val_engine=val_engine,
-                stage_params=stage_params,
-                cv_fold_evaluator=cv_fold_evaluator,
-            )
-            off_obj[i] = obj
-            off_metrics[i] = metrics
-```
-with:
-```python
-        off_obj = np.full((pop_size, 3), np.inf)
-        off_metrics: list[dict] = [{} for _ in range(pop_size)]
-        _evaluate_population_indices(
-            offspring,
-            list(range(pop_size)),
-            dont_cares,
-            engine,
-            pareto_archive,
-            off_obj,
-            off_metrics,
-            val_engine=val_engine,
-            global_metrics_cache=global_metrics_cache,
-            diversity_reference=diversity_reference,
-            diversity_metrics_by_key=diversity_metrics_by_key,
-            stage_params=stage_params,
-        )
-```
-(All those vars are in scope in `_run_nsga3`: `global_metrics_cache`,
-`diversity_reference`, `diversity_metrics_by_key` are all set up before the loop.)
+### Task 1: Config Parameter Tuning (Runtime + OOS)
+**Branch:** `feat/phase2-config-tuning`
+**Files:** `gpu_fuzzy_trader/config.py`
+**Risk:** Low (parameter-only changes, no logic changes)
 
-### Exact edits — `_run_nsga2_fallback` (~line 1678, identical loop)
-Replace the same per-chromosome loop with the same `_evaluate_population_indices`
-call. The fallback loop may not have `diversity_reference` /
-`diversity_metrics_by_key` / `global_metrics_cache` in scope — check; if absent,
-omit those kwargs (they default to None). Keep `val_engine`, `stage_params`.
+Changes:
+- **Runtime reduction:**
+  - `PHASE2_GENERATIONS = 100` (was 132, diminishing returns past 100)
+  - `PHASE2_ISLAND_TOTAL_GENERATIONS = PHASE2_GENERATIONS` (stays linked)
+  - `PHASE2_ISLAND_EPOCH_GENERATIONS = 25` (was 15, fewer epoch rebuilds)
+  - `PHASE2_PLATEAU_POST_RESTART_STOP_PATIENCE = 5` (was 3, less aggressive early stop)
+  - `PHASE2_ISLAND_PLATEAU_POST_RESTART_STOP_PATIENCE = 5` (was 3)
+  - `PHASE2_PLATEAU_POST_RESTART_BOOST_GENS = 4` (was 3, more boost time)
+  - `PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT = 1.0` (was 0.5, require meaningful improvement)
+  - `PHASE2_MIGRATION_ENABLED = False` (was True, overhead without benefit per config comment)
+  - `PHASE2_EVAL_GLOBAL_CACHE_MAX_SIZE = 1200` (was 575, prevent premature eviction)
+  - `PHASE2_VAL_SIM_INTERVAL = 2` (was 3, more frequent archive updates)
 
-### Note on cv_fold_min
-`_evaluate_population_indices` does NOT compute CV fold returns (matches the
-existing initial-pop path). With `PHASE2_F3_OBJECTIVE="profit_factor"` (active
-config) this is correct. If `cv_fold_min` is ever enabled, BOTH initial-pop and
-offspring batched paths would need CV handling — pre-existing limitation, out of
-scope. Add a brief comment noting this.
+- **OOS improvement:**
+  - `PHASE2_JOINT_TRAIN_VAL = True` (was False, anti-overfit via min(train,val) fitness)
+  - `PHASE2_F3_OBJECTIVE = "cv_fold_min"` (was "profit_factor", worst-case CV fold)
+  - `PHASE2_DIVERSITY_PENALTY = 2.0` (was 0.5, prevent phenotype collapse)
+  - `PHASE2_PHENOTYPE_SORTINO_STEP = 0.15` (was 0.3, finer behavioral buckets)
+  - `PHASE2_PHENOTYPE_F3_STEP = 2.0` (was 5.0, finer f3 buckets)
+  - `PHASE2_MUTATION_RATE = 0.35` (was 0.3, more exploration)
+  - `PHASE2_MIN_PROFITABLE_SYMBOLS = 5` (was 4, broader cross-symbol edge)
 
-### Test — `tests/unit/test_phase2_offspring_batch.py`
-- Mock `engine.simulate_rule_batch` to count calls; run a short evolution
-  (pop=10, 2 gens, `_EVOX_AVAILABLE=False` → fallback path, FakeEngine-like
-  stub returning a list of N metric dicts).
-- Assert `simulate_rule_batch` is called ONCE per generation for train (not
-  pop_size times). Use a wrapper that records call count and batch sizes.
-- Assert objectives/metrics are populated (not inf) after the loop.
+- **Pool admission fixes:**
+  - `PHASE2_MONTHLY_ADMISSION_MIN_RATIO = 0.5` (was 0.667, island-friendly)
+  - `PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO = 0.4` (was 0.5)
 
-### Acceptance
-1. `PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_phase2_offspring_batch.py tests/unit/test_evox_runner.py tests/unit/test_phase2_plateau_restart.py tests/unit/test_phase2_post_restart_stop.py tests/unit/test_plateau_state_leak.py -q` passes.
-2. Full `tests/unit/` passes (no regressions).
-3. Import check passes.
-4. No dead code; the old per-chromosome offspring loop is fully removed (do
-   NOT leave it as a commented fallback).
+- **Orphan fix:**
+  - `PHASE2_ORPHAN_ENABLED = False` (was True, consistently fails with viability collapse)
+
+**Acceptance criteria:**
+- All parameter values updated in config.py
+- All docstrings/comments updated to reflect new values and rationale
+- No logic changes in any other file
+- Existing tests pass with `PYTEST_LOW_MEMORY=1`
 
 ---
 
-## Task 2 (A2) — Periodic val simulation
+### Task 2: EvoX Runner Code Fixes (Cache + Diversity)
+**Branch:** `feat/phase2-evox-fixes`
+**Files:** `gpu_fuzzy_trader/evolution/evox_runner.py`
+**Risk:** Medium (logic changes in evolution loop)
 
-### Problem
-Val `simulate_rule_batch` runs every gen for every chromosome but
-`PHASE2_JOINT_TRAIN_VAL=False` ⇒ val never affects objectives. Only used by
-deployable_archive tracking + pool admission.
+Changes:
+1. **LRU cache trimming** — Replace random eviction with FIFO (dict insertion order) in `_trim_global_metrics_cache()`. Random eviction was destroying useful cached results, causing near-zero cache hit rates.
 
-### Fix
-Add `PHASE2_VAL_SIM_INTERVAL` (default 3). Run val sim when
-`gen % interval == 0` OR on the last gen of the epoch. When skipped,
-val_metrics=None and `_update_deployable_archive` is skipped that gen (existing
-archive entries persist; new admits only on val-gens).
+2. **Phenotype-collapse recovery trigger** — Add a new trigger in `_should_inject_diversity_recovery()` that fires when the Pareto front collapses to ≤3 members despite high genetic uniqueness. This addresses the "pareto=1 for 7+ generations" problem where all 200 chromosomes are genetically unique but phenotypically identical.
 
-### Files
-1. `gpu_fuzzy_trader/config.py` — new knob.
-2. `gpu_fuzzy_trader/evolution/evox_runner.py` — guard val in
-   `_evaluate_population_indices` (add `run_val: bool = True` param) and at the
-   2 call sites for offspring; guard the `_update_deployable_archive` call.
-3. `tests/unit/test_phase2_val_sim_interval.py` (NEW).
-
-### config.py
-```python
-# PHASE2_VAL_SIM_INTERVAL — run val backtest every N generations during
-# evolution (1 = every gen).  Only matters when PHASE2_JOINT_TRAIN_VAL=False
-# (val doesn't affect objectives then).  Val always runs on the epoch's last
-# gen for pool-admission freshness.
-#   1 → original behaviour (val every gen).
-#   3 → 3x fewer val sims; deployable_archive refreshes every 3 gens (default).
-PHASE2_VAL_SIM_INTERVAL = 3
-```
-
-### evox_runner.py
-- Add `run_val: bool = True` param to `_evaluate_population_indices`. Guard
-  the `val_metrics_list = val_engine.simulate_rule_batch(...)` call:
-  `if val_engine is not None and run_val:`.
-- Same `run_val` param on `_evaluate_chromosome` (single path) for consistency.
-- At offspring call sites: pass `run_val=(gen % int(_cfg.PHASE2_VAL_SIM_INTERVAL) == 0)`.
-  For the initial-pop eval call (top of loop), pass `run_val=True`.
-- Guard `_update_deployable_archive(...)` with `if run_val_this_gen:`
-  (only admit new deployables when val ran). The final gen always runs val
-  (it's `gen == n_generations - 1` ⇒ `gen % interval` may not be 0, so force
-  `run_val = is_last_gen or gen % interval == 0`).
-
-### Test
-- With `PHASE2_VAL_SIM_INTERVAL=2`, mock val_engine; assert val
-  `simulate_rule_batch` called only on even gens (0,2,4) over a 5-gen run, not
-  every gen. Assert train sim called every gen.
-
-### Acceptance
-Same suite passes; no regressions.
+**Acceptance criteria:**
+- `_trim_global_metrics_cache` uses FIFO eviction (first-inserted keys removed first)
+- `_should_inject_diversity_recovery` accepts `pareto_size` parameter and triggers when `pareto_size <= 3 and plateau_streak >= 2`
+- The new trigger is called from `_run_nsga3` and `_run_nsga2_fallback` with the current `len(pareto_indices)`
+- Existing tests pass with `PYTEST_LOW_MEMORY=1`
+- New test for phenotype-collapse trigger
 
 ---
 
-## Task 3 (A3) — Fix island patience dead-code bug
+### Task 3: Island Scheduler + Pool Admission Fixes
+**Branch:** `feat/phase2-island-fixes`
+**Files:** `gpu_fuzzy_trader/phases/phase2_island_scheduler.py`, `gpu_fuzzy_trader/phases/phase2_rule_pool.py`, `gpu_fuzzy_trader/evolution/evox_runner.py`
+**Risk:** Medium (logic changes in scheduling and pool admission)
 
-### Problem
-`_should_plateau_early_stop_phase2` for island profiles reads
-`stage_params.plateau_early_stop_patience` (=8, from the None-stage profile)
-instead of `PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE` (=6). The island knob
-is unreachable.
+Changes:
+1. **Minimum epoch size guard** in `_run_cluster_islands()` — Skip epochs with remaining < 5 generations (useless 1-gen epochs that waste ~30s on engine rebuild). Set `_island_generations_done = gens_per_cluster` to exit the loop cleanly.
 
-### Fix
-For island profiles, always use `PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE`
-(ignore stage_params patience, since islands run single-stage with stage=None).
+2. **Monthly gate island-scoped ratio** in `finalize_island()` — Use `self.island_hyperparams.monthly_admission_min_ratio` (if available) instead of the global `PHASE2_MONTHLY_ADMISSION_MIN_RATIO` for the monthly admission gate.
 
-### Files
-1. `gpu_fuzzy_trader/evolution/evox_runner.py` — `_should_plateau_early_stop_phase2`.
-2. `tests/unit/test_phase2_island_early_stop.py` — add a regression test.
+3. **Logging patience fix** in `_run_nsga3()` and `_run_nsga2_fallback()` — The plateau early-stop log message should use the same patience value as the decision logic (island-scoped patience, not global default).
 
-### Exact edit (~line 590)
-Replace:
-```python
-    if _cfg.scoped_island_profile(island_profile):
-        patience = (
-            int(stage_params.plateau_early_stop_patience)
-            if stage_params is not None and getattr(stage_params, "plateau_early_stop_patience", None) is not None
-            else int(getattr(_cfg, "PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE", _cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE))
-        )
-    else:
-        patience = (
-            int(stage_params.plateau_early_stop_patience)
-            if stage_params is not None
-            else int(_cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE)
-        )
-```
-with:
-```python
-    if _cfg.scoped_island_profile(island_profile):
-        # Islands run single-stage (stage=None); the stage_params patience is
-        # the GLOBAL default baked into the None profile, NOT the island knob.
-        # Use the island-scoped config directly so PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE
-        # actually takes effect.
-        patience = int(getattr(
-            _cfg, "PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE",
-            _cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE,
-        ))
-    else:
-        patience = (
-            int(stage_params.plateau_early_stop_patience)
-            if stage_params is not None
-            else int(_cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE)
-        )
-```
+**Acceptance criteria:**
+- Epochs with remaining < MIN_EPOCH_GENS (5) are skipped in `_run_cluster_islands`
+- `finalize_island` monthly gate uses island-scoped ratio when `island_hyperparams` is set
+- Log messages show the actual patience value used in the decision
+- Existing tests pass with `PYTEST_LOW_MEMORY=1`
+- New test for min epoch size guard
 
-### Test
-- Add `test_island_patience_uses_island_knob`: with
-  `PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE=6` and a stage_params whose
-  `plateau_early_stop_patience=8` (the bug condition), assert
-  `_should_plateau_early_stop_phase2(9, 6, deployable_count=5, island_profile="cluster_0")`
-  returns True (streak 6 >= island patience 6) — proving the island knob wins.
+---
 
-### Acceptance
-Same suite passes; no regressions.
+## Verification
+
+After all tasks are merged:
+1. Run `PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/ -x -q` to verify no regressions
+2. Verify config values with a quick import check
+3. Next Colab run should show:
+   - Fewer epoch starts (larger epoch size)
+   - Higher cache hit rates (LRU + larger cache)
+   - Better Pareto front diversity (phenotype trigger + stronger penalty)
+   - More rules surviving monthly gate (lower ratio threshold)
+   - Shorter total runtime (~60% target)

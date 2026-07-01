@@ -1337,12 +1337,13 @@ class TestEvaluateChromosome:
             # With total return obj enabled: f3 = -total_return_pct = -15.0 (plus penalties)
             assert np.isclose(objectives[2], -15.0)
             
-            # Disable it -> should use default PHASE2_F3_OBJECTIVE (profit_factor = 5.0)
+            # Disable it -> should use PHASE2_F3_OBJECTIVE (profit_factor = 5.0)
             _cfg.PHASE2_USE_TOTAL_RETURN_OBJ = False
+            _cfg.PHASE2_F3_OBJECTIVE = "profit_factor"
             objectives, metrics = _evaluate_chromosome(
                 chromosome, dont_cares, engine, []
             )
-            # With profit_factor default: f3 = -profit_factor = -5.0 (plus penalties)
+            # With profit_factor: f3 = -profit_factor = -5.0 (plus penalties)
             assert np.isclose(objectives[2], -5.0)
 
             # Set PHASE2_F3_OBJECTIVE to "win_rate" -> should use win_rate = 50.0

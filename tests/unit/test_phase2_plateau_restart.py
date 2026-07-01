@@ -35,9 +35,9 @@ def test_config_defaults():
     assert cfg.PHASE2_PLATEAU_DIVERSITY_RESTART_ENABLED is True
     assert cfg.PHASE2_PLATEAU_DIVERSITY_RESTART_FRACTION == 0.65
     assert cfg.PHASE2_PLATEAU_MAX_RESTARTS == 3
-    assert cfg.PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT == 0.5
+    assert cfg.PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT == 1.0
     assert cfg.PHASE2_PLATEAU_POST_RESTART_MUTATION_BOOST == 0.45
-    assert cfg.PHASE2_PLATEAU_POST_RESTART_BOOST_GENS == 3
+    assert cfg.PHASE2_PLATEAU_POST_RESTART_BOOST_GENS == 4
     assert cfg.PHASE2_HOF_EPOCH_CARRYOVER == 10
     assert cfg.PHASE2_DIVERSITY_HAMMING_THRESHOLD_AUTO is True
     assert cfg.PHASE2_DIVERSITY_HAMMING_THRESHOLD == 0
@@ -248,27 +248,28 @@ class TestMutationBoostIntegration:
 
         # ---- AC3: multi-gen mutation boost ----
         # Offspring calls happen each gen except gen 2 (continue after restart)
-        #   [0]=gen0, [1]=gen1, [2]=gen3(boosted), [3]=gen4(boosted), [4]=gen5(boosted)
-        assert len(mutation_rates) >= 5, (
-            f"Expected >=5 offspring calls, got {len(mutation_rates)}"
+        #   [0]=gen0, [1]=gen1, [2]=gen3(boosted), [3]=gen4(boosted),
+        #   [4]=gen5(boosted), [5]=gen6(boosted)
+        assert len(mutation_rates) >= 6, (
+            f"Expected >=6 offspring calls, got {len(mutation_rates)}"
         )
 
         expected_boosted = float(
             getattr(cfg, "PHASE2_PLATEAU_POST_RESTART_MUTATION_BOOST", 0.45)
         )
 
-        # After restart at gen 2, next 3 offspring calls use boosted mutation rate
-        for i in range(2, 5):
+        # After restart at gen 2, next 4 offspring calls use boosted mutation rate
+        for i in range(2, 6):
             assert mutation_rates[i] == pytest.approx(expected_boosted), (
                 f"Gen {i+1} mutation_rate {mutation_rates[i]} != boosted "
                 f"{expected_boosted}"
             )
 
-        # After 3 boosted gens, it should revert to normal mutation rate
-        gen6_rate = mutation_rates[5]
+        # After 4 boosted gens, it should revert to normal mutation rate
+        gen7_rate = mutation_rates[6]
         base_mr = _stage_mutation_rate(None)
-        assert gen6_rate == pytest.approx(base_mr), (
-            f"Gen 6 mutation_rate {gen6_rate} != default {base_mr}"
+        assert gen7_rate == pytest.approx(base_mr), (
+            f"Gen 7 mutation_rate {gen7_rate} != default {base_mr}"
         )
 
         # ---- AC4: plateau_streak reset ----
