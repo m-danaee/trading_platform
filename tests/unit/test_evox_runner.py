@@ -488,6 +488,21 @@ class TestPopulationDiversityMetrics:
         assert not _should_inject_diversity_recovery(1.0)
         assert _should_inject_diversity_recovery(0.1)
 
+    def test_phenotype_collapse_trigger_fires_on_small_pareto_with_streak(self, monkeypatch):
+        """Verify that phenotype-collapse (Check 3) triggers when Pareto
+        front is ≤3 despite high genetic uniqueness."""
+        monkeypatch.setattr(_cfg, "PHASE2_DIVERSITY_RECOVERY_ENABLED", True)
+        # High genetic uniqueness passes Check 1, small Pareto (≤3) with
+        # streak ≥2 triggers Check 3 even though Check 2 threshold is lenient
+        # (pop_size // 40 = 200 // 40 = 5)
+        assert _should_inject_diversity_recovery(
+            1.0,  # population_unique_ratio — high, passes Check 1
+            pareto_size=2,
+            plateau_streak=3,
+            pop_size=200,
+            valid_count=100,
+        )
+
 
 class TestDeployableArchive:
     def test_harvest_prefers_deployable_archive(self):
