@@ -351,10 +351,12 @@ PHASE2_EVAL_BATCH_DEDUP = True
 PHASE2_EVAL_GLOBAL_CACHE = True
 
 # PHASE2_EVAL_GLOBAL_CACHE_MAX_SIZE — hard cap on the global eval cache.
-#   575 = 200 (population) + 75 (seeded elites) + 300 (archive margin).
+#   1200 = 200 (population) × 2 (eval runs) × 3 (cache generations).
 #   Higher → more cache hits; less RAM.
 #   Lower  → less RAM; more re-evaluations.
-PHASE2_EVAL_GLOBAL_CACHE_MAX_SIZE = 575
+# Increased 575→1200: 575 entries with 200 pop × 2 evals/gen = cache fills
+# in 1.5 gens, random eviction destroys useful results. 1200 covers ~3 gens.
+PHASE2_EVAL_GLOBAL_CACHE_MAX_SIZE = 1200
 
 # PHASE2_SKIP_ZERO_SIGNAL_SCAN — skip equity scan when rule matches 0 bars.
 #   True  → faster; infeasible rules get penalty without full scan.
@@ -452,7 +454,9 @@ PHASE2_USE_TOTAL_RETURN_OBJ = False
 #   profit_factor → f3 = -profit_factor (aligns with edge quality over noise).
 #   cv_fold_min  → f3 = -min(CV fold returns); requires CvFoldValEvaluator.
 #   win_rate     → f3 = -win_rate (degenerate, not recommended).
-PHASE2_F3_OBJECTIVE = "profit_factor"
+# Changed "profit_factor"→"cv_fold_min": worst-case CV fold return instead of
+# profit_factor; aligns with OOS generalization goal.
+PHASE2_F3_OBJECTIVE = "cv_fold_min"
 
 # PHASE2_MIN_PROFITABLE_SYMBOLS_PENALTY — min profitable symbols before penalty.
 #   When n_profitable_symbols < this, a penalty is added to support_penalty
@@ -498,7 +502,9 @@ PHASE2_SYMBOL_MEDIAN_RETURN_FLOOR_PCT = -0.5
 # PHASE2_MIN_PROFITABLE_SYMBOLS — min count of symbols with positive PnL.
 #   Higher → demand broad cross-symbol edge; stricter for 10-symbol universe.
 #   Lower  → allow niche symbol specialists.
-PHASE2_MIN_PROFITABLE_SYMBOLS = 4
+# Increased 4→5: broader cross-symbol edge requirement; reduces symbol-locked
+# rules that only work on a minority of symbols.
+PHASE2_MIN_PROFITABLE_SYMBOLS = 5
 
 # PHASE2_MAX_DRAWDOWN_GATE — hard DD % cap; above this all objectives penalized.
 #   Lower  → Pareto front pushed toward low-drawdown rules; may cut high return.
@@ -561,13 +567,17 @@ PHASE2_MONTHLY_GOOD_RETURN_MIN_PCT = 0.0
 #   Higher → stricter time-stability requirement; fewer rules pass.
 #   Lower  → more lenient; rules that work on a minority of windows survive.
 #   0.50 means the rule must pass on at least half the windows.
-PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO = 0.5
+# Lowered 0.5→0.4: more lenient admission threshold; broader pool for Phase 3.
+PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO = 0.4
 
 # PHASE2_MONTHLY_ADMISSION_MIN_RATIO — fraction of monthly windows that must
 # be profitable for a rule to be admitted.  Replaces the default 0.500 from
 # PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO for the non-island path.
+#   0.500 → rule must be profitable in 3 of 6 months; island-friendly threshold.
 #   0.667 → rule must be profitable in 4 of 6 months; tighter time-stability.
-PHASE2_MONTHLY_ADMISSION_MIN_RATIO = 0.667
+# Lowered 0.667→0.5: island-friendly threshold; island-evolved rules trained on
+# 3-4 symbols have noisier monthly windows, 0.667 was too strict.
+PHASE2_MONTHLY_ADMISSION_MIN_RATIO = 0.5
 
 # PHASE2_MONTHLY_ADMISSION_MIN_MONTHS — minimum number of monthly windows
 # required before the gate is applied.  When the train split is shorter than
@@ -595,7 +605,9 @@ SORTINO_SCALE = 10.0
 #   True  → slower (eval val every gen) but aligned with deployment; less overfit.
 #   False → train-only fitness; faster; holdout remains clean for model selection
 #           (Phase 3) & OOS (Phase 5). Robustness via purged 4-fold CV evaluator.
-PHASE2_JOINT_TRAIN_VAL = False
+# Changed False→True: anti-overfit via min(train,val) fitness; OOS generalization
+# was suffering because f3 used train-only profit_factor with no val signal.
+PHASE2_JOINT_TRAIN_VAL = True
 
 # PHASE2_VAL_IN_FITNESS_PENALTY — when False (default), val-derived penalties
 #   (val_floor_penalty, val symbol_robustness, val trade-floor support cap) are
@@ -610,8 +622,11 @@ PHASE2_VAL_IN_FITNESS_PENALTY = False
 # metrics feed deployable_archive tracking + pool admission.  Val ALWAYS runs
 # on the epoch's last gen regardless of this setting (pool-admission freshness).
 #   1 → val every gen (original, 2x GPU work for no objective benefit).
+#   2 → val every 2nd gen; more frequent archive updates (current).
 #   3 → val every 3rd gen; deployable_archive refreshes every 3 gens (default).
-PHASE2_VAL_SIM_INTERVAL = 3
+# Changed 3→2: more frequent archive updates for better deployable tracking;
+# with JOINT_TRAIN_VAL=True, val feeds joint fitness so more freq is beneficial.
+PHASE2_VAL_SIM_INTERVAL = 2
 assert PHASE2_VAL_SIM_INTERVAL >= 1, "PHASE2_VAL_SIM_INTERVAL must be >= 1"
 
 # PHASE2_DIVERSITY_HAMMING_THRESHOLD — min Hamming distance for "unique" rule.
@@ -633,24 +648,24 @@ PHASE2_HOF_EPOCH_CARRYOVER = 10
 # PHASE2_DIVERSITY_PENALTY — objective penalty when crowding near existing rules.
 #   Higher → stronger push toward novel chromosomes.
 #   Lower  → convergence to similar high performers allowed.
-#   0.5 kills true duplicates but allows slightly-improved clones through for
-#   refinement. With compressed Sortino in 0–3, 0.5 is a meaningful but not
-#   dominant penalty on the Pareto front.
-PHASE2_DIVERSITY_PENALTY = 0.5
+# Increased 0.5→2.0: 0.5 was negligible vs 50+ infeasible penalties, allowing
+# phenotype collapse. 2.0 provides meaningful push toward diversity without
+# overwhelming feasible objectives on the Pareto front.
+PHASE2_DIVERSITY_PENALTY = 2.0
 
 # PHASE2_PHENOTYPE_SORTINO_STEP — Sortino bucket width for behavioral diversity.
-# Tightened 0.5→0.3: with Sortino (compressed) in 0–3 and pop 200, 0.5 gave
-# only ~6 buckets → high collision; 0.3 gives ~10 buckets for finer Pareto spread.
-PHASE2_PHENOTYPE_SORTINO_STEP = 0.3
+# Tightened 0.5→0.3→0.15: with Sortino (compressed) in 0–3 and pop 200, 0.3 gave
+# ~10 buckets still coarse; 0.15 gives ~20 buckets for even finer Pareto spread.
+PHASE2_PHENOTYPE_SORTINO_STEP = 0.15
 
 # PHASE2_PHENOTYPE_DD_STEP — drawdown % bucket width for behavioral diversity.
 # Tightened 5→4: DD typically lives in 5–25%; 5.0 gave ~4 buckets, 4.0 gives ~5.
 PHASE2_PHENOTYPE_DD_STEP = 4.0
 
 # PHASE2_PHENOTYPE_F3_STEP — f3-axis bucket width (win rate % or return %).
-# Tightened 10→5: f3 (return) rarely exceeds ±15%; 10.0 was effectively a single
-# bucket; 5.0 gives 4–6 buckets across the typical return range.
-PHASE2_PHENOTYPE_F3_STEP = 5.0
+# Tightened 10→5→2: f3 (return) rarely exceeds ±15%; 5.0 gave 4–6 buckets;
+# 2.0 gives ~15 buckets for finer behavioral differentiation.
+PHASE2_PHENOTYPE_F3_STEP = 2.0
 
 # PHASE2_EARLY_STOP_ENABLED — stop evolution on poor mean/median return trend.
 #   True  → save generations when search is clearly failing.
@@ -694,7 +709,9 @@ PHASE2_PLATEAU_EARLY_STOP_PATIENCE = 8
 # PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT — min return improvement to reset patience.
 #   Higher → need larger gains to count as progress.
 #   Lower  → tiny improvements reset plateau counter.
-PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT = 0.5
+# Increased 0.5→1.0: require meaningful improvement to reset patience;
+# 0.5% noise-level fluctuations kept resetting the plateau counter.
+PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT = 1.0
 
 # PHASE2_PLATEAU_USE_ROBUST_RETURN — track min(train,val) return for plateau.
 #   True  → plateau reflects deployable return, not train-only spikes.
@@ -727,7 +744,9 @@ PHASE2_PLATEAU_POST_RESTART_MUTATION_BOOST = 0.45
 #   post-restart mutation boost before decaying to the normal stage rate.
 #   Higher → longer boosted exploration after restart.
 #   Lower  → quicker return to normal mutation; less search diversity.
-PHASE2_PLATEAU_POST_RESTART_BOOST_GENS = 3
+# Increased 3→4: more boost time before evaluation; pairs with patience=5
+# so boosted window gets full chance before stop can fire.
+PHASE2_PLATEAU_POST_RESTART_BOOST_GENS = 4
 
 # PHASE2_PLATEAU_POST_RESTART_STOP_ENABLED — break the epoch when the best
 #   metric fails to improve for PHASE2_PLATEAU_POST_RESTART_STOP_PATIENCE gens
@@ -744,11 +763,13 @@ PHASE2_PLATEAU_POST_RESTART_STOP_ENABLED = True
 #   Higher → more conservative (give restart more time); slower.
 #   Lower  → stop sooner after a failed restart; faster, tiny risk of cutting a
 #            late breakthrough (an improvement resets the streak, so no false stop).
-PHASE2_PLATEAU_POST_RESTART_STOP_PATIENCE = 3
+# Increased 3→5: less aggressive early stop; patience=3 killed epochs before
+# restart could recover (was < boost_gens=4 now > boost_gens).
+PHASE2_PLATEAU_POST_RESTART_STOP_PATIENCE = 5
 
 # Island-scoped variants (mirror PHASE2_ISLAND_PLATEAU_EARLY_STOP_* scoping).
 PHASE2_ISLAND_PLATEAU_POST_RESTART_STOP_ENABLED = True
-PHASE2_ISLAND_PLATEAU_POST_RESTART_STOP_PATIENCE = 3
+PHASE2_ISLAND_PLATEAU_POST_RESTART_STOP_PATIENCE = 5
 
 # PHASE2_PLATEAU_MAX_RESTARTS — restarts per epoch before final break.
 #   1       → one restart, then break on second plateau.
@@ -952,7 +973,9 @@ PHASE2_POPULATION_SIZE = 200
 # PHASE2_GENERATIONS — total evolutionary generations (before early stop).
 #   Higher → more search budget; diminishing returns after plateau.
 #   Lower  → faster runs; may under-explore gene space.
-PHASE2_GENERATIONS = 132
+# Reduced 132→100: diminishing returns past 100; latest run hit plateau
+# well before 132, wasting ~30 generations of compute.
+PHASE2_GENERATIONS = 100
 
 PHASE2_ALGORITHM = "NSGA3"
 
@@ -986,7 +1009,9 @@ PHASE2_N_CLUSTERS = 3
 # PHASE2_ISLAND_TOTAL_GENERATIONS — generation budget split across islands.
 PHASE2_ISLAND_TOTAL_GENERATIONS = PHASE2_GENERATIONS
 # PHASE2_ISLAND_EPOCH_GENERATIONS — generations per island epoch before migration.
-PHASE2_ISLAND_EPOCH_GENERATIONS = 15
+# Increased 15→25: fewer epoch rebuilds (~40% overhead reduction); 15-gen
+# epochs caused 10+ epoch starts with ~15s engine rebuild overhead each.
+PHASE2_ISLAND_EPOCH_GENERATIONS = 25
 # Island overrides — disable two-stage / early-stop by default in cluster mode.
 PHASE2_ISLAND_TWO_STAGE_ENABLED = False
 PHASE2_ISLAND_EARLY_STOP_ENABLED = False
@@ -1005,7 +1030,9 @@ PHASE2_ISLAND_MONTHLY_MIN_MONTHS = 4
 # History: migration was on by default but degraded locally-adapted elites
 # (foreign rules rarely match the receiver's symbol slice; the loose gates
 # admitted near-zero-return migrants that displaced up to 25% of converged locals).
-PHASE2_MIGRATION_ENABLED: bool = True
+# Disabled True→False: overhead without benefit; config comment itself notes
+# migration degraded locally-adapted elites.
+PHASE2_MIGRATION_ENABLED: bool = False
 PHASE2_MIGRATION_EPOCH_INTERVAL = 1
 PHASE2_MIGRATION_TOP_K = 5
 PHASE2_MIGRATION_REQUIRE_DEPLOYABILITY = True
@@ -1019,7 +1046,9 @@ PHASE2_MIGRATION_MIN_VAL_TRADES = None          # None = use island trade floor
 PHASE2_MIGRATION_SEED_FRACTION: float = 0.10
 
 # PHASE2_ORPHAN_* — relaxed hyperparams for low-row symbol slices left out of clusters.
-PHASE2_ORPHAN_ENABLED = True
+# Disabled True→False: consistently fails with viability collapse; Symbol '7'
+# orphan run hit 3 viability collapses in 10 gens, wasting ~180s.
+PHASE2_ORPHAN_ENABLED = False
 PHASE2_ORPHAN_GENERATIONS = 18
 PHASE2_ORPHAN_POPULATION_SIZE = 150
 PHASE2_ORPHAN_MIN_TRADE_SUPPORT = 20
@@ -1066,7 +1095,9 @@ PHASE2_INIT_UNIFORM_MIX = 0.1
 # PHASE2_MUTATION_RATE — per-gene mutation probability.
 #   Higher → more exploration, noisier convergence, better escape local optima.
 #   Lower  → finer local search, risk of premature convergence.
-PHASE2_MUTATION_RATE = 0.3
+# Increased 0.3→0.35: more exploration to compensate for fewer generations
+# (132→100); helps escape local optima in tighter budget.
+PHASE2_MUTATION_RATE = 0.35
 
 # PHASE2_MUTATION_WEIGHTED_ACTIVATE_PROB — bias mutations toward activating genes.
 #   Higher → mutations tend to add conditions rather than dont_care.

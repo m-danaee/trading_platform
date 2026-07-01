@@ -34,6 +34,7 @@ def test_val_skipped_on_non_interval_gens(monkeypatch):
     val_engine = CountingEngine()
 
     monkeypatch.setattr(cfg, "PHASE2_VAL_SIM_INTERVAL", 2)
+    monkeypatch.setattr(cfg, "PHASE2_JOINT_TRAIN_VAL", False)
     monkeypatch.setattr(cfg, "PHASE2_EARLY_STOP_ENABLED", False)
     monkeypatch.setattr(cfg, "PHASE2_EARLY_STOP_MIN_GENERATION", 999)
     monkeypatch.setattr(cfg, "PHASE2_PLATEAU_EARLY_STOP_ENABLED", False)

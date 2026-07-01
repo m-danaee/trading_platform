@@ -249,13 +249,14 @@ def test_phase2_use_total_return_obj():
         # Sortino obj should be -0.5 + pen, DD should be 2.0 + pen, F3 should be -15.0 + pen
         assert np.isclose(objectives[0, 2], -15.0)
         
-        # Disable it -> should use default PHASE2_F3_OBJECTIVE (profit_factor = 5.0)
+        # Disable it -> should use PHASE2_F3_OBJECTIVE (profit_factor = 5.0)
         _cfg.PHASE2_USE_TOTAL_RETURN_OBJ = False
+        _cfg.PHASE2_F3_OBJECTIVE = "profit_factor"
         objectives[0] = np.inf
         _evaluate_population_indices(
             pop, [0], dont_cares, engine, [], objectives, metrics_cache
         )
-        # With profit_factor default: f3 = -profit_factor = -5.0 (plus penalties)
+        # With profit_factor: f3 = -profit_factor = -5.0 (plus penalties)
         assert np.isclose(objectives[0, 2], -5.0)
 
         # Set PHASE2_F3_OBJECTIVE to "win_rate" -> should use win_rate = 50.0
