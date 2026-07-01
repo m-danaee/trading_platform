@@ -893,8 +893,12 @@ def _should_inject_diversity_recovery(
     ):
         return True
     # Check 3: Phenotype collapse — Pareto front ≤3 despite high genetic uniqueness
-    # This catches the case where all 200 chromosomes are genetically unique
-    # but phenotypically identical (same trading behavior, different gene encoding)
+    # This catches the case where chromosomes are genetically unique but phenotypically
+    # identical (same trading behavior, different gene encoding).
+    # Note: For pop_size >= 120, Check 2 (threshold = pop_size // 40) already covers
+    # pareto_size <= 3. Check 3 adds explicit coverage for smaller populations
+    # (e.g., island runs with pop_size < 120) and serves as a safety net if Check 2
+    # thresholds are tightened in the future.
     if pareto_size > 0 and pareto_size <= 3 and int(plateau_streak) >= 2:
         return True
     if _should_viability_recovery(
