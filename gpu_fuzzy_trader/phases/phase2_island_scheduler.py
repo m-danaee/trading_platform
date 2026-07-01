@@ -355,6 +355,18 @@ def _run_cluster_islands(
             if gen._island_generations_done >= gens_per_cluster:
                 continue
             remaining = gens_per_cluster - gen._island_generations_done
+
+            # Skip tiny remaining epochs (engine rebuild ~30s with negligible benefit)
+            MIN_EPOCH_GENS = 5
+            if remaining < MIN_EPOCH_GENS:
+                logger.info(
+                    "Phase 2 [%s]: skipping final epoch for cluster %s "
+                    "(remaining=%d < MIN_EPOCH_GENS=%d)",
+                    direction, cid, remaining, MIN_EPOCH_GENS,
+                )
+                gen._island_generations_done = gens_per_cluster  # exit loop cleanly
+                continue
+
             gen.run_epoch(n_generations=min(epoch_gens, remaining))
             gen.park_engines()
             epoch_counter += 1

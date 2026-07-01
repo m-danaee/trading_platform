@@ -1908,6 +1908,18 @@ def _run_nsga2_fallback(
                         mutation_rate,
                     )
                     continue  # skip env selection; go to next gen
+            # Determine the patience value used in the decision logic
+            if _cfg.scoped_island_profile(island_profile):
+                patience_used = int(getattr(
+                    _cfg, "PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE",
+                    _cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE,
+                ))
+            else:
+                patience_used = (
+                    int(stage_params.plateau_early_stop_patience)
+                    if stage_params is not None
+                    else int(_cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE)
+                )
             logger.info(
                 "%s: plateau early stop at gen %d (progress=%.2f%% unchanged "
                 "for %d gens, patience=%d, min_delta=%.2f%%, "
@@ -1916,7 +1928,7 @@ def _run_nsga2_fallback(
                 gen + 1,
                 plateau_metric,
                 plateau_streak,
-                int(stage_params.plateau_early_stop_patience),
+                patience_used,
                 float(_cfg.PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT),
                 deployable_count,
                 pop_unique_ratio,
@@ -2554,6 +2566,18 @@ def _run_nsga3(
                     )
                     continue  # skip env selection; go to next gen
                 # else fall through to break
+            # Determine the patience value used in the decision logic
+            if _cfg.scoped_island_profile(island_profile):
+                patience_used = int(getattr(
+                    _cfg, "PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE",
+                    _cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE,
+                ))
+            else:
+                patience_used = (
+                    int(stage_params.plateau_early_stop_patience)
+                    if stage_params is not None
+                    else int(_cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE)
+                )
             logger.info(
                 "%s: plateau early stop at gen %d (progress=%.2f%% unchanged "
                 "for %d gens, patience=%d, min_delta=%.2f%%, "
@@ -2562,7 +2586,7 @@ def _run_nsga3(
                 gen + 1,
                 plateau_metric,
                 plateau_streak,
-                int(stage_params.plateau_early_stop_patience),
+                patience_used,
                 float(_cfg.PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT),
                 deployable_count,
                 pop_unique_ratio,
