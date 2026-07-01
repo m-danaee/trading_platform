@@ -559,6 +559,27 @@ def _update_max_return_plateau(
     return best_max_return, streak + 1
 
 
+def _resolve_plateau_patience(
+    stage_params: Phase2StageParams | None,
+    island_profile: str,
+) -> int:
+    """Resolve the plateau patience value based on profile and stage.
+
+    Islands run single-stage (stage=None); the stage_params patience is
+    the GLOBAL default baked into the None profile, NOT the island knob.
+    Use the island-scoped config directly so
+    PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE actually takes effect.
+    """
+    if _cfg.scoped_island_profile(island_profile):
+        return int(getattr(
+            _cfg, "PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE",
+            _cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE,
+        ))
+    if stage_params is not None:
+        return int(stage_params.plateau_early_stop_patience)
+    return int(_cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE)
+
+
 def _should_plateau_early_stop_phase2(
     gen: int,
     streak: int,
@@ -596,21 +617,7 @@ def _should_plateau_early_stop_phase2(
         )
         if diversity_ratio < _diversity_recovery_min_unique_ratio(stage_params):
             return False
-    if _cfg.scoped_island_profile(island_profile):
-        # Islands run single-stage (stage=None); the stage_params patience is
-        # the GLOBAL default baked into the None profile, NOT the island knob.
-        # Use the island-scoped config directly so
-        # PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE actually takes effect.
-        patience = int(getattr(
-            _cfg, "PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE",
-            _cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE,
-        ))
-    else:
-        patience = (
-            int(stage_params.plateau_early_stop_patience)
-            if stage_params is not None
-            else int(_cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE)
-        )
+    patience = _resolve_plateau_patience(stage_params, island_profile)
     return streak >= patience
 
 
@@ -1908,18 +1915,7 @@ def _run_nsga2_fallback(
                         mutation_rate,
                     )
                     continue  # skip env selection; go to next gen
-            # Determine the patience value used in the decision logic
-            if _cfg.scoped_island_profile(island_profile):
-                patience_used = int(getattr(
-                    _cfg, "PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE",
-                    _cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE,
-                ))
-            else:
-                patience_used = (
-                    int(stage_params.plateau_early_stop_patience)
-                    if stage_params is not None
-                    else int(_cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE)
-                )
+            patience_used = _resolve_plateau_patience(stage_params, island_profile)
             logger.info(
                 "%s: plateau early stop at gen %d (progress=%.2f%% unchanged "
                 "for %d gens, patience=%d, min_delta=%.2f%%, "
@@ -2566,18 +2562,7 @@ def _run_nsga3(
                     )
                     continue  # skip env selection; go to next gen
                 # else fall through to break
-            # Determine the patience value used in the decision logic
-            if _cfg.scoped_island_profile(island_profile):
-                patience_used = int(getattr(
-                    _cfg, "PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE",
-                    _cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE,
-                ))
-            else:
-                patience_used = (
-                    int(stage_params.plateau_early_stop_patience)
-                    if stage_params is not None
-                    else int(_cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE)
-                )
+            patience_used = _resolve_plateau_patience(stage_params, island_profile)
             logger.info(
                 "%s: plateau early stop at gen %d (progress=%.2f%% unchanged "
                 "for %d gens, patience=%d, min_delta=%.2f%%, "

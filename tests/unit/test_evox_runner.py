@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from unittest import mock
 
 import numpy as np
@@ -18,6 +19,7 @@ from gpu_fuzzy_trader.evolution.evox_runner import (
     _pareto_robust_stats,
     _plateau_progress_metric,
     _population_unique_chromosome_ratio,
+    _resolve_plateau_patience,
     _should_inject_diversity_recovery,
     _should_plateau_early_stop_phase2,
     _update_deployable_archive,
@@ -714,3 +716,105 @@ class TestParetoRobustStats:
         stats = _pareto_robust_stats([0], metrics_cache)
         assert stats["max_robust_return_pct"] == pytest.approx(1.0)
         assert stats["mean_robust_return_pct"] == pytest.approx(1.0)
+
+
+class TestResolvePlateauPatience:
+    """Tests for _resolve_plateau_patience helper."""
+
+    def test_island_profile_uses_island_patience(self, monkeypatch):
+        monkeypatch.setattr(_cfg, "PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE", 6)
+        monkeypatch.setattr(_cfg, "PHASE2_PLATEAU_EARLY_STOP_PATIENCE", 8)
+        assert _resolve_plateau_patience(None, "cluster") == 6
+        assert _resolve_plateau_patience(None, "orphan") == 6
+
+    def test_global_profile_uses_global_patience(self, monkeypatch):
+        monkeypatch.setattr(_cfg, "PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE", 6)
+        monkeypatch.setattr(_cfg, "PHASE2_PLATEAU_EARLY_STOP_PATIENCE", 8)
+        assert _resolve_plateau_patience(None, "global") == 8
+
+    def _make_stage_params(self, patience: int):
+        """Helper to create a Phase2StageParams with controlled patience."""
+        from gpu_fuzzy_trader.phases.phase2_stage import Phase2StageParams
+        return Phase2StageParams(
+            stage="A",
+            mutation_rate=0.1,
+            mutation_weighted_activate_prob=0.3,
+            diversity_penalty=1.0,
+            diversity_hamming_threshold=3,
+            diversity_recovery_min_unique_ratio=0.3,
+            diversity_recovery_inject_fraction=0.25,
+            diversity_recovery_mutation_boost=1.5,
+            plateau_early_stop_patience=patience,
+            plateau_early_stop_min_generation=20,
+            early_stop_min_generation=20,
+            seed_fraction=0.3,
+            return_floor_pct=-50.0,
+            min_trade_support=10,
+            use_robust_return_obj=True,
+            soft_feasibility=True,
+            pool_require_positive_splits=True,
+        )
+
+    def test_stage_params_overrides_global_patience(self, monkeypatch):
+        monkeypatch.setattr(_cfg, "PHASE2_PLATEAU_EARLY_STOP_PATIENCE", 8)
+        stage_params = self._make_stage_params(patience=4)
+        assert _resolve_plateau_patience(stage_params, "global") == 4
+
+    def test_island_profile_ignores_stage_params(self, monkeypatch):
+        monkeypatch.setattr(_cfg, "PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE", 6)
+        monkeypatch.setattr(_cfg, "PHASE2_PLATEAU_EARLY_STOP_PATIENCE", 8)
+        stage_params = self._make_stage_params(patience=4)
+        # Island profile ignores stage_params; always uses island knob
+        assert _resolve_plateau_patience(stage_params, "cluster") == 6
+
+
+class TestPlateauEarlyStopBehavior:
+    """Verify decision logic uses correct patience values (regression:
+    logs showed patience=8 but decision used patience=6 for islands)."""
+
+    @staticmethod
+    def _dummy_state():
+        return {
+            "deployable_count": 5,
+            "unique_chromosome_ratio": 0.5,
+            "population_unique_ratio": 0.5,
+        }
+
+    def test_island_triggers_at_island_patience_not_global(self, monkeypatch):
+        """Island profile: streak=6 triggers when island_patience=6 even
+        when global_patience=8."""
+        monkeypatch.setattr(_cfg, "PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE", 6)
+        monkeypatch.setattr(_cfg, "PHASE2_PLATEAU_EARLY_STOP_PATIENCE", 8)
+        monkeypatch.setattr(_cfg, "PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED", True)
+        monkeypatch.setattr(_cfg, "PHASE2_PLATEAU_EARLY_STOP_MIN_GENERATION", 1)
+        monkeypatch.setattr(_cfg, "PHASE2_ISLAND_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO", False)
+
+        # streak=6 should trigger (island patience=6 < global patience=8)
+        assert _should_plateau_early_stop_phase2(
+            10, 6, stage_params=None, island_profile="cluster",
+            **self._dummy_state(),
+        )
+        # streak=5 should NOT trigger (below island patience=6)
+        assert not _should_plateau_early_stop_phase2(
+            10, 5, stage_params=None, island_profile="cluster",
+            **self._dummy_state(),
+        )
+
+    def test_global_triggers_at_global_patience(self, monkeypatch):
+        """Global profile: streak=6 does NOT trigger when global_patience=8."""
+        monkeypatch.setattr(_cfg, "PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE", 6)
+        monkeypatch.setattr(_cfg, "PHASE2_PLATEAU_EARLY_STOP_PATIENCE", 8)
+        monkeypatch.setattr(_cfg, "PHASE2_PLATEAU_EARLY_STOP_ENABLED", True)
+        monkeypatch.setattr(_cfg, "PHASE2_PLATEAU_EARLY_STOP_MIN_GENERATION", 1)
+        monkeypatch.setattr(_cfg, "PHASE2_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO", False)
+
+        # Global patience=8: streak=6 should NOT trigger
+        assert not _should_plateau_early_stop_phase2(
+            10, 6, stage_params=None, island_profile="global",
+            **self._dummy_state(),
+        )
+        # Global patience=8: streak=8 should trigger
+        assert _should_plateau_early_stop_phase2(
+            10, 8, stage_params=None, island_profile="global",
+            **self._dummy_state(),
+        )
