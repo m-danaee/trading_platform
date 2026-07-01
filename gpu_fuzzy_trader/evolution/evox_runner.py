@@ -892,6 +892,15 @@ def _should_inject_diversity_recovery(
         and int(plateau_streak) >= 2
     ):
         return True
+    # Check 3: Phenotype collapse — Pareto front ≤3 despite high genetic uniqueness
+    # This catches the case where chromosomes are genetically unique but phenotypically
+    # identical (same trading behavior, different gene encoding).
+    # Note: For pop_size >= 120, Check 2 (threshold = pop_size // 40) already covers
+    # pareto_size <= 3. Check 3 adds explicit coverage for smaller populations
+    # (e.g., island runs with pop_size < 120) and serves as a safety net if Check 2
+    # thresholds are tightened in the future.
+    if pareto_size > 0 and pareto_size <= 3 and int(plateau_streak) >= 2:
+        return True
     if _should_viability_recovery(
         stage_params,
         valid_count=valid_count,
@@ -1197,14 +1206,16 @@ def _trim_global_metrics_cache(
     global_metrics_cache: dict[tuple[int, ...], dict],
     max_size: int,
 ) -> None:
-    """Bound run-wide eval cache size to limit RAM growth across long runs."""
+    """Bound run-wide eval cache size to limit RAM growth across long runs.
+
+    Uses FIFO eviction (oldest entries first) to preserve recent evaluations
+    and maximize cache hit rates across generations.
+    """
     overflow = len(global_metrics_cache) - int(max_size)
     if overflow <= 0:
         return
-    import random as _trim_random
-    keys_to_remove = _trim_random.sample(
-        list(global_metrics_cache.keys()), k=overflow,
-    )
+    # Remove oldest entries (dict preserves insertion order)
+    keys_to_remove = list(global_metrics_cache.keys())[:overflow]
     for key in keys_to_remove:
         global_metrics_cache.pop(key, None)
 

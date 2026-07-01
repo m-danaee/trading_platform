@@ -488,6 +488,63 @@ class TestPopulationDiversityMetrics:
         assert not _should_inject_diversity_recovery(1.0)
         assert _should_inject_diversity_recovery(0.1)
 
+    def test_phenotype_collapse_trigger_fires_on_small_pareto_with_streak(self, monkeypatch):
+        """Test that Check 3 fires when pareto_size=3, plateau_streak=2, pop_size=100.
+
+        For pop_size=100, Check 2 threshold is max(2, 100 // 40) = 2.
+        So pareto_size=3 does NOT match Check 2 (3 > 2), but DOES match Check 3 (3 <= 3).
+        This isolates the phenotype-collapse trigger.
+        """
+        monkeypatch.setattr(_cfg, "PHASE2_DIVERSITY_RECOVERY_ENABLED", True)
+        # pop_size=100 → Check 2 threshold = 2, so pareto_size=3 bypasses Check 2
+        # Check 3 should fire: pareto_size=3 <= 3 and plateau_streak=2 >= 2
+        assert _should_inject_diversity_recovery(
+            population_unique_ratio=1.0,  # high genetic uniqueness
+            pareto_size=3,
+            plateau_streak=2,
+            pop_size=100,
+            valid_count=50,
+        ) is True
+
+    def test_phenotype_collapse_does_not_fire_without_streak(self, monkeypatch):
+        """Check 3 requires plateau_streak >= 2 (isolated with pop_size=100)."""
+        monkeypatch.setattr(_cfg, "PHASE2_DIVERSITY_RECOVERY_ENABLED", True)
+        # pop_size=100 → Check 2 threshold = 2
+        # pareto_size=3 → 3 > 2, so Check 2 does NOT fire
+        # plateau_streak=1 → < 2, so Check 3 does NOT fire
+        assert _should_inject_diversity_recovery(
+            population_unique_ratio=1.0,
+            pareto_size=3,
+            plateau_streak=1,  # below Check 3 threshold
+            pop_size=100,
+            valid_count=50,
+        ) is False
+
+    def test_phenotype_collapse_boundary_pop_size_100(self, monkeypatch):
+        """For pop_size=100, Check 2 threshold=2, so pareto_size=4 should NOT trigger."""
+        monkeypatch.setattr(_cfg, "PHASE2_DIVERSITY_RECOVERY_ENABLED", True)
+        # Check 2: pareto_size=4 > threshold=2 → False
+        # Check 3: pareto_size=4 > 3 → False
+        # Should return False (assuming no other checks fire)
+        assert _should_inject_diversity_recovery(
+            population_unique_ratio=1.0,
+            pareto_size=4,
+            plateau_streak=2,
+            pop_size=100,
+            valid_count=50,
+        ) is False
+
+    def test_phenotype_collapse_respects_master_switch(self, monkeypatch):
+        """Check 3 respects PHASE2_DIVERSITY_RECOVERY_ENABLED."""
+        monkeypatch.setattr(_cfg, "PHASE2_DIVERSITY_RECOVERY_ENABLED", False)
+        assert _should_inject_diversity_recovery(
+            population_unique_ratio=1.0,
+            pareto_size=2,
+            plateau_streak=3,
+            pop_size=100,
+            valid_count=50,
+        ) is False
+
 
 class TestDeployableArchive:
     def test_harvest_prefers_deployable_archive(self):
