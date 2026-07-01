@@ -304,6 +304,16 @@ def _run_orphan_boosts(
     return pool
 
 
+def _should_skip_epoch(remaining: int) -> bool:
+    """Check if an epoch should be skipped due to small remaining budget.
+
+    Engine rebuild takes ~30s (JAX compilation, GPU memory allocation).
+    Epochs with fewer than the configured minimum generations provide
+    negligible evolutionary benefit relative to the rebuild cost.
+    """
+    return remaining < int(_cfg.PHASE2_ISLAND_MIN_EPOCH_GENERATIONS)
+
+
 def _run_cluster_islands(
     train_df: pd.DataFrame,
     val_df: pd.DataFrame,
@@ -355,6 +365,18 @@ def _run_cluster_islands(
             if gen._island_generations_done >= gens_per_cluster:
                 continue
             remaining = gens_per_cluster - gen._island_generations_done
+
+            # Skip tiny remaining epochs (engine rebuild ~30s with negligible benefit)
+            if _should_skip_epoch(remaining):
+                min_gens = int(_cfg.PHASE2_ISLAND_MIN_EPOCH_GENERATIONS)
+                logger.info(
+                    "Phase 2 [%s]: skipping final epoch for cluster %s "
+                    "(remaining=%d < PHASE2_ISLAND_MIN_EPOCH_GENERATIONS=%d)",
+                    direction, cid, remaining, min_gens,
+                )
+                gen._island_generations_done = gens_per_cluster  # exit loop cleanly
+                continue
+
             gen.run_epoch(n_generations=min(epoch_gens, remaining))
             gen.park_engines()
             epoch_counter += 1

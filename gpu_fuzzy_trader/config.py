@@ -1012,6 +1012,9 @@ PHASE2_ISLAND_TOTAL_GENERATIONS = PHASE2_GENERATIONS
 # Increased 15→25: fewer epoch rebuilds (~40% overhead reduction); 15-gen
 # epochs caused 10+ epoch starts with ~15s engine rebuild overhead each.
 PHASE2_ISLAND_EPOCH_GENERATIONS = 25
+# PHASE2_ISLAND_MIN_EPOCH_GENERATIONS — skip epochs with fewer remaining gens
+# than this threshold (engine rebuild ~30s with negligible benefit for <5 gens).
+PHASE2_ISLAND_MIN_EPOCH_GENERATIONS = 5
 # Island overrides — disable two-stage / early-stop by default in cluster mode.
 PHASE2_ISLAND_TWO_STAGE_ENABLED = False
 PHASE2_ISLAND_EARLY_STOP_ENABLED = False
