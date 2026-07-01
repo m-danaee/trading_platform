@@ -21,9 +21,9 @@ Target: ~60% runtime reduction + improved OOS generalization.
 - **A3** ✅ MERGED (ce3706a) — island patience dead-code fix
 
 ## Current Plan Tasks
-- **Task 1** 🔄 IN_PROGRESS — Config parameter tuning (runtime + OOS) [branch: `feat/phase2-config-tuning`]
-- **Task 2** ⏳ PENDING — EvoX runner code fixes (cache + diversity)
-- **Task 3** ⏳ PENDING — Island scheduler + pool admission fixes
+- **Task 1** ✅ MERGED (cd69462) — Config parameter tuning (runtime + OOS)
+- **Task 2** ✅ MERGED (feat/phase2-evox-fixes) — EvoX runner code fixes (FIFO cache + phenotype-collapse trigger)
+- **Task 3** ✅ MERGED (feat/phase2-island-fixes) — Island scheduler + pool admission fixes (min epoch guard, patience helper, config param)
 
 ## Current State
-Task 1 in progress. Implementer dispatched on branch `feat/phase2-config-tuning`.
+**All 3 tasks complete and merged to main.** Ready for next Colab run to validate improvements.

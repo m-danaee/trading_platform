@@ -688,10 +688,46 @@ def _write_synthetic_test_csv(tmp_path: "Path", n_rows: int = 600) -> str:
 
 
 class TestOOSEvaluatorRun:
-    """Integration tests using tmp_path overrides for all output paths."""
+    """Integration tests using tmp_path overrides for all output paths.
+
+    The run() method is expensive (~4s) because it loads CSV data and runs
+    CPUBacktestEngine.  We use a shared class-scoped fixture that runs ev.run()
+    *once* and stores the result; all simple assertion tests reuse it.
+    """
+
+    @pytest.fixture(scope="class")
+    def run_result(self, tmp_path_factory):
+        """Run OOS_Evaluator.run() once for the whole class (long direction only)."""
+        import gpu_fuzzy_trader.phases.phase5_oos as m
+
+        tmp_path = tmp_path_factory.mktemp("oos_run")
+        orig_strategy = m._STRATEGY_PATHS.copy()
+        orig_report = m._REPORT_PATHS.copy()
+
+        for d in ("long", "short"):
+            m._STRATEGY_PATHS[d] = str(tmp_path / f"{d}.json")
+        m._REPORT_PATHS["long"] = str(
+            tmp_path / "reports" / "test_long_report.json")
+        m._REPORT_PATHS["short"] = str(
+            tmp_path / "reports" / "test_short_report.json")
+        m._REPORT_PATHS["per_symbol"] = str(
+            tmp_path / "reports" / "test_per_symbol_performance.csv"
+        )
+
+        _write_rule_set(str(tmp_path / "long.json"), "long")
+        csv_path = _write_synthetic_test_csv(tmp_path)
+
+        try:
+            ev = OOS_Evaluator(test_csv_path=csv_path)
+            result = ev.run()
+        finally:
+            m._STRATEGY_PATHS.update(orig_strategy)
+            m._REPORT_PATHS.update(orig_report)
+
+        return {"result": result, "tmp_path": tmp_path, "m": m}
 
     def _setup_paths(self, m, tmp_path, directions=("long", "short")):
-        """Override module-level path dicts and return originals."""
+        """Override module-level path dicts and return originals (for standalone tests)."""
         orig_strategy = m._STRATEGY_PATHS.copy()
         orig_report = m._REPORT_PATHS.copy()
 
@@ -725,18 +761,15 @@ class TestOOSEvaluatorRun:
         finally:
             self._restore_paths(m, orig_s, orig_r)
 
-    def test_run_returns_dict_with_long_key(self, tmp_path):
-        import gpu_fuzzy_trader.phases.phase5_oos as m
-        orig_s, orig_r = self._setup_paths(m, tmp_path, directions=("long",))
-        csv_path = _write_synthetic_test_csv(tmp_path)
-        try:
-            ev = OOS_Evaluator(test_csv_path=csv_path)
-            result = ev.run()
-            assert "long" in result
-        finally:
-            self._restore_paths(m, orig_s, orig_r)
+    # ---------------------------------------------------------------------------
+    # Tests that reuse the shared run_result fixture (single ev.run() call)
+    # ---------------------------------------------------------------------------
+
+    def test_run_returns_dict_with_long_key(self, run_result):
+        assert "long" in run_result["result"]
 
     def test_run_returns_dict_with_both_keys(self, tmp_path):
+        """Both directions: run once for this specific case."""
         import gpu_fuzzy_trader.phases.phase5_oos as m
         orig_s, orig_r = self._setup_paths(
             m, tmp_path, directions=("long", "short"))
@@ -749,67 +782,31 @@ class TestOOSEvaluatorRun:
         finally:
             self._restore_paths(m, orig_s, orig_r)
 
-    def test_run_creates_long_report_file(self, tmp_path):
-        import gpu_fuzzy_trader.phases.phase5_oos as m
-        orig_s, orig_r = self._setup_paths(m, tmp_path, directions=("long",))
-        csv_path = _write_synthetic_test_csv(tmp_path)
-        try:
-            ev = OOS_Evaluator(test_csv_path=csv_path)
-            ev.run()
-            assert os.path.exists(m._REPORT_PATHS["long"])
-        finally:
-            self._restore_paths(m, orig_s, orig_r)
+    def test_run_creates_long_report_file(self, run_result):
+        long_report = str(run_result["tmp_path"] / "reports" / "test_long_report.json")
+        assert os.path.exists(long_report)
 
-    def test_run_creates_per_symbol_csv(self, tmp_path):
-        import gpu_fuzzy_trader.phases.phase5_oos as m
-        orig_s, orig_r = self._setup_paths(m, tmp_path, directions=("long",))
-        csv_path = _write_synthetic_test_csv(tmp_path)
-        try:
-            ev = OOS_Evaluator(test_csv_path=csv_path)
-            ev.run()
-            assert os.path.exists(m._REPORT_PATHS["per_symbol"])
-        finally:
-            self._restore_paths(m, orig_s, orig_r)
+    def test_run_creates_per_symbol_csv(self, run_result):
+        per_sym = str(run_result["tmp_path"] / "reports" / "test_per_symbol_performance.csv")
+        assert os.path.exists(per_sym)
 
-    def test_run_metrics_has_required_keys(self, tmp_path):
-        import gpu_fuzzy_trader.phases.phase5_oos as m
-        orig_s, orig_r = self._setup_paths(m, tmp_path, directions=("long",))
-        csv_path = _write_synthetic_test_csv(tmp_path)
-        try:
-            ev = OOS_Evaluator(test_csv_path=csv_path)
-            result = ev.run()
-            metrics = result["long"]["test"]
-            for key in ("total_return_pct", "max_drawdown_pct", "win_rate",
-                        "executed_trades", "account_ruined"):
-                assert key in metrics, f"Missing key: {key}"
-        finally:
-            self._restore_paths(m, orig_s, orig_r)
+    def test_run_metrics_has_required_keys(self, run_result):
+        metrics = run_result["result"]["long"]["test"]
+        for key in ("total_return_pct", "max_drawdown_pct", "win_rate",
+                    "executed_trades", "account_ruined"):
+            assert key in metrics, f"Missing key: {key}"
 
-    def test_run_long_report_is_valid_json(self, tmp_path):
-        import gpu_fuzzy_trader.phases.phase5_oos as m
-        orig_s, orig_r = self._setup_paths(m, tmp_path, directions=("long",))
-        csv_path = _write_synthetic_test_csv(tmp_path)
-        try:
-            ev = OOS_Evaluator(test_csv_path=csv_path)
-            ev.run()
-            with open(m._REPORT_PATHS["long"]) as fh:
-                data = json.load(fh)
-            assert isinstance(data, dict)
-        finally:
-            self._restore_paths(m, orig_s, orig_r)
+    def test_run_long_report_is_valid_json(self, run_result):
+        long_report = str(run_result["tmp_path"] / "reports" / "test_long_report.json")
+        with open(long_report) as fh:
+            data = json.load(fh)
+        assert isinstance(data, dict)
 
-    def test_run_per_symbol_csv_has_correct_columns(self, tmp_path):
-        import gpu_fuzzy_trader.phases.phase5_oos as m
-        orig_s, orig_r = self._setup_paths(m, tmp_path, directions=("long",))
-        csv_path = _write_synthetic_test_csv(tmp_path)
-        try:
-            ev = OOS_Evaluator(test_csv_path=csv_path)
-            ev.run()
-            df = pd.read_csv(m._REPORT_PATHS["per_symbol"])
-            for col in ("direction", "symbol", "trade_count", "win_rate", "net_pnl"):
-                assert col in df.columns, f"Missing column: {col}"
-        finally:
-            self._restore_paths(m, orig_s, orig_r)
+    def test_run_per_symbol_csv_has_correct_columns(self, run_result):
+        per_sym = str(run_result["tmp_path"] / "reports" / "test_per_symbol_performance.csv")
+        df = pd.read_csv(per_sym)
+        for col in ("direction", "symbol", "trade_count", "win_rate", "net_pnl"):
+            assert col in df.columns, f"Missing column: {col}"
 
     def test_returned_results_match_post_cleanup_report_metrics(self, tmp_path):
         """Returned Phase 5 metrics must match saved report after rule pruning."""

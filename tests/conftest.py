@@ -55,3 +55,20 @@ def _low_memory_cleanup(request: pytest.FixtureRequest):
         jax.clear_caches()
     except Exception:
         pass
+
+
+@pytest.fixture(autouse=True)
+def _close_matplotlib_figures():
+    """Close all open matplotlib figures after each test.
+
+    Prevents figure objects from accumulating in memory across tests in
+    the reporter test suite, which is the dominant source of matplotlib
+    overhead under low-memory runs.
+    """
+    yield
+    try:
+        import matplotlib.pyplot as plt
+
+        plt.close("all")
+    except Exception:
+        pass

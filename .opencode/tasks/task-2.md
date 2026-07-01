@@ -1,256 +1,208 @@
-# Task 2 (A2) — Periodic Val Simulation
+# Task 2: EvoX Runner Code Fixes (Cache + Diversity)
 
-**Branch:** `feature/task-2-val-sim-interval` (from `main`)
-**Skill:** implementer
+**ID:** task-2
+**Branch:** `feat/phase2-evox-fixes`
+**Files:** `gpu_fuzzy_trader/evolution/evox_runner.py`
+**Risk:** Medium (logic changes in evolution loop)
 
-## Goal
-Val `simulate_rule_batch` runs every generation for every chromosome, but
-`PHASE2_JOINT_TRAIN_VAL=False` + `PHASE2_VAL_IN_FITNESS_PENALTY=False` means
-val metrics NEVER affect NSGA-III objectives. Val is only used for
-deployable_archive tracking + pool admission. Run val every Nth gen (default 3)
-instead of every gen → ~25-30% per-epoch wall-clock reduction. Val always runs
-on the epoch's last gen for pool-admission freshness.
+## Description
 
-## Hard constraints (AGENTS.md)
-- Use `.venv` for all commands; tests with `PYTEST_LOW_MEMORY=1` only.
-- Do NOT run the pipeline. Do NOT touch `evaluator_v5.ipynb`.
-- Remove dead/obsolete code after edits.
+Fix two critical issues in the EvoX runner that cause cache thrashing and premature convergence:
 
-## Files
-1. `gpu_fuzzy_trader/config.py` — 1 new knob.
-2. `gpu_fuzzy_trader/evolution/evox_runner.py` — `_evaluate_population_indices`
-   signature + both loops (nsga3 + nsga2_fallback).
-3. `gpu_fuzzy_trader/phases/phase2_rule_pool.py` — `_evaluate_chromosome`
-   signature (consistency; used by the single-chromosome fallback path).
-4. `tests/unit/test_phase2_val_sim_interval.py` (NEW).
+1. **LRU Cache Trimming** — Replace random eviction with FIFO (dict insertion order) in `_trim_global_metrics_cache()`. Random eviction destroys useful cached results, causing near-zero cache hit rates (0.00-0.07 in logs).
 
-## EDIT 1 — config.py
-Insert this knob near the other PHASE2_JOINT_TRAIN_VAL / PHASE2_VAL_* knobs
-(search for `PHASE2_VAL_IN_FITNESS_PENALTY` and place it after that block):
+2. **Phenotype-Collapse Recovery Trigger** — Add a new trigger in `_should_inject_diversity_recovery()` that fires when the Pareto front collapses to ≤3 members despite high genetic uniqueness. This addresses the "pareto=1 for 7+ generations" problem where all 200 chromosomes are genetically unique but phenotypically identical.
+
+## Changes Required
+
+### 1. LRU Cache Trimming
+
+**Location:** `gpu_fuzzy_trader/evolution/evox_runner.py` → `_trim_global_metrics_cache()`
+
+**Current implementation:**
 ```python
-# PHASE2_VAL_SIM_INTERVAL — run val backtest every N generations during
-# evolution (1 = every gen, original behaviour).  Only matters when
-# PHASE2_JOINT_TRAIN_VAL=False (val doesn't affect objectives then); val
-# metrics feed deployable_archive tracking + pool admission.  Val ALWAYS runs
-# on the epoch's last gen regardless of this setting (pool-admission freshness).
-#   1 → val every gen (original, 2x GPU work for no objective benefit).
-#   3 → val every 3rd gen; deployable_archive refreshes every 3 gens (default).
-PHASE2_VAL_SIM_INTERVAL = 3
+def _trim_global_metrics_cache(global_metrics_cache, max_size):
+    """Bound run-wide eval cache size to limit RAM growth across long runs."""
+    overflow = len(global_metrics_cache) - int(max_size)
+    if overflow <= 0:
+        return
+    import random as _trim_random
+    keys_to_remove = _trim_random.sample(
+        list(global_metrics_cache.keys()), k=overflow,
+    )
+    for key in keys_to_remove:
+        global_metrics_cache.pop(key, None)
 ```
 
-## EDIT 2 — evox_runner.py `_evaluate_population_indices` (~line 1218)
-Add a `run_val: bool = True` parameter to the signature (after `stage_params`):
+**Problem:** Random eviction destroys useful cached results. With 200 pop × 2 evals/gen = 400 sims/gen and cache size 1200, the cache fills in ~3 generations. Random eviction means parents evaluated in gen 1 are likely evicted before offspring in gen 2 are evaluated, causing cache miss rates >90%.
+
+**Fix:** Use FIFO eviction (remove oldest entries first). Python dicts preserve insertion order (3.7+), so we can just pop from the front:
+
 ```python
-def _evaluate_population_indices(
-    population: np.ndarray,
-    indices: list[int],
-    dont_cares: np.ndarray,
-    engine,
-    pareto_archive: list[np.ndarray],
-    objectives: np.ndarray,
-    metrics_cache: list[dict],
-    val_engine=None,
-    global_metrics_cache: dict[tuple[int, ...], dict] | None = None,
-    diversity_reference: list[np.ndarray] | None = None,
-    diversity_metrics_by_key: dict[tuple[int, ...], dict] | None = None,
+def _trim_global_metrics_cache(global_metrics_cache, max_size):
+    """Bound run-wide eval cache size to limit RAM growth across long runs.
+    
+    Uses FIFO eviction (oldest entries first) to preserve recent evaluations
+    and maximize cache hit rates across generations.
+    """
+    overflow = len(global_metrics_cache) - int(max_size)
+    if overflow <= 0:
+        return
+    # Remove oldest entries (dict preserves insertion order)
+    keys_to_remove = list(global_metrics_cache.keys())[:overflow]
+    for key in keys_to_remove:
+        global_metrics_cache.pop(key, None)
+```
+
+### 2. Phenotype-Collapse Recovery Trigger
+
+**Location:** `gpu_fuzzy_trader/evolution/evox_runner.py` → `_should_inject_diversity_recovery()`
+
+**Current implementation:**
+```python
+def _should_inject_diversity_recovery(
+    population_unique_ratio: float,
     stage_params: Phase2StageParams | None = None,
-    run_val: bool = True,
-) -> dict[str, int]:
+    *,
+    pareto_size: int = 0,
+    plateau_streak: int = 0,
+    pop_size: int = 0,
+    valid_count: int = 0,
+) -> bool:
+    if not bool(getattr(_cfg, "PHASE2_DIVERSITY_RECOVERY_ENABLED", True)):
+        return False
+    if (
+        population_unique_ratio
+        < _diversity_recovery_min_unique_ratio(stage_params)
+    ):
+        return True
+    collapse_threshold = max(2, int(pop_size) // 40)
+    if (
+        pareto_size > 0
+        and pareto_size <= collapse_threshold
+        and int(plateau_streak) >= 2
+    ):
+        return True
+    if _should_viability_recovery(
+        stage_params,
+        valid_count=valid_count,
+        plateau_streak=plateau_streak,
+    ):
+        return True
+    return False
 ```
-Change the val-sim guard (search for `val_metrics_list = None` / `if val_engine is not None:`):
+
+**Problem:** The function already has a `pareto_size` parameter and checks for small Pareto fronts, but the threshold is `pop_size // 40` (e.g., 200 // 40 = 5). This is too lenient — logs show `pareto=1` for 7+ consecutive generations with `pop_unique=1.00` (all 200 chromosomes genetically unique but phenotypically identical). The diversity recovery never fires because `population_unique_ratio=1.00` passes the first check.
+
+**Fix:** Add an explicit phenotype-collapse trigger that fires when `pareto_size <= 3` and `plateau_streak >= 2`, regardless of genetic uniqueness:
+
 ```python
-        val_metrics_list = None
-        if val_engine is not None and run_val:
+def _should_inject_diversity_recovery(
+    population_unique_ratio: float,
+    stage_params: Phase2StageParams | None = None,
+    *,
+    pareto_size: int = 0,
+    plateau_streak: int = 0,
+    pop_size: int = 0,
+    valid_count: int = 0,
+) -> bool:
+    if not bool(getattr(_cfg, "PHASE2_DIVERSITY_RECOVERY_ENABLED", True)):
+        return False
+    
+    # Check 1: Genetic uniqueness collapse
+    if (
+        population_unique_ratio
+        < _diversity_recovery_min_unique_ratio(stage_params)
+    ):
+        return True
+    
+    # Check 2: Pareto front collapse (existing logic)
+    collapse_threshold = max(2, int(pop_size) // 40)
+    if (
+        pareto_size > 0
+        and pareto_size <= collapse_threshold
+        and int(plateau_streak) >= 2
+    ):
+        return True
+    
+    # Check 3: Phenotype collapse (NEW) — Pareto front ≤3 despite high genetic uniqueness
+    # This catches the case where all 200 chromosomes are genetically unique
+    # but phenotypically identical (same trading behavior, different gene encoding)
+    if pareto_size > 0 and pareto_size <= 3 and int(plateau_streak) >= 2:
+        return True
+    
+    # Check 4: Viability recovery
+    if _should_viability_recovery(
+        stage_params,
+        valid_count=valid_count,
+        plateau_streak=plateau_streak,
+    ):
+        return True
+    
+    return False
 ```
-(Just add `and run_val` to the existing `if val_engine is not None:` condition.)
 
-## EDIT 3 — phase2_rule_pool.py `_evaluate_chromosome` (~line 700)
-Add the same `run_val: bool = True` parameter to `_evaluate_chromosome`'s
-signature (after `cv_fold_evaluator`), and guard its val block identically:
-```python
-    val_metrics: dict | None = None
-    if val_engine is not None and run_val:
+### 3. Update Call Sites
+
+**Location:** `gpu_fuzzy_trader/evolution/evox_runner.py` → `_run_nsga3()` and `_run_nsga2_fallback()`
+
+Both functions call `_should_inject_diversity_recovery()` and need to pass the current `len(pareto_indices)` as the `pareto_size` parameter.
+
+**Verification:** The call already passes `pareto_size=len(pareto_indices)`, so no change needed here. Just verify both `_run_nsga3` and `_run_nsga2_fallback` pass this parameter.
+
+## Acceptance Criteria
+
+1. `_trim_global_metrics_cache` uses FIFO eviction (first-inserted keys removed first)
+2. `_should_inject_diversity_recovery` triggers when `pareto_size <= 3 and plateau_streak >= 2`
+3. Both `_run_nsga3` and `_run_nsga2_fallback` pass `pareto_size=len(pareto_indices)` to `_should_inject_diversity_recovery`
+4. Existing tests pass: `PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/ -x -q`
+5. New test for phenotype-collapse trigger (verify it fires when `pareto_size=2, plateau_streak=3, pop_unique_ratio=1.0`)
+
+## Verification Commands
+
+```bash
+# Run tests
+PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/ -x -q
+
+# Verify FIFO eviction (manual check)
+grep -A 10 "def _trim_global_metrics_cache" gpu_fuzzy_trader/evolution/evox_runner.py
+
+# Verify phenotype trigger (manual check)
+grep -A 5 "Check 3: Phenotype collapse" gpu_fuzzy_trader/evolution/evox_runner.py
 ```
-(This is the single-chromosome fallback path used by `_reevaluate_infinite_objectives`;
-keeping the param consistent avoids a signature mismatch. The TODO comment above
-this block can stay or be updated to note the periodic-val implementation.)
 
-## EDIT 4 — evox_runner.py BOTH loops: compute run_val_this_gen + pass to call sites
+## Rationale
 
-### `_run_nsga3` (~line 2046+)
-At the TOP of the loop body, right after `just_restarted = False` (which was
-added in the prior task), add:
-```python
-        is_last_gen = gen == n_generations - 1
-        run_val_this_gen = is_last_gen or (
-            gen % int(_cfg.PHASE2_VAL_SIM_INTERVAL) == 0
-        )
+### Why FIFO instead of random?
+
+With 200 pop × 2 evals/gen = 400 sims/gen and cache size 1200, the cache fills in ~3 generations. Random eviction means:
+- Gen 1: Evaluate 200 parents, cache them
+- Gen 2: Evaluate 200 offspring, cache them (cache now has 400 entries)
+- Gen 3: Evaluate 200 parents, cache them (cache now has 600 entries)
+- Gen 4: Evaluate 200 offspring, cache them (cache now has 800 entries)
+- Gen 5: Evaluate 200 parents, cache them (cache now has 1000 entries)
+- Gen 6: Evaluate 200 offspring, cache them (cache now has 1200 entries, at capacity)
+- Gen 7: Evaluate 200 parents → random eviction removes ~200 entries, likely including gen 1-2 parents that are still useful for offspring crossover
+
+FIFO eviction removes the oldest entries (gen 1-2), preserving recent evaluations (gen 5-6) that are more likely to be reused in gen 7 offspring.
+
+### Why phenotype collapse at pareto_size ≤ 3?
+
+Logs show multiple epochs with `pareto=1` for 7+ consecutive generations:
 ```
-NOTE: There is already an `is_last_gen = gen == n_generations - 1` line later in
-the loop (~line 2331). Leave that later assignment in place (it just reassigns
-the same value; removing it risks breaking the `if not is_last_gen:` /
-`if is_last_gen: break` logic). Computing it early at the top is safe and lets
-us use it for the eval calls.
-
-Then pass `run_val=run_val_this_gen` to BOTH `_evaluate_population_indices`
-call sites in nsga3:
-- The **parent eval** call (~line 2190, `parent_stats = _evaluate_population_indices(...)`):
-  add `run_val=run_val_this_gen,` to the kwargs.
-- The **offspring eval** call (~line 2396, `off_stats = _evaluate_population_indices(...)`):
-  add `run_val=run_val_this_gen,` to the kwargs.
-
-Then GUARD the `_update_deployable_archive` call (~line 2212) so new deployables
-are only admitted when val ran this gen (existing archive entries persist on
-non-val gens; they just don't grow). Wrap it:
-```python
-        if run_val_this_gen:
-            _update_deployable_archive(
-                deployable_archive,
-                population,
-                list(range(pop_size)),
-                metrics_cache,
-            )
+gen 4/15: pareto=1 mean_return=15.28% ... pop_viable=199
+gen 5/15: pareto=1 mean_return=15.28% ... pop_viable=199
+...
+gen 10/15: pareto=1 mean_return=15.28% ... pop_viable=200
 ```
-(Keep `_update_hall_of_fame(...)` and `_count_deployable_preview(...)` UN-guarded —
-those don't need val.)
 
-### `_run_nsga2_fallback` (~line 1590+)
-Apply the SAME pattern. At the top of the loop body (after `just_restarted = False`),
-add:
-```python
-        is_last_gen = gen == n_generations - 1
-        run_val_this_gen = is_last_gen or (
-            gen % int(_cfg.PHASE2_VAL_SIM_INTERVAL) == 0
-        )
-```
-Pass `run_val=run_val_this_gen` to:
-- The **initial-pop eval** loop (the `for i in range(pop_size): _evaluate_chromosome(...)`
-  loop at ~line 1672): add `run_val=run_val_this_gen,` to the `_evaluate_chromosome` call.
-- The **offspring eval** `_evaluate_population_indices` call (~line 1998): add
-  `run_val=run_val_this_gen,` to kwargs.
-Guard the `_update_deployable_archive` call (~line 1687) the same way as nsga3.
+This means 199 out of 200 chromosomes are dominated by one rule. The `pop_unique=1.00` (all genetically unique) is misleading — they're phenotypically identical (same trading behavior, different gene encoding due to sparse slots).
 
-## EDIT 5 — Tests `tests/unit/test_phase2_val_sim_interval.py` (NEW)
-Prove val is skipped on non-interval gens. Use a stub engine pair (train+val)
-that records calls; run a 5-gen evolution with `PHASE2_VAL_SIM_INTERVAL=2`;
-assert val called only on gens 0,2,4 (and last gen), train called every gen.
-```python
-"""Unit tests for periodic val simulation (Phase 2 runtime A2)."""
+Setting the threshold at `pareto_size <= 3` catches this collapse while allowing normal Pareto front diversity (typically 5-20 members). The `plateau_streak >= 2` requirement prevents false triggers during early transient convergence.
 
-from __future__ import annotations
+## Notes
 
-from unittest import mock
-
-import numpy as np
-import pytest
-
-from gpu_fuzzy_trader import config as cfg
-from gpu_fuzzy_trader.evolution.evox_runner import run_phase2_evolution
-
-
-class CountingEngine:
-    def __init__(self):
-        self.calls: list[int] = []
-
-    def simulate_rule_batch(self, chromosomes, tp=None, sl=None, capital_pct=None):
-        B = int(chromosomes.shape[0])
-        self.calls.append(B)
-        return [
-            {
-                "sortino_ratio": 1.0, "total_return_pct": 1.0,
-                "max_drawdown_pct": 2.0, "win_rate": 50.0, "executed_trades": 50,
-            }
-            for _ in range(B)
-        ]
-
-
-def test_val_skipped_on_non_interval_gens(monkeypatch):
-    """With PHASE2_VAL_SIM_INTERVAL=2, val sim runs only on even gens (0,2,4)
-    + last gen; train sim runs every gen."""
-    train_engine = CountingEngine()
-    val_engine = CountingEngine()
-
-    monkeypatch.setattr(cfg, "PHASE2_VAL_SIM_INTERVAL", 2)
-    monkeypatch.setattr(cfg, "PHASE2_EARLY_STOP_ENABLED", False)
-    monkeypatch.setattr(cfg, "PHASE2_EARLY_STOP_MIN_GENERATION", 999)
-    monkeypatch.setattr(cfg, "PHASE2_PLATEAU_EARLY_STOP_ENABLED", False)
-    monkeypatch.setattr(cfg, "PHASE2_PLATEAU_POST_RESTART_STOP_ENABLED", False)
-    monkeypatch.setattr(cfg, "PHASE2_DIVERSITY_RECOVERY_ENABLED", False)
-
-    with mock.patch("gpu_fuzzy_trader.evolution.evox_runner._EVOX_AVAILABLE", False):
-        rng = np.random.default_rng(0)
-        feature_infos = [
-            {"name": "f0", "mode": "binary", "score": 0.5},
-            {"name": "f1", "mode": "binary", "score": 0.5},
-        ]
-        run_phase2_evolution(
-            feature_infos=feature_infos,
-            engine=train_engine,
-            val_engine=val_engine,
-            pop_size=10,
-            n_generations=5,
-            rng=rng,
-        )
-
-    # Train should run every gen (>=5 calls, one per gen minimum).
-    assert len(train_engine.calls) >= 5, (
-        f"Train should run every gen; got {len(train_engine.calls)} calls"
-    )
-    # Val should run LESS often than train (skipped on odd gens).
-    assert len(val_engine.calls) < len(train_engine.calls), (
-        f"Val should be skipped on non-interval gens; "
-        f"val={len(val_engine.calls)} train={len(train_engine.calls)}"
-    )
-    # Val must run at least on gen 0 (interval) and last gen (forced).
-    assert len(val_engine.calls) >= 2, (
-        f"Val should run on gen 0 and last gen at minimum; got {len(val_engine.calls)}"
-    )
-
-
-def test_val_runs_every_gen_when_interval_1(monkeypatch):
-    """PHASE2_VAL_SIM_INTERVAL=1 preserves original behaviour (val every gen)."""
-    train_engine = CountingEngine()
-    val_engine = CountingEngine()
-
-    monkeypatch.setattr(cfg, "PHASE2_VAL_SIM_INTERVAL", 1)
-    monkeypatch.setattr(cfg, "PHASE2_EARLY_STOP_ENABLED", False)
-    monkeypatch.setattr(cfg, "PHASE2_EARLY_STOP_MIN_GENERATION", 999)
-    monkeypatch.setattr(cfg, "PHASE2_PLATEAU_EARLY_STOP_ENABLED", False)
-    monkeypatch.setattr(cfg, "PHASE2_PLATEAU_POST_RESTART_STOP_ENABLED", False)
-    monkeypatch.setattr(cfg, "PHASE2_DIVERSITY_RECOVERY_ENABLED", False)
-
-    with mock.patch("gpu_fuzzy_trader.evolution.evox_runner._EVOX_AVAILABLE", False):
-        rng = np.random.default_rng(0)
-        feature_infos = [
-            {"name": "f0", "mode": "binary", "score": 0.5},
-        ]
-        run_phase2_evolution(
-            feature_infos=feature_infos,
-            engine=train_engine,
-            val_engine=val_engine,
-            pop_size=10,
-            n_generations=3,
-            rng=rng,
-        )
-
-    assert len(val_engine.calls) > 0, "Val should run when interval=1"
-    # With interval=1, val count should be close to train count (every gen).
-    assert len(val_engine.calls) >= len(train_engine.calls) - 1, (
-        f"interval=1 should run val every gen; val={len(val_engine.calls)} "
-        f"train={len(train_engine.calls)}"
-    )
-```
-(Adjust assertions if dedup/last-gen-skip changes exact counts — the key
-invariant is val_count < train_count when interval>1, and val runs on gen 0 + last gen.)
-
-## Verification (run from repo root)
-1. `.venv/bin/python -c "import gpu_fuzzy_trader.evolution.evox_runner; import gpu_fuzzy_trader.phases.phase2_rule_pool"`
-2. `PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_phase2_val_sim_interval.py tests/unit/test_phase2_offspring_batch.py tests/unit/test_evox_runner.py tests/unit/test_phase2_plateau_restart.py tests/unit/test_phase2_post_restart_stop.py tests/unit/test_plateau_state_leak.py tests/unit/test_island_early_stop.py tests/unit/test_phase2_island_early_stop.py -q`
-3. `PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/ -q`
-
-## Acceptance criteria
-1. New tests pass; val sim count < train sim count when interval>1.
-2. All targeted + full unit tests pass (no regressions).
-3. Import check exits 0.
-4. No dead code; old `if val_engine is not None:` guards updated to include `and run_val`.
-5. Single commit on `feature/task-2-val-sim-interval`: `perf(phase2): periodic val simulation`.
+- This is a medium-risk task (logic changes in evolution loop)
+- The FIFO change is low-risk (just changes eviction order)
+- The phenotype trigger is medium-risk (new logic path, but well-bounded)
+- Both changes should be tested on next Colab run to validate cache hit rates and Pareto front diversity
