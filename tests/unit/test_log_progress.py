@@ -102,7 +102,7 @@ class TestLogGeneration:
         )
         msg = log.info.call_args[0][0]
         assert "pareto_unique=1.00" in msg
-        assert "pop_unique=0.05" in msg
+        assert "pop_diversity=0.05" in msg
         assert "cache_hit_rate=0.82" in msg
 
     def test_emits_deployable_pop_viable_and_plateau_streak(self):

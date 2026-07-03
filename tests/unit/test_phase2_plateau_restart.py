@@ -33,7 +33,7 @@ from gpu_fuzzy_trader.phases.phase2_rule_pool import _init_population
 def test_config_defaults():
     """New config keys have correct defaults."""
     assert cfg.PHASE2_PLATEAU_DIVERSITY_RESTART_ENABLED is True
-    assert cfg.PHASE2_PLATEAU_DIVERSITY_RESTART_FRACTION == 0.65
+    assert cfg.PHASE2_PLATEAU_DIVERSITY_RESTART_FRACTION == 0.35
     assert cfg.PHASE2_PLATEAU_MAX_RESTARTS == 3
     assert cfg.PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT == 1.0
     assert cfg.PHASE2_PLATEAU_POST_RESTART_MUTATION_BOOST == 0.45
@@ -61,12 +61,15 @@ class TestPlateauDiversityRestart:
         pop_size = 20
         # Use _init_population to get correct sparse format
         population = _init_population(pop_size, feature_infos, rng)
-        # Elite = indices 0..4 (first 5 Pareto front indices, but n_elite caps at 2)
-        elite_indices = list(range(2))
-        pareto_indices = list(range(5)) + [10, 11, 12]
+        # Top 3 Pareto members by robust_return_pct survive (n_elite = min(10, max(3, ...)))
+        pareto_indices = [10, 11, 12]
+        elite_indices = [12, 11, 10]
 
         objectives = np.full((pop_size, 3), 0.5)
-        metrics_cache = [{"total_return_pct": float(i)} for i in range(pop_size)]
+        metrics_cache = [
+            {"total_return_pct": float(i), "robust_return_pct": float(i)}
+            for i in range(pop_size)
+        ]
 
         # Record elite chromosome keys (sparse encoding)
         from gpu_fuzzy_trader.phases.phase2_sparse_encoding import chromosome_key
@@ -88,12 +91,10 @@ class TestPlateauDiversityRestart:
         assert n_elite == len(elite_indices), (
             f"Expected {len(elite_indices)} elite kept, got {n_elite}"
         )
-        # Check elite chromosomes are intact
         for i in elite_indices:
             assert chromosome_key(population[i]) in elite_keys, (
                 f"Elite at index {i} was modified"
             )
-            # Elite objectives/metrics should NOT be reset to inf/{}
             assert not np.any(np.isinf(objectives[i])), (
                 f"Elite objective at {i} was reset to inf"
             )
@@ -136,18 +137,20 @@ class TestPlateauDiversityRestart:
             "No non-elite slots were reset to inf/{}"
         )
 
-    def test_n_elite_at_most_5(self):
-        """Even with large Pareto front, at most 2 elite are preserved (was 5)."""
+    def test_n_elite_capped_at_ten(self):
+        """Even with large Pareto front, at most 10 elite are preserved."""
         rng = np.random.default_rng(42)
         feature_infos = [
             {"name": "f0", "mode": "binary", "score": 0.5},
         ]
         pop_size = 20
         population = _init_population(pop_size, feature_infos, rng)
-        # Pareto front has 20 indices
         pareto_indices = list(range(20))
         objectives = np.full((pop_size, 3), 0.5)
-        metrics_cache = [{"v": i} for i in range(pop_size)]
+        metrics_cache = [
+            {"total_return_pct": float(i), "robust_return_pct": float(i)}
+            for i in range(pop_size)
+        ]
 
         n_elite = _plateau_diversity_restart(
             population,
@@ -158,7 +161,7 @@ class TestPlateauDiversityRestart:
             pareto_indices=pareto_indices,
             pop_size=pop_size,
         )
-        assert n_elite == 2, f"Expected 2 elite, got {n_elite}"
+        assert n_elite == 10, f"Expected 10 elite, got {n_elite}"
 
 
 # ---------------------------------------------------------------------------

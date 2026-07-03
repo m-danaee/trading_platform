@@ -114,6 +114,8 @@ TEST_CSV_PATH = _env_str(
 # Cached splits from train.csv (Phases 2–5). Rebuilt when train.csv is newer.
 TRAIN_70_PATH = "data/train_70.parquet"
 VALIDATION_30_PATH = "data/validation_30.parquet"
+VALIDATION_FITNESS_PATH = "data/validation_fitness.parquet"
+VALIDATION_SELECTION_PATH = "data/validation_selection.parquet"
 
 OUTPUTS_DIR = "outputs"
 RUN_LOG_PATH = os.path.join(OUTPUTS_DIR, "run.log")
@@ -736,7 +738,7 @@ PHASE2_PLATEAU_DIVERSITY_RESTART_ENABLED = True
 # PHASE2_PLATEAU_DIVERSITY_RESTART_FRACTION — share of pop reinitialised on restart.
 #   Higher  → more fresh chromosomes; may lose more elite progress.
 #   Lower   → gentler restart; may not escape attractor.
-PHASE2_PLATEAU_DIVERSITY_RESTART_FRACTION = 0.65
+PHASE2_PLATEAU_DIVERSITY_RESTART_FRACTION = 0.35
 
 # PHASE2_PLATEAU_POST_RESTART_MUTATION_BOOST — mutation rate (not multiplier) used
 #   for PHASE2_PLATEAU_POST_RESTART_BOOST_GENS after a plateau restart, then
@@ -774,7 +776,7 @@ PHASE2_PLATEAU_POST_RESTART_STOP_PATIENCE = 5
 
 # Island-scoped variants (mirror PHASE2_ISLAND_PLATEAU_EARLY_STOP_* scoping).
 PHASE2_ISLAND_PLATEAU_POST_RESTART_STOP_ENABLED = True
-PHASE2_ISLAND_PLATEAU_POST_RESTART_STOP_PATIENCE = 5
+PHASE2_ISLAND_PLATEAU_POST_RESTART_STOP_PATIENCE = 8
 
 # PHASE2_PLATEAU_MAX_RESTARTS — restarts per epoch before final break.
 #   1       → one restart, then break on second plateau.
@@ -1048,7 +1050,7 @@ PHASE2_ISLAND_MONTHLY_MIN_MONTHS = 4
 # admitted near-zero-return migrants that displaced up to 25% of converged locals).
 # Disabled True→False: overhead without benefit; config comment itself notes
 # migration degraded locally-adapted elites.
-PHASE2_MIGRATION_ENABLED: bool = False
+PHASE2_MIGRATION_ENABLED: bool = True
 PHASE2_MIGRATION_EPOCH_INTERVAL = 1
 PHASE2_MIGRATION_TOP_K = 5
 PHASE2_MIGRATION_REQUIRE_DEPLOYABILITY = True
@@ -1513,6 +1515,9 @@ PHASE4_GRID_PASSES = 2
 # PHASE4_GRID_MIN_IMPROVEMENT — minimum score improvement to accept a new combo.
 PHASE4_GRID_MIN_IMPROVEMENT = 0.005
 
+# PHASE4_GRID_ENABLED — when False, Phase 4 grid search is skipped (RB Governor replaces Ph 3+4).
+PHASE4_GRID_ENABLED: bool = False
+
 # PHASE4_OPTIMIZE_PER_RULE_SYMBOL — tune each rule on its assigned symbol(s) only.
 #   True  → grid trials for a rule are scored on train/val rows for that rule's
 #           "symbol is X" filters (matches Phase 3 per-symbol selection).
@@ -1652,7 +1657,7 @@ RB_MIN_COMBINED_RETURN_IMPROVEMENT: float = 2.0  # min combined return-% uplift 
 # RB_REQUIRE_TRAIN_SLIGHTLY_ABOVE_VALID — when True, apply a shape
 #   bonus/penalty so that train return is slightly above val return (a
 #   healthy sign) but not wildly above (overfit sign).
-RB_REQUIRE_TRAIN_SLIGHTLY_ABOVE_VALID: bool = False
+RB_REQUIRE_TRAIN_SLIGHTLY_ABOVE_VALID: bool = True
 RB_TRAIN_VALID_MIN_RATIO: float = 1.03
 RB_TRAIN_VALID_MAX_RATIO: float = 1.35
 RB_TRAIN_VALID_MIN_ABS_GAP: float = 0.20
@@ -1697,6 +1702,9 @@ RB_MAX_TOTAL_CAPITAL: float = 100.0
 # RB_REQUIRE_SYMBOL_FILTERS — every final rule must include at least one
 #   ``symbol is X`` condition (required for per-symbol strategies).
 RB_REQUIRE_SYMBOL_FILTERS: bool = True
+
+# RB_MIN_DISTINCT_SYMBOLS — final ruleset must span at least this many symbols.
+RB_MIN_DISTINCT_SYMBOLS: int = 5
 
 # RB_SYMBOL_USE_COMBINATIONS — when True, generate 1-/2-/3-symbol variants
 #   of each pool rule.  Set False to restrict to single-symbol variants only.

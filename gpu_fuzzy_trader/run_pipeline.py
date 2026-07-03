@@ -223,11 +223,13 @@ def _log_pipeline_config() -> None:
     if _cfg.PHASE2_ISLAND_MODE == "cluster":
         total_gens = int(_cfg.PHASE2_ISLAND_TOTAL_GENERATIONS)
         n_clusters = max(1, int(_cfg.PHASE2_N_CLUSTERS))
-        gens_per_cluster = max(1, total_gens // n_clusters)
+        base_gens = max(1, total_gens // n_clusters)
+        remainder = total_gens % n_clusters
+        gens_per_cluster = base_gens + (1 if remainder else 0)
         epoch_gens = int(_cfg.PHASE2_ISLAND_EPOCH_GENERATIONS)
         phase2_fmt = (
             "PHASE2 algo=%s pop=%d island_total=%d per_cluster=%d epoch=%d "
-            "joint_train_val=%s"
+            "joint_train_val=%s migration=%s"
         )
         phase2_args = (
             _cfg.PHASE2_ALGORITHM,
@@ -236,6 +238,7 @@ def _log_pipeline_config() -> None:
             gens_per_cluster,
             epoch_gens,
             _cfg.PHASE2_JOINT_TRAIN_VAL,
+            _cfg.PHASE2_MIGRATION_ENABLED,
         )
     else:
         phase2_fmt = "PHASE2 algo=%s pop=%d gen=%d joint_train_val=%s"
@@ -245,12 +248,20 @@ def _log_pipeline_config() -> None:
             _cfg.PHASE2_GENERATIONS,
             _cfg.PHASE2_JOINT_TRAIN_VAL,
         )
+    if bool(getattr(_cfg, "RB_GOVERNOR_ENABLED", False)):
+        phase34_fmt = "RB_GOVERNOR enabled"
+    else:
+        phase34_fmt = (
+            "PHASE3 per-symbol greedy | PHASE4 grid_search=%s"
+            % getattr(_cfg, "PHASE4_GRID_ENABLED", False)
+        )
     logger.info(
         "Pipeline config: PHASE1 top_k=%d | "
         + phase2_fmt
-        + " | PHASE3 per-symbol greedy | PHASE4 grid_search=True | %s",
+        + " | %s | %s",
         _cfg.PHASE1_TOP_K_FEATURES,
         *phase2_args,
+        phase34_fmt,
         debug_suffix,
     )
 
@@ -452,6 +463,8 @@ class Pipeline_Orchestrator:
         self._output_dir = _resolve_output_root(output_dir)
         self._log_path = os.path.join(self._output_dir, "pipeline.log")
         self._cv_folds: list | None = None
+        self._val_fitness_df: pd.DataFrame | None = None
+        self._val_selection_df: pd.DataFrame | None = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -498,18 +511,23 @@ class Pipeline_Orchestrator:
                 # Step 1: Load and prepare data
                 # ------------------------------------------------------------------
                 train_df, val_df = self._load_and_split_data()
+                val_fitness_df, val_selection_df = self._validation_scoring_frames(val_df)
                 results["data"] = {
                     "train_rows": len(train_df),
                     "val_rows": len(val_df),
+                    "val_fitness_rows": len(val_fitness_df),
+                    "val_selection_rows": len(val_selection_df),
                 }
 
                 # ------------------------------------------------------------------
                 # Phase 1: Feature Selection
                 # ------------------------------------------------------------------
-                phase1_result = self._run_phase1(train_df, force=force, val_df=val_df)
+                phase1_result = self._run_phase1(train_df, force=force, val_df=None)
                 results["phase1"] = phase1_result
                 train_df, val_df = self._prune_splits_after_phase1(
                     train_df, val_df, phase1_result)
+                val_fitness_df, val_selection_df = self._prune_splits_after_phase1(
+                    val_fitness_df, val_selection_df, phase1_result)
                 self._cv_folds = self._prune_cv_folds_after_phase1(
                     self._cv_folds, phase1_result)
 
@@ -517,7 +535,7 @@ class Pipeline_Orchestrator:
                 # Phase 2: Rule Pool Generation
                 # ------------------------------------------------------------------
                 phase2_result = self._run_phase2(
-                    train_df, phase1_result, force=force, val_df=val_df)
+                    train_df, phase1_result, force=force, val_df=val_fitness_df)
                 results["phase2"] = phase2_result
 
                 # Check if Phase 2 produced any rules; if not, skip Phases 3 and 4
@@ -535,7 +553,12 @@ class Pipeline_Orchestrator:
                     self._release_between_phases("RB Governor")
 
                     rb_result = self._run_rb_governor(
-                        train_df, val_df, phase2_result, cv_folds=self._cv_folds)
+                        train_df,
+                        val_df,
+                        phase2_result,
+                        cv_folds=self._cv_folds,
+                        val_selection_df=val_selection_df,
+                    )
                     results["phase3"] = rb_result
                     results["phase4"] = rb_result
                     phase5_directions = frozenset(rb_result.keys())
@@ -624,6 +647,7 @@ class Pipeline_Orchestrator:
 
             try:
                 train_df, val_df = self._load_and_split_data()
+                val_fitness_df, val_selection_df = self._validation_scoring_frames(val_df)
                 results["data"] = {
                     "train_rows": len(train_df),
                     "val_rows": len(val_df),
@@ -633,11 +657,13 @@ class Pipeline_Orchestrator:
                 results["phase1"] = phase1_result
                 train_df, val_df = self._prune_splits_after_phase1(
                     train_df, val_df, phase1_result)
+                val_fitness_df, val_selection_df = self._prune_splits_after_phase1(
+                    val_fitness_df, val_selection_df, phase1_result)
                 self._cv_folds = self._prune_cv_folds_after_phase1(
                     self._cv_folds, phase1_result)
 
                 phase2_result = self._run_phase2(
-                    train_df, phase1_result, force=force, val_df=val_df)
+                    train_df, phase1_result, force=force, val_df=val_fitness_df)
                 results["phase2"] = phase2_result
 
                 pool_empty = not _phase2_result_has_rules(phase2_result)
@@ -654,7 +680,12 @@ class Pipeline_Orchestrator:
                     self._release_between_phases("RB Governor")
 
                     rb_result = self._run_rb_governor(
-                        train_df, val_df, phase2_result, cv_folds=self._cv_folds)
+                        train_df,
+                        val_df,
+                        phase2_result,
+                        cv_folds=self._cv_folds,
+                        val_selection_df=val_selection_df,
+                    )
                     results["phase3"] = rb_result
                     results["phase4"] = rb_result
                     phase5_directions = frozenset(rb_result.keys())
@@ -720,10 +751,11 @@ class Pipeline_Orchestrator:
                     "train_rows": len(train_df),
                     "val_rows": len(val_df),
                 }
-                results["phase1"] = self._run_phase1(train_df, force=True, val_df=val_df)
+                results["phase1"] = self._run_phase1(train_df, force=True, val_df=None)
 
             elif phase == 2:
                 train_df, val_df = self._load_and_split_data()
+                val_fitness_df, val_selection_df = self._validation_scoring_frames(val_df)
                 results["data"] = {
                     "train_rows": len(train_df),
                     "val_rows": len(val_df),
@@ -731,13 +763,16 @@ class Pipeline_Orchestrator:
                 phase1_result = self._load_phase1_outputs()
                 train_df, val_df = self._prune_splits_after_phase1(
                     train_df, val_df, phase1_result)
+                val_fitness_df, val_selection_df = self._prune_splits_after_phase1(
+                    val_fitness_df, val_selection_df, phase1_result)
                 self._cv_folds = self._prune_cv_folds_after_phase1(
                     self._cv_folds, phase1_result)
                 results["phase2"] = self._run_phase2(
-                    train_df, phase1_result, force=True, val_df=val_df)
+                    train_df, phase1_result, force=True, val_df=val_fitness_df)
 
             elif phase == 3:
                 train_df, val_df = self._load_and_split_data()
+                _, val_selection_df = self._validation_scoring_frames(val_df)
                 results["data"] = {
                     "train_rows": len(train_df),
                     "val_rows": len(val_df),
@@ -747,7 +782,12 @@ class Pipeline_Orchestrator:
                     self._release_between_phases("RB Governor")
 
                     rb_result = self._run_rb_governor(
-                        train_df, val_df, phase2_result, cv_folds=self._cv_folds)
+                        train_df,
+                        val_df,
+                        phase2_result,
+                        cv_folds=self._cv_folds,
+                        val_selection_df=val_selection_df,
+                    )
                     results["phase3"] = rb_result
                     results["phase4"] = rb_result
                 else:
@@ -964,6 +1004,35 @@ class Pipeline_Orchestrator:
             len(cv_folds) if cv_folds else "n/a",
         )
         return self._apply_debug_symbol_scope(train_df, val_df)
+
+    def _validation_scoring_frames(
+        self,
+        val_df: pd.DataFrame,
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Load or derive validation fitness/selection halves for Phase 2 / RB."""
+        import os
+
+        import pandas as pd
+
+        from gpu_fuzzy_trader.backtest.df_slim import downcast_numeric_df
+        from gpu_fuzzy_trader.data.splitter import split_validation_fitness_selection
+
+        fitness_path = _cfg.VALIDATION_FITNESS_PATH
+        selection_path = _cfg.VALIDATION_SELECTION_PATH
+        if os.path.exists(fitness_path) and os.path.exists(selection_path):
+            val_fitness = downcast_numeric_df(pd.read_parquet(fitness_path))
+            val_selection = downcast_numeric_df(pd.read_parquet(selection_path))
+        else:
+            val_fitness, val_selection = split_validation_fitness_selection(val_df)
+
+        symbols = _cfg.resolve_debug_symbols(val_df)
+        if symbols is not None:
+            val_fitness = _cfg.filter_df_to_symbols(val_fitness, symbols)
+            val_selection = _cfg.filter_df_to_symbols(val_selection, symbols)
+
+        self._val_fitness_df = val_fitness
+        self._val_selection_df = val_selection
+        return val_fitness, val_selection
 
     def _apply_debug_symbol_scope(
         self,
@@ -1603,6 +1672,7 @@ class Pipeline_Orchestrator:
         phase2_result: dict[str, list[dict]],
         *,
         cv_folds: list | None = None,
+        val_selection_df: pd.DataFrame | None = None,
     ) -> dict[str, dict]:
         """Run the RB Governor pipeline (Phase 3 + Phase 4 replacement).
 
@@ -1633,6 +1703,7 @@ class Pipeline_Orchestrator:
                 directions=directions,
                 output_dir=_cfg.OUTPUTS_DIR,
                 cv_folds=cv_folds,
+                val_selection_df=val_selection_df,
             )
         except Exception as exc:
             logger.error("RB Governor failed: %s", exc, exc_info=True)

@@ -839,6 +839,39 @@ def _evaluate_chromosome(
     )
 
 
+def attach_cv_fold_returns_batch(
+    metrics_list: list[dict],
+    chromosomes: np.ndarray,
+    cv_fold_evaluator: "CvFoldValEvaluator | None",
+) -> None:
+    """Attach per-fold returns for cv_fold_min f3 on batched metrics."""
+    if cv_fold_evaluator is None:
+        return
+    if str(getattr(_cfg, "PHASE2_F3_OBJECTIVE", "profit_factor")) != "cv_fold_min":
+        return
+    try:
+        engines = cv_fold_evaluator._ensure_fold_engines()
+        for idx, metrics in enumerate(metrics_list):
+            chrom = chromosomes[idx]
+            chrom_batch = _chromosome_batch(chrom)
+            cv_returns: list[float] = []
+            for fe in engines:
+                fold_metrics_list = fe.simulate_rule_batch(
+                    chromosomes=chrom_batch,
+                    tp=_cfg.PHASE2_TP,
+                    sl=_cfg.PHASE2_SL,
+                    capital_pct=_cfg.PHASE2_CAPITAL_PCT,
+                )
+                cv_returns.append(
+                    float(fold_metrics_list[0].get("total_return_pct", 0.0))
+                )
+            metrics["_cv_fold_returns"] = cv_returns
+    except Exception as exc:
+        logger.debug("attach_cv_fold_returns_batch failed: %s", exc)
+        for metrics in metrics_list:
+            metrics.setdefault("_cv_fold_returns", [])
+
+
 # ---------------------------------------------------------------------------
 # NSGA-II helpers (non-dominated sorting + crowding distance)
 # ---------------------------------------------------------------------------

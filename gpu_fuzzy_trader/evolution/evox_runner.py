@@ -793,6 +793,28 @@ def _population_unique_chromosome_ratio(population: np.ndarray) -> float:
     return float(len(keys) / n)
 
 
+def _population_genotype_diversity_ratio(population: np.ndarray) -> float:
+    """Median pairwise Hamming distance normalized by mean chromosome length."""
+    from gpu_fuzzy_trader.phases.phase2_sparse_encoding import (
+        count_active_slots,
+        is_sparse_chromosome,
+    )
+
+    def _chrom_len(chrom: np.ndarray) -> int:
+        chrom = np.asarray(chrom)
+        if is_sparse_chromosome(chrom):
+            return max(1, count_active_slots(chrom) * 2)
+        return max(1, int(chrom.size))
+
+    n = len(population)
+    if n < 2:
+        return 0.0
+    chroms = [population[i] for i in range(n)]
+    median_hamming = _median_pairwise_hamming(chroms)
+    avg_len = float(np.mean([_chrom_len(c) for c in chroms]))
+    return float(median_hamming / avg_len)
+
+
 def _hamming_distance(a: np.ndarray, b: np.ndarray) -> int:
     """Hamming distance between two chromosomes (sparse-aware)."""
     from gpu_fuzzy_trader.phases.phase2_sparse_encoding import (
@@ -843,21 +865,30 @@ def _plateau_diversity_restart(
 ) -> int:
     """Reinit a fraction of the population on plateau, preserving Pareto elite.
 
-    Keeps the first K = min(5, len(pareto_indices)) elite chromosomes from the
-    Pareto front, then reinitialises a configurable fraction of the remaining
-    slots via ``_init_population``.  Resets those slots' objectives to ``inf``
-    and ``metrics_cache`` to ``{}``.
+    Keeps the top K = min(10, max(3, len(pareto_indices))) elite chromosomes
+    ranked by ``robust_return_pct`` (fallback: ``total_return_pct``), then
+    reinitialises a configurable fraction of the remaining slots via
+    ``_init_population``.  Resets those slots' objectives to ``inf`` and
+    ``metrics_cache`` to ``{}``.
 
     Returns the number of elite chromosomes kept.
     """
     from gpu_fuzzy_trader.phases.phase2_rule_pool import _init_population
 
-    n_elite = min(2, max(1, len(pareto_indices)))
+    n_elite = min(10, max(3, len(pareto_indices)))
+
+    def _elite_score(idx: int) -> float:
+        m = metrics_cache[idx] if idx < len(metrics_cache) else {}
+        if m.get("robust_return_pct") is not None:
+            return float(m["robust_return_pct"])
+        return float(m.get("total_return_pct", -1e9))
+
+    ranked = sorted(pareto_indices, key=_elite_score, reverse=True)
+    elite_positions = set(ranked[:n_elite])
     fraction = float(
         getattr(_cfg, "PHASE2_PLATEAU_DIVERSITY_RESTART_FRACTION", 0.40)
     )
     # Determine which slots to reinit: all non-elite slots
-    elite_positions = set(pareto_indices[:n_elite])
     all_slots = list(range(pop_size))
     reinit_slots = [i for i in all_slots if i not in elite_positions]
     n_reinit = max(0, min(len(reinit_slots), int(round(pop_size * fraction))))
@@ -1269,10 +1300,12 @@ def _evaluate_population_indices(
     run_val: bool = True,
     generation: int | None = None,
     is_last_gen: bool = False,
+    cv_fold_evaluator=None,
 ) -> dict[str, int]:
     """Evaluate unevaluated individuals, preferring batch simulate_rule_batch."""
     from gpu_fuzzy_trader.phases.phase2_rule_pool import (
         _evaluate_chromosome,
+        attach_cv_fold_returns_batch,
     )
     from gpu_fuzzy_trader.phases.phase2_sparse_encoding import chromosome_key
 
@@ -1354,6 +1387,11 @@ def _evaluate_population_indices(
             capital_pct=_cfg.PHASE2_CAPITAL_PCT,
             generation=generation,
             is_last_gen=is_last_gen,
+        )
+        attach_cv_fold_returns_batch(
+            metrics_list,
+            unique_chroms,
+            cv_fold_evaluator,
         )
 
         val_metrics_list = None
@@ -1438,6 +1476,7 @@ def _evaluate_population_indices(
                 diversity_reference=diversity_reference,
                 diversity_metrics_by_key=diversity_metrics_by_key,
                 stage_params=stage_params,
+                cv_fold_evaluator=cv_fold_evaluator,
                 run_val=run_val,
                 generation=generation,
                 is_last_gen=is_last_gen,
@@ -1503,6 +1542,7 @@ def _reevaluate_infinite_objectives(
     diversity_metrics_by_key: dict[tuple[int, ...], dict] | None = None,
     stage_params: Phase2StageParams | None = None,
     run_val: bool = True,
+    cv_fold_evaluator=None,
 ) -> dict[str, int]:
     """Evaluate any individuals still marked with inf objectives."""
     if indices is None:
@@ -1528,6 +1568,7 @@ def _reevaluate_infinite_objectives(
         diversity_metrics_by_key=diversity_metrics_by_key,
         stage_params=stage_params,
         run_val=run_val,
+        cv_fold_evaluator=cv_fold_evaluator,
     )
 
 
@@ -1705,8 +1746,8 @@ def _run_nsga2_fallback(
     plateau_best_progress = -np.inf
     plateau_streak = 0
     if reset_plateau:
-        plateau_best_progress = -np.inf
-        plateau_streak = 0
+        post_restart_no_improve_streak = 0
+        post_restart_best_progress = -np.inf
     mutation_rate = _stage_mutation_rate(stage_params)
     weighted_activate_prob = _stage_weighted_activate_prob(stage_params)
     # restart_count is per-stage (Stage A and Stage B each have their own),
@@ -1768,6 +1809,7 @@ def _run_nsga2_fallback(
         )
         unique_ratio = float(pareto_diag.get("unique_chromosome_ratio", 0.0))
         pop_unique_ratio = _population_unique_chromosome_ratio(population)
+        pop_diversity_ratio = _population_genotype_diversity_ratio(population)
         plateau_metric = _plateau_progress_metric(
             pareto_indices, metrics_cache)
         history.append({
@@ -1780,7 +1822,7 @@ def _run_nsga2_fallback(
             "deployable_preview_count": deployable_count,
             "deployable_archive_size": len(deployable_archive),
             "plateau_progress_pct": plateau_metric,
-            "pop_unique_chromosome_ratio": pop_unique_ratio,
+            "pop_genotype_diversity_ratio": pop_diversity_ratio,
             **_pareto_sortino_stats(pareto_indices, metrics_cache),
             **pareto_diag,
         })
@@ -1842,7 +1884,7 @@ def _run_nsga2_fallback(
                 "PHASE2_PLATEAU_POST_RESTART_BOOST_GENS",
                 3,
             ))
-            post_restart_best_progress = plateau_best_progress
+            post_restart_best_progress = -np.inf
             post_restart_no_improve_streak = 0
             just_restarted = True
             logger.info(
@@ -1870,7 +1912,7 @@ def _run_nsga2_fallback(
             valid_count=val_count,
             unique_chromosome_ratio=float(
                 pareto_diag.get("unique_chromosome_ratio", 0.0)),
-            pop_unique_chromosome_ratio=pop_unique_ratio,
+            pop_unique_chromosome_ratio=pop_diversity_ratio,
             deployable_count=deployable_count,
             pop_viable_count=pop_viable_count,
             plateau_streak=plateau_streak,
@@ -1907,7 +1949,7 @@ def _run_nsga2_fallback(
             plateau_streak,
             deployable_count=deployable_count,
             unique_chromosome_ratio=unique_ratio,
-            population_unique_ratio=pop_unique_ratio,
+            population_unique_ratio=pop_diversity_ratio,
             stage_params=stage_params,
             island_profile=island_profile,
         ):
@@ -1941,7 +1983,7 @@ def _run_nsga2_fallback(
                     ))
                     restart_count += 1
                     plateau_streak = 0
-                    post_restart_best_progress = plateau_best_progress
+                    post_restart_best_progress = -np.inf
                     post_restart_no_improve_streak = 0
                     just_restarted = True
                     logger.info(
@@ -1968,7 +2010,7 @@ def _run_nsga2_fallback(
                 patience_used,
                 float(_cfg.PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT),
                 deployable_count,
-                pop_unique_ratio,
+                pop_diversity_ratio,
             )
             break
 
@@ -2034,6 +2076,7 @@ def _run_nsga2_fallback(
                 val_engine=val_engine,
                 stage_params=stage_params,
                 run_val=run_val_this_gen,
+                cv_fold_evaluator=cv_fold_evaluator,
             )
             mutation_rate = _stage_mutation_rate(
                 stage_params, diversity_recovery=True,
@@ -2249,6 +2292,8 @@ def _run_nsga3(
     if reset_plateau:
         plateau_best_progress = -np.inf
         plateau_streak = 0
+        post_restart_no_improve_streak = 0
+        post_restart_best_progress = -np.inf
 
     hist_before_loop = len(history)
     for gen in range(n_generations):
@@ -2275,6 +2320,7 @@ def _run_nsga3(
             run_val=run_val_this_gen,
             generation=gen,
             is_last_gen=is_last_gen,
+            cv_fold_evaluator=cv_fold_evaluator,
         )
 
         # Compute fronts once — reused for logging, offspring, and archive.
@@ -2300,6 +2346,7 @@ def _run_nsga3(
         )
         unique_ratio = float(pareto_diag.get("unique_chromosome_ratio", 0.0))
         pop_unique_ratio = _population_unique_chromosome_ratio(population)
+        pop_diversity_ratio = _population_genotype_diversity_ratio(population)
         plateau_metric = _plateau_progress_metric(
             pareto_indices, metrics_cache)
         robust_stats = _pareto_robust_stats(pareto_indices, metrics_cache)
@@ -2313,7 +2360,7 @@ def _run_nsga3(
             "deployable_preview_count": deployable_count,
             "deployable_archive_size": len(deployable_archive),
             "plateau_progress_pct": plateau_metric,
-            "pop_unique_chromosome_ratio": pop_unique_ratio,
+            "pop_genotype_diversity_ratio": pop_diversity_ratio,
             **_pareto_sortino_stats(pareto_indices, metrics_cache),
             **robust_stats,
             **pareto_diag,
@@ -2377,7 +2424,7 @@ def _run_nsga3(
                 "PHASE2_PLATEAU_POST_RESTART_BOOST_GENS",
                 3,
             ))
-            post_restart_best_progress = plateau_best_progress
+            post_restart_best_progress = -np.inf
             post_restart_no_improve_streak = 0
             just_restarted = True
             logger.info(
@@ -2449,6 +2496,7 @@ def _run_nsga3(
                     diversity_metrics_by_key=diversity_metrics_by_key,
                     stage_params=stage_params,
                     run_val=run_val_this_gen,
+                    cv_fold_evaluator=cv_fold_evaluator,
                 )
                 mutation_rate = _stage_mutation_rate(
                     stage_params, diversity_recovery=True,
@@ -2493,6 +2541,7 @@ def _run_nsga3(
                 diversity_metrics_by_key=diversity_metrics_by_key,
                 stage_params=stage_params,
                 run_val=run_val_this_gen,
+                cv_fold_evaluator=cv_fold_evaluator,
             )
 
         gen_eval_stats = _merge_gen_eval_stats(
@@ -2512,7 +2561,7 @@ def _run_nsga3(
             valid_count=val_count,
             unique_chromosome_ratio=float(
                 pareto_diag.get("unique_chromosome_ratio", 0.0)),
-            pop_unique_chromosome_ratio=pop_unique_ratio,
+            pop_unique_chromosome_ratio=pop_diversity_ratio,
             cache_hit_rate=_eval_cache_hit_rate(gen_eval_stats),
             deployable_count=deployable_count,
             pop_viable_count=pop_viable_count,
@@ -2550,7 +2599,7 @@ def _run_nsga3(
             plateau_streak,
             deployable_count=deployable_count,
             unique_chromosome_ratio=unique_ratio,
-            population_unique_ratio=pop_unique_ratio,
+            population_unique_ratio=pop_diversity_ratio,
             stage_params=stage_params,
             island_profile=island_profile,
         ):
@@ -2585,7 +2634,7 @@ def _run_nsga3(
                     ))
                     restart_count += 1
                     plateau_streak = 0
-                    post_restart_best_progress = plateau_best_progress
+                    post_restart_best_progress = -np.inf
                     post_restart_no_improve_streak = 0
                     just_restarted = True
                     logger.info(
@@ -2613,7 +2662,7 @@ def _run_nsga3(
                 patience_used,
                 float(_cfg.PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT),
                 deployable_count,
-                pop_unique_ratio,
+                pop_diversity_ratio,
             )
             break
 
@@ -2673,6 +2722,7 @@ def _run_nsga3(
         plateau_streak=plateau_streak,
         post_restart_no_improve_streak=post_restart_no_improve_streak,
         post_restart_best_progress=post_restart_best_progress,
+        post_restart_gens_remaining=post_restart_gens_remaining,
         ref_vec=ref_vec,
         mutation_rate=mutation_rate,
         weighted_activate_prob=weighted_activate_prob,

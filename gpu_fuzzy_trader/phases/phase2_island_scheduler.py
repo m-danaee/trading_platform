@@ -350,11 +350,17 @@ def _run_cluster_islands(
                          key=lambda x: int(x) if x.isdigit() else x)
     n_clusters = len(cluster_ids)
     total_gens = int(_cfg.PHASE2_ISLAND_TOTAL_GENERATIONS)
-    gens_per_cluster = max(1, total_gens // max(1, n_clusters))
+    base_gens = max(1, total_gens // max(1, n_clusters))
+    remainder = total_gens % max(1, n_clusters)
+    cluster_budgets = {
+        cid: base_gens + (1 if idx < remainder else 0)
+        for idx, cid in enumerate(cluster_ids)
+    }
     epoch_gens = int(_cfg.PHASE2_ISLAND_EPOCH_GENERATIONS)
 
     generators: dict[str, Rule_Pool_Generator] = {}
     for cid in cluster_ids:
+        gens_per_cluster = cluster_budgets[cid]
         syms = cluster_map[cid]
         scoped_train = _cfg.filter_df_to_symbols(train_df, syms)
         scoped_val = _cfg.filter_df_to_symbols(val_df, syms)
@@ -381,9 +387,13 @@ def _run_cluster_islands(
         )
 
     epoch_counter = 0
-    while any(g._island_generations_done < gens_per_cluster for g in generators.values()):
+    while any(
+        generators[cid]._island_generations_done < cluster_budgets[cid]
+        for cid in cluster_ids
+    ):
         for cid in cluster_ids:
             gen = generators[cid]
+            gens_per_cluster = cluster_budgets[cid]
             if gen._island_generations_done >= gens_per_cluster:
                 continue
             remaining = gens_per_cluster - gen._island_generations_done

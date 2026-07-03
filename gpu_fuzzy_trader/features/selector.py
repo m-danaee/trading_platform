@@ -234,8 +234,6 @@ def _check_spearman_sign_consistency(
         min_abs_corr = float(config.PHASE1_SIGN_CONSISTENCY_MIN_ABS_CORR)
 
     folds = _get_spearman_folds(df, n_folds)
-    if val_df is not None:
-        folds.append(val_df)
     label_col = "label_close_288"
     if label_col not in df.columns:
         return set(feature_cols)

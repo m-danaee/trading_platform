@@ -12,7 +12,7 @@ def test_config_defaults():
     assert cfg.PHASE2_PLATEAU_POST_RESTART_STOP_ENABLED is True
     assert cfg.PHASE2_PLATEAU_POST_RESTART_STOP_PATIENCE == 5
     assert cfg.PHASE2_ISLAND_PLATEAU_POST_RESTART_STOP_ENABLED is True
-    assert cfg.PHASE2_ISLAND_PLATEAU_POST_RESTART_STOP_PATIENCE == 5
+    assert cfg.PHASE2_ISLAND_PLATEAU_POST_RESTART_STOP_PATIENCE == 8
     assert cfg.PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE == 6
 
 
@@ -24,7 +24,7 @@ def test_island_streak_below_patience_no_stop():
 
 def test_island_streak_at_patience_stops():
     assert _should_post_restart_early_stop_phase2(
-        5, island_profile="cluster_0",
+        8, island_profile="cluster_0",
     )
 
 
@@ -53,8 +53,8 @@ def test_global_disabled_no_stop(monkeypatch):
 
 def test_orphan_uses_island_knobs():
     assert not _should_post_restart_early_stop_phase2(
-        4, island_profile="orphan",
+        7, island_profile="orphan",
     )
     assert _should_post_restart_early_stop_phase2(
-        5, island_profile="orphan",
+        8, island_profile="orphan",
     )

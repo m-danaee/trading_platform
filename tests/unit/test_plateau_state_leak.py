@@ -45,6 +45,7 @@ def _make_minimal_gen() -> Rule_Pool_Generator:
     gen._feature_modes = {"feat_0": "discrete"}
     gen._engine = None
     gen._val_engine = None
+    gen._rng = np.random.default_rng(gen.seed)
     gen._ensure_engines = lambda: None  # no-op: no GPU needed
     return gen
 

@@ -266,6 +266,18 @@ def _positive_returns(train_m: dict, valid_m: dict) -> bool:
     return _f(train_m, "total_return_pct") > 0.0 and _f(valid_m, "total_return_pct") > 0.0
 
 
+def _symbols_in_rules(rules: list[dict]) -> set[str]:
+    symbols: set[str] = set()
+    for rule in rules:
+        for cond in rule.get("conditions", []):
+            text = str(cond).strip().lower()
+            if text.startswith("symbol is "):
+                symbols.add(text[len("symbol is "):].strip())
+            elif text.startswith("[symbol] is "):
+                symbols.add(text[len("[symbol] is "):].strip())
+    return symbols
+
+
 def _rule_key(rule: dict) -> tuple[str, ...]:
     return tuple(sorted(str(c) for c in rule.get("conditions", [])))
 
@@ -593,6 +605,7 @@ def _compose_ruleset(
     }]
 
     max_rules = int(getattr(_cfg, "RB_MAX_RULES", getattr(_cfg, "PHASE3_MAX_RULES", 5)))
+    min_distinct_symbols = int(getattr(_cfg, "RB_MIN_DISTINCT_SYMBOLS", 0))
     max_overlap = float(getattr(_cfg, "RB_MAX_PAIR_OVERLAP", 0.22))
     min_score_improve = float(getattr(_cfg, "RB_MIN_SCORE_IMPROVEMENT", 0.05))
     min_train_ret_improve = float(getattr(_cfg, "RB_MIN_TRAIN_RETURN_IMPROVEMENT", 0.01))
@@ -617,6 +630,11 @@ def _compose_ruleset(
                 continue
             trial_recs = selected + [cand]
             trial_rules = [r.rule for r in trial_recs]
+            if min_distinct_symbols > 0:
+                selected_syms = _symbols_in_rules([r.rule for r in selected])
+                cand_syms = _symbols_in_rules([cand.rule])
+                if len(selected_syms) < min_distinct_symbols and not (cand_syms - selected_syms):
+                    continue
             train_m, valid_m, score = _evaluate_ruleset(train_engine, valid_engine, trial_rules)
             if return_only_add:
                 if not _positive_returns(train_m, valid_m):
@@ -1159,13 +1177,16 @@ def run_rb_governor_pipeline(
     *,
     output_dir: str | os.PathLike[str] | None = None,
     cv_folds: list | None = None,
+    val_selection_df: pd.DataFrame | None = None,
 ) -> dict[str, dict]:
     """Build and optimize rb strategies for each direction and write outputs."""
     out_dir = Path(output_dir or _cfg.OUTPUTS_DIR)
     reports_dir = out_dir / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
 
-    train_like, valid_df = _load_scoring_frames(train_df, val_df)
+    train_like, _ = _load_scoring_frames(train_df, val_df)
+    scoring_val = val_selection_df if val_selection_df is not None else val_df
+    _, valid_df = _load_scoring_frames(train_df, scoring_val)
     results: dict[str, dict] = {}
 
     for direction in directions:

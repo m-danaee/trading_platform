@@ -96,7 +96,7 @@ def log_generation(
     if unique_chromosome_ratio is not None:
         msg += " pareto_unique=%.2f" % unique_chromosome_ratio
     if pop_unique_chromosome_ratio is not None:
-        msg += " pop_unique=%.2f" % pop_unique_chromosome_ratio
+        msg += " pop_diversity=%.2f" % pop_unique_chromosome_ratio
     if cache_hit_rate is not None:
         msg += " cache_hit_rate=%.2f" % cache_hit_rate
     if deployable_count is not None:

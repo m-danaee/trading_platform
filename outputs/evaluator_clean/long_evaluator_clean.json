@@ -3,8 +3,71 @@
   "rules_set": [
     {
       "conditions": [
-        "[feat_0] IS Very High",
-        "symbol is SYM_A"
+        "[open_gap_atr_14] IS Strong Positive",
+        "[body_to_tr] IS Very High",
+        "[vol_regime_pct_120] IS Very High",
+        "[rsi_hidden_div_flag] IS Positive (1)",
+        "symbol is 9"
+      ],
+      "tp": 2.0,
+      "sl": 1.0,
+      "capital_pct": 30.0
+    },
+    {
+      "conditions": [
+        "[range_compression_20_100] IS High",
+        "[log_range_over_vol_100] IS Low",
+        "[up_close_ratio_5] IS Very High",
+        "[cand_up_down_vol_ratio_20] IS Medium",
+        "symbol is 6"
+      ],
+      "tp": 2.0,
+      "sl": 1.0,
+      "capital_pct": 30.0
+    },
+    {
+      "conditions": [
+        "[roc_10] IS Weak Bullish",
+        "[open_gap_atr_14] IS Exactly Zero",
+        "[efficiency_ratio_20] IS Low",
+        "[vol_over_median20] IS Low",
+        "symbol is 1"
+      ],
+      "tp": 2.0,
+      "sl": 1.0,
+      "capital_pct": 30.0
+    },
+    {
+      "conditions": [
+        "[range_compression_20_100] IS High",
+        "[log_range_over_vol_100] IS Low",
+        "[up_close_ratio_5] IS Very High",
+        "[cand_up_down_vol_ratio_20] IS Medium",
+        "symbol is 10"
+      ],
+      "tp": 2.0,
+      "sl": 1.0,
+      "capital_pct": 30.0
+    },
+    {
+      "conditions": [
+        "[range_compression_20_100] IS Very High",
+        "[drawdown_from_peak_60] IS High",
+        "[lower_wick_to_tr] IS Very Low",
+        "[vol_regime_pct_120] IS Very Low",
+        "symbol is 7"
+      ],
+      "tp": 2.0,
+      "sl": 1.0,
+      "capital_pct": 30.0
+    },
+    {
+      "conditions": [
+        "[amihud_illiquidity_20] IS Very High",
+        "[roc_10] IS Extreme Bearish",
+        "[close_location_value] IS Low",
+        "[absret_ema_ratio_20_100] IS Very Low",
+        "symbol is 9"
       ],
       "tp": 2.0,
       "sl": 1.0,
