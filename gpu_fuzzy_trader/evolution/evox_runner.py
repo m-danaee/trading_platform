@@ -1364,6 +1364,8 @@ def _evaluate_population_indices(
                     tp=_cfg.PHASE2_TP,
                     sl=_cfg.PHASE2_SL,
                     capital_pct=_cfg.PHASE2_CAPITAL_PCT,
+                    generation=generation,
+                    is_last_gen=is_last_gen,
                 )
             except Exception as exc:
                 logger.debug(

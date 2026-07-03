@@ -1,0 +1,84 @@
+{
+  "task_id": "20",
+  "title": "Kill the Per-Generation Runtime Blowup (60-230s/gen)",
+  "verdict": "REQUEST_CHANGES",
+  "reviewer": "code-reviewer",
+  "commit_reviewed": "d44c646",
+  "branch": "fix/phase2-runtime-blowup",
+  "base_branch": "main",
+  "tests_run": "213 passed (test_gpu_engine.py, test_evox_runner.py, test_phase2_val_sim_interval.py, test_phase2_rule_pool.py, test_phase2_offspring_batch.py, test_phase2_plateau_restart.py, test_phase2_rule_pool_properties.py, test_gpu_engine_properties.py) under PYTEST_LOW_MEMORY=1",
+  "summary": "R1, R2, R3, R4 are implemented and the val-cadence helper is correctly factored. HOWEVER, the R1 fallback path injects a 'neutral' per_symbol_metrics that the C5 inline penalty and _symbol_robustness_penalty in phase2_rule_pool.py WILL penalize as if every chromosome were highly concentrated on losing symbols. This is a real search-bias bug that fires on 4/5 of generations with the default interval=5. Additional smaller issues around lru_cache stickiness on env vars, and an inconsistent plumbing in the batched val call. Fix the neutral-metrics bug before merging.",
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "HIGH",
+      "title": "Neutral per_symbol_metrics still triggers C5 + robustness penalties",
+      "location": "gpu_fuzzy_trader/backtest/gpu_engine.py:574-591 (_neutral_per_symbol_metrics) and :945-955 (call site)",
+      "description": "The neutral implementation returns {str(sym): {trade_count: 0, win_rate: 0.0, net_pnl: 0.0} for sym in symbols}. Verified analytically: (a) C5 inline check in phase2_rule_pool.py:574-582 counts symbols with net_pnl > 0.0 STRICTLY, so profitable=0 with neutral entries and penalty fires: (3-0)*2.0 = 6.0. (b) _symbol_robustness_penalty (phase2_rule_pool.py:258-285) computes median pnl_pct = 0.0 across all symbols; with PHASE2_SYMBOL_MEDIAN_RETURN_FLOOR_PCT=-0.5 (config.py:500), med < floor so |floor-med| = 0.5 added, plus (3-0)*2.0 = 6.0 from the profitability shortfall. Net per-chromosome bias from this 'neutral' is roughly +12.0 on support_penalty, scaled by PHASE2_SUPPORT_PENALTY_WEIGHT_F1/F2/F3 (0.4/0.6/0.6) → ~+4.8 to +7.2 per objective, on EVERY chromosome in EVERY non-enriched gen. With default PHASE2_ENRICH_SYMBOL_METRICS_EVERY_N_GENS=5 this is 4/5 = 80% of generations. This biases the NSGA-III search toward chromosomes with low drawdown/return (to absorb the constant penalty) and away from good ones. The function's docstring even claims 'doesn't fire spuriously' — that claim is wrong.",
+      "fix": "Use positive net_pnl in the neutral entries so both the C5 strict-greater-than check and the median-vs-floor check are satisfied. The simplest correct form: {str(sym): {'trade_count': 0, 'win_rate': 0.0, 'net_pnl': 1.0} for sym in symbols}. Verified that this yields profitable=N (no C5 penalty) and median pnl_pct = 0.1% (no robustness penalty). Update the docstring to reflect the intent ('positive net_pnl so C5/robustness stay neutral'). Update the test assertion in tests/unit/test_gpu_engine.py:660-665 to assert net_pnl > 0.0 rather than == 0.0 and update its comment."
+    },
+    {
+      "id": "F2",
+      "severity": "MEDIUM",
+      "title": "lru_cache on resolve_phase2_gpu_batch_size is sticky on env var changes",
+      "location": "gpu_fuzzy_trader/_gpu_runtime.py:106-139",
+      "description": "resolve_phase2_gpu_batch_size() is decorated with @functools.lru_cache(maxsize=1). Confirmed via repro: setting PHASE2_GPU_BATCH_SIZE=64 in env, calling the function, then changing env to PHASE2_GPU_BATCH_SIZE=128 and calling again returns 64 (cached). The docstring claims 'one probe per process' so this is intentional for production, but it is a footgun for tests and for any tooling that mutates the env between runs in the same process. There's no cache_clear or invalidation hook. Recommend documenting the lru_cache requirement explicitly in any test that monkeypatches the env, and consider exposing a small cache_clear() helper (or using @cache with explicit invalidation) so test fixtures can opt in.",
+      "fix": "Add a one-liner in the docstring: 'Tests that monkeypatch PHASE2_GPU_BATCH_SIZE must call resolve_phase2_gpu_batch_size.cache_clear() or restart the process.' This is non-blocking but worth a comment so the next person doesn't get confused."
+    },
+    {
+      "id": "F3",
+      "severity": "MEDIUM",
+      "title": "Inconsistent generation/is_last_gen plumbing in batched val path",
+      "location": "gpu_fuzzy_trader/evolution/evox_runner.py:1362-1368",
+      "description": "The train engine call in _evaluate_population_indices (line 1350) correctly passes generation=generation, is_last_gen=is_last_gen. The fallback path through _evaluate_chromosome (phase2_rule_pool.py:777) also passes them. But the batched val engine call at evox_runner.py:1362 omits them. Consequence: when PHASE2_GPU_ENRICH_SYMBOL_METRICS is True and the user runs through the NSGA-III batched path, the val engine always runs the CPU enrichment (because generation=None makes phase2_should_enrich_symbol_metrics default to True). This partially defeats R1's throttling — the val engine is enriched every gen, the train engine is not. Behavior is silent and asymmetric.",
+      "fix": "Pass generation=generation, is_last_gen=is_last_gen to the val_engine.simulate_rule_batch call at evox_runner.py:1362. Then add an explicit comment that this is intentional (so the val engine throttles enrichment on the same cadence)."
+    },
+    {
+      "id": "F4",
+      "severity": "LOW",
+      "title": "Misleading test assertion comment",
+      "location": "tests/unit/test_gpu_engine.py:660-665",
+      "description": "The new test asserts float(sym_entry.get('net_pnl', 0.0)) == 0.0 with the comment 'Neutral values should have zero net_pnl so C5 penalty doesn't fire'. The comment is wrong (see F1). The test still passes because the assertion only checks the dict value, not the penalty. Once F1 is fixed, the assertion should be updated to > 0.0 and the comment to match.",
+      "fix": "Tied to F1 — update assertion and comment together."
+    },
+    {
+      "id": "F5",
+      "severity": "INFO",
+      "title": "val_* key preservation is partial — does not achieve stated 'reuse for joint-fitness'",
+      "location": "gpu_fuzzy_trader/evolution/evox_runner.py:1389-1401 (batched) and :1733-1743 (fallback)",
+      "description": "Task-20.md R2 says 'reuse the last-known val metrics from metrics_cache/global_metrics_cache for the joint-fitness computation'. The current implementation copies val_* keys from the previous cache entry into the current metrics dict, but the objective is computed inside compute_phase2_objectives_from_metrics(metrics, val_metrics=None, ...) which gates all joint-fitness logic on `if val_metrics is not None`. So the preserved val_* keys are persisted in metrics_cache for the next gen that DOES run val, but they do NOT influence THIS skipped gen's objectives. The skipped gen's objective is effectively train-only. This is a partial implementation of the spec, not a bug per se. Spec-reviewer approved with awareness.",
+      "fix": "Optional: refactor compute_phase2_objectives_from_metrics to also accept val_* keys from metrics when val_metrics is None (e.g., extract val_metrics = {k[4:]: v for k, v in metrics.items() if k.startswith('val_')} as a fallback). Or accept this as-is and update task-20.md's R2 wording to match the actual 'stale cache for next gen' behavior. Non-blocking but worth aligning docs with code."
+    },
+    {
+      "id": "F6",
+      "severity": "INFO",
+      "title": "str(sym) key type — confirmed safe",
+      "location": "gpu_fuzzy_trader/backtest/gpu_engine.py:588",
+      "description": "Reviewed the key type. engine.df['symbol'] is either string dtype or categorical; in both cases str(sym) yields a Python str. CPU engine's return_logs=True path uses per_symbol_metrics[str(sym)] (cpu_engine.py:1100) so the key type matches. No issue."
+    },
+    {
+      "id": "F7",
+      "severity": "INFO",
+      "title": "_should_run_val_this_gen gen=0 edge case — correct",
+      "location": "gpu_fuzzy_trader/evolution/evox_runner.py:105-117",
+      "description": "Verified: 0 % interval == 0 for any interval >= 1, so val runs on gen 0 (and is_last_gen=True takes precedence). Correct."
+    },
+    {
+      "id": "F8",
+      "severity": "INFO",
+      "title": "Pre-existing key_suffix bug fix is correct",
+      "location": "gpu_fuzzy_trader/phases/phase2_rule_pool.py:753",
+      "description": "key_suffix is now defined at the top of the try block (was undefined in the old log lines). Minor, but a real fix."
+    },
+    {
+      "id": "F9",
+      "severity": "INFO",
+      "title": "All 213 tests pass under PYTEST_LOW_MEMORY=1",
+      "location": "tests/",
+      "description": "Verified the acceptance-criteria test command (plus extra related test files) all pass: 90 unit tests in test_gpu_engine.py and test_evox_runner.py, plus test_phase2_val_sim_interval.py, test_phase2_rule_pool.py, test_phase2_offspring_batch.py, test_phase2_plateau_restart.py, test_phase2_rule_pool_properties.py, test_gpu_engine_properties.py. No regressions."
+    }
+  ],
+  "blocking_fixes": ["F1"],
+  "recommended_fixes": ["F3", "F4"],
+  "informational": ["F2", "F5", "F6", "F7", "F8", "F9"]
+}

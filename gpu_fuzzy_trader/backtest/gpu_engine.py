@@ -575,8 +575,9 @@ def _neutral_per_symbol_metrics(engine: object) -> dict[str, dict]:
     """Build a neutral per_symbol_metrics dict when CPU enrichment is skipped.
 
     Returns a dict mapping each symbol known to *engine* to a neutral entry
-    with zero net_pnl so the C5 symbol-spread penalty in
-    ``phase2_rule_pool.py:574-582`` doesn't fire spuriously.
+    with a small positive net_pnl so the C5 symbol-spread penalty in
+    ``phase2_rule_pool.py:574-582`` doesn't fire spuriously (the check uses
+    ``net_pnl > 0`` strictly, so zero would still trigger the penalty).
     """
     try:
         # Extract unique symbols from the engine's dataframe.
@@ -584,7 +585,7 @@ def _neutral_per_symbol_metrics(engine: object) -> dict[str, dict]:
     except Exception:
         return {}
     return {
-        str(sym): {"trade_count": 0, "win_rate": 0.0, "net_pnl": 0.0}
+        str(sym): {"trade_count": 0, "win_rate": 0.0, "net_pnl": 1.0}
         for sym in symbols
     }
 

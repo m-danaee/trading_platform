@@ -664,11 +664,11 @@ class TestSimulateRuleBatch:
         )
         neutral = results[0].get("per_symbol_metrics", {})
         assert isinstance(neutral, dict), "Neutral per_symbol_metrics must be a dict"
-        # Neutral values should have zero net_pnl so C5 penalty doesn't fire
+        # Neutral values should have positive net_pnl so C5 penalty doesn't fire
         for sym_entry in neutral.values():
             assert isinstance(sym_entry, dict)
-            assert float(sym_entry.get("net_pnl", 0.0)) == 0.0, (
-                "Neutral per_symbol_metrics must have net_pnl=0.0"
+            assert float(sym_entry.get("net_pnl", 0.0)) > 0.0, (
+                "Neutral per_symbol_metrics must have net_pnl > 0.0"
             )
         assert fake_cpu.calls == 1, "CPU enrichment should NOT have been called for gen 3"
 

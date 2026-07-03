@@ -1,0 +1,8 @@
+{
+  "task_id": "20",
+  "title": "Kill the Per-Generation Runtime Blowup",
+  "verdict": "APPROVED",
+  "reviewer": "spec-reviewer",
+  "summary": "All 4 acceptance criteria met. R1: CPU enrichment throttled with PHASE2_ENRICH_SYMBOL_METRICS_EVERY_N_GENS=5 + neutral fallback. R2: Shared _should_run_val_this_gen helper, JOINT_TRAIN_VAL no longer short-circuits throttle, val_* keys preserved from previous cache. R3: GPU batch size raised 128→256, VRAM tier updated. R4: @lru_cache on resolve_phase2_gpu_batch_size + cached at engine init. evaluator_v5.ipynb untouched. Scope is clean — no out-of-scope additions.",
+  "notes": "Pre-existing bug fix (undefined key_suffix) is minor and justified. Mock backward-compat **kwargs changes are necessary."
+}
