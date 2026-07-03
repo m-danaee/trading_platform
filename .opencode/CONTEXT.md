@@ -30,9 +30,9 @@ See `.opencode/tasks/task-20.md`..`task-23.md` for full analysis.
 - **Task 20** ✅ COMPLETE (dace7c7 on fix/phase2-runtime-blowup) — Kill per-generation runtime blowup
 
 ## Current Plan Tasks
-- **Task 21** 🔄 IN PROGRESS — Island RNG state leakage + generation-budget realization
+- **Task 21** ✅ COMPLETE (25a628a on fix/island-rng-and-budget) — Island RNG state leakage + generation-budget realization
 - **Task 22** 🔲 TODO — Restore Phase2→RB-Governor→OOS objective continuity
 - **Task 23** 🔲 TODO — Config/logging anomaly cleanup
 
 ## Current State
-**Task 21 in progress** on branch `fix/island-rng-and-budget`.
+**Task 21 completed.** Branch `fix/island-rng-and-budget` with 2 commits, passed spec review + code review. Awaiting checkpoint resume for Task 22.
