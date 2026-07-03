@@ -1597,7 +1597,8 @@ def _load_internal_split_frames_for_rb() -> tuple[pd.DataFrame, pd.DataFrame]:
     if train_path.exists() and valid_path.exists():
         return downcast_numeric_df(pd.read_parquet(train_path)), downcast_numeric_df(pd.read_parquet(valid_path))
     from gpu_fuzzy_trader.data.splitter import Data_Splitter
-    full = Data_Loader().load_dataset(getattr(_cfg, "TRAIN_CSV_PATH", "data/train.csv"))
+    full = Data_Loader().load_dataset(
+        getattr(_cfg, "TRAIN_CSV_PATH", "data/train_2.csv"))
     train_df, valid_df = Data_Splitter().split_and_persist(full)
     return train_df, valid_df
 

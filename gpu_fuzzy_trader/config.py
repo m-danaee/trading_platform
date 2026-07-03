@@ -103,11 +103,12 @@ def _env_str(name: str, default: str) -> str:
 DATA_ROOT = os.environ.get("DATA_ROOT", "").strip()
 TRAIN_CSV_PATH = _env_str(
     "TRAIN_CSV_PATH",
-    os.path.join(DATA_ROOT, "train.csv") if DATA_ROOT else "data/train.csv",
+    os.path.join(
+        DATA_ROOT, "train_2.csv") if DATA_ROOT else "data/train_2.csv",
 )
 TEST_CSV_PATH = _env_str(
     "TEST_CSV_PATH",
-    os.path.join(DATA_ROOT, "test.csv") if DATA_ROOT else "data/test.csv",
+    os.path.join(DATA_ROOT, "test_2.csv") if DATA_ROOT else "data/test_2.csv",
 )
 
 # Cached splits from train.csv (Phases 2–5). Rebuilt when train.csv is newer.

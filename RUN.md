@@ -9,8 +9,8 @@ Quick reference for setup, running the GPU-Fuzzy trading pipeline, tests, and ev
 - **Python 3.10+** (3.12 tested)
 - **Repository root as working directory** — all paths in `gpu_fuzzy_trader/config.py` are relative to the project root
 - **Data files** (included in this repo):
-  - `data/train.csv` — training data (Phases 1–4)
-  - `data/test.csv` — held-out test data (Phase 5 only)
+  - `data/train_2.csv` — training data (Phases 1–4)
+  - `data/test_2.csv` — held-out test data (Phase 5 only)
 
 ---
 
@@ -280,8 +280,8 @@ Edit `gpu_fuzzy_trader/config.py` before running. Common settings:
 
 | Setting                        | Default                | Purpose                                                   |
 | ------------------------------ | ---------------------- | --------------------------------------------------------- |
-| `TRAIN_CSV_PATH`               | `data/train.csv`       | Training CSV                                              |
-| `TEST_CSV_PATH`                | `data/test.csv`        | Test CSV                                                  |
+| `TRAIN_CSV_PATH`               | `data/train_2.csv`     | Training CSV                                              |
+| `TEST_CSV_PATH`                | `data/test_2.csv`      | Test CSV                                                  |
 | `PHASE1_TOP_K_FEATURES`        | `30`                   | Features per direction                                    |
 | `PHASE2_ALGORITHM`             | `"NSGA3"`              | Fixed; NSGA-III when EvoX is installed                    |
 | `PHASE2_POPULATION_SIZE`       | `200`                  | Phase 2 population                                        |

@@ -2,6 +2,7 @@
 """Compare Phase 3 (pre-risk-opt) vs Phase 4 strategies on the test set via evaluator_v5."""
 
 from __future__ import annotations
+from gpu_fuzzy_trader import config as _cfg
 
 import json
 import sys
@@ -10,6 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+
 
 # Phase 2 static risk used by Phase 3 (unchanged by Phase 4 for short in this run).
 PHASE3_STATIC_TP = 2.0
@@ -50,8 +52,8 @@ def _reset_risk_to_phase3(strategy: dict) -> dict:
 
 def _evaluate(ns: dict, strategy: dict, label: str) -> dict:
     _, df_eval, feature_cols, feature_modes, _ = ns["load_training_and_evaluation_data"](
-        reference_schema_path=str(ROOT / "data" / "train.csv"),
-        evaluation_file_path=str(ROOT / "data" / "test.csv"),
+        reference_schema_path=_cfg.TRAIN_CSV_PATH,
+        evaluation_file_path=_cfg.TEST_CSV_PATH,
     )
     metrics, _, _ = ns["evaluate_student_strategy_on_dataset"](
         df_eval=df_eval,
