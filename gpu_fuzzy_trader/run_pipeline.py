@@ -8,9 +8,10 @@ Execution order:
   2. Load and prepare data (Data_Loader + Data_Splitter)
   3. Phase 1: Feature_Selector
   4. Phase 2: Rule_Pool_Generator for both directions
-  5. Phase 3: Rule_Set_Selector for both directions
-  6. Phase 4: WalkForwardRiskOptimizer for both directions
-  7. Phase 5: OOS_Evaluator (always runs)
+  5. Phase 3: Rule_Set_Selector (legacy — skipped when RB Governor active)
+  6. Phase 4: WalkForwardRiskOptimizer (legacy — skipped when RB Governor active)
+  7. RB Governor: unified selection + risk tuning (replaces Phase 3+4)
+  8. Phase 5: OOS_Evaluator (always runs)
 
 Default CLI (``python -m gpu_fuzzy_trader.run_pipeline``) always re-runs Phases 1–4.
 Pass ``--resume`` to skip phases whose on-disk outputs are already valid.
@@ -376,6 +377,9 @@ def _print_run_summary(results: dict[str, Any], phase: int | None, log_path: str
         return
 
     if phase == 3:
+        if _cfg.RB_GOVERNOR_ENABLED:
+            print("  Phase 3: SKIPPED (RB Governor replaces Phase 3+4)")
+            return
         phase_result = results.get("phase3", {})
         if not phase_result:
             print("  No Phase 3 rule sets were produced")
@@ -390,6 +394,9 @@ def _print_run_summary(results: dict[str, Any], phase: int | None, log_path: str
         return
 
     if phase == 4:
+        if _cfg.RB_GOVERNOR_ENABLED:
+            print("  Phase 4: SKIPPED (RB Governor replaces Phase 3+4)")
+            return
         phase_result = results.get("phase4", {})
         if not phase_result:
             print("  No Phase 4 optimized strategies were produced")
