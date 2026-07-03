@@ -4,13 +4,19 @@
 **base_branch:** `main`
 **branch_policy:** isolated
 **execution_mode:** checkpoint
-**plan:** `.opencode/plans/PLAN.md` (4 tasks: 20-23) — **ALL COMPLETE**
+**status:** COMPLETE — all tasks merged to main
 
 ## Completed Tasks
-- **Task 20** ✅ `fix/phase2-runtime-blowup` — CPU enrichment throttled, val cadence fixed, GPU batch widened, VRAM probe memoized
-- **Task 21** ✅ `fix/island-rng-and-budget` — Persistent advancing RNG per island, per-island seed derivation
-- **Task 22** ✅ `fix/objective-continuity` — F3 objective truthful label, tp/sl/capital_pct persisted on pool entries, RB Governor CV-fold consistency
-- **Task 23** ✅ `fix/config-logging-anomalies` — Pipeline docstring/summary show RB Governor, skip_symbol_robustness_penalty clarified
+- **Task 20** ✅ merged — Kill per-generation runtime blowup
+- **Task 21** ✅ merged — Island RNG state leakage
+- **Task 22** ✅ merged — Restore objective continuity
+- **Task 23** ✅ merged — Config/logging anomaly cleanup
+
+## Merged Branches
+- fix/phase2-runtime-blowup → main (fast-forward)
+- fix/island-rng-and-budget → main
+- fix/objective-continuity → main
+- fix/config-logging-anomalies → main
 
 ## Current State
-**Plan complete.** Four feature branches ready for finalization.
+Plan complete. Ready for branch cleanup and Colab validation.
