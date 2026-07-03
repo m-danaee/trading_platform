@@ -2131,6 +2131,11 @@ def resolve_island_hyperparams(
         min_profitable_symbols=int(min_profitable),
         monthly_admission_min_months=int(monthly_months),
         monthly_admission_min_profitable_ratio=float(monthly_ratio),
+        # skip_symbol_robustness_penalty is always True for island-scoped runs
+        # (cluster/orphan) because the per-symbol median profit check is
+        # too aggressive for small symbol sets (most clusters have 2-5 symbols).
+        # The min_profitable_symbols gate already provides cross-symbol quality
+        # control at an appropriate threshold.
         skip_symbol_robustness_penalty=True,
         n_rows=int(rows),
         n_symbols=int(sym_n),
