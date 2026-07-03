@@ -7,6 +7,7 @@ guarded inter-cluster migration, and orphan-symbol mini-runs.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -34,6 +35,27 @@ from gpu_fuzzy_trader.phases.phase2_support import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _derive_island_seed(base_seed: int | None, island_id: str) -> int | None:
+    """Return a deterministic but distinct seed per island from base seed + id.
+
+    Parameters
+    ----------
+    base_seed : int or None
+        The base random seed. If None, returns None.
+    island_id : str
+        Unique identifier for the island (e.g. cluster ID or 'orphan_SYM').
+
+    Returns
+    -------
+    int or None
+        A derived seed in [0, 2**31), or None when base_seed is None.
+    """
+    if base_seed is None:
+        return None
+    h = hashlib.sha256(f"{base_seed}:{island_id}".encode()).digest()
+    return int.from_bytes(h[:4], "big") % (2**31)
 
 
 def _load_phase1_feature_lists() -> tuple[list[dict], list[dict]]:
@@ -271,7 +293,7 @@ def _run_orphan_boosts(
                 direction=direction,
                 pop_size=int(_cfg.PHASE2_ORPHAN_POPULATION_SIZE),
                 n_generations=int(_cfg.PHASE2_ORPHAN_GENERATIONS),
-                seed=seed,
+                seed=_derive_island_seed(seed, f"orphan_{sym}"),
                 cv_folds=cv_folds,
                 island_id=f"orphan_{sym}",
                 source_symbols=[sym],
@@ -349,7 +371,7 @@ def _run_cluster_islands(
             feature_infos=feature_infos,
             direction=direction,
             n_generations=gens_per_cluster,
-            seed=seed,
+            seed=_derive_island_seed(seed, cid),
             cv_folds=cv_folds,
             island_id=cid,
             source_symbols=syms,

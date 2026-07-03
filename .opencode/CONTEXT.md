@@ -26,13 +26,13 @@ See `.opencode/tasks/task-20.md`..`task-23.md` for full analysis.
 - **Task 1** ✅ MERGED (cd69462) — Config parameter tuning (runtime + OOS)
 - **Task 2** ✅ MERGED (feat/phase2-evox-fixes) — EvoX runner code fixes (FIFO cache + phenotype-collapse trigger)
 - **Task 3** ✅ MERGED (feat/phase2-island-fixes) — Island scheduler + pool admission fixes (min epoch guard, patience helper, config param)
-- **OOM Fix** ✅ MERGED (fix/oom-rb-governor-transition) — Memory cleanup between phases to prevent OOM at RB Governor boundary
+- **OOM Fix** ✅ MERGED (fix/oom-rb-governor-transition) — Memory cleanup between phases
+- **Task 20** ✅ COMPLETE (dace7c7 on fix/phase2-runtime-blowup) — Kill per-generation runtime blowup
 
 ## Current Plan Tasks
-- **Task 20** ✅ COMPLETE (dace7c7 on fix/phase2-runtime-blowup) — Kill per-generation runtime blowup
-- **Task 21** 🔲 TODO — Island RNG state leakage + generation-budget realization
+- **Task 21** ✅ COMPLETE (25a628a on fix/island-rng-and-budget) — Island RNG state leakage + generation-budget realization
 - **Task 22** 🔲 TODO — Restore Phase2→RB-Governor→OOS objective continuity
 - **Task 23** 🔲 TODO — Config/logging anomaly cleanup
 
 ## Current State
-**Task 20 completed.** Branch `fix/phase2-runtime-blowup` with 3 commits, passed spec review + code review. Awaiting checkpoint resume for Task 21.
+**Task 21 completed.** Branch `fix/island-rng-and-budget` with 2 commits, passed spec review + code review. Awaiting checkpoint resume for Task 22.

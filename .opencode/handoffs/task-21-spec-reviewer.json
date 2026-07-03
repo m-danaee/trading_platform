@@ -1,0 +1,30 @@
+{
+  "task_id": "21",
+  "title": "Island RNG State Leakage & Generation-Budget Realization",
+  "reviewer": "spec-reviewer",
+  "verdict": "APPROVED",
+  "branch": "fix/island-rng-and-budget",
+  "base_branch": "main",
+  "commit_reviewed": "25a628a",
+  "files_reviewed": [
+    "gpu_fuzzy_trader/phases/phase2_rule_pool.py",
+    "gpu_fuzzy_trader/phases/phase2_island_scheduler.py",
+    "tests/unit/test_phase2_rule_pool.py"
+  ],
+  "acceptance_criteria": {
+    "A1_persistent_self_rng": "PASS — self._rng initialized once in __init__ at line 1973 of phase2_rule_pool.py; all three call sites (lines 2242, 2847, 2889) replaced with `rng = self._rng`. Verified by grep that no `np.random.default_rng(self.seed)` calls remain in the file.",
+    "A2_distinct_island_seeds": "PASS — `_derive_island_seed(base_seed, island_id)` helper added (lines 40-58) in phase2_island_scheduler.py using SHA-256 truncation. Applied at line 296 (orphan islands, island_id='orphan_{sym}') and line 374 (cluster islands, island_id=cid). Handles base_seed=None gracefully (returns None).",
+    "A3_existing_tests_pass": "PASS — 125/125 tests pass in test_phase2_rule_pool.py and test_phase2_island_scheduler.py (PYTEST_LOW_MEMORY=1). Verified via pytest run in 68.34s.",
+    "A4_rng_state_advances_across_run_epoch": "PASS — `test_rng_state_advances_across_run_epoch_calls` asserts the bit_generator state changes after each run_epoch() call, proving the persistent RNG advances. Also `test_rng_state_not_reset_between_run_epoch_calls` reinforces the same property.",
+    "A5_distinct_seeds_produce_distinct_outputs": "PASS — `test_derive_island_seed_distinct_for_distinct_ids` confirms 3 distinct island_ids produce 3 distinct derived seeds. `test_distinct_seeds_produce_distinct_rng_state` confirms two Rule_Pool_Generator instances with different seeds have different bit_generator state. `test_derive_island_seed_deterministic` and `test_derive_island_seed_different_base_differs` provide additional coverage.",
+    "A6_evaluator_v5_not_modified": "PASS — `git diff main...fix/island-rng-and-budget --name-only | grep -i evaluator` returns no matches. evaluator_v5.ipynb untouched."
+  },
+  "out_of_scope_additions": "None substantive. The .opencode/CONTEXT.md change is orchestrator bookkeeping (date + state transition) and is not a code/spec concern.",
+  "compatibility_check": "PASS — `self.seed` attribute is still preserved (line 1972) for any external code that may inspect it. The `_rng` initialization falls back to `_cfg.PHASE2_SEED` when seed is None, preserving prior behavior for the seed=None case. No call sites depend on replaying identical RNG sequences; the persistent-state change is safe.",
+  "minor_observations": [
+    "The test for distinct seeds tests RNG state equality rather than initial population equality directly, but this is functionally equivalent (distinct state -> distinct draws -> distinct populations).",
+    "The implementer added a defensive fallback to _cfg.PHASE2_SEED when seed is None, which is sensible but not explicitly required by the spec. Not out-of-scope since it preserves compatibility."
+  ],
+  "issues": [],
+  "notes": "All 6 acceptance criteria met. Implementation is minimal, targeted, and well-tested (8 new tests, all passing). No out-of-scope additions. evaluator_v5.ipynb is untouched per the strict constraint."
+}

@@ -1977,6 +1977,7 @@ class Rule_Pool_Generator:
         self.pop_size = pop_size if pop_size is not None else _cfg.PHASE2_POPULATION_SIZE
         self.n_generations = n_generations if n_generations is not None else _cfg.PHASE2_GENERATIONS
         self.seed = seed  # preserved as-is (None when not provided, per docstring)
+        self._rng = np.random.default_rng(seed if seed is not None else _cfg.PHASE2_SEED)
         self._feature_signature = _archive_feature_signature(feature_infos)
         self._evolution_state = None
         self._island_history: list[dict] = []
@@ -2245,7 +2246,7 @@ class Rule_Pool_Generator:
         list[dict]
             Pareto-front rules in pool JSON schema.
         """
-        rng = np.random.default_rng(self.seed)
+        rng = self._rng
 
         logger.info(
             "Phase 2 [%s]: pop=%d, gen=%d, features=%d",
@@ -2850,7 +2851,7 @@ class Rule_Pool_Generator:
                     k: hof[k] for k in keys
                 }
 
-        rng = np.random.default_rng(self.seed)
+        rng = self._rng
         feature_probs = build_feature_sampling_probs(self.feature_infos)
         tag = f"Phase 2 [{self.direction}]"
         if stage_plan.two_stage_active and stage_plan.stage is not None:
@@ -2892,7 +2893,7 @@ class Rule_Pool_Generator:
         from gpu_fuzzy_trader.phases.phase2_init import build_feature_sampling_probs
 
         self._ensure_engines()
-        rng = np.random.default_rng(self.seed)
+        rng = self._rng
         feature_probs = build_feature_sampling_probs(self.feature_infos)
         tag = f"Phase 2 [{self.direction}] finalize"
 
