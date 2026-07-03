@@ -524,6 +524,15 @@ class Pipeline_Orchestrator:
                     results["phase4"] = {}
                     phase5_directions: frozenset[str] = frozenset()
                 elif bool(getattr(_cfg, "RB_GOVERNOR_ENABLED", False)):
+                    # Release Phase 2 GPU resources before RB Governor to avoid OOM
+                    logger.info(
+                        "Releasing Phase 2 resources before RB Governor..."
+                    )
+                    from gpu_fuzzy_trader._memory import release_phase2_resources
+                    release_phase2_resources()
+                    import gc
+                    gc.collect()
+
                     rb_result = self._run_rb_governor(
                         train_df, val_df, phase2_result, cv_folds=self._cv_folds)
                     results["phase3"] = rb_result
@@ -533,6 +542,15 @@ class Pipeline_Orchestrator:
                     # ------------------------------------------------------------------
                     # Phase 3: Rule Set Selection
                     # ------------------------------------------------------------------
+                    # Release Phase 2 resources before Phase 3 to avoid OOM
+                    logger.info(
+                        "Releasing Phase 2 resources before Phase 3..."
+                    )
+                    from gpu_fuzzy_trader._memory import release_phase2_resources
+                    release_phase2_resources()
+                    import gc
+                    gc.collect()
+
                     phase3_result = self._run_phase3(
                         train_df, val_df, phase2_result, force=force)
                     results["phase3"] = phase3_result
@@ -540,6 +558,13 @@ class Pipeline_Orchestrator:
                     # ------------------------------------------------------------------
                     # Phase 4: RL Risk Optimization
                     # ------------------------------------------------------------------
+                    # Release Phase 3 GPU resources before Phase 4 to avoid OOM
+                    logger.info(
+                        "Releasing Phase 3 resources before Phase 4..."
+                    )
+                    release_phase2_resources()
+                    gc.collect()
+
                     phase4_result = self._run_phase4(
                         train_df, val_df, phase3_result, force=force)
                     results["phase4"] = phase4_result
@@ -644,15 +669,38 @@ class Pipeline_Orchestrator:
                     results["phase4"] = {}
                     phase5_directions: frozenset[str] = frozenset()
                 elif bool(getattr(_cfg, "RB_GOVERNOR_ENABLED", False)):
+                    # Release Phase 2 resources before RB Governor to avoid OOM
+                    logger.info(
+                        "Releasing Phase 2 resources before RB Governor..."
+                    )
+                    from gpu_fuzzy_trader._memory import release_phase2_resources
+                    release_phase2_resources()
+                    import gc
+                    gc.collect()
+
                     rb_result = self._run_rb_governor(
                         train_df, val_df, phase2_result, cv_folds=self._cv_folds)
                     results["phase3"] = rb_result
                     results["phase4"] = rb_result
                     phase5_directions = frozenset(rb_result.keys())
                 else:
+                    logger.info(
+                        "Releasing Phase 2 resources before Phase 3..."
+                    )
+                    from gpu_fuzzy_trader._memory import release_phase2_resources
+                    release_phase2_resources()
+                    import gc
+                    gc.collect()
+
                     phase3_result = self._run_phase3(
                         train_df, val_df, phase2_result, force=force)
                     results["phase3"] = phase3_result
+
+                    logger.info(
+                        "Releasing Phase 3 resources before Phase 4..."
+                    )
+                    release_phase2_resources()
+                    gc.collect()
 
                     phase4_result = self._run_phase4(
                         train_df, val_df, phase3_result, force=force)
@@ -730,11 +778,28 @@ class Pipeline_Orchestrator:
                 }
                 phase2_result = self._load_phase2_outputs()
                 if bool(getattr(_cfg, "RB_GOVERNOR_ENABLED", False)):
+                    # Release Phase 2 resources before RB Governor to avoid OOM
+                    logger.info(
+                        "Releasing Phase 2 resources before RB Governor..."
+                    )
+                    from gpu_fuzzy_trader._memory import release_phase2_resources
+                    release_phase2_resources()
+                    import gc
+                    gc.collect()
+
                     rb_result = self._run_rb_governor(
                         train_df, val_df, phase2_result, cv_folds=self._cv_folds)
                     results["phase3"] = rb_result
                     results["phase4"] = rb_result
                 else:
+                    logger.info(
+                        "Releasing Phase 2 resources before Phase 3..."
+                    )
+                    from gpu_fuzzy_trader._memory import release_phase2_resources
+                    release_phase2_resources()
+                    import gc
+                    gc.collect()
+
                     results["phase3"] = self._run_phase3(
                         train_df, val_df, phase2_result, force=True)
 
@@ -748,6 +813,14 @@ class Pipeline_Orchestrator:
                 # optimizer on existing outputs/{long,short}.json rule
                 # conditions (TP/SL/capital only). RB Governor is not used
                 # here — it would re-select rules from the Phase 2 pool.
+                logger.info(
+                    "Releasing Phase 3 resources before Phase 4..."
+                )
+                from gpu_fuzzy_trader._memory import release_phase2_resources
+                release_phase2_resources()
+                import gc
+                gc.collect()
+
                 phase3_result = self._load_phase3_outputs()
                 results["phase4"] = self._run_phase4(
                     train_df, val_df, phase3_result, force=True)

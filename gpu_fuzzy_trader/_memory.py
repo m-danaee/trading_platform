@@ -28,8 +28,16 @@ def log_memory_rss(label: str) -> None:
 
 
 def release_phase2_resources() -> None:
-    """Force GC and clear JAX compilation caches between Phase 2 directions."""
+    """Force GC and clear JAX compilation caches between Phase 2 directions.
+
+    Releases:
+      - Python garbage (gc.collect)
+      - JAX compilation cache (jax.clear_caches)
+      - Global GPU warmup signature registry (_WARMED_SIGNATURES)
+    """
     import gc
+
+    log_memory_rss("before_release_phase2_resources")
 
     gc.collect()
     try:
@@ -38,3 +46,16 @@ def release_phase2_resources() -> None:
         jax.clear_caches()
     except Exception:
         pass
+
+    # Clear warmup-signature registry so next phase recompiles with
+    # fresh memory layout instead of holding references to old engines.
+    try:
+        from gpu_fuzzy_trader._gpu_runtime import _WARMED_SIGNATURES
+
+        _WARMED_SIGNATURES.clear()
+    except Exception:
+        pass
+
+    gc.collect()
+
+    log_memory_rss("after_release_phase2_resources")
