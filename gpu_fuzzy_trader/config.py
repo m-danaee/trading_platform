@@ -452,11 +452,15 @@ PHASE2_USE_TOTAL_RETURN_OBJ = False
 # PHASE2_F3_OBJECTIVE — third objective: "profit_factor" (default),
 # "cv_fold_min" (min of CV fold returns), or "win_rate" (legacy).
 #   profit_factor → f3 = -profit_factor (aligns with edge quality over noise).
-#   cv_fold_min  → f3 = -min(CV fold returns); requires CvFoldValEvaluator.
+#   cv_fold_min  → f3 = -min(CV fold returns); requires CvFoldValEvaluator
+#                  which is too expensive for NSGA-III inner loop — disabled.
 #   win_rate     → f3 = -win_rate (degenerate, not recommended).
-# Changed "profit_factor"→"cv_fold_min": worst-case CV fold return instead of
-# profit_factor; aligns with OOS generalization goal.
-PHASE2_F3_OBJECTIVE = "cv_fold_min"
+# NOTE: cv_fold_min requires batched CV-fold evaluation which is prohibitively
+# expensive in the NSGA-III inner loop.  The truthful config label is
+# profit_factor — what actually executes in all batch-evaluated individuals.
+# CV-fold robustness is enforced at the pool-admission gate and RB Governor
+# scoring stages instead.
+PHASE2_F3_OBJECTIVE = "profit_factor"
 
 # PHASE2_MIN_PROFITABLE_SYMBOLS_PENALTY — min profitable symbols before penalty.
 #   When n_profitable_symbols < this, a penalty is added to support_penalty

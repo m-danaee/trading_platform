@@ -24,15 +24,15 @@ See `.opencode/tasks/task-20.md`..`task-23.md` for full analysis.
 - **A2** ✅ MERGED (ed4f183) — periodic val sim
 - **A3** ✅ MERGED (ce3706a) — island patience dead-code fix
 - **Task 1** ✅ MERGED (cd69462) — Config parameter tuning (runtime + OOS)
-- **Task 2** ✅ MERGED (feat/phase2-evox-fixes) — EvoX runner code fixes (FIFO cache + phenotype-collapse trigger)
-- **Task 3** ✅ MERGED (feat/phase2-island-fixes) — Island scheduler + pool admission fixes (min epoch guard, patience helper, config param)
-- **OOM Fix** ✅ MERGED (fix/oom-rb-governor-transition) — Memory cleanup between phases
-- **Task 20** ✅ COMPLETE (dace7c7 on fix/phase2-runtime-blowup) — Kill per-generation runtime blowup
+- **Task 2** ✅ MERGED (feat/phase2-evox-fixes) — EvoX runner code fixes
+- **Task 3** ✅ MERGED (feat/phase2-island-fixes) — Island scheduler + pool admission
+- **OOM Fix** ✅ MERGED (fix/oom-rb-governor-transition) — Memory cleanup
+- **Task 20** ✅ COMPLETE (on fix/phase2-runtime-blowup) — Kill per-generation runtime blowup
+- **Task 21** ✅ COMPLETE (on fix/island-rng-and-budget) — Island RNG state leakage
 
 ## Current Plan Tasks
-- **Task 21** ✅ COMPLETE (25a628a on fix/island-rng-and-budget) — Island RNG state leakage + generation-budget realization
-- **Task 22** 🔲 TODO — Restore Phase2→RB-Governor→OOS objective continuity
+- **Task 22** ✅ COMPLETE (ac918c4 on fix/objective-continuity) — Restore Phase2→RB-Governor→OOS objective continuity
 - **Task 23** 🔲 TODO — Config/logging anomaly cleanup
 
 ## Current State
-**Task 21 completed.** Branch `fix/island-rng-and-budget` with 2 commits, passed spec review + code review. Awaiting checkpoint resume for Task 22.
+**Task 22 completed.** Branch `fix/objective-continuity` with 2 commits, passed spec review + code review. Awaiting checkpoint resume for Task 23.

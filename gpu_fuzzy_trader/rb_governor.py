@@ -217,12 +217,18 @@ def _score_metrics(train_m: dict, valid_m: dict, *, min_train_trades: int | None
     score -= max(0.0, train_ratio - valid_ratio) * float(getattr(_cfg, "RB_TRAIN_VALID_RATIO_GAP_WEIGHT", 30.0))
     score -= max(0.0, train_ret - valid_ret) * float(getattr(_cfg, "RB_TRAIN_VALID_RETURN_GAP_WEIGHT", 4.0))
 
-    # CV-fold consistency term
-    if cv_fold_returns:
+    # CV-fold consistency penalty (when per-fold returns are available)
+    if cv_fold_returns and len(cv_fold_returns) > 1:
         cv_min = min(cv_fold_returns)
-        cv_std = float(np.std(cv_fold_returns))
-        score += 8.0 * cv_min
-        score -= 3.0 * cv_std
+        cv_max = max(cv_fold_returns)
+        cv_range = cv_max - cv_min
+        cv_mean = sum(cv_fold_returns) / len(cv_fold_returns)
+        # Penalize rules where worst fold is negative
+        if cv_min < 0:
+            score -= abs(cv_min) * 5.0
+        # Penalize high variance across folds (inconsistent OOS)
+        if abs(cv_mean) > 0.01 and cv_range > abs(cv_mean) * 2.0:
+            score -= (cv_range / max(abs(cv_mean), 0.01) - 2.0) * 5.0
 
     return float(score)
 
