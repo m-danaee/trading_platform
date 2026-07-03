@@ -1200,7 +1200,7 @@ class TestRulePoolGeneratorRun:
         calls = []
 
         class MockEngine:
-            def simulate_rule_batch(self, chromosomes, tp, sl, capital_pct):
+            def simulate_rule_batch(self, chromosomes, tp, sl, capital_pct, **kwargs):
                 calls.append({"tp": tp, "sl": sl, "capital_pct": capital_pct})
                 return [{
                     "sortino_ratio": 1.0,

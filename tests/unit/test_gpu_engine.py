@@ -583,7 +583,7 @@ class TestSimulateRuleBatch:
             def __init__(self) -> None:
                 self.calls = 0
 
-            def simulate_rule_batch(self, chromosomes, tp, sl, capital_pct):
+            def simulate_rule_batch(self, chromosomes, tp, sl, capital_pct, **kwargs):
                 self.calls += 1
                 return [
                     {
@@ -605,6 +605,82 @@ class TestSimulateRuleBatch:
             chrom, tp=4.0, sl=2.0, capital_pct=50.0)
         assert results[0].get("per_symbol_metrics") == per_sym
         assert fake_cpu.calls == 1
+
+    def test_enrichment_throttled_by_generation(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When generation is provided, CPU enrichment only runs on matching gens.
+
+        With PHASE2_ENRICH_SYMBOL_METRICS_EVERY_N_GENS=5, enrichment should:
+        - Run on gen 0, 5, 10, ... (multiples of 5)
+        - Run on last gen (is_last_gen=True) regardless of interval
+        - Provide neutral per_symbol_metrics when skipped
+        """
+        from gpu_fuzzy_trader import config as cfg
+
+        monkeypatch.setattr(cfg, "PHASE2_GPU_ENRICH_SYMBOL_METRICS", True)
+        monkeypatch.setattr(cfg, "PHASE2_ENRICH_SYMBOL_METRICS_EVERY_N_GENS", 5)
+        df = _make_df(n=20, label_max=106.0, label_min=99.0, label_close=104.0)
+        eng = _make_engine(df)
+        per_sym = {"SYM": {"net_pnl": 12.5, "executed_trades": 3}}
+
+        class FakeCpuEngine:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def simulate_rule_batch(self, chromosomes, tp, sl, capital_pct, **kwargs):
+                self.calls += 1
+                return [
+                    {
+                        "total_return_pct": 1.0,
+                        "sortino_ratio": 1.0,
+                        "max_drawdown_pct": 1.0,
+                        "win_rate": 50.0,
+                        "profit_factor": 1.2,
+                        "executed_trades": 5,
+                        "per_symbol_metrics": per_sym,
+                    }
+                    for _ in range(len(chromosomes))
+                ]
+
+        fake_cpu = FakeCpuEngine()
+        eng._cpu_engine_ref = fake_cpu
+        chrom = np.array([[10, 2]], dtype=np.int32)
+
+        # Gen 0 (multiple of 5) → enrichment should run
+        results = eng.simulate_rule_batch(
+            chrom, tp=4.0, sl=2.0, capital_pct=50.0,
+            generation=0, is_last_gen=False,
+        )
+        assert results[0].get("per_symbol_metrics") == per_sym, (
+            "Enrichment should run on gen 0 (interval match)"
+        )
+        assert fake_cpu.calls == 1
+
+        # Gen 3 (not multiple of 5, not last gen) → enrichment skipped, neutral metrics
+        results = eng.simulate_rule_batch(
+            chrom, tp=4.0, sl=2.0, capital_pct=50.0,
+            generation=3, is_last_gen=False,
+        )
+        neutral = results[0].get("per_symbol_metrics", {})
+        assert isinstance(neutral, dict), "Neutral per_symbol_metrics must be a dict"
+        # Neutral values should have zero net_pnl so C5 penalty doesn't fire
+        for sym_entry in neutral.values():
+            assert isinstance(sym_entry, dict)
+            assert float(sym_entry.get("net_pnl", 0.0)) == 0.0, (
+                "Neutral per_symbol_metrics must have net_pnl=0.0"
+            )
+        assert fake_cpu.calls == 1, "CPU enrichment should NOT have been called for gen 3"
+
+        # Last gen (is_last_gen=True) → enrichment should run regardless of gen number
+        results = eng.simulate_rule_batch(
+            chrom, tp=4.0, sl=2.0, capital_pct=50.0,
+            generation=3, is_last_gen=True,
+        )
+        assert results[0].get("per_symbol_metrics") == per_sym, (
+            "Enrichment should run on last gen even when gen is not interval match"
+        )
+        assert fake_cpu.calls == 2
 
 
 # ---------------------------------------------------------------------------

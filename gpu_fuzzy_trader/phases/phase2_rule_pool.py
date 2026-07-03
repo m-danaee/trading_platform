@@ -735,6 +735,8 @@ def _evaluate_chromosome(
     island_hyperparams: _cfg.IslandHyperparams | None = None,
     cv_fold_evaluator: CvFoldValEvaluator | None = None,
     run_val: bool = True,
+    generation: int | None = None,
+    is_last_gen: bool = False,
 ) -> tuple[np.ndarray, dict]:
     """
     Evaluate a single chromosome and return (objectives, metrics).
@@ -748,12 +750,15 @@ def _evaluate_chromosome(
     When *cv_fold_evaluator* is provided and PHASE2_F3_OBJECTIVE is "cv_fold_min",
     per-fold returns are computed and stored as "_cv_fold_returns" in metrics.
     """
+    key_suffix = str(chromosome[:8].tolist())
     try:
         metrics_list = engine.simulate_rule_batch(
             chromosomes=_chromosome_batch(chromosome),
             tp=_cfg.PHASE2_TP,
             sl=_cfg.PHASE2_SL,
             capital_pct=_cfg.PHASE2_CAPITAL_PCT,
+            generation=generation,
+            is_last_gen=is_last_gen,
         )
         metrics = metrics_list[0]
     except Exception as exc:
@@ -774,6 +779,8 @@ def _evaluate_chromosome(
                 tp=_cfg.PHASE2_TP,
                 sl=_cfg.PHASE2_SL,
                 capital_pct=_cfg.PHASE2_CAPITAL_PCT,
+                generation=generation,
+                is_last_gen=is_last_gen,
             )
             val_metrics = val_list[0]
         except Exception as exc:

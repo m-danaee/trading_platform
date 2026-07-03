@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import logging
 import os
 import subprocess
@@ -86,7 +87,7 @@ def _vram_batch_cap(vram: float | None, config_default: int) -> int:
     if vram <= 12.0:
         return min(config_default, 32)
     if vram <= 16.0:
-        return min(config_default, 128)
+        return min(config_default, 256)
     if vram <= 24.0:
         return min(config_default, 96)
     return config_default
@@ -103,9 +104,10 @@ def _ram_batch_cap(ram: float | None) -> int | None:
     return None
 
 
+@functools.lru_cache(maxsize=1)
 def resolve_phase2_gpu_batch_size() -> int:
     """
-    Return Phase 2 GPU vmap chunk size.
+    Return Phase 2 GPU vmap chunk size (cached — one probe per process).
 
     Priority: ``PHASE2_GPU_BATCH_SIZE`` env override > config auto flag >
     VRAM heuristic > ``config.PHASE2_GPU_BATCH_SIZE``.
@@ -119,13 +121,16 @@ def resolve_phase2_gpu_batch_size() -> int:
     - unknown: min(config, 32)
     - <= 8 GiB: 16
     - <= 12 GiB: 32
-    - <= 16 GiB: 128  (Colab T4)
+    - <= 16 GiB: 256  (Colab T4 — raised from 128 to cover full pop in one chunk)
     - <= 24 GiB: 96
     - > 24 GiB: config default
 
     Host RAM tiers (final cap):
     - <= 13 GiB: 32  (Colab free tier — avoids SIGKILL during compile)
     - <= 16 GiB: 64
+
+    Note: ``@lru_cache`` ensures nvidia-smi and /proc/meminfo are probed only
+    once per process, not on every ``simulate_rule_batch`` call.
     """
     env_override = os.environ.get("PHASE2_GPU_BATCH_SIZE", "").strip()
     if env_override:

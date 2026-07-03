@@ -571,6 +571,24 @@ def _batch_metrics_from_array(
     return out
 
 
+def _neutral_per_symbol_metrics(engine: object) -> dict[str, dict]:
+    """Build a neutral per_symbol_metrics dict when CPU enrichment is skipped.
+
+    Returns a dict mapping each symbol known to *engine* to a neutral entry
+    with zero net_pnl so the C5 symbol-spread penalty in
+    ``phase2_rule_pool.py:574-582`` doesn't fire spuriously.
+    """
+    try:
+        # Extract unique symbols from the engine's dataframe.
+        symbols = engine.df["symbol"].unique()
+    except Exception:
+        return {}
+    return {
+        str(sym): {"trade_count": 0, "win_rate": 0.0, "net_pnl": 0.0}
+        for sym in symbols
+    }
+
+
 # ---------------------------------------------------------------------------
 # GPUBacktestEngine
 # ---------------------------------------------------------------------------
@@ -676,6 +694,10 @@ class GPUBacktestEngine:
         # Cache for pre-computed trade outcomes
         self._trade_outcomes_cache: dict[tuple, jnp.ndarray] = {}
 
+        # Resolve GPU batch size once at engine init — VRAM/RAM probe is expensive.
+        from gpu_fuzzy_trader._gpu_runtime import resolve_phase2_gpu_batch_size
+        self._gpu_batch_size: int = max(1, resolve_phase2_gpu_batch_size())
+
         self._cpu_engine_ref: CPUBacktestEngine | None = None
         self._cpu_engine_constants = constants
 
@@ -777,11 +799,23 @@ class GPUBacktestEngine:
         tp: float,
         sl: float,
         capital_pct: float,
+        generation: int | None = None,
+        is_last_gen: bool = False,
     ) -> list[dict]:
         """Evaluate a batch of rule chromosomes on GPU.
 
         Large populations are processed in chunks of ``PHASE2_GPU_BATCH_SIZE``
         to cap peak VRAM (rule matching materializes a (B, N, K) tensor).
+
+        Parameters
+        ----------
+        generation : int, optional
+            Current generation number.  Used to throttle the CPU enrichment
+            pass (``PHASE2_ENRICH_SYMBOL_METRICS_EVERY_N_GENS``).  Passed
+            through by the runner loops.
+        is_last_gen : bool
+            Whether this is the last generation (enrichment always runs on
+            final gen to keep archive/pool data fresh).
         """
         chromosomes = np.asarray(chromosomes, dtype=np.int32)
         from gpu_fuzzy_trader.phases.phase2_sparse_encoding import is_sparse_batch
@@ -808,12 +842,11 @@ class GPUBacktestEngine:
                     f"Chromosome width {K} does not match engine feature "
                     f"count {expected_k}.")
 
-        from gpu_fuzzy_trader._gpu_runtime import resolve_phase2_gpu_batch_size
-
         capital_rate = capital_pct / 100.0
         max_exposure_rate = self.max_total_exposure_pct / 100.0
         N = len(self.df)
-        chunk_size = max(1, resolve_phase2_gpu_batch_size())
+        # Use cached batch size (resolved once at engine init, not re-probed)
+        chunk_size = self._gpu_batch_size
         price_returns_all = self._get_trade_outcomes(tp, sl)
 
         # Pad chromosomes to a multiple of chunk_size to avoid shape recompilation.
@@ -893,7 +926,9 @@ class GPUBacktestEngine:
             results_np,
             self.trade_direction,
         )
-        if _cfg.phase2_should_enrich_symbol_metrics(self):
+        if _cfg.phase2_should_enrich_symbol_metrics(
+            self, generation=generation, is_last_gen=is_last_gen,
+        ):
             try:
                 cpu_metrics = self._lazy_cpu_engine.simulate_rule_batch(
                     chromosomes=chromosomes,
@@ -910,6 +945,13 @@ class GPUBacktestEngine:
                 logger.debug(
                     "GPU per-symbol metrics enrichment skipped: %s", exc,
                 )
+        else:
+            # When enrichment is skipped, inject neutral per_symbol_metrics so
+            # downstream code (phase2_rule_pool.py:574-582) doesn't break.
+            _neutral_per_sym = _neutral_per_symbol_metrics(self)
+            for m in metrics_list:
+                if "per_symbol_metrics" not in m:
+                    m["per_symbol_metrics"] = _neutral_per_sym
         return metrics_list
 
 

@@ -307,7 +307,7 @@ def test_plateau_trigger_basic(monkeypatch):
 class FakeEngine:
     """Minimal engine stub that returns fixed metrics."""
 
-    def simulate_rule_batch(self, chromosomes, tp=None, sl=None, capital_pct=None):
+    def simulate_rule_batch(self, chromosomes, tp=None, sl=None, capital_pct=None, **kwargs):
         B = chromosomes.shape[0]
         return [
             {

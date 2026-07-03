@@ -65,7 +65,9 @@ class TestRunPhase2EvolutionSmoke:
         ]
 
         class FakeEngine:
-            def simulate_rule_batch(self, chromosomes, tp, sl, capital_pct):
+            def simulate_rule_batch(
+                self, chromosomes, tp, sl, capital_pct, **kwargs,
+            ):
                 B = chromosomes.shape[0]
                 return [
                     {
@@ -98,7 +100,9 @@ class TestRunPhase2EvolutionFallback:
         ]
 
         class FakeEngine:
-            def simulate_rule_batch(self, chromosomes, tp, sl, capital_pct):
+            def simulate_rule_batch(
+                self, chromosomes, tp, sl, capital_pct, **kwargs,
+            ):
                 B = chromosomes.shape[0]
                 return [
                     {
@@ -133,7 +137,9 @@ class TestRunPhase2EvolutionFallback:
         ]
 
         class FakeEngine:
-            def simulate_rule_batch(self, chromosomes, tp, sl, capital_pct):
+            def simulate_rule_batch(
+                self, chromosomes, tp, sl, capital_pct, **kwargs,
+            ):
                 B = chromosomes.shape[0]
                 return [
                     {
@@ -296,7 +302,9 @@ class TestEvalOptimizations:
         call_sizes: list[int] = []
 
         class CountingEngine:
-            def simulate_rule_batch(self, chromosomes, tp, sl, capital_pct):
+            def simulate_rule_batch(
+                self, chromosomes, tp, sl, capital_pct, **kwargs,
+            ):
                 call_sizes.append(chromosomes.shape[0])
                 return [
                     _default_eval_metrics()
@@ -326,7 +334,9 @@ class TestEvalOptimizations:
         call_count = 0
 
         class CountingEngine:
-            def simulate_rule_batch(self, chromosomes, tp, sl, capital_pct):
+            def simulate_rule_batch(
+                self, chromosomes, tp, sl, capital_pct, **kwargs,
+            ):
                 nonlocal call_count
                 call_count += 1
                 return [
@@ -374,7 +384,9 @@ class TestEvalOptimizations:
         call_count = 0
 
         class CountingEngine:
-            def simulate_rule_batch(self, chromosomes, tp, sl, capital_pct):
+            def simulate_rule_batch(
+                self, chromosomes, tp, sl, capital_pct, **kwargs,
+            ):
                 nonlocal call_count
                 call_count += 1
                 return [_default_eval_metrics()]

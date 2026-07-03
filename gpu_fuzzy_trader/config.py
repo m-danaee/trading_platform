@@ -328,7 +328,7 @@ PHASE1_SAMPLING_TOTAL = 701_000
 # Used directly when PHASE2_GPU_BATCH_SIZE_AUTO is False; otherwise VRAM/RAM-capped.
 #   Higher → faster throughput until OOM; 64–128 is fine on Colab T4 with headroom.
 #   Lower  → safer on small GPUs / 12 GiB RAM hosts, more kernel launches, slower.
-PHASE2_GPU_BATCH_SIZE = 128
+PHASE2_GPU_BATCH_SIZE = 256
 
 # PHASE2_GPU_BATCH_SIZE_AUTO — cap batch size by detected GPU VRAM and host RAM.
 #   True  → apply tiers in _gpu_runtime (12 GiB RAM → 32; T4 ≤16 GiB VRAM → 128).
@@ -961,6 +961,14 @@ PHASE2_STAGE_B_EARLY_STOP_MIN_GENERATION = 20
 
 # PHASE2_GPU_ENRICH_SYMBOL_METRICS — merge CPU per-symbol metrics after GPU batch eval.
 PHASE2_GPU_ENRICH_SYMBOL_METRICS = True
+
+# PHASE2_ENRICH_SYMBOL_METRICS_EVERY_N_GENS — throttle CPU enrichment cadence.
+#   CPU full re-simulation (per_symbol_metrics) is expensive (~60s/gen).
+#   Only run every N generations (always on last gen) to keep symbol-spread
+#   penalty fresh enough without paying the full cost every generation.
+#   1 = every gen (original behavior).
+#   5 = every 5th gen (default — saves ~80% of CPU enrichment cost).
+PHASE2_ENRICH_SYMBOL_METRICS_EVERY_N_GENS = 5
 # =============================================================================
 # Phase 2 — NSGA-III search budget & archive
 # =============================================================================
@@ -1883,9 +1891,24 @@ def phase2_history_path(
     return os.path.join(outputs_dir, f"phase2_{direction}_history.json")
 
 
-def phase2_should_enrich_symbol_metrics(engine: object | None = None) -> bool:
-    """Return True when GPU batch eval should run a follow-up CPU enrichment pass."""
+def phase2_should_enrich_symbol_metrics(
+    engine: object | None = None,
+    generation: int | None = None,
+    is_last_gen: bool = False,
+) -> bool:
+    """Return True when GPU batch eval should run a follow-up CPU enrichment pass.
+
+    When *generation* is provided, enrichment is throttled to every N generations
+    (``PHASE2_ENRICH_SYMBOL_METRICS_EVERY_N_GENS``) plus always on the final
+    generation.  This avoids paying the expensive CPU full re-simulation cost on
+    every generation while keeping the symbol-spread penalty signal fresh enough.
+    """
     if not PHASE2_GPU_ENRICH_SYMBOL_METRICS:
+        return False
+    if generation is not None:
+        interval = max(1, int(PHASE2_ENRICH_SYMBOL_METRICS_EVERY_N_GENS))
+        if is_last_gen or (generation % interval == 0):
+            return True
         return False
     return True
 

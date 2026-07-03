@@ -17,7 +17,7 @@ class CountingEngine:
     def __init__(self):
         self.train_calls: list[int] = []
 
-    def simulate_rule_batch(self, chromosomes, tp=None, sl=None, capital_pct=None):
+    def simulate_rule_batch(self, chromosomes, tp=None, sl=None, capital_pct=None, **kwargs):
         B = int(chromosomes.shape[0])
         self.train_calls.append(B)
         return [

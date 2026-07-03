@@ -15,7 +15,7 @@ class CountingEngine:
     def __init__(self):
         self.calls: list[int] = []
 
-    def simulate_rule_batch(self, chromosomes, tp=None, sl=None, capital_pct=None):
+    def simulate_rule_batch(self, chromosomes, tp=None, sl=None, capital_pct=None, **kwargs):
         B = int(chromosomes.shape[0])
         self.calls.append(B)
         return [
@@ -71,8 +71,14 @@ def test_val_skipped_on_non_interval_gens(monkeypatch):
     )
 
 
-def test_val_runs_every_gen_when_joint_train_val_true(monkeypatch):
-    """PHASE2_JOINT_TRAIN_VAL=True must force val every gen regardless of interval."""
+def test_val_respects_interval_even_when_joint_train_val_true(monkeypatch):
+    """PHASE2_JOINT_TRAIN_VAL=True no longer forces val every gen.
+
+    JOINT_TRAIN_VAL controls whether val metrics *feed fitness*, not how
+    often val is computed.  Val cadence is governed solely by
+    ``PHASE2_VAL_SIM_INTERVAL`` (+ always on last gen).  This separation
+    was restored to fix the per-generation runtime blowup.
+    """
     train_engine = CountingEngine()
     val_engine = CountingEngine()
 
@@ -99,11 +105,17 @@ def test_val_runs_every_gen_when_joint_train_val_true(monkeypatch):
             rng=rng,
         )
 
-    # When JOINT=True, val must run every gen (same count as train), even
-    # though interval=5 would normally skip most gens.
-    assert len(val_engine.calls) == len(train_engine.calls), (
-        f"JOINT=True should force val every gen; "
+    # With interval=5 and n_generations=3, val runs on gen 0 (0%5==0) and
+    # last gen (gen 2), but NOT on gen 1.  Train runs every gen (3 times)
+    # plus initial-pop evaluation calls.  Val should therefore be *fewer*
+    # than train calls.
+    assert len(val_engine.calls) < len(train_engine.calls), (
+        f"JOINT=True should NOT force val every gen when interval=5; "
         f"val={len(val_engine.calls)} train={len(train_engine.calls)}"
+    )
+    # Val must still run at least on gen 0 (interval) and last gen (forced).
+    assert len(val_engine.calls) >= 2, (
+        f"Val should run on gen 0 and last gen at minimum; got {len(val_engine.calls)}"
     )
 
 

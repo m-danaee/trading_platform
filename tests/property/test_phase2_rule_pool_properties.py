@@ -131,6 +131,7 @@ class _RecordingEngine:
         tp: float,
         sl: float,
         capital_pct: float,
+        **kwargs,
     ) -> list[dict]:
         self.calls.append({"tp": tp, "sl": sl, "capital_pct": capital_pct})
         # Return a plausible metrics dict for each chromosome in the batch

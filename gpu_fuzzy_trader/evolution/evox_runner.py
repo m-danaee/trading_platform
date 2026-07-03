@@ -102,6 +102,23 @@ except ImportError as exc:
     non_dominate_rank = None  # type: ignore[assignment]
 
 
+def _should_run_val_this_gen(gen: int, is_last_gen: bool) -> bool:
+    """Shared val-cadence check for both NSGA-II fallback and NSGA-III loops.
+
+    Val simulation always runs on the last generation (pool admission needs
+    fresh metrics).  Otherwise, throttle via ``PHASE2_VAL_SIM_INTERVAL``.
+
+    ``PHASE2_JOINT_TRAIN_VAL`` does NOT affect cadence — it controls whether
+    val metrics *feed fitness*, not how often val is computed.  This was the
+    root cause of the 2x blowup: the old ``or bool(_cfg.PHASE2_JOINT_TRAIN_VAL)``
+    short-circuited the throttle whenever joint training was enabled.
+    """
+    if is_last_gen:
+        return True
+    interval = max(1, int(_cfg.PHASE2_VAL_SIM_INTERVAL))
+    return gen % interval == 0
+
+
 def _build_rank_and_crowding(
     objectives: np.ndarray,
     fronts: list[list[int]],
@@ -1250,6 +1267,8 @@ def _evaluate_population_indices(
     diversity_metrics_by_key: dict[tuple[int, ...], dict] | None = None,
     stage_params: Phase2StageParams | None = None,
     run_val: bool = True,
+    generation: int | None = None,
+    is_last_gen: bool = False,
 ) -> dict[str, int]:
     """Evaluate unevaluated individuals, preferring batch simulate_rule_batch."""
     from gpu_fuzzy_trader.phases.phase2_rule_pool import (
@@ -1333,6 +1352,8 @@ def _evaluate_population_indices(
             tp=_cfg.PHASE2_TP,
             sl=_cfg.PHASE2_SL,
             capital_pct=_cfg.PHASE2_CAPITAL_PCT,
+            generation=generation,
+            is_last_gen=is_last_gen,
         )
 
         val_metrics_list = None
@@ -1374,6 +1395,15 @@ def _evaluate_population_indices(
             if val_metrics_list is not None:
                 val_metrics = _metrics_snapshot(val_metrics_list[uj])
 
+            # When val was not computed this gen, preserve val_* keys from
+            # the previous cache entry so joint-fitness signal (C5/C6
+            # penalties that depend on val metrics) does not go stale.
+            if not run_val and i < len(metrics_cache):
+                old = metrics_cache[i]
+                for k, v in old.items():
+                    if k.startswith("val_") and k not in metrics:
+                        metrics[k] = v
+
             _assign_eval_result(
                 i,
                 population[i],
@@ -1406,6 +1436,9 @@ def _evaluate_population_indices(
                 diversity_reference=diversity_reference,
                 diversity_metrics_by_key=diversity_metrics_by_key,
                 stage_params=stage_params,
+                run_val=run_val,
+                generation=generation,
+                is_last_gen=is_last_gen,
             )
             objectives[i] = obj
             metrics_cache[i] = metrics
@@ -1688,11 +1721,7 @@ def _run_nsga2_fallback(
     for gen in range(n_generations):
         just_restarted = False
         is_last_gen = gen == n_generations - 1
-        run_val_this_gen = (
-            is_last_gen
-            or bool(_cfg.PHASE2_JOINT_TRAIN_VAL)
-            or (gen % int(_cfg.PHASE2_VAL_SIM_INTERVAL) == 0)
-        )
+        run_val_this_gen = _should_run_val_this_gen(gen, is_last_gen)
         for i in range(pop_size):
             if np.any(np.isinf(objectives[i])):
                 obj, metrics = _evaluate_chromosome(
@@ -1701,8 +1730,18 @@ def _run_nsga2_fallback(
                     stage_params=stage_params,
                     cv_fold_evaluator=cv_fold_evaluator,
                     run_val=run_val_this_gen,
+                    generation=gen,
+                    is_last_gen=is_last_gen,
                 )
                 objectives[i] = obj
+                # Preserve val_* keys from previous generation's cache when val
+                # was not run this gen (keeps joint-fitness signal alive between
+                # val simulation intervals).
+                if not run_val_this_gen and i < len(metrics_cache):
+                    old = metrics_cache[i]
+                    for k, v in old.items():
+                        if k.startswith("val_") and k not in metrics:
+                            metrics[k] = v
                 metrics_cache[i] = metrics
 
         fronts = non_dominated_sort(objectives)
@@ -2213,11 +2252,7 @@ def _run_nsga3(
     for gen in range(n_generations):
         just_restarted = False
         is_last_gen = gen == n_generations - 1
-        run_val_this_gen = (
-            is_last_gen
-            or bool(_cfg.PHASE2_JOINT_TRAIN_VAL)
-            or (gen % int(_cfg.PHASE2_VAL_SIM_INTERVAL) == 0)
-        )
+        run_val_this_gen = _should_run_val_this_gen(gen, is_last_gen)
         diversity_reference = _build_diversity_reference(
             hall_of_fame, pareto_archive,
         )
@@ -2236,6 +2271,8 @@ def _run_nsga3(
             diversity_metrics_by_key=diversity_metrics_by_key,
             stage_params=stage_params,
             run_val=run_val_this_gen,
+            generation=gen,
+            is_last_gen=is_last_gen,
         )
 
         # Compute fronts once — reused for logging, offspring, and archive.
