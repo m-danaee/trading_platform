@@ -29,11 +29,10 @@ See `.opencode/tasks/task-20.md`..`task-23.md` for full analysis.
 - **OOM Fix** ✅ MERGED (fix/oom-rb-governor-transition) — Memory cleanup between phases to prevent OOM at RB Governor boundary
 
 ## Current Plan Tasks
-- **Task 20** 🔄 IN PROGRESS — Kill per-generation runtime blowup
+- **Task 20** ✅ COMPLETE (dace7c7 on fix/phase2-runtime-blowup) — Kill per-generation runtime blowup
 - **Task 21** 🔲 TODO — Island RNG state leakage + generation-budget realization
 - **Task 22** 🔲 TODO — Restore Phase2→RB-Governor→OOS objective continuity
 - **Task 23** 🔲 TODO — Config/logging anomaly cleanup
 
 ## Current State
-**Task 20 in progress** on branch `fix/phase2-runtime-blowup`.
-Recommended order: Task 20 first (unblocks fast iteration), then Task 21 + Task 22 in parallel, Task 23 any time.
+**Task 20 completed.** Branch `fix/phase2-runtime-blowup` with 3 commits, passed spec review + code review. Awaiting checkpoint resume for Task 21.
