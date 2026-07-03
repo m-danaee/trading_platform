@@ -2346,3 +2346,144 @@ class TestValLeakGate:
             f"  closed: {obj_closed}\n"
             f"  open:   {obj_open}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Tests: Persistent RNG state across run_epoch() calls
+# ---------------------------------------------------------------------------
+
+class TestRulePoolGeneratorRng:
+    """Verify that Rule_Pool_Generator's persistent self._rng advances across
+    multiple run_epoch() calls, and that distinct seeds produce distinct state."""
+
+    def _make_generator(self, seed: int = 42) -> Rule_Pool_Generator:
+        fi = _make_feature_infos(["positive", "positive", "positive"])
+        df = _make_train_df(n_rows=100, n_features=3, symbols=["A"])
+        gen = Rule_Pool_Generator(
+            df, fi, "long",
+            pop_size=8,
+            n_generations=6,
+            seed=seed,
+        )
+        return gen
+
+    def test_rng_state_advances_across_run_epoch_calls(self):
+        """After two run_epoch() calls, the internal RNG state must differ
+        from the initial state, proving state advances across calls."""
+        gen = self._make_generator(seed=42)
+        initial_state = gen._rng.bit_generator.state["state"]["state"]
+
+        gen.run_epoch(n_generations=2)
+        after_first = gen._rng.bit_generator.state["state"]["state"]
+
+        gen.run_epoch(n_generations=2)
+        after_second = gen._rng.bit_generator.state["state"]["state"]
+
+        # The RNG state should have advanced after each call
+        assert initial_state != after_first, (
+            "RNG state did not advance after first run_epoch() call"
+        )
+        assert after_first != after_second, (
+            "RNG state did not advance after second run_epoch() call"
+        )
+        assert initial_state != after_second, (
+            "RNG state should differ from initial after two calls"
+        )
+
+    def test_rng_state_not_reset_between_run_epoch_calls(self):
+        """The RNG should produce *different* sequences in two consecutive
+        run_epoch() calls, proving they do NOT replay from the same seed."""
+        gen = self._make_generator(seed=42)
+
+        # Capture RNG state used during first epoch by peeking at the
+        # generator's internal state after the epoch starts drawing numbers.
+        gen.run_epoch(n_generations=2)
+        state_after_first = gen._rng.bit_generator.state["state"]["state"]
+
+        gen.run_epoch(n_generations=2)
+        state_after_second = gen._rng.bit_generator.state["state"]["state"]
+
+        # Different state means different future draw sequences
+        assert state_after_first != state_after_second, (
+            "RNG state after second run_epoch() should differ from first"
+        )
+
+    def test_distinct_seeds_produce_distinct_rng_state(self):
+        """Two generators with different seeds must have different RNG state."""
+        gen_a = self._make_generator(seed=42)
+        gen_b = self._make_generator(seed=99)
+
+        state_a = gen_a._rng.bit_generator.state["state"]["state"]
+        state_b = gen_b._rng.bit_generator.state["state"]["state"]
+
+        assert state_a != state_b, (
+            "Generators with different seeds should have different RNG state"
+        )
+
+    def test_rng_is_persistent_generator(self):
+        """Rule_Pool_Generator must initialize self._rng as a Generator."""
+        gen = self._make_generator(seed=42)
+        assert hasattr(gen, "_rng"), "Generator should have _rng attribute"
+        assert isinstance(gen._rng, np.random.Generator), (
+            "_rng should be a numpy random Generator"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Tests: _derive_island_seed
+# ---------------------------------------------------------------------------
+
+def test_derive_island_seed_distinct_for_distinct_ids():
+    """_derive_island_seed must produce different seeds for different island IDs."""
+    from gpu_fuzzy_trader.phases.phase2_island_scheduler import (
+        _derive_island_seed,
+    )
+
+    base = 42
+    s1 = _derive_island_seed(base, "cluster_0")
+    s2 = _derive_island_seed(base, "cluster_1")
+    s3 = _derive_island_seed(base, "orphan_AAPL")
+
+    ids = [s1, s2, s3]
+    assert len(set(ids)) == 3, (
+        f"Expected 3 distinct seeds for different island IDs, got {ids}"
+    )
+
+
+def test_derive_island_seed_deterministic():
+    """_derive_island_seed must return the same value for same inputs."""
+    from gpu_fuzzy_trader.phases.phase2_island_scheduler import (
+        _derive_island_seed,
+    )
+
+    s1 = _derive_island_seed(42, "cluster_0")
+    s2 = _derive_island_seed(42, "cluster_0")
+    assert s1 == s2, (
+        f"Same inputs should produce same seed, got {s1} vs {s2}"
+    )
+
+
+def test_derive_island_seed_none_base():
+    """_derive_island_seed should return None when base_seed is None."""
+    from gpu_fuzzy_trader.phases.phase2_island_scheduler import (
+        _derive_island_seed,
+    )
+
+    result = _derive_island_seed(None, "cluster_0")
+    assert result is None, (
+        f"Expected None when base_seed is None, got {result}"
+    )
+
+
+def test_derive_island_seed_different_base_differs():
+    """Different base seeds must produce different derived seeds for same ID."""
+    from gpu_fuzzy_trader.phases.phase2_island_scheduler import (
+        _derive_island_seed,
+    )
+
+    s1 = _derive_island_seed(42, "cluster_0")
+    s2 = _derive_island_seed(99, "cluster_0")
+    assert s1 != s2, (
+        f"Different base seeds should give different derived seeds, "
+        f"got {s1} == {s2}"
+    )
