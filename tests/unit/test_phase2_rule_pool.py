@@ -1155,6 +1155,19 @@ class TestRulePoolGeneratorRun:
                 assert "total_return_pct" in entry["objectives"]
                 assert "max_drawdown_pct" in entry["objectives"]
                 assert "win_rate" in entry["objectives"]
+                # Task 22: pool entries must persist tp/sl/capital_pct for RB Governor
+                assert "tp" in entry, f"Pool entry missing 'tp': {list(entry.keys())}"
+                assert "sl" in entry, f"Pool entry missing 'sl': {list(entry.keys())}"
+                assert "capital_pct" in entry, f"Pool entry missing 'capital_pct': {list(entry.keys())}"
+                assert entry["tp"] == float(_cfg.PHASE2_TP), (
+                    f"Expected tp={_cfg.PHASE2_TP}, got {entry['tp']}"
+                )
+                assert entry["sl"] == float(_cfg.PHASE2_SL), (
+                    f"Expected sl={_cfg.PHASE2_SL}, got {entry['sl']}"
+                )
+                assert entry["capital_pct"] == float(_cfg.PHASE2_CAPITAL_PCT), (
+                    f"Expected capital_pct={_cfg.PHASE2_CAPITAL_PCT}, got {entry['capital_pct']}"
+                )
         finally:
             m._POOL_PATHS.update(original_pool)
             m._HISTORY_PATHS.update(original_hist)

@@ -1390,6 +1390,9 @@ def _build_pool_from_archive(
                 "win_rate": float(metrics.get("win_rate", 0.0)),
             },
             "executed_trades": executed,
+            "tp": float(_cfg.PHASE2_TP),
+            "sl": float(_cfg.PHASE2_SL),
+            "capital_pct": float(_cfg.PHASE2_CAPITAL_PCT),
         }
         if val_metrics is not None:
             pool_entry["val_objectives"] = {

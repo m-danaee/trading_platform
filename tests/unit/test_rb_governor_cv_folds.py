@@ -75,26 +75,45 @@ def _valid_metrics(
 
 
 class TestScoreMetricsCvFoldTerm:
-    """Verify the ``+8.0*cv_min - 3.0*cv_std`` term in ``_score_metrics``."""
+    """Verify the CV-fold consistency penalty in ``_score_metrics``.
 
-    def test_cv_fold_term_applied(self):
-        """Call _score_metrics with cv_fold_returns=[5.0, -2.0, 3.0] and verify the CV term."""
+    New formula (skipped for len <= 1):
+      - If cv_min < 0:  score -= abs(cv_min) * 5.0
+      - If abs(cv_mean) > 0.01 and cv_range > abs(cv_mean) * 2.0:
+          score -= (cv_range / max(abs(cv_mean), 0.01) - 2.0) * 5.0
+    """
+
+    def test_cv_fold_term_applied_penalizes_negative_min_and_high_variance(self):
+        """cv_fold_returns=[5.0, -2.0, 3.0] — worst fold negative + high variance."""
         train_m = _train_metrics(return_pct=5.0)
         valid_m = _valid_metrics(return_pct=4.0)
 
-        # Score without CV term
         score_no_cv = _score_metrics(train_m, valid_m, cv_fold_returns=None)
-
-        # Score with CV term
         cv_returns = [5.0, -2.0, 3.0]
         score_with_cv = _score_metrics(train_m, valid_m, cv_fold_returns=cv_returns)
 
-        # Expected CV term: +8.0 * min - 3.0 * std
-        cv_min = min(cv_returns)  # -2.0
-        cv_std = float(np.std(cv_returns))
-        expected_cv_term = 8.0 * cv_min - 3.0 * cv_std  # -16.0 - 3.0*std
+        # Expected penalties:
+        # cv_min = -2.0 < 0 -> penalty = 2.0 * 5.0 = 10.0
+        # cv_mean = 2.0, cv_range = 7.0
+        # abs(2.0) > 0.01 and 7.0 > 2.0 * 2.0=4.0
+        # penalty = (7.0 / 2.0 - 2.0) * 5.0 = (3.5 - 2.0) * 5.0 = 7.5
+        # Total = 10.0 + 7.5 = 17.5
+        expected_penalty = 10.0 + 7.5
+        assert score_with_cv == pytest.approx(score_no_cv - expected_penalty, abs=1e-9)
 
-        assert score_with_cv == pytest.approx(score_no_cv + expected_cv_term, abs=1e-9)
+    def test_cv_fold_all_positive_low_variance_no_penalty(self):
+        """All positive folds with low variance — no penalty."""
+        train_m = _train_metrics(return_pct=5.0)
+        valid_m = _valid_metrics(return_pct=4.0)
+
+        score_no_cv = _score_metrics(train_m, valid_m, cv_fold_returns=None)
+        cv_returns = [4.0, 5.0, 6.0]
+        score_with_cv = _score_metrics(train_m, valid_m, cv_fold_returns=cv_returns)
+
+        # cv_min = 4.0 >= 0 -> no negative-min penalty
+        # cv_mean = 5.0, cv_range = 2.0
+        # 2.0 > 5.0 * 2.0 = 10.0? No -> no variance penalty
+        assert score_with_cv == pytest.approx(score_no_cv, abs=1e-9)
 
     def test_cv_fold_none_skips_term(self):
         """cv_fold_returns=None skips the CV term."""
@@ -116,16 +135,15 @@ class TestScoreMetricsCvFoldTerm:
 
         assert score_empty == pytest.approx(score_none, abs=1e-9)
 
-    def test_cv_fold_single_element(self):
-        """Single-element cv_fold_returns works: std=0.0, min=the element."""
+    def test_cv_fold_single_element_skipped(self):
+        """Single-element cv_fold_returns (len=1) is skipped."""
         train_m = _train_metrics(return_pct=5.0)
         valid_m = _valid_metrics(return_pct=4.0)
 
         score_no_cv = _score_metrics(train_m, valid_m, cv_fold_returns=None)
         score_single = _score_metrics(train_m, valid_m, cv_fold_returns=[3.0])
 
-        # Expected: +8.0*3.0 - 3.0*0.0 = +24.0
-        assert score_single == pytest.approx(score_no_cv + 24.0, abs=1e-9)
+        assert score_single == pytest.approx(score_no_cv, abs=1e-9)
 
 
 # ---------------------------------------------------------------------------

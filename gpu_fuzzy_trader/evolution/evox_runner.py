@@ -2781,6 +2781,9 @@ def extract_deployable_migrants(
                 "max_drawdown_pct": float(metrics.get("val_max_drawdown_pct", 0.0)),
             },
             "val_executed_trades": int(metrics.get("val_executed_trades", 0)),
+            "tp": float(_cfg.PHASE2_TP),
+            "sl": float(_cfg.PHASE2_SL),
+            "capital_pct": float(_cfg.PHASE2_CAPITAL_PCT),
             "migrant_rank_score": float(entry.get("rank_score", 0.0)),
         })
     return migrants
