@@ -1,0 +1,55 @@
+{
+  "task_id": "22",
+  "title": "Restore Phase2→RB-Governor→OOS Objective Continuity",
+  "reviewer": "spec-reviewer",
+  "base_branch": "main",
+  "feature_branch": "fix/objective-continuity",
+  "commit_reviewed": "ac918c4",
+  "verdict": "APPROVED",
+  "reviewed_at": "2026-07-03",
+  "summary": "Task 22 implementation correctly addresses all three problems in the Phase2→RB-Governor→OOS objective chain. All acceptance criteria are met. One minor formula deviation in R3 is well-documented and preserves spec intent.",
+  "acceptance_criteria": {
+    "R1_PHASE2_F3_OBJECTIVE_reverted": {
+      "status": "MET",
+      "evidence": "config.py:460 sets PHASE2_F3_OBJECTIVE = 'profit_factor'. Comment updated to truthfully explain that cv_fold_min requires batched CV-fold evaluation that is too expensive for the NSGA-III inner loop, and that profit_factor is the truthful label (what actually executes). CV-fold robustness is delegated to pool-admission gate and RB Governor scoring."
+    },
+    "R2_pool_and_migrant_tp_sl_capital_pct": {
+      "status": "MET",
+      "evidence": "phase2_rule_pool.py:1390-1393 adds tp/sl/capital_pct to _build_pool_from_archive pool entries from _cfg.PHASE2_TP/SL/CAPITAL_PCT. evox_runner.py:2781-2784 adds the same fields to extract_deployable_migrants entries. Both use float(_cfg.PHASE2_*) for type consistency."
+    },
+    "R3_rb_governor_cv_fold_in_scoring": {
+      "status": "MET_WITH_DEVIATION",
+      "evidence": "rb_governor.py:217-231 implements CV-fold penalty using cv_fold_returns. Callers at lines 561 and 1207 pass cv_fold_returns to _score_metrics. The penalty has the same intent as spec (negative worst-fold + high cross-fold variance) but uses a normalized form: (cv_range / max(abs(cv_mean), 0.01) - 2.0) * 5.0 instead of the spec's (cv_range - abs(cv_mean)) * 2.0. Adds an abs(cv_mean) > 0.01 guard to prevent division instability with near-zero mean folds. Implementation is penalty-only (no positive reward term) which is more conservative for OOS gate.",
+      "deviation_note": "Formula differs from spec; deviation is documented in test docstring (test_rb_governor_cv_folds.py) and the handoff note 'R3 CV-fold term now penalty-only with len>1 guard'. Intent preserved: both negative worst-fold and high variance are penalized. Magnitude/scale differs but the qualitative behaviour matches."
+    },
+    "R4_existing_tests_pass": {
+      "status": "MET",
+      "evidence": "146 tests pass: tests/unit/test_phase2_rule_pool.py + tests/unit/test_evox_runner.py + tests/unit/test_rb_governor_cv_folds.py (PYTEST_LOW_MEMORY=1, 73s). Note: the task's verification command referenced test_rb_governor.py but the actual file is test_rb_governor_cv_folds.py — the correct one was used."
+    },
+    "R5_new_test_for_pool_tp_sl_capital_pct": {
+      "status": "MET",
+      "evidence": "tests/unit/test_phase2_rule_pool.py:1158-1170 adds assertions that every pool entry contains tp/sl/capital_pct and that the values match float(_cfg.PHASE2_TP/SL/CAPITAL_PCT) exactly. 13 lines added."
+    },
+    "R6_evaluator_v5_not_modified": {
+      "status": "MET",
+      "evidence": "git diff main...fix/objective-continuity --name-only contains no .ipynb files. evaluator_v5.ipynb is untouched."
+    }
+  },
+  "out_of_scope_additions": {
+    "opencode_artifacts": {
+      "status": "EXPECTED",
+      "note": ".opencode/CONTEXT.md and .opencode/tasks/task-22.md are workflow artifacts (context update + task spec doc), not code modifications. Acceptable per Nexus workflow."
+    },
+    "code_changes": "No out-of-scope code changes. All 4 source files (config.py, evox_runner.py, phase2_rule_pool.py, rb_governor.py) and 2 test files map cleanly to the spec's R1/R2/R3/R5 requirements."
+  },
+  "missing_requirements": [],
+  "test_coverage_notes": [
+    "test_phase2_rule_pool.py: added exact-value assertions for tp/sl/capital_pct on pool entries",
+    "test_rb_governor_cv_folds.py: rewrote CV-fold term test to cover both penalty triggers (negative min + high variance) and the no-penalty cases (all positive low variance, None, empty, single-element)"
+  ],
+  "recommendation": "APPROVED. Implementation is faithful to spec with one minor, well-documented R3 formula refinement. All acceptance criteria are objectively satisfied.",
+  "followups": [
+    "No spec changes required.",
+    "R3 formula deviation could be flagged for a future spec amendment if the implementer's normalized form is preferred, but the current implementation correctly satisfies 'incorporates cv_fold_returns when available'."
+  ]
+}

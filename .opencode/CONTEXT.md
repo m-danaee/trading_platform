@@ -31,8 +31,8 @@ See `.opencode/tasks/task-20.md`..`task-23.md` for full analysis.
 - **Task 21** ✅ COMPLETE (on fix/island-rng-and-budget) — Island RNG state leakage
 
 ## Current Plan Tasks
-- **Task 22** 🔄 IN PROGRESS — Restore Phase2→RB-Governor→OOS objective continuity
+- **Task 22** ✅ COMPLETE (ac918c4 on fix/objective-continuity) — Restore Phase2→RB-Governor→OOS objective continuity
 - **Task 23** 🔲 TODO — Config/logging anomaly cleanup
 
 ## Current State
-**Task 22 in progress** on branch `fix/objective-continuity`.
+**Task 22 completed.** Branch `fix/objective-continuity` with 2 commits, passed spec review + code review. Awaiting checkpoint resume for Task 23.

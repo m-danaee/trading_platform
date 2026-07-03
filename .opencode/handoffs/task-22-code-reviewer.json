@@ -1,0 +1,58 @@
+{
+  "task_id": "22",
+  "title": "Restore Phase2→RB-Governor→OOS Objective Continuity",
+  "reviewer": "code-reviewer",
+  "base_branch": "main",
+  "feature_branch": "fix/objective-continuity",
+  "commit_reviewed": "ac918c4",
+  "verdict": "APPROVED",
+  "reviewed_at": "2026-07-03",
+  "summary": "Task 22 implementation is correct, numerically stable, and maintainable. R1 comment is truthful; R2 covers both pool entry construction paths; R3 penalty formula is a defensible refinement of the spec with documented deviation (normalized form prevents unbounded penalty growth). All review focus areas are addressed. One minor test-coverage gap noted (migrant path not directly asserted), but it is non-blocking given the trivial nature of the change and the 31 passing evox_runner tests.",
+  "focus_area_findings": {
+    "R1_F3_OBJECTIVE_comment": {
+      "status": "OK",
+      "evidence": "config.py:460 sets PHASE2_F3_OBJECTIVE='profit_factor'. Comment block (lines 455-461) truthfully explains (1) why cv_fold_min is disabled (too expensive for NSGA-III inner loop), (2) why profit_factor is the truthful label (what actually executes), and (3) where CV-fold robustness IS enforced (pool admission + RB Governor scoring). All three legs of the audit finding are addressed in the comment.",
+      "risk": "None."
+    },
+    "R2_pool_entry_construction_paths": {
+      "status": "OK",
+      "evidence": "Both production paths are updated: (a) phase2_rule_pool.py:1390-1393 in _build_pool_from_archive, (b) evox_runner.py:2781-2784 in extract_deployable_migrants. Both use float(_cfg.PHASE2_*) for type consistency. Placement is inside the dict literal so the fields are unconditionally present in every entry (no risk of being set conditionally and missing on some entries). The fields sit alongside the existing 'executed_trades' and 'val_objectives' keys which is logically correct (operating parameters belong with rule metadata, not objectives).",
+      "coverage_check": "Searched all pool/migrant producers: only _build_pool_from_archive and extract_deployable_migrants are the two production paths feeding RB Governor. Other consumers (phase2_island_scheduler, phase3_rule_set, phase4_wf_optimizer) defensively read rule.get('tp', _cfg.PHASE2_TP) so they remain correct even with old-format entries. No third producer path exists.",
+      "risk": "None."
+    },
+    "R3_CV_fold_penalty_formula": {
+      "status": "OK_WITH_DEVIATION",
+      "evidence": "rb_governor.py:217-231 implements the penalty with three defensive guards: (1) `if cv_fold_returns and len(cv_fold_returns) > 1` skips the degenerate single-fold case, (2) `if abs(cv_mean) > 0.01` gate prevents trigger when mean is near zero, (3) `max(abs(cv_mean), 0.01)` in denominator prevents division by zero. The denominator `max(...)` is belt-and-suspenders since the gate already ensures abs(cv_mean) > 0.01, but is harmless redundancy.",
+      "deviation_analysis": "Spec formula `(cv_range - abs(cv_mean)) * 2.0` is linear in cv_range; implementation `(cv_range / max(abs(cv_mean), 0.01) - 2.0) * 5.0` is bounded as cv_range grows. Concrete example: cv_fold_returns=[100, -100, 100] -> spec penalty 333.34, impl penalty 20.0. The normalized form is actually MORE numerically stable than the spec: it prevents pathological scores when a single fold goes deeply negative. This is a defensible improvement, not a regression. The qualitative behaviour (penalize high cross-fold variance) is preserved.",
+      "behavior_change_note": "The original `+8.0*cv_min - 3.0*cv_std` had a bidirectional component (positive cv_min boosted score). The new formula is penalty-only, which aligns strictly with the spec text 'Penalize rules where worst fold is negative'. This is a deliberate design choice noted in the handoff; the spec-reviewer also flagged it as 'more conservative for OOS gate'.",
+      "single_fold_case": "len > 1 guard is correct. With len == 1, cv_min == cv_max == cv_mean, so cv_range = 0 (variance check trivially false) and cv_min might or might not be < 0. Skipping is the right choice since a single fold cannot establish consistency. Test `test_cv_fold_single_element_skipped` verifies this.",
+      "risk": "Low. The formula is penalty-only, so it cannot push a rule's score above its non-CV baseline. This is the intended conservative behaviour."
+    },
+    "test_quality": {
+      "status": "OK_WITH_GAP",
+      "evidence": "(a) Pool path test (test_phase2_rule_pool.py:1158-1170) asserts the keys exist AND the values match float(_cfg.PHASE2_TP/SL/CAPITAL_PCT) exactly. (b) CV-fold tests cover all five edge cases: negative-min+high-variance penalty, all-positive-low-variance no-penalty, None, empty list, single-element. The CV-fold test docstring documents the new formula precisely with worked numbers. All 10 cv_fold tests + 1 pool schema test pass locally (PYTEST_LOW_MEMORY=1).",
+      "coverage_gap": "No test directly asserts the schema of `extract_deployable_migrants` output. The pool-side change is exercised by test_run_pool_entries_have_correct_schema, but the migrant-side change is not. The evox_runner tests (31 pass) do not import or call extract_deployable_migrants with a real state. This is a minor gap — the code change is 3 lines of dict addition with no branching, and downstream consumers (phase2_island_scheduler, phase3_rule_set) defensively read these fields with PHASE2_* defaults, so a missing field would degrade gracefully to the old behaviour. Not a blocker.",
+      "test_for_old_formula_preservation": "test_rb_governor_cv_folds.py correctly removes the `+24.0` assertion from test_cv_fold_single_element and replaces it with `score_single == score_no_cv` (no penalty for len=1). This matches the new implementation.",
+      "risk": "Low — gap is for a trivially-correct code change."
+    },
+    "no_evaluator_v5_modification": {
+      "status": "OK",
+      "evidence": "git diff main...fix/objective-continuity --name-only contains no .ipynb files. evaluator_v5.ipynb untouched."
+    }
+  },
+  "regression_risks": [
+    "Score range change in _score_metrics: the CV-fold term is now penalty-only, so rules passing through _score_metrics with valid cv_fold_returns can only have LOWER scores than before. This shifts the score landscape in RB Governor — rules that scored well under the old `+8.0*cv_min` reward may now score lower. The impact is concentrated on rules with positive cv_min (rules that look robust on a single fold but happen to have a deeply-negative outlier). This is the intended direction per spec but is a real behaviour change. Existing 31 evox_runner tests pass, so no obvious test regression.",
+    "Pool entries now carry explicit tp/sl/capital_pct. Any consumer that previously assumed these fields were absent (and used rule.get('tp', RB_DEFAULT_*) to get the default) will now get Phase 2's values instead. This is the intended fix, but downstream RB Governor scoring will see different operating parameters than before. No tests assert on RB Governor's selected-rule parameters post-fix, so no immediate test regression."
+  ],
+  "out_of_scope_changes": "None. .opencode/ artifacts (CONTEXT.md, task-22.md) are workflow files, not code modifications. evaluator_v5.ipynb is NOT modified.",
+  "test_execution_record": {
+    "tests_unit_test_rb_governor_cv_folds_py": "10 passed in 1.62s",
+    "tests_unit_test_phase2_rule_pool_py_pool_schema_test": "1 passed in 9.73s (104 deselected)",
+    "tests_unit_test_evox_runner_py": "31 passed in 10.36s",
+    "command": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest <files> -x -q"
+  },
+  "followups_non_blocking": [
+    "Consider adding a test that calls extract_deployable_migrants with a minimal archive state and asserts the output migrant dicts contain tp/sl/capital_pct matching _cfg.PHASE2_TP/SL/CAPITAL_PCT. This would close the test-coverage gap and make the R2 fix symmetric with the pool-side test."
+  ],
+  "recommendation": "APPROVED. All three problems from the audit are addressed with correct, numerically stable code. R1 comment is truthful and complete. R2 covers both production paths. R3 penalty formula is a defensible refinement with documented deviation that improves numerical stability. Minor test-coverage gap for the migrant path is noted but non-blocking. Spec-reviewer's APPROVED verdict is consistent with this code-review verdict."
+}
