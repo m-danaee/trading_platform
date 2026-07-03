@@ -52,6 +52,7 @@ import sys
 import os
 import logging
 import json
+import gc
 import numpy as np
 
 from gpu_fuzzy_trader._jax_env import configure_jax_env
@@ -524,6 +525,8 @@ class Pipeline_Orchestrator:
                     results["phase4"] = {}
                     phase5_directions: frozenset[str] = frozenset()
                 elif bool(getattr(_cfg, "RB_GOVERNOR_ENABLED", False)):
+                    self._release_between_phases("RB Governor")
+
                     rb_result = self._run_rb_governor(
                         train_df, val_df, phase2_result, cv_folds=self._cv_folds)
                     results["phase3"] = rb_result
@@ -533,6 +536,8 @@ class Pipeline_Orchestrator:
                     # ------------------------------------------------------------------
                     # Phase 3: Rule Set Selection
                     # ------------------------------------------------------------------
+                    self._release_between_phases("Phase 3")
+
                     phase3_result = self._run_phase3(
                         train_df, val_df, phase2_result, force=force)
                     results["phase3"] = phase3_result
@@ -540,6 +545,8 @@ class Pipeline_Orchestrator:
                     # ------------------------------------------------------------------
                     # Phase 4: RL Risk Optimization
                     # ------------------------------------------------------------------
+                    self._release_between_phases("Phase 4")
+
                     phase4_result = self._run_phase4(
                         train_df, val_df, phase3_result, force=force)
                     results["phase4"] = phase4_result
@@ -548,14 +555,7 @@ class Pipeline_Orchestrator:
                 # ------------------------------------------------------------------
                 # Phase 5: Out-of-Sample Evaluation (always runs)
                 # ------------------------------------------------------------------
-                # Free GPU memory before CPU-only Phase 5 to avoid OOM
-                try:
-                    import jax
-                    jax.clear_caches()
-                except Exception:
-                    pass
-                import gc
-                gc.collect()
+                self._release_between_phases("Phase 5")
 
                 phase5_result = self._run_phase5(
                     allowed_directions=phase5_directions)
@@ -644,21 +644,28 @@ class Pipeline_Orchestrator:
                     results["phase4"] = {}
                     phase5_directions: frozenset[str] = frozenset()
                 elif bool(getattr(_cfg, "RB_GOVERNOR_ENABLED", False)):
+                    self._release_between_phases("RB Governor")
+
                     rb_result = self._run_rb_governor(
                         train_df, val_df, phase2_result, cv_folds=self._cv_folds)
                     results["phase3"] = rb_result
                     results["phase4"] = rb_result
                     phase5_directions = frozenset(rb_result.keys())
                 else:
+                    self._release_between_phases("Phase 3")
+
                     phase3_result = self._run_phase3(
                         train_df, val_df, phase2_result, force=force)
                     results["phase3"] = phase3_result
+
+                    self._release_between_phases("Phase 4")
 
                     phase4_result = self._run_phase4(
                         train_df, val_df, phase3_result, force=force)
                     results["phase4"] = phase4_result
                     phase5_directions = frozenset(phase3_result.keys())
 
+                self._release_between_phases("Phase 5")
                 phase5_result = self._run_phase5(
                     allowed_directions=phase5_directions)
                 results["phase5"] = phase5_result
@@ -730,11 +737,15 @@ class Pipeline_Orchestrator:
                 }
                 phase2_result = self._load_phase2_outputs()
                 if bool(getattr(_cfg, "RB_GOVERNOR_ENABLED", False)):
+                    self._release_between_phases("RB Governor")
+
                     rb_result = self._run_rb_governor(
                         train_df, val_df, phase2_result, cv_folds=self._cv_folds)
                     results["phase3"] = rb_result
                     results["phase4"] = rb_result
                 else:
+                    self._release_between_phases("Phase 3")
+
                     results["phase3"] = self._run_phase3(
                         train_df, val_df, phase2_result, force=True)
 
@@ -748,12 +759,15 @@ class Pipeline_Orchestrator:
                 # optimizer on existing outputs/{long,short}.json rule
                 # conditions (TP/SL/capital only). RB Governor is not used
                 # here — it would re-select rules from the Phase 2 pool.
+                self._release_between_phases("Phase 4")
+
                 phase3_result = self._load_phase3_outputs()
                 results["phase4"] = self._run_phase4(
                     train_df, val_df, phase3_result, force=True)
 
             else:
                 self._ensure_phase5_inputs()
+                self._release_between_phases("Phase 5")
                 results["phase5"] = self._run_phase5()
 
             total_elapsed = time.monotonic() - pipeline_start
@@ -765,6 +779,16 @@ class Pipeline_Orchestrator:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _release_between_phases(self, before: str) -> None:
+        """Release GPU/host resources between heavy phases (best-effort)."""
+        logger.info("Releasing GPU resources before %s ...", before)
+        try:
+            from gpu_fuzzy_trader._memory import release_phase2_resources
+
+            release_phase2_resources()
+        except Exception as exc:
+            logger.warning("Memory release before %s failed: %s", before, exc)
 
     def _attach_run_log_handler(self) -> logging.FileHandler:
         """Attach a FileHandler to the root logger writing to RUN_LOG_PATH.
