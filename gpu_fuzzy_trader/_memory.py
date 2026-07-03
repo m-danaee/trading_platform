@@ -44,8 +44,8 @@ def release_phase2_resources() -> None:
         import jax
 
         jax.clear_caches()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("jax.clear_caches() failed: %s", exc)
 
     # Clear warmup-signature registry so next phase recompiles with
     # fresh memory layout instead of holding references to old engines.
@@ -53,8 +53,8 @@ def release_phase2_resources() -> None:
         from gpu_fuzzy_trader._gpu_runtime import _WARMED_SIGNATURES
 
         _WARMED_SIGNATURES.clear()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("_WARMED_SIGNATURES.clear() failed: %s", exc)
 
     gc.collect()
 
