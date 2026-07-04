@@ -529,6 +529,26 @@ class Feature_Selector:
             {"long": [...], "short": [...]}
             Also persists results to outputs/selected_features_{direction}.json.
         """
+        phase1_disabled = bool(getattr(config, "PHASE1_DISABLED", False))
+        if phase1_disabled:
+            shared = build_phase1_shared_context(train_df)
+            all_infos = [
+                {
+                    "name": col,
+                    "mode": shared.feature_modes.get(col, "positive"),
+                    "score": 0.0,
+                }
+                for col in shared.feature_cols
+            ]
+            results = {"long": list(all_infos), "short": list(all_infos)}
+            _persist_phase1_results(results, phase1_disabled=True)
+            logger.info(
+                "Phase 1 [disabled]: using all %d features (post-dispersion) "
+                "for both directions",
+                len(all_infos),
+            )
+            return results
+
         shared = build_phase1_shared_context(
             train_df,
         )
@@ -574,14 +594,9 @@ class Feature_Selector:
             features = results[direction]
 
             # Persist
-            out_path = _DIRECTION_PATHS[direction]
-            os.makedirs(os.path.dirname(out_path), exist_ok=True)
-            payload = {"direction": direction, "features": features}
-            with open(out_path, "w", encoding="utf-8") as fh:
-                json.dump(payload, fh, indent=2)
-            logger.info(
-                "Phase 1 [%s]: saved %d features to %s",
-                direction, len(features), out_path,
+            _persist_phase1_results(
+                {direction: features},
+                phase1_disabled=False,
             )
 
         return results
@@ -655,9 +670,25 @@ class Feature_Selector:
             if not os.path.exists(path):
                 # File missing → need to run (but don't fail)
                 return None
-            # File exists → validate (raises ValueError if corrupted)
-            features = Feature_Selector.load_and_validate(path)
-            results[direction] = features
+            try:
+                with open(path, "r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+            except (json.JSONDecodeError, OSError) as exc:
+                raise ValueError(
+                    f"Feature selection file is unreadable or corrupted: {path}"
+                ) from exc
+            _validate_schema(data, path)
+            cached_disabled = bool(data.get("phase1_disabled", False))
+            current_disabled = bool(getattr(config, "PHASE1_DISABLED", False))
+            if cached_disabled != current_disabled:
+                logger.info(
+                    "Phase 1: cached output was built with PHASE1_DISABLED=%s, "
+                    "current config is %s; forcing re-run",
+                    cached_disabled,
+                    current_disabled,
+                )
+                return None
+            results[direction] = data["features"]
 
         return results
 
@@ -665,6 +696,30 @@ class Feature_Selector:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _persist_phase1_results(
+    results: dict[str, list[dict]],
+    *,
+    phase1_disabled: bool,
+) -> None:
+    """Write Phase 1 feature JSON for each direction in *results*."""
+    for direction, features in results.items():
+        out_path = _DIRECTION_PATHS[direction]
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+        payload = {
+            "direction": direction,
+            "features": features,
+            "phase1_disabled": bool(phase1_disabled),
+        }
+        with open(out_path, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, indent=2)
+        logger.info(
+            "Phase 1 [%s]: saved %d features to %s",
+            direction,
+            len(features),
+            out_path,
+        )
 
 
 def _mutual_info_discrete_mask(

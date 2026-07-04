@@ -388,8 +388,8 @@ def _sample_df(
     patterns.
 
     The caller-supplied ``random_state`` (int or ``np.random.Generator``)
-    seeds the start selection for reproducibility; ``None`` falls back to
-    seed 0.
+    seeds the start selection for reproducibility; ``None`` uses
+    ``PHASE2_SEED`` (process seed unless ``GLOBAL_SEED`` is set).
 
     Contiguity within each symbol is required because the backtest engine
     processes bars sequentially for position management, exposure release,
@@ -406,14 +406,14 @@ def _sample_df(
         df: Input DataFrame (must contain a ``symbol`` column when
             ``len(symbols) > 1``).
         total_rows: Target row count across all symbols.
-        random_state: Seed (int), ``np.random.Generator``, or ``None`` for
-            a deterministic default seed.
+        random_state: Seed (int), ``np.random.Generator``, or ``None`` to use
+            ``PHASE2_SEED``.
         forbidden_ranges: Per-symbol ``(start_bar, end_bar)`` intervals
             (inclusive) that the sampled slice must NOT overlap. Bars are
             0-indexed within each symbol. ``None`` or empty = no
             constraint.
     """
-    rng = np.random.default_rng(0) if random_state is None else (
+    rng = np.random.default_rng(_cfg.PHASE2_SEED) if random_state is None else (
         random_state if isinstance(random_state, np.random.Generator)
         else np.random.default_rng(random_state)
     )
@@ -2160,19 +2160,11 @@ class Rule_Pool_Generator:
         # Build forbidden bar ranges from CV folds so the sampled training
         # slice never overlaps a CV/holdout valid region (prevents data
         # leakage into the CV fitness signal).
-        forbidden_ranges: list[tuple[int, int]] = []
-        if self._cv_folds:
-            for f in self._cv_folds:
-                forbidden_ranges.append((f.valid_start_bar, f.valid_end_bar))
-        # Pull the embargo back from the start of each forbidden region so
-        # train labels (which use a MAX_HOLD_CANDLES lookahead) cannot
-        # peek into the valid region.
-        if forbidden_ranges:
-            embargo = int(getattr(
-                _cfg, "PURGED_WF_EMBARGO_CANDLES", _cfg.MAX_HOLD_CANDLES))
-            forbidden_ranges = [
-                (max(0, s - embargo), e) for s, e in forbidden_ranges
-            ]
+        from gpu_fuzzy_trader.validation.rolling_cv import build_forbidden_ranges
+
+        forbidden_ranges = (
+            build_forbidden_ranges(self._cv_folds) if self._cv_folds else []
+        )
 
         # Sample training data to budget, then slim to backtest-only columns
         sample_seed = seed if seed is not None else _cfg.PHASE2_SEED

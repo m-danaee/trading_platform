@@ -1629,14 +1629,15 @@ def _optimize_risk_return_only(
 
 def _load_internal_split_frames_for_rb() -> tuple[pd.DataFrame, pd.DataFrame]:
     """Load the internal train and validation split without reading the final test file."""
-    train_path = Path(getattr(_cfg, "TRAIN_75_PATH", "data/train_75.parquet"))
-    valid_path = Path(getattr(_cfg, "VALIDATION_25_PATH", "data/validation_25.parquet"))
-    if train_path.exists() and valid_path.exists():
-        return downcast_numeric_df(pd.read_parquet(train_path)), downcast_numeric_df(pd.read_parquet(valid_path))
-    from gpu_fuzzy_trader.data.splitter import Data_Splitter
-    full = Data_Loader().load_dataset(
-        getattr(_cfg, "TRAIN_CSV_PATH", "data/train_2.csv"))
-    train_df, valid_df = Data_Splitter().split_and_persist(full)
+    from gpu_fuzzy_trader.data.splitter import Data_Splitter, load_cached_split_if_fresh
+
+    cached = load_cached_split_if_fresh()
+    if cached is not None:
+        train_df, val_df, _, _, _ = cached
+        return train_df, val_df
+
+    full = Data_Loader().load_dataset(_cfg.TRAIN_CSV_PATH)
+    train_df, valid_df, _ = Data_Splitter().split_and_persist(full)
     return train_df, valid_df
 
 

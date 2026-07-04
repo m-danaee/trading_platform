@@ -378,27 +378,23 @@ class OOS_Evaluator:
 
     def _load_datasets_by_split(self) -> dict[str, pd.DataFrame]:
         """Load prepared train, validation, and test datasets."""
+        from gpu_fuzzy_trader.data.splitter import Data_Splitter, load_cached_split_if_fresh
+
         datasets: dict[str, pd.DataFrame] = {}
 
-        if os.path.exists(_cfg.TRAIN_70_PATH) and os.path.exists(_cfg.VALIDATION_30_PATH):
-            try:
-                datasets["train"] = downcast_numeric_df(
-                    pd.read_parquet(_cfg.TRAIN_70_PATH))
-                datasets["validation"] = downcast_numeric_df(
-                    pd.read_parquet(_cfg.VALIDATION_30_PATH))
-                datasets["test"] = self.prepare_test_data(self.test_csv_path)
-                logger.info(
-                    "Loaded cached train / validation splits and prepared test data: train=%d, validation=%d, test=%d",
-                    len(datasets["train"]),
-                    len(datasets["validation"]),
-                    len(datasets["test"]),
-                )
-                return datasets
-            except Exception as exc:
-                logger.warning(
-                    "Failed to load cached train/validation splits (%s); falling back to recomputing them.",
-                    exc,
-                )
+        cached = load_cached_split_if_fresh()
+        if cached is not None:
+            train_df, val_df, _, _, _ = cached
+            datasets["train"] = train_df
+            datasets["validation"] = val_df
+            datasets["test"] = self.prepare_test_data(self.test_csv_path)
+            logger.info(
+                "Loaded cached train / validation splits and prepared test data: train=%d, validation=%d, test=%d",
+                len(datasets["train"]),
+                len(datasets["validation"]),
+                len(datasets["test"]),
+            )
+            return datasets
 
         loader = Data_Loader()
         splitter = Data_Splitter()

@@ -947,3 +947,73 @@ class TestOOSEvaluatorRun:
             m._FEATURE_PATHS.update(orig_features)
             reporter_module._REPORTS_DIR = orig_reports_dir
             self._restore_paths(m, orig_s, orig_r)
+
+
+class TestPhase5CachedSplitFreshness:
+    def test_load_datasets_uses_validated_cache_when_fresh(
+        self, tmp_path, monkeypatch,
+    ):
+        from gpu_fuzzy_trader.data.loader import Data_Loader
+        from gpu_fuzzy_trader.data.splitter import Data_Splitter
+        from tests.unit.test_data_splitter import _patch_split_paths
+
+        train_csv = tmp_path / "train_2.csv"
+        loader = Data_Loader()
+        source_df = loader.load_dataset(_write_synthetic_test_csv(tmp_path))
+        source_df.to_csv(train_csv, index=False)
+        (tmp_path / "test").mkdir()
+        test_csv = _write_synthetic_test_csv(tmp_path / "test")
+
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+        with _patch_split_paths(str(cache_dir))() as paths:
+            Data_Splitter().split_and_persist(source_df)
+            os.utime(train_csv, (1, 1))
+            for path in paths.values():
+                os.utime(path, (2, 2))
+
+        monkeypatch.setattr(_cfg, "TRAIN_CSV_PATH", str(train_csv))
+        monkeypatch.setattr(_cfg, "TRAIN_70_PATH", paths["train"])
+        monkeypatch.setattr(_cfg, "VALIDATION_30_PATH", paths["val"])
+        monkeypatch.setattr(_cfg, "VALIDATION_FITNESS_PATH", paths["fitness"])
+        monkeypatch.setattr(
+            _cfg, "VALIDATION_SELECTION_PATH", paths["selection"])
+        monkeypatch.setattr(_cfg, "CV_FOLDS_MANIFEST_PATH", paths["manifest"])
+        monkeypatch.setattr(_cfg, "SPLIT_MODE", "holdout_70_30")
+
+        ev = OOS_Evaluator(test_csv_path=test_csv)
+        datasets = ev._load_datasets_by_split()
+        assert len(datasets["train"]) > 0
+        assert len(datasets["validation"]) > 0
+        assert len(datasets["test"]) > 0
+
+    def test_load_datasets_rejects_stale_parquet_cache(
+        self, tmp_path, monkeypatch,
+    ):
+        from gpu_fuzzy_trader.data.loader import Data_Loader
+        from gpu_fuzzy_trader.data.splitter import Data_Splitter, load_cached_split_if_fresh
+        from tests.unit.test_data_splitter import _patch_split_paths
+
+        train_csv = tmp_path / "train_2.csv"
+        loader = Data_Loader()
+        source_df = loader.load_dataset(_write_synthetic_test_csv(tmp_path))
+        source_df.to_csv(train_csv, index=False)
+
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+        with _patch_split_paths(str(cache_dir))() as paths:
+            Data_Splitter().split_and_persist(source_df)
+            os.utime(train_csv, (3, 3))
+            for path in paths.values():
+                os.utime(path, (2, 2))
+
+        monkeypatch.setattr(_cfg, "TRAIN_CSV_PATH", str(train_csv))
+        monkeypatch.setattr(_cfg, "TRAIN_70_PATH", paths["train"])
+        monkeypatch.setattr(_cfg, "VALIDATION_30_PATH", paths["val"])
+        monkeypatch.setattr(_cfg, "VALIDATION_FITNESS_PATH", paths["fitness"])
+        monkeypatch.setattr(
+            _cfg, "VALIDATION_SELECTION_PATH", paths["selection"])
+        monkeypatch.setattr(_cfg, "CV_FOLDS_MANIFEST_PATH", paths["manifest"])
+        monkeypatch.setattr(_cfg, "SPLIT_MODE", "holdout_70_30")
+
+        assert load_cached_split_if_fresh() is None

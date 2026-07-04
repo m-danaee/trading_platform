@@ -405,25 +405,50 @@ class TestLoadAndSplitDataCache:
         return orch
 
     def test_uses_cached_split_when_fresh(self, tmp_path, monkeypatch):
+        import json
+
+        from gpu_fuzzy_trader.validation.rolling_cv import purged_config_fingerprint
+
         train_df = _make_df(n_rows=120)
         val_df = _make_df(n_rows=40)
 
         csv_path = tmp_path / "train.csv"
         train_path = tmp_path / "train_70.parquet"
         val_path = tmp_path / "validation_30.parquet"
+        fitness_path = tmp_path / "validation_fitness.parquet"
+        selection_path = tmp_path / "validation_selection.parquet"
+        manifest_path = tmp_path / "cv_folds_manifest.json"
 
         _make_df(n_rows=120).to_csv(csv_path, index=False)
         train_df.to_parquet(train_path, index=False)
         val_df.to_parquet(val_path, index=False)
+        val_df.iloc[: len(val_df) // 2].to_parquet(fitness_path, index=False)
+        val_df.iloc[len(val_df) // 2:].to_parquet(selection_path, index=False)
+        manifest_path.write_text(
+            json.dumps(
+                {
+                    "split_mode": "holdout_70_30",
+                    "config_fingerprint": purged_config_fingerprint(),
+                    "reference_rows": 120,
+                    "n_folds": 0,
+                    "folds": [],
+                }
+            ),
+            encoding="utf-8",
+        )
 
         now = time.time()
         os.utime(csv_path, (now - 100, now - 100))
-        os.utime(train_path, (now, now))
-        os.utime(val_path, (now, now))
+        for path in (train_path, val_path, fitness_path, selection_path, manifest_path):
+            os.utime(path, (now, now))
 
         monkeypatch.setattr(_cfg, "TRAIN_CSV_PATH", str(csv_path))
         monkeypatch.setattr(_cfg, "TRAIN_70_PATH", str(train_path))
         monkeypatch.setattr(_cfg, "VALIDATION_30_PATH", str(val_path))
+        monkeypatch.setattr(_cfg, "VALIDATION_FITNESS_PATH", str(fitness_path))
+        monkeypatch.setattr(
+            _cfg, "VALIDATION_SELECTION_PATH", str(selection_path))
+        monkeypatch.setattr(_cfg, "CV_FOLDS_MANIFEST_PATH", str(manifest_path))
         monkeypatch.setattr(_cfg, "DEBUG_SYMBOL_SCOPE_ENABLED", False)
         monkeypatch.setattr(_cfg, "SPLIT_MODE", "holdout_70_30")
 

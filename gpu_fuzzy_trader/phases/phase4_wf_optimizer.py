@@ -828,7 +828,7 @@ class WalkForwardRiskOptimizer:
     Parameters
     ----------
     val_df : pd.DataFrame
-        Persisted validation split (validation_25) for deployment gate metrics.
+        Persisted validation split (validation_30) for deployment gate metrics.
     rule_set : dict
         Rule set dict from Phase 3 (evaluator_v3.ipynb format).
     direction : str

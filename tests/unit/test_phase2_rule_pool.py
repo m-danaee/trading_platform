@@ -754,6 +754,23 @@ class TestSampleDf:
         # No constraint: can be anywhere
         assert bar_idx[0] >= 0 and bar_idx[-1] < 400
 
+    def test_sample_df_none_uses_phase2_seed(self, monkeypatch):
+        df = _make_train_df(n_rows=400, symbols=["A", "B"])
+        monkeypatch.setattr(_cfg, "PHASE2_SEED", 4242)
+        expected = _sample_df(df, total_rows=80, random_state=4242)
+        actual = _sample_df(df, total_rows=80)
+        pd.testing.assert_frame_equal(
+            expected.reset_index(drop=True),
+            actual.reset_index(drop=True),
+        )
+
+    def test_sample_df_none_is_not_seed_zero(self, monkeypatch):
+        df = _make_train_df(n_rows=400, symbols=["A", "B"])
+        monkeypatch.setattr(_cfg, "PHASE2_SEED", 4242)
+        with_seed = _sample_df(df, total_rows=80, random_state=0)
+        with_none = _sample_df(df, total_rows=80)
+        assert not with_seed.equals(with_none)
+
 
 # ---------------------------------------------------------------------------
 # Tests: _validate_pool_schema

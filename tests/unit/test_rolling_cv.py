@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import pandas as pd
 import pytest
 
 from gpu_fuzzy_trader.validation.rolling_cv import (
     PurgedFold,
     aggregate_fold_metrics,
+    build_forbidden_ranges,
     build_purged_walk_forward_folds,
     cv_folds_only,
     derive_primary_holdout,
+    mask_df_to_safe_region,
     summarize_fold_metrics,
 )
 
@@ -120,3 +123,47 @@ class TestPurgedWalkForward:
         summary = summarize_fold_metrics([])
         assert summary.folds == 0
         assert summary.min_trades == 0
+
+    def test_cv_folds_equal_size_via_divmod(self, purged_cv_config, monkeypatch):
+        """CV valid blocks differ by at most 1 bar when remaining % n != 0."""
+        monkeypatch.setattr(
+            "gpu_fuzzy_trader.validation.rolling_cv._cfg.PURGED_WF_N_SPLITS",
+            2,
+        )
+        monkeypatch.setattr(
+            "gpu_fuzzy_trader.validation.rolling_cv._cfg.PURGED_WF_MIN_TRAIN_FRACTION",
+            0.20,
+        )
+        # per_symbol=10001 -> remaining often not divisible by n_cv_folds
+        df = _make_multi_symbol_df(10001)
+        folds = cv_folds_only(build_purged_walk_forward_folds(df))
+        assert len(folds) >= 2
+        sizes = []
+        for fold in folds:
+            per_sym = fold.n_valid_rows // df["symbol"].nunique()
+            sizes.append(per_sym)
+        assert max(sizes) - min(sizes) <= 1
+
+    def test_build_forbidden_ranges_includes_embargo(self, purged_cv_config):
+        df = _make_multi_symbol_df(8000)
+        folds = build_purged_walk_forward_folds(df)
+        forbidden = build_forbidden_ranges(folds, embargo=288)
+        assert forbidden
+        for fold, (f_start, f_end) in zip(folds, forbidden):
+            assert f_start == max(0, fold.valid_start_bar - 288)
+            assert f_end == fold.valid_end_bar
+
+    def test_mask_df_to_safe_region_excludes_cv_valid(self, purged_cv_config):
+        df = _make_multi_symbol_df(8000)
+        folds = build_purged_walk_forward_folds(df)
+        forbidden = build_forbidden_ranges(folds)
+        masked = mask_df_to_safe_region(df, forbidden)
+        for f_start, f_end in forbidden:
+            for sym in df["symbol"].unique():
+                sub = masked[masked["symbol"] == sym]
+                if sub.empty:
+                    continue
+                bi = sub["_symbol_bar_index"].to_numpy()
+                assert np.all((bi < f_start) | (bi > f_end)), (
+                    f"symbol {sym} overlaps forbidden [{f_start}, {f_end}]"
+                )

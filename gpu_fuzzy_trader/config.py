@@ -114,7 +114,7 @@ TEST_CSV_PATH = _env_str(
     os.path.join(DATA_ROOT, "test_2.csv") if DATA_ROOT else "data/test_2.csv",
 )
 
-# Cached splits from train.csv (Phases 2–5). Rebuilt when train.csv is newer.
+# Cached splits from train_2.csv (Phases 2–5). Rebuilt when train_2.csv is newer.
 TRAIN_70_PATH = "data/train_70.parquet"
 VALIDATION_30_PATH = "data/validation_30.parquet"
 VALIDATION_FITNESS_PATH = "data/validation_fitness.parquet"
@@ -171,7 +171,7 @@ TAIL_DROP_ROWS = 288
 # =============================================================================
 # Phases 4–5 always use persisted train_70 + validation_30 (see splitter.py).
 
-# SPLIT_MODE — how train.csv is divided before Phase 2.
+# SPLIT_MODE — how train_2.csv is divided before Phase 2.
 #   holdout_70_30       → single per-symbol 70/30 chronological split (legacy).
 #   purged_walk_forward → expanding CV folds + primary tail holdout with embargo.
 SPLIT_MODE = "purged_walk_forward"
@@ -181,7 +181,7 @@ SPLIT_MODE = "purged_walk_forward"
 # PURGED_WF_N_SPLITS — number of CV folds on the train prefix (K).
 #   K CV folds are built on the first (1 - HOLDOUT_FRACTION) of each symbol;
 #   a separate primary holdout (validation_30) is always appended (K+1 total).
-PURGED_WF_N_SPLITS = 3
+PURGED_WF_N_SPLITS = 2
 
 # PURGED_WF_HOLDOUT_FRACTION — tail fraction per symbol reserved for val parquet.
 PURGED_WF_HOLDOUT_FRACTION = 0.3
@@ -198,7 +198,10 @@ PURGED_WF_MIN_TRAIN_FRACTION = 0.4
 PURGED_WF_MIN_VALID_ROWS = 3000
 
 # PURGED_WF_AGGREGATION — combine per-fold metrics: worst | mean.
-PURGED_WF_AGGREGATION = "worst"
+# mean averages return/PF/Sortino; still uses max drawdown and min trades.
+# Prefer mean when per-fold trade floors are low (scaled slices) so one noisy
+# fold does not dominate fitness; worst is more conservative for large folds.
+PURGED_WF_AGGREGATION = "mean"
 
 # PURGED_WF_REQUIRE_ALL_CV_FOLDS — pool admission also checks every CV fold.
 PURGED_WF_REQUIRE_ALL_CV_FOLDS = False
@@ -277,6 +280,14 @@ PHASE1_DISPERSION_THRESHOLD = 0.95
 #   Higher → wider Phase 2 search space, slower evolution, more combinations.
 #   Lower  → faster search, risk of missing predictive features.
 PHASE1_TOP_K_FEATURES = 25
+
+# PHASE1_DISABLED — bypass MI ranking, sign-consistency, stationarity, and top-K
+# selection. When True, Feature_Selector.run returns ALL features that pass the
+# dispersion filter (PHASE1_DISPERSION_THRESHOLD) for both directions, with modes
+# detected by Feature_Detector. Phase 2 then evolves over the full feature set.
+#   True  → larger GA search space, more GPU RAM per chromosome, no MI prefilter.
+#   False → normal top-K MI-ranked selection.
+PHASE1_DISABLED: bool = True
 
 # PHASE1_MAX_FEATURE_OVERLAP — max shared feature names between long & short lists.
 #   Enforced as int(TOP_K × overlap) shared names (e.g. 25 × 0.8 → 20 shared).

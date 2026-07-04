@@ -500,14 +500,25 @@ class TestLoadAndValidate:
 # ---------------------------------------------------------------------------
 
 class TestSkipIfValid:
-    def _write_valid_file(self, path: str, direction: str):
+    def _write_valid_file(
+        self,
+        path: str,
+        direction: str,
+        *,
+        phase1_disabled: bool = False,
+    ):
         data = {
             "direction": direction,
             "features": [{"name": "feat_a", "mode": "positive", "score": 0.5}],
+            "phase1_disabled": phase1_disabled,
         }
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as fh:
             json.dump(data, fh)
+
+    @pytest.fixture(autouse=True)
+    def _phase1_enabled_for_cache_tests(self, monkeypatch):
+        monkeypatch.setattr(config, "PHASE1_DISABLED", False)
 
     def test_returns_none_when_no_files(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
@@ -574,6 +585,65 @@ class TestSkipIfValid:
         )
         with pytest.raises(ValueError):
             Feature_Selector.skip_if_valid()
+
+    def test_skip_if_valid_invalidates_on_disabled_toggle(
+        self, tmp_path, monkeypatch,
+    ):
+        long_path = str(tmp_path / "selected_features_long.json")
+        short_path = str(tmp_path / "selected_features_short.json")
+        self._write_valid_file(long_path, "long", phase1_disabled=False)
+        self._write_valid_file(short_path, "short", phase1_disabled=False)
+
+        monkeypatch.setattr(
+            "gpu_fuzzy_trader.features.selector._LONG_PATH", long_path)
+        monkeypatch.setattr(
+            "gpu_fuzzy_trader.features.selector._SHORT_PATH", short_path)
+        monkeypatch.setattr(
+            "gpu_fuzzy_trader.features.selector._DIRECTION_PATHS",
+            {"long": long_path, "short": short_path},
+        )
+        monkeypatch.setattr(config, "PHASE1_DISABLED", True)
+        assert Feature_Selector.skip_if_valid() is None
+
+
+# ---------------------------------------------------------------------------
+# Tests: PHASE1_DISABLED bypass
+# ---------------------------------------------------------------------------
+
+class TestPhase1Disabled:
+    def test_phase1_disabled_returns_all_features(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(config, "PHASE1_DISABLED", True)
+        monkeypatch.setattr(
+            "gpu_fuzzy_trader.features.selector._DIRECTION_PATHS",
+            {
+                "long": str(tmp_path / "selected_features_long.json"),
+                "short": str(tmp_path / "selected_features_short.json"),
+            },
+        )
+        train_df = _make_train_df(n_rows=200, n_features=8, symbols=["A", "B"])
+        shared = build_phase1_shared_context(train_df)
+        result = Feature_Selector().run(train_df)
+        assert len(result["long"]) == len(shared.feature_cols)
+        assert len(result["short"]) == len(shared.feature_cols)
+        for direction in ("long", "short"):
+            for entry in result[direction]:
+                assert entry["mode"] in {
+                    "binary", "ternary", "positive", "signed"}
+                assert entry["score"] == 0.0
+
+    def test_phase1_disabled_persists_flag(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(config, "PHASE1_DISABLED", True)
+        long_path = str(tmp_path / "selected_features_long.json")
+        short_path = str(tmp_path / "selected_features_short.json")
+        monkeypatch.setattr(
+            "gpu_fuzzy_trader.features.selector._DIRECTION_PATHS",
+            {"long": long_path, "short": short_path},
+        )
+        train_df = _make_train_df(n_rows=100, n_features=4)
+        Feature_Selector().run(train_df)
+        with open(long_path, encoding="utf-8") as fh:
+            payload = json.load(fh)
+        assert payload.get("phase1_disabled") is True
 
 
 # ---------------------------------------------------------------------------

@@ -22,8 +22,8 @@ from gpu_fuzzy_trader.phases.phase2_support import (
 from gpu_fuzzy_trader.phases.phase4_wf_optimizer import (
     build_phase4_walk_forward_splits,
 )
+from gpu_fuzzy_trader.data.splitter import load_cached_split_if_fresh
 from gpu_fuzzy_trader.rb_governor import _filter_good_rules, _is_positive_good
-from gpu_fuzzy_trader.run_pipeline import Pipeline_Orchestrator
 
 
 def _synthetic_val_df(*, n_rows_per_symbol: int = 400, symbols: list[str] | None = None) -> pd.DataFrame:
@@ -235,15 +235,25 @@ class TestConflict09StaleParquetCache:
       csv_path = tmp_path / "train.csv"
       train_pq = tmp_path / "train_70.parquet"
       val_pq = tmp_path / "validation_30.parquet"
+      fitness_pq = tmp_path / "validation_fitness.parquet"
+      selection_pq = tmp_path / "validation_selection.parquet"
       manifest = tmp_path / "cv_folds_manifest.json"
 
       pd.DataFrame({"x": [1]}).to_parquet(train_pq)
       pd.DataFrame({"x": [1]}).to_parquet(val_pq)
+      pd.DataFrame({"x": [1]}).to_parquet(fitness_pq)
+      pd.DataFrame({"x": [1]}).to_parquet(selection_pq)
       csv_path.write_text("x\n1\n", encoding="utf-8")
+      os.utime(csv_path, (1, 1))
+      for path in (train_pq, val_pq, fitness_pq, selection_pq, manifest):
+          path.touch()
+          os.utime(path, (2, 2))
 
       monkeypatch.setattr(_cfg, "TRAIN_CSV_PATH", str(csv_path))
       monkeypatch.setattr(_cfg, "TRAIN_70_PATH", str(train_pq))
       monkeypatch.setattr(_cfg, "VALIDATION_30_PATH", str(val_pq))
+      monkeypatch.setattr(_cfg, "VALIDATION_FITNESS_PATH", str(fitness_pq))
+      monkeypatch.setattr(_cfg, "VALIDATION_SELECTION_PATH", str(selection_pq))
       monkeypatch.setattr(_cfg, "CV_FOLDS_MANIFEST_PATH", str(manifest))
       monkeypatch.setattr(_cfg, "SPLIT_MODE", "purged_walk_forward")
 
@@ -252,27 +262,36 @@ class TestConflict09StaleParquetCache:
           "config_fingerprint": "stale",
       }), encoding="utf-8")
 
-      assert Pipeline_Orchestrator._load_cached_split_if_fresh() is None
+      assert load_cached_split_if_fresh() is None
 
-  def test_holdout_cache_does_not_validate_split_mode(self, tmp_path, monkeypatch):
+  def test_holdout_cache_rejected_without_manifest(self, tmp_path, monkeypatch):
       csv_path = tmp_path / "train.csv"
       train_pq = tmp_path / "train_70.parquet"
       val_pq = tmp_path / "validation_30.parquet"
+      fitness_pq = tmp_path / "validation_fitness.parquet"
+      selection_pq = tmp_path / "validation_selection.parquet"
 
       pd.DataFrame({"x": [1, 2]}).to_parquet(train_pq)
       pd.DataFrame({"x": [3]}).to_parquet(val_pq)
+      pd.DataFrame({"x": [3]}).to_parquet(fitness_pq)
+      pd.DataFrame({"x": [3]}).to_parquet(selection_pq)
       csv_path.write_text("x\n1\n", encoding="utf-8")
       os.utime(csv_path, (1, 1))
       os.utime(train_pq, (2, 2))
       os.utime(val_pq, (2, 2))
+      os.utime(fitness_pq, (2, 2))
+      os.utime(selection_pq, (2, 2))
 
       monkeypatch.setattr(_cfg, "TRAIN_CSV_PATH", str(csv_path))
       monkeypatch.setattr(_cfg, "TRAIN_70_PATH", str(train_pq))
       monkeypatch.setattr(_cfg, "VALIDATION_30_PATH", str(val_pq))
+      monkeypatch.setattr(_cfg, "VALIDATION_FITNESS_PATH", str(fitness_pq))
+      monkeypatch.setattr(_cfg, "VALIDATION_SELECTION_PATH", str(selection_pq))
+      monkeypatch.setattr(_cfg, "CV_FOLDS_MANIFEST_PATH",
+                          str(tmp_path / "missing.json"))
       monkeypatch.setattr(_cfg, "SPLIT_MODE", "holdout_70_30")
 
-      cached = Pipeline_Orchestrator._load_cached_split_if_fresh()
-      assert cached is not None
+      assert load_cached_split_if_fresh() is None
 
 
 class TestConflict10SupportPenaltyMaxZero:

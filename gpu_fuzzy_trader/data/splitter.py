@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 import logging
+import os
 from typing import TYPE_CHECKING
 
 import pandas as pd
@@ -60,7 +61,6 @@ def _purged_walk_forward_split(
     from gpu_fuzzy_trader.validation.rolling_cv import (
         build_purged_walk_forward_folds,
         derive_primary_holdout,
-        write_cv_folds_manifest,
     )
 
     _cfg.set_purged_wf_reference_rows(len(df))
@@ -73,13 +73,11 @@ def _purged_walk_forward_split(
         return train_df, val_df, []
 
     train_df, val_df = derive_primary_holdout(folds)
-    manifest_path = write_cv_folds_manifest(folds, reference_rows=len(df))
     logger.info(
-        "Purged walk-forward: %d folds, train=%d rows, holdout val=%d rows, manifest=%s",
+        "Purged walk-forward: %d folds, train=%d rows, holdout val=%d rows",
         len(folds),
         len(train_df),
         len(val_df),
-        manifest_path,
     )
     return train_df, val_df, folds
 
@@ -99,7 +97,7 @@ def _chronological_half_split(
         if n <= 1:
             parts.append(g if first_half else g.iloc[0:0])
             continue
-        split_point = max(1, n // 2)
+        split_point = n // 2  # first half gets floor; second half gets ceil
         if first_half:
             parts.append(g.iloc[:split_point])
         else:
@@ -118,6 +116,87 @@ def split_validation_fitness_selection(
     return val_fitness, val_selection
 
 
+def load_cached_split_if_fresh() -> (
+    tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame,
+          pd.DataFrame, list | None] | None
+):
+    """Load cached split parquets when they are newer than the source CSV.
+
+    Validates manifest ``split_mode``, ``config_fingerprint``, all four parquet
+    mtimes, and (purged mode) ``reference_rows`` against a fresh CSV load.
+
+    Returns
+    -------
+    tuple or None
+        ``(train, val, val_fitness, val_selection, cv_folds)`` on cache hit,
+        else ``None``.
+    """
+    from gpu_fuzzy_trader.data.loader import Data_Loader
+    from gpu_fuzzy_trader.validation.rolling_cv import (
+        build_purged_walk_forward_folds,
+        load_cv_folds_manifest,
+        purged_config_fingerprint,
+    )
+
+    csv_path = _cfg.TRAIN_CSV_PATH
+    train_path = _cfg.TRAIN_70_PATH
+    val_path = _cfg.VALIDATION_30_PATH
+    fitness_path = _cfg.VALIDATION_FITNESS_PATH
+    selection_path = _cfg.VALIDATION_SELECTION_PATH
+    manifest_path = getattr(_cfg, "CV_FOLDS_MANIFEST_PATH", "")
+
+    required_paths = (
+        csv_path,
+        train_path,
+        val_path,
+        fitness_path,
+        selection_path,
+        manifest_path,
+    )
+    if not all(os.path.exists(p) for p in required_paths):
+        return None
+
+    try:
+        csv_mtime = os.path.getmtime(csv_path)
+        cache_mtime = min(
+            os.path.getmtime(train_path),
+            os.path.getmtime(val_path),
+            os.path.getmtime(fitness_path),
+            os.path.getmtime(selection_path),
+            os.path.getmtime(manifest_path),
+        )
+        manifest = load_cv_folds_manifest(manifest_path)
+        if manifest is None:
+            return None
+        if manifest.get("split_mode") != _cfg.SPLIT_MODE:
+            return None
+        if manifest.get("config_fingerprint") != purged_config_fingerprint():
+            return None
+    except OSError:
+        return None
+
+    if cache_mtime < csv_mtime:
+        return None
+
+    train_df = downcast_numeric_df(pd.read_parquet(train_path))
+    val_df = downcast_numeric_df(pd.read_parquet(val_path))
+    val_fitness = downcast_numeric_df(pd.read_parquet(fitness_path))
+    val_selection = downcast_numeric_df(pd.read_parquet(selection_path))
+
+    cv_folds: list | None = None
+    if _cfg.split_mode_is_purged_walk_forward():
+        loader = Data_Loader()
+        train_full = loader.load_dataset(csv_path)
+        ref = manifest.get("reference_rows")
+        if ref is None or int(ref) != len(train_full):
+            return None
+        _cfg.set_purged_wf_reference_rows(len(train_full))
+        folds = build_purged_walk_forward_folds(train_full)
+        cv_folds = folds if folds else None
+
+    return train_df, val_df, val_fitness, val_selection, cv_folds
+
+
 class Data_Splitter:
     """Chronological train/validation splitter."""
 
@@ -134,6 +213,8 @@ class Data_Splitter:
             ``(train_df, validation_df, cv_folds)``. ``cv_folds`` is non-None
             only when ``SPLIT_MODE == purged_walk_forward``.
         """
+        from gpu_fuzzy_trader.validation.rolling_cv import write_cv_folds_manifest
+
         mode = str(_cfg.SPLIT_MODE).strip().lower()
         cv_folds: list | None = None
 
@@ -141,6 +222,7 @@ class Data_Splitter:
             train_df, validation_df, cv_folds = _purged_walk_forward_split(df)
         else:
             train_df, validation_df = _holdout_70_30_split(df)
+            _cfg.set_purged_wf_reference_rows(len(df))
 
         train_df = downcast_numeric_df(train_df)
         validation_df = downcast_numeric_df(validation_df)
@@ -154,6 +236,16 @@ class Data_Splitter:
         validation_df.to_parquet(VALIDATION_30_PATH, index=False)
         val_fitness_df.to_parquet(VALIDATION_FITNESS_PATH, index=False)
         val_selection_df.to_parquet(VALIDATION_SELECTION_PATH, index=False)
+
+        manifest_path = write_cv_folds_manifest(
+            cv_folds,
+            reference_rows=len(df),
+        )
+        logger.info(
+            "Persisted train/validation splits and manifest=%s (mode=%s)",
+            manifest_path,
+            _cfg.SPLIT_MODE,
+        )
 
         return train_df, validation_df, cv_folds
 

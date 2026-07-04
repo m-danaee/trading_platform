@@ -36,8 +36,12 @@ from gpu_fuzzy_trader import rb_governor as _rb_governor_module
 from gpu_fuzzy_trader.features import selector as _selector_module
 from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.data.loader import Data_Loader
-from gpu_fuzzy_trader.data.splitter import Data_Splitter
+from gpu_fuzzy_trader.data.splitter import Data_Splitter, load_cached_split_if_fresh
 from gpu_fuzzy_trader.features.selector import Feature_Selector
+from gpu_fuzzy_trader.validation.rolling_cv import (
+    build_forbidden_ranges,
+    mask_df_to_safe_region,
+)
 from gpu_fuzzy_trader.phases.phase2_rule_pool import Rule_Pool_Generator
 from gpu_fuzzy_trader.phases.phase3_rule_set import Rule_Set_Selector
 from gpu_fuzzy_trader.phases.phase4_wf_optimizer import WalkForwardRiskOptimizer
@@ -522,7 +526,10 @@ class Pipeline_Orchestrator:
                 # ------------------------------------------------------------------
                 # Phase 1: Feature Selection
                 # ------------------------------------------------------------------
-                phase1_result = self._run_phase1(train_df, force=force, val_df=None)
+                phase1_train_df = self._mask_train_df_for_phase1(train_df)
+                phase1_result = self._run_phase1(
+                    phase1_train_df, force=force, val_df=None,
+                )
                 results["phase1"] = phase1_result
                 train_df, val_df = self._prune_splits_after_phase1(
                     train_df, val_df, phase1_result)
@@ -751,7 +758,10 @@ class Pipeline_Orchestrator:
                     "train_rows": len(train_df),
                     "val_rows": len(val_df),
                 }
-                results["phase1"] = self._run_phase1(train_df, force=True, val_df=None)
+                phase1_train_df = self._mask_train_df_for_phase1(train_df)
+                results["phase1"] = self._run_phase1(
+                    phase1_train_df, force=True, val_df=None,
+                )
 
             elif phase == 2:
                 train_df, val_df = self._load_and_split_data()
@@ -958,15 +968,17 @@ class Pipeline_Orchestrator:
 
     def _load_and_split_data(self) -> tuple[pd.DataFrame, pd.DataFrame]:
         """
-        Load train.csv and split into train/validation DataFrames.
+        Load train_2.csv and split into train/validation DataFrames.
 
         When ``SPLIT_MODE`` is ``purged_walk_forward``, also rebuilds CV folds
         (stored on ``self._cv_folds``) for Phases 2–3.
         """
-        cached_split = self._load_cached_split_if_fresh()
+        cached_split = load_cached_split_if_fresh()
         if cached_split is not None:
-            train_df, val_df = cached_split
-            self._cv_folds = self._rebuild_cv_folds_if_needed()
+            train_df, val_df, val_fitness, val_selection, cv_folds = cached_split
+            self._cv_folds = cv_folds
+            self._preloaded_val_fitness = val_fitness
+            self._preloaded_val_selection = val_selection
             logger.info(
                 "Using cached train/validation split from %s and %s (mode=%s)",
                 _cfg.TRAIN_70_PATH,
@@ -974,6 +986,9 @@ class Pipeline_Orchestrator:
                 _cfg.SPLIT_MODE,
             )
             return self._apply_debug_symbol_scope(train_df, val_df)
+
+        self._preloaded_val_fitness = None
+        self._preloaded_val_selection = None
 
         logger.info("Loading training data from %s …", _cfg.TRAIN_CSV_PATH)
         loader = Data_Loader()
@@ -992,10 +1007,16 @@ class Pipeline_Orchestrator:
             if _cfg.split_mode_is_purged_walk_forward()
             else "holdout 70/30"
         )
-        logger.info("Splitting train.csv (%s) …", split_label)
+        logger.info("Splitting %s (%s) …", _cfg.TRAIN_CSV_PATH, split_label)
 
         train_df, val_df, cv_folds = splitter.split_and_persist(train_full)
         self._cv_folds = cv_folds
+
+        from gpu_fuzzy_trader.data.splitter import split_validation_fitness_selection
+
+        val_fitness, val_selection = split_validation_fitness_selection(val_df)
+        self._preloaded_val_fitness = val_fitness
+        self._preloaded_val_selection = val_selection
 
         logger.info(
             "Split complete: train=%d rows, val=%d rows, cv_folds=%s",
@@ -1008,22 +1029,23 @@ class Pipeline_Orchestrator:
     def _validation_scoring_frames(
         self,
         val_df: pd.DataFrame,
+        val_fitness: pd.DataFrame | None = None,
+        val_selection: pd.DataFrame | None = None,
     ) -> tuple[pd.DataFrame, pd.DataFrame]:
         """Load or derive validation fitness/selection halves for Phase 2 / RB."""
-        import os
-
-        import pandas as pd
-
         from gpu_fuzzy_trader.backtest.df_slim import downcast_numeric_df
         from gpu_fuzzy_trader.data.splitter import split_validation_fitness_selection
 
-        fitness_path = _cfg.VALIDATION_FITNESS_PATH
-        selection_path = _cfg.VALIDATION_SELECTION_PATH
-        if os.path.exists(fitness_path) and os.path.exists(selection_path):
-            val_fitness = downcast_numeric_df(pd.read_parquet(fitness_path))
-            val_selection = downcast_numeric_df(pd.read_parquet(selection_path))
-        else:
+        if val_fitness is None:
+            val_fitness = getattr(self, "_preloaded_val_fitness", None)
+        if val_selection is None:
+            val_selection = getattr(self, "_preloaded_val_selection", None)
+
+        if val_fitness is None or val_selection is None:
             val_fitness, val_selection = split_validation_fitness_selection(val_df)
+        else:
+            val_fitness = downcast_numeric_df(val_fitness)
+            val_selection = downcast_numeric_df(val_selection)
 
         symbols = _cfg.resolve_debug_symbols(val_df)
         if symbols is not None:
@@ -1081,76 +1103,6 @@ class Pipeline_Orchestrator:
             len(scoped_val),
         )
         return scoped_train, scoped_val
-
-    @staticmethod
-    def _load_cached_split_if_fresh() -> tuple[pd.DataFrame, pd.DataFrame] | None:
-        """Load cached split files when they are newer than the source CSV."""
-        csv_path = _cfg.TRAIN_CSV_PATH
-        train_path = _cfg.TRAIN_70_PATH
-        val_path = _cfg.VALIDATION_30_PATH
-        manifest_path = getattr(_cfg, "CV_FOLDS_MANIFEST_PATH", "")
-
-        if not (
-            os.path.exists(csv_path)
-            and os.path.exists(train_path)
-            and os.path.exists(val_path)
-        ):
-            return None
-
-        try:
-            csv_mtime = os.path.getmtime(csv_path)
-            cache_mtime = min(
-                os.path.getmtime(train_path),
-                os.path.getmtime(val_path),
-            )
-            if _cfg.split_mode_is_purged_walk_forward():
-                if not os.path.exists(manifest_path):
-                    return None
-                manifest = json.load(open(manifest_path, encoding="utf-8"))
-                if manifest.get("split_mode") != _cfg.SPLIT_MODE:
-                    return None
-                from gpu_fuzzy_trader.validation.rolling_cv import (
-                    purged_config_fingerprint,
-                )
-                if manifest.get("config_fingerprint") != purged_config_fingerprint():
-                    return None
-                cache_mtime = min(cache_mtime, os.path.getmtime(manifest_path))
-        except OSError:
-            return None
-
-        if cache_mtime < csv_mtime:
-            return None
-
-        from gpu_fuzzy_trader.backtest.df_slim import downcast_numeric_df
-
-        train_df = downcast_numeric_df(pd.read_parquet(train_path))
-        val_df = downcast_numeric_df(pd.read_parquet(val_path))
-        return train_df, val_df
-
-    @staticmethod
-    def _rebuild_cv_folds_if_needed() -> list | None:
-        """Rebuild in-memory CV folds when using a cached purged split."""
-        if not _cfg.split_mode_is_purged_walk_forward():
-            return None
-
-        from gpu_fuzzy_trader.validation.rolling_cv import (
-            build_purged_walk_forward_folds,
-            load_cv_folds_manifest,
-        )
-
-        manifest = load_cv_folds_manifest()
-        if manifest is not None:
-            ref = manifest.get("reference_rows")
-            if ref is not None:
-                _cfg.set_purged_wf_reference_rows(int(ref))
-
-        loader = Data_Loader()
-        train_full = loader.load_dataset(_cfg.TRAIN_CSV_PATH)
-        if manifest is None or manifest.get("reference_rows") is None:
-            _cfg.set_purged_wf_reference_rows(len(train_full))
-
-        folds = build_purged_walk_forward_folds(train_full)
-        return folds if folds else None
 
     @staticmethod
     def _phase1_keep_feature_names(
@@ -1248,6 +1200,21 @@ class Pipeline_Orchestrator:
     # ------------------------------------------------------------------
     # Phase 1
     # ------------------------------------------------------------------
+
+    def _mask_train_df_for_phase1(self, train_df: pd.DataFrame) -> pd.DataFrame:
+        """Exclude CV/holdout valid bars (+ embargo) from Phase 1 training data."""
+        if not self._cv_folds or train_df.empty:
+            return train_df
+        forbidden = build_forbidden_ranges(self._cv_folds)
+        if not forbidden:
+            return train_df
+        masked = mask_df_to_safe_region(train_df, forbidden)
+        logger.info(
+            "Phase 1: masked train_df to safe region (%d -> %d rows)",
+            len(train_df),
+            len(masked),
+        )
+        return masked
 
     def _run_phase1(
         self,

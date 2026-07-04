@@ -91,13 +91,13 @@ def _split_symbol_segments(
     cv_valid_ranges: list[tuple[int, int]] = []
     if n_cv_folds > 0 and prefix_n > min_train_start:
         remaining = prefix_n - min_train_start
-        chunk_size = max(1, remaining // n_cv_folds)
+        base, rem = divmod(remaining, n_cv_folds)
         start = min_train_start
         for i in range(n_cv_folds):
-            if i == n_cv_folds - 1:
-                end = prefix_n - 1
-            else:
-                end = min(prefix_n - 1, start + chunk_size - 1)
+            size = base + 1 if i < rem else base
+            if size <= 0:
+                continue
+            end = min(prefix_n - 1, start + size - 1)
             if start <= end and end < holdout_start:
                 cv_valid_ranges.append((start, end))
             start = end + 1
@@ -114,6 +114,41 @@ def _slice_symbol_rows(
     idx = g[_bar_index_col(g)].values
     mask = (idx >= start_bar) & (idx <= end_bar)
     return g.loc[mask].copy()
+
+
+def build_forbidden_ranges(
+    cv_folds: list[PurgedFold],
+    embargo: int | None = None,
+) -> list[tuple[int, int]]:
+    """Build per-symbol forbidden ``(start_bar, end_bar)`` ranges from folds.
+
+    Each fold's valid region is forbidden. The embargo is pulled back from
+    each valid start so train labels (``MAX_HOLD_CANDLES`` lookahead) cannot
+    peek into the valid block.
+    """
+    if not cv_folds:
+        return []
+    if embargo is None:
+        embargo = int(
+            getattr(_cfg, "PURGED_WF_EMBARGO_CANDLES", _cfg.MAX_HOLD_CANDLES)
+        )
+    ranges = [(f.valid_start_bar, f.valid_end_bar) for f in cv_folds]
+    return [(max(0, int(s) - int(embargo)), int(e)) for s, e in ranges]
+
+
+def mask_df_to_safe_region(
+    df: pd.DataFrame,
+    forbidden_ranges: list[tuple[int, int]],
+    bar_col: str = "_symbol_bar_index",
+) -> pd.DataFrame:
+    """Drop rows whose per-symbol bar index falls inside any forbidden range."""
+    if not forbidden_ranges or df.empty or bar_col not in df.columns:
+        return df
+    mask = np.ones(len(df), dtype=bool)
+    idx = df[bar_col].to_numpy()
+    for s, e in forbidden_ranges:
+        mask &= ~((idx >= int(s)) & (idx <= int(e)))
+    return df.loc[mask].reset_index(drop=True)
 
 
 def _purge_train(
@@ -431,12 +466,13 @@ def purged_config_fingerprint() -> str:
 
 
 def write_cv_folds_manifest(
-    folds: list[PurgedFold],
+    folds: list[PurgedFold] | None,
     *,
     reference_rows: int,
     path: str | None = None,
 ) -> str:
-    """Persist fold metadata JSON; returns the path written."""
+    """Persist split/fold metadata JSON; returns the path written."""
+    fold_list = folds or []
     out_path = path or getattr(
         _cfg, "CV_FOLDS_MANIFEST_PATH", "data/cv_folds_manifest.json")
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
@@ -445,15 +481,11 @@ def write_cv_folds_manifest(
         "split_mode": getattr(_cfg, "SPLIT_MODE", "holdout_70_30"),
         "config_fingerprint": purged_config_fingerprint(),
         "reference_rows": int(reference_rows),
-        "n_folds": len(folds),
+        "n_folds": len(fold_list),
         "config": {
-            "PURGED_WF_N_SPLITS": getattr(_cfg, "PURGED_WF_N_SPLITS", 4),
-            "PURGED_WF_HOLDOUT_FRACTION": getattr(
-                _cfg, "PURGED_WF_HOLDOUT_FRACTION", 0.25
-            ),
-            "PURGED_WF_EMBARGO_CANDLES": getattr(
-                _cfg, "PURGED_WF_EMBARGO_CANDLES", _cfg.MAX_HOLD_CANDLES
-            ),
+            "PURGED_WF_N_SPLITS": _cfg.PURGED_WF_N_SPLITS,
+            "PURGED_WF_HOLDOUT_FRACTION": _cfg.PURGED_WF_HOLDOUT_FRACTION,
+            "PURGED_WF_EMBARGO_CANDLES": _cfg.PURGED_WF_EMBARGO_CANDLES,
         },
         "folds": [
             {
@@ -465,7 +497,7 @@ def write_cv_folds_manifest(
                 "valid_start_bar": f.valid_start_bar,
                 "valid_end_bar": f.valid_end_bar,
             }
-            for f in folds
+            for f in fold_list
         ],
     }
     with open(out_path, "w", encoding="utf-8") as fh:
