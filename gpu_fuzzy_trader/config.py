@@ -453,6 +453,11 @@ MIN_TRADE_SUPPORT = 120
 #   Lower  → evolution tolerates thin trade counts longer.
 SUPPORT_PENALTY_MAX = 5.0
 
+# TRADE_SUPPORT_PENALTY_EXPONENT — exponent for trade-support penalty between
+# pool_floor and min_support. Higher = steeper, harsher penalty for low-trade-
+# count rules. Default 3.0 (was implicitly 2.0 before this parameter existed).
+TRADE_SUPPORT_PENALTY_EXPONENT = 3.0
+
 # MIN_TRADE_POOL_FLOOR — hard reject below this executed trade count.
 #   Higher → archive/pool never keeps very rare rules.
 #   Lower  → extremely sparse rules can survive if other metrics excel.

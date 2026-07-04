@@ -83,7 +83,7 @@ def _static_support_penalty(
     if executed < _cfg.MIN_TRADE_POOL_FLOOR:
         return 2.0 * _cfg.SUPPORT_PENALTY_MAX
     shortfall = (support_target - executed) / max(support_target, 1)
-    return min(shortfall ** 2 * _cfg.SUPPORT_PENALTY_MAX, _cfg.SUPPORT_PENALTY_MAX)
+    return min(shortfall ** float(_cfg.TRADE_SUPPORT_PENALTY_EXPONENT) * _cfg.SUPPORT_PENALTY_MAX, _cfg.SUPPORT_PENALTY_MAX)
 
 
 def trade_support_penalty(
