@@ -254,6 +254,13 @@ MAX_TOTAL_EXPOSURE_PCT = 100.0
 #   Lower  → more micro-trades counted toward support metrics.
 MIN_POSITION_NOTIONAL = 1.0
 
+# MAX_TIME_EXIT_RETURN_PCT — max absolute return for time-exit trades (no TP/SL hit).
+# A time-exit should not out-earn a full TP hit. This caps the fallback return
+# when a trade holds to MAX_HOLD_CANDLES without hitting TP or SL, preventing
+# unbounded close_ret from distorting rule metrics during Phase 2 evolution.
+# Default ±50% is a generous ceiling; typical TP values are 2-4%.
+MAX_TIME_EXIT_RETURN_PCT = 50.0
+
 
 # =============================================================================
 # Phase 0 — Logging
@@ -453,6 +460,11 @@ MIN_TRADE_SUPPORT = 120
 #   Lower  → evolution tolerates thin trade counts longer.
 SUPPORT_PENALTY_MAX = 5.0
 
+# TRADE_SUPPORT_PENALTY_EXPONENT — exponent for trade-support penalty between
+# pool_floor and min_support. Higher = steeper, harsher penalty for low-trade-
+# count rules. Default 3.0 (was implicitly 2.0 before this parameter existed).
+TRADE_SUPPORT_PENALTY_EXPONENT = 3.0
+
 # MIN_TRADE_POOL_FLOOR — hard reject below this executed trade count.
 #   Higher → archive/pool never keeps very rare rules.
 #   Lower  → extremely sparse rules can survive if other metrics excel.
@@ -552,6 +564,13 @@ PHASE2_POOL_VAL_RETURN_MIN_PCT = 0.0
 #   Higher → more lenient; only extreme train>>val gaps rejected.
 #   Lower  → stricter alignment between train and val required.
 PHASE2_MAX_TRAIN_VAL_GAP_PCT = 16.0
+
+# PHASE2_OVERFIT_WARNING_RATIO — threshold ratio (max_return / max_robust_return)
+# above which a WARNING is logged during evolution. Signals a rule that performs
+# well on train but poorly on validation — likely overfit to the training window.
+#   Higher → only extreme overfit gaps trigger a warning.
+#   Lower  → more sensitive; smaller gaps also trigger warnings.
+PHASE2_OVERFIT_WARNING_RATIO = 3.0
 
 # PHASE2_KEEP_TOP_RULES — max rules kept in the final Phase 2 pool after
 # admission filtering, sorted by deployability_rank_score descending.

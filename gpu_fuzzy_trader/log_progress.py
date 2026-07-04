@@ -111,6 +111,21 @@ def log_generation(
         msg += " elapsed=%.1fs" % elapsed_s
     logger.info(msg)
 
+    # Overfit warning: when max_return >> max_robust_return, the best rule on
+    # train is likely overfit to the training window and may not generalize.
+    if (
+        max_return_pct is not None
+        and max_robust_return_pct is not None
+        and max_robust_return_pct > 0
+    ):
+        ratio = max_return_pct / max_robust_return_pct
+        if ratio > _cfg.PHASE2_OVERFIT_WARNING_RATIO:
+            logger.warning(
+                "%s gen %d: max_return=%.2f%% vs max_robust_return=%.2f%% "
+                "(%.1fx overfit to train window!)",
+                tag, gen + 1, max_return_pct, max_robust_return_pct, ratio,
+            )
+
 
 def log_phase3_generation(
     logger: logging.Logger,
