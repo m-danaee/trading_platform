@@ -636,6 +636,15 @@ class GPUBacktestEngine:
         # --- Pre-extract label arrays as JAX arrays ---
         entry = df["label_open_next"].values.astype(
             np.float32 if bool(getattr(_cfg, "PHASE2_GPU_USE_FP32", True)) else np.float64)
+
+        invalid_mask = (~np.isfinite(entry)) | (entry <= 0)
+        if np.any(invalid_mask):
+            bad = int(np.sum(invalid_mask))
+            raise ValueError(
+                f"Invalid label_open_next values (must be finite and positive). "
+                f"Bad rows: {bad}"
+            )
+
         self._max_ret_jax = jnp.array(
             (df["label_max_288"].values - entry) / entry * 100.0,
             dtype=_JXF)
