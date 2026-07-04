@@ -959,7 +959,9 @@ class TestPhase5CachedSplitFreshness:
 
         train_csv = tmp_path / "train_2.csv"
         loader = Data_Loader()
-        source_df = loader.load_dataset(_write_synthetic_test_csv(tmp_path))
+        source_df = loader.load_dataset(
+            _write_synthetic_test_csv(tmp_path, n_rows=3000)
+        )
         source_df.to_csv(train_csv, index=False)
         (tmp_path / "test").mkdir()
         test_csv = _write_synthetic_test_csv(tmp_path / "test")

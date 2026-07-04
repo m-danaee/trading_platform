@@ -21,7 +21,7 @@ class TestRbGovernorDataLoad:
         csv_path.write_text("x\n1\n", encoding="utf-8")
 
         with _patch_split_paths(str(tmp_path))() as paths:
-            df = _make_df({1: 100})
+            df = _make_df({1: 2000})
             Data_Splitter().split_and_persist(df)
             os.utime(csv_path, (1, 1))
             for path in paths.values():

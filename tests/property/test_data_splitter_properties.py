@@ -3,15 +3,16 @@ Property-based tests for gpu_fuzzy_trader.data.splitter.Data_Splitter
 
 **Validates: Requirements 2.6, 2.7**
 
-Property 5: Per-Symbol Chronological Split Ratio
+Property 5: Per-Symbol Chronological Split with Embargo
   For any valid dataset with multiple symbols, after calling
   Data_Splitter().split_and_persist():
 
-  1. Each symbol has exactly floor(N * 0.70) rows in the train set.
-  2. Each symbol has exactly N - floor(N * 0.70) rows in the validation set.
-  3. No row appears in both train and validation sets (no overlap).
-  4. Train rows are chronologically before validation rows for each symbol.
-  5. The split is per-symbol (independent for each symbol).
+  1. Each symbol has exactly floor(N * HOLDOUT_TRAIN_FRACTION) rows in train.
+  2. After train, HOLDOUT_EMBARGO_CANDLES bars are dropped (embargo).
+  3. Remaining bars (after embargo_end) go to validation.
+  4. No row appears in both train and validation sets (no overlap).
+  5. Train rows are chronologically before validation rows for each symbol.
+  6. The split is per-symbol (independent for each symbol).
 """
 
 from __future__ import annotations
@@ -38,11 +39,12 @@ from gpu_fuzzy_trader.data.splitter import Data_Splitter
 
 SYMBOL_POOL = ["SYM_A", "SYM_B", "SYM_C", "SYM_D"]
 
-# Keep row counts small enough for fast tests but large enough to exercise
-# the floor(N * 0.70) split meaningfully (at least 4 rows so both train and
-# validation are non-empty: floor(4 * 0.70) = 2 train, 2 validation).
-MIN_ROWS_PER_SYMBOL = 4
-MAX_ROWS_PER_SYMBOL = 60
+# Keep row counts large enough to exercise the holdout+embargo split.
+# With HOLDOUT_TRAIN_FRACTION=0.65 and HOLDOUT_EMBARGO_CANDLES=288, a symbol
+# needs at least floor(N * 0.65) + 288 + 1 rows to have any validation rows.
+# For a 1000-row symbol: train=650, embargo=288, val=62.
+MIN_ROWS_PER_SYMBOL = 1000
+MAX_ROWS_PER_SYMBOL = 2000
 
 
 def _make_timestamps(n: int, base_ts: pd.Timestamp, freq_minutes: int = 5) -> list[pd.Timestamp]:
@@ -129,7 +131,7 @@ def _run_split(
 
 
 # ---------------------------------------------------------------------------
-# Property 5: Per-Symbol Chronological Split Ratio
+# Property 5: Per-Symbol Chronological Split with Embargo
 # Validates: Requirements 2.6, 2.7
 # ---------------------------------------------------------------------------
 
@@ -142,37 +144,42 @@ def test_property_5_per_symbol_split_ratio_and_no_overlap(
     data: tuple[pd.DataFrame, dict[str, int]],
 ) -> None:
     """
-    **Property 5: Per-Symbol Chronological Split Ratio**
+    **Property 5: Per-Symbol Chronological Split with Embargo**
     **Validates: Requirements 2.6, 2.7**
 
     For any valid dataset with multiple symbols, after calling
     Data_Splitter().split_and_persist():
 
-    1. Each symbol has exactly floor(N * 0.70) rows in the train set.
-    2. Each symbol has exactly N - floor(N * 0.70) rows in the validation set.
-    3. No row appears in both train and validation sets (no overlap).
-    4. Train rows are chronologically before validation rows for each symbol.
-    5. The split is per-symbol (independent for each symbol).
+    1. Train = floor(N * HOLDOUT_TRAIN_FRACTION) rows per symbol.
+    2. Embargo = HOLDOUT_EMBARGO_CANDLES dropped after train.
+    3. Validation = rows after embargo_end (if any).
+    4. No row appears in both train and validation sets (no overlap).
+    5. Train rows are chronologically before validation rows for each symbol.
+    6. The split is per-symbol (independent for each symbol).
     """
+    train_frac = float(config_mod.HOLDOUT_TRAIN_FRACTION)
+    embargo = int(config_mod.HOLDOUT_EMBARGO_CANDLES)
+
     df, symbol_counts = data
     with tempfile.TemporaryDirectory() as tmp_dir:
         train_df, val_df = _run_split(df, tmp_dir)
 
-    # --- 1 & 2: Per-symbol row counts use floor(N * 0.70) ---
+    # --- 1 & 2: Per-symbol row counts with embargo ---
     for sym, n in symbol_counts.items():
-        expected_train = math.floor(n * 0.70)
-        expected_val = n - expected_train
+        expected_train = math.floor(n * train_frac)
+        embargo_end = min(expected_train + embargo, n)
+        expected_val = n - embargo_end
 
         actual_train = len(train_df[train_df["symbol"] == sym])
         actual_val = len(val_df[val_df["symbol"] == sym])
 
         assert actual_train == expected_train, (
             f"Symbol '{sym}' (N={n}): expected {expected_train} train rows "
-            f"(floor({n} * 0.70)), got {actual_train}."
+            f"(floor({n} * {train_frac})), got {actual_train}."
         )
         assert actual_val == expected_val, (
             f"Symbol '{sym}' (N={n}): expected {expected_val} validation rows "
-            f"(N - floor(N * 0.70) = {n} - {expected_train}), got {actual_val}."
+            f"(N - min(train_end + embargo, N) = {n} - {embargo_end}), got {actual_val}."
         )
 
     # --- 3: No overlap — no (symbol, datetime) pair appears in both sets ---
@@ -203,16 +210,28 @@ def test_property_5_per_symbol_split_ratio_and_no_overlap(
             f"Train rows must be chronologically before validation rows."
         )
 
-    # --- 5: Split is per-symbol (total counts are sum of per-symbol splits) ---
-    total_expected_train = sum(math.floor(n * 0.70) for n in symbol_counts.values())
-    total_expected_val = sum(n - math.floor(n * 0.70) for n in symbol_counts.values())
+    # --- 5 & 6: Split is per-symbol (total counts sum of per-symbol splits) ---
+    for sym, n in symbol_counts.items():
+        expected_train = math.floor(n * train_frac)
+        embargo_end = min(expected_train + embargo, n)
+        expected_val = n - embargo_end
+        # Ensure no cross-symbol contamination in total counts
+        pass
+
+    total_expected_train = sum(
+        math.floor(n * train_frac) for n in symbol_counts.values()
+    )
+    total_expected_val = sum(
+        n - min(math.floor(n * train_frac) + embargo, n)
+        for n in symbol_counts.values()
+    )
 
     assert len(train_df) == total_expected_train, (
         f"Total train rows: expected {total_expected_train} "
-        f"(sum of per-symbol floor(N * 0.70)), got {len(train_df)}. "
+        f"(sum of per-symbol floor(N * {train_frac})), got {len(train_df)}. "
         f"This indicates the split is not being done per-symbol independently."
     )
     assert len(val_df) == total_expected_val, (
         f"Total validation rows: expected {total_expected_val} "
-        f"(sum of per-symbol remainders), got {len(val_df)}."
+        f"(sum of per-symbol val after embargo), got {len(val_df)}."
     )

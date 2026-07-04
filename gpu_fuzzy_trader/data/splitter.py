@@ -3,8 +3,8 @@ data/splitter.py — Data_Splitter
 
 Per-symbol chronological split for Phases 2–4:
 
-- ``holdout_70_30``: single 70/30 holdout (legacy).
-- ``purged_walk_forward``: expanding CV folds + primary tail holdout with embargo.
+- ``holdout_70_30``: single 65/35 holdout + 288-bar embargo gap (active).
+- ``purged_walk_forward``: expanding CV folds + primary tail holdout with embargo (deprecated).
 """
 
 from __future__ import annotations
@@ -31,16 +31,25 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _holdout_70_30_split(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Per-symbol 70/30 chronological split."""
+def _holdout_embargo_split(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Per-symbol chronological split with embargo gap.
+
+    Train: first ``HOLDOUT_TRAIN_FRACTION`` of each symbol's bars.
+    Embargo: next ``HOLDOUT_EMBARGO_CANDLES`` bars — DROPPED.
+    Validation: remaining bars after embargo.
+    """
+    train_frac = float(_cfg.HOLDOUT_TRAIN_FRACTION)
+    embargo = int(_cfg.HOLDOUT_EMBARGO_CANDLES)
     train_parts: list[pd.DataFrame] = []
     validation_parts: list[pd.DataFrame] = []
 
     for _, group in df.groupby("symbol", sort=True):
         n = len(group)
-        split_point = math.floor(n * 0.70)
-        train_parts.append(group.iloc[:split_point])
-        validation_parts.append(group.iloc[split_point:])
+        train_end = math.floor(n * train_frac)
+        embargo_end = min(train_end + embargo, n)
+        train_parts.append(group.iloc[:train_end])
+        if embargo_end < n:
+            validation_parts.append(group.iloc[embargo_end:])
 
     train_df = (
         pd.concat(train_parts, ignore_index=True)
@@ -67,9 +76,9 @@ def _purged_walk_forward_split(
     folds = build_purged_walk_forward_folds(df)
     if not folds:
         logger.warning(
-            "Purged walk-forward produced no folds; falling back to holdout_70_30"
+            "Purged walk-forward produced no folds; falling back to holdout_embargo"
         )
-        train_df, val_df = _holdout_70_30_split(df)
+        train_df, val_df = _holdout_embargo_split(df)
         return train_df, val_df, []
 
     train_df, val_df = derive_primary_holdout(folds)
@@ -221,7 +230,7 @@ class Data_Splitter:
         if mode == "purged_walk_forward":
             train_df, validation_df, cv_folds = _purged_walk_forward_split(df)
         else:
-            train_df, validation_df = _holdout_70_30_split(df)
+            train_df, validation_df = _holdout_embargo_split(df)
             _cfg.set_purged_wf_reference_rows(len(df))
 
         train_df = downcast_numeric_df(train_df)

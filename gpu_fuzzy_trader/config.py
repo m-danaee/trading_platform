@@ -6,7 +6,7 @@ All modules import from here; do not duplicate defaults elsewhere.
 File layout
 -----------
   1. Global randomness (``GLOBAL_SEED``, ``get_seed``)
-  2. Phase 0 — paths, schema, train/val split, backtest, logging
+  2. Phase 0 — paths, schema, train/val split (holdout+embargo), backtest, logging
   3. Phase 1 — feature selection + GPU row budget (Phase 1→2 bridge)
   4. Phase 2 — rule evolution (NSGA-III): risk, genome, gates, islands
   5. Phase 3 — rule-team selection (legacy greedy path)
@@ -19,7 +19,7 @@ File layout
 
 Pipeline phases
 ---------------
-  Phase 0  Paths, schema, train/val split, backtest constants
+  Phase 0  Paths, schema, train/val split (holdout+embargo), backtest constants
   Phase 1  Feature selection (train.csv only)
   Phase 2  NSGA-III rule-pool evolution (GPU backtests)
   Phase 3  Greedy + NSGA-II rule-team selection  *(skipped when RB Governor on)*
@@ -39,7 +39,8 @@ Tuning cheat-sheet (symptom → knob)
                                    PHASE2_*_FLOOR ↑, PHASE2_MAX_DRAWDOWN_GATE ↓
   Phase 3 finds no teams           PHASE3_*_FLOOR ↓, PHASE3_MIN_RULES ↓
   Phase 4 rejects all trials       PHASE4_MIN_WORST_* ↓, PHASE4_WF_SPLITS ↓
-  Fees / horizon mismatch          FEE_PCT, TAIL_DROP_ROWS, MAX_HOLD_CANDLES
+  Fees / horizon mismatch          FEE_PCT, TAIL_DROP_ROWS, MAX_HOLD_CANDLES,
+                                   HOLDOUT_EMBARGO_CANDLES
                                    (must match evaluator_v5.ipynb)
   RB Governor too strict           RB_MIN_* ↓, RB_KEEP_TOP_RULES ↑
 
@@ -172,11 +173,27 @@ TAIL_DROP_ROWS = 288
 # Phases 4–5 always use persisted train_70 + validation_30 (see splitter.py).
 
 # SPLIT_MODE — how train_2.csv is divided before Phase 2.
-#   holdout_70_30       → single per-symbol 70/30 chronological split (legacy).
-#   purged_walk_forward → expanding CV folds + primary tail holdout with embargo.
-SPLIT_MODE = "purged_walk_forward"
+#   holdout_70_30       → single per-symbol 65/35 chronological split with embargo
+#                         (288 bars dropped between train and val).
+#   purged_walk_forward → expanding CV folds + primary tail holdout with embargo
+#                         (deprecated — use holdout_70_30 instead).
+SPLIT_MODE = "holdout_70_30"
+
+# HOLDOUT_TRAIN_FRACTION — fraction of each symbol's bars reserved for training.
+# The remaining (1 - HOLDOUT_TRAIN_FRACTION) is validation, with an embargo gap
+# of HOLDOUT_EMBARGO_CANDLES bars dropped between them to prevent label lookahead.
+HOLDOUT_TRAIN_FRACTION = 0.65
+
+# HOLDOUT_EMBARGO_CANDLES — bars dropped between train and val (label horizon).
+# Must equal MAX_HOLD_CANDLES so a position opened at the last train bar cannot
+# look into the validation window.
+HOLDOUT_EMBARGO_CANDLES = 288
 
 # --- Purged walk-forward (when SPLIT_MODE == purged_walk_forward) ---
+# NOTE: Purged walk-forward CV is deprecated. SPLIT_MODE is now "holdout_70_30"
+# with HOLDOUT_TRAIN_FRACTION + HOLDOUT_EMBARGO_CANDLES (see above).
+# The purged-WF keys below are retained for reference but are inactive when
+# SPLIT_MODE != "purged_walk_forward".
 
 # PURGED_WF_N_SPLITS — number of CV folds on the train prefix (K).
 #   K CV folds are built on the first (1 - HOLDOUT_FRACTION) of each symbol;
@@ -191,7 +208,7 @@ PURGED_WF_EMBARGO_CANDLES = 288
 
 # PURGED_WF_MIN_TRAIN_FRACTION — minimum train prefix before first CV valid block.
 # Set to 0.4 so the strict no-leak safe region (prefix - embargo) is wide enough
-# to fit PHASE1_SAMPLING_TOTAL (701k) per-symbol bars without overlap.
+# to fit PHASE1_SAMPLING_TOTAL per-symbol bars without overlap.
 PURGED_WF_MIN_TRAIN_FRACTION = 0.4
 
 # PURGED_WF_MIN_VALID_ROWS — minimum rows in a CV valid block (holdout exempt).
@@ -2278,6 +2295,9 @@ assert float(PURGED_WF_HOLDOUT_FRACTION) + float(PURGED_WF_MIN_TRAIN_FRACTION) <
 )
 assert int(TAIL_DROP_ROWS) == int(MAX_HOLD_CANDLES), (
     "TAIL_DROP_ROWS must equal MAX_HOLD_CANDLES (label horizon)"
+)
+assert int(HOLDOUT_EMBARGO_CANDLES) == int(MAX_HOLD_CANDLES), (
+    "HOLDOUT_EMBARGO_CANDLES must equal MAX_HOLD_CANDLES (label horizon)"
 )
 # =============================================================================
 assert MIN_CONDITIONS <= MAX_CONDITIONS, (
