@@ -359,17 +359,21 @@ def _sample_df(
         else np.random.default_rng(random_state)
     )
 
-    if "symbol" not in df.columns:
+    if "symbol" not in df.columns or df.empty:
         return _downsample_chronological(df, min(total_rows, len(df)), rng)
 
     symbols = df["symbol"].unique()
     n_sym = len(symbols)
-    rows_per_sym = max(1, total_rows // n_sym)
+    if n_sym == 0:
+        return df.iloc[0:0].reset_index(drop=True)
+
+    base, rem = divmod(total_rows, n_sym)
+    sizes = [base + 1] * rem + [base] * (n_sym - rem)
 
     parts = []
-    for sym in symbols:
+    for sym, target_n in zip(symbols, sizes):
         sym_df = df[df["symbol"] == sym]
-        n = min(rows_per_sym, len(sym_df))
+        n = min(target_n, len(sym_df))
         parts.append(_downsample_chronological(sym_df, n, rng))
 
     return pd.concat(parts, ignore_index=True)

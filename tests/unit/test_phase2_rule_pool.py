@@ -590,6 +590,49 @@ class TestSampleDf:
             sampled = _sample_df(df, total_rows=80, random_state=seed)
             assert len(sampled) == 80
 
+    def test_total_rows_exact_via_divmod(self):
+        """divmod distribution gives exactly total_rows (no rounding loss).
+        701_000 % 14 == 6, so the previous ``//`` lost 6 rows."""
+        df = _make_train_df(n_rows=400, symbols=["A", "B", "C", "D"])
+        sampled = _sample_df(df, total_rows=101, random_state=0)
+        assert len(sampled) == 101
+        per_sym = sampled.groupby("symbol").size().to_dict()
+        # 101 = 4*25 + 1 → first symbol gets 26, rest get 25
+        assert per_sym["A"] == 26
+        assert per_sym["B"] == 25
+        assert per_sym["C"] == 25
+        assert per_sym["D"] == 25
+
+    def test_total_rows_smaller_than_n_symbols(self):
+        """total_rows < n_symbols must NOT force 1 row per symbol."""
+        df = _make_train_df(n_rows=400, symbols=["A", "B", "C", "D"])
+        sampled = _sample_df(df, total_rows=2, random_state=0)
+        assert len(sampled) == 2
+
+    def test_total_rows_zero(self):
+        """total_rows=0 returns empty df (does not force 1 row per symbol)."""
+        df = _make_train_df(n_rows=400, symbols=["A", "B", "C", "D"])
+        sampled = _sample_df(df, total_rows=0, random_state=0)
+        assert len(sampled) == 0
+
+    def test_empty_input_dataframe(self):
+        """Empty input must not raise ZeroDivisionError."""
+        empty = pd.DataFrame({
+            "symbol": pd.Series(dtype=object),
+            "datetime": pd.Series(dtype="datetime64[ns]"),
+            "_symbol_bar_index": pd.Series(dtype=np.int64),
+        })
+        sampled = _sample_df(empty, total_rows=100, random_state=0)
+        assert len(sampled) == 0
+
+    def test_total_rows_exactly_divisible(self):
+        """When total_rows divides n_symbols evenly, all symbols get equal rows."""
+        df = _make_train_df(n_rows=400, symbols=["A", "B", "C", "D"])
+        sampled = _sample_df(df, total_rows=100, random_state=0)
+        assert len(sampled) == 100
+        for sym in ["A", "B", "C", "D"]:
+            assert (sampled["symbol"] == sym).sum() == 25
+
 
 # ---------------------------------------------------------------------------
 # Tests: _validate_pool_schema
