@@ -190,7 +190,9 @@ PURGED_WF_HOLDOUT_FRACTION = 0.3
 PURGED_WF_EMBARGO_CANDLES = 288
 
 # PURGED_WF_MIN_TRAIN_FRACTION — minimum train prefix before first CV valid block.
-PURGED_WF_MIN_TRAIN_FRACTION = 0.3
+# Set to 0.4 so the strict no-leak safe region (prefix - embargo) is wide enough
+# to fit PHASE1_SAMPLING_TOTAL (701k) per-symbol bars without overlap.
+PURGED_WF_MIN_TRAIN_FRACTION = 0.4
 
 # PURGED_WF_MIN_VALID_ROWS — minimum rows in a CV valid block (holdout exempt).
 PURGED_WF_MIN_VALID_ROWS = 3000
