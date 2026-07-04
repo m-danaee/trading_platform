@@ -1,1 +1,27 @@
-{"task_id": "task-3", "branch": "fix/diversity-restart-on-plateau", "status": "DONE", "commit": "ddc33ce", "files_changed": ["gpu_fuzzy_trader/config.py", "gpu_fuzzy_trader/evolution/evox_runner.py", "README.md", "tests/unit/test_phase2_plateau_restart.py"], "tests": {"targeted (restart+early_stop+leak+evox)": "50 passed", "tests/unit full": "1191 passed, 3 pre-existing failures"}, "design_notes": ["Elite selection: keeps first K=min(5,len(pareto_indices)) from Pareto front, positions excluded from reinit pool", "Mutation boost/restore: one-shot _plateau_restart_boost variable set to min(0.6, base_rate*1.6), consumed next gen then None->default restored", "_inject_diversity_recovery NOT refactored - new _plateau_diversity_restart helper created (distinct purposes: collapse vs plateau convergence), both reuse _init_population", "Applied to both _run_nsga3 and _run_nsga2_fallback loops"], "notes_for_reviewer": ["Restart applied to both evolution loop variants for consistency", "10 tests cover all 6 acceptance criteria plus edge cases", "Review findings addressed: dead params removed (stage_params, feature_probs), integration test added for AC3+AC4, comments added at restart_count reset points"], "acceptance_criteria_met": [1, 2, 3, 4, 5, 6]}
+{
+  "task": "task-3",
+  "title": "Tighten Trade-Support Penalty",
+  "status": "DONE",
+  "commit": "466610b",
+  "branch": "fix/tighten-trade-support-penalty",
+  "base_branch": "main",
+  "files_changed": [
+    "gpu_fuzzy_trader/config.py",
+    "gpu_fuzzy_trader/phases/phase2_support.py",
+    "gpu_fuzzy_trader/evolution/numba_ops.py"
+  ],
+  "tests": {
+    "full": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_phase2_support.py tests/unit/test_cpu_engine.py tests/unit/test_phase2_rule_pool.py tests/unit/test_numba_ops.py -q -x: 243 passed"
+  },
+  "acceptance_criteria_met": [
+    "TRADE_SUPPORT_PENALTY_EXPONENT=3.0 config constant exists with docstring",
+    "_static_support_penalty uses config-driven exponent instead of hardcoded ** 2",
+    "numba_ops.py _batch_static_penalties_numba accepts exponent param and uses shortfall ** exponent",
+    "_static_penalty_py fallback also uses config-driven exponent",
+    "All 243 tests pass"
+  ],
+  "notes": [
+    "Branch reset to clean single-commit state (stray Task 1 commit removed)",
+    "No other hardcoded shortfall ** 2 patterns remain in codebase"
+  ]
+}

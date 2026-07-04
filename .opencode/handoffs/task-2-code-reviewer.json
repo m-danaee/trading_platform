@@ -1,105 +1,54 @@
 {
-  "task_id": "task-2-per-symbol-phase2",
-  "reviewer": "code-reviewer",
-  "review_type": "code-quality",
-  "scope": "Per-Symbol Phase 2 Training (config.py + run_pipeline.py)",
-  "base_branch": "feature/task-1-gpu-runtime",
-  "feature_branch": "feature/task-2-per-symbol-phase2",
-  "verdict": "APPROVED",
-  "review_focus": [
-    "correctness",
-    "edge_cases",
-    "error_handling",
-    "dead_code",
-    "memory_performance",
-    "logging",
-    "style_consistency",
-    "config_values",
-    "hardcoded_paths"
+  "task": "task-2",
+  "title": "Add Entry-Price Guard on GPU Engine",
+  "branch": "fix/gpu-entry-price-guard",
+  "base_branch": "main",
+  "commit": "425d2c1",
+  "stage": "code-review",
+  "spec_result": "APPROVED",
+  "code_result": "REQUEST_CHANGES",
+  "files_changed": [
+    "gpu_fuzzy_trader/backtest/gpu_engine.py"
   ],
+  "diff_summary": {
+    "lines_added": 9,
+    "lines_removed": 0,
+    "files_touched": 1
+  },
   "findings": [
     {
       "id": "F1",
-      "title": "Purged CV override is properly scoped via try/finally",
-      "severity": "verified-ok",
-      "notes": "The `try/finally` in the per-symbol block correctly saves `PHASE2_CV_FILTER_ENABLED` before override and restores it in the `finally` clause. This survives all exit paths: normal completion, per-symbol `continue` after exception, and propagated exceptions. Verified empirically: after `_run_phase2(force=True)`, `_cfg.PHASE2_CV_FILTER_ENABLED` returns to its original value."
-    },
-    {
-      "id": "F2",
-      "title": "_tag_pool_with_symbol edge cases are handled correctly",
-      "severity": "verified-ok",
-      "notes": "Edge cases verified: (a) empty pool → empty list, (b) empty `conditions` list → `['symbol is S']` appended, (c) duplicate `symbol is X` condition → no-op (idempotent), (d) rule missing `conditions` key → treated as `[]` and tag is added, (e) input is not mutated (shallow copy via `dict(rule)` plus `list(...)` on conditions). Verified by running ad-hoc tests against the live code."
-    },
-    {
-      "id": "F3",
-      "title": "Per-symbol exception handling is correct: failed symbol is skipped, others continue",
-      "severity": "verified-ok",
-      "notes": "Verified empirically: with three symbols A/B/C, B raises a RuntimeError, the pipeline logs the error with `exc_info=True`, skips B via `continue`, and successfully generates pools for A and C. Final merged pool has 2 rules. The pipeline does not abort. The outer direction-level `try/except` from the original code is intentionally not used here — this is a deliberate change in failure semantics (one bad symbol does not kill the whole direction), and it's what the task spec requested."
-    },
-    {
-      "id": "F4",
-      "title": "Config values are reasonable and well-documented",
-      "severity": "verified-ok",
-      "notes": "PER_SYMBOL_PHASE2=True default matches the spec. PER_SYMBOL_MIN_ROWS=1000 is a reasonable floor for meaningful per-symbol training. PHASE2_PER_SYMBOL_POOL_DIR is derived from existing PHASE2_POOL_DIR (no hardcoded path). All three new constants have explanatory comments."
-    },
-    {
-      "id": "F5",
-      "title": "No hardcoded paths",
-      "severity": "verified-ok",
-      "notes": "Per-symbol directory: `_cfg.PHASE2_PER_SYMBOL_POOL_DIR` (config-derived). Standard pool path: `_phase2_module._POOL_PATHS[direction]` (config-derived). Per-symbol file name: `f'phase2_{direction}_{symbol}_pool.json'` (uses loop/direction variables, no hardcoded literal). File output parent directories are created with `os.makedirs(..., exist_ok=True)`. Standard path's parent is also created defensively."
-    },
-    {
-      "id": "F6",
-      "title": "Style consistency with project",
-      "severity": "verified-ok",
-      "notes": "Uses `getattr(_cfg, ..., default)` defensive pattern (consistent with rest of file). Numpy-style docstrings on the new helpers. f-strings for format. Same indentation, same logger usage, same exc_info=True style. The new `if per_symbol_phase2 / else` branch keeps the original combined-symbols path verbatim below it (not refactored), which preserves diff readability and matches the 'clean old implementation' guidance."
-    },
-    {
-      "id": "F7",
-      "title": "Logging is informative and uses appropriate levels",
-      "severity": "verified-ok",
-      "notes": "INFO for progress (per-symbol start, generated count, merged total). WARNING for skip conditions (insufficient rows, GPU runtime failure). ERROR with `exc_info=True` for per-symbol failures. The final 'merged N rules from M symbols' line is informative. Direction name is included in every message via `dir_phase_name`."
-    },
-    {
-      "id": "F8",
-      "title": "Memory/performance characteristics",
-      "severity": "minor",
-      "notes": "Per-symbol loop does `train_df[train_df['symbol'] == symbol].copy()` which creates a full DataFrame copy per symbol. For typical symbol counts (single-digit to low double-digit) this is acceptable. The GPU runtime is reconfigured once per symbol (matching original per-direction pattern); this is non-trivial overhead but mirrors the existing code. No memory leak in the loop body."
-    },
-    {
-      "id": "F9",
-      "title": "Possible suboptimal behavior: previous-pool seeding includes rules from other symbols",
-      "severity": "minor",
-      "notes": "`Rule_Pool_Generator.run()` calls `Rule_Pool_Generator.load_pool(direction)` which loads the merged standard pool. On a re-run of per-symbol mode, this merged pool contains rules tagged with other symbols. These are then used as `seed_chromosomes` for the current symbol's evolution. Suboptimal but not breaking: chromosomes are valid regardless of symbol tag; the new rules for the current symbol are tagged correctly when merged back. The original combined-symbols mode has the same behavior, so this is consistent with the existing design rather than a regression."
-    },
-    {
-      "id": "F10",
-      "title": "try/finally scope is appropriate",
-      "severity": "verified-ok",
-      "notes": "The `try/finally` only wraps the per-symbol loop, not the subsequent merge + standard-path write. This is correct: we want the config restored before doing other work. If the merge step or standard-path write raises, the exception propagates, which is consistent with the original combined-symbols behavior (an exception in `generator.run()` was logged but `pool = []` set; an exception during file write would have propagated too)."
-    },
-    {
-      "id": "F11",
-      "title": "No dead code, no unused imports",
-      "severity": "verified-ok",
-      "notes": "Both new helpers (`_tag_pool_with_symbol`, `_merge_pools`) are referenced. No new imports were added. The old `pool = []` initializer in the exception handler is gone with the original branch (the new branch has its own empty-pool path: all symbols skipped → empty `per_symbol_pools` → empty `merged_pool`). The original `else` branch (combined-symbols) keeps its old structure verbatim."
+      "severity": "low",
+      "category": "test_coverage",
+      "title": "No new unit test added for the new guard on GPU engine",
+      "detail": "The CPU engine has a sibling test `test_invalid_entry_price_raises` at tests/unit/test_cpu_engine.py:1003 that exercises the exact same guard (zero entry price). The GPU engine change introduces an identical guard at gpu_fuzzy_trader/backtest/gpu_engine.py:643-651 but ships no corresponding test in tests/unit/test_gpu_engine.py. The implementer reports '146 passed' but no new test was added. Other ValueError paths on the GPU engine (e.g., `test_missing_feature_raises_clear_error` line 396, chromosome-width line 553) are explicitly covered, so the asymmetry is inconsistent with the file's existing testing pattern.",
+      "fix": "Add a test in tests/unit/test_gpu_engine.py mirroring tests/unit/test_cpu_engine.py:1003-1007. Suggested body: build a small DataFrame with `label_open_next = [100.0, 0.0, 100.0]` (zero entry price is invalid) and assert `pytest.raises(ValueError, match=\"Invalid label_open_next\")` on `GPUBacktestEngine(...)` construction. Optionally also cover NaN and negative cases to lock in edge-case behavior."
     }
   ],
-  "correctness": {
-    "passes": true,
-    "notes": "All edge cases handled. Per-symbol path tested live: (a) symbols with insufficient rows are skipped with warning, (b) successful symbols contribute to merged pool with correct 'symbol is S' tag, (c) per-symbol exception is caught and logged with traceback, other symbols continue, (d) PHASE2_CV_FILTER_ENABLED is restored to its original value after the run. Backward compat verified by reading the `else` branch (combined-symbols path unchanged)."
+  "correctness_review": {
+    "matches_cpu_engine": true,
+    "verification": "Side-by-side comparison of cpu_engine.py:493-501 and gpu_engine.py:643-651 confirms identical logic: `invalid_mask = (~np.isfinite(entry)) | (entry <= 0)`, same `bad = int(np.sum(invalid_mask))` counter, same error message string 'Invalid label_open_next values (must be finite and positive). Bad rows: {bad}'.",
+    "placement_correct": true,
+    "placement_note": "Guard inserted immediately after `entry = df['label_open_next'].values.astype(...)` (line 640) and before the first division-by-entry at `self._max_ret_jax = jnp.array((df['label_max_288'].values - entry) / entry * 100.0, ...)` (line 642). This matches the CPU engine placement and ensures degenerate entry prices are rejected before any downstream calculation."
   },
-  "edge_cases": {
-    "passes": true,
-    "notes": "Empty pool, empty conditions, duplicate conditions, missing 'conditions' key, all-symbols-fail, all-symbols-skipped (insufficient rows), and per-symbol exception paths all handled. The dedup in `_tag_pool_with_symbol` is via `any(str(c) == cond_str for c in conditions)`, which correctly handles both string and any-stringifiable entries."
+  "edge_case_review": {
+    "nan": "caught — `np.isfinite(nan)` is False, so `~np.isfinite(entry)` is True",
+    "inf": "caught — `np.isfinite(inf)` is False, so `~np.isfinite(entry)` is True (covers both +inf and -inf)",
+    "zero": "caught — `entry <= 0` is True for 0.0",
+    "negative": "caught — `entry <= 0` is True for any negative value",
+    "positive_finite": "passes through — no false positives",
+    "empty_array": "covered — `np.any(empty_mask)` is False, no exception raised (matches CPU engine behavior)"
   },
-  "test_adequacy": {
-    "passes": true,
-    "notes": "The 8 existing tests in tests/unit/test_run_pipeline.py (verified by implementer) cover the broader pipeline but do not specifically cover the per-symbol path. The implementer's handoff states: 'helper functions verification: _tag_pool_with_symbol, _merge_pools: OK' — these were ad-hoc, not committed tests. I ran similar ad-hoc tests during review and they all pass. A committed unit test for `_tag_pool_with_symbol` and `_merge_pools` (and ideally for the try/finally CV restoration) would improve coverage. This is not blocking; the new helpers are small and exercised end-to-end in normal pipeline runs."
+  "verified_manually": {
+    "logic_correctness": "Ran a 6-element array containing [100.0, 0.0, nan, 50.0, -10.0, inf] through the validation expression; correctly identified 4 bad rows and produced the expected error message. The 'all valid' case produced no false positives.",
+    "existing_tests": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_gpu_engine.py tests/unit/test_cpu_engine.py -k 'label_open_next or invalid_entry' -q → 1 passed (existing CPU test still green). Full gpu/cpu suite reported 146 passed in implementer handoff."
   },
-  "config_changes": {
-    "passes": true,
-    "notes": "Three new config constants, all derived from existing values, all documented. PER_SYMBOL_PHASE2=True default matches task spec. PER_SYMBOL_MIN_ROWS=1000 is conservative. PHASE2_PER_SYMBOL_POOL_DIR uses os.path.join on the existing PHASE2_POOL_DIR (no hardcoded literal)."
+  "security_review": "None expected — pure input validation. No I/O, no logging of untrusted data, no mutation of inputs.",
+  "maintainability_review": {
+    "error_message_clarity": "Good — message names the offending column, the required property ('finite and positive'), and the count of bad rows. This is sufficient for debugging a polluted `label_open_next` series without leaking raw data.",
+    "code_style": "Matches surrounding code style (no docstring on the guard block, consistent with cpu_engine.py). The blank line on either side of the block separates it from the `entry = ...` line and the `_max_ret_jax` assignment cleanly.",
+    "duplication": "Acceptable — the CPU and GPU engines each carry their own validation by design (they are independent code paths with separate pre-extraction blocks). Extracting to a shared helper would be a separate refactor and is out of scope for this task."
   },
-  "recommendation": "APPROVED. The implementation is clean, well-scoped, follows project conventions, and handles all identified edge cases correctly. Minor suggestions (committed unit tests for the new helpers, documentation of why CV is disabled in per-symbol mode) are not blocking."
+  "out_of_scope_changes": "None. Single-file, 9-line insertion with no incidental edits.",
+  "summary": "Implementation is correct, well-placed, and a faithful port of the CPU engine guard. Edge cases (nan/inf/zero/negative) are all covered by the same single expression. Only issue is a minor test-coverage gap: the new guard is not exercised by a GPU-engine unit test, breaking symmetry with the existing CPU-engine test for the same logic."
 }

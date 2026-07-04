@@ -1,1 +1,24 @@
-{"task_id": "task-2", "title": "Periodic Val Simulation (A2)", "branch": "feature/task-2-val-sim-interval", "base_branch": "main", "commit_sha": "c42f105", "implementer_state": "completed", "files_changed": ["gpu_fuzzy_trader/config.py", "gpu_fuzzy_trader/evolution/evox_runner.py", "gpu_fuzzy_trader/phases/phase2_rule_pool.py", "tests/unit/test_phase2_val_sim_interval.py"], "test_results": {"new_tests": "2 passed", "targeted": "63 passed", "full_unit": "1264 passed, 1 pre-existing skip"}, "key_decisions": ["is_last_gen computed at top of loop (early) + kept later assignment", "_update_hall_of_fame and _count_deployable_preview unguarded", "TODO(task-2) comments removed", "test assertions relaxed to val_count >= 2 (key invariant: val_count < train_count)"], "spec_task_file": ".opencode/tasks/task-2.md"}
+{
+  "task": "task-2",
+  "title": "Add Entry-Price Guard on GPU Engine",
+  "status": "DONE",
+  "commit": "f451216",
+  "branch": "fix/gpu-entry-price-guard",
+  "base_branch": "main",
+  "files_changed": [
+    "gpu_fuzzy_trader/backtest/gpu_engine.py",
+    "tests/unit/test_gpu_engine.py"
+  ],
+  "tests": {
+    "entry_guard": "1 passed — test_invalid_entry_price_raises",
+    "full": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_gpu_engine.py tests/unit/test_cpu_engine.py -q -x: 147 passed"
+  },
+  "acceptance_criteria_met": [
+    "GPU engine raises ValueError on non-finite/non-positive label_open_next, matching CPU engine",
+    "Guard placed after entry=... and before division-by-entry calculations",
+    "Mirror test test_invalid_entry_price_raises added matching CPU engine pattern"
+  ],
+  "notes": [
+    "Previous code-review fix (F1): added test_invalid_entry_price_raises to TestGPUBacktestEngineInit"
+  ]
+}

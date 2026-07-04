@@ -1,14 +1,15 @@
 {
   "task": "task-2",
-  "branch": "fix/elite-preservation",
+  "branch": "fix/gpu-entry-price-guard",
   "stage": "code-review",
   "spec_result": "APPROVED",
-  "spec_notes": "All 4 ACs pass. Implementation uses decomposed args (cleaner than spec). Added used_slots tracking (robust improvement). All 30 tests pass. README updated correctly.",
-  "implementer_commit": "9b1f942",
+  "spec_notes": "Entry-price guard matches CPU engine validation exactly. 9 lines added, single-file change. Guard placed after entry extraction and before division-by-entry calculations. All 146 tests pass. No out-of-scope changes detected.",
+  "implementer_commit": "425d2c1",
   "files_changed": [
-    "gpu_fuzzy_trader/config.py",
-    "gpu_fuzzy_trader/evolution/evox_runner.py",
-    "tests/unit/test_elite_preservation.py",
-    "README.md"
+    "gpu_fuzzy_trader/backtest/gpu_engine.py"
+  ],
+  "acceptance_criteria_met": [
+    "GPU engine raises ValueError on non-finite/non-positive label_open_next, matching CPU engine",
+    "Guard placed after entry=... and before division-by-entry calculations"
   ]
 }

@@ -2,104 +2,69 @@
   "task": "task-1",
   "reviewer": "code-reviewer",
   "status": "APPROVED",
-  "review_date": "2026-07-01",
+  "review_date": "2026-07-04",
   "base_branch": "main",
-  "feature_branch": "feat/phase2-config-tuning",
-  "commit_reviewed": "cd69462",
+  "feature_branch": "fix/time-exit-return-cap",
+  "commit_reviewed": "46cb88a",
   "verdict": "APPROVED",
-  "summary": "All 20 parameter values match the task spec exactly and are internally consistent. The single production file modified is gpu_fuzzy_trader/config.py. Test updates are minimal, targeted, and correctly track the new defaults (JOINT_TRAIN_VAL=True, F3_OBJECTIVE=cv_fold_min, MIGRATION_ENABLED=False, monthly admission thresholds, plateau knobs). 168 tests in the affected test files pass. Two minor informational notes are non-blocking.",
-  "correctness_checks": {
-    "joint_train_val_true_with_val_sim_interval_2": {
-      "status": "PASS",
-      "analysis": "Verified evox_runner.py:1676 / :2200. The condition `run_val_this_gen = is_last_gen OR JOINT_TRAIN_VAL OR (gen % VAL_SIM_INTERVAL == 0)` short-circuits to True on every gen when JOINT_TRAIN_VAL=True. VAL_SIM_INTERVAL=2 becomes effectively a no-op for val sim frequency (val runs every gen), but it remains meaningful for the deployable_archive refresh cadence (the `_update_deployable_archive` block is also gated by `run_val_this_gen`, so it refreshes every gen under JOINT). No conflict.",
-      "follow_up_note": "VAL_SIM_INTERVAL=2 is therefore inert under JOINT_TRAIN_VAL=True; this is fine but worth knowing for future tuners."
-    },
-    "f3_objective_cv_fold_min_with_joint_train_val_true": {
-      "status": "PASS",
-      "analysis": "Verified phase2_rule_pool.py:539-622 and 786. The objectives use three orthogonal data sources: f1 Sortino uses min(train, val) Sortino when JOINT_TRAIN_VAL; f2 drawdown uses max(train, val) drawdown; f3 return uses min(CV fold returns) when cv_fold_evaluator is provided AND split_mode is purged_walk_forward (line 786), otherwise falls back to profit_factor (line 605-606). Combinations are independent — no logical conflict. cv_fold_min is computed only from CV fold engines, not from val_engine, so the change does not interfere with JOINT_TRAIN_VAL's train/val behavior.",
-      "follow_up_note": "If purged_walk_forward is not active, f3 silently falls back to profit_factor, defeating the OOS goal. The fallback exists for safety but operators should verify their split mode before relying on cv_fold_min."
-    },
-    "diversity_penalty_2.0_scale_audit": {
-      "status": "PASS",
-      "analysis": "Verified phase2_rule_pool.py:184-219 (_diversity_penalty_blended). The penalty is a fixed value (0 or penalty_weight) — added directly to f1/f3 and not scaled by a per-objective weight. Compared with the existing penalty scales: PHASE2_SUPPORT_PENALTY_WEIGHT_F1=0.4 × SUPPORT_PENALTY_MAX(5.0) = 2.0 max contribution to f1. So 2.0 is approximately equal to a full support-penalty on f1, and ~67% of a full support-penalty on f2/f3 (weight 0.6 × 5.0 = 3.0). The new value is meaningful but not dominant, consistent with the inline comment.",
-      "follow_up_note": "optuna_search.py:52 lists PHASE2_DIVERSITY_PENALTY search range as [3, 5, 8, 12, 16]. The new default of 2.0 is below the lowest optuna value. Not in production path, but if Optuna is re-run, the default value would not be in the search space. Optional fix: extend the range to [2, 3, 5, 8, 12, 16]."
-    },
-    "plateau_patience_5_vs_boost_gens_4": {
-      "status": "PASS",
-      "analysis": "PATIENCE > BOOST_GENS ensures the post-restart early-stop cannot fire during the boost window. The post_restart_no_improve_streak resets to 0 at restart, increments per gen of no progress; with patience=5, the stop can only fire at gen 5 post-restart, which is 1 gen after the 4-gen boost window expires. This is the intended 'let the boost window work' behavior. Verified in evox_runner.py:1783-1900.",
-      "follow_up_note": null
-    },
-    "cache_size_1200_with_joint_train_val": {
-      "status": "PASS",
-      "analysis": "Cache formula: 200 pop × 2 (train+val with JOINT) = 400 sims/gen. 1200 entries = 3 gens of working set. The inline comment math is correct. With the previous 575, cache filled in ~1.4 gens; with 1200, eviction happens after gen 3, which matches the comment's intent.",
-      "follow_up_note": null
-    },
-    "migration_disabled_with_orphan_enabled_false": {
-      "status": "PASS",
-      "analysis": "Verified evox_runner.py:1675, ischeduler guard, and config.py. Migration guard short-circuits to False when MIGRATION_ENABLED=False, so no cross-island contamination. Orphan hyperparams (PHASE2_ORPHAN_*) remain defined in config but are unused when PHASE2_ORPHAN_ENABLED=False. Spec required this (orphan disabled separately from migration).",
-      "follow_up_note": null
-    }
+  "summary": "Clean, low-risk parameter + clip-guard implementation. CPU and GPU engines use semantically equivalent np.clip/jnp.clip with the same config-driven cap value, ensuring long/short symmetry. All 4 new CPU tests + 4 new GPU tests pass; full engine test suite (154 tests) is green with no regressions. Two minor docstring/coupling observations are noted but do not block approval.",
+  "correctness": {
+    "np_clip_vs_jnp_clip_parity": "VERIFIED. np.clip(x, -cap, cap) and jnp.clip(x, -cap, cap) are element-wise equivalent for scalar clipping. Manual parity checks against cap=50.0 confirm identical outputs for [60.0, -60.0, 50.0, -50.0, 1.5, -1.5] in both libs.",
+    "long_short_symmetry": "VERIFIED. Long path clips s_close (the price return). Short path clips -s_close (the short PnL). The negation in the short path is consistent with how s_close is later consumed in equity simulation. Tests cover both directions with positive and negative clip cases.",
+    "config_source_of_truth": "Both engines read the cap from the same constant (_cfg.MAX_TIME_EXIT_RETURN_PCT = 50.0). No risk of CPU/GPU drift.",
+    "test_math_verification": "Verified by hand: long close_ret=60 -> clip to 50; long close_ret=-60 -> clip to -50; short -close_ret=60 -> clip to 50; short -close_ret=-60 -> clip to -50. All four new tests assert exactly these values and pass."
   },
-  "edge_case_audit": {
-    "monthly_admission_ratio_boundary_0.5": {
-      "status": "PASS",
-      "analysis": "Tests in test_phase2_monthly_admission.py verify the boundary (0.5 ratio now passes). Implementation in phase2_rule_pool.py uses `>=` so 0.5 exactly passes. Correct.",
-      "follow_up_note": null
-    },
-    "phenotype_f3_step_with_negative_cv_fold_returns": {
-      "status": "PASS",
-      "analysis": "Verified phase2_rule_pool.py:171-179 (_phenotype_bucket_key). f3_val = min(cv_fold_returns) can be negative when the worst fold had a loss. `int(f3_val / f3_step)` produces a negative int which becomes a valid tuple key. The diversity-penalty-blended path uses `_phenotype_bucket_key` only for the ref-chromosome's stored bucket, so the comparison is consistent (both sides use the same key function). No collision risk.",
-      "follow_up_note": null
-    },
-    "island_patience_default_chain": {
-      "status": "PASS",
-      "analysis": "Verified evox_runner.py:635-636: island patience defaults fall back to global PATIENCE (now 5). Both knobs explicitly set to 5 in config, so no surprise. The fallback chain in the production code is intact.",
-      "follow_up_note": null
-    }
-  },
-  "test_adequacy": {
-    "files_reviewed": 8,
-    "files_audited": [
-      "tests/unit/test_config_additions.py",
-      "tests/unit/test_evox_runner.py",
-      "tests/unit/test_migration_safety.py",
-      "tests/unit/test_phase2_monthly_admission.py",
-      "tests/unit/test_phase2_plateau_restart.py",
-      "tests/unit/test_phase2_post_restart_stop.py",
-      "tests/unit/test_phase2_rule_pool.py",
-      "tests/unit/test_phase2_val_sim_interval.py"
-    ],
-    "tests_run": "168 passed in 72.01s with PYTEST_LOW_MEMORY=1",
-    "coverage_gaps": [],
-    "analysis": "Each parameter change is reflected in at least one test. The JOINT_TRAIN_VAL=True default is correctly handled in test_phase2_val_sim_interval.py via monkeypatch.setattr(cfg, 'PHASE2_JOINT_TRAIN_VAL', False), keeping the 'val-skipped on non-interval gens' test scenario deterministic. F3_OBJECTIVE=cv_fold_min default is handled in test_evox_runner.py and test_phase2_rule_pool.py by explicitly setting 'profit_factor' where the test relies on a specific f3 value. MIGRATION_ENABLED=False is properly tested as the new default in test_migration_safety.py. Plateau and admission parameters have correct numerical updates. No tests were added but none are required for parameter-only changes; the existing test surface is sufficient.",
-    "follow_up_note": "If a future Colab run reveals that cv_fold_min is producing degenerate objectives, an integration test that exercises CvFoldValEvaluator with F3_OBJECTIVE=cv_fold_min would be a useful addition (not required for this task)."
-  },
-  "maintainability": {
-    "comment_quality": "GOOD",
-    "rationale_per_parameter": "Every changed parameter has an inline comment documenting the old -> new transition and the reason. Consistent style across all 20 changes.",
-    "follow_up_note_1": {
-      "severity": "LOW",
-      "type": "stale_docstring",
-      "location": "gpu_fuzzy_trader/config.py:452",
-      "issue": "The F3_OBJECTIVE docstring still says 'profit_factor (default), cv_fold_min (min of CV fold returns), or win_rate (legacy)' but the default value is now cv_fold_min. Future tuners reading the docstring would expect profit_factor to be the default.",
-      "recommendation": "Update the parenthetical to '(cv_fold_min default, profit_factor legacy, win_rate not recommended)' to reflect the new order. Not blocking."
-    },
-    "follow_up_note_2": {
-      "severity": "LOW",
-      "type": "search_range_drift",
-      "location": "gpu_fuzzy_trader/optuna_search.py:52",
-      "issue": "PHASE2_DIVERSITY_PENALTY search range is [3, 5, 8, 12, 16] but the new default is 2.0. The default value is not in the search space.",
-      "recommendation": "If Optuna is used for future tuning, extend the range to include 2.0 (e.g. [2, 3, 5, 8, 12, 16]). Optuna is not in the production pipeline, so this is informational only."
-    }
+  "edge_cases": {
+    "cap_zero": "np.clip(x, 0, 0) == 0 and jnp.clip(x, 0, 0) == 0 for all x. Degenerate but valid behavior; no crash.",
+    "cap_negative": "np.clip(x, +c, -c) with c>0 has min>max; NumPy silently swaps, JAX may warn. Not exercised in tests. Not a real concern because cap is a config value not user input, but a guard or assertion could be added to config.py to assert cap > 0.",
+    "cap_float_precision": "cap=50.0 is a Python float. _JXF(cap) in the GPU path casts to the configured JAX float dtype. Returns are clamped in the same dtype, so no precision mismatch between engines.",
+    "jit_compatibility": "The new jnp.clip call is JIT-compatible; no shape or tracer issues introduced."
   },
   "security": {
-    "status": "N/A",
-    "analysis": "Config-only changes. No I/O, no path handling, no auth/authz, no input validation surface touched. Verified no production code outside config.py was modified."
+    "concerns": "None. The cap is a hard-coded config value, not user input. No I/O, no network, no untrusted code paths touched."
   },
-  "production_scope_audit": {
-    "production_files_changed": ["gpu_fuzzy_trader/config.py"],
-    "out_of_scope_production_changes": false,
-    "notes": "Confirmed via full diff that no logic changes in gpu_fuzzy_trader/evolution/*, gpu_fuzzy_trader/phases/*, or gpu_fuzzy_trader/run_pipeline.py. The .opencode/* diffs are workflow tracking files (CONTEXT, PLAN, task spec) and not production code."
+  "maintainability": {
+    "config_driven_constant": "GOOD. MAX_TIME_EXIT_RETURN_PCT lives in config.py with a clear inline comment block describing intent and rationale.",
+    "docstring_accuracy_minor_issue": "MINOR. The config comment says 'A time-exit should not out-earn a full TP hit.' This is misleading: with the default cap of 50% and typical TP values of 2-4%, a clipped time-exit will still out-earn a TP. The cap is really an outlier bound, not a fairness constraint. Recommend rewording to e.g. 'Caps the time-exit fallback return at ±50% to prevent pathological close_ret from distorting rule metrics; typical TP values are 2-4% so this only affects outliers.' Does not block approval.",
+    "test_coupling_to_default": "MINOR. The 4 new tests hard-code the expected return value of 50.0 / -50.0, which is correct for the current default cap. If the default ever changes, tests must be updated in lockstep. Could be improved by parameterizing the cap (e.g., @pytest.mark.parametrize with the cap value), but the current approach is acceptable and the coupling is obvious from the inline comments.",
+    "cpu_per_call_config_lookup": "NIT. The CPU engine reads _cfg.MAX_TIME_EXIT_RETURN_PCT on every call to _build_trade_outcome_single. The function is called in a loop over all rows. The lookup is cheap (attribute access on a module), but it could be cached once on engine construction (e.g., self._time_exit_cap = _cfg.MAX_TIME_EXIT_RETURN_PCT in __init__). Performance impact is negligible at current scale; GPU path already reads it once per call so no change needed there.",
+    "spec_comment_inconsistency": "The spec-reviewer handoff (task-1-spec-reviewer.json) describes Task 1 as 'Config Parameter Tuning (Runtime + OOS)' and lists a completely different set of files (test_evox_runner.py, test_migration_safety.py, etc.). The actual diff on fix/time-exit-return-cap is a self-contained 5-file change for capping time-exit returns. The spec-reviewer handoff appears to belong to a different task. This does not affect the code under review — the spec reviewer's verdict on the parameter-tuning task is unrelated and does not gate this review."
   },
-  "verdict_rationale": "The task is parameter-only and risk was correctly classified as Low. All 20 changes match the spec, are internally consistent, and the test suite is properly maintained. The two LOW-severity follow-up notes are non-blocking and can be addressed in a follow-up if desired. Approval granted."
+  "test_adequacy": {
+    "cpu_tests": "4 new tests: 2 long (positive/negative clip) + 2 short (positive/negative clip). Each verifies both the clipped return value and the 'Time_288' exit reason. PASSING.",
+    "gpu_tests": "4 new tests: 2 long (positive/negative clip) + 2 short (positive/negative clip). Same scenarios as CPU. PASSING.",
+    "regression_check": "Ran the full tests/unit/test_cpu_engine.py and tests/unit/test_gpu_engine.py suites: 154 passed, 0 failed, 0 regressions.",
+    "parity_test_gap": "OPTIONAL. There is no explicit CPU-vs-GPU parity test asserting that the two engines return identical values for the same inputs. Such a test would be nice-to-have for future drift detection, but the existing tests already exercise the same input shape in both engines and would catch the most likely regressions.",
+    "edge_case_gap": "OPTIONAL. No test for cap=0 (degenerate) or for a close_ret that lands exactly at the cap boundary (cap=50.0 with close_ret=50.0). Boundary test would be cheap to add."
+  },
+  "scope_check": {
+    "files_changed": [
+      "gpu_fuzzy_trader/config.py",
+      "gpu_fuzzy_trader/backtest/cpu_engine.py",
+      "gpu_fuzzy_trader/backtest/gpu_engine.py",
+      "tests/unit/test_cpu_engine.py",
+      "tests/unit/test_gpu_engine.py"
+    ],
+    "production_files_changed": [
+      "gpu_fuzzy_trader/config.py",
+      "gpu_fuzzy_trader/backtest/cpu_engine.py",
+      "gpu_fuzzy_trader/backtest/gpu_engine.py"
+    ],
+    "out_of_scope_changes": false,
+    "notes": "The change is well-scoped: a single new config constant + 1-line clip wrap in each engine + 4 tests per engine. No collateral damage to other modules."
+  },
+  "outstanding_items": [],
+  "fix_items": [
+    {
+      "severity": "nit",
+      "description": "The config.py comment 'A time-exit should not out-earn a full TP hit' is misleading given the 50% default. Recommend rewording to clarify this is an outlier cap, not a fairness bound.",
+      "blocking": false
+    },
+    {
+      "severity": "nit",
+      "description": "Tests are hard-coded to cap=50.0. Consider parameterizing so the tests assert the clipping behavior generically (clip(x, -cap, cap)) rather than baking in the default value.",
+      "blocking": false
+    }
+  ],
+  "verdict_rationale": "The implementation is correct, well-tested, and minimal. Both engines use semantically identical clip operations driven by a single config constant. All 8 new tests pass and the full engine test suite shows no regressions. The two nits (docstring wording, test parameterization) are non-blocking and can be addressed in a follow-up if desired."
 }
