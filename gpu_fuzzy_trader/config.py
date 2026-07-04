@@ -565,6 +565,13 @@ PHASE2_POOL_VAL_RETURN_MIN_PCT = 0.0
 #   Lower  → stricter alignment between train and val required.
 PHASE2_MAX_TRAIN_VAL_GAP_PCT = 16.0
 
+# PHASE2_OVERFIT_WARNING_RATIO — threshold ratio (max_return / max_robust_return)
+# above which a WARNING is logged during evolution. Signals a rule that performs
+# well on train but poorly on validation — likely overfit to the training window.
+#   Higher → only extreme overfit gaps trigger a warning.
+#   Lower  → more sensitive; smaller gaps also trigger warnings.
+PHASE2_OVERFIT_WARNING_RATIO = 3.0
+
 # PHASE2_KEEP_TOP_RULES — max rules kept in the final Phase 2 pool after
 # admission filtering, sorted by deployability_rank_score descending.
 #   Higher → larger pool for Phase 3 greedy selection.

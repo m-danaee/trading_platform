@@ -1850,6 +1850,7 @@ def _run_nsga2_fallback(
             pop_size,
             metrics_cache,
         )
+        robust_stats = _pareto_robust_stats(pareto_indices, metrics_cache)
         # --- viability-collapse trigger: forced restart when viable pop is
         #     persistently below threshold ---
         pop_size_for_viability = max(pop_size, 1)
@@ -1909,6 +1910,9 @@ def _run_nsga2_fallback(
             max_return_pct=max_ret,
             median_return_pct=median_ret,
             max_sortino=max_sort,
+            mean_robust_return_pct=robust_stats["mean_robust_return_pct"],
+            max_robust_return_pct=robust_stats["max_robust_return_pct"],
+            max_robust_sortino=robust_stats["max_robust_sortino"],
             valid_count=val_count,
             unique_chromosome_ratio=float(
                 pareto_diag.get("unique_chromosome_ratio", 0.0)),
