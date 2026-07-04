@@ -375,11 +375,11 @@ class TestIntegrationPerSymbolGreedy:
 
         captured_dfs: list[pd.DataFrame] = []
 
-        def _capture_eval(df_in, rule_set, direction, feature_names=None, windows=None):
+        def _capture_eval(df_in, rule_set, direction, feature_names=None, windows=None, n_rows=None):
             captured_dfs.append(df_in)
             return evaluate_rule_set_monthly(
                 df_in, rule_set, direction,
-                feature_names=feature_names, windows=windows)
+                feature_names=feature_names, windows=windows, n_rows=n_rows)
 
         patches = {
             "MONTHLY_VALIDATION_ENABLED": True,

@@ -812,7 +812,7 @@ def _profit_amp_monthly_summary(valid_df: pd.DataFrame, rules: list[dict], direc
                 "max_drawdown_pct": 100.0,
                 "executed_trades": 0,
             })
-    return summarize_monthly_metrics(metrics), metrics
+    return summarize_monthly_metrics(metrics, n_rows=len(valid_df)), metrics
 
 
 def _profit_amp_certificate(
@@ -1256,19 +1256,35 @@ def run_rb_governor_pipeline(
             min_valid_trades=int(getattr(_cfg, "RB_RULESET_MIN_VALID_TRADES", getattr(_cfg, "RB_MIN_VALID_TRADES", 15))),
         )
 
+        val_ret = _f(opt_test, "total_return_pct")
+        val_pf = _f(opt_test, "profit_factor")
+        ret_gate = float(_cfg.PHASE5_VALIDATION_RETURN_GATE_PCT)
+        pf_gate = float(_cfg.PHASE5_VALIDATION_PROFIT_FACTOR_GATE)
+        deployable = (
+            val_ret >= (ret_gate - 1e-9)
+            and val_pf >= (pf_gate - 1e-9)
+        )
+
         strategy = _strategy(
             direction,
             opt_rules,
-            risk_optimized=True,
+            risk_optimized=bool(deployable),
             extra={
+                "deployment_accepted": bool(deployable),
+                "validation_gate": {
+                    "return_pct": val_ret,
+                    "profit_factor": val_pf,
+                    "required_return_pct": ret_gate,
+                    "required_profit_factor": pf_gate,
+                },
                 "rb_score": opt_score,
                 "rb_train_return_pct": _f(opt_train, "total_return_pct"),
-                "rb_valid_return_pct": _f(opt_test, "total_return_pct"),
-                "rb_valid_profit_factor": _f(opt_test, "profit_factor"),
+                "rb_valid_return_pct": val_ret,
+                "rb_valid_profit_factor": val_pf,
                 "rb_valid_max_drawdown_pct": _f(opt_test, "max_drawdown_pct"),
                 "rb_valid_executed_trades": _i(opt_test, "executed_trades"),
-                "rb_train_minus_valid_return_pct": _f(opt_train, "total_return_pct") - _f(opt_test, "total_return_pct"),
-                "rb_train_valid_ratio": _f(opt_train, "total_return_pct") / max(_f(opt_test, "total_return_pct"), 1e-9),
+                "rb_train_minus_valid_return_pct": _f(opt_train, "total_return_pct") - val_ret,
+                "rb_train_valid_ratio": _f(opt_train, "total_return_pct") / max(val_ret, 1e-9),
                 "rb_profit_amp_objective": profit_objective,
                 "rb_profit_amp_accepted": bool(profit_meta.get("accepted", False)),
             },

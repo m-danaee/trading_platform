@@ -395,7 +395,8 @@ def _monthly_drag_for_rules(
             ):
                 metrics.append(
                     eng.simulate_rule_set_from_cache(rules, win_cache, "train"))
-            summary = summarize_monthly_metrics(metrics)
+            summary = summarize_monthly_metrics(
+                metrics, n_rows=len(monthly_ctx.combined_df))
         else:
             summary, _ = evaluate_rule_set_monthly(
                 monthly_ctx.combined_df,
@@ -403,12 +404,14 @@ def _monthly_drag_for_rules(
                 monthly_ctx.direction,
                 feature_names=monthly_ctx.feature_names,
                 windows=monthly_ctx.monthly_windows,
+                n_rows=len(monthly_ctx.combined_df),
             )
         if summary.windows <= 0:
             raw_pen = float(
                 getattr(_cfg, "PHASE4_MONTHLY_FALLBACK_PENALTY", 5.0))
         else:
-            raw_pen = monthly_penalty(summary)
+            raw_pen = monthly_penalty(
+                summary, n_rows=len(monthly_ctx.combined_df))
     except Exception as exc:
         logger.debug("Phase 4 monthly eval failed for grid trial: %s", exc)
         raw_pen = float(getattr(_cfg, "PHASE4_MONTHLY_FALLBACK_PENALTY", 5.0))

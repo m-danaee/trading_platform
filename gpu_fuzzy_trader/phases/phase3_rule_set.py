@@ -1127,13 +1127,14 @@ def _per_symbol_greedy(
                     combined_df, combo_fmt, direction,
                     feature_names=feature_names,
                     windows=monthly_windows,
+                    n_rows=len(combined_df),
                 )
                 if monthly_summary.windows <= 0:
                     monthly_pen = _phase3_scaled_monthly_penalty(float(getattr(
                         _cfg, "PHASE3_MONTHLY_FALLBACK_PENALTY", 5.0)))
                 else:
                     monthly_pen = _phase3_scaled_monthly_penalty(
-                        monthly_penalty(monthly_summary))
+                        monthly_penalty(monthly_summary, n_rows=len(combined_df)))
             except Exception as exc:
                 logger.debug("monthly eval failed for combo, using fallback: %s", exc)
                 monthly_pen = _phase3_scaled_monthly_penalty(float(getattr(

@@ -173,7 +173,18 @@ def build_monthly_windows(
     return windows
 
 
-def summarize_monthly_metrics(metrics: Iterable[dict]) -> MonthlyWindowSummary:
+def _resolved_monthly_min_trades(n_rows: int | None) -> int:
+  """Return purged-WF-scaled monthly trade floor when *n_rows* is known."""
+  if n_rows is not None:
+    return int(_cfg.effective_monthly_min_trades(int(n_rows)))
+  return int(_cfg.MONTHLY_MIN_TRADES)
+
+
+def summarize_monthly_metrics(
+    metrics: Iterable[dict],
+    *,
+    n_rows: int | None = None,
+) -> MonthlyWindowSummary:
     """Aggregate per-window metrics into a ``MonthlyWindowSummary``.
 
     Parameters
@@ -267,7 +278,7 @@ def summarize_monthly_metrics(metrics: Iterable[dict]) -> MonthlyWindowSummary:
         - 0.20 * float(np.max(dips))
         - max(
             0.0,
-            float(getattr(_cfg, "MONTHLY_MIN_TRADES", 20))
+            float(_resolved_monthly_min_trades(n_rows))
             - float(np.min(trades)),
         )
         * 0.08
@@ -299,6 +310,7 @@ def evaluate_rule_set_monthly(
     direction: str,
     feature_names: list[str] | None = None,
     windows: list[pd.DataFrame] | None = None,
+    n_rows: int | None = None,
 ) -> tuple[MonthlyWindowSummary, list[dict]]:
     """Evaluate a rule set on chronological monthly windows.
 
@@ -346,10 +358,16 @@ def evaluate_rule_set_monthly(
                     "executed_trades": 0,
                 }
             )
-    return summarize_monthly_metrics(metrics), metrics
+    if n_rows is None and df is not None:
+        n_rows = len(df)
+    return summarize_monthly_metrics(metrics, n_rows=n_rows), metrics
 
 
-def monthly_penalty(summary: MonthlyWindowSummary) -> float:
+def monthly_penalty(
+    summary: MonthlyWindowSummary,
+    *,
+    n_rows: int | None = None,
+) -> float:
     """Compute a non-negative penalty for Phase 3/4 objective functions.
 
     Lower is better.  Returns ``100.0`` when *summary* has zero windows.
@@ -410,7 +428,7 @@ def monthly_penalty(summary: MonthlyWindowSummary) -> float:
     latest_weight = float(getattr(_cfg, "MONTHLY_LATEST_WEIGHT", 0.6))
     penalty += max(0.0, -summary.latest_return_pct) * latest_weight
 
-    min_trades = int(getattr(_cfg, "MONTHLY_MIN_TRADES", 20))
+    min_trades = _resolved_monthly_min_trades(n_rows)
     penalty += max(0.0, min_trades - summary.min_trades) * 0.08
 
     return float(penalty)

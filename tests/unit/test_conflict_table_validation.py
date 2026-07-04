@@ -150,7 +150,7 @@ class TestConflict05TripleMonthlyGates:
 
       from gpu_fuzzy_trader.validation.monthly_windows import MonthlyWindowSummary
 
-      monkeypatch.setattr(_cfg, "PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO", 0.3)
+      monkeypatch.setattr(_cfg, "PHASE2_MONTHLY_ADMISSION_MIN_RATIO", 0.3)
       monkeypatch.setattr(_cfg, "RB_PROFIT_AMP_MIN_MONTHLY_PROFITABLE_RATIO", 0.90)
       monkeypatch.setattr(_cfg, "RB_PROFIT_AMP_MIN_MONTHLY_WINDOWS", 2)
 

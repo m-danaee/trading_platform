@@ -1876,7 +1876,7 @@ def _apply_monthly_admission_gate(
     Each rule is evaluated on every monthly window via
     ``_evaluate_rule_on_window``.  Only rules whose good-month ratio
     (per ``PHASE2_MONTHLY_GOOD_RETURN_MIN_PCT``) meets or exceeds
-    ``PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO`` (or the island-specific
+    ``PHASE2_MONTHLY_ADMISSION_MIN_RATIO`` (or the island-specific
     threshold when ``island_hyperparams`` is provided) are kept.
 
     Graceful degradation: if the gate would empty the pool, the **original**

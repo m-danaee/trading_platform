@@ -354,13 +354,13 @@ Runs on **train split only** (no validation labels for ranking).
 
 | False (default) | True |
 |-----------------|------|
-| No extra gate | Rule must pass `PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO` on train months |
+| No extra gate | Rule must pass `PHASE2_MONTHLY_ADMISSION_MIN_RATIO` on train months |
 | | Skipped if &lt; `PHASE2_MONTHLY_ADMISSION_MIN_MONTHS` windows |
 
 | Parameter | Default | Effect |
 |-----------|---------|--------|
 | `PHASE2_MONTHLY_GOOD_RETURN_MIN_PCT` | 0.0 | Min return % for a month to count "good" |
-| `PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO` | 0.5 | Fraction of good months required |
+| `PHASE2_MONTHLY_ADMISSION_MIN_RATIO` | 0.5 | Fraction of good months required |
 | `PHASE2_MONTHLY_ADMISSION_MIN_MONTHS` | 4 | Min windows before gate applies |
 
 ### 5.7 Diversity, early stop, two-stage

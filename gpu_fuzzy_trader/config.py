@@ -50,6 +50,7 @@ Environment overrides: DATA_ROOT, TRAIN_CSV_PATH, TEST_CSV_PATH,
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from typing import Literal
@@ -59,6 +60,8 @@ import pandas as pd
 # Repo root (parent of gpu_fuzzy_trader/) — paths outside per-run OUTPUTS_DIR.
 _PROJECT_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), os.pardir))
+
+_logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -175,8 +178,9 @@ SPLIT_MODE = "purged_walk_forward"
 
 # --- Purged walk-forward (when SPLIT_MODE == purged_walk_forward) ---
 
-# PURGED_WF_N_SPLITS — total fold count including primary holdout (K).
-#   K-1 folds are CV; last fold is the persisted validation holdout.
+# PURGED_WF_N_SPLITS — number of CV folds on the train prefix (K).
+#   K CV folds are built on the first (1 - HOLDOUT_FRACTION) of each symbol;
+#   a separate primary holdout (validation_30) is always appended (K+1 total).
 PURGED_WF_N_SPLITS = 3
 
 # PURGED_WF_HOLDOUT_FRACTION — tail fraction per symbol reserved for val parquet.
@@ -210,7 +214,7 @@ _PURGED_WF_REFERENCE_ROWS: int | None = None
 
 
 # =============================================================================
-# Phase 0 — Backtest simulation (must match evaluator_v3.ipynb)
+# Phase 0 — Backtest simulation (must match evaluator_v5.ipynb)
 # =============================================================================
 # Used by cpu_engine / gpu_engine in all phases.
 
@@ -225,7 +229,7 @@ LEVERAGE = 1.0
 
 # FEE_PCT — round-trip fee as % of notional per trade.
 #   Higher → penalizes high-turnover rules; net return and PF drop for active rules.
-#   Lower  → optimistic backtest; must match evaluator_v3.ipynb for valid OOS.
+#   Lower  → optimistic backtest; must match evaluator_v5.ipynb for valid OOS.
 FEE_PCT = 0.20
 
 # MAX_HOLD_CANDLES — force-exit horizon (bars) when neither TP nor SL hits.
@@ -272,7 +276,8 @@ PHASE1_DISPERSION_THRESHOLD = 0.95
 #   Lower  → faster search, risk of missing predictive features.
 PHASE1_TOP_K_FEATURES = 25
 
-# PHASE1_MAX_FEATURE_OVERLAP — max Jaccard overlap between long & short lists.
+# PHASE1_MAX_FEATURE_OVERLAP — max shared feature names between long & short lists.
+#   Enforced as int(TOP_K × overlap) shared names (e.g. 25 × 0.8 → 20 shared).
 #   Higher → more shared features across directions; smaller combined gene space.
 #   Lower  → more direction-specific lists; better asymmetry, less redundancy.
 PHASE1_MAX_FEATURE_OVERLAP = 0.8
@@ -334,7 +339,7 @@ PHASE1_SAMPLING_TOTAL = 701_000
 PHASE2_GPU_BATCH_SIZE = 256
 
 # PHASE2_GPU_BATCH_SIZE_AUTO — cap batch size by detected GPU VRAM and host RAM.
-#   True  → apply tiers in _gpu_runtime (12 GiB RAM → 32; T4 ≤16 GiB VRAM → 128).
+#   True  → apply tiers in _gpu_runtime (12 GiB RAM → 32; T4 ≤16 GiB VRAM → 256).
 #   False → use PHASE2_GPU_BATCH_SIZE exactly (env PHASE2_GPU_BATCH_SIZE still wins).
 PHASE2_GPU_BATCH_SIZE_AUTO = True
 
@@ -466,8 +471,10 @@ PHASE2_USE_TOTAL_RETURN_OBJ = False
 PHASE2_F3_OBJECTIVE = "profit_factor"
 
 # PHASE2_MIN_PROFITABLE_SYMBOLS_PENALTY — min profitable symbols before penalty.
-#   When n_profitable_symbols < this, a penalty is added to support_penalty
-#   to discourage symbol-locked rules that only work on one symbol.
+#   Softer evolution nudge (default 3): adds to support_penalty when
+#   n_profitable_symbols < this during fitness.  Stricter pool gate
+#   PHASE2_MIN_PROFITABLE_SYMBOLS (default 5) is enforced separately at
+#   admission via _symbol_robustness_penalty.
 PHASE2_MIN_PROFITABLE_SYMBOLS_PENALTY = 3
 
 # PHASE2_SYMBOL_GENE_DONT_CARE_PROB — probability of forcing a symbol gene to
@@ -475,9 +482,11 @@ PHASE2_MIN_PROFITABLE_SYMBOLS_PENALTY = 3
 #   symbol-locked evolution.
 PHASE2_SYMBOL_GENE_DONT_CARE_PROB = 0.4
 
-# PHASE2_USE_ROBUST_RETURN_OBJ — f3 uses min(train_return, val_return).
-#   True  → penalizes train-only return spikes (recommended with val/CV).
-#   False → train return only; easier overfit to in-sample seasons.
+# PHASE2_USE_ROBUST_RETURN_OBJ — store min(train_return, val_return) as
+#   robust_return_pct on metrics when PHASE2_JOINT_TRAIN_VAL=True.
+#   Does NOT change f3 when PHASE2_F3_OBJECTIVE="profit_factor" and
+#   PHASE2_USE_TOTAL_RETURN_OBJ=False; use USE_TOTAL_RETURN_OBJ=True to
+#   override f3 to robust return.
 PHASE2_USE_ROBUST_RETURN_OBJ = True
 
 # PHASE2_SORTINO_MIN_TRADE_THRESHOLD — trade count below which Sortino is scaled down.
@@ -513,7 +522,7 @@ PHASE2_SYMBOL_MEDIAN_RETURN_FLOOR_PCT = -0.5
 # rules that only work on a minority of symbols.
 PHASE2_MIN_PROFITABLE_SYMBOLS = 5
 
-# PHASE2_MAX_DRAWDOWN_GATE — hard DD % cap; above this all objectives penalized.
+# PHASE2_MAX_DRAWDOWN_GATE — soft DD % cap; excess DD adds penalty on f2 only.
 #   Lower  → Pareto front pushed toward low-drawdown rules; may cut high return.
 #   Higher → allow aggressive rules with large equity swings.
 PHASE2_MAX_DRAWDOWN_GATE = 20.0
@@ -569,19 +578,11 @@ PHASE2_MONTHLY_ADMISSION_ENABLED = True
 #   -1.0 → month counts if return >= -1% (more lenient non-loss bar).
 PHASE2_MONTHLY_GOOD_RETURN_MIN_PCT = 0.0
 
-# PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO — fraction of monthly windows
-# that must count as "good" per PHASE2_MONTHLY_GOOD_RETURN_MIN_PCT to be admitted.
-#   Higher → stricter time-stability requirement; fewer rules pass.
-#   Lower  → more lenient; rules that work on a minority of windows survive.
-#   0.50 means the rule must pass on at least half the windows.
-# Lowered 0.5→0.4: more lenient admission threshold; broader pool for Phase 3.
-PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO = 0.4
-
 # PHASE2_MONTHLY_ADMISSION_MIN_RATIO — fraction of monthly windows that must
-# be profitable for a rule to be admitted.  Replaces the default 0.500 from
-# PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO for the non-island path.
-#   0.500 → rule must be profitable in 3 of 6 months; island-friendly threshold.
-#   0.667 → rule must be profitable in 4 of 6 months; tighter time-stability.
+# be profitable for a rule to be admitted (non-island path; island uses
+# island_hyperparams.monthly_admission_min_profitable_ratio from this value).
+#   0.500 → rule must be profitable in half the windows.
+#   0.667 → rule must be profitable in two-thirds of windows; tighter stability.
 # Lowered 0.667→0.5: island-friendly threshold; island-evolved rules trained on
 # 3-4 symbols have noisier monthly windows, 0.667 was too strict.
 PHASE2_MONTHLY_ADMISSION_MIN_RATIO = 0.5
@@ -661,8 +662,8 @@ PHASE2_HOF_EPOCH_CARRYOVER = 10
 PHASE2_DIVERSITY_PENALTY = 2.0
 
 # PHASE2_PHENOTYPE_SORTINO_STEP — Sortino bucket width for behavioral diversity.
-# Tightened 0.5→0.3→0.15: with Sortino (compressed) in 0–3 and pop 200, 0.3 gave
-# ~10 buckets still coarse; 0.15 gives ~20 buckets for even finer Pareto spread.
+# Tightened 0.5→0.3→0.15: with compressed Sortino in ~0–20 and pop 200, finer
+# buckets give broader Pareto spread.
 PHASE2_PHENOTYPE_SORTINO_STEP = 0.15
 
 # PHASE2_PHENOTYPE_DD_STEP — drawdown % bucket width for behavioral diversity.
@@ -729,9 +730,9 @@ PHASE2_PLATEAU_USE_ROBUST_RETURN = True
 PHASE2_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO = True
 PHASE2_PLATEAU_BLOCK_WHEN_DIVERSITY_LOW = False
 
-# PHASE2_PLATEAU_DIVERSITY_RESTART_ENABLED — reinit part of the pop on first plateau
-#   instead of immediately breaking. Breaks on the second plateau instead.
-#   True  → first plateau injects diversity, second plateau breaks.
+# PHASE2_PLATEAU_DIVERSITY_RESTART_ENABLED — reinit part of the pop on plateau
+#   instead of immediately breaking when restarts remain.
+#   True  → up to PHASE2_PLATEAU_MAX_RESTARTS diversity restarts, then break.
 #   False → immediate break on first plateau (original behaviour).
 PHASE2_PLATEAU_DIVERSITY_RESTART_ENABLED = True
 
@@ -779,7 +780,7 @@ PHASE2_ISLAND_PLATEAU_POST_RESTART_STOP_ENABLED = True
 PHASE2_ISLAND_PLATEAU_POST_RESTART_STOP_PATIENCE = 8
 
 # PHASE2_PLATEAU_MAX_RESTARTS — restarts per epoch before final break.
-#   1       → one restart, then break on second plateau.
+#   3       → up to 3 diversity restarts, then break on the next plateau.
 #   0       → immediately break (disables restart regardless of ENABLED flag).
 PHASE2_PLATEAU_MAX_RESTARTS = 3
 
@@ -1395,6 +1396,8 @@ PHASE4_INCLUDE_TAIL_HOLDOUT = True
 PHASE4_TAIL_HOLDOUT_FRACTION = 0.25
 
 # --- Feasibility filters (trial rejected if any fail) ---
+# Legacy Phase 4 WF gates; inactive when RB_GOVERNOR_ENABLED=True.
+# Retained for the legacy Optuna/grid path when RB Governor is off.
 
 # PHASE4_MAX_WORST_DRAWDOWN_PCT — max allowed worst-window drawdown %.
 #   Lower → only low-DD risk params feasible; may reject all trials.
@@ -1432,7 +1435,8 @@ MONTHLY_WINDOW_DAYS = 30
 MONTHLY_WINDOW_MIN_ROWS = 2500
 # MONTHLY_WINDOW_MAX_WINDOWS — cap on windows evaluated per backtest slice.
 MONTHLY_WINDOW_MAX_WINDOWS = 24
-# MONTHLY_RECENCY_WEIGHT — up-weight the most recent monthly windows in penalty.
+# MONTHLY_RECENCY_WEIGHT — up-weight recent windows in summarize_monthly_metrics
+# recency_weighted_return (not used directly inside monthly_penalty()).
 MONTHLY_RECENCY_WEIGHT = 2.2
 # MONTHLY_MIN_TRADES — minimum executed trades per window (scaled in purged WF).
 MONTHLY_MIN_TRADES = 20
@@ -1584,8 +1588,8 @@ RB_MIN_VALID_TRADES: int = 6
 # RB_RULESET_MIN_* — trade-count floors applied to the composed team (all
 #   rules together).  Should be larger than the per-rule floors because the
 #   combined team fires more frequently than any single rule.
-RB_RULESET_MIN_TRAIN_TRADES: int = 8
-RB_RULESET_MIN_VALID_TRADES: int = 4
+RB_RULESET_MIN_TRAIN_TRADES: int = 12
+RB_RULESET_MIN_VALID_TRADES: int = 8
 
 
 # --- Pool & candidate limits ---
@@ -1604,7 +1608,8 @@ RB_KEEP_TOP_RULES: int = 120
 # --- Team composition ---
 
 # RB_MAX_RULES — maximum rules in the composed team (hard cap; keep aligned
-#   with PHASE3_GLOBAL_MAX_RULES).
+#   with PHASE3_GLOBAL_MAX_RULES).  To reach RB_MAX_RULES with the default
+#   RB_CAPITAL_GRID min (15%), lower grid min or raise RB_MAX_TOTAL_CAPITAL.
 RB_MAX_RULES: int = 20
 
 # RB_MAX_PAIR_OVERLAP — max Hamming-style overlap between any two rules in
@@ -1642,6 +1647,8 @@ RB_TRAIN_VALID_RETURN_GAP_WEIGHT: float = 4.0
 
 
 # --- Lenient-add mode (friend's recommended path) ---
+# RB_RULE_ADD_IGNORE_SUBSET_BEAT and RB_MIN_COMBINED_RETURN_IMPROVEMENT are
+# active only when RB_RULE_ADD_BY_RETURN_ONLY=True.
 
 # RB_RULE_ADD_BY_RETURN_ONLY — add rules purely on combined-return uplift
 #   (skips the stricter subset-beat and overlap checks when paired with
@@ -1649,6 +1656,7 @@ RB_TRAIN_VALID_RETURN_GAP_WEIGHT: float = 4.0
 RB_RULE_ADD_BY_RETURN_ONLY: bool = False
 RB_RULE_ADD_IGNORE_OVERLAP: bool = False
 RB_RULE_ADD_IGNORE_SUBSET_BEAT: bool = True
+# Active only when RB_RULE_ADD_BY_RETURN_ONLY=True.
 RB_MIN_COMBINED_RETURN_IMPROVEMENT: float = 2.0  # min combined return-% uplift to add a new rule
 
 
@@ -1682,7 +1690,9 @@ RB_MIN_SL: float = 1.0
 
 # RB_TP_GRID / RB_SL_GRID / RB_CAPITAL_GRID — values enumerated per rule in
 #   the round-robin grid search.  Coarser than the friend's full grid to
-#   keep runtime reasonable on a ~10-symbol universe.
+#   keep runtime reasonable on a ~10-symbol universe.  With grid min 15%
+#   and RB_MAX_TOTAL_CAPITAL=100, at most ~6 rules can hold min capital;
+#   raise RB_MAX_TOTAL_CAPITAL or lower grid min to approach RB_MAX_RULES.
 RB_TP_GRID: tuple[float, ...] = (1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0)
 RB_SL_GRID: tuple[float, ...] = (1.0, 1.2, 1.5, 2.0, 2.5)
 RB_CAPITAL_GRID: tuple[float, ...] = (15.0, 20.0, 25.0, 35.0)
@@ -1980,6 +1990,11 @@ def scale_trade_floor(
         return int(base)
     ref = reference_rows if reference_rows is not None else _PURGED_WF_REFERENCE_ROWS
     if ref is None or ref <= 0:
+        _logger.warning(
+            "scale_trade_floor: purged walk-forward active but reference_rows "
+            "unset; using unscaled base=%s (call set_purged_wf_reference_rows)",
+            base,
+        )
         return int(base)
     scaled = int(round(int(base) * int(n_rows) / int(ref)))
     return max(int(PURGED_WF_MIN_TRADE_FLOOR_ABSOLUTE), scaled)
@@ -2035,6 +2050,7 @@ def effective_phase3_min_val_trades(n_rows: int | None = None) -> int:
 
 
 def effective_phase4_min_worst_trades(n_rows: int | None = None) -> int:
+    """Legacy Phase 4 WF gate floor; unwired when RB_GOVERNOR_ENABLED=True."""
     base = int(PHASE4_MIN_WORST_TRADES)
     if n_rows is None:
         return base
@@ -2219,6 +2235,12 @@ assert int(PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN) >= 5, (
 )
 assert PHASE1_SIGN_CONSISTENCY_MIN_FOLDS <= PHASE1_STATIONARITY_FOLDS, (
     "sign-consistency cannot require more folds than stationarity uses"
+)
+assert float(PURGED_WF_HOLDOUT_FRACTION) + float(PURGED_WF_MIN_TRAIN_FRACTION) <= 1.0, (
+    "holdout + min train prefix must fit within each symbol timeline"
+)
+assert int(TAIL_DROP_ROWS) == int(MAX_HOLD_CANDLES), (
+    "TAIL_DROP_ROWS must equal MAX_HOLD_CANDLES (label horizon)"
 )
 # =============================================================================
 assert MIN_CONDITIONS <= MAX_CONDITIONS, (
