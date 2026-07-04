@@ -830,3 +830,69 @@ class TestPlateauEarlyStopBehavior:
             10, 8, stage_params=None, island_profile="global",
             **self._dummy_state(),
         )
+
+
+class TestValMetricInheritance:
+    def test_inherit_val_from_global_cache_by_genotype(self):
+        from gpu_fuzzy_trader.evolution.evox_runner import (
+            _inherit_val_metrics_from_global_cache,
+        )
+
+        key = (0, 1, 2)
+        global_cache = {
+            key: {
+                "total_return_pct": 10.0,
+                "val_total_return_pct": 5.0,
+                "val_sortino_ratio": 1.2,
+            },
+        }
+        metrics = {"total_return_pct": 12.0}
+        _inherit_val_metrics_from_global_cache(
+            metrics, key, global_cache, run_val=False,
+        )
+        assert metrics["val_total_return_pct"] == 5.0
+        assert metrics["val_sortino_ratio"] == 1.2
+
+    def test_no_inherit_when_val_runs(self):
+        from gpu_fuzzy_trader.evolution.evox_runner import (
+            _inherit_val_metrics_from_global_cache,
+        )
+
+        key = (0, 1, 2)
+        global_cache = {key: {"val_total_return_pct": 5.0}}
+        metrics = {"total_return_pct": 12.0}
+        _inherit_val_metrics_from_global_cache(
+            metrics, key, global_cache, run_val=True,
+        )
+        assert "val_total_return_pct" not in metrics
+
+
+class TestParetoTrainValGapStats:
+    def test_gap_stats_on_pareto_front(self):
+        from gpu_fuzzy_trader.evolution.evox_runner import (
+            _pareto_train_val_gap_stats,
+        )
+
+        metrics_cache = [
+            {"total_return_pct": 100.0, "val_total_return_pct": 40.0},
+            {"total_return_pct": 50.0},
+        ]
+        stats = _pareto_train_val_gap_stats([0, 1], metrics_cache)
+        assert stats["max_train_val_gap_pct"] == 60.0
+        assert abs(stats["max_train_val_gap_ratio"] - 2.5) < 1e-6
+
+
+class TestPhase2EvolutionStateRestartCount:
+    def test_restart_count_field_defaults_zero(self):
+        from gpu_fuzzy_trader.evolution.evox_runner import Phase2EvolutionState
+
+        state = Phase2EvolutionState(
+            population=np.zeros((1, 3), dtype=np.int32),
+            objectives=np.zeros((1, 3)),
+            metrics_cache=[{}],
+            pareto_archive=[],
+            hall_of_fame={},
+            deployable_archive={},
+            global_metrics_cache={},
+        )
+        assert state.restart_count == 0

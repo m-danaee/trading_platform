@@ -64,6 +64,12 @@ def log_generation(
     mean_robust_return_pct: float | None = None,
     max_robust_return_pct: float | None = None,
     max_robust_sortino: float | None = None,
+    max_train_val_gap_pct: float | None = None,
+    max_train_val_gap_ratio: float | None = None,
+    max_holdout_return_pct: float | None = None,
+    max_holdout_sortino: float | None = None,
+    objective_corr_f1_f3: float | None = None,
+    rank0_fraction: float | None = None,
     valid_count: int | None = None,
     unique_chromosome_ratio: float | None = None,
     pop_unique_chromosome_ratio: float | None = None,
@@ -91,6 +97,18 @@ def log_generation(
         msg += " max_robust_return=%.2f%%" % max_robust_return_pct
     if max_robust_sortino is not None:
         msg += " max_robust_sortino=%.2f" % max_robust_sortino
+    if max_train_val_gap_pct is not None:
+        msg += " max_train_val_gap=%.2f%%" % max_train_val_gap_pct
+    if max_train_val_gap_ratio is not None and max_train_val_gap_ratio > 0.0:
+        msg += " max_train_val_gap_ratio=%.2fx" % max_train_val_gap_ratio
+    if max_holdout_return_pct is not None:
+        msg += " max_holdout_return=%.2f%%" % max_holdout_return_pct
+    if max_holdout_sortino is not None:
+        msg += " max_holdout_sortino=%.2f" % max_holdout_sortino
+    if objective_corr_f1_f3 is not None:
+        msg += " corr_f1_f3=%.2f" % objective_corr_f1_f3
+    if rank0_fraction is not None:
+        msg += " rank0_frac=%.2f" % rank0_fraction
     if valid_count is not None:
         msg += " valid_rules=%d" % valid_count
     if unique_chromosome_ratio is not None:
@@ -173,6 +191,12 @@ def maybe_log_generation(
     mean_robust_return_pct: float | None = None,
     max_robust_return_pct: float | None = None,
     max_robust_sortino: float | None = None,
+    max_train_val_gap_pct: float | None = None,
+    max_train_val_gap_ratio: float | None = None,
+    max_holdout_return_pct: float | None = None,
+    max_holdout_sortino: float | None = None,
+    objective_corr_f1_f3: float | None = None,
+    rank0_fraction: float | None = None,
     valid_count: int | None = None,
     unique_chromosome_ratio: float | None = None,
     pop_unique_chromosome_ratio: float | None = None,
@@ -207,6 +231,12 @@ def maybe_log_generation(
         mean_robust_return_pct=mean_robust_return_pct,
         max_robust_return_pct=max_robust_return_pct,
         max_robust_sortino=max_robust_sortino,
+        max_train_val_gap_pct=max_train_val_gap_pct,
+        max_train_val_gap_ratio=max_train_val_gap_ratio,
+        max_holdout_return_pct=max_holdout_return_pct,
+        max_holdout_sortino=max_holdout_sortino,
+        objective_corr_f1_f3=objective_corr_f1_f3,
+        rank0_fraction=rank0_fraction,
         valid_count=valid_count,
         unique_chromosome_ratio=unique_chromosome_ratio,
         pop_unique_chromosome_ratio=pop_unique_chromosome_ratio,

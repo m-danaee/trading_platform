@@ -565,6 +565,18 @@ PHASE2_MAX_TRAIN_VAL_GAP_PCT = 16.0
 #   Lower  → more sensitive; smaller gaps also trigger warnings.
 PHASE2_OVERFIT_WARNING_RATIO = 3.0
 
+# PHASE2_OVERFIT_GAP_PENALTY_WEIGHT — fitness penalty when train_return / val_return
+#   exceeds PHASE2_OVERFIT_GAP_RATIO_THRESHOLD (applied to f1 and f3).
+PHASE2_OVERFIT_GAP_PENALTY_WEIGHT = 5.0
+
+# PHASE2_OVERFIT_GAP_RATIO_THRESHOLD — train/val return ratio above which the
+#   overfit-gap penalty starts accumulating.
+PHASE2_OVERFIT_GAP_RATIO_THRESHOLD = 1.5
+
+# PHASE2_OBJECTIVE_CORR_WARN_THRESHOLD — log a debug warning when Pareto-front
+#   objective pairwise correlation exceeds this (Pareto collapse risk).
+PHASE2_OBJECTIVE_CORR_WARN_THRESHOLD = 0.9
+
 # PHASE2_KEEP_TOP_RULES — max rules kept in the final Phase 2 pool after
 # admission filtering, sorted by deployability_rank_score descending.
 #   Higher → larger pool for Phase 3 greedy selection.
@@ -657,9 +669,9 @@ PHASE2_VAL_IN_FITNESS_PENALTY = False
 #   1 → val every gen (original, 2x GPU work for no objective benefit).
 #   2 → val every 2nd gen; more frequent archive updates (current).
 #   3 → val every 3rd gen; deployable_archive refreshes every 3 gens (default).
-# Changed 3→2: more frequent archive updates for better deployable tracking;
-# with JOINT_TRAIN_VAL=True, val feeds joint fitness so more freq is beneficial.
-PHASE2_VAL_SIM_INTERVAL = 2
+# Changed 3→2→1: val every gen for honest robust metrics and joint fitness;
+# slot-index val staling bug fixed — frequent val is now safe and necessary.
+PHASE2_VAL_SIM_INTERVAL = 1
 assert PHASE2_VAL_SIM_INTERVAL >= 1, "PHASE2_VAL_SIM_INTERVAL must be >= 1"
 
 # PHASE2_DIVERSITY_HAMMING_THRESHOLD — min Hamming distance for "unique" rule.

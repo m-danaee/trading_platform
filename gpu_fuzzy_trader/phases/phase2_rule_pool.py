@@ -815,11 +815,30 @@ def compute_phase2_objectives_from_metrics(
         sortino_for_obj, dd_for_obj, f3_val,
     )
 
+    overfit_gap_penalty = 0.0
+    if (
+        val_metrics is not None
+        and float(getattr(_cfg, "PHASE2_OVERFIT_GAP_PENALTY_WEIGHT", 0.0)) > 0.0
+    ):
+        train_ret = float(metrics.get("total_return_pct", 0.0))
+        val_ret = float(val_metrics.get("total_return_pct", 0.0))
+        if val_ret > 0.0:
+            gap_ratio = train_ret / max(val_ret, 1e-6)
+            gap_threshold = float(
+                getattr(_cfg, "PHASE2_OVERFIT_GAP_RATIO_THRESHOLD", 1.5),
+            )
+            if gap_ratio > gap_threshold:
+                overfit_gap_penalty = (
+                    (gap_ratio - gap_threshold)
+                    * float(_cfg.PHASE2_OVERFIT_GAP_PENALTY_WEIGHT)
+                )
+
     f1 = (
         -sortino_for_obj
         + (_cfg.PHASE2_SUPPORT_PENALTY_WEIGHT_F1 * support_penalty)
         + diversity_penalty
         + trade_penalty
+        + overfit_gap_penalty
     )
     f2 = (
         dd_for_obj
@@ -833,6 +852,7 @@ def compute_phase2_objectives_from_metrics(
         + diversity_penalty
         + cond_penalty
         + trade_penalty
+        + overfit_gap_penalty
     )
 
     if val_metrics is not None:

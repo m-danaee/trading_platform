@@ -58,6 +58,7 @@ class Phase2EvolutionState:
     post_restart_gens_remaining: int = 0
     post_restart_no_improve_streak: int = 0
     post_restart_best_progress: float = -np.inf
+    restart_count: int = 0
 
 
 def trim_evolution_state_memory(
@@ -258,6 +259,42 @@ def _val_metrics_from_cache(metrics: dict) -> dict | None:
     }
 
 
+def _inherit_val_metrics_from_global_cache(
+    metrics: dict,
+    key: tuple[int, ...],
+    global_metrics_cache: dict[tuple[int, ...], dict] | None,
+    *,
+    run_val: bool,
+) -> None:
+    """Copy val_* from global cache for identical chromosomes when val is skipped.
+
+    Replaces the old slot-index inheritance that copied unrelated parents'
+    val metrics into offspring at the same population index.
+    """
+    if run_val:
+        return
+    if not _cfg.PHASE2_EVAL_GLOBAL_CACHE or global_metrics_cache is None:
+        return
+    cached = global_metrics_cache.get(key)
+    if cached is None:
+        return
+    for k, v in cached.items():
+        if k.startswith("val_") and k not in metrics:
+            metrics[k] = v
+    sidecar = cached.get("_cached_val_metrics")
+    if isinstance(sidecar, dict):
+        mapping = {
+            "total_return_pct": "val_total_return_pct",
+            "profit_factor": "val_profit_factor",
+            "executed_trades": "val_executed_trades",
+            "sortino_ratio": "val_sortino_ratio",
+            "max_drawdown_pct": "val_max_drawdown_pct",
+        }
+        for src, dst in mapping.items():
+            if src in sidecar and dst not in metrics:
+                metrics[dst] = sidecar[src]
+
+
 def _build_diversity_reference(
     hall_of_fame: dict[tuple[int, ...], np.ndarray],
     pareto_archive: list[np.ndarray],
@@ -359,6 +396,176 @@ def _pareto_robust_stats(
         "max_robust_return_pct": float(np.max(robust_returns)),
         "max_robust_sortino": float(np.max(robust_sortinos)),
     }
+
+
+def _pareto_train_val_gap_stats(
+    pareto_indices: list[int],
+    metrics_cache: list[dict],
+) -> dict[str, float]:
+    """Max train-vs-val return gap and ratio over the Pareto front."""
+    if not pareto_indices:
+        return {
+            "max_train_val_gap_pct": 0.0,
+            "max_train_val_gap_ratio": 0.0,
+        }
+    gaps: list[float] = []
+    ratios: list[float] = []
+    for i in pareto_indices:
+        train_ret = float(metrics_cache[i].get("total_return_pct", 0.0))
+        val_m = _val_metrics_from_cache(metrics_cache[i])
+        if val_m is None:
+            continue
+        val_ret = float(val_m.get("total_return_pct", 0.0))
+        gaps.append(train_ret - val_ret)
+        if val_ret > 0.0:
+            ratios.append(train_ret / val_ret)
+    return {
+        "max_train_val_gap_pct": float(max(gaps)) if gaps else 0.0,
+        "max_train_val_gap_ratio": float(max(ratios)) if ratios else 0.0,
+    }
+
+
+def _pareto_holdout_stats(
+    pareto_indices: list[int],
+    population: np.ndarray,
+    pool_val_engine,
+    *,
+    generation: int | None = None,
+    is_last_gen: bool = False,
+) -> dict[str, float | None]:
+    """Holdout-only robust snapshot for logging (not used in selection)."""
+    empty: dict[str, float | None] = {
+        "max_holdout_return_pct": None,
+        "max_holdout_sortino": None,
+    }
+    if pool_val_engine is None or not pareto_indices:
+        return empty
+    from gpu_fuzzy_trader.phases.phase2_rule_pool import _saturating_sortino
+
+    chroms = np.stack(
+        [population[int(i)].copy() for i in pareto_indices],
+        axis=0,
+    )
+    try:
+        holdout_metrics = pool_val_engine.simulate_rule_batch(
+            chromosomes=chroms,
+            tp=_cfg.PHASE2_TP,
+            sl=_cfg.PHASE2_SL,
+            capital_pct=_cfg.PHASE2_CAPITAL_PCT,
+            generation=generation,
+            is_last_gen=is_last_gen,
+        )
+    except Exception as exc:
+        logger.debug("Holdout snapshot simulate_rule_batch failed: %s", exc)
+        return empty
+
+    returns: list[float] = []
+    sortinos: list[float] = []
+    for metrics in holdout_metrics:
+        returns.append(float(metrics.get("total_return_pct", 0.0)))
+        sortinos.append(_saturating_sortino(float(
+            metrics.get("sortino_ratio", metrics.get("total_return_pct", 0.0)),
+        )))
+    return {
+        "max_holdout_return_pct": float(max(returns)) if returns else None,
+        "max_holdout_sortino": float(max(sortinos)) if sortinos else None,
+    }
+
+
+def _population_rank_diagnostics(
+    fronts: list[list[int]],
+    pop_size: int,
+) -> dict[str, float]:
+    """Non-dominated rank distribution across the live population."""
+    if not fronts or pop_size <= 0:
+        return {
+            "rank0_fraction": 0.0,
+            "rank1_fraction": 0.0,
+            "max_rank": 0.0,
+        }
+    ranks = np.full(pop_size, len(fronts), dtype=np.int32)
+    for rank, front in enumerate(fronts):
+        for i in front:
+            ranks[int(i)] = rank
+    return {
+        "rank0_fraction": float(np.sum(ranks == 0) / pop_size),
+        "rank1_fraction": float(np.sum(ranks == 1) / pop_size),
+        "max_rank": float(np.max(ranks)),
+    }
+
+
+def _refresh_survivor_val_metrics(
+    population: np.ndarray,
+    survivor_indices: list[int],
+    metrics_cache: list[dict],
+    objectives: np.ndarray,
+    dont_cares: np.ndarray,
+    pareto_archive: list[np.ndarray],
+    val_engine,
+    *,
+    diversity_reference: list[np.ndarray] | None = None,
+    diversity_metrics_by_key: dict[tuple[int, ...], dict] | None = None,
+    stage_params: Phase2StageParams | None = None,
+    global_metrics_cache: dict[tuple[int, ...], dict] | None = None,
+    generation: int | None = None,
+    is_last_gen: bool = False,
+) -> None:
+    """Re-run val backtests for unevaluated survivors and refresh objectives."""
+    if val_engine is None or not survivor_indices:
+        return
+    from gpu_fuzzy_trader.phases.phase2_sparse_encoding import chromosome_key
+
+    n_valid_rows = (
+        int(getattr(val_engine, "n_valid_rows"))
+        if getattr(val_engine, "n_valid_rows", None) is not None
+        else None
+    )
+    chroms = np.stack(
+        [population[int(i)].copy() for i in survivor_indices],
+        axis=0,
+    )
+    try:
+        val_metrics_list = val_engine.simulate_rule_batch(
+            chromosomes=chroms,
+            tp=_cfg.PHASE2_TP,
+            sl=_cfg.PHASE2_SL,
+            capital_pct=_cfg.PHASE2_CAPITAL_PCT,
+            generation=generation,
+            is_last_gen=is_last_gen,
+        )
+    except Exception as exc:
+        logger.debug(
+            "Survivor val refresh simulate_rule_batch failed: %s", exc)
+        return
+
+    for j, idx in enumerate(survivor_indices):
+        i = int(idx)
+        val_metrics = _metrics_snapshot(val_metrics_list[j])
+        train_metrics = _metrics_snapshot(metrics_cache[i])
+        for k in list(train_metrics.keys()):
+            if k.startswith("val_"):
+                train_metrics.pop(k, None)
+        _assign_eval_result(
+            i,
+            population[i],
+            train_metrics,
+            val_metrics,
+            dont_cares,
+            pareto_archive,
+            objectives,
+            metrics_cache,
+            diversity_reference=diversity_reference,
+            diversity_metrics_by_key=diversity_metrics_by_key,
+            stage_params=stage_params,
+            n_valid_rows=n_valid_rows,
+        )
+        if _cfg.PHASE2_EVAL_GLOBAL_CACHE and global_metrics_cache is not None:
+            _store_global_metrics_cache(
+                global_metrics_cache,
+                chromosome_key(population[i]),
+                metrics_cache[i],
+                val_metrics,
+            )
 
 
 def _update_deployable_archive(
@@ -1085,6 +1292,16 @@ def _pareto_diagnostics(
     else:
         std_f1 = std_f2 = std_f3 = 0.0
 
+    corr_f1_f2 = corr_f1_f3 = corr_f2_f3 = 0.0
+    if len(pareto_obj) >= 2:
+        obj = np.asarray(pareto_obj, dtype=np.float64)
+        if np.std(obj[:, 0]) > 1e-12 and np.std(obj[:, 1]) > 1e-12:
+            corr_f1_f2 = float(np.corrcoef(obj[:, 0], obj[:, 1])[0, 1])
+        if np.std(obj[:, 0]) > 1e-12 and np.std(obj[:, 2]) > 1e-12:
+            corr_f1_f3 = float(np.corrcoef(obj[:, 0], obj[:, 2])[0, 1])
+        if np.std(obj[:, 1]) > 1e-12 and np.std(obj[:, 2]) > 1e-12:
+            corr_f2_f3 = float(np.corrcoef(obj[:, 1], obj[:, 2])[0, 1])
+
     chromosomes: list[np.ndarray] = []
     if population is not None:
         for i in pareto_indices:
@@ -1105,6 +1322,9 @@ def _pareto_diagnostics(
         "objective_std_f1": float(std_f1),
         "objective_std_f2": float(std_f2),
         "objective_std_f3": float(std_f3),
+        "objective_corr_f1_f2": corr_f1_f2,
+        "objective_corr_f1_f3": corr_f1_f3,
+        "objective_corr_f2_f3": corr_f2_f3,
     }
 
 
@@ -1435,14 +1655,14 @@ def _evaluate_population_indices(
             if val_metrics_list is not None:
                 val_metrics = _metrics_snapshot(val_metrics_list[uj])
 
-            # When val was not computed this gen, preserve val_* keys from
-            # the previous cache entry so joint-fitness signal (C5/C6
-            # penalties that depend on val metrics) does not go stale.
-            if not run_val and i < len(metrics_cache):
-                old = metrics_cache[i]
-                for k, v in old.items():
-                    if k.startswith("val_") and k not in metrics:
-                        metrics[k] = v
+            # When val was not computed this gen, inherit val_* only from an
+            # identical chromosome in the global cache (never from slot index).
+            _inherit_val_metrics_from_global_cache(
+                metrics,
+                key,
+                global_metrics_cache,
+                run_val=run_val,
+            )
 
             _assign_eval_result(
                 i,
@@ -1735,6 +1955,7 @@ def _run_nsga2_fallback(
     pareto_archive: list[np.ndarray] = []
     hall_of_fame: dict[tuple[int, ...], np.ndarray] = {}
     deployable_archive: dict[tuple[int, ...], dict] = {}
+    global_metrics_cache: dict[tuple[int, ...], dict] = {}
     history: list[dict] = []
 
     tag = log_tag or "NSGA-II (fallback)"
@@ -1765,6 +1986,12 @@ def _run_nsga2_fallback(
         just_restarted = False
         is_last_gen = gen == n_generations - 1
         run_val_this_gen = _should_run_val_this_gen(gen, is_last_gen)
+        from gpu_fuzzy_trader.phases.phase2_sparse_encoding import chromosome_key
+
+        pre_survivors = [
+            i for i in range(pop_size)
+            if not np.any(np.isinf(objectives[i]))
+        ]
         for i in range(pop_size):
             if np.any(np.isinf(objectives[i])):
                 obj, metrics = _evaluate_chromosome(
@@ -1777,15 +2004,36 @@ def _run_nsga2_fallback(
                     is_last_gen=is_last_gen,
                 )
                 objectives[i] = obj
-                # Preserve val_* keys from previous generation's cache when val
-                # was not run this gen (keeps joint-fitness signal alive between
-                # val simulation intervals).
-                if not run_val_this_gen and i < len(metrics_cache):
-                    old = metrics_cache[i]
-                    for k, v in old.items():
-                        if k.startswith("val_") and k not in metrics:
-                            metrics[k] = v
+                key = chromosome_key(population[i])
+                _inherit_val_metrics_from_global_cache(
+                    metrics,
+                    key,
+                    global_metrics_cache,
+                    run_val=run_val_this_gen,
+                )
                 metrics_cache[i] = metrics
+                if _cfg.PHASE2_EVAL_GLOBAL_CACHE:
+                    val_m = _val_metrics_from_cache(metrics)
+                    _store_global_metrics_cache(
+                        global_metrics_cache,
+                        key,
+                        metrics,
+                        val_m,
+                    )
+        if run_val_this_gen and val_engine is not None and pre_survivors:
+            _refresh_survivor_val_metrics(
+                population,
+                pre_survivors,
+                metrics_cache,
+                objectives,
+                dont_cares,
+                pareto_archive,
+                val_engine,
+                global_metrics_cache=global_metrics_cache,
+                stage_params=stage_params,
+                generation=gen,
+                is_last_gen=is_last_gen,
+            )
 
         fronts = non_dominated_sort(objectives)
         pareto_indices = fronts[0]
@@ -1812,6 +2060,21 @@ def _run_nsga2_fallback(
         pop_diversity_ratio = _population_genotype_diversity_ratio(population)
         plateau_metric = _plateau_progress_metric(
             pareto_indices, metrics_cache)
+        robust_stats = _pareto_robust_stats(pareto_indices, metrics_cache)
+        gap_stats = _pareto_train_val_gap_stats(pareto_indices, metrics_cache)
+        rank_diag = _population_rank_diagnostics(fronts, pop_size)
+        holdout_stats: dict[str, float | None] = {
+            "max_holdout_return_pct": None,
+            "max_holdout_sortino": None,
+        }
+        if is_last_gen and pool_val_engine is not None:
+            holdout_stats = _pareto_holdout_stats(
+                pareto_indices,
+                population,
+                pool_val_engine,
+                generation=gen,
+                is_last_gen=is_last_gen,
+            )
         history.append({
             "generation": gen,
             "pareto_size": len(pareto_indices),
@@ -1824,6 +2087,10 @@ def _run_nsga2_fallback(
             "plateau_progress_pct": plateau_metric,
             "pop_genotype_diversity_ratio": pop_diversity_ratio,
             **_pareto_sortino_stats(pareto_indices, metrics_cache),
+            **robust_stats,
+            **gap_stats,
+            **rank_diag,
+            **holdout_stats,
             **pareto_diag,
         })
 
@@ -1850,7 +2117,6 @@ def _run_nsga2_fallback(
             pop_size,
             metrics_cache,
         )
-        robust_stats = _pareto_robust_stats(pareto_indices, metrics_cache)
         # --- viability-collapse trigger: forced restart when viable pop is
         #     persistently below threshold ---
         pop_size_for_viability = max(pop_size, 1)
@@ -1913,6 +2179,13 @@ def _run_nsga2_fallback(
             mean_robust_return_pct=robust_stats["mean_robust_return_pct"],
             max_robust_return_pct=robust_stats["max_robust_return_pct"],
             max_robust_sortino=robust_stats["max_robust_sortino"],
+            max_train_val_gap_pct=gap_stats["max_train_val_gap_pct"],
+            max_train_val_gap_ratio=gap_stats["max_train_val_gap_ratio"],
+            max_holdout_return_pct=holdout_stats.get("max_holdout_return_pct"),
+            max_holdout_sortino=holdout_stats.get("max_holdout_sortino"),
+            objective_corr_f1_f3=float(
+                pareto_diag.get("objective_corr_f1_f3", 0.0)),
+            rank0_fraction=float(rank_diag.get("rank0_fraction", 0.0)),
             valid_count=val_count,
             unique_chromosome_ratio=float(
                 pareto_diag.get("unique_chromosome_ratio", 0.0)),
@@ -2226,8 +2499,6 @@ def _run_nsga3(
         mutation_rate = _stage_mutation_rate(stage_params)
         weighted_activate_prob = _stage_weighted_activate_prob(stage_params)
         generation_offset = 0
-        # restart_count is per-stage (Stage A and Stage B each have their own),
-        # deliberately more lenient than per-epoch.
         restart_count = 0
         viability_collapse_streak = 0
         max_restarts = int(getattr(
@@ -2255,9 +2526,7 @@ def _run_nsga3(
             if state.mutation_rate is not None
             else _stage_mutation_rate(stage_params)
         )
-        # restart_count is per-stage — each stage gets its own count, which is
-        # deliberately more lenient than sharing a single count per epoch.
-        restart_count = 0
+        restart_count = int(getattr(state, "restart_count", 0))
         viability_collapse_streak = 0
         max_restarts = int(getattr(
             _cfg, "PHASE2_PLATEAU_MAX_RESTARTS", 1,
@@ -2308,6 +2577,10 @@ def _run_nsga3(
             hall_of_fame, pareto_archive,
         )
         diversity_metrics_by_key = global_metrics_cache
+        pre_survivors = [
+            i for i in range(pop_size)
+            if not np.any(np.isinf(objectives[i]))
+        ]
         parent_stats = _evaluate_population_indices(
             population,
             list(range(pop_size)),
@@ -2326,6 +2599,22 @@ def _run_nsga3(
             is_last_gen=is_last_gen,
             cv_fold_evaluator=cv_fold_evaluator,
         )
+        if run_val_this_gen and val_engine is not None and pre_survivors:
+            _refresh_survivor_val_metrics(
+                population,
+                pre_survivors,
+                metrics_cache,
+                objectives,
+                dont_cares,
+                pareto_archive,
+                val_engine,
+                diversity_reference=diversity_reference,
+                diversity_metrics_by_key=diversity_metrics_by_key,
+                stage_params=stage_params,
+                global_metrics_cache=global_metrics_cache,
+                generation=gen,
+                is_last_gen=is_last_gen,
+            )
 
         # Compute fronts once — reused for logging, offspring, and archive.
         fronts = non_dominated_sort(objectives)
@@ -2354,6 +2643,34 @@ def _run_nsga3(
         plateau_metric = _plateau_progress_metric(
             pareto_indices, metrics_cache)
         robust_stats = _pareto_robust_stats(pareto_indices, metrics_cache)
+        gap_stats = _pareto_train_val_gap_stats(pareto_indices, metrics_cache)
+        rank_diag = _population_rank_diagnostics(fronts, pop_size)
+        holdout_stats: dict[str, float | None] = {
+            "max_holdout_return_pct": None,
+            "max_holdout_sortino": None,
+        }
+        if is_last_gen and pool_val_engine is not None:
+            holdout_stats = _pareto_holdout_stats(
+                pareto_indices,
+                population,
+                pool_val_engine,
+                generation=gen,
+                is_last_gen=is_last_gen,
+            )
+        corr_threshold = float(
+            getattr(_cfg, "PHASE2_OBJECTIVE_CORR_WARN_THRESHOLD", 0.9),
+        )
+        for corr_key in (
+            "objective_corr_f1_f2",
+            "objective_corr_f1_f3",
+            "objective_corr_f2_f3",
+        ):
+            corr_val = float(pareto_diag.get(corr_key, 0.0))
+            if abs(corr_val) >= corr_threshold:
+                logger.debug(
+                    "Phase 2 [%s] gen %d: %s=%.2f (Pareto collapse risk)",
+                    tag, gen + 1, corr_key, corr_val,
+                )
         history.append({
             "generation": generation_offset + gen,
             "pareto_size": len(pareto_indices),
@@ -2367,6 +2684,9 @@ def _run_nsga3(
             "pop_genotype_diversity_ratio": pop_diversity_ratio,
             **_pareto_sortino_stats(pareto_indices, metrics_cache),
             **robust_stats,
+            **gap_stats,
+            **rank_diag,
+            **holdout_stats,
             **pareto_diag,
         })
 
@@ -2562,6 +2882,13 @@ def _run_nsga3(
             mean_robust_return_pct=robust_stats["mean_robust_return_pct"],
             max_robust_return_pct=robust_stats["max_robust_return_pct"],
             max_robust_sortino=robust_stats["max_robust_sortino"],
+            max_train_val_gap_pct=gap_stats["max_train_val_gap_pct"],
+            max_train_val_gap_ratio=gap_stats["max_train_val_gap_ratio"],
+            max_holdout_return_pct=holdout_stats.get("max_holdout_return_pct"),
+            max_holdout_sortino=holdout_stats.get("max_holdout_sortino"),
+            objective_corr_f1_f3=float(
+                pareto_diag.get("objective_corr_f1_f3", 0.0)),
+            rank0_fraction=float(rank_diag.get("rank0_fraction", 0.0)),
             valid_count=val_count,
             unique_chromosome_ratio=float(
                 pareto_diag.get("unique_chromosome_ratio", 0.0)),
@@ -2731,6 +3058,7 @@ def _run_nsga3(
         mutation_rate=mutation_rate,
         weighted_activate_prob=weighted_activate_prob,
         stage=stage,
+        restart_count=restart_count,
     )
     if not build_pool:
         if return_state:
