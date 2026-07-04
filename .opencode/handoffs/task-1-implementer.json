@@ -1,6 +1,6 @@
 {
   "status": "DONE",
-  "commit": "0cf059e",
+  "commit": "bdfbeec",
   "branch": "fix/holdout-embargo-split",
   "files_changed": [
     "gpu_fuzzy_trader/config.py",
