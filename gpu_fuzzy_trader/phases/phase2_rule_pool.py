@@ -330,10 +330,48 @@ def _downsample_chronological(
     return ordered.iloc[start : start + n_rows].reset_index(drop=True)
 
 
+def _largest_safe_range(
+    total_len: int,
+    forbidden: list[tuple[int, int]],
+) -> tuple[int, int]:
+    """Return (start, end) of the largest contiguous bar range not in
+    *forbidden*. The forbidden list may be unsorted/overlapping; it is
+    merged internally. ``end`` is inclusive. Returns ``(0, -1)`` if no
+    safe range exists (caller must handle)."""
+    if not forbidden:
+        return (0, total_len - 1)
+    # Merge forbidden intervals
+    sorted_f = sorted(forbidden, key=lambda x: x[0])
+    merged: list[tuple[int, int]] = []
+    for s, e in sorted_f:
+        s, e = max(0, int(s)), min(total_len - 1, int(e))
+        if s > e:
+            continue
+        if merged and s <= merged[-1][1] + 1:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], e))
+        else:
+            merged.append((s, e))
+    # Find largest gap
+    best_start, best_end = 0, -1
+    cursor = 0
+    for s, e in merged:
+        if s > cursor:
+            gap_end = s - 1
+            if (gap_end - cursor + 1) > (best_end - best_start + 1):
+                best_start, best_end = cursor, gap_end
+        cursor = max(cursor, e + 1)
+    if cursor <= total_len - 1:
+        gap_end = total_len - 1
+        if (gap_end - cursor + 1) > (best_end - best_start + 1):
+            best_start, best_end = cursor, gap_end
+    return (best_start, best_end)
+
+
 def _sample_df(
     df: pd.DataFrame,
     total_rows: int,
     random_state: int | np.random.Generator | None = None,
+    forbidden_ranges: list[tuple[int, int]] | None = None,
 ) -> pd.DataFrame:
     """Sample up to *total_rows* rows, distributed equally across symbols.
 
@@ -358,12 +396,22 @@ def _sample_df(
     and intraday pattern recognition — stride sampling silently drops
     intermediate candles.
 
+    ``forbidden_ranges`` (per-symbol bar indices) excludes CV/holdout valid
+    regions and their embargo buffer from the sampled slice to prevent
+    training data from leaking into validation. If the largest safe range
+    is smaller than the requested sample, the function returns whatever
+    fits and logs a warning.
+
     Args:
         df: Input DataFrame (must contain a ``symbol`` column when
             ``len(symbols) > 1``).
         total_rows: Target row count across all symbols.
         random_state: Seed (int), ``np.random.Generator``, or ``None`` for
             a deterministic default seed.
+        forbidden_ranges: Per-symbol ``(start_bar, end_bar)`` intervals
+            (inclusive) that the sampled slice must NOT overlap. Bars are
+            0-indexed within each symbol. ``None`` or empty = no
+            constraint.
     """
     rng = np.random.default_rng(0) if random_state is None else (
         random_state if isinstance(random_state, np.random.Generator)
@@ -382,20 +430,40 @@ def _sample_df(
     sizes = [base + 1] * rem + [base] * (n_sym - rem)
     n_per_sym = sizes[0]
 
-    # Per-symbol lengths; smallest symbol bounds the shared start.
     sym_groups = {sym: df[df["symbol"] == sym] for sym in symbols}
     min_sym_len = min(len(g) for g in sym_groups.values())
+    if min_sym_len <= 0:
+        return df.iloc[0:0].reset_index(drop=True)
 
-    if n_per_sym >= min_sym_len:
-        start = 0
+    safe_start, safe_end = _largest_safe_range(
+        min_sym_len, forbidden_ranges or []
+    )
+    safe_len = safe_end - safe_start + 1 if safe_end >= safe_start else 0
+
+    if safe_len <= 0:
+        logger.warning(
+            "_sample_df: no safe range available; returning empty")
+        return df.iloc[0:0].reset_index(drop=True)
+
+    if n_per_sym <= safe_len:
+        max_start = safe_end - n_per_sym + 1
+        start = int(rng.integers(safe_start, max_start + 1))
+        sizes_to_use = sizes
     else:
-        start = int(rng.integers(0, min_sym_len - n_per_sym + 1))
+        logger.warning(
+            "_sample_df: requested %d bars/sym exceeds largest safe range "
+            "%d; using the entire safe range (%d bars/sym)",
+            n_per_sym, safe_len, safe_len,
+        )
+        start = safe_start
+        # Shrink: each symbol contributes the full safe range
+        sizes_to_use = [safe_len] * n_sym
 
     parts = []
-    for sym, target_n in zip(symbols, sizes):
+    for sym, target_n in zip(symbols, sizes_to_use):
         sym_df = sym_groups[sym]
-        avail = len(sym_df) - start
-        take = min(target_n, max(0, avail))
+        avail = max(0, len(sym_df) - start)
+        take = min(target_n, avail)
         if take <= 0:
             continue
         ordered = _sort_chronological(sym_df)
@@ -2089,10 +2157,30 @@ class Rule_Pool_Generator:
             int(len(val_df)) if val_df is not None else None
         )
 
+        # Build forbidden bar ranges from CV folds so the sampled training
+        # slice never overlaps a CV/holdout valid region (prevents data
+        # leakage into the CV fitness signal).
+        forbidden_ranges: list[tuple[int, int]] = []
+        if self._cv_folds:
+            for f in self._cv_folds:
+                forbidden_ranges.append((f.valid_start_bar, f.valid_end_bar))
+        # Pull the embargo back from the start of each forbidden region so
+        # train labels (which use a MAX_HOLD_CANDLES lookahead) cannot
+        # peek into the valid region.
+        if forbidden_ranges:
+            embargo = int(getattr(
+                _cfg, "PURGED_WF_EMBARGO_CANDLES", _cfg.MAX_HOLD_CANDLES))
+            forbidden_ranges = [
+                (max(0, s - embargo), e) for s, e in forbidden_ranges
+            ]
+
         # Sample training data to budget, then slim to backtest-only columns
         sample_seed = seed if seed is not None else _cfg.PHASE2_SEED
         sampled = _sample_df(
-            self._scoped_train_df, _cfg.PHASE1_SAMPLING_TOTAL, random_state=sample_seed,
+            self._scoped_train_df,
+            _cfg.PHASE1_SAMPLING_TOTAL,
+            random_state=sample_seed,
+            forbidden_ranges=forbidden_ranges,
         )
         feature_names = [fi["name"] for fi in feature_infos]
 

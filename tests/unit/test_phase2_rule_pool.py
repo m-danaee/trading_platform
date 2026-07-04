@@ -677,6 +677,83 @@ class TestSampleDf:
             d_rows = (sampled["symbol"] == "D").sum()
             assert d_rows <= 50
 
+    def test_sample_avoids_forbidden_ranges(self):
+        """Sampled slice must not overlap any forbidden range (per symbol)."""
+        df = _make_train_df(n_rows=400, symbols=["A", "B"])
+        # Per-symbol 200 rows. Forbid [50, 99] (the middle).
+        forbidden = [(50, 99)]
+        for seed in range(20):
+            sampled = _sample_df(
+                df, total_rows=80, random_state=seed,
+                forbidden_ranges=forbidden,
+            )
+            for sym in ["A", "B"]:
+                bar_idx = sampled[sampled["symbol"] == sym][
+                    "_symbol_bar_index"
+                ].to_numpy()
+                if len(bar_idx) == 0:
+                    continue
+                s_start, s_end = int(bar_idx[0]), int(bar_idx[-1])
+                # Slice must not overlap [50, 99]
+                assert s_end < 50 or s_start > 99, (
+                    f"seed={seed} sym={sym}: slice [{s_start}, {s_end}] "
+                    f"overlaps forbidden [50, 99]"
+                )
+
+    def test_sample_handles_disjoint_forbidden_ranges(self):
+        """Multiple non-contiguous forbidden ranges must all be avoided."""
+        df = _make_train_df(n_rows=400, symbols=["A", "B"])
+        forbidden = [(80, 99), (150, 199), (300, 319)]
+        sampled = _sample_df(
+            df, total_rows=60, random_state=42,
+            forbidden_ranges=forbidden,
+        )
+        for sym in ["A", "B"]:
+            bar_idx = sampled[sampled["symbol"] == sym][
+                "_symbol_bar_index"
+            ].to_numpy()
+            if len(bar_idx) == 0:
+                continue
+            s_start, s_end = int(bar_idx[0]), int(bar_idx[-1])
+            for f_start, f_end in forbidden:
+                assert s_end < f_start or s_start > f_end, (
+                    f"sym={sym}: slice [{s_start}, {s_end}] overlaps "
+                    f"forbidden [{f_start}, {f_end}]"
+                )
+
+    def test_sample_uses_largest_safe_range(self):
+        """With multiple safe ranges, use the largest one."""
+        df = _make_train_df(n_rows=400, symbols=["A"])
+        # Two safe regions: [0, 49] (50 bars) and [150, 399] (250 bars).
+        # Largest is [150, 399] → sample start ∈ [150, 399-80+1] = [150, 320].
+        sampled = _sample_df(
+            df, total_rows=80, random_state=42,
+            forbidden_ranges=[(50, 149)],
+        )
+        bar_idx = sampled["_symbol_bar_index"].to_numpy()
+        s_start, s_end = int(bar_idx[0]), int(bar_idx[-1])
+        assert s_start >= 150
+        assert s_end <= 399
+
+    def test_sample_warns_and_shrinks_when_safe_region_too_small(self):
+        """If the safe region is smaller than the requested size, shrink + warn."""
+        df = _make_train_df(n_rows=400, symbols=["A"])
+        # Only 30 safe bars; ask for 100.
+        sampled = _sample_df(
+            df, total_rows=100, random_state=0,
+            forbidden_ranges=[(30, 399)],
+        )
+        assert len(sampled) == 30  # entire safe region
+
+    def test_no_constraint_when_forbidden_empty(self):
+        """Empty forbidden_ranges == no constraint (backward compat)."""
+        df = _make_train_df(n_rows=400, symbols=["A"])
+        sampled = _sample_df(df, total_rows=100, random_state=0)
+        assert len(sampled) == 100
+        bar_idx = sampled["_symbol_bar_index"].to_numpy()
+        # No constraint: can be anywhere
+        assert bar_idx[0] >= 0 and bar_idx[-1] < 400
+
 
 # ---------------------------------------------------------------------------
 # Tests: _validate_pool_schema
