@@ -210,7 +210,7 @@ if _NUMBA_AVAILABLE:
         return distances
 
     @njit(cache=True)
-    def _batch_static_penalties_numba(executed, min_support, pool_floor, penalty_max):
+    def _batch_static_penalties_numba(executed, min_support, pool_floor, penalty_max, exponent):
         n = len(executed)
         out = np.empty(n, dtype=np.float64)
         for i in range(n):
@@ -221,7 +221,7 @@ if _NUMBA_AVAILABLE:
                 out[i] = 2.0 * penalty_max
             else:
                 shortfall = (min_support - ex) / min_support
-                val = shortfall * shortfall * penalty_max
+                val = shortfall ** exponent * penalty_max
                 if val > penalty_max:
                     out[i] = penalty_max
                 else:
@@ -261,6 +261,7 @@ def batch_static_support_penalties(executed: np.ndarray) -> np.ndarray:
             _cfg.MIN_TRADE_SUPPORT,
             _cfg.MIN_TRADE_POOL_FLOOR,
             _cfg.SUPPORT_PENALTY_MAX,
+            _cfg.TRADE_SUPPORT_PENALTY_EXPONENT,
         )
     return np.array(
         [_static_penalty_py(int(v)) for v in ex],
@@ -274,7 +275,7 @@ def _static_penalty_py(executed: int) -> float:
     if executed < _cfg.MIN_TRADE_POOL_FLOOR:
         return 2.0 * _cfg.SUPPORT_PENALTY_MAX
     shortfall = (_cfg.MIN_TRADE_SUPPORT - executed) / _cfg.MIN_TRADE_SUPPORT
-    return min(shortfall ** 2 * _cfg.SUPPORT_PENALTY_MAX, _cfg.SUPPORT_PENALTY_MAX)
+    return min(shortfall ** float(_cfg.TRADE_SUPPORT_PENALTY_EXPONENT) * _cfg.SUPPORT_PENALTY_MAX, _cfg.SUPPORT_PENALTY_MAX)
 
 
 def batch_hamming_min(
