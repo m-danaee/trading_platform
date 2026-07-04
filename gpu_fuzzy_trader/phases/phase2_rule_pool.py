@@ -303,15 +303,31 @@ def _sort_chronological(df: pd.DataFrame) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
-def _downsample_chronological(df: pd.DataFrame, n_rows: int) -> pd.DataFrame:
-    """Evenly spaced chronological downsampling (deterministic, order-preserving)."""
+def _downsample_chronological(
+    df: pd.DataFrame,
+    n_rows: int,
+    rng: np.random.Generator,
+) -> pd.DataFrame:
+    """Pick a contiguous chronological slice of *n_rows* from *df*.
+
+    Critical for trading backtests: bars are sequential temporal events, so the
+    downsampler must NOT skip rows (stride sampling breaks position management
+    and intraday pattern recognition). A uniform random start is chosen bounded
+    so that ``n_rows`` always fits forward; if the symbol has fewer than
+    ``n_rows`` bars the full chronological frame is returned.
+
+    Args:
+        df: Chronologically ordered DataFrame (per symbol).
+        n_rows: Number of contiguous rows to take.
+        rng: ``np.random.Generator`` used to pick the start index.
+    """
     ordered = _sort_chronological(df)
     total = len(ordered)
-    if total <= n_rows:
-        return ordered
-    idx = np.linspace(0, total - 1, num=n_rows, dtype=np.int64)
-    idx = np.unique(idx)
-    return ordered.iloc[idx].reset_index(drop=True)
+    n_rows = min(n_rows, total)
+    if n_rows >= total:
+        return ordered.reset_index(drop=True)
+    start = int(rng.integers(0, total - n_rows + 1))
+    return ordered.iloc[start : start + n_rows].reset_index(drop=True)
 
 
 def _sample_df(
@@ -321,21 +337,30 @@ def _sample_df(
 ) -> pd.DataFrame:
     """Sample up to *total_rows* rows, distributed equally across symbols.
 
-    Rows are taken in chronological order per symbol (deterministic stride
-    downsampling). Random sampling is intentionally avoided because backtest
-    engines rely on row order and ``_symbol_bar_index`` for exposure release.
+    Per symbol, a random starting bar is chosen and ``total_rows / n_symbols``
+    contiguous chronological bars are taken from that point onward. The random
+    start is bounded so the slice never overflows the symbol's history. The
+    caller-supplied ``random_state`` (int or ``np.random.Generator``) seeds
+    the start selection for reproducibility; ``None`` falls back to seed 0.
+
+    Contiguity is required because the backtest engine processes bars
+    sequentially for position management, exposure release, and intraday
+    pattern recognition — stride sampling silently drops intermediate candles.
 
     Args:
-        df: Input DataFrame.
-        total_rows: Target row count.
-        random_state: **Intentionally ignored.** Accepted only for API
-            compatibility with callers that pass a seed. Sampling is
-            chronologically deterministic; do not rely on this for
-            reproducibility — set ``PHASE2_SEED`` upstream instead.
+        df: Input DataFrame (must contain a ``symbol`` column when
+            ``len(symbols) > 1``).
+        total_rows: Target row count across all symbols.
+        random_state: Seed (int), ``np.random.Generator``, or ``None`` for
+            a deterministic default seed.
     """
-    del random_state  # chronology-preserving sampling is deterministic
+    rng = np.random.default_rng(0) if random_state is None else (
+        random_state if isinstance(random_state, np.random.Generator)
+        else np.random.default_rng(random_state)
+    )
+
     if "symbol" not in df.columns:
-        return _downsample_chronological(df, min(total_rows, len(df)))
+        return _downsample_chronological(df, min(total_rows, len(df)), rng)
 
     symbols = df["symbol"].unique()
     n_sym = len(symbols)
@@ -345,7 +370,7 @@ def _sample_df(
     for sym in symbols:
         sym_df = df[df["symbol"] == sym]
         n = min(rows_per_sym, len(sym_df))
-        parts.append(_downsample_chronological(sym_df, n))
+        parts.append(_downsample_chronological(sym_df, n, rng))
 
     return pd.concat(parts, ignore_index=True)
 

@@ -551,12 +551,44 @@ class TestSampleDf:
 
     def test_sampling_is_deterministic(self):
         df = _make_train_df(n_rows=400, symbols=["A", "B"])
-        first = _sample_df(df, total_rows=80)
+        first = _sample_df(df, total_rows=80, random_state=999)
         second = _sample_df(df, total_rows=80, random_state=999)
         pd.testing.assert_frame_equal(
             first.reset_index(drop=True),
             second.reset_index(drop=True),
         )
+
+    def test_sampling_varies_with_seed(self):
+        df = _make_train_df(n_rows=400, symbols=["A", "B"])
+        first = _sample_df(df, total_rows=80, random_state=1)
+        second = _sample_df(df, total_rows=80, random_state=2)
+        assert not first.equals(second)
+
+    def test_sampling_is_contiguous_per_symbol(self):
+        """Critical: bars must be contiguous so the backtest engine preserves
+        temporal causality. Stride gaps would silently drop intermediate
+        candles, breaking position management and intraday patterns."""
+        df = _make_train_df(n_rows=400, symbols=["A", "B", "C", "D"])
+        sampled = _sample_df(df, total_rows=120, random_state=7)
+        for sym in ["A", "B", "C", "D"]:
+            sym_df = sampled[sampled["symbol"] == sym].sort_values(
+                "_symbol_bar_index"
+            )
+            if sym_df.empty:
+                continue
+            bar_idx = sym_df["_symbol_bar_index"].to_numpy()
+            assert bar_idx.size >= 2
+            # Every consecutive pair must be exactly +1 apart (contiguous).
+            assert np.all(np.diff(bar_idx) == 1), (
+                f"symbol {sym} has non-contiguous bars: gaps detected"
+            )
+
+    def test_sampling_respects_random_start_bound(self):
+        """Random start must be bounded so the slice always fits forward."""
+        df = _make_train_df(n_rows=400, symbols=["A", "B"])
+        for seed in range(20):
+            sampled = _sample_df(df, total_rows=80, random_state=seed)
+            assert len(sampled) == 80
 
 
 # ---------------------------------------------------------------------------
