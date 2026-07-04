@@ -1,29 +1,33 @@
 {
-  "task": "task-1",
   "status": "DONE",
-  "commit": "cd69462",
+  "commit": "0cf059e",
+  "branch": "fix/holdout-embargo-split",
   "files_changed": [
     "gpu_fuzzy_trader/config.py",
-    "tests/unit/test_config_additions.py",
-    "tests/unit/test_evox_runner.py",
-    "tests/unit/test_migration_safety.py",
-    "tests/unit/test_phase2_monthly_admission.py",
-    "tests/unit/test_phase2_plateau_restart.py",
-    "tests/unit/test_phase2_post_restart_stop.py",
-    "tests/unit/test_phase2_rule_pool.py",
-    "tests/unit/test_phase2_val_sim_interval.py"
+    "gpu_fuzzy_trader/data/splitter.py",
+    "gpu_fuzzy_trader/validation/rolling_cv.py",
+    "tests/property/test_data_splitter_properties.py",
+    "tests/unit/test_data_splitter.py",
+    "tests/unit/test_phase5_oos.py",
+    "tests/unit/test_rb_governor_data_load.py"
   ],
-  "summary": "Updated all 20 Phase 2 config parameters with rationale comments. Updated test assertions to match new values and fixed test logic for JOINT_TRAIN_VAL=True default. All 1334 tests pass.",
+  "test_results": {
+    "command": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/ -x -q --ignore=tests/unit/test_crash_fix_and_run_logging.py --ignore=tests/unit/test_phase2_rule_pool.py --ignore=tests/unit/test_phase2_val_sim_interval.py",
+    "result": "1250 passed, 5 skipped, 0 failures (excluding 3 pre-existing unrelated failures)",
+    "note": "The 3 excluded tests failed identically on main (pre-existing); our changes cause no regressions"
+  },
+  "acceptance_criteria": {
+    "1_SPLIT_MODE_holdout_70_30": "✅ gpu_fuzzy_trader/config.py line 180",
+    "2_HOLDOUT_TRAIN_FRACTION_and_EMBARGO_CANDLES": "✅ lines 183, 188 in config.py",
+    "3_assert_HOLDOUT_EMBARGO_CANDLES_eq_MAX_HOLD_CANDLES": "✅ assertion at ~line 2290, verified at runtime",
+    "4_embargo_split_drops_288_bars": "✅ _holdout_embargo_split drops HOLDOUT_EMBARGO_CANDLES (288) between train/val",
+    "5_no_test_regressions": "✅ 1250 passed, 0 new failures",
+    "6_no_old_function_name": "✅ grep returns no matches for _holdout_70_30_split in splitter.py"
+  },
   "notes_for_reviewer": [
-    "No logic changes in production code - only config.py parameter values and comments updated.",
-    "Test files updated to assert new parameter values and accommodate JOINT_TRAIN_VAL=True default (test_phase2_val_sim_interval, test_evox_runner, test_phase2_rule_pool).",
-    "Key change: JOINT_TRAIN_VAL=True causes val to run every gen, so test_val_skipped_on_non_interval_gens now explicitly sets JOINT_TRAIN_VAL=False.",
-    "PHASE2_ISLAND_TOTAL_GENERATIONS stays linked to PHASE2_GENERATIONS (no change needed).",
-    "PHASE2_ORPHAN_ENABLED=False leaves orphan hyperparams in place but inactive - can be re-enabled easily.",
-    "All 1334 tests pass with PYTEST_LOW_MEMORY=1."
-  ],
-  "verification": {
-    "config_import": "PHASE2_GENERATIONS=100, JOINT_TRAIN_VAL=True, F3_OBJECTIVE=cv_fold_min",
-    "test_results": "1334 passed, 5 skipped"
-  }
+    "The old purged-WF config keys (PURGED_WF_*) are retained with a deprecation comment but are now inactive when SPLIT_MODE != 'purged_walk_forward'.",
+    "Tests that hardcoded floor(N * 0.70) were updated to use config values (HOLDOUT_TRAIN_FRACTION = 0.65) and account for the 288-bar embargo.",
+    "Small N values in tests were increased (e.g. 100 → 2000) to ensure non-empty validation after the embargo.",
+    "Edge case tests for single-row/small symbols were updated to reflect that embargo consumes all remaining rows."
+  ]
 }

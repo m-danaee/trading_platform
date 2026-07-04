@@ -211,13 +211,6 @@ def test_property_5_per_symbol_split_ratio_and_no_overlap(
         )
 
     # --- 5 & 6: Split is per-symbol (total counts sum of per-symbol splits) ---
-    for sym, n in symbol_counts.items():
-        expected_train = math.floor(n * train_frac)
-        embargo_end = min(expected_train + embargo, n)
-        expected_val = n - embargo_end
-        # Ensure no cross-symbol contamination in total counts
-        pass
-
     total_expected_train = sum(
         math.floor(n * train_frac) for n in symbol_counts.values()
     )

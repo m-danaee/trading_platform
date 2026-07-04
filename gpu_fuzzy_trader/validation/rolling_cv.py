@@ -444,21 +444,25 @@ def aggregate_fold_metrics(
     }
 
 
-_PURGED_CONFIG_KEYS = (
+_SPLIT_CONFIG_KEYS = (
+    # Purged walk-forward keys (deprecated mode)
     "PURGED_WF_N_SPLITS",
     "PURGED_WF_HOLDOUT_FRACTION",
     "PURGED_WF_EMBARGO_CANDLES",
     "PURGED_WF_MIN_TRAIN_FRACTION",
     "PURGED_WF_MIN_VALID_ROWS",
+    # Holdout split keys (active mode)
+    "HOLDOUT_TRAIN_FRACTION",
+    "HOLDOUT_EMBARGO_CANDLES",
 )
 
 
 def purged_config_fingerprint() -> str:
-    """Return a short hash of all purged-WF config knobs for cache invalidation."""
+    """Return a short hash of all split-config knobs for cache invalidation."""
     import hashlib
 
     parts: list[str] = []
-    for key in _PURGED_CONFIG_KEYS:
+    for key in _SPLIT_CONFIG_KEYS:
         val = getattr(_cfg, key, None)
         parts.append(f"{key}={val!r}")
     raw = "|".join(parts)
