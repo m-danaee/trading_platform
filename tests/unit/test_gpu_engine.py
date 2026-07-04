@@ -382,6 +382,12 @@ class TestGPUBacktestEngineInit:
         with pytest.raises(ValueError):
             _make_engine(df, direction="buy")
 
+    def test_invalid_entry_price_raises(self):
+        df = _make_df(n=3)
+        df["label_open_next"] = [100.0, 0.0, 100.0]
+        with pytest.raises(ValueError, match="Invalid label_open_next"):
+            _make_engine(df)
+
     def test_backend_attribute(self):
         df = _make_df(n=10)
         eng = _make_engine(df)
