@@ -337,15 +337,26 @@ def _sample_df(
 ) -> pd.DataFrame:
     """Sample up to *total_rows* rows, distributed equally across symbols.
 
-    Per symbol, a random starting bar is chosen and ``total_rows / n_symbols``
-    contiguous chronological bars are taken from that point onward. The random
-    start is bounded so the slice never overflows the symbol's history. The
-    caller-supplied ``random_state`` (int or ``np.random.Generator``) seeds
-    the start selection for reproducibility; ``None`` falls back to seed 0.
+    A single random start bar is chosen and applied to **every** symbol, so
+    the resulting slices are temporally aligned (all symbols see the same
+    clock). The per-symbol slice is contiguous and chronological from that
+    shared start. The start is bounded so the slice fits in the smallest
+    symbol's history.
 
-    Contiguity is required because the backtest engine processes bars
-    sequentially for position management, exposure release, and intraday
-    pattern recognition — stride sampling silently drops intermediate candles.
+    Temporal alignment is required because the backtest engine assumes all
+    symbols share the same timestamps — if BTC starts at bar 2,500 and ETH
+    starts at bar 6,200 the engine sees them at different times, breaking
+    cross-symbol signals (relative strength, pair trading) and intraday
+    patterns.
+
+    The caller-supplied ``random_state`` (int or ``np.random.Generator``)
+    seeds the start selection for reproducibility; ``None`` falls back to
+    seed 0.
+
+    Contiguity within each symbol is required because the backtest engine
+    processes bars sequentially for position management, exposure release,
+    and intraday pattern recognition — stride sampling silently drops
+    intermediate candles.
 
     Args:
         df: Input DataFrame (must contain a ``symbol`` column when
@@ -369,13 +380,29 @@ def _sample_df(
 
     base, rem = divmod(total_rows, n_sym)
     sizes = [base + 1] * rem + [base] * (n_sym - rem)
+    n_per_sym = sizes[0]
+
+    # Per-symbol lengths; smallest symbol bounds the shared start.
+    sym_groups = {sym: df[df["symbol"] == sym] for sym in symbols}
+    min_sym_len = min(len(g) for g in sym_groups.values())
+
+    if n_per_sym >= min_sym_len:
+        start = 0
+    else:
+        start = int(rng.integers(0, min_sym_len - n_per_sym + 1))
 
     parts = []
     for sym, target_n in zip(symbols, sizes):
-        sym_df = df[df["symbol"] == sym]
-        n = min(target_n, len(sym_df))
-        parts.append(_downsample_chronological(sym_df, n, rng))
+        sym_df = sym_groups[sym]
+        avail = len(sym_df) - start
+        take = min(target_n, max(0, avail))
+        if take <= 0:
+            continue
+        ordered = _sort_chronological(sym_df)
+        parts.append(ordered.iloc[start : start + take].reset_index(drop=True))
 
+    if not parts:
+        return df.iloc[0:0].reset_index(drop=True)
     return pd.concat(parts, ignore_index=True)
 
 

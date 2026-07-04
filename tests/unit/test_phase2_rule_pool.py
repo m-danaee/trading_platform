@@ -633,6 +633,50 @@ class TestSampleDf:
         for sym in ["A", "B", "C", "D"]:
             assert (sampled["symbol"] == sym).sum() == 25
 
+    def test_all_symbols_share_start_datetime(self):
+        """All symbols must start at the same datetime (shared clock)."""
+        df = _make_train_df(n_rows=400, symbols=["A", "B", "C", "D"])
+        sampled = _sample_df(df, total_rows=120, random_state=7)
+        first_dts = {
+            sym: sampled[sampled["symbol"] == sym].sort_values("datetime")[
+                "datetime"
+            ].iloc[0]
+            for sym in ["A", "B", "C", "D"]
+        }
+        unique_starts = set(first_dts.values())
+        assert len(unique_starts) == 1, (
+            f"symbols start at different times: {first_dts}"
+        )
+
+    def test_all_symbols_share_end_datetime(self):
+        """All symbols must end at the same datetime (shared clock)."""
+        df = _make_train_df(n_rows=400, symbols=["A", "B", "C", "D"])
+        sampled = _sample_df(df, total_rows=120, random_state=7)
+        last_dts = {
+            sym: sampled[sampled["symbol"] == sym].sort_values("datetime")[
+                "datetime"
+            ].iloc[-1]
+            for sym in ["A", "B", "C", "D"]
+        }
+        unique_ends = set(last_dts.values())
+        assert len(unique_ends) == 1, (
+            f"symbols end at different times: {last_dts}"
+        )
+
+    def test_start_within_min_symbol_bound(self):
+        """Shared start must be bounded so the slice fits in the smallest symbol."""
+        # Imbalanced: A,B,C have 100 rows, D has only 50 rows.
+        df = _make_train_df(n_rows=350, symbols=["A", "B", "C", "D"])
+        # Force D to be smaller: trim it.
+        d_mask = df["symbol"] == "D"
+        df = pd.concat([df[~d_mask].head(300), df[d_mask].head(50)], ignore_index=True)
+        for seed in range(20):
+            sampled = _sample_df(df, total_rows=80, random_state=seed)
+            assert len(sampled) > 0
+            # D should never be asked for more than 50 rows
+            d_rows = (sampled["symbol"] == "D").sum()
+            assert d_rows <= 50
+
 
 # ---------------------------------------------------------------------------
 # Tests: _validate_pool_schema
