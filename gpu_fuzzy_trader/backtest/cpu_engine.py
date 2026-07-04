@@ -554,7 +554,6 @@ class CPUBacktestEngine:
 
         Mirrors evaluator_v3.ipynb's _build_trade_outcome_single exactly.
         """
-        cap = _cfg.MAX_TIME_EXIT_RETURN_PCT
         s_max = float(self.max_ret[idx])
         s_min = float(self.min_ret[idx])
         s_close = float(self.close_ret[idx])
@@ -570,7 +569,7 @@ class CPUBacktestEngine:
                 return float(tp), "TP"
             if hit_sl:
                 return float(-sl), "SL"
-            return float(np.clip(s_close, -cap, cap)), "Time_288"
+            return float(s_close), "Time_288"
 
         # short
         hit_tp = s_min <= -tp
@@ -582,7 +581,7 @@ class CPUBacktestEngine:
             return float(tp), "TP"
         if hit_sl:
             return float(-sl), "SL"
-        return float(np.clip(-s_close, -cap, cap)), "Time_288"
+        return float(-s_close), "Time_288"
 
     def _calculate_position_notional(
         self,
