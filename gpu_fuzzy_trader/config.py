@@ -342,7 +342,7 @@ PHASE1_STATIONARITY_RANK_DRIFT_MAX = 8
 # Peak GPU RAM scales ~linearly with this value (largest VRAM lever).
 #   Higher → more statistical power, slower, OOM risk on small GPUs.
 #   Lower  → faster, less RAM; trade/support floors may need proportional cut.
-PHASE1_SAMPLING_TOTAL = 701_000
+PHASE1_SAMPLING_TOTAL = 1_000_000
 
 # PHASE2_GPU_BATCH_SIZE — chromosomes per JAX vmap chunk in simulate_rule_batch.
 # Peak VRAM scales ~linearly (rule matching is O(batch × rows × conditions)).
@@ -1004,7 +1004,7 @@ PHASE2_POPULATION_SIZE = 200
 #   Lower  → faster runs; may under-explore gene space.
 # Reduced 132→100: diminishing returns past 100; latest run hit plateau
 # well before 132, wasting ~30 generations of compute.
-PHASE2_GENERATIONS = 100
+PHASE2_GENERATIONS = 132
 
 PHASE2_ALGORITHM = "NSGA3"
 
