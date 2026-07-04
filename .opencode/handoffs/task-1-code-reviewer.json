@@ -2,69 +2,71 @@
   "task": "task-1",
   "reviewer": "code-reviewer",
   "status": "APPROVED",
-  "review_date": "2026-07-04",
+  "review_date": "2026-07-05",
   "base_branch": "main",
-  "feature_branch": "fix/time-exit-return-cap",
-  "commit_reviewed": "46cb88a",
+  "feature_branch": "fix/holdout-embargo-split",
+  "commit_reviewed": "bdfbeec",
+  "previous_review_commits": ["0cf059e"],
   "verdict": "APPROVED",
-  "summary": "Clean, low-risk parameter + clip-guard implementation. CPU and GPU engines use semantically equivalent np.clip/jnp.clip with the same config-driven cap value, ensuring long/short symmetry. All 4 new CPU tests + 4 new GPU tests pass; full engine test suite (154 tests) is green with no regressions. Two minor docstring/coupling observations are noted but do not block approval.",
+  "summary": "Both fixes from the previous review are correctly and minimally implemented. The cache fingerprint now invalidates on changes to HOLDOUT_TRAIN_FRACTION and HOLDOUT_EMBARGO_CANDLES (verified empirically), and the dead for-loop in the property test has been cleanly removed without affecting coverage. No new issues introduced. 33/33 related tests pass.",
+  "fix_verification": {
+    "M1_cache_fingerprint_missing_holdout_keys": {
+      "status": "RESOLVED",
+      "evidence": [
+        "_PURGED_CONFIG_KEYS renamed to _SPLIT_CONFIG_KEYS (no stale references anywhere in the repo)",
+        "Tuple now contains both 'HOLDOUT_TRAIN_FRACTION' and 'HOLDOUT_EMBARGO_CANDLES' (rolling_cv.py lines 455-456)",
+        "Docstring updated from 'purged-WF config knobs' to 'split-config knobs'",
+        "Empirical verification: mutating HOLDOUT_TRAIN_FRACTION (0.65→0.50) changes the fingerprint from 0b7b96e6da6c7eac to 34c9990a3f3eee20",
+        "Empirical verification: mutating HOLDOUT_EMBARGO_CANDLES (288→100) changes the fingerprint to 70aa88b38fd8148c",
+        "Both keys exist in config.py (line 185 and line 190 respectively)"
+      ]
+    },
+    "L1_dead_for_loop_in_test": {
+      "status": "RESOLVED",
+      "evidence": [
+        "Removed the 7-line duplicate loop (with `# Ensure no cross-symbol contamination in total counts` + `pass`) at test_data_splitter_properties.py lines 211-217",
+        "The per-symbol assertion loop that ACTUALLY uses expected_train/expected_val/embargo_end (earlier in the function) is intact and unchanged",
+        "The total_expected_train / total_expected_val sum(...) expressions below work correctly without the dead loop",
+        "`math` import on line 20 is still required (used by sum(...) and min(...) expressions) — no orphan imports",
+        "test_property_5_per_symbol_split_ratio_and_no_overlap passes (1 passed)"
+      ]
+    }
+  },
   "correctness": {
-    "np_clip_vs_jnp_clip_parity": "VERIFIED. np.clip(x, -cap, cap) and jnp.clip(x, -cap, cap) are element-wise equivalent for scalar clipping. Manual parity checks against cap=50.0 confirm identical outputs for [60.0, -60.0, 50.0, -50.0, 1.5, -1.5] in both libs.",
-    "long_short_symmetry": "VERIFIED. Long path clips s_close (the price return). Short path clips -s_close (the short PnL). The negation in the short path is consistent with how s_close is later consumed in equity simulation. Tests cover both directions with positive and negative clip cases.",
-    "config_source_of_truth": "Both engines read the cap from the same constant (_cfg.MAX_TIME_EXIT_RETURN_PCT = 50.0). No risk of CPU/GPU drift.",
-    "test_math_verification": "Verified by hand: long close_ret=60 -> clip to 50; long close_ret=-60 -> clip to -50; short -close_ret=60 -> clip to 50; short -close_ret=-60 -> clip to -50. All four new tests assert exactly these values and pass."
+    "fingerprint_invalidation_works": "VERIFIED. Both HOLDOUT_TRAIN_FRACTION and HOLDOUT_EMBARGO_CANDLES are correctly included in the config fingerprint via _SPLIT_CONFIG_KEYS. When either value changes, the manifest's stored config_fingerprint no longer matches purged_config_fingerprint(), causing the cache loader (splitter.py line 182) to return None and trigger a fresh split. The stale-cache bug from the previous review is fully fixed.",
+    "constant_rename_consistency": "VERIFIED. _PURGED_CONFIG_KEYS no longer appears anywhere in the repo. _SPLIT_CONFIG_KEYS is the sole reference and is correctly used in purged_config_fingerprint() (rolling_cv.py line 465).",
+    "test_no_coverage_loss": "VERIFIED. The removed dead loop computed values that were immediately discarded (only `pass` after a comment). Removing it does not change any assertion. The per-symbol assertions earlier in the function (using expected_train, expected_val, embargo_end) are untouched, and the total-count assertions below use the same math via sum()."
   },
   "edge_cases": {
-    "cap_zero": "np.clip(x, 0, 0) == 0 and jnp.clip(x, 0, 0) == 0 for all x. Degenerate but valid behavior; no crash.",
-    "cap_negative": "np.clip(x, +c, -c) with c>0 has min>max; NumPy silently swaps, JAX may warn. Not exercised in tests. Not a real concern because cap is a config value not user input, but a guard or assertion could be added to config.py to assert cap > 0.",
-    "cap_float_precision": "cap=50.0 is a Python float. _JXF(cap) in the GPU path casts to the configured JAX float dtype. Returns are clamped in the same dtype, so no precision mismatch between engines.",
-    "jit_compatibility": "The new jnp.clip call is JIT-compatible; no shape or tracer issues introduced."
+    "missing_config_key": "If either HOLDOUT_TRAIN_FRACTION or HOLDOUT_EMBARGO_CANDLES were missing from config.py, getattr(_cfg, key, None) would yield None and the fingerprint would still be stable. Since both keys exist (config.py lines 185, 190), this is moot. The deprecated PURGED_WF_* keys also use getattr(_cfg, key, None) for safety.",
+    "fingerprint_uniqueness": "The sha256 of the joined key=value string is truncated to 16 hex chars (64 bits). Collision probability is astronomically low for the small number of distinct config combinations in this project.",
+    "test_doesnt_depend_on_old_loop": "The 'Ensure no cross-symbol contamination' comment that was removed was a comment-only check (the loop body was `pass`). Removing it is purely a code-cleanup change; no semantic content was lost."
   },
   "security": {
-    "concerns": "None. The cap is a hard-coded config value, not user input. No I/O, no network, no untrusted code paths touched."
+    "concerns": "None. The fingerprint function is internal and not exposed to untrusted input. It reads only module-level config values via getattr."
   },
   "maintainability": {
-    "config_driven_constant": "GOOD. MAX_TIME_EXIT_RETURN_PCT lives in config.py with a clear inline comment block describing intent and rationale.",
-    "docstring_accuracy_minor_issue": "MINOR. The config comment says 'A time-exit should not out-earn a full TP hit.' This is misleading: with the default cap of 50% and typical TP values of 2-4%, a clipped time-exit will still out-earn a TP. The cap is really an outlier bound, not a fairness constraint. Recommend rewording to e.g. 'Caps the time-exit fallback return at ±50% to prevent pathological close_ret from distorting rule metrics; typical TP values are 2-4% so this only affects outliers.' Does not block approval.",
-    "test_coupling_to_default": "MINOR. The 4 new tests hard-code the expected return value of 50.0 / -50.0, which is correct for the current default cap. If the default ever changes, tests must be updated in lockstep. Could be improved by parameterizing the cap (e.g., @pytest.mark.parametrize with the cap value), but the current approach is acceptable and the coupling is obvious from the inline comments.",
-    "cpu_per_call_config_lookup": "NIT. The CPU engine reads _cfg.MAX_TIME_EXIT_RETURN_PCT on every call to _build_trade_outcome_single. The function is called in a loop over all rows. The lookup is cheap (attribute access on a module), but it could be cached once on engine construction (e.g., self._time_exit_cap = _cfg.MAX_TIME_EXIT_RETURN_PCT in __init__). Performance impact is negligible at current scale; GPU path already reads it once per call so no change needed there.",
-    "spec_comment_inconsistency": "The spec-reviewer handoff (task-1-spec-reviewer.json) describes Task 1 as 'Config Parameter Tuning (Runtime + OOS)' and lists a completely different set of files (test_evox_runner.py, test_migration_safety.py, etc.). The actual diff on fix/time-exit-return-cap is a self-contained 5-file change for capping time-exit returns. The spec-reviewer handoff appears to belong to a different task. This does not affect the code under review — the spec reviewer's verdict on the parameter-tuning task is unrelated and does not gate this review."
+    "rename_clarity": "GOOD. _SPLIT_CONFIG_KEYS is a more accurate name now that the keys span both modes (deprecated purged-WF + active holdout). The in-source comment groups the two categories with their own headers, which is excellent for future readers.",
+    "minimal_diff": "GOOD. The fix touches exactly the two files mentioned in the previous review and 10 lines total in production code. No collateral changes.",
+    "docstring_accuracy": "GOOD. The function docstring now correctly says 'split-config knobs' instead of 'purged-WF config knobs'."
   },
   "test_adequacy": {
-    "cpu_tests": "4 new tests: 2 long (positive/negative clip) + 2 short (positive/negative clip). Each verifies both the clipped return value and the 'Time_288' exit reason. PASSING.",
-    "gpu_tests": "4 new tests: 2 long (positive/negative clip) + 2 short (positive/negative clip). Same scenarios as CPU. PASSING.",
-    "regression_check": "Ran the full tests/unit/test_cpu_engine.py and tests/unit/test_gpu_engine.py suites: 154 passed, 0 failed, 0 regressions.",
-    "parity_test_gap": "OPTIONAL. There is no explicit CPU-vs-GPU parity test asserting that the two engines return identical values for the same inputs. Such a test would be nice-to-have for future drift detection, but the existing tests already exercise the same input shape in both engines and would catch the most likely regressions.",
-    "edge_case_gap": "OPTIONAL. No test for cap=0 (degenerate) or for a close_ret that lands exactly at the cap boundary (cap=50.0 with close_ret=50.0). Boundary test would be cheap to add."
+    "splitter_property_tests": "tests/property/test_data_splitter_properties.py: 1 passed (test_property_5_per_symbol_split_ratio_and_no_overlap)",
+    "splitter_unit_tests": "tests/unit/test_data_splitter.py: 32 passed",
+    "combined": "33/33 related tests pass with no regressions",
+    "fingerprint_cache_invalidation_test": "tests/unit/test_run_pipeline.py (test_uses_cached_split_when_fresh) exercises the fingerprint read path. It does not specifically test that mutating HOLDOUT_TRAIN_FRACTION or HOLDOUT_EMBARGO_CANDLES invalidates the cache, but the existing test verifies the happy-path round-trip, and the fix's correctness was empirically confirmed via direct invocation of purged_config_fingerprint() in this review.",
+    "edge_case_gap": "OPTIONAL. A dedicated test asserting that the fingerprint differs when HOLDOUT_TRAIN_FRACTION or HOLDOUT_EMBARGO_CANDLES changes would lock in the fix against future regressions. Not blocking; the fix is straightforward enough that this is low-priority follow-up."
   },
   "scope_check": {
-    "files_changed": [
-      "gpu_fuzzy_trader/config.py",
-      "gpu_fuzzy_trader/backtest/cpu_engine.py",
-      "gpu_fuzzy_trader/backtest/gpu_engine.py",
-      "tests/unit/test_cpu_engine.py",
-      "tests/unit/test_gpu_engine.py"
-    ],
-    "production_files_changed": [
-      "gpu_fuzzy_trader/config.py",
-      "gpu_fuzzy_trader/backtest/cpu_engine.py",
-      "gpu_fuzzy_trader/backtest/gpu_engine.py"
+    "files_changed_in_fix_commit": [
+      "gpu_fuzzy_trader/validation/rolling_cv.py",
+      "tests/property/test_data_splitter_properties.py",
+      ".opencode/handoffs/task-1-implementer.json (housekeeping)"
     ],
     "out_of_scope_changes": false,
-    "notes": "The change is well-scoped: a single new config constant + 1-line clip wrap in each engine + 4 tests per engine. No collateral damage to other modules."
+    "notes": "The fix is well-scoped to the two issues identified in the previous review. The handoff file was also updated to reflect the new commit hash and branch (this is housekeeping, not a functional change)."
   },
   "outstanding_items": [],
-  "fix_items": [
-    {
-      "severity": "nit",
-      "description": "The config.py comment 'A time-exit should not out-earn a full TP hit' is misleading given the 50% default. Recommend rewording to clarify this is an outlier cap, not a fairness bound.",
-      "blocking": false
-    },
-    {
-      "severity": "nit",
-      "description": "Tests are hard-coded to cap=50.0. Consider parameterizing so the tests assert the clipping behavior generically (clip(x, -cap, cap)) rather than baking in the default value.",
-      "blocking": false
-    }
-  ],
-  "verdict_rationale": "The implementation is correct, well-tested, and minimal. Both engines use semantically identical clip operations driven by a single config constant. All 8 new tests pass and the full engine test suite shows no regressions. The two nits (docstring wording, test parameterization) are non-blocking and can be addressed in a follow-up if desired."
+  "fix_items": [],
+  "verdict_rationale": "Both issues from the previous review are fully and correctly resolved. The cache fingerprint now includes HOLDOUT_TRAIN_FRACTION and HOLDOUT_EMBARGO_CANDLES, the rename from _PURGED_CONFIG_KEYS to _SPLIT_CONFIG_KEYS is consistent throughout the codebase, and the dead for-loop in the property test was removed without affecting any assertion. Empirical verification confirmed that mutating either new key produces a distinct fingerprint hash, which means stale-cache scenarios are now properly invalidated. All 33 related tests pass with no regressions. No new issues introduced by the fixes. Approving for merge."
 }

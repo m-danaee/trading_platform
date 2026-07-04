@@ -1,0 +1,32 @@
+{
+  "direction": "short",
+  "rules_set": [
+    {
+      "conditions": [
+        "[feat_1] IS Very High",
+        "symbol is SYM_A"
+      ],
+      "tp": 2.0,
+      "sl": 1.0,
+      "capital_pct": 30.0
+    }
+  ],
+  "risk_optimized": false,
+  "deployment_accepted": false,
+  "validation_gate": {
+    "return_pct": 1.1920928955078125e-05,
+    "profit_factor": 1.0,
+    "required_return_pct": 2.0,
+    "required_profit_factor": 1.05
+  },
+  "rb_score": -7901.831477499737,
+  "rb_train_return_pct": 0.9000062942504883,
+  "rb_valid_return_pct": 1.1920928955078125e-05,
+  "rb_valid_profit_factor": 1.0,
+  "rb_valid_max_drawdown_pct": 0.7199950814247131,
+  "rb_valid_executed_trades": 4,
+  "rb_train_minus_valid_return_pct": 0.8999943733215332,
+  "rb_train_valid_ratio": 75498.0,
+  "rb_profit_amp_objective": -400.0311456150281,
+  "rb_profit_amp_accepted": false
+}

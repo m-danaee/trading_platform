@@ -1,208 +1,114 @@
-# Task 2: EvoX Runner Code Fixes (Cache + Diversity)
+# Task 2: Fix GPU Engine PnL Timing — Defer PnL to Release Step
 
-**ID:** task-2
-**Branch:** `feat/phase2-evox-fixes`
-**Files:** `gpu_fuzzy_trader/evolution/evox_runner.py`
-**Risk:** Medium (logic changes in evolution loop)
+**Branch:** `fix/gpu-pnl-defer-to-release`
+**Base:** `main`
 
-## Description
+## Goal
 
-Fix two critical issues in the EvoX runner that cause cache thrashing and premature convergence:
+Fix the GPU backtest engine (`gpu_engine.py`) to credit trade PnL at position **release time** (close) instead of **entry time** (open), matching the CPU engine's correct semantics.
 
-1. **LRU Cache Trimming** — Replace random eviction with FIFO (dict insertion order) in `_trim_global_metrics_cache()`. Random eviction destroys useful cached results, causing near-zero cache hit rates (0.00-0.07 in logs).
+## Root Cause
 
-2. **Phenotype-Collapse Recovery Trigger** — Add a new trigger in `_should_inject_diversity_recovery()` that fires when the Pareto front collapses to ≤3 members despite high genetic uniqueness. This addresses the "pareto=1 for 7+ generations" problem where all 200 chromosomes are genetically unique but phenotypically identical.
-
-## Changes Required
-
-### 1. LRU Cache Trimming
-
-**Location:** `gpu_fuzzy_trader/evolution/evox_runner.py` → `_trim_global_metrics_cache()`
-
-**Current implementation:**
-```python
-def _trim_global_metrics_cache(global_metrics_cache, max_size):
-    """Bound run-wide eval cache size to limit RAM growth across long runs."""
-    overflow = len(global_metrics_cache) - int(max_size)
-    if overflow <= 0:
-        return
-    import random as _trim_random
-    keys_to_remove = _trim_random.sample(
-        list(global_metrics_cache.keys()), k=overflow,
-    )
-    for key in keys_to_remove:
-        global_metrics_cache.pop(key, None)
-```
-
-**Problem:** Random eviction destroys useful cached results. With 200 pop × 2 evals/gen = 400 sims/gen and cache size 1200, the cache fills in ~3 generations. Random eviction means parents evaluated in gen 1 are likely evicted before offspring in gen 2 are evaluated, causing cache miss rates >90%.
-
-**Fix:** Use FIFO eviction (remove oldest entries first). Python dicts preserve insertion order (3.7+), so we can just pop from the front:
+In `_jax_simulate_equity_batch()`, the scan `step` function computes PnL from the entry bar's forward-looking labels and **immediately adds it to equity**:
 
 ```python
-def _trim_global_metrics_cache(global_metrics_cache, max_size):
-    """Bound run-wide eval cache size to limit RAM growth across long runs.
-    
-    Uses FIFO eviction (oldest entries first) to preserve recent evaluations
-    and maximize cache hit rates across generations.
-    """
-    overflow = len(global_metrics_cache) - int(max_size)
-    if overflow <= 0:
-        return
-    # Remove oldest entries (dict preserves insertion order)
-    keys_to_remove = list(global_metrics_cache.keys())[:overflow]
-    for key in keys_to_remove:
-        global_metrics_cache.pop(key, None)
+# CURRENT (WRONG): equity grows at ENTRY
+gross_pnl = position_notional * (price_return_pct / 100.0)
+net_pnl = gross_pnl - fee
+new_equity = equity + net_pnl   # ← future return credited NOW
 ```
 
-### 2. Phenotype-Collapse Recovery Trigger
+The `_jax_release_open_slots` function only frees exposure slots — it does NOT update equity. By contrast, the CPU engine (`cpu_engine.py:670`) correctly defers PnL: `equity += pos["net_pnl"]` happens only in `_release_due_positions`.
 
-**Location:** `gpu_fuzzy_trader/evolution/evox_runner.py` → `_should_inject_diversity_recovery()`
+**Impact:** Equity grows on unrealized gains → next bar's position size is inflated → exponential compounding → 953% max_return with sequential sampling.
 
-**Current implementation:**
-```python
-def _should_inject_diversity_recovery(
-    population_unique_ratio: float,
-    stage_params: Phase2StageParams | None = None,
-    *,
-    pareto_size: int = 0,
-    plateau_streak: int = 0,
-    pop_size: int = 0,
-    valid_count: int = 0,
-) -> bool:
-    if not bool(getattr(_cfg, "PHASE2_DIVERSITY_RECOVERY_ENABLED", True)):
-        return False
-    if (
-        population_unique_ratio
-        < _diversity_recovery_min_unique_ratio(stage_params)
-    ):
-        return True
-    collapse_threshold = max(2, int(pop_size) // 40)
-    if (
-        pareto_size > 0
-        and pareto_size <= collapse_threshold
-        and int(plateau_streak) >= 2
-    ):
-        return True
-    if _should_viability_recovery(
-        stage_params,
-        valid_count=valid_count,
-        plateau_streak=plateau_streak,
-    ):
-        return True
-    return False
-```
+## Changes
 
-**Problem:** The function already has a `pareto_size` parameter and checks for small Pareto fronts, but the threshold is `pop_size // 40` (e.g., 200 // 40 = 5). This is too lenient — logs show `pareto=1` for 7+ consecutive generations with `pop_unique=1.00` (all 200 chromosomes genetically unique but phenotypically identical). The diversity recovery never fires because `population_unique_ratio=1.00` passes the first check.
+### File: `gpu_fuzzy_trader/backtest/gpu_engine.py`
 
-**Fix:** Add an explicit phenotype-collapse trigger that fires when `pareto_size <= 3` and `plateau_streak >= 2`, regardless of genetic uniqueness:
+#### 1. Add `slot_pnl` to scan carry
+
+Currently the carry has `slot_release` (int32) and `slot_notional` (float). Add a third parallel array:
 
 ```python
-def _should_inject_diversity_recovery(
-    population_unique_ratio: float,
-    stage_params: Phase2StageParams | None = None,
-    *,
-    pareto_size: int = 0,
-    plateau_streak: int = 0,
-    pop_size: int = 0,
-    valid_count: int = 0,
-) -> bool:
-    if not bool(getattr(_cfg, "PHASE2_DIVERSITY_RECOVERY_ENABLED", True)):
-        return False
-    
-    # Check 1: Genetic uniqueness collapse
-    if (
-        population_unique_ratio
-        < _diversity_recovery_min_unique_ratio(stage_params)
-    ):
-        return True
-    
-    # Check 2: Pareto front collapse (existing logic)
-    collapse_threshold = max(2, int(pop_size) // 40)
-    if (
-        pareto_size > 0
-        and pareto_size <= collapse_threshold
-        and int(plateau_streak) >= 2
-    ):
-        return True
-    
-    # Check 3: Phenotype collapse (NEW) — Pareto front ≤3 despite high genetic uniqueness
-    # This catches the case where all 200 chromosomes are genetically unique
-    # but phenotypically identical (same trading behavior, different gene encoding)
-    if pareto_size > 0 and pareto_size <= 3 and int(plateau_streak) >= 2:
-        return True
-    
-    # Check 4: Viability recovery
-    if _should_viability_recovery(
-        stage_params,
-        valid_count=valid_count,
-        plateau_streak=plateau_streak,
-    ):
-        return True
-    
-    return False
+init_slot_pnl = jnp.zeros(max_slots, dtype=_JXF)  # NEW
+
+init_carry = (
+    init_cap, init_cap, _JXF(0.0), _JXF(0.0),  # equity, peak, dd, exposure
+    jnp.int32(0), jnp.int32(0), _JXF(0.0), _JXF(0.0),  # wins, losses, gp, gl
+    jnp.int32(0), jnp.int32(0),  # executed, skipped
+    jnp.bool_(False),  # ruined
+    _JXF(0.0), jnp.int32(0), _JXF(0.0),  # trade_return_sum, n_neg, neg_sq_sum
+    init_slot_release, init_slot_notional, init_slot_pnl,  # ← ADD pnl
+)
 ```
 
-### 3. Update Call Sites
+Also update the carry unpacking in `step()` and `final_carry`.
 
-**Location:** `gpu_fuzzy_trader/evolution/evox_runner.py` → `_run_nsga3()` and `_run_nsga2_fallback()`
+#### 2. Modify `_jax_release_open_slots` to return PnL to credit
 
-Both functions call `_should_inject_diversity_recovery()` and need to pass the current `len(pareto_indices)` as the `pareto_size` parameter.
+Change signature to also accept `slot_pnl` and return `equity_delta` + updated stats:
 
-**Verification:** The call already passes `pareto_size=len(pareto_indices)`, so no change needed here. Just verify both `_run_nsga3` and `_run_nsga2_fallback` pass this parameter.
+```python
+def _jax_release_open_slots(
+    slot_release, slot_notional, slot_pnl,  # ← added slot_pnl
+    open_exposure, current_row,
+) -> tuple[slot_release, slot_notional, slot_pnl, open_exposure, equity_delta,
+           wins_delta, losses_delta, gp_delta, gl_delta, trade_ret_sum_delta,
+           n_neg_delta, neg_sq_sum_delta]:
+```
+
+Logic: for each releasing slot, sum its `slot_pnl` into `equity_delta`, count wins/losses, update Sortino running stats.
+
+#### 3. Modify `_jax_open_slot` to store PnL
+
+Add `net_pnl` parameter. Store it in `slot_pnl` at the free slot index (currently stores 0).
+
+```python
+def _jax_open_slot(
+    slot_release, slot_notional, slot_pnl,  # ← added slot_pnl
+    open_exposure, release_idx,
+    position_notional, net_pnl,  # ← added net_pnl
+    can_trade,
+) -> tuple[slot_release, slot_notional, slot_pnl, open_exposure]:
+```
+
+#### 4. Remove entry-time equity/Sortino updates from scan `step`
+
+Currently at entry time:
+- `new_equity = equity + net_pnl` ← REMOVE (move to release)
+- `new_wins`, `new_losses`, `new_gross_profit`, `new_gross_loss` ← REMOVE (move to release)
+- `new_trade_return_sum`, `new_n_neg`, `new_neg_sq_sum` ← REMOVE (move to release)
+
+After the fix:
+- Entry only increments `executed` and updates `slot_*` arrays
+- Release updates equity + all stats from `equity_delta` returned by `_jax_release_open_slots`
+
+#### 5. Handle final unreleased positions after scan
+
+After `lax.scan` completes, positions opened in the last 288 bars are still open. Credit their PnL to equity (they were held to data end). Use a simple loop over remaining active slots adding their PnL to final equity.
+
+#### 6. Keep Sortino stats consistent
+
+The Sortino ratio at the end uses `trade_return_sum`, `n_neg`, `neg_sq_sum` which must now be accumulated at release time (not entry time). Update these in `_jax_release_open_slots`.
+
+## Key Constraints
+
+- The scan step MUST release before trading (current order is correct: release, then check signals, then open)
+- `max_drawdown` calculation depends on equity updates at release time — peak equity tracking must update when positions close
+- `new_peak = max(peak_equity, equity + equity_delta)` after release
+- `dd = (peak - new_equity) / peak * 100` after release + entry combined
+- Position sizing for new entries must use equity AFTER released PnL is added (current order achieves this)
 
 ## Acceptance Criteria
 
-1. `_trim_global_metrics_cache` uses FIFO eviction (first-inserted keys removed first)
-2. `_should_inject_diversity_recovery` triggers when `pareto_size <= 3 and plateau_streak >= 2`
-3. Both `_run_nsga3` and `_run_nsga2_fallback` pass `pareto_size=len(pareto_indices)` to `_should_inject_diversity_recovery`
-4. Existing tests pass: `PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/ -x -q`
-5. New test for phenotype-collapse trigger (verify it fires when `pareto_size=2, plateau_streak=3, pop_unique_ratio=1.0`)
+1. GPU engine `total_return_pct` matches CPU engine within ±1% for the SAME rule on the SAME data slice
+2. `win_rate`, `profit_factor`, `executed_trades` match CPU engine exactly
+3. `max_drawdown_pct` matches CPU engine within ±5%
+4. `sortino_ratio` matches CPU engine within ±5%
+5. Existing Phase 2 tests pass: `PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/ -x -q`
+6. New test: `test_gpu_cpu_return_parity` — compare GPU and CPU engine for 10 random chromosomes
 
-## Verification Commands
-
-```bash
-# Run tests
-PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/ -x -q
-
-# Verify FIFO eviction (manual check)
-grep -A 10 "def _trim_global_metrics_cache" gpu_fuzzy_trader/evolution/evox_runner.py
-
-# Verify phenotype trigger (manual check)
-grep -A 5 "Check 3: Phenotype collapse" gpu_fuzzy_trader/evolution/evox_runner.py
-```
-
-## Rationale
-
-### Why FIFO instead of random?
-
-With 200 pop × 2 evals/gen = 400 sims/gen and cache size 1200, the cache fills in ~3 generations. Random eviction means:
-- Gen 1: Evaluate 200 parents, cache them
-- Gen 2: Evaluate 200 offspring, cache them (cache now has 400 entries)
-- Gen 3: Evaluate 200 parents, cache them (cache now has 600 entries)
-- Gen 4: Evaluate 200 offspring, cache them (cache now has 800 entries)
-- Gen 5: Evaluate 200 parents, cache them (cache now has 1000 entries)
-- Gen 6: Evaluate 200 offspring, cache them (cache now has 1200 entries, at capacity)
-- Gen 7: Evaluate 200 parents → random eviction removes ~200 entries, likely including gen 1-2 parents that are still useful for offspring crossover
-
-FIFO eviction removes the oldest entries (gen 1-2), preserving recent evaluations (gen 5-6) that are more likely to be reused in gen 7 offspring.
-
-### Why phenotype collapse at pareto_size ≤ 3?
-
-Logs show multiple epochs with `pareto=1` for 7+ consecutive generations:
-```
-gen 4/15: pareto=1 mean_return=15.28% ... pop_viable=199
-gen 5/15: pareto=1 mean_return=15.28% ... pop_viable=199
-...
-gen 10/15: pareto=1 mean_return=15.28% ... pop_viable=200
-```
-
-This means 199 out of 200 chromosomes are dominated by one rule. The `pop_unique=1.00` (all genetically unique) is misleading — they're phenotypically identical (same trading behavior, different gene encoding due to sparse slots).
-
-Setting the threshold at `pareto_size <= 3` catches this collapse while allowing normal Pareto front diversity (typically 5-20 members). The `plateau_streak >= 2` requirement prevents false triggers during early transient convergence.
-
-## Notes
-
-- This is a medium-risk task (logic changes in evolution loop)
-- The FIFO change is low-risk (just changes eviction order)
-- The phenotype trigger is medium-risk (new logic path, but well-bounded)
-- Both changes should be tested on next Colab run to validate cache hit rates and Pareto front diversity
+## Files Changed
+- `gpu_fuzzy_trader/backtest/gpu_engine.py` (primary change)
+- `tests/test_gpu_engine.py` (new parity test)

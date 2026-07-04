@@ -1,24 +1,47 @@
 {
-  "task": "task-2",
-  "title": "Add Entry-Price Guard on GPU Engine",
+  "task_id": "task-2",
+  "role": "implementer",
   "status": "DONE",
-  "commit": "f451216",
-  "branch": "fix/gpu-entry-price-guard",
-  "base_branch": "main",
+  "commit": "b3966fd",
+  "branch": "fix/gpu-pnl-defer-to-release",
   "files_changed": [
     "gpu_fuzzy_trader/backtest/gpu_engine.py",
     "tests/unit/test_gpu_engine.py"
   ],
-  "tests": {
-    "entry_guard": "1 passed — test_invalid_entry_price_raises",
-    "full": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_gpu_engine.py tests/unit/test_cpu_engine.py -q -x: 147 passed"
-  },
-  "acceptance_criteria_met": [
-    "GPU engine raises ValueError on non-finite/non-positive label_open_next, matching CPU engine",
-    "Guard placed after entry=... and before division-by-entry calculations",
-    "Mirror test test_invalid_entry_price_raises added matching CPU engine pattern"
+  "summary": "Fixed GPU engine PnL timing by deferring PnL credit to position release (close) time instead of entry (open) time.",
+  "design_decisions": [
+    "Added slot_pnl array to JAX scan carry to store net PnL per open position slot",
+    "Sortino statistics are computed at entry time (not release) because trade_ret = net_pnl / equity requires entry-time equity, matching CPU engine behavior",
+    "Final release after scan credits remaining open positions' PnL to equity and counts wins/losses"
   ],
-  "notes": [
-    "Previous code-review fix (F1): added test_invalid_entry_price_raises to TestGPUBacktestEngineInit"
+  "tests_run": [
+    {
+      "command": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_gpu_engine.py -x -q",
+      "result": "61 passed (60 existing + 1 new parity test)",
+      "note": "All GPU engine tests pass"
+    },
+    {
+      "command": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_gpu_engine.py tests/unit/test_gpu_engine_jax_failure.py tests/unit/test_numba_ops.py tests/unit/test_encoder.py -x -q",
+      "result": "131 passed",
+      "note": "All related tests pass"
+    }
+  ],
+  "gpu_vs_cpu_parity": {
+    "test": "test_gpu_cpu_return_parity",
+    "description": "10 random chromosomes, binary + signed features, 120-row multi-symbol dataset",
+    "result": "PASS",
+    "metrics": {
+      "total_return_pct": "within ±1% of CPU",
+      "win_rate": "identical to CPU",
+      "profit_factor": "identical to CPU",
+      "executed_trades": "identical to CPU",
+      "max_drawdown_pct": "within ±5% of CPU",
+      "sortino_ratio": "within ±5% of CPU"
+    }
+  },
+  "notes_for_reviewer": [
+    "Sortino stats remain at entry time (not moved to release) because trade_ret = net_pnl / equity requires entry-time equity context — this matches the CPU engine's _simulate_rule_set_entries which also appends trade_return at entry",
+    "The fix changes equity dynamics significantly: with sequential sampling, previously an all-positive dataset would show 953% max_return; now it should show reasonable returns matching CPU",
+    "Pre-existing test failure in tests/unit/test_phase2_rule_pool.py::TestRobustReturnObjective::test_f3_uses_min_train_val_return is unrelated to this change"
   ]
 }

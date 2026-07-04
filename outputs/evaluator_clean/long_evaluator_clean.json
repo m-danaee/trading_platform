@@ -1,0 +1,14 @@
+{
+  "direction": "long",
+  "rules_set": [
+    {
+      "conditions": [
+        "[feat_0] IS Very High",
+        "symbol is SYM_A"
+      ],
+      "tp": 2.0,
+      "sl": 1.0,
+      "capital_pct": 30.0
+    }
+  ]
+}

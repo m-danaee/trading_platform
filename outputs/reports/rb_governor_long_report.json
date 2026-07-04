@@ -1,0 +1,148 @@
+{
+  "direction": "long",
+  "rb_score": -6902.431809009689,
+  "train_metrics": {
+    "direction": "long",
+    "total_return_pct": "0.9000063",
+    "sortino_ratio": 0.10000000517401439,
+    "max_drawdown_pct": "0.358064",
+    "win_rate": 75.0,
+    "account_ruined": false,
+    "loss_count": 1,
+    "time_closed_count": 0,
+    "raw_signal_count": 43,
+    "executed_trades": 4,
+    "final_equity": "1009.00006",
+    "profit_factor": "3.5000002",
+    "avg_position_notional": 250.0,
+    "skipped_min_notional_count": 39,
+    "max_simultaneous_positions": 4,
+    "max_total_open_exposure": 1000.0,
+    "per_symbol_metrics": {
+      "SYM_A": {
+        "trade_count": 4,
+        "win_rate": 75.0,
+        "net_pnl": "9.0"
+      }
+    }
+  },
+  "valid_metrics": {
+    "direction": "long",
+    "total_return_pct": "0.6000042",
+    "sortino_ratio": 0.06324555688474334,
+    "max_drawdown_pct": "0.47487015",
+    "win_rate": 50.0,
+    "account_ruined": false,
+    "loss_count": 2,
+    "time_closed_count": 0,
+    "raw_signal_count": 20,
+    "executed_trades": 4,
+    "final_equity": "1006.00006",
+    "profit_factor": "2.25",
+    "avg_position_notional": 250.0,
+    "skipped_min_notional_count": 16,
+    "max_simultaneous_positions": 4,
+    "max_total_open_exposure": 1000.0,
+    "per_symbol_metrics": {
+      "SYM_A": {
+        "trade_count": 4,
+        "win_rate": 50.0,
+        "net_pnl": "6.0"
+      }
+    }
+  },
+  "train_minus_valid_return_pct": 0.3000020980834961,
+  "train_valid_ratio": 1.5,
+  "n_positive_single_rules": 2,
+  "selected_rules": 1,
+  "compose_history": [
+    {
+      "step": 1,
+      "action": "seed",
+      "score": -6902.431809009689,
+      "train_return_pct": 0.9000062942504883,
+      "valid_return_pct": 0.6000041961669922,
+      "rules": 1
+    }
+  ],
+  "risk_history": [
+    {
+      "pass": 0,
+      "rule_index": -1,
+      "score": -6902.431809009689,
+      "train_return_pct": 0.9000062942504883,
+      "valid_return_pct": 0.6000041961669922,
+      "train_pf": 3.500000238418579,
+      "valid_pf": 2.25
+    }
+  ],
+  "profit_amplifier": {
+    "enabled": false,
+    "accepted": false,
+    "baseline_profit_amp_objective": -408.5115791876898,
+    "baseline_certificate": {
+      "passed": false,
+      "reasons": [
+        "full_sample_positive_good_failed"
+      ],
+      "train_return_pct": 0.9000062942504883,
+      "valid_return_pct": 0.6000041961669922,
+      "train_profit_factor": 3.500000238418579,
+      "valid_profit_factor": 2.25,
+      "train_drawdown_pct": 0.3580639958381653,
+      "valid_drawdown_pct": 0.47487014532089233,
+      "train_trades": 4,
+      "valid_trades": 4
+    },
+    "baseline_monthly_metrics": [],
+    "reason": "disabled"
+  },
+  "top_single_rules": [
+    {
+      "rank": 1,
+      "score": -6898.931809009689,
+      "train_return_pct": 0.9000062942504883,
+      "valid_return_pct": 0.6000041961669922,
+      "train_pf": 3.500000238418579,
+      "valid_pf": 2.25,
+      "valid_dd": 0.47487014532089233,
+      "valid_trades": 4,
+      "conditions": [
+        "[feat_0] IS Very High",
+        "symbol is SYM_A"
+      ],
+      "rule": {
+        "conditions": [
+          "[feat_0] IS Very High",
+          "symbol is SYM_A"
+        ],
+        "tp": 2.0,
+        "sl": 1.0,
+        "capital_pct": 30.0
+      }
+    },
+    {
+      "rank": 2,
+      "score": -8707.639646600817,
+      "train_return_pct": -0.29999613761901855,
+      "valid_return_pct": -0.7917881011962891,
+      "train_pf": 0.6428571939468384,
+      "valid_pf": 0.05738556757569313,
+      "valid_dd": 0.8395915627479553,
+      "valid_trades": 4,
+      "conditions": [
+        "[feat_1] IS Very High",
+        "symbol is SYM_A"
+      ],
+      "rule": {
+        "conditions": [
+          "[feat_1] IS Very High",
+          "symbol is SYM_A"
+        ],
+        "tp": 2.0,
+        "sl": 1.0,
+        "capital_pct": 30.0
+      }
+    }
+  ]
+}

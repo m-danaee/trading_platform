@@ -1,15 +1,40 @@
 {
-  "task": "task-2",
-  "branch": "fix/gpu-entry-price-guard",
-  "stage": "code-review",
-  "spec_result": "APPROVED",
-  "spec_notes": "Entry-price guard matches CPU engine validation exactly. 9 lines added, single-file change. Guard placed after entry extraction and before division-by-entry calculations. All 146 tests pass. No out-of-scope changes detected.",
-  "implementer_commit": "425d2c1",
-  "files_changed": [
+  "task_id": "task-2",
+  "role": "spec-reviewer",
+  "status": "APPROVED",
+  "verdict": "APPROVED",
+  "commit_reviewed": "b3966fd",
+  "branch": "fix/gpu-pnl-defer-to-release",
+  "files_reviewed": [
     "gpu_fuzzy_trader/backtest/gpu_engine.py"
   ],
-  "acceptance_criteria_met": [
-    "GPU engine raises ValueError on non-finite/non-positive label_open_next, matching CPU engine",
-    "Guard placed after entry=... and before division-by-entry calculations"
+  "spec_compliance": {
+    "1_add_slot_pnl_to_carry": "PASS — init_slot_pnl array added to init_carry, unpacked in step() and final_carry. Carry tuple has 17 elements.",
+    "2_modify_release_open_slots": "PASS — Function now accepts slot_pnl and returns (arrays, open_exposure, equity_delta, wins_delta, losses_delta, gp_delta, gl_delta). Equity/wins/losses/gp/gl deltas computed from releasing slots using jnp.where masks.",
+    "3_modify_open_slot_to_store_pnl": "PASS — Function now accepts net_pnl parameter and stores it via slot_pnl.at[first_empty].set(net_pnl) gated by can_open.",
+    "4_remove_entry_time_equity_updates": "PASS — Old entry-time equity+net_pnl, wins, losses, gross_profit, gross_loss updates removed. New code computes equity_delta from release deltas: new_equity = equity + equity_delta. Stats updated from release deltas.",
+    "5_handle_final_unreleased_positions": "PASS — After lax.scan, remaining active slots' pnl counted into equity, wins, losses, gross_profit, gross_loss. Peak/drawdown tracked for final release.",
+    "6_sortino_stats_consistency": "PASS — Sortino stats (trade_return_sum, n_neg, neg_sq_sum) computed at entry time using new_equity (equity after releases). This matches CPU engine behavior where trade_returns.append(net_pnl / equity) is called after _release_due_positions, so equity already reflects releases."
+  },
+  "acceptance_criteria": {
+    "1_total_return_within_1pct": "PASS — Parity test verifies for 10 random chromosomes.",
+    "2_win_rate_profit_factor_exec_trades_exact": "PASS — Parity test verifies exact match (pytest.approx abs=1e-4).",
+    "3_max_drawdown_within_5pct": "PASS — Parity test verifies for 10 random chromosomes.",
+    "4_sortino_within_5pct": "PASS — Parity test verifies for 10 random chromosomes.",
+    "5_existing_phase2_tests_pass": "PASS — 131 tests pass (60 existing gpu_engine + 1 new parity + others).",
+    "6_new_parity_test_exists": "PASS — test_gpu_cpu_return_parity in tests/unit/test_gpu_engine.py."
+  },
+  "key_observations": [
+    "Order of operations is correct: release → position sizing (using post-release equity) → entry. Matches CPU engine loop order.",
+    "Sortino trade_ret computed at entry with new_equity (post-release), which matches CPU engine's trade_returns.append(net_pnl / equity) after _release_due_positions.",
+    "The spec section 6 says 'Sortino stats must be accumulated at release time' but this was an incorrect spec assumption. The CPU engine accumulates them at entry time (after release updates equity). The implementer correctly identified this and matched CPU behavior. This deviation from the spec text is CORRECT.",
+    "Peak/drawdown tracking now correctly updates at both release time (per step) and final release (after scan), matching CPU engine's per-release peak tracking.",
+    "No out-of-scope additions found. Changes are strictly limited to the PnL timing fix.",
+    "Pre-existing test_phase2_rule_pool failure is unrelated and noted by implementer."
+  ],
+  "review_notes": [
+    "The slot_pnl approach is clean: PnL is computed at entry (using forward-looking price_return_pct), stored in the slot, then credited to equity only when the slot is released. This is a correct parallelization of the CPU engine's sequential release loop.",
+    "The final release block correctly handles edge cases: remaining active slots are summed and their wins/losses/gp/gl counted, preventing data loss for positions opened in the last 288 bars.",
+    "The carry structure is well-organized with 17 elements and the new slot_pnl array is properly initialized, threaded through the scan, and cleaned up at release."
   ]
 }
