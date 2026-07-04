@@ -264,28 +264,61 @@ def _exposure_slot_capacity(
 def _jax_release_open_slots(
     slot_release: jnp.ndarray,
     slot_notional: jnp.ndarray,
+    slot_pnl: jnp.ndarray,
     open_exposure: jnp.ndarray,
     current_row: jnp.ndarray,
-) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    """Release positions due at or before current_row; reduce open exposure."""
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray,  # arrays
+           jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:  # scalar deltas
+    """Release positions due at or before current_row; credit PnL, reduce open exposure.
+
+    Returns updated slot arrays, new open_exposure, and deltas for:
+    equity, wins, losses, gross_profit, gross_loss.
+    Sortino statistics are accumulated at entry time (not here) so that
+    trade_ret = net_pnl / equity uses the correct entry-time equity.
+    """
     active = slot_release >= 0
     releasing = active & (slot_release <= current_row)
+
+    # PnL deltas from releasing slots
+    equity_delta = jnp.sum(jnp.where(releasing, slot_pnl, 0.0))
+    wins_delta = jnp.sum(jnp.where(
+        releasing & (slot_pnl > 0.0), 1, 0).astype(jnp.int32))
+    losses_delta = jnp.sum(jnp.where(
+        releasing & (slot_pnl < 0.0), 1, 0).astype(jnp.int32))
+    gp_delta = jnp.sum(jnp.where(
+        releasing & (slot_pnl > 0.0), slot_pnl, 0.0))
+    gl_delta = jnp.sum(jnp.where(
+        releasing & (slot_pnl < 0.0), jnp.abs(slot_pnl), 0.0))
+
+    # Notional release (free up exposure slots)
     release_sum = jnp.sum(jnp.where(releasing, slot_notional, 0.0))
     new_open_exposure = open_exposure - release_sum
+
+    # Clear released slots
     new_slot_release = jnp.where(releasing, -1, slot_release)
     new_slot_notional = jnp.where(releasing, 0.0, slot_notional)
-    return new_slot_release, new_slot_notional, new_open_exposure
+    new_slot_pnl = jnp.where(releasing, 0.0, slot_pnl)
+
+    return (new_slot_release, new_slot_notional, new_slot_pnl,
+            new_open_exposure,
+            equity_delta, wins_delta, losses_delta, gp_delta, gl_delta)
 
 
 def _jax_open_slot(
     slot_release: jnp.ndarray,
     slot_notional: jnp.ndarray,
+    slot_pnl: jnp.ndarray,
     open_exposure: jnp.ndarray,
     release_idx: jnp.ndarray,
     position_notional: jnp.ndarray,
+    net_pnl: jnp.ndarray,
     can_trade: jnp.ndarray,
-) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    """Reserve one open-slot and add notional to open exposure."""
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """Reserve one open-slot, store net_pnl, and add notional to open exposure.
+
+    Stores the trade's net_pnl in `slot_pnl` at the allocated slot so that
+    ``_jax_release_open_slots`` can credit the PnL when the position closes.
+    """
     empty_mask = slot_release < 0
     has_empty = jnp.any(empty_mask)
     first_empty = jnp.argmax(empty_mask.astype(jnp.int32))
@@ -301,9 +334,14 @@ def _jax_open_slot(
         slot_notional.at[first_empty].set(position_notional),
         slot_notional,
     )
+    new_slot_pnl = jnp.where(
+        can_open,
+        slot_pnl.at[first_empty].set(net_pnl),
+        slot_pnl,
+    )
     new_open_exposure = open_exposure + jnp.where(
         can_open, position_notional, 0.0)
-    return new_slot_release, new_slot_notional, new_open_exposure
+    return new_slot_release, new_slot_notional, new_slot_pnl, new_open_exposure
 
 
 @_maybe_partial_jit(static_argnums=(4, 5, 6, 7, 8, 9, 10))
@@ -333,6 +371,7 @@ def _jax_simulate_equity_batch(
     max_slots = int(max_open_slots)
     init_slot_release = jnp.full(max_slots, -1, dtype=jnp.int32)
     init_slot_notional = jnp.zeros(max_slots, dtype=_JXF)
+    init_slot_pnl = jnp.zeros(max_slots, dtype=_JXF)
     row_indices = jnp.arange(N, dtype=jnp.int32)
 
     def simulate_one(signal_mask):
@@ -359,6 +398,7 @@ def _jax_simulate_equity_batch(
             _JXF(0.0),   # neg_sq_sum
             init_slot_release,
             init_slot_notional,
+            init_slot_pnl,
         )
 
         def step(carry, x):
@@ -366,18 +406,36 @@ def _jax_simulate_equity_batch(
              wins, losses, gross_profit, gross_loss,
              executed, skipped, account_ruined,
              trade_return_sum, n_neg, neg_sq_sum,
-             slot_release, slot_notional) = carry
+             slot_release, slot_notional, slot_pnl) = carry
 
             is_sig = x[0]
             price_return_pct = x[1]
             current_row = x[2].astype(jnp.int32)
 
-            slot_release, slot_notional, open_exposure = _jax_release_open_slots(
-                slot_release, slot_notional, open_exposure, current_row)
+            # ----- 1. Release due positions and credit PnL -----
+            (slot_release, slot_notional, slot_pnl, open_exposure,
+             equity_delta, wins_delta, losses_delta, gp_delta, gl_delta
+             ) = _jax_release_open_slots(
+                slot_release, slot_notional, slot_pnl, open_exposure, current_row)
 
-            # Position sizing (after releasing due positions)
-            target = equity * capital_rate_f * leverage_f
-            max_exp = equity * max_exposure_rate_f * leverage_f
+            # Apply release deltas to equity and peak/drawdown tracking
+            new_equity = equity + equity_delta
+            new_peak = jnp.maximum(peak_equity, new_equity)
+            dd = jnp.where(
+                new_peak > 0.0,
+                (new_peak - new_equity) / new_peak * 100.0,
+                100.0,
+            )
+            new_max_dd = jnp.maximum(max_dd, dd)
+
+            new_wins = wins + wins_delta
+            new_losses = losses + losses_delta
+            new_gross_profit = gross_profit + gp_delta
+            new_gross_loss = gross_loss + gl_delta
+
+            # ----- 2. Position sizing (after releases, using new_equity) -----
+            target = new_equity * capital_rate_f * leverage_f
+            max_exp = new_equity * max_exposure_rate_f * leverage_f
             remaining = jnp.maximum(0.0, max_exp - open_exposure)
             position_notional = jnp.minimum(target, remaining)
             has_empty = jnp.any(slot_release < 0)
@@ -389,26 +447,7 @@ def _jax_simulate_equity_batch(
             fee = position_notional * fee_rate_f
             net_pnl = gross_pnl - fee
 
-            trade_ret = jnp.where(
-                can_trade & (equity > 0.0), net_pnl / equity, 0.0)
-
-            new_equity = jnp.where(can_trade, equity + net_pnl, equity)
-            new_peak = jnp.maximum(peak_equity, new_equity)
-            dd = jnp.where(
-                new_peak > 0.0,
-                (new_peak - new_equity) / new_peak * 100.0,
-                100.0,
-            )
-            new_max_dd = jnp.maximum(max_dd, dd)
-
-            new_wins = wins + jnp.where(
-                can_trade & (net_pnl > 0.0), 1, 0).astype(jnp.int32)
-            new_losses = losses + jnp.where(
-                can_trade & (net_pnl < 0.0), 1, 0).astype(jnp.int32)
-            new_gross_profit = gross_profit + jnp.where(
-                can_trade & (net_pnl > 0.0), net_pnl, 0.0)
-            new_gross_loss = gross_loss + jnp.where(
-                can_trade & (net_pnl < 0.0), jnp.abs(net_pnl), 0.0)
+            # ----- 3. Entry: store PnL in slot (NOT added to equity yet) -----
             new_executed = executed + jnp.where(
                 can_trade, 1, 0).astype(jnp.int32)
             new_skipped = skipped + jnp.where(
@@ -417,7 +456,9 @@ def _jax_simulate_equity_batch(
                 1, 0).astype(jnp.int32)
             new_ruined = account_ruined | (new_equity <= 0.0)
 
-            # Running Sortino stats
+            # Sortino stats: compute at entry with correct equity (after releases)
+            trade_ret = jnp.where(
+                can_trade & (new_equity > 0.0), net_pnl / new_equity, 0.0)
             new_trade_return_sum = trade_return_sum + jnp.where(
                 can_trade, trade_ret, 0.0)
             is_neg = can_trade & (trade_ret < 0.0)
@@ -425,13 +466,16 @@ def _jax_simulate_equity_batch(
             new_neg_sq_sum = neg_sq_sum + jnp.where(
                 is_neg, trade_ret ** 2, 0.0)
 
+            # Store net_pnl in slot (will be credited at release)
             release_idx = release_indices[current_row]
-            slot_release, slot_notional, new_open_exposure = _jax_open_slot(
+            slot_release, slot_notional, slot_pnl, new_open_exposure = _jax_open_slot(
                 slot_release,
                 slot_notional,
+                slot_pnl,
                 open_exposure,
                 release_idx,
                 position_notional,
+                net_pnl,
                 can_trade,
             )
 
@@ -440,7 +484,7 @@ def _jax_simulate_equity_batch(
                 new_wins, new_losses, new_gross_profit, new_gross_loss,
                 new_executed, new_skipped, new_ruined,
                 new_trade_return_sum, new_n_neg, new_neg_sq_sum,
-                slot_release, slot_notional,
+                slot_release, slot_notional, slot_pnl,
             )
             return new_carry, None
 
@@ -451,7 +495,34 @@ def _jax_simulate_equity_batch(
          wins, losses, gross_profit, gross_loss,
          executed, skipped, account_ruined,
          trade_return_sum, n_neg, neg_sq_sum,
-         _slot_release, _slot_notional) = final_carry
+         _slot_release, _slot_notional, slot_pnl) = final_carry
+
+        # ----- 4. Final release: credit PnL from positions still open at scan end -----
+        slot_active = _slot_release >= 0
+        remaining_pnl = jnp.sum(jnp.where(slot_active, slot_pnl, 0.0))
+        equity = equity + remaining_pnl
+        new_peak = jnp.maximum(peak_equity, equity)
+        dd_final = jnp.where(
+            new_peak > 0.0,
+            (new_peak - equity) / new_peak * 100.0,
+            100.0,
+        )
+        max_dd = jnp.maximum(max_dd, dd_final)
+        peak_equity = new_peak
+
+        # Count remaining wins/losses/gross-PnL from final-release positions
+        remaining_wins = jnp.sum(jnp.where(
+            slot_active & (slot_pnl > 0.0), 1, 0).astype(jnp.int32))
+        remaining_losses = jnp.sum(jnp.where(
+            slot_active & (slot_pnl < 0.0), 1, 0).astype(jnp.int32))
+        remaining_gp = jnp.sum(jnp.where(
+            slot_active & (slot_pnl > 0.0), slot_pnl, 0.0))
+        remaining_gl = jnp.sum(jnp.where(
+            slot_active & (slot_pnl < 0.0), jnp.abs(slot_pnl), 0.0))
+        wins = wins + remaining_wins
+        losses = losses + remaining_losses
+        gross_profit = gross_profit + remaining_gp
+        gross_loss = gross_loss + remaining_gl
 
         total_return_pct = (equity / init_cap - 1.0) * 100.0
         raw_signal_count = jnp.sum(signal_mask).astype(_JXF)

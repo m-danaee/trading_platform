@@ -969,4 +969,147 @@ class TestGPUCPUNumericalParity:
         assert cpu_batch_results[1]["executed_trades"] == cpu_single_0["executed_trades"]
 
 
+# ---------------------------------------------------------------------------
+# Test: GPU-CPU return parity after PnL timing fix (Task 2)
+# ---------------------------------------------------------------------------
 
+class TestGPUCPUReturnParity:
+    """Compare GPU and CPU engine for 10 random chromosomes (Task 2 acceptance criteria).
+
+    After fixing PnL timing (defer to release), GPU should match CPU within:
+      - total_return_pct: ±1%
+      - win_rate, profit_factor, executed_trades: exact
+      - max_drawdown_pct: ±5%
+      - sortino_ratio: ±5%
+    """
+
+    def _make_parity_df(self, n: int = 120) -> pd.DataFrame:
+        """Build a multi-symbol DataFrame with mixed TP/SL/time-exit outcomes."""
+        rng = np.random.default_rng(42)
+        entry = 100.0
+        symbols = ["AAPL"] * (n // 2) + ["MSFT"] * (n - n // 2)
+        bar_idx = []
+        for sym in ["AAPL", "MSFT"]:
+            bar_idx.extend(range(n // 2))
+        bar_idx = bar_idx[:n]
+        label_max = entry + rng.uniform(0, 8, n)
+        label_min = entry - rng.uniform(0, 5, n)
+        label_close = entry + rng.uniform(-3, 3, n)
+        mbm = rng.integers(0, 2, n)
+        # Two features: binary and signed (for richer chromosome diversity)
+        feat_binary = rng.integers(0, 2, n)
+        feat_signed = rng.uniform(-1.0, 1.0, n)
+        return pd.DataFrame({
+            "symbol": symbols,
+            "datetime": pd.date_range("2024-01-01", periods=n, freq="5min"),
+            "_symbol_bar_index": bar_idx,
+            "label_open_next": [entry] * n,
+            "label_max_288": label_max,
+            "label_min_288": label_min,
+            "label_close_288": label_close,
+            "label_max_before_min": mbm,
+            "feat_binary": feat_binary,
+            "feat_signed": feat_signed,
+        })
+
+    def _random_chromosomes(self, n_chrom: int = 10) -> np.ndarray:
+        """Generate random chromosomes for binary + signed features."""
+        rng = np.random.default_rng(123)
+        chroms = []
+        for _ in range(n_chrom):
+            binary_gene = int(rng.integers(0, 2))    # binary: 0 or 1
+            signed_gene = int(rng.integers(0, 10))   # signed: 0-9
+            chroms.append([binary_gene, signed_gene])
+        return np.array(chroms, dtype=np.int32)
+
+    def test_gpu_cpu_return_parity(self):
+        """GPU engine results must match CPU engine within specified tolerances
+        for 10 random chromosomes, confirming the PnL-timing fix (Task 2)."""
+        df = self._make_parity_df(n=120)
+        feature_modes = {"feat_binary": "binary", "feat_signed": "signed"}
+
+        # Use modest leverage and conservative parameters so exposure limits
+        # are not the dominant factor — PnL timing is what we're testing.
+        gpu_eng = GPUBacktestEngine(
+            df, feature_modes, "long",
+            initial_capital=100_000.0,
+            max_hold_candles=2,
+            leverage=1.0,
+            max_total_exposure_pct=100.0,
+            fee_pct=0.0,
+            min_position_notional=0.01,
+        )
+        cpu_eng = CPUBacktestEngine(
+            df, feature_modes, "long",
+            initial_capital=100_000.0,
+            max_hold_candles=2,
+            leverage=1.0,
+            max_total_exposure_pct=100.0,
+            fee_pct=0.0,
+            min_position_notional=0.01,
+        )
+
+        chroms = self._random_chromosomes(n_chrom=10)
+        gpu_results = gpu_eng.simulate_rule_batch(
+            chroms, tp=4.0, sl=2.0, capital_pct=50.0)
+        cpu_results = cpu_eng.simulate_rule_batch(
+            chroms, tp=4.0, sl=2.0, capital_pct=50.0)
+
+        assert len(gpu_results) == 10
+        assert len(cpu_results) == 10
+
+        failures: list[str] = []
+        for i in range(10):
+            g = gpu_results[i]
+            c = cpu_results[i]
+            idx = i + 1
+
+            # 1. total_return_pct within ±1% (relative to CPU return span)
+            cpu_ret = c["total_return_pct"]
+            gpu_ret = g["total_return_pct"]
+            ret_tol = max(0.01, abs(cpu_ret) * 0.01)  # ±1% of abs(cpu_ret), floor 0.01
+            if abs(gpu_ret - cpu_ret) > ret_tol:
+                failures.append(
+                    f"Chrom {idx}: total_return_pct GPU={gpu_ret:.4f} CPU={cpu_ret:.4f} "
+                    f"diff={abs(gpu_ret-cpu_ret):.4f} tol={ret_tol:.4f}"
+                )
+
+            # 2. win_rate, profit_factor, executed_trades match exactly
+            try:
+                assert g["win_rate"] == pytest.approx(c["win_rate"], abs=1e-4)
+            except AssertionError:
+                failures.append(
+                    f"Chrom {idx}: win_rate GPU={g['win_rate']:.4f} CPU={c['win_rate']:.4f}")
+            try:
+                assert g["profit_factor"] == pytest.approx(c["profit_factor"], abs=1e-4)
+            except AssertionError:
+                failures.append(
+                    f"Chrom {idx}: profit_factor GPU={g['profit_factor']:.4f} "
+                    f"CPU={c['profit_factor']:.4f}")
+            if g["executed_trades"] != c["executed_trades"]:
+                failures.append(
+                    f"Chrom {idx}: executed_trades GPU={g['executed_trades']} "
+                    f"CPU={c['executed_trades']}")
+
+            # 3. max_drawdown_pct within ±5% (relative)
+            cpu_dd = c["max_drawdown_pct"]
+            gpu_dd = g["max_drawdown_pct"]
+            dd_tol = max(0.5, abs(cpu_dd) * 0.05)  # ±5% of abs(cpu_dd), floor 0.5
+            if abs(gpu_dd - cpu_dd) > dd_tol:
+                failures.append(
+                    f"Chrom {idx}: max_drawdown_pct GPU={gpu_dd:.4f} CPU={cpu_dd:.4f} "
+                    f"diff={abs(gpu_dd-cpu_dd):.4f} tol={dd_tol:.4f}"
+                )
+
+            # 4. sortino_ratio within ±5% (relative)
+            cpu_sort = c["sortino_ratio"]
+            gpu_sort = g["sortino_ratio"]
+            sort_tol = max(0.05, abs(cpu_sort) * 0.05)  # ±5%, floor 0.05
+            if abs(gpu_sort - cpu_sort) > sort_tol:
+                failures.append(
+                    f"Chrom {idx}: sortino_ratio GPU={gpu_sort:.4f} CPU={cpu_sort:.4f} "
+                    f"diff={abs(gpu_sort-cpu_sort):.4f} tol={sort_tol:.4f}"
+                )
+
+        assert not failures, (
+            "GPU-CPU parity failures:\n" + "\n".join(failures))
