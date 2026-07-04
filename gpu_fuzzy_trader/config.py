@@ -254,6 +254,13 @@ MAX_TOTAL_EXPOSURE_PCT = 100.0
 #   Lower  → more micro-trades counted toward support metrics.
 MIN_POSITION_NOTIONAL = 1.0
 
+# MAX_TIME_EXIT_RETURN_PCT — max absolute return for time-exit trades (no TP/SL hit).
+# A time-exit should not out-earn a full TP hit. This caps the fallback return
+# when a trade holds to MAX_HOLD_CANDLES without hitting TP or SL, preventing
+# unbounded close_ret from distorting rule metrics during Phase 2 evolution.
+# Default ±50% is a generous ceiling; typical TP values are 2-4%.
+MAX_TIME_EXIT_RETURN_PCT = 50.0
+
 
 # =============================================================================
 # Phase 0 — Logging

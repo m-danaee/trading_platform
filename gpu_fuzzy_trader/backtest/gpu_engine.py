@@ -222,6 +222,7 @@ def _jax_compute_trade_outcomes(
     """
     tp_f = _JXF(tp)
     sl_f = _JXF(sl)
+    time_exit_cap = _JXF(_cfg.MAX_TIME_EXIT_RETURN_PCT)
 
     # Long path
     long_hit_tp = max_ret >= tp_f
@@ -230,7 +231,8 @@ def _jax_compute_trade_outcomes(
     long_both_result = jnp.where(max_before_min == 1, tp_f, -sl_f)
     long_result = jnp.where(
         long_both_hit, long_both_result,
-        jnp.where(long_hit_tp, tp_f, jnp.where(long_hit_sl, -sl_f, close_ret)),
+        jnp.where(long_hit_tp, tp_f, jnp.where(
+            long_hit_sl, -sl_f, jnp.clip(close_ret, -time_exit_cap, time_exit_cap))),
     )
 
     # Short path
@@ -241,7 +243,7 @@ def _jax_compute_trade_outcomes(
     short_result = jnp.where(
         short_both_hit, short_both_result,
         jnp.where(short_hit_tp, tp_f, jnp.where(
-            short_hit_sl, -sl_f, -close_ret)),
+            short_hit_sl, -sl_f, jnp.clip(-close_ret, -time_exit_cap, time_exit_cap))),
     )
 
     return jnp.where(is_long, long_result, short_result)

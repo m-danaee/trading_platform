@@ -542,6 +542,22 @@ class TestTradeOutcomeLong:
         assert ret == pytest.approx(1.5)
         assert reason == "Time_288"
 
+    def test_time_exit_clipped_positive(self):
+        """Long time-exit close_ret above cap is clipped."""
+        # close_288=160.0 with entry=100.0 → close_ret=60% → clipped to 50%
+        eng = self._engine(max_288=101.0, min_288=99.0, close_288=160.0, mbm=1)
+        ret, reason = eng._build_trade_outcome_single(0, tp=4.0, sl=2.0)
+        assert ret == pytest.approx(50.0)
+        assert reason == "Time_288"
+
+    def test_time_exit_clipped_negative(self):
+        """Long time-exit close_ret below -cap is clipped."""
+        # close_288=40.0 with entry=100.0 → close_ret=-60% → clipped to -50%
+        eng = self._engine(max_288=101.0, min_288=99.0, close_288=40.0, mbm=1)
+        ret, reason = eng._build_trade_outcome_single(0, tp=4.0, sl=2.0)
+        assert ret == pytest.approx(-50.0)
+        assert reason == "Time_288"
+
 
 class TestTradeOutcomeShort:
     """Test _build_trade_outcome_single for short direction."""
@@ -596,6 +612,22 @@ class TestTradeOutcomeShort:
         # close_ret = 1.5%, short returns -1.5%
         ret, reason = eng._build_trade_outcome_single(0, tp=4.0, sl=2.0)
         assert ret == pytest.approx(-1.5)
+        assert reason == "Time_288"
+
+    def test_time_exit_short_clipped_positive(self):
+        """Short time-exit -close_ret above cap is clipped."""
+        # close_288=40.0 with entry=100.0 → close_ret=-60% → -close_ret=+60% → clipped to 50%
+        eng = self._engine(max_288=101.0, min_288=99.0, close_288=40.0, mbm=1)
+        ret, reason = eng._build_trade_outcome_single(0, tp=4.0, sl=2.0)
+        assert ret == pytest.approx(50.0)
+        assert reason == "Time_288"
+
+    def test_time_exit_short_clipped_negative(self):
+        """Short time-exit -close_ret below -cap is clipped."""
+        # close_288=160.0 with entry=100.0 → close_ret=+60% → -close_ret=-60% → clipped to -50%
+        eng = self._engine(max_288=101.0, min_288=99.0, close_288=160.0, mbm=1)
+        ret, reason = eng._build_trade_outcome_single(0, tp=4.0, sl=2.0)
+        assert ret == pytest.approx(-50.0)
         assert reason == "Time_288"
 
 

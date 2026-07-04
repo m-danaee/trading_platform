@@ -284,6 +284,20 @@ class TestComputeTradeOutcomes:
             max_r, min_r, close_r, mbm, tp=4.0, sl=2.0, is_long=True))
         assert result[0] == pytest.approx(1.5)
 
+    def test_long_time_exit_clipped_positive(self):
+        """Long time-exit close_ret above cap is clipped."""
+        max_r, min_r, close_r, mbm = self._arrays([1.0], [-1.0], [60.0], [1])
+        result = np.asarray(_jax_compute_trade_outcomes(
+            max_r, min_r, close_r, mbm, tp=4.0, sl=2.0, is_long=True))
+        assert result[0] == pytest.approx(50.0)
+
+    def test_long_time_exit_clipped_negative(self):
+        """Long time-exit close_ret below -cap is clipped."""
+        max_r, min_r, close_r, mbm = self._arrays([1.0], [-1.0], [-60.0], [1])
+        result = np.asarray(_jax_compute_trade_outcomes(
+            max_r, min_r, close_r, mbm, tp=4.0, sl=2.0, is_long=True))
+        assert result[0] == pytest.approx(-50.0)
+
     def test_short_tp_only(self):
         # Short TP: min_ret <= -tp
         max_r, min_r, close_r, mbm = self._arrays([1.0], [-5.0], [2.0], [1])
@@ -316,6 +330,22 @@ class TestComputeTradeOutcomes:
         result = np.asarray(_jax_compute_trade_outcomes(
             max_r, min_r, close_r, mbm, tp=4.0, sl=2.0, is_long=False))
         assert result[0] == pytest.approx(-1.5)
+
+    def test_short_time_exit_clipped_positive(self):
+        """Short time-exit -close_ret above cap is clipped."""
+        max_r, min_r, close_r, mbm = self._arrays([1.0], [-1.0], [-60.0], [1])
+        # -close_ret = 60.0 > 50.0 → clipped to 50.0
+        result = np.asarray(_jax_compute_trade_outcomes(
+            max_r, min_r, close_r, mbm, tp=4.0, sl=2.0, is_long=False))
+        assert result[0] == pytest.approx(50.0)
+
+    def test_short_time_exit_clipped_negative(self):
+        """Short time-exit -close_ret below -cap is clipped."""
+        max_r, min_r, close_r, mbm = self._arrays([1.0], [-1.0], [60.0], [1])
+        # -close_ret = -60.0 < -50.0 → clipped to -50.0
+        result = np.asarray(_jax_compute_trade_outcomes(
+            max_r, min_r, close_r, mbm, tp=4.0, sl=2.0, is_long=False))
+        assert result[0] == pytest.approx(-50.0)
 
     def test_vectorized_batch(self):
         """Multiple rows processed simultaneously."""
