@@ -37,6 +37,36 @@ from gpu_fuzzy_trader.phases.phase2_support import (
 logger = logging.getLogger(__name__)
 
 
+def compute_cluster_generation_budgets(
+    total_gens: int,
+    cluster_ids: list[str],
+) -> dict[str, int]:
+    """Split *total_gens* across *cluster_ids* (base + remainder).
+
+    Each cluster receives ``total_gens // len(cluster_ids)`` generations;
+    the first ``total_gens % len(cluster_ids)`` clusters get one extra.
+
+    Parameters
+    ----------
+    total_gens : int
+        Total generation budget across all clusters.
+    cluster_ids : list[str]
+        Sorted list of cluster identifiers.
+
+    Returns
+    -------
+    dict[str, int]
+        Mapping ``{cluster_id: generation_budget}``.
+    """
+    k = max(1, len(cluster_ids))
+    base = max(1, total_gens // k)
+    remainder = total_gens % k
+    return {
+        cid: base + (1 if idx < remainder else 0)
+        for idx, cid in enumerate(cluster_ids)
+    }
+
+
 def _derive_island_seed(base_seed: int | None, island_id: str) -> int | None:
     """Return a deterministic but distinct seed per island from base seed + id.
 
@@ -348,14 +378,8 @@ def _run_cluster_islands(
 ) -> list[dict]:
     cluster_ids = sorted(cluster_map.keys(),
                          key=lambda x: int(x) if x.isdigit() else x)
-    n_clusters = len(cluster_ids)
     total_gens = int(_cfg.PHASE2_ISLAND_TOTAL_GENERATIONS)
-    base_gens = max(1, total_gens // max(1, n_clusters))
-    remainder = total_gens % max(1, n_clusters)
-    cluster_budgets = {
-        cid: base_gens + (1 if idx < remainder else 0)
-        for idx, cid in enumerate(cluster_ids)
-    }
+    cluster_budgets = compute_cluster_generation_budgets(total_gens, cluster_ids)
     epoch_gens = int(_cfg.PHASE2_ISLAND_EPOCH_GENERATIONS)
 
     generators: dict[str, Rule_Pool_Generator] = {}

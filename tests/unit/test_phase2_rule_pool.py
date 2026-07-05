@@ -1109,7 +1109,7 @@ class TestRulePoolGeneratorRun:
     def test_holdout_mode_builds_val_engine_for_admission(
         self, tmp_path, monkeypatch,
     ):
-        """In holdout_70_30 mode, val engine must be built for pool admission
+        """In holdout mode, val engine must be built for pool admission
         even when PHASE2_JOINT_TRAIN_VAL is False (regression: deployable=0)."""
         import gpu_fuzzy_trader.phases.phase2_rule_pool as m
         original_pool = m._POOL_PATHS.copy()
@@ -1132,7 +1132,7 @@ class TestRulePoolGeneratorRun:
                 val_df=val_df,
             )
             assert gen._val_engine is not None, (
-                "val engine must be built in holdout_70_30 mode for pool "
+                "val engine must be built in holdout mode for pool "
                 "admission, even when PHASE2_JOINT_TRAIN_VAL=False"
             )
         finally:
@@ -2169,7 +2169,7 @@ class TestIslandAwareTradeFloor:
             compute_phase2_objectives_from_metrics,
         )
 
-        monkeypatch.setattr(_cfg, "SPLIT_MODE", "holdout_70_30")
+        monkeypatch.setattr(_cfg, "SPLIT_MODE", "holdout")
         monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 25)
         monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
         monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)

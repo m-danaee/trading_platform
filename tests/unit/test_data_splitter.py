@@ -114,7 +114,7 @@ def _patch_split_paths(tmp_dir: str):
     }
 
     @contextlib.contextmanager
-    def _cm(split_mode: str = "holdout_70_30"):
+    def _cm(split_mode: str = "holdout"):
         config_mod.TRAIN_70_PATH = train_path
         config_mod.VALIDATION_30_PATH = val_path
         config_mod.VALIDATION_FITNESS_PATH = fitness_path
@@ -464,7 +464,7 @@ class TestPurgedWalkForwardSplit:
 
 
 class TestLoadCachedSplitIfFresh:
-    def _write_holdout_cache(self, tmp_path, monkeypatch, *, split_mode="holdout_70_30"):
+    def _write_holdout_cache(self, tmp_path, monkeypatch, *, split_mode="holdout"):
         import gpu_fuzzy_trader.config as config_mod
 
         csv_path = tmp_path / "train_2.csv"

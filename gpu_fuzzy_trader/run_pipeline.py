@@ -43,6 +43,9 @@ from gpu_fuzzy_trader.validation.rolling_cv import (
     mask_df_to_safe_region,
 )
 from gpu_fuzzy_trader.phases.phase2_rule_pool import Rule_Pool_Generator
+from gpu_fuzzy_trader.phases.phase2_island_scheduler import (
+    compute_cluster_generation_budgets,
+)
 from gpu_fuzzy_trader.phases.phase3_rule_set import Rule_Set_Selector
 from gpu_fuzzy_trader.phases.phase4_wf_optimizer import WalkForwardRiskOptimizer
 from gpu_fuzzy_trader.phases.phase5_oos import OOS_Evaluator
@@ -226,13 +229,12 @@ def _log_pipeline_config() -> None:
         )
     if _cfg.PHASE2_ISLAND_MODE == "cluster":
         total_gens = int(_cfg.PHASE2_ISLAND_TOTAL_GENERATIONS)
-        n_clusters = max(1, int(_cfg.PHASE2_N_CLUSTERS))
-        base_gens = max(1, total_gens // n_clusters)
-        remainder = total_gens % n_clusters
-        gens_per_cluster = base_gens + (1 if remainder else 0)
+        cluster_ids = [str(i) for i in range(max(1, int(_cfg.PHASE2_N_CLUSTERS)))]
+        budgets = compute_cluster_generation_budgets(total_gens, cluster_ids)
+        gens_per_cluster = budgets[cluster_ids[0]]
         epoch_gens = int(_cfg.PHASE2_ISLAND_EPOCH_GENERATIONS)
         phase2_fmt = (
-            "PHASE2 algo=%s pop=%d island_total=%d per_cluster=%d epoch=%d "
+            "PHASE2 algo=%s pop=%d island_total=%d per_cluster_gens=%d epoch=%d "
             "joint_train_val=%s migration=%s"
         )
         phase2_args = (
@@ -1005,7 +1007,7 @@ class Pipeline_Orchestrator:
         split_label = (
             "purged walk-forward"
             if _cfg.split_mode_is_purged_walk_forward()
-            else "holdout 70/30"
+            else f"holdout {_cfg.holdout_train_val_label()}"
         )
         logger.info("Splitting %s (%s) …", _cfg.TRAIN_CSV_PATH, split_label)
 

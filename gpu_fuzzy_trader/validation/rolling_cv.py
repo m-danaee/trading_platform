@@ -482,7 +482,7 @@ def write_cv_folds_manifest(
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
 
     payload: dict[str, Any] = {
-        "split_mode": getattr(_cfg, "SPLIT_MODE", "holdout_70_30"),
+        "split_mode": getattr(_cfg, "SPLIT_MODE", "holdout"),
         "config_fingerprint": purged_config_fingerprint(),
         "reference_rows": int(reference_rows),
         "n_folds": len(fold_list),

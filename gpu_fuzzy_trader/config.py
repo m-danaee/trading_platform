@@ -173,11 +173,13 @@ TAIL_DROP_ROWS = 288
 # Phases 4–5 always use persisted train_70 + validation_30 (see splitter.py).
 
 # SPLIT_MODE — how train_2.csv is divided before Phase 2.
-#   holdout_70_30       → single per-symbol 65/35 chronological split with embargo
+#   holdout             → single per-symbol chronological split with embargo
 #                         (288 bars dropped between train and val).
+#                         The actual train/val fraction is set by
+#                         HOLDOUT_TRAIN_FRACTION (see below).
 #   purged_walk_forward → expanding CV folds + primary tail holdout with embargo
-#                         (deprecated — use holdout_70_30 instead).
-SPLIT_MODE = "holdout_70_30"
+#                         (deprecated — use holdout instead).
+SPLIT_MODE = "holdout"
 
 # HOLDOUT_TRAIN_FRACTION — fraction of each symbol's bars reserved for training.
 # The remaining (1 - HOLDOUT_TRAIN_FRACTION) is validation, with an embargo gap
@@ -189,8 +191,22 @@ HOLDOUT_TRAIN_FRACTION = 0.65
 # look into the validation window.
 HOLDOUT_EMBARGO_CANDLES = 288
 
+
+def holdout_train_val_label(frac: float = HOLDOUT_TRAIN_FRACTION) -> str:
+    """Return a human-friendly 'train/val' label derived from *frac*.
+
+    Example: ``frac=0.65`` → ``"65/35"``, ``frac=0.70`` → ``"70/30"``.
+
+    Intended for log / status messages so the percentage is always in sync
+    with ``HOLDOUT_TRAIN_FRACTION`` instead of being baked into a string.
+    """
+    train_pct = int(round(frac * 100))
+    val_pct = 100 - train_pct
+    return f"{train_pct}/{val_pct}"
+
+
 # --- Purged walk-forward (when SPLIT_MODE == purged_walk_forward) ---
-# NOTE: Purged walk-forward CV is deprecated. SPLIT_MODE is now "holdout_70_30"
+# NOTE: Purged walk-forward CV is deprecated. SPLIT_MODE is now "holdout"
 # with HOLDOUT_TRAIN_FRACTION + HOLDOUT_EMBARGO_CANDLES (see above).
 # The purged-WF keys below are retained for reference but are inactive when
 # SPLIT_MODE != "purged_walk_forward".
@@ -1097,14 +1113,18 @@ PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN = 10
 PHASE2_ISLAND_MONTHLY_MIN_MONTHS = 4
 # Migration — exchange top elites between islands every N epochs.
 # PHASE2_MIGRATION_ENABLED — master switch for inter-island elite exchange.
-#   False (default) → migration block in _run_cluster_islands is skipped entirely;
-#                     islands still run independently and the final pool merge is unchanged.
-#   True            → guarded migration every PHASE2_MIGRATION_EPOCH_INTERVAL epochs.
-# History: migration was on by default but degraded locally-adapted elites
-# (foreign rules rarely match the receiver's symbol slice; the loose gates
-# admitted near-zero-return migrants that displaced up to 25% of converged locals).
-# Disabled True→False: overhead without benefit; config comment itself notes
-# migration degraded locally-adapted elites.
+#   True (default) → guarded migration every PHASE2_MIGRATION_EPOCH_INTERVAL
+#                     epochs. Migrants are re-evaluated on the receiver's data
+#                     via filter_migrants_for_cluster (admission gates, symbol
+#                     deployability) before seeding into the receiver's
+#                     population. This prevents near-zero-return migrants from
+#                     displacing converged locals.
+#   False           → migration block in _run_cluster_islands is skipped
+#                     entirely; islands run independently and the final pool
+#                     merge is unchanged.
+# Re-enabled with receiver-side re-evaluation guards after earlier versions
+# showed that loose admission gates admitted near-zero-return migrants that
+# displaced up to 25% of converged locals.
 PHASE2_MIGRATION_ENABLED: bool = True
 PHASE2_MIGRATION_EPOCH_INTERVAL = 1
 PHASE2_MIGRATION_TOP_K = 5

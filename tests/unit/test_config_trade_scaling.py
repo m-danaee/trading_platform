@@ -17,7 +17,7 @@ def purged_mode(monkeypatch):
 
 @pytest.fixture
 def holdout_mode(monkeypatch):
-    monkeypatch.setattr(cfg, "SPLIT_MODE", "holdout_70_30")
+    monkeypatch.setattr(cfg, "SPLIT_MODE", "holdout")
     cfg.set_purged_wf_reference_rows(700_000)
 
 

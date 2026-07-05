@@ -2667,7 +2667,7 @@ def _run_nsga3(
         ):
             corr_val = float(pareto_diag.get(corr_key, 0.0))
             if abs(corr_val) >= corr_threshold:
-                logger.debug(
+                logger.warning(
                     "Phase 2 [%s] gen %d: %s=%.2f (Pareto collapse risk)",
                     tag, gen + 1, corr_key, corr_val,
                 )

@@ -108,7 +108,7 @@ class TestConflict02JointTrainValFalseStrictGates:
 
 
 class TestConflict03HoldoutPhase4SplitsTailHoldout:
-  """holdout_70_30 + PHASE4_WF_SPLITS=4 + tail holdout → tiny WF windows."""
+  """holdout + PHASE4_WF_SPLITS=4 + tail holdout → tiny WF windows."""
 
   def test_four_splits_plus_tail_shrink_worst_window_below_trade_gate(self, monkeypatch):
       monkeypatch.setattr(_cfg, "PHASE4_WF_SPLITS", 4)
@@ -135,7 +135,7 @@ class TestConflict04PurgedLegacyPhase4TripleWf:
       assert _cfg.effective_phase4_wf_splits() == 1
 
   def test_holdout_mode_keeps_configured_splits(self, monkeypatch):
-      monkeypatch.setattr(_cfg, "SPLIT_MODE", "holdout_70_30")
+      monkeypatch.setattr(_cfg, "SPLIT_MODE", "holdout")
       monkeypatch.setattr(_cfg, "PHASE4_WF_SPLITS", 4)
       assert _cfg.effective_phase4_wf_splits() == 4
 
@@ -258,7 +258,7 @@ class TestConflict09StaleParquetCache:
       monkeypatch.setattr(_cfg, "SPLIT_MODE", "purged_walk_forward")
 
       manifest.write_text(json.dumps({
-          "split_mode": "holdout_70_30",
+          "split_mode": "holdout",
           "config_fingerprint": "stale",
       }), encoding="utf-8")
 
@@ -289,7 +289,7 @@ class TestConflict09StaleParquetCache:
       monkeypatch.setattr(_cfg, "VALIDATION_SELECTION_PATH", str(selection_pq))
       monkeypatch.setattr(_cfg, "CV_FOLDS_MANIFEST_PATH",
                           str(tmp_path / "missing.json"))
-      monkeypatch.setattr(_cfg, "SPLIT_MODE", "holdout_70_30")
+      monkeypatch.setattr(_cfg, "SPLIT_MODE", "holdout")
 
       assert load_cached_split_if_fresh() is None
 

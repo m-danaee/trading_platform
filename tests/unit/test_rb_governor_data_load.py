@@ -34,7 +34,7 @@ class TestRbGovernorDataLoad:
         monkeypatch.setattr(
             _cfg, "VALIDATION_SELECTION_PATH", paths["selection"])
         monkeypatch.setattr(_cfg, "CV_FOLDS_MANIFEST_PATH", paths["manifest"])
-        monkeypatch.setattr(_cfg, "SPLIT_MODE", "holdout_70_30")
+        monkeypatch.setattr(_cfg, "SPLIT_MODE", "holdout")
 
         train_df, val_df = _load_internal_split_frames_for_rb()
         assert len(train_df) > 0

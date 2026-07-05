@@ -427,7 +427,7 @@ class TestLoadAndSplitDataCache:
         manifest_path.write_text(
             json.dumps(
                 {
-                    "split_mode": "holdout_70_30",
+                    "split_mode": "holdout",
                     "config_fingerprint": purged_config_fingerprint(),
                     "reference_rows": 120,
                     "n_folds": 0,
@@ -450,7 +450,7 @@ class TestLoadAndSplitDataCache:
             _cfg, "VALIDATION_SELECTION_PATH", str(selection_path))
         monkeypatch.setattr(_cfg, "CV_FOLDS_MANIFEST_PATH", str(manifest_path))
         monkeypatch.setattr(_cfg, "DEBUG_SYMBOL_SCOPE_ENABLED", False)
-        monkeypatch.setattr(_cfg, "SPLIT_MODE", "holdout_70_30")
+        monkeypatch.setattr(_cfg, "SPLIT_MODE", "holdout")
 
         with patch("gpu_fuzzy_trader.run_pipeline.Data_Loader.load_dataset") as load_mock, \
                 patch("gpu_fuzzy_trader.run_pipeline.Data_Splitter.split_and_persist") as split_mock:

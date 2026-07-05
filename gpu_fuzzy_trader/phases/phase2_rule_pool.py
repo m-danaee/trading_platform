@@ -14,7 +14,8 @@ Chromosome encoding:
 Three objectives (all minimised):
     f1 = -sortino_ratio
     f2 = max_drawdown_pct
-    f3 = -win_rate
+    f3 = -(objective)  — objective driven by PHASE2_F3_OBJECTIVE
+                         (default ``"profit_factor"`` → f3 = -profit_factor).
 
 Penalties:
     support_penalty        — if executed_trades < MIN_TRADE_SUPPORT

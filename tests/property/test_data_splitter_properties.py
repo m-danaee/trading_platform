@@ -118,7 +118,7 @@ def _run_split(
 
     splitter_mod.TRAIN_70_PATH = train_path
     splitter_mod.VALIDATION_30_PATH = val_path
-    config_mod.SPLIT_MODE = "holdout_70_30"
+    config_mod.SPLIT_MODE = "holdout"
 
     try:
         train_df, val_df, _ = Data_Splitter().split_and_persist(df)

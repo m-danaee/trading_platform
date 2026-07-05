@@ -3,7 +3,8 @@ data/splitter.py — Data_Splitter
 
 Per-symbol chronological split for Phases 2–4:
 
-- ``holdout_70_30``: single 65/35 holdout + 288-bar embargo gap (active).
+- ``holdout``: single holdout split + 288-bar embargo gap (active).
+  Train/val fraction determined by ``HOLDOUT_TRAIN_FRACTION`` (default 65/35).
 - ``purged_walk_forward``: expanding CV folds + primary tail holdout with embargo (deprecated).
 """
 

@@ -7,23 +7,38 @@ import logging
 import pytest
 
 from gpu_fuzzy_trader import config as cfg
-from gpu_fuzzy_trader.phases.phase2_island_scheduler import _should_skip_epoch
+from gpu_fuzzy_trader.phases.phase2_island_scheduler import (
+    _should_skip_epoch,
+    compute_cluster_generation_budgets,
+)
 
 
 def test_gens_per_cluster_split():
     total = int(cfg.PHASE2_ISLAND_TOTAL_GENERATIONS)
     k = int(cfg.PHASE2_N_CLUSTERS)
-    gens_per = max(1, total // max(1, k))
-    assert gens_per * k <= total + k
+    cluster_ids = [str(i) for i in range(max(1, k))]
+    budgets = compute_cluster_generation_budgets(total, cluster_ids)
+    # Total budget must be preserved
+    assert sum(budgets.values()) == total
+    # Each cluster has at least 1 gen
+    assert all(v >= 1 for v in budgets.values())
+    # Spread is at most 1 apart (even distribution)
+    vals = list(budgets.values())
+    assert max(vals) - min(vals) <= 1
 
 
 def test_epoch_rounds_cover_budget():
     total = int(cfg.PHASE2_ISLAND_TOTAL_GENERATIONS)
     k = int(cfg.PHASE2_N_CLUSTERS)
     epoch = int(cfg.PHASE2_ISLAND_EPOCH_GENERATIONS)
-    gens_per = max(1, total // max(1, k))
-    rounds = (gens_per + epoch - 1) // epoch
-    assert rounds * epoch >= gens_per
+    cluster_ids = [str(i) for i in range(max(1, k))]
+    budgets = compute_cluster_generation_budgets(total, cluster_ids)
+    for cid, gens in budgets.items():
+        rounds = (gens + epoch - 1) // epoch
+        assert rounds * epoch >= gens, (
+            f"Cluster {cid}: {rounds} rounds of {epoch} gens "
+            f"does not cover budget {gens}"
+        )
 
 
 class TestMinEpochGuard:
