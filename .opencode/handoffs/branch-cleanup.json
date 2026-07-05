@@ -1,0 +1,10 @@
+{
+  "plan_id": "phase2-overfit-gap-stages-1-3",
+  "branches_deleted": [
+    "fix/phase2-stage1-mechanical",
+    "fix/phase2-stage2-seed-migration",
+    "fix/phase2-stage3-fitness-gap"
+  ],
+  "method": "git branch -d (safe, fast-forwarded branches)",
+  "timestamp": "2026-07-06T00:00:00Z"
+}
