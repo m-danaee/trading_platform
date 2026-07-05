@@ -1,27 +1,25 @@
 {
-  "task": "task-3",
-  "title": "Tighten Trade-Support Penalty",
+  "task_id": 3,
+  "task_title": "Stage 3 fitness-function gap fixes (core)",
+  "branch": "fix/phase2-stage3-fitness-gap",
   "status": "DONE",
-  "commit": "466610b",
-  "branch": "fix/tighten-trade-support-penalty",
-  "base_branch": "main",
+  "commit": "8ff3328",
   "files_changed": [
     "gpu_fuzzy_trader/config.py",
+    "gpu_fuzzy_trader/phases/phase2_rule_pool.py",
     "gpu_fuzzy_trader/phases/phase2_support.py",
-    "gpu_fuzzy_trader/evolution/numba_ops.py"
+    "tests/unit/test_phase2_rule_pool.py",
+    "tests/unit/test_phase2_support.py",
+    ".opencode/tasks/task-3.md"
   ],
   "tests": {
-    "full": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_phase2_support.py tests/unit/test_cpu_engine.py tests/unit/test_phase2_rule_pool.py tests/unit/test_numba_ops.py -q -x: 243 passed"
+    "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_phase2_rule_pool.py tests/unit/test_phase2_support.py tests/unit/test_phase2_island_scheduler.py tests/unit/test_island_scheduler_migration.py tests/unit/test_migration_safety.py tests/unit/test_elite_preservation.py tests/unit/test_evox_runner.py tests/unit/test_config_additions.py -v": "253 passed"
   },
-  "acceptance_criteria_met": [
-    "TRADE_SUPPORT_PENALTY_EXPONENT=3.0 config constant exists with docstring",
-    "_static_support_penalty uses config-driven exponent instead of hardcoded ** 2",
-    "numba_ops.py _batch_static_penalties_numba accepts exponent param and uses shortfall ** exponent",
-    "_static_penalty_py fallback also uses config-driven exponent",
-    "All 243 tests pass"
-  ],
-  "notes": [
-    "Branch reset to clean single-commit state (stray Task 1 commit removed)",
-    "No other hardcoded shortfall ** 2 patterns remain in codebase"
+  "notes_for_reviewer": [
+    "Item 8: Changed overfit_gap_penalty from ratio-based to subtraction-based, removed if val_ret > 0.0 gate. Added gate behind PHASE2_JOINT_TRAIN_VAL or PHASE2_VAL_IN_FITNESS_PENALTY for consistency with existing C6 val-penalty gating (otherwise test_val_penalties_gated_closed would fail). Old PHASE2_OVERFIT_GAP_RATIO_THRESHOLD renamed to PHASE2_OVERFIT_GAP_PCT_THRESHOLD with default 8.0pp.",
+    "Item 9: Added train-vs-val gap check to _raw_feasibility_violation_score using PHASE2_MAX_TRAIN_VAL_GAP_PCT=16.0. This is the highest-leverage single change as it flows into deployability preview, real objectives, and elite preservation.",
+    "Item 10 (f1/f3 asymmetry) NOT implemented — explicitly out of scope per plan.",
+    "Note on overfit_gap_penalty gating: The plan explicitly says 'remove the if val_ret > 0.0 gate' but doesn't mention adding a replacement gate. However, the existing C6 test (test_val_penalties_gated_closed) expects ALL val-derived penalties to be gated behind PHASE2_JOINT_TRAIN_VAL or PHASE2_VAL_IN_FITNESS_PENALTY. The overfit_gap_penalty was accidentally hidden behind the if val_ret > 0.0 gate for this test case (val_ret=-15.0). Adding the explicit gate is the correct minimal fix that maintains the contract. If this is undesirable, the C6 test would need updating to explicitly exclude overfit_gap_penalty from the gate — but that would be a separate decision.",
+    "All 253 tests pass across all 8 specified test suites."
   ]
 }
