@@ -1,61 +1,27 @@
 {
-  "task_id": "task-2",
-  "role": "code-reviewer",
-  "status": "DONE",
+  "task_id": 2,
   "verdict": "APPROVED",
-  "commit_reviewed": "b3966fd",
-  "branch": "fix/gpu-pnl-defer-to-release",
-  "files_reviewed": [
-    "gpu_fuzzy_trader/backtest/gpu_engine.py",
-    "tests/unit/test_gpu_engine.py"
-  ],
-  "review_focus": {
-    "jax_scan_logic": "PASS — carry has 17 elements (added slot_pnl), init_carry correctly initializes the new array, step() and final_carry unpack all 17 elements. Order of operations is correct: release (with PnL credit) → position sizing (using post-release equity) → entry (store PnL in slot, no equity update) → Sortino stat compute (with post-release equity).",
-    "slot_management": "PASS — _jax_open_slot uses can_open = can_trade & has_empty mask; when no empty slot, can_open is False and slot_release/slot_pnl/open_exposure are unchanged. Final release block after scan handles positions that never release within the loop (release_idx >= N).",
-    "edge_cases": {
-      "no_slots_free": "PASS — _jax_open_slot gates updates with can_open mask; signal still counts as executed if can_trade, but slot arrays are unchanged and exposure not increased.",
-      "all_slots_occupied": "PASS — same as above; subsequent signals on same row are correctly skipped from slot update.",
-      "final_unreleased_positions": "PASS — block after lax.scan computes remaining_pnl, remaining_wins/losses/gp/gl from active slot_pnl, and applies them to equity, peak, max_dd, wins, losses, gross_profit, gross_loss. This is correct because PnL was stored at entry and is now realized.",
-      "account_ruined": "PASS — new_ruined uses post-release equity (new_equity = equity + equity_delta), matching CPU engine's `if equity <= 0: break` after release."
-    },
-    "numerical_stability": "PASS — _JXF (float32 by default) accumulations are bounded by test tolerances (±1% return, ±5% DD/Sortino). jnp.sum over slot_pnl is correct. The fix doesn't introduce additional accumulations compared to the old code (in fact, fewer because PnL is summed once at release instead of added at entry).",
-    "sortino_consistency": "PASS — The spec text said Sortino should accumulate at release, but the implementer correctly identified that the CPU engine actually computes trade_ret = net_pnl / equity AFTER releases (so equity already reflects released PnL). The GPU code matches this: trade_ret = net_pnl / new_equity where new_equity is post-release. The docstring in _jax_release_open_slots explicitly documents this rationale.",
-    "regression_check_zero_signal": "PASS — _zero_signal_result_row is unchanged and only used when signal_mask is all-False (no scan path).",
-    "regression_check_fast_reject": "PASS — _fast_reject_result_rows is unchanged and only used when raw_signal_count < trade_floor (no scan path).",
-    "regression_check_simulate_rule_set": "PASS — CPU delegation path is unchanged.",
-    "test_coverage": "ADEQUATE — test_gpu_cpu_return_parity covers 10 random chromosomes, binary+signed features, 120-row multi-symbol dataset, with tolerances matching acceptance criteria. Covers all 6 required metrics. Could be expanded to short direction and longer data, but is sufficient for the fix's primary goal."
-  },
-  "tests_run": [
+  "findings": [
     {
-      "command": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_gpu_engine.py::TestGPUCPUReturnParity -x -v",
-      "result": "1 passed in 19.60s"
+      "severity": "low",
+      "category": "test",
+      "finding": "5 of the new tests use source-inspection (inspect.getsource) rather than behavioral testing. While they serve as regression guards against specific code-structure mistakes, they are fragile: a refactor renaming 'round_counter' or restructuring indentation would cause false failures even when behavior is correct. The plan explicitly asked to 'drive _run_cluster_islands (or just _should_migrate_this_round directly) with n_clusters=3, interval=2' — only the parametrized test on _should_migrate_this_round does this behaviorally. The loop-level test (test_migration_cadence_uses_rounds_not_clusters) is source-inspection only."
     },
     {
-      "command": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_gpu_engine.py::TestGPUCPUNumericalParity -x -q",
-      "result": "6 passed in 43.47s"
-    },
-    {
-      "command": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_gpu_engine.py::TestSimulateEquitySequential tests/unit/test_gpu_engine.py::TestSimulateRuleBatch -x -q",
-      "result": "19 passed in 61.71s"
-    },
-    {
-      "command": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_gpu_engine_jax_failure.py -x -q",
-      "result": "3 passed in 2.08s"
+      "severity": "low",
+      "category": "maintainability",
+      "finding": "Commit message on 0c8d014 mentions only 'define n_clusters' but the commit includes all three fixes (seed collision, migration cadence, n_clusters). Future readers of git blame may be confused about when the seed/migration changes were introduced."
     }
   ],
-  "key_observations": [
-    "The slot_pnl approach is the cleanest way to parallelize the CPU engine's sequential release loop. Each slot independently holds its own PnL, and release is a single jnp.where mask sum — no per-slot Python branching.",
-    "Final release is critical and correctly implemented: positions opened near the end of the data whose release_index >= N would otherwise be lost. The block credits PnL and updates all relevant stats.",
-    "The spec deviation on Sortino is actually a CORRECT deviation: matching CPU engine behavior is more important than literal spec text. The implementer's note in the docstring makes this clear.",
-    "Float32 vs float64 drift is bounded by the test tolerances. The fix doesn't worsen this — slot_pnl is a single value per slot, summed at release, which is the same precision as the old code.",
-    "No code-smell or dead code: old entry-time equity updates were cleanly removed; no commented-out leftovers; carry structure is well-organized with consistent naming.",
-    "Reuse of _zero_signal_result_row, _fast_reject_result_rows, and CPU delegation path is preserved (no regression)."
+  "positive_observations": [
+    "Item 6 (seed collision): _derive_island_seed called with direction prefix at both call sites — f\"{direction}_{cid}\" (line 424) and f\"{direction}_orphan_{sym}\" (line 326). direction is a string parameter in scope at both sites. Signature unchanged. Seed uniqueness tests use real _derive_island_seed values, not mock assertions.",
+    "Item 7 (migration cadence): _should_migrate_this_round is a clean pure function with correct docstring. Handles edge cases (interval <= 0 → False, round_index=0 % interval=0 → True). round_counter increments once per outer while loop (line 461), NOT inside the for-cid loop. All epoch_counter references purged from production code.",
+    "n_clusters fix: n_clusters = len(cluster_ids) placed correctly at line 401, immediately after cluster_ids is sorted. AST verified: 1 assignment, 2 references (the second is in 'and n_clusters > 1' at the migration guard). Regression tests for this exist.",
+    "Parametrized test (test_should_migrate_this_round_parametrized) covers 14 cases including edge cases: interval=0 (never fires), interval=-1 (never fires), interval=1 (always fires), interval=2, interval=3 with various round_index values. This is the strongest test in the set.",
+    "Edge cases covered: base_seed=None returns None (test_derive_island_seed_none_input_returns_none), signature unchanged verified (test_derive_island_seed_signature_unchanged), interval <= 0 handled in helper.",
+    "No dead code: zero epoch_counter references in production code (grep confirmed). No unused imports introduced.",
+    "All 53 tests pass (39 test_phase2_island_scheduler + 4 test_island_scheduler_migration + 10 test_migration_safety). 130/131 pass in test_phase2_rule_pool (1 pre-existing, unrelated failure).",
+    "Backward compatibility: _derive_island_seed signature unchanged. Seed values will differ (intentional bug fix), but no tests depend on exact historical seed values — test_derive_island_seed_distinct_for_distinct_ids in test_phase2_rule_pool.py checks uniqueness, not exact values."
   ],
-  "minor_observations": [
-    "Test could be strengthened by also testing 'short' direction (not just 'long') and larger chromosomes (3+ features). However, this is a test quality nitpick, not a blocker — the spec acceptance criteria are met.",
-    "The docstring in _jax_release_open_slots could mention the `account_ruined` interaction, but this is also fine because the post-step check is documented elsewhere.",
-    "A targeted unit test specifically for the final-release edge case (positions opened in last 288 bars) would be valuable to lock in behavior, but the parity test exercises this implicitly."
-  ],
-  "verdict_reasoning": "The implementation correctly defers PnL credit to release time, matching the CPU engine's behavior. All edge cases (no slots free, final unreleased positions, account_ruined) are handled. The Sortino stat deviation from the spec text is a correct implementation detail that matches the actual CPU engine. The new parity test covers the 6 required metrics within the specified tolerances. All 61 existing GPU engine tests still pass. No regressions in non-scan code paths (_zero_signal_result_row, _fast_reject_result_rows, CPU delegation). The fix is clean, minimal, and well-documented.",
-  "recommendation": "APPROVED. Ready to merge to main after Task 1 (already merged). No blocking issues."
+  "notes": "The implementation is correct across all three fixes. The seed collision fix and migration cadence fix address real, reproducible bugs. The n_clusters NameError introduced by Task 1 is properly resolved. The test strategy could be stronger — 5 source-inspection tests are fragile and the plan's explicit request for a behavioral loop-drive test was only partially satisfied (the parametrized test on _should_migrate_this_round, while excellent, is the helper function in isolation, not the full loop). However, the combination of isolation tests on the helper + source-inspection regression guards + all existing integration-level tests passing provides adequate coverage for the risk level of these changes. No blocking issues."
 }

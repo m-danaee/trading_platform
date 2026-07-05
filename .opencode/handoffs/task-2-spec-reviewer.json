@@ -1,12 +1,18 @@
 {
   "task_id": 2,
-  "verdict": "REQUEST_CHANGES",
-  "items_reviewed": {
-    "item_6_seed_collision": "approved — _derive_island_seed called with direction prefix at both cluster (line 426: f\"{direction}_{cid}\") and orphan (line 326: f\"{direction}_orphan_{sym}\") paths. Signature unchanged (verified by test_derive_island_seed_signature_unchanged). direction is in scope at both sites (function parameter).",
-    "item_7_migration_cadence": "approved (helper + loop fix correct in isolation) — _should_migrate_this_round helper exists (line 369). round_counter increments once per outer while round (line 461, after for-cid loop). Inline modulo replaced with helper call. BUT the migration guard that uses this helper is BROKEN due to n_clusters NameError (see below).",
-    "n_clusters_undefined": "issue: CONFIRMED NameError — n_clusters is referenced at line 468 ('and n_clusters > 1') but NEVER assigned inside _run_cluster_islands. AST analysis: 0 assignments, 1 reference. This was introduced by Task 1 (commit 8d81c8f) which removed 'n_clusters = len(cluster_ids)' (previously at line 351) when extracting compute_cluster_generation_budgets. The implementer's claim that this is 'pre-existing, not in scope' is INCORRECT: (1) it was introduced by Task 1, not pre-existing, (2) it sits directly inside the migration guard that Item 7 is fixing, (3) it will crash at runtime with NameError whenever PHASE2_MIGRATION_ENABLED=True (the default) and _should_migrate_this_round returns True (which it does on round 0). The migration cadence fix cannot be considered complete while the gate it sits in is broken. REQUIRED FIX: Add 'n_clusters = len(cluster_ids)' after line 401 (after the cluster_ids assignment)."
+  "verdict": "APPROVED",
+  "previous_issues": {
+    "n_clusters_undefined": "resolved — n_clusters = len(cluster_ids) added at line 403 inside _run_cluster_islands, immediately after cluster_ids assignment. AST analysis confirms 1 assignment, 2 references. Migration guard at line 469 ('and n_clusters > 1') now resolves correctly."
   },
+  "items_reviewed": {
+    "item_6_seed_collision": "approved — _derive_island_seed called with direction prefix at both cluster (line 427: f\"{direction}_{cid}\") and orphan (line 326: f\"{direction}_orphan_{sym}\") paths. Signature unchanged. direction is in scope at both sites.",
+    "item_7_migration_cadence": "approved — _should_migrate_this_round helper exists at line 369. round_counter increments once per outer while round (line 462, after for-cid loop ends). Inline modulo replaced with helper call. n_clusters NameError is now fixed (line 403), so the migration guard at line 469 is fully functional."
+  },
+  "regression_tests": {
+    "test_n_clusters_assigned_in_function": "PASSED",
+    "test_n_clusters_referenced_in_migration_guard": "PASSED"
+  },
+  "test_results": "183 passed, 1 failed (pre-existing failure in test_phase2_rule_pool.py::TestRobustReturnObjective::test_f3_uses_min_train_val_return, unrelated to task 2 changes).",
   "out_of_scope_check": "approved — Only production files touched: gpu_fuzzy_trader/phases/phase2_island_scheduler.py and tests/unit/test_phase2_island_scheduler.py (both listed in task-2.md). Other changes are .opencode/ workflow files. No push, no merge, no base branch modifications.",
-  "tests": "51 passed in touched suites (test_phase2_island_scheduler.py, test_island_scheduler_migration.py, test_migration_safety.py). All new tests pass: test_derive_island_seed_differs_across_directions, test_derive_island_seed_orphan_differs_across_directions, test_should_migrate_this_round_parametrized (14 cases), test_migration_cadence_uses_rounds_not_clusters, test_round_counter_name_used, test_migration_guard_uses_helper.",
-  "notes": "Item 6 is correctly and completely implemented. Item 7's helper function and loop restructuring are correct, but the migration guard is broken by a NameError on 'n_clusters' (line 468) — this variable was removed by Task 1's compute_cluster_generation_budgets extraction and never restored. The implementer flagged this correctly but mischaracterized it as 'pre-existing' and 'out of scope'. It is neither: Task 1 introduced it, and it is in the direct code path of Item 7's migration fix. Fix is one line: add 'n_clusters = len(cluster_ids)' after the cluster_ids assignment at line 401. Recommend also adding a test that exercises the migration guard with migration enabled and n_clusters > 1 to catch this class of regression."
+  "notes": "All previous issues resolved. The n_clusters NameError fix is a single-line addition at line 403 (n_clusters = len(cluster_ids)), placed correctly after cluster_ids is computed. Two regression tests added in TestNClustersDefined class to prevent future regressions. Items 6 and 7 remain correctly implemented. All acceptance criteria met."
 }
