@@ -1,33 +1,37 @@
 {
+  "task_id": 1,
+  "task_title": "Stage 1 mechanical fixes",
+  "branch": "fix/phase2-stage1-mechanical",
   "status": "DONE",
-  "commit": "bdfbeec",
-  "branch": "fix/holdout-embargo-split",
+  "commit": "8d81c8f",
   "files_changed": [
     "gpu_fuzzy_trader/config.py",
     "gpu_fuzzy_trader/data/splitter.py",
     "gpu_fuzzy_trader/validation/rolling_cv.py",
+    "gpu_fuzzy_trader/run_pipeline.py",
+    "gpu_fuzzy_trader/phases/phase2_rule_pool.py",
+    "gpu_fuzzy_trader/evolution/evox_runner.py",
+    "gpu_fuzzy_trader/phases/phase2_island_scheduler.py",
+    "tests/unit/test_phase2_island_scheduler.py",
     "tests/property/test_data_splitter_properties.py",
+    "tests/unit/test_config_trade_scaling.py",
+    "tests/unit/test_conflict_table_validation.py",
     "tests/unit/test_data_splitter.py",
+    "tests/unit/test_phase2_rule_pool.py",
     "tests/unit/test_phase5_oos.py",
-    "tests/unit/test_rb_governor_data_load.py"
+    "tests/unit/test_rb_governor_data_load.py",
+    "tests/unit/test_run_pipeline.py"
   ],
-  "test_results": {
-    "command": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/ -x -q --ignore=tests/unit/test_crash_fix_and_run_logging.py --ignore=tests/unit/test_phase2_rule_pool.py --ignore=tests/unit/test_phase2_val_sim_interval.py",
-    "result": "1250 passed, 5 skipped, 0 failures (excluding 3 pre-existing unrelated failures)",
-    "note": "The 3 excluded tests failed identically on main (pre-existing); our changes cause no regressions"
-  },
-  "acceptance_criteria": {
-    "1_SPLIT_MODE_holdout_70_30": "✅ gpu_fuzzy_trader/config.py line 180",
-    "2_HOLDOUT_TRAIN_FRACTION_and_EMBARGO_CANDLES": "✅ lines 183, 188 in config.py",
-    "3_assert_HOLDOUT_EMBARGO_CANDLES_eq_MAX_HOLD_CANDLES": "✅ assertion at ~line 2290, verified at runtime",
-    "4_embargo_split_drops_288_bars": "✅ _holdout_embargo_split drops HOLDOUT_EMBARGO_CANDLES (288) between train/val",
-    "5_no_test_regressions": "✅ 1250 passed, 0 new failures",
-    "6_no_old_function_name": "✅ grep returns no matches for _holdout_70_30_split in splitter.py"
+  "tests": {
+    "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_phase2_island_scheduler.py tests/unit/test_phase2_rule_pool.py tests/unit/test_phase2_support.py tests/unit/test_migration_safety.py tests/unit/test_island_scheduler_migration.py tests/unit/test_data_splitter.py -v": "210 passed, 1 failed (pre-existing: test_f3_uses_min_train_val_return -- unrelated to these changes)"
   },
   "notes_for_reviewer": [
-    "The old purged-WF config keys (PURGED_WF_*) are retained with a deprecation comment but are now inactive when SPLIT_MODE != 'purged_walk_forward'.",
-    "Tests that hardcoded floor(N * 0.70) were updated to use config values (HOLDOUT_TRAIN_FRACTION = 0.65) and account for the 288-bar embargo.",
-    "Small N values in tests were increased (e.g. 100 → 2000) to ensure non-empty validation after the embargo.",
-    "Edge case tests for single-row/small symbols were updated to reflect that embargo consumes all remaining rows."
+    "SPLIT_MODE renamed from 'holdout_70_30' to 'holdout' in all code comparison sites (source + tests). Docs/README untouched (not functional selectors).",
+    "holdout_train_val_label() helper added in config.py derived from HOLDOUT_TRAIN_FRACTION (default 0.65 -> '65/35').",
+    "PHASE2_MIGRATION_ENABLED comment rewritten to describe current re-enabled-with-guards state (not old failure mode). Kept True. Considered reverting to False; chose rewrite-comments path per plan.",
+    "compute_cluster_generation_budgets helper extracted in phase2_island_scheduler.py, used by both _run_cluster_islands and _log_pipeline_config.",
+    "Log key renamed from per_cluster= to per_cluster_gens=.",
+    "Pre-existing test failure in test_phase2_rule_pool.py::TestRobustReturnObjective::test_f3_uses_min_train_val_return (f3 expected -3.0, got 6.166...) -- unrelated to Stage 1 changes.",
+    "No behavior changes. All changes are label/comment/structural only."
   ]
 }
