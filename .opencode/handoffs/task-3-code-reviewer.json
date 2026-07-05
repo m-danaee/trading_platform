@@ -1,101 +1,32 @@
 {
-  "task": "task-3",
-  "title": "Tighten Trade-Support Penalty",
+  "task_id": 3,
   "verdict": "APPROVED",
-  "reviewer": "code-reviewer",
-  "review_date": "2026-07-04",
-  "branch": "fix/tighten-trade-support-penalty",
-  "commit": "466610b",
-  "base_branch": "main",
-  "diff_summary": {
-    "files_changed": [
-      "gpu_fuzzy_trader/config.py",
-      "gpu_fuzzy_trader/evolution/numba_ops.py",
-      "gpu_fuzzy_trader/phases/phase2_support.py"
-    ],
-    "lines_added": 10,
-    "lines_removed": 4,
-    "commit_count": 1,
-    "stray_commits": false
-  },
   "findings": [
     {
-      "id": "F1",
       "severity": "low",
-      "category": "test_coverage",
-      "title": "No regression test for the exponent shape",
-      "description": "The entire purpose of this change is to make the graduated penalty curve steeper (2 -> 3). However, no test asserts the specific shape. The only test that exercises the graduated zone is `test_graduated_between_floor_and_support` in tests/unit/test_phase2_support.py, which only checks `0 <= pen <= SUPPORT_PENALTY_MAX` — that assertion would pass for ANY exponent >= 1 (or even 0.5, 0.1, etc.). A future accidental change of TRADE_SUPPORT_PENALTY_EXPONENT to 2.0, 4.0, or even 0.5 would not be caught by the test suite.",
-      "suggestion": "Add a single test that pins the expected penalty value for a known (executed, min_support, pool_floor, exponent) tuple, e.g. with min_support=120, pool_floor=40, executed=80, exponent=3.0: shortfall=40/120=0.333, penalty=0.333**3 * 5.0 ~= 0.185. Also assert a monkey-patched exponent change (e.g. set to 2.0) yields the quadratic value. This locks down the shape and the config wiring in one test.",
-      "blocker": false
+      "category": "behavioral_risk",
+      "finding": "Meta-gate: overfit_gap_penalty now gated behind PHASE2_JOINT_TRAIN_VAL or PHASE2_VAL_IN_FITNESS_PENALTY. When both are False, penalty does not fire even for extreme gaps. This deviates from the plan's literal instruction ('remove the if val_ret > 0.0 gate') but preserves the C6 test contract (test_val_penalties_gated_closed). In the production default config (PHASE2_JOINT_TRAIN_VAL=True), the bug is fully fixed. The spec reviewer approved this deviation. Users who explicitly disable both val gates should be aware they also disable overfit gap protection."
     },
     {
-      "id": "F2",
-      "severity": "info",
-      "category": "maintainability",
-      "title": "Dead cap code in numba penalty",
-      "description": "The numba `_batch_static_penalties_numba` contains `if val > penalty_max: out[i] = penalty_max` after `val = shortfall ** exponent * penalty_max`. With exponent >= 1 and shortfall in (0,1), val is strictly less than penalty_max, so the cap is dead code. This was also dead with exponent=2 (pre-existing) — not introduced by this change, just made more obviously dead. Similarly the Python versions' `min(..., _cfg.SUPPORT_PENALTY_MAX)` cap is now dead in the graduated zone. Harmless, but could be removed for clarity in a follow-up.",
-      "blocker": false
+      "severity": "low",
+      "category": "behavioral_risk",
+      "finding": "Subtraction semantics edge case: When both train and val returns are negative but train substantially outperforms val (e.g., train=-5%, val=-25%, gap=20pp), the subtraction-based penalty fires. This is mathematically correct (train doing 20pp better than val IS an overfit signal regardless of sign), but may be surprising to users migrating from the old ratio-based approach where negative val_ret always dodged the penalty. The config comment documents that the new approach is 'well-defined for any sign of val_ret (unlike the old ratio-based definition).'"
     },
     {
-      "id": "F3",
-      "severity": "info",
+      "severity": "low",
       "category": "maintainability",
-      "title": "Minor inconsistency: divisor guard differs between numba and Python",
-      "description": "_static_support_penalty (Python) uses `max(support_target, 1)` as divisor; _static_penalty_py (Python) uses `_cfg.MIN_TRADE_SUPPORT` directly; _batch_static_penalties_numba uses `min_support` directly. If `min_support == 0` is ever passed, the two Python versions and the numba version diverge (one raises ZeroDivisionError, the two others too). Pre-existing inconsistency, not introduced by this change, and the config default is 120 so it never fires in practice.",
-      "blocker": false
+      "finding": "Default threshold 8.0pp is at the aggressive/low end of the plan's suggested 8-10pp range. The plan explicitly flags this as 'a tunable you should sanity-check against your own risk tolerance.' The config comment documents the rationale (below hard gate of 16.0pp). Monitor whether this causes excessive penalization of rules with moderate but acceptable train-val gaps in production runs."
     }
   ],
-  "correctness": {
-    "all_three_sites_updated": true,
-    "sites_checked": [
-      {
-        "site": "_static_support_penalty in gpu_fuzzy_trader/phases/phase2_support.py",
-        "line": 87,
-        "uses_exponent": true,
-        "expression": "min(shortfall ** float(_cfg.TRADE_SUPPORT_PENALTY_EXPONENT) * _cfg.SUPPORT_PENALTY_MAX, _cfg.SUPPORT_PENALTY_MAX)"
-      },
-      {
-        "site": "_batch_static_penalties_numba in gpu_fuzzy_trader/evolution/numba_ops.py",
-        "line": 226,
-        "uses_exponent": true,
-        "expression": "val = shortfall ** exponent * penalty_max",
-        "caller_passes": "_cfg.TRADE_SUPPORT_PENALTY_EXPONENT at line 266 of batch_static_support_penalties"
-      },
-      {
-        "site": "_static_penalty_py in gpu_fuzzy_trader/evolution/numba_ops.py",
-        "line": 278,
-        "uses_exponent": true,
-        "expression": "min(shortfall ** float(_cfg.TRADE_SUPPORT_PENALTY_EXPONENT) * _cfg.SUPPORT_PENALTY_MAX, _cfg.SUPPORT_PENALTY_MAX)"
-      }
-    ],
-    "edge_cases": {
-      "executed_eq_min_support": "returns 0.0 in all 3 sites; exponent irrelevant",
-      "executed_lt_pool_floor": "returns 2.0 * penalty_max in all 3 sites; exponent irrelevant (hard reject)",
-      "shortfall_in_0_1": "val = shortfall**3 * penalty_max in (0, penalty_max); cap is dead but harmless",
-      "shortfall_eq_0": "guarded by executed >= min_support check, never reaches the power",
-      "shortfall_eq_1": "guarded by executed < pool_floor check, never reaches the power"
-    }
-  },
-  "security": {
-    "concerns": "None — config-driven numeric exponent, no external input"
-  },
-  "test_adequacy": {
-    "tests_pass": 243,
-    "tests_added": 0,
-    "concerns": "Existing test suite does not pin the exponent shape; see F1."
-  },
-  "scope_check": {
-    "only_task3_changes": true,
-    "files_changed_count": 3,
-    "commit_count": 1,
-    "stray_commits": false,
-    "all_changes_consistent_with_task": true
-  },
-  "verdict_rationale": "Implementation is correct, minimal (+10/-4), and well-scoped. All three penalty sites consistently use TRADE_SUPPORT_PENALTY_EXPONENT (3.0). Edge cases (zero, below-floor) are correctly guarded. No security concerns. The only meaningful gap is the lack of a regression test that pins the specific exponent value (F1, low-severity). The two info-level findings (F2 dead cap, F3 divisor inconsistency) are pre-existing and not introduced by this change. Approving with the suggestion to add a shape-pinning test as a follow-up.",
-  "notes": [
-    "Single clean commit; no stray Task-1 commit",
-    "Numba signature change (added exponent param) will trigger JIT recompile; @njit(cache=True) handles this correctly",
-    "Hard-floor penalty (2.0 * SUPPORT_PENALTY_MAX for executed < pool_floor) correctly left unchanged — it is not in the graduated zone",
-    "float() cast in Python paths is a sensible type-safety measure for the numba call"
-  ]
+  "positive_observations": [
+    "All 3 new tests are well-structured, self-documenting, and properly isolate the changed behavior via monkeypatch config control. The monotonicity test avoids asserting exact numbers and instead asserts ordering — robust to future weight changes.",
+    "Clean rename with zero stale references: PHASE2_OVERFIT_GAP_RATIO_THRESHOLD has 0 hits in any .py file. optuna_search.py correctly not touched.",
+    "The gap check in _raw_feasibility_violation_score correctly handles val_metrics=None (early return above the new code) and uses getattr with a sensible default matching the config's actual value.",
+    "Config comment block thoroughly updated: documents subtraction semantics, the 8.0pp default rationale, and the relationship to PHASE2_MAX_TRAIN_VAL_GAP_PCT=16.0.",
+    "No dead code, no unused imports. The cleanup is thorough — only the specific lines changed were touched.",
+    "Test placement follows project conventions: rule-pool tests in TestRobustReturnObjective, support test in TestDeployabilityHelpers.",
+    "Pre-existing test_f3_uses_min_train_val_return now passes (was failing pre-fix due to the old penalty shape).",
+    "All 253 tests pass across all 8 specified test suites."
+  ],
+  "notes": "This is the highest-leverage change in the plan. The implementation is clean, the tests are thorough, and the design deviation (meta-gate) is well-justified and transparently documented. The risk surface is well-understood: graduated soft penalty at 8.0pp ramping toward the hard gate at 16.0pp, applied symmetrically to f1 and f3. The new feasibility gap check closes the critical gap in the deployability pipeline (evolution preview → real objectives → elite preservation). APPROVED."
 }
