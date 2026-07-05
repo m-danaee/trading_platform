@@ -1,171 +1,107 @@
-# Task 3: Island Scheduler + Pool Admission Fixes
+# Task 3: Stage 3 — Fitness-function gap fixes (the core fix)
 
-**ID:** task-3
-**Branch:** `feat/phase2-island-fixes`
-**Files:** 
-- `gpu_fuzzy_trader/phases/phase2_island_scheduler.py`
-- `gpu_fuzzy_trader/phases/phase2_rule_pool.py`
-- `gpu_fuzzy_trader/evolution/evox_runner.py`
-**Risk:** Medium (logic changes in scheduling and pool admission)
+## Source plan
+`/home/danaee/.claude/plans/you-are-a-senior-pure-cupcake.md` — Stage 3, items 8-9 (item 10 deferred)
 
-## Description
+## Branch
+`fix/phase2-stage3-fitness-gap` (from `main`)
 
-Fix three issues in the island scheduling and pool admission logic:
+## Files to touch
+- `gpu_fuzzy_trader/phases/phase2_rule_pool.py` (Item 8)
+- `gpu_fuzzy_trader/phases/phase2_support.py` (Item 9)
+- `gpu_fuzzy_trader/config.py` (rename threshold parameter)
+- `tests/unit/test_phase2_rule_pool.py` (new tests for both items)
+- `tests/unit/test_phase2_support.py` (new test for Item 9)
+- `tests/unit/test_config_additions.py` (if needed for renamed config key)
+- `gpu_fuzzy_trader/optuna_search.py` (update if it references the renamed config)
 
-1. **Minimum epoch size guard** — Skip epochs with remaining < 5 generations (useless 1-gen epochs that waste ~30s on engine rebuild)
-2. **Monthly gate island-scoped ratio** — Use island-scoped `monthly_admission_min_ratio` instead of global default
-3. **Logging patience fix** — Plateau early-stop log message should use the same patience value as the decision logic
+## Changes
 
-## Changes Required
+### Item 8: Fix `overfit_gap_penalty`'s blind spot
 
-### Change 1: Minimum Epoch Size Guard
+**Current bug** (`phases/phase2_rule_pool.py:818-834`):
+- Ratio-based: `gap_ratio = train_ret / max(val_ret, 1e-6)`
+- Gated on `if val_ret > 0.0` — a rule with train=99%/val≤0% gets **zero** penalty
+- The worst overfit case dodges the only in-loop check
 
-**Location:** `gpu_fuzzy_trader/phases/phase2_island_scheduler.py` → `_run_cluster_islands()`
+**Fix:** Switch to subtraction-based (`train_ret - val_ret`), matching the final pool-admission gate's check. This unifies the two different "gap" definitions in the codebase (ratio in-loop vs. subtraction at final gate) into one.
 
-**Problem:** When an island's generation budget is nearly exhausted, the scheduler launches tiny epochs (1-4 generations) that waste ~30s on engine rebuild but provide negligible evolutionary benefit.
-
-**Fix:** Add a guard to skip epochs with `remaining < MIN_EPOCH_GENS` (5 generations):
-
+Replace the current block in `phases/phase2_rule_pool.py` with:
 ```python
-while any(g._island_generations_done < gens_per_cluster for g in generators.values()):
-    for cid in cluster_ids:
-        gen = generators[cid]
-        if gen._island_generations_done >= gens_per_cluster:
-            continue
-        remaining = gens_per_cluster - gen._island_generations_done
-        
-        # NEW: Skip tiny remaining epochs
-        MIN_EPOCH_GENS = 5
-        if remaining < MIN_EPOCH_GENS:
-            logger.info(
-                "Phase 2 [%s]: skipping final epoch for cluster %s "
-                "(remaining=%d < MIN_EPOCH_GENS=%d)",
-                direction, cid, remaining, MIN_EPOCH_GENS,
-            )
-            gen._island_generations_done = gens_per_cluster  # exit loop cleanly
-            continue
-        
-        epoch_gens = min(_cfg.PHASE2_ISLAND_EPOCH_GENERATIONS, remaining)
-        gen.run_epoch(n_generations=epoch_gens)
-```
-
-**Acceptance criteria:**
-- Epochs with `remaining < 5` are skipped with a log message
-- `_island_generations_done` is set to `gens_per_cluster` to exit the loop
-- No functional change for epochs with `remaining >= 5`
-
-### Change 2: Monthly Gate Island-Scoped Ratio
-
-**Location:** `gpu_fuzzy_trader/phases/phase2_rule_pool.py` → `finalize_island()`
-
-**Problem:** The monthly admission gate uses the global `PHASE2_MONTHLY_ADMISSION_MIN_RATIO` (0.5) for all islands, but island-scoped hyperparameters should override this.
-
-**Fix:** Use `self.island_hyperparams.monthly_admission_min_ratio` if available:
-
-```python
-def finalize_island(self) -> list[dict]:
-    # ... existing code ...
-    
-    # Monthly admission gate
-    if _cfg.PHASE2_MONTHLY_ADMISSION_ENABLED:
-        # Use island-scoped ratio if available, else global default
-        min_ratio = (
-            self.island_hyperparams.monthly_admission_min_ratio
-            if self.island_hyperparams is not None
-            and hasattr(self.island_hyperparams, 'monthly_admission_min_ratio')
-            else _cfg.PHASE2_MONTHLY_ADMISSION_MIN_RATIO
+overfit_gap_penalty = 0.0
+if val_metrics is not None and float(_cfg.PHASE2_OVERFIT_GAP_PENALTY_WEIGHT) > 0.0:
+    train_ret = float(metrics.get("total_return_pct", 0.0))
+    val_ret = float(val_metrics.get("total_return_pct", 0.0))
+    gap_pct = train_ret - val_ret
+    if gap_pct > float(_cfg.PHASE2_OVERFIT_GAP_PCT_THRESHOLD):
+        overfit_gap_penalty = (
+            (gap_pct - _cfg.PHASE2_OVERFIT_GAP_PCT_THRESHOLD)
+            * float(_cfg.PHASE2_OVERFIT_GAP_PENALTY_WEIGHT)
         )
-        
-        pool = [
-            rule for rule in pool
-            if self._passes_monthly_gate(rule, min_ratio)
-        ]
 ```
 
-**Acceptance criteria:**
-- `finalize_island()` checks for `island_hyperparams.monthly_admission_min_ratio`
-- Falls back to `PHASE2_MONTHLY_ADMISSION_MIN_RATIO` if not available
-- No change to `_passes_monthly_gate()` logic
+**Config rename** in `config.py`:
+- `PHASE2_OVERFIT_GAP_RATIO_THRESHOLD` → `PHASE2_OVERFIT_GAP_PCT_THRESHOLD` (units change from ratio to pct-points)
+- Keep `PHASE2_OVERFIT_GAP_PENALTY_WEIGHT`
+- Update the comment block at `config.py:585-591` to reflect subtraction-based semantics
+- Suggested new default: ~8-10pp (below the hard gate `PHASE2_MAX_TRAIN_VAL_GAP_PCT=16.0`). The plan says "this is a tunable you should sanity-check against your own risk tolerance, not a value I'd fix unilaterally" — pick a reasonable default like 8.0 and note it in the handoff.
 
-### Change 3: Logging Patience Fix
+**New test** in `tests/unit/test_phase2_rule_pool.py` (extend near `TestRobustReturnObjective` at line 1657):
+- Assert penalty for `train=99%/val=-10%` is **larger** than for `train=99%/val=1%` (monotonicity / no-blind-spot)
+- Do NOT assert exact numbers — assert ordering/monotonicity
+- Add a test that asserts the penalty is **non-zero** when `val_ret <= 0` (the bug case)
 
-**Location:** `gpu_fuzzy_trader/evolution/evox_runner.py` → `_run_nsga3()` and `_run_nsga2_fallback()`
+### Item 9: Add same gap check to `_raw_feasibility_violation_score`
 
-**Problem:** The plateau early-stop log message uses the global `PHASE2_PLATEAU_EARLY_STOP_PATIENCE` (8) instead of the island-scoped `PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE` (6), causing confusion in logs.
+**Why this is highest-leverage:** `_raw_feasibility_violation_score` is the single choke point — it feeds:
+- `passes_evolution_deployability_preview` (→ `_update_deployable_archive` in `evolution/evox_runner.py:571-614`, which gates `deployable_archive` membership and therefore what `_preserve_deployable_elites` can force-pin into the population every generation)
+- The real objectives via `support_penalty` (weighted 0.4/0.6/0.6 into f1/f2/f3 in `phase2_rule_pool.py:793-801`)
 
-**Fix:** Use the same patience value in the log message as in the decision logic:
+It currently checks trade-count/return/PF floors but never the train-vs-val gap, unlike the final pool-admission gate (phase2_support.py:179-181).
 
+**Fix in `phases/phase2_support.py:_raw_feasibility_violation_score`** (~line 329-369):
+After the existing val_pf check (~line 367), add:
 ```python
-# In _run_nsga3() and _run_nsga2_fallback(), when logging plateau early-stop:
-
-# Determine the patience value used in the decision
-if island_profile == "island":
-    patience_used = _cfg.PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE
-else:
-    patience_used = _cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE
-
-logger.info(
-    "Phase 2 [%s]: plateau early-stop at gen %d "
-    "(streak=%d >= patience=%d, best_return=%.4f)",
-    island_profile, gen, plateau_streak, patience_used, best_return,
-)
+gap = train_ret - val_ret
+max_gap = float(getattr(_cfg, "PHASE2_MAX_TRAIN_VAL_GAP_PCT", 16.0))
+if gap > max_gap:
+    score += (gap - max_gap) * 1.0  # weight tunable, same order as existing PF term
 ```
 
-**Acceptance criteria:**
-- Log message uses the same patience value as the decision logic
-- For island runs, uses `PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE`
-- For non-island runs, uses `PHASE2_PLATEAU_EARLY_STOP_PATIENCE`
+**New test** in `tests/unit/test_phase2_support.py` (extend `TestDeployabilityHelpers` at ~line 122-194):
+- `train_ret=90%`, `val_ret=10%` (gap=80pp, over threshold), but all individual floors otherwise passing
+- Assert `_raw_feasibility_violation_score(...) > 0.0` (was 0.0 pre-fix)
+- Assert `passes_evolution_deployability_preview(...) is False` (was True pre-fix)
+- This directly encodes the bug as a regression test
 
-## Acceptance Criteria
+### Item 10: DEFERRED per plan
+f1/f3 asymmetry (making f3 worst-of-train/val like f1) is explicitly out of scope. The plan says: "land #8/#9 first, re-run, and only pursue this if the gap is still insufficiently controlled."
 
-1. Epochs with `remaining < 5` are skipped in `_run_cluster_islands`
-2. `finalize_island` monthly gate uses island-scoped ratio when `island_hyperparams` is set
-3. Log messages show the actual patience value used in the decision
-4. Existing tests pass: `PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/ -x -q`
-5. New test for min epoch size guard
+## Acceptance criteria
+- [ ] `overfit_gap_penalty` uses subtraction (`train_ret - val_ret`), not ratio
+- [ ] `overfit_gap_penalty` is well-defined for `val_ret <= 0` (no `if val_ret > 0` gate)
+- [ ] `PHASE2_OVERFIT_GAP_PCT_THRESHOLD` (new name) exists in config; old `PHASE2_OVERFIT_GAP_RATIO_THRESHOLD` removed
+- [ ] No remaining references to `PHASE2_OVERFIT_GAP_RATIO_THRESHOLD` (grep whole repo)
+- [ ] `optuna_search.py` updated to use new name (if it references the old one)
+- [ ] New monotonicity test for `overfit_gap_penalty` passes (penalty at val=-10% > penalty at val=1%)
+- [ ] New test for blind spot: penalty non-zero when val_ret <= 0
+- [ ] `_raw_feasibility_violation_score` includes train-vs-val gap check using `PHASE2_MAX_TRAIN_VAL_GAP_PCT`
+- [ ] New test: train_ret=90%/val_ret=10% with otherwise-passing floors → `_raw_feasibility_violation_score > 0` AND `passes_evolution_deployability_preview is False`
+- [ ] Pre-existing test `test_f3_uses_min_train_val_return` should now PASS (was failing in Tasks 1-2)
+- [ ] All touched test suites pass with `PYTEST_LOW_MEMORY=1`
 
-## Verification Commands
+## Hard rules
+- Do NOT change the `_derive_island_seed` signature (unrelated to this task).
+- Do NOT push to remote, do NOT merge to main.
+- Use `.venv/bin/python` for any test command.
+- Use `PYTEST_LOW_MEMORY=1`.
+- Only run touched test suites, not full suite (OOM risk per AGENTS.md).
+- Commit message prefix: `fix(task-3): <item summary>`. One commit per item, or one consolidated commit.
 
-```bash
-# Run tests
-PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/ -x -q
-
-# Verify min epoch guard
-grep -B 2 -A 10 "MIN_EPOCH_GENS" gpu_fuzzy_trader/phases/phase2_island_scheduler.py
-
-# Verify island-scoped monthly ratio
-grep -B 2 -A 8 "monthly_admission_min_ratio" gpu_fuzzy_trader/phases/phase2_rule_pool.py
-
-# Verify logging patience fix
-grep -B 2 -A 5 "patience_used" gpu_fuzzy_trader/evolution/evox_runner.py
+## Verification command
+```
+cd /home/danaee/trading_platform
+PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_phase2_rule_pool.py tests/unit/test_phase2_support.py tests/unit/test_phase2_island_scheduler.py tests/unit/test_island_scheduler_migration.py tests/unit/test_migration_safety.py tests/unit/test_elite_preservation.py tests/unit/test_evox_runner.py tests/unit/test_config_additions.py -v
 ```
 
-## Rationale
-
-### Why skip epochs with remaining < 5?
-
-- Engine rebuild takes ~30s (JAX compilation, GPU memory allocation)
-- 1-4 generations provide negligible evolutionary benefit
-- Wastes ~30s per tiny epoch with no meaningful progress
-- Setting `_island_generations_done = gens_per_cluster` exits the loop cleanly
-
-### Why island-scoped monthly ratio?
-
-- Different islands may have different data characteristics
-- Island hyperparameters allow fine-tuning per-island behavior
-- Global default may be too strict or too lenient for specific islands
-- Consistent with other island-scoped parameters (e.g., `plateau_patience`)
-
-### Why fix the logging patience?
-
-- Logs showed `patience=8` but decision used `patience=6` for islands
-- Caused confusion when debugging early-stop behavior
-- Log message should reflect the actual decision logic
-
-## Notes
-
-- This is a medium-risk task (logic changes in scheduling and pool admission)
-- The min epoch guard is low-risk (just skips tiny epochs)
-- The monthly gate fix is low-risk (just uses the right parameter)
-- The logging fix is low-risk (just corrects the log message)
-- All changes should be tested on next Colab run to validate behavior
+If `test_f3_uses_min_train_val_return` was failing in Tasks 1-2 due to the `overfit_gap_penalty` shape change, the new subtraction-based logic should make it pass.

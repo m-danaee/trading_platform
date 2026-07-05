@@ -1700,6 +1700,133 @@ class TestRobustReturnObjective:
         assert np.isclose(objectives[2], -3.0)
         assert out_metrics["robust_return_pct"] == pytest.approx(3.0)
 
+    def test_overfit_gap_penalty_positive_when_val_negative(self, monkeypatch):
+        """Blind-spot regression: overfit_gap_penalty must fire when val_ret <= 0."""
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+            compute_phase2_objectives_from_metrics,
+        )
+
+        monkeypatch.setattr(_cfg, "PHASE2_JOINT_TRAIN_VAL", False)
+        monkeypatch.setattr(_cfg, "PHASE2_VAL_IN_FITNESS_PENALTY", True)
+        monkeypatch.setattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ", True)
+        monkeypatch.setattr(_cfg, "PHASE2_USE_ROBUST_RETURN_OBJ", False)
+        monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", False)
+        monkeypatch.setattr(_cfg, "PHASE2_OVERFIT_GAP_PENALTY_WEIGHT", 1.0)
+        monkeypatch.setattr(_cfg, "PHASE2_OVERFIT_GAP_PCT_THRESHOLD", 5.0)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 1)
+        monkeypatch.setattr(_cfg, "PHASE2_RETURN_FLOOR_PCT", -100.0)
+        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR", 0.0)
+        monkeypatch.setattr(_cfg, "PHASE2_VAL_RETURN_FLOOR_PCT", -100.0)
+        monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
+
+        dont_cares = np.full(4, 5, dtype=np.int32)
+        chrom = np.array([0, 1, 2, 3], dtype=np.int32)
+        metrics = {
+            "executed_trades": 100,
+            "total_return_pct": 99.0,
+            "sortino_ratio": 1.0,
+            "max_drawdown_pct": 2.0,
+            "win_rate": 50.0,
+            "profit_factor": 1.2,
+            "per_symbol_metrics": {
+                "SYM1": {"net_pnl": 100.0},
+                "SYM2": {"net_pnl": 200.0},
+                "SYM3": {"net_pnl": 300.0},
+            },
+        }
+        val_metrics_neg = {
+            "executed_trades": 50,
+            "total_return_pct": -10.0,
+            "sortino_ratio": -0.5,
+            "max_drawdown_pct": 1.0,
+            "win_rate": 30.0,
+            "profit_factor": 0.5,
+        }
+        val_metrics_mild = {
+            "executed_trades": 50,
+            "total_return_pct": 1.0,
+            "sortino_ratio": 0.8,
+            "max_drawdown_pct": 1.0,
+            "win_rate": 55.0,
+            "profit_factor": 1.1,
+        }
+
+        # Case 1: val_ret = -10 % (worst case — bug dodged old ratio gate).
+        obj_neg, _ = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, metrics, [], val_metrics=val_metrics_neg,
+        )
+        # Case 2: val_ret = 1 % (mild case — should have smaller penalty).
+        obj_mild, _ = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, metrics, [], val_metrics=val_metrics_mild,
+        )
+
+        # The overfit_gap_penalty ADDSto f1 (positive = worse). So a larger gap
+        # → higher f1 (since f1 = -sortino + penalties...).
+        # f1 is objectives[0]; the penalty makes f1 less negative / more positive.
+        assert obj_neg[0] > obj_mild[0], (
+            "Worst-case gap (99 / -10) should have HIGHER f1 than mild gap (99 / 1)."
+        )
+
+    def test_overfit_gap_penalty_nonzero_for_negative_val_ret(self, monkeypatch):
+        """Direct assertion that penalty is strictly positive when val_ret <= 0."""
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+            compute_phase2_objectives_from_metrics,
+        )
+
+        monkeypatch.setattr(_cfg, "PHASE2_JOINT_TRAIN_VAL", False)
+        monkeypatch.setattr(_cfg, "PHASE2_VAL_IN_FITNESS_PENALTY", True)
+        monkeypatch.setattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ", True)
+        monkeypatch.setattr(_cfg, "PHASE2_USE_ROBUST_RETURN_OBJ", False)
+        monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", False)
+        monkeypatch.setattr(_cfg, "PHASE2_OVERFIT_GAP_PENALTY_WEIGHT", 10.0)
+        monkeypatch.setattr(_cfg, "PHASE2_OVERFIT_GAP_PCT_THRESHOLD", 5.0)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 1)
+        monkeypatch.setattr(_cfg, "PHASE2_RETURN_FLOOR_PCT", -100.0)
+        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR", 0.0)
+        monkeypatch.setattr(_cfg, "PHASE2_VAL_RETURN_FLOOR_PCT", -100.0)
+        monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
+        # Disable diversity & trade penalties to isolate overfit_gap_penalty.
+        monkeypatch.setattr(_cfg, "PHASE2_DIVERSITY_PENALTY", 0.0)
+
+        dont_cares = np.full(4, 5, dtype=np.int32)
+        chrom = np.array([0, 1, 2, 3], dtype=np.int32)
+        metrics = {
+            "executed_trades": 100,
+            "total_return_pct": 99.0,
+            "sortino_ratio": 1.0,
+            "max_drawdown_pct": 2.0,
+            "win_rate": 50.0,
+            "profit_factor": 1.2,
+            "per_symbol_metrics": {
+                "SYM1": {"net_pnl": 100.0},
+                "SYM2": {"net_pnl": 200.0},
+                "SYM3": {"net_pnl": 300.0},
+            },
+        }
+        val_metrics_zero = {
+            "executed_trades": 50,
+            "total_return_pct": 0.0,  # borderline: val_ret == 0
+            "sortino_ratio": 0.0,
+            "max_drawdown_pct": 0.0,
+            "win_rate": 50.0,
+            "profit_factor": 1.0,
+        }
+
+        obj, out = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, metrics, [], val_metrics=val_metrics_zero,
+        )
+        # f1 = -sortino + support_penalty + diversity_penalty + trade_penalty + overfit_gap_penalty
+        # sortino is 1.0 → -1.0 base. overfit_gap_penalty should be > 0, making f1 > -1.0
+        # Actually, let's check out_metrics for the penalty directly.
+        # But _overfit_gap_penalty isn't in out_metrics. Let's check f1 difference.
+        # With val_ret=0, gap=99-0=99 >> 5 threshold → penalty = (99-5)*10 = 940.
+        # f1 = -1.0 + 0 + 0 + 0 + 940 = 939. So f1 should be > 0.
+        assert obj[0] > 0.0, (
+            f"Expected positive f1 when overfit_gap_penalty applies, got {obj[0]}"
+        )
+
 
 class TestPhenotypeDiversityPenalty:
     def test_phenotype_penalty_same_bucket_different_genes(self, monkeypatch):

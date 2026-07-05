@@ -229,6 +229,40 @@ class TestDeployabilityHelpers:
         finally:
             _cfg.PHASE2_USE_TOTAL_RETURN_OBJ = orig_use_ret
 
+    def test_feasibility_violation_catches_train_val_gap(self, monkeypatch) -> None:
+        """Regression: train=90%/val=10% (gap=80pp >> 16pp threshold) must produce
+        a non-zero violation score and fail deployability preview."""
+        from gpu_fuzzy_trader.phases.phase2_support import (
+            _raw_feasibility_violation_score,
+            passes_evolution_deployability_preview,
+        )
+
+        monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", True)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 1)
+        monkeypatch.setattr(_cfg, "PHASE2_RETURN_FLOOR_PCT", -100.0)
+        monkeypatch.setattr(_cfg, "PHASE2_VAL_RETURN_FLOOR_PCT", -100.0)
+        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR", 0.0)
+        monkeypatch.setattr(_cfg, "PHASE2_MAX_TRAIN_VAL_GAP_PCT", 16.0)
+
+        train = {
+            "total_return_pct": 90.0,
+            "profit_factor": 1.5,
+            "executed_trades": 100,
+        }
+        val = {
+            "total_return_pct": 10.0,
+            "profit_factor": 1.2,
+            "executed_trades": 50,
+        }
+
+        score = _raw_feasibility_violation_score(train, val)
+        assert score > 0.0, (
+            f"Expected positive violation for 80pp gap, got {score}"
+        )
+        assert passes_evolution_deployability_preview(train, val) is False, (
+            "Should not pass deployability preview with 80pp train-val gap"
+        )
+
 
 class TestPoolAdmissionScaledFloors:
     def test_scaled_min_val_trades_on_small_slice(self, monkeypatch) -> None:

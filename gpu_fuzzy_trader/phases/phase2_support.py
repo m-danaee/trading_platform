@@ -366,6 +366,14 @@ def _raw_feasibility_violation_score(
     if val_pf < pf_floor:
         score += (pf_floor - val_pf) * 5.0
 
+    # train-vs-val gap check: mirror the final pool-admission gate (line ~179).
+    # A large train>>val gap is a classic overfit signal; penalise it here so
+    # it flows into both deployability preview and the real objectives.
+    gap = train_ret - val_ret
+    max_gap = float(getattr(_cfg, "PHASE2_MAX_TRAIN_VAL_GAP_PCT", 16.0))
+    if gap > max_gap:
+        score += (gap - max_gap) * 1.0
+
     return score
 
 

@@ -598,13 +598,16 @@ PHASE2_MAX_TRAIN_VAL_GAP_PCT = 16.0
 #   Lower  → more sensitive; smaller gaps also trigger warnings.
 PHASE2_OVERFIT_WARNING_RATIO = 3.0
 
-# PHASE2_OVERFIT_GAP_PENALTY_WEIGHT — fitness penalty when train_return / val_return
-#   exceeds PHASE2_OVERFIT_GAP_RATIO_THRESHOLD (applied to f1 and f3).
+# PHASE2_OVERFIT_GAP_PENALTY_WEIGHT — fitness penalty when train_return - val_return
+#   exceeds PHASE2_OVERFIT_GAP_PCT_THRESHOLD (applied to f1 and f3).
 PHASE2_OVERFIT_GAP_PENALTY_WEIGHT = 5.0
 
-# PHASE2_OVERFIT_GAP_RATIO_THRESHOLD — train/val return ratio above which the
-#   overfit-gap penalty starts accumulating.
-PHASE2_OVERFIT_GAP_RATIO_THRESHOLD = 1.5
+# PHASE2_OVERFIT_GAP_PCT_THRESHOLD — train/val return gap (in percentage points)
+#   above which the overfit-gap penalty starts accumulating. Subtraction-based,
+#   well-defined for any sign of val_ret (unlike the old ratio-based definition).
+#   Default 8.0pp is below PHASE2_MAX_TRAIN_VAL_GAP_PCT=16.0 so the soft penalty
+#   starts ramping before the hard gate rejects outright.
+PHASE2_OVERFIT_GAP_PCT_THRESHOLD = 8.0
 
 # PHASE2_OBJECTIVE_CORR_WARN_THRESHOLD — log a debug warning when Pareto-front
 #   objective pairwise correlation exceeds this (Pareto collapse risk).

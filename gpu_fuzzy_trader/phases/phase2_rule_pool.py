@@ -820,19 +820,19 @@ def compute_phase2_objectives_from_metrics(
     if (
         val_metrics is not None
         and float(getattr(_cfg, "PHASE2_OVERFIT_GAP_PENALTY_WEIGHT", 0.0)) > 0.0
+        and (_cfg.PHASE2_JOINT_TRAIN_VAL or getattr(_cfg, "PHASE2_VAL_IN_FITNESS_PENALTY", False))
     ):
         train_ret = float(metrics.get("total_return_pct", 0.0))
         val_ret = float(val_metrics.get("total_return_pct", 0.0))
-        if val_ret > 0.0:
-            gap_ratio = train_ret / max(val_ret, 1e-6)
-            gap_threshold = float(
-                getattr(_cfg, "PHASE2_OVERFIT_GAP_RATIO_THRESHOLD", 1.5),
+        gap_pct = train_ret - val_ret
+        gap_threshold = float(
+            getattr(_cfg, "PHASE2_OVERFIT_GAP_PCT_THRESHOLD", 8.0),
+        )
+        if gap_pct > gap_threshold:
+            overfit_gap_penalty = (
+                (gap_pct - gap_threshold)
+                * float(_cfg.PHASE2_OVERFIT_GAP_PENALTY_WEIGHT)
             )
-            if gap_ratio > gap_threshold:
-                overfit_gap_penalty = (
-                    (gap_ratio - gap_threshold)
-                    * float(_cfg.PHASE2_OVERFIT_GAP_PENALTY_WEIGHT)
-                )
 
     f1 = (
         -sortino_for_obj
