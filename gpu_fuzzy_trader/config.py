@@ -410,7 +410,7 @@ PHASE2_EVAL_GLOBAL_CACHE = True
 #   Lower  → less RAM; more re-evaluations.
 # Increased 575→1200: 575 entries with 200 pop × 2 evals/gen = cache fills
 # in 1.5 gens, random eviction destroys useful results. 1200 covers ~3 gens.
-PHASE2_EVAL_GLOBAL_CACHE_MAX_SIZE = 1200
+PHASE2_EVAL_GLOBAL_CACHE_MAX_SIZE = 600
 
 # PHASE2_SKIP_ZERO_SIGNAL_SCAN — skip equity scan when rule matches 0 bars.
 #   True  → faster; infeasible rules get penalty without full scan.

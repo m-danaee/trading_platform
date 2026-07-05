@@ -500,6 +500,15 @@ def _run_cluster_islands(
                         _merge_archive_entries(inbound),
                     )
 
+    # Free cache memory across all cluster generators before finalizing
+    # (Fix 2: RAM quick wins — clear global metrics cache between clusters).
+    from gpu_fuzzy_trader.evolution.evox_runner import clear_global_metrics_cache
+
+    for cid in cluster_ids:
+        gen = generators.get(cid)
+        if gen is not None and gen._evolution_state is not None:
+            clear_global_metrics_cache(gen._evolution_state.global_metrics_cache)
+
     cluster_pools: list[dict] = []
     for cid, gen in generators.items():
         pool_part = gen.finalize_island()
@@ -508,6 +517,10 @@ def _run_cluster_islands(
             source_symbols=cluster_map.get(cid, []),
         )
         cluster_pools.extend(annotated)
+        # (Fix 3: RAM quick wins — explicit engine teardown + GC)
+        del generators[cid]
+        import gc as _gc
+        _gc.collect()
 
     return _merge_archive_entries(cluster_pools)
 

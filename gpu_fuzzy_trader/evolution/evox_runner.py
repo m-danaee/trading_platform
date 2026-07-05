@@ -1495,6 +1495,24 @@ def _trim_global_metrics_cache(
         global_metrics_cache.pop(key, None)
 
 
+def clear_global_metrics_cache(
+    cache: dict | None = None,
+) -> None:
+    """Clear the global eval cache and force GC.
+
+    Used to free RAM between cluster runs in island-scheduled Phase 2.
+    If *cache* is provided, calls ``cache.clear()``; otherwise clears the
+    module-level cache if one exists.
+    """
+    if cache is not None:
+        cache.clear()
+    else:
+        # Fallback for any module-level cache (currently none defined).
+        pass
+    import gc as _gc
+    _gc.collect()
+
+
 def _load_global_metrics_cache(
     cached: dict,
 ) -> tuple[dict, dict | None]:
@@ -2772,7 +2790,7 @@ def _run_nsga3(
 
         # Periodically reclaim stale Python objects (metric dicts, offspring
         # arrays) to reduce peak RSS on memory-constrained hosts (Colab 12 GiB).
-        if gen % 10 == 0 and gen > 0:
+        if gen % 3 == 0 and gen > 0:
             import gc as _gc
             _gc.collect()
 
