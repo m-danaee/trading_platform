@@ -3,7 +3,7 @@
   "task_title": "Stage 2 seed collision + migration cadence",
   "branch": "fix/phase2-stage2-seed-migration",
   "status": "DONE",
-  "commit": "b80f803",
+  "commit": "0c8d014",
   "files_changed": [
     "gpu_fuzzy_trader/phases/phase2_island_scheduler.py",
     "tests/unit/test_phase2_island_scheduler.py"
