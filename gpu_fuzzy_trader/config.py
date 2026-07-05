@@ -405,11 +405,12 @@ PHASE2_EVAL_BATCH_DEDUP = True
 PHASE2_EVAL_GLOBAL_CACHE = True
 
 # PHASE2_EVAL_GLOBAL_CACHE_MAX_SIZE — hard cap on the global eval cache.
-#   1200 = 200 (population) × 2 (eval runs) × 3 (cache generations).
+#   600 = 200 (population) × 2 (eval runs) × 1.5 (cache generations).
 #   Higher → more cache hits; less RAM.
 #   Lower  → less RAM; more re-evaluations.
-# Increased 575→1200: 575 entries with 200 pop × 2 evals/gen = cache fills
-# in 1.5 gens, random eviction destroys useful results. 1200 covers ~3 gens.
+# Halved from 1200 to reduce Colab RAM footprint (~0.4 GB saving).
+# Rationale: cache hit rate was observed at 0-4% in the 2026-07-05 22:09 log,
+# so a 50% cut is near-free — the working set is ~1.5 gens at 200 pop.
 PHASE2_EVAL_GLOBAL_CACHE_MAX_SIZE = 600
 
 # PHASE2_SKIP_ZERO_SIGNAL_SCAN — skip equity scan when rule matches 0 bars.
