@@ -1,72 +1,18 @@
 {
-  "task": "task-1",
-  "reviewer": "code-reviewer",
-  "status": "APPROVED",
-  "review_date": "2026-07-05",
-  "base_branch": "main",
-  "feature_branch": "fix/holdout-embargo-split",
-  "commit_reviewed": "bdfbeec",
-  "previous_review_commits": ["0cf059e"],
+  "task_id": 1,
   "verdict": "APPROVED",
-  "summary": "Both fixes from the previous review are correctly and minimally implemented. The cache fingerprint now invalidates on changes to HOLDOUT_TRAIN_FRACTION and HOLDOUT_EMBARGO_CANDLES (verified empirically), and the dead for-loop in the property test has been cleanly removed without affecting coverage. No new issues introduced. 33/33 related tests pass.",
-  "fix_verification": {
-    "M1_cache_fingerprint_missing_holdout_keys": {
-      "status": "RESOLVED",
-      "evidence": [
-        "_PURGED_CONFIG_KEYS renamed to _SPLIT_CONFIG_KEYS (no stale references anywhere in the repo)",
-        "Tuple now contains both 'HOLDOUT_TRAIN_FRACTION' and 'HOLDOUT_EMBARGO_CANDLES' (rolling_cv.py lines 455-456)",
-        "Docstring updated from 'purged-WF config knobs' to 'split-config knobs'",
-        "Empirical verification: mutating HOLDOUT_TRAIN_FRACTION (0.65→0.50) changes the fingerprint from 0b7b96e6da6c7eac to 34c9990a3f3eee20",
-        "Empirical verification: mutating HOLDOUT_EMBARGO_CANDLES (288→100) changes the fingerprint to 70aa88b38fd8148c",
-        "Both keys exist in config.py (line 185 and line 190 respectively)"
-      ]
-    },
-    "L1_dead_for_loop_in_test": {
-      "status": "RESOLVED",
-      "evidence": [
-        "Removed the 7-line duplicate loop (with `# Ensure no cross-symbol contamination in total counts` + `pass`) at test_data_splitter_properties.py lines 211-217",
-        "The per-symbol assertion loop that ACTUALLY uses expected_train/expected_val/embargo_end (earlier in the function) is intact and unchanged",
-        "The total_expected_train / total_expected_val sum(...) expressions below work correctly without the dead loop",
-        "`math` import on line 20 is still required (used by sum(...) and min(...) expressions) — no orphan imports",
-        "test_property_5_per_symbol_split_ratio_and_no_overlap passes (1 passed)"
-      ]
-    }
-  },
-  "correctness": {
-    "fingerprint_invalidation_works": "VERIFIED. Both HOLDOUT_TRAIN_FRACTION and HOLDOUT_EMBARGO_CANDLES are correctly included in the config fingerprint via _SPLIT_CONFIG_KEYS. When either value changes, the manifest's stored config_fingerprint no longer matches purged_config_fingerprint(), causing the cache loader (splitter.py line 182) to return None and trigger a fresh split. The stale-cache bug from the previous review is fully fixed.",
-    "constant_rename_consistency": "VERIFIED. _PURGED_CONFIG_KEYS no longer appears anywhere in the repo. _SPLIT_CONFIG_KEYS is the sole reference and is correctly used in purged_config_fingerprint() (rolling_cv.py line 465).",
-    "test_no_coverage_loss": "VERIFIED. The removed dead loop computed values that were immediately discarded (only `pass` after a comment). Removing it does not change any assertion. The per-symbol assertions earlier in the function (using expected_train, expected_val, embargo_end) are untouched, and the total-count assertions below use the same math via sum()."
-  },
-  "edge_cases": {
-    "missing_config_key": "If either HOLDOUT_TRAIN_FRACTION or HOLDOUT_EMBARGO_CANDLES were missing from config.py, getattr(_cfg, key, None) would yield None and the fingerprint would still be stable. Since both keys exist (config.py lines 185, 190), this is moot. The deprecated PURGED_WF_* keys also use getattr(_cfg, key, None) for safety.",
-    "fingerprint_uniqueness": "The sha256 of the joined key=value string is truncated to 16 hex chars (64 bits). Collision probability is astronomically low for the small number of distinct config combinations in this project.",
-    "test_doesnt_depend_on_old_loop": "The 'Ensure no cross-symbol contamination' comment that was removed was a comment-only check (the loop body was `pass`). Removing it is purely a code-cleanup change; no semantic content was lost."
-  },
-  "security": {
-    "concerns": "None. The fingerprint function is internal and not exposed to untrusted input. It reads only module-level config values via getattr."
-  },
-  "maintainability": {
-    "rename_clarity": "GOOD. _SPLIT_CONFIG_KEYS is a more accurate name now that the keys span both modes (deprecated purged-WF + active holdout). The in-source comment groups the two categories with their own headers, which is excellent for future readers.",
-    "minimal_diff": "GOOD. The fix touches exactly the two files mentioned in the previous review and 10 lines total in production code. No collateral changes.",
-    "docstring_accuracy": "GOOD. The function docstring now correctly says 'split-config knobs' instead of 'purged-WF config knobs'."
-  },
-  "test_adequacy": {
-    "splitter_property_tests": "tests/property/test_data_splitter_properties.py: 1 passed (test_property_5_per_symbol_split_ratio_and_no_overlap)",
-    "splitter_unit_tests": "tests/unit/test_data_splitter.py: 32 passed",
-    "combined": "33/33 related tests pass with no regressions",
-    "fingerprint_cache_invalidation_test": "tests/unit/test_run_pipeline.py (test_uses_cached_split_when_fresh) exercises the fingerprint read path. It does not specifically test that mutating HOLDOUT_TRAIN_FRACTION or HOLDOUT_EMBARGO_CANDLES invalidates the cache, but the existing test verifies the happy-path round-trip, and the fix's correctness was empirically confirmed via direct invocation of purged_config_fingerprint() in this review.",
-    "edge_case_gap": "OPTIONAL. A dedicated test asserting that the fingerprint differs when HOLDOUT_TRAIN_FRACTION or HOLDOUT_EMBARGO_CANDLES changes would lock in the fix against future regressions. Not blocking; the fix is straightforward enough that this is low-priority follow-up."
-  },
-  "scope_check": {
-    "files_changed_in_fix_commit": [
-      "gpu_fuzzy_trader/validation/rolling_cv.py",
-      "tests/property/test_data_splitter_properties.py",
-      ".opencode/handoffs/task-1-implementer.json (housekeeping)"
-    ],
-    "out_of_scope_changes": false,
-    "notes": "The fix is well-scoped to the two issues identified in the previous review. The handoff file was also updated to reflect the new commit hash and branch (this is housekeeping, not a functional change)."
-  },
-  "outstanding_items": [],
-  "fix_items": [],
-  "verdict_rationale": "Both issues from the previous review are fully and correctly resolved. The cache fingerprint now includes HOLDOUT_TRAIN_FRACTION and HOLDOUT_EMBARGO_CANDLES, the rename from _PURGED_CONFIG_KEYS to _SPLIT_CONFIG_KEYS is consistent throughout the codebase, and the dead for-loop in the property test was removed without affecting any assertion. Empirical verification confirmed that mutating either new key produces a distinct fingerprint hash, which means stale-cache scenarios are now properly invalidated. All 33 related tests pass with no regressions. No new issues introduced by the fixes. Approving for merge."
+  "findings": [],
+  "positive_observations": [
+    "SPLIT_MODE rename is atomically complete — grep for \"holdout_70_30\" and 'holdout_70_30' in all *.py files returns zero hits",
+    "holdout_train_val_label(frac) helper is well-designed: handles edge cases (frac=0, frac=1), uses int(round(frac*100)) to avoid floating-point truncation artifacts, and is used at both call sites (run_pipeline.py:1010, config docstring)",
+    "compute_cluster_generation_budgets helper matches original inline logic exactly: total_gens=132 across 3 clusters → {0:44, 1:44, 2:44} sum=132. Both call sites (_run_cluster_islands and _log_pipeline_config) now delegate to it",
+    "corr_f1_f3 warning level change is a clean one-line diff: logger.debug → logger.warning, no surrounding lines touched",
+    "log key renamed from per_cluster= to per_cluster_gens= — more descriptive and avoids ambiguity with population splits",
+    "Test updates are thorough: test_gens_per_cluster_split asserts on helper output (sum, min≥1, max-min≤1), not reimplementing the formula. test_epoch_rounds_cover_budget iterates per-cluster with descriptive failure messages",
+    "PHASE2_MIGRATION_ENABLED comment accurately describes current re-enabled-with-guards state, mentions receiver-side re-evaluation and filter_migrants_for_cluster admission gates",
+    "phase2_rule_pool.py docstring correctly reflects PHASE2_F3_OBJECTIVE-driven semantics (f3 = -(objective))",
+    "No dead code: old inline arithmetic removed from both _run_cluster_islands and _log_pipeline_config. No unused imports introduced",
+    "210 tests pass; 1 pre-existing failure (test_f3_uses_min_train_val_return) is Task 3 scope, not introduced here"
+  ],
+  "notes": "Zero-behavior-risk task — all changes are label/comment/structural as specified. Docs/README still reference holdout_70_30 but task spec explicitly says 'Docs/README untouched (not functional selectors)'. data/cv_folds_manifest.json is a generated artifact, not a code comparison site. One test comment at test_phase2_rule_pool.py:2527 still says '70/30 split' — it's a descriptive comment about approximate trade floor behavior, not a functional comparison site or log message, so it doesn't violate acceptance criteria."
 }

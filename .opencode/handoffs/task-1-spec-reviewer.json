@@ -1,74 +1,14 @@
 {
-  "task": "task-1",
-  "reviewer": "spec-reviewer",
-  "status": "APPROVED",
-  "review_date": "2026-07-01",
-  "base_branch": "main",
-  "feature_branch": "feat/phase2-config-tuning",
-  "commit_reviewed": "cd69462",
+  "task_id": 1,
   "verdict": "APPROVED",
-  "summary": "All 20 parameter values match the task spec EXACTLY. config.py is the only production file modified. Test file changes are minimal, necessary, and correctly track the new parameter values. No out-of-scope production logic changes.",
-  "parameter_verification": {
-    "PHASE2_GENERATIONS": {"spec": 100, "actual": 100, "pass": true},
-    "PHASE2_ISLAND_EPOCH_GENERATIONS": {"spec": 25, "actual": 25, "pass": true},
-    "PHASE2_PLATEAU_POST_RESTART_STOP_PATIENCE": {"spec": 5, "actual": 5, "pass": true},
-    "PHASE2_ISLAND_PLATEAU_POST_RESTART_STOP_PATIENCE": {"spec": 5, "actual": 5, "pass": true},
-    "PHASE2_PLATEAU_POST_RESTART_BOOST_GENS": {"spec": 4, "actual": 4, "pass": true},
-    "PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT": {"spec": 1.0, "actual": 1.0, "pass": true},
-    "PHASE2_MIGRATION_ENABLED": {"spec": false, "actual": false, "pass": true},
-    "PHASE2_EVAL_GLOBAL_CACHE_MAX_SIZE": {"spec": 1200, "actual": 1200, "pass": true},
-    "PHASE2_VAL_SIM_INTERVAL": {"spec": 2, "actual": 2, "pass": true},
-    "PHASE2_JOINT_TRAIN_VAL": {"spec": true, "actual": true, "pass": true},
-    "PHASE2_F3_OBJECTIVE": {"spec": "cv_fold_min", "actual": "cv_fold_min", "pass": true},
-    "PHASE2_DIVERSITY_PENALTY": {"spec": 2.0, "actual": 2.0, "pass": true},
-    "PHASE2_PHENOTYPE_SORTINO_STEP": {"spec": 0.15, "actual": 0.15, "pass": true},
-    "PHASE2_PHENOTYPE_F3_STEP": {"spec": 2.0, "actual": 2.0, "pass": true},
-    "PHASE2_MUTATION_RATE": {"spec": 0.35, "actual": 0.35, "pass": true},
-    "PHASE2_MIN_PROFITABLE_SYMBOLS": {"spec": 5, "actual": 5, "pass": true},
-    "PHASE2_MONTHLY_ADMISSION_MIN_RATIO": {"spec": 0.5, "actual": 0.5, "pass": true},
-    "PHASE2_MONTHLY_ADMISSION_MIN_PROFITABLE_RATIO": {"spec": 0.4, "actual": 0.4, "pass": true},
-    "PHASE2_ORPHAN_ENABLED": {"spec": false, "actual": false, "pass": true},
-    "PHASE2_ISLAND_TOTAL_GENERATIONS": {"spec": "PHASE2_GENERATIONS (100)", "actual": "PHASE2_GENERATIONS (100)", "pass": true}
+  "items_reviewed": {
+    "item_1_split_mode": "approved — 'holdout_70_30' removed from all Python comparison sites (grep returns zero hits in *.py). holdout_train_val_label(frac) helper exists at config.py:195 deriving from HOLDOUT_TRAIN_FRACTION. No hardcoded '70/30' or '65/35' in log strings (only in docstring examples). run_pipeline.py:1010 uses dynamic f\"holdout {_cfg.holdout_train_val_label()}\". All test files updated atomically for the rename.",
+    "item_2_docstring": "approved — phases/phase2_rule_pool.py:14-17 no longer says 'f3 = -win_rate'. New docstring reads 'f3 = -(objective) — objective driven by PHASE2_F3_OBJECTIVE (default \"profit_factor\" → f3 = -profit_factor)'.",
+    "item_3_warning_level": "approved — evolution/evox_runner.py:2669 now uses logger.warning(...) instead of logger.debug(...) for the corr_f1_f3 Pareto collapse risk warning.",
+    "item_4_shared_helper": "approved — compute_cluster_generation_budgets(total_gens, cluster_ids) exists at phase2_island_scheduler.py:40. Used by _run_cluster_islands (line 382) and _log_pipeline_config (line 233 via import). Log key renamed from per_cluster= to per_cluster_gens=. Tests test_gens_per_cluster_split and test_epoch_rounds_cover_budget exercise the helper directly (assert on its output, not re-implementing the formula).",
+    "item_5_migration_comment": "approved — config.py:1113-1127 comment rewritten. No longer narrates old failure mode as current. Describes re-enabled-with-guards state, mentions receiver-side re-evaluation via filter_migrants_for_cluster (admission gates, symbol deployability). Value remains True."
   },
-  "scope_check": {
-    "production_files_changed": ["gpu_fuzzy_trader/config.py"],
-    "test_files_changed": [
-      "tests/unit/test_config_additions.py",
-      "tests/unit/test_evox_runner.py",
-      "tests/unit/test_migration_safety.py",
-      "tests/unit/test_phase2_monthly_admission.py",
-      "tests/unit/test_phase2_plateau_restart.py",
-      "tests/unit/test_phase2_post_restart_stop.py",
-      "tests/unit/test_phase2_rule_pool.py",
-      "tests/unit/test_phase2_val_sim_interval.py"
-    ],
-    "workflow_files_changed": [
-      ".opencode/CONTEXT.md",
-      ".opencode/plans/PLAN.md",
-      ".opencode/tasks/task-1.md"
-    ],
-    "out_of_scope_production_changes": false,
-    "notes": "No production code outside gpu_fuzzy_trader/config.py was modified (verified via git diff for gpu_fuzzy_trader/evolution and gpu_fuzzy_trader/phases - both empty). Test changes are minimal and correctly track new parameter values. .opencode/* files are workflow tracking files, not production code, and reflect the rescoping from Priority A to Phase 2 Quality Overhaul plan."
-  },
-  "comment_updates": {
-    "updated": true,
-    "notes": "All 19 changed parameters have inline comments documenting the old->new transition and rationale, consistent with the spec's documented reasoning."
-  },
-  "test_file_audit": {
-    "test_config_additions.py": "1-line assertion update: PHASE2_ISLAND_EPOCH_GENERATIONS 15->25. Correct.",
-    "test_evox_runner.py": "Explicitly sets PHASE2_F3_OBJECTIVE='profit_factor' because default is now 'cv_fold_min'. Required to keep test scenario deterministic.",
-    "test_migration_safety.py": "Tests inverted: now verifies PHASE2_MIGRATION_ENABLED=False blocks migration by default. Correct.",
-    "test_phase2_monthly_admission.py": "Test expectations updated for 0.5 threshold (rules at 0.5 ratio now pass). Correct.",
-    "test_phase2_plateau_restart.py": "BOOST_GENS 3->4 changes test (5->6 expected offspring calls, boosted window indices shifted). MIN_DELTA_PCT 0.5->1.0. Correct.",
-    "test_phase2_post_restart_stop.py": "PATIENCE 3->5, test streak counts updated. Correct.",
-    "test_phase2_rule_pool.py": "Explicitly sets PHASE2_F3_OBJECTIVE='profit_factor' (default is now 'cv_fold_min'). Correct.",
-    "test_phase2_val_sim_interval.py": "Adds monkeypatch to set JOINT_TRAIN_VAL=False so the val-skipped test scenario still works (with JOINT_TRAIN_VAL=True default, val runs every gen). Correct."
-  },
-  "live_verification": {
-    "config_imports_cleanly": true,
-    "all_20_values_match": true,
-    "command": ".venv/bin/python -c \"from gpu_fuzzy_trader import config; ...\""
-  },
-  "outstanding_items": [],
-  "fix_items": []
+  "out_of_scope_check": "approved — No behavior changes (all label/comment/structural). Files touched: all 8 listed in task-1.md plus 8 test files (necessary for atomic holdout_70_30→holdout rename across all comparison sites). No push, no merge, no base branch modifications. Branch has no remote tracking.",
+  "tests": "210 passed, 1 failed (pre-existing: test_f3_uses_min_train_val_return — in Task 3 scope, not Task 1).",
+  "notes": "Helper signature uses cluster_ids: list[str] instead of n_clusters: int — plan explicitly allows this variant ('pass them in or use a separate helper that takes cluster_ids + total_gens'). data/cv_folds_manifest.json still contains 'holdout_70_30' but this is a generated artifact, not a code comparison site. README.md and docs/ still reference holdout_70_30 but these are documentation, not functional selectors."
 }

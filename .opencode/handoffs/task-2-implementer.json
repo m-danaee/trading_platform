@@ -1,47 +1,21 @@
 {
-  "task_id": "task-2",
-  "role": "implementer",
+  "task_id": 2,
+  "task_title": "Stage 2 seed collision + migration cadence",
+  "branch": "fix/phase2-stage2-seed-migration",
   "status": "DONE",
-  "commit": "b3966fd",
-  "branch": "fix/gpu-pnl-defer-to-release",
+  "commit": "b80f803",
   "files_changed": [
-    "gpu_fuzzy_trader/backtest/gpu_engine.py",
-    "tests/unit/test_gpu_engine.py"
+    "gpu_fuzzy_trader/phases/phase2_island_scheduler.py",
+    "tests/unit/test_phase2_island_scheduler.py"
   ],
-  "summary": "Fixed GPU engine PnL timing by deferring PnL credit to position release (close) time instead of entry (open) time.",
-  "design_decisions": [
-    "Added slot_pnl array to JAX scan carry to store net PnL per open position slot",
-    "Sortino statistics are computed at entry time (not release) because trade_ret = net_pnl / equity requires entry-time equity, matching CPU engine behavior",
-    "Final release after scan credits remaining open positions' PnL to equity and counts wins/losses"
-  ],
-  "tests_run": [
-    {
-      "command": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_gpu_engine.py -x -q",
-      "result": "61 passed (60 existing + 1 new parity test)",
-      "note": "All GPU engine tests pass"
-    },
-    {
-      "command": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_gpu_engine.py tests/unit/test_gpu_engine_jax_failure.py tests/unit/test_numba_ops.py tests/unit/test_encoder.py -x -q",
-      "result": "131 passed",
-      "note": "All related tests pass"
-    }
-  ],
-  "gpu_vs_cpu_parity": {
-    "test": "test_gpu_cpu_return_parity",
-    "description": "10 random chromosomes, binary + signed features, 120-row multi-symbol dataset",
-    "result": "PASS",
-    "metrics": {
-      "total_return_pct": "within ±1% of CPU",
-      "win_rate": "identical to CPU",
-      "profit_factor": "identical to CPU",
-      "executed_trades": "identical to CPU",
-      "max_drawdown_pct": "within ±5% of CPU",
-      "sortino_ratio": "within ±5% of CPU"
-    }
+  "tests": {
+    "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_phase2_island_scheduler.py tests/unit/test_island_scheduler_migration.py tests/unit/test_migration_safety.py tests/unit/test_phase2_rule_pool.py -v": "183 passed, 1 failed (pre-existing failure in test_phase2_rule_pool.py::test_f3_uses_min_train_val_return)"
   },
   "notes_for_reviewer": [
-    "Sortino stats remain at entry time (not moved to release) because trade_ret = net_pnl / equity requires entry-time equity context — this matches the CPU engine's _simulate_rule_set_entries which also appends trade_return at entry",
-    "The fix changes equity dynamics significantly: with sequential sampling, previously an all-positive dataset would show 953% max_return; now it should show reasonable returns matching CPU",
-    "Pre-existing test failure in tests/unit/test_phase2_rule_pool.py::TestRobustReturnObjective::test_f3_uses_min_train_val_return is unrelated to this change"
+    "Item 6: _derive_island_seed call sites now include direction prefix at both cluster and orphan paths. Signature unchanged.",
+    "Item 7: _should_migrate_this_round helper added. round_counter increments once per outer while round (not per cluster). Inline modulo replaced with helper call.",
+    "n_clusters NameError fixed: n_clusters = len(cluster_ids) added at line 401; new regression tests added (test_n_clusters_assigned_in_function, test_n_clusters_referenced_in_migration_guard).",
+    "All new tests pass including regression tests for n_clusters NameError fix.",
+    "One pre-existing failure in test_phase2_rule_pool.py::TestRobustReturnObjective::test_f3_uses_min_train_val_return unrelated to changes."
   ]
 }

@@ -323,7 +323,7 @@ def _run_orphan_boosts(
                 direction=direction,
                 pop_size=int(_cfg.PHASE2_ORPHAN_POPULATION_SIZE),
                 n_generations=int(_cfg.PHASE2_ORPHAN_GENERATIONS),
-                seed=_derive_island_seed(seed, f"orphan_{sym}"),
+                seed=_derive_island_seed(seed, f"{direction}_orphan_{sym}"),
                 cv_folds=cv_folds,
                 island_id=f"orphan_{sym}",
                 source_symbols=[sym],
@@ -366,6 +366,28 @@ def _should_skip_epoch(remaining: int) -> bool:
     return remaining < int(_cfg.PHASE2_ISLAND_MIN_EPOCH_GENERATIONS)
 
 
+def _should_migrate_this_round(round_index: int, interval: int) -> bool:
+    """Return True if migration should fire on this outer round (1-indexed).
+
+    Parameters
+    ----------
+    round_index : int
+        The current outer-round count (starts at 0, incremented after each
+        ``while`` iteration in ``_run_cluster_islands``).
+    interval : int
+        The configured migration epoch interval (``PHASE2_MIGRATION_EPOCH_INTERVAL``).
+        Values <= 0 are treated as "never migrate".
+
+    Returns
+    -------
+    bool
+        True when migration should be performed this round.
+    """
+    if interval <= 0:
+        return False
+    return round_index % interval == 0
+
+
 def _run_cluster_islands(
     train_df: pd.DataFrame,
     val_df: pd.DataFrame,
@@ -378,6 +400,7 @@ def _run_cluster_islands(
 ) -> list[dict]:
     cluster_ids = sorted(cluster_map.keys(),
                          key=lambda x: int(x) if x.isdigit() else x)
+    n_clusters = len(cluster_ids)
     total_gens = int(_cfg.PHASE2_ISLAND_TOTAL_GENERATIONS)
     cluster_budgets = compute_cluster_generation_budgets(total_gens, cluster_ids)
     epoch_gens = int(_cfg.PHASE2_ISLAND_EPOCH_GENERATIONS)
@@ -401,7 +424,7 @@ def _run_cluster_islands(
             feature_infos=feature_infos,
             direction=direction,
             n_generations=gens_per_cluster,
-            seed=_derive_island_seed(seed, cid),
+            seed=_derive_island_seed(seed, f"{direction}_{cid}"),
             cv_folds=cv_folds,
             island_id=cid,
             source_symbols=syms,
@@ -410,7 +433,7 @@ def _run_cluster_islands(
             reference_rows=reference_rows,
         )
 
-    epoch_counter = 0
+    round_counter = 0
     while any(
         generators[cid]._island_generations_done < cluster_budgets[cid]
         for cid in cluster_ids
@@ -435,11 +458,14 @@ def _run_cluster_islands(
 
             gen.run_epoch(n_generations=min(epoch_gens, remaining))
             gen.park_engines()
-            epoch_counter += 1
+
+        round_counter += 1
 
         if (
             _cfg.PHASE2_MIGRATION_ENABLED
-            and epoch_counter % int(_cfg.PHASE2_MIGRATION_EPOCH_INTERVAL) == 0
+            and _should_migrate_this_round(
+                round_counter, int(_cfg.PHASE2_MIGRATION_EPOCH_INTERVAL),
+            )
             and n_clusters > 1
         ):
             from gpu_fuzzy_trader.evolution.evox_runner import (

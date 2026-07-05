@@ -8,6 +8,8 @@ import pytest
 
 from gpu_fuzzy_trader import config as cfg
 from gpu_fuzzy_trader.phases.phase2_island_scheduler import (
+    _derive_island_seed,
+    _should_migrate_this_round,
     _should_skip_epoch,
     compute_cluster_generation_budgets,
 )
@@ -120,3 +122,185 @@ class TestMinEpochGuardWithMocks:
         gen.run_epoch(n_generations=epoch_gens)
         assert gen.run_epoch_called
         assert gen._island_generations_done == 8
+
+
+# ============================================================================
+# Item 6: Long/short seed collision — _derive_island_seed must differ by direction
+# ============================================================================
+
+
+class TestSeedDirectionUniqueness:
+    """AC: _derive_island_seed produces different seeds for long vs short."""
+
+    def test_derive_island_seed_differs_across_directions(self):
+        """Same cluster ID but different direction ⇒ different seed."""
+        seed = 42
+        long_seed = _derive_island_seed(seed, "long_0")
+        short_seed = _derive_island_seed(seed, "short_0")
+        assert long_seed != short_seed, (
+            "long cluster 0 and short cluster 0 must not share the same seed"
+        )
+
+    def test_derive_island_seed_orphan_differs_across_directions(self):
+        """Same orphan symbol but different direction ⇒ different seed."""
+        seed = 42
+        long_seed = _derive_island_seed(seed, "long_orphan_AAPL")
+        short_seed = _derive_island_seed(seed, "short_orphan_AAPL")
+        assert long_seed != short_seed, (
+            "long orphan AAPL and short orphan AAPL must not share the same seed"
+        )
+
+    def test_derive_island_seed_signature_unchanged(self):
+        """_derive_island_seed signature must remain (base_seed, island_id) — no direction param."""
+        import inspect
+        sig = inspect.signature(_derive_island_seed)
+        params = list(sig.parameters.keys())
+        assert params == ["base_seed", "island_id"], (
+            f"Signature changed to {params}; must remain (base_seed, island_id)"
+        )
+
+    def test_derive_island_seed_none_input_returns_none(self):
+        """base_seed=None should return None regardless of island_id."""
+        assert _derive_island_seed(None, "long_0") is None
+        assert _derive_island_seed(None, "short_0") is None
+
+
+# ============================================================================
+# Item 7: Migration cadence — _should_migrate_this_round helper + loop fix
+# ============================================================================
+
+
+class TestMigrationCadenceHelper:
+    """Pure-function tests for _should_migrate_this_round."""
+
+    @pytest.mark.parametrize("round_index,interval,expected", [
+        (0, 2, True),
+        (1, 2, False),
+        (2, 2, True),
+        (3, 2, False),
+        (0, 1, True),
+        (1, 1, True),
+        (0, 3, True),
+        (1, 3, False),
+        (2, 3, False),
+        (3, 3, True),
+        (0, 0, False),   # interval <= 0 never fires
+        (5, 0, False),
+        (0, -1, False),
+        (3, -1, False),
+    ])
+    def test_should_migrate_this_round_parametrized(
+        self, round_index, interval, expected,
+    ):
+        """Verify pure helper returns correct boolean for various inputs."""
+        assert _should_migrate_this_round(round_index, interval) is expected
+
+    def test_migration_cadence_uses_rounds_not_clusters(self):
+        """Verify _run_cluster_islands increments round_counter at outer scope,
+        NOT inside the ``for cid in cluster_ids:`` loop."""
+        from gpu_fuzzy_trader.phases.phase2_island_scheduler import _run_cluster_islands
+        import inspect
+
+        source = inspect.getsource(_run_cluster_islands)
+
+        # The old bug: epoch_counter += 1 inside the for cid loop
+        # The fix: round_counter += 1 at outer while scope (after for cid)
+
+        # Assert the increment happens OUTSIDE the for-cid loop.
+        # Strategy: find the 'for cid in cluster_ids:' block and assert
+        # that 'round_counter += 1' is NOT indented inside it.
+        lines = source.splitlines()
+        in_for_cid_block = False
+        for_cid_indent = None
+        round_increment_found = False
+        round_increment_indent = None
+
+        for i, line in enumerate(lines):
+            stripped = line.lstrip()
+            indent = len(line) - len(stripped)
+
+            if "for cid in cluster_ids:" in stripped:
+                in_for_cid_block = True
+                for_cid_indent = indent
+                continue
+
+            if in_for_cid_block and "round_counter += 1" in stripped:
+                round_increment_found = True
+                round_increment_indent = indent
+                break
+
+            # Detect end of for-cid block by checking if a line at same or lesser
+            # indent as the 'for' keyword appears (and is not a comment/blank)
+            if in_for_cid_block and stripped and not stripped.startswith("#"):
+                if indent <= for_cid_indent:
+                    in_for_cid_block = False
+
+        assert round_increment_found, (
+            "round_counter += 1 not found in _run_cluster_islands source"
+        )
+        # If the increment were inside the for-cid block, its indent would be
+        # greater than for_cid_indent. It should be at the same or lesser indent.
+        assert round_increment_indent is not None and round_increment_indent <= for_cid_indent, (
+            f"round_counter += 1 (indent={round_increment_indent}) is INSIDE "
+            f"the 'for cid' block (indent={for_cid_indent}); "
+            f"it must be at outer while scope"
+        )
+
+    def test_round_counter_name_used(self):
+        """Verify _run_cluster_islands uses 'round_counter' not 'epoch_counter'."""
+        from gpu_fuzzy_trader.phases.phase2_island_scheduler import _run_cluster_islands
+        import inspect
+
+        source = inspect.getsource(_run_cluster_islands)
+        assert "round_counter" in source, (
+            "'round_counter' not found; variable not renamed"
+        )
+        assert "epoch_counter" not in source, (
+            "'epoch_counter' still present; should be renamed to 'round_counter'"
+        )
+
+    def test_migration_guard_uses_helper(self):
+        """Verify the migration guard calls _should_migrate_this_round."""
+        from gpu_fuzzy_trader.phases.phase2_island_scheduler import _run_cluster_islands
+        import inspect
+
+        source = inspect.getsource(_run_cluster_islands)
+        assert "_should_migrate_this_round" in source, (
+            "Migration guard must use the _should_migrate_this_round helper"
+        )
+        # Ensure the old inline modulo is gone
+        assert "round_counter % int" not in source, (
+            "Inline modulo still present; should use _should_migrate_this_round"
+        )
+
+
+# ============================================================================
+# n_clusters NameError regression guard (spec review Item 7 fix)
+# ============================================================================
+
+
+class TestNClustersDefined:
+    """AC: n_clusters is assigned inside _run_cluster_islands so the migration
+    guard condition 'and n_clusters > 1' does not raise NameError."""
+
+    def test_n_clusters_assigned_in_function(self):
+        """n_clusters must be assigned in _run_cluster_islands
+        for the migration guard at line ~468 to work."""
+        from gpu_fuzzy_trader.phases.phase2_island_scheduler import _run_cluster_islands
+        import inspect
+
+        source = inspect.getsource(_run_cluster_islands)
+        assert "n_clusters = len(cluster_ids)" in source, (
+            "n_clusters must be assigned in _run_cluster_islands "
+            "for the migration guard to work"
+        )
+
+    def test_n_clusters_referenced_in_migration_guard(self):
+        """The migration guard must reference n_clusters."""
+        from gpu_fuzzy_trader.phases.phase2_island_scheduler import _run_cluster_islands
+        import inspect
+
+        source = inspect.getsource(_run_cluster_islands)
+        assert "n_clusters > 1" in source, (
+            "Migration guard must reference n_clusters > 1"
+        )

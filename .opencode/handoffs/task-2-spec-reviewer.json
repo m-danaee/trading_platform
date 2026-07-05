@@ -1,40 +1,12 @@
 {
-  "task_id": "task-2",
-  "role": "spec-reviewer",
-  "status": "APPROVED",
-  "verdict": "APPROVED",
-  "commit_reviewed": "b3966fd",
-  "branch": "fix/gpu-pnl-defer-to-release",
-  "files_reviewed": [
-    "gpu_fuzzy_trader/backtest/gpu_engine.py"
-  ],
-  "spec_compliance": {
-    "1_add_slot_pnl_to_carry": "PASS — init_slot_pnl array added to init_carry, unpacked in step() and final_carry. Carry tuple has 17 elements.",
-    "2_modify_release_open_slots": "PASS — Function now accepts slot_pnl and returns (arrays, open_exposure, equity_delta, wins_delta, losses_delta, gp_delta, gl_delta). Equity/wins/losses/gp/gl deltas computed from releasing slots using jnp.where masks.",
-    "3_modify_open_slot_to_store_pnl": "PASS — Function now accepts net_pnl parameter and stores it via slot_pnl.at[first_empty].set(net_pnl) gated by can_open.",
-    "4_remove_entry_time_equity_updates": "PASS — Old entry-time equity+net_pnl, wins, losses, gross_profit, gross_loss updates removed. New code computes equity_delta from release deltas: new_equity = equity + equity_delta. Stats updated from release deltas.",
-    "5_handle_final_unreleased_positions": "PASS — After lax.scan, remaining active slots' pnl counted into equity, wins, losses, gross_profit, gross_loss. Peak/drawdown tracked for final release.",
-    "6_sortino_stats_consistency": "PASS — Sortino stats (trade_return_sum, n_neg, neg_sq_sum) computed at entry time using new_equity (equity after releases). This matches CPU engine behavior where trade_returns.append(net_pnl / equity) is called after _release_due_positions, so equity already reflects releases."
+  "task_id": 2,
+  "verdict": "REQUEST_CHANGES",
+  "items_reviewed": {
+    "item_6_seed_collision": "approved — _derive_island_seed called with direction prefix at both cluster (line 426: f\"{direction}_{cid}\") and orphan (line 326: f\"{direction}_orphan_{sym}\") paths. Signature unchanged (verified by test_derive_island_seed_signature_unchanged). direction is in scope at both sites (function parameter).",
+    "item_7_migration_cadence": "approved (helper + loop fix correct in isolation) — _should_migrate_this_round helper exists (line 369). round_counter increments once per outer while round (line 461, after for-cid loop). Inline modulo replaced with helper call. BUT the migration guard that uses this helper is BROKEN due to n_clusters NameError (see below).",
+    "n_clusters_undefined": "issue: CONFIRMED NameError — n_clusters is referenced at line 468 ('and n_clusters > 1') but NEVER assigned inside _run_cluster_islands. AST analysis: 0 assignments, 1 reference. This was introduced by Task 1 (commit 8d81c8f) which removed 'n_clusters = len(cluster_ids)' (previously at line 351) when extracting compute_cluster_generation_budgets. The implementer's claim that this is 'pre-existing, not in scope' is INCORRECT: (1) it was introduced by Task 1, not pre-existing, (2) it sits directly inside the migration guard that Item 7 is fixing, (3) it will crash at runtime with NameError whenever PHASE2_MIGRATION_ENABLED=True (the default) and _should_migrate_this_round returns True (which it does on round 0). The migration cadence fix cannot be considered complete while the gate it sits in is broken. REQUIRED FIX: Add 'n_clusters = len(cluster_ids)' after line 401 (after the cluster_ids assignment)."
   },
-  "acceptance_criteria": {
-    "1_total_return_within_1pct": "PASS — Parity test verifies for 10 random chromosomes.",
-    "2_win_rate_profit_factor_exec_trades_exact": "PASS — Parity test verifies exact match (pytest.approx abs=1e-4).",
-    "3_max_drawdown_within_5pct": "PASS — Parity test verifies for 10 random chromosomes.",
-    "4_sortino_within_5pct": "PASS — Parity test verifies for 10 random chromosomes.",
-    "5_existing_phase2_tests_pass": "PASS — 131 tests pass (60 existing gpu_engine + 1 new parity + others).",
-    "6_new_parity_test_exists": "PASS — test_gpu_cpu_return_parity in tests/unit/test_gpu_engine.py."
-  },
-  "key_observations": [
-    "Order of operations is correct: release → position sizing (using post-release equity) → entry. Matches CPU engine loop order.",
-    "Sortino trade_ret computed at entry with new_equity (post-release), which matches CPU engine's trade_returns.append(net_pnl / equity) after _release_due_positions.",
-    "The spec section 6 says 'Sortino stats must be accumulated at release time' but this was an incorrect spec assumption. The CPU engine accumulates them at entry time (after release updates equity). The implementer correctly identified this and matched CPU behavior. This deviation from the spec text is CORRECT.",
-    "Peak/drawdown tracking now correctly updates at both release time (per step) and final release (after scan), matching CPU engine's per-release peak tracking.",
-    "No out-of-scope additions found. Changes are strictly limited to the PnL timing fix.",
-    "Pre-existing test_phase2_rule_pool failure is unrelated and noted by implementer."
-  ],
-  "review_notes": [
-    "The slot_pnl approach is clean: PnL is computed at entry (using forward-looking price_return_pct), stored in the slot, then credited to equity only when the slot is released. This is a correct parallelization of the CPU engine's sequential release loop.",
-    "The final release block correctly handles edge cases: remaining active slots are summed and their wins/losses/gp/gl counted, preventing data loss for positions opened in the last 288 bars.",
-    "The carry structure is well-organized with 17 elements and the new slot_pnl array is properly initialized, threaded through the scan, and cleaned up at release."
-  ]
+  "out_of_scope_check": "approved — Only production files touched: gpu_fuzzy_trader/phases/phase2_island_scheduler.py and tests/unit/test_phase2_island_scheduler.py (both listed in task-2.md). Other changes are .opencode/ workflow files. No push, no merge, no base branch modifications.",
+  "tests": "51 passed in touched suites (test_phase2_island_scheduler.py, test_island_scheduler_migration.py, test_migration_safety.py). All new tests pass: test_derive_island_seed_differs_across_directions, test_derive_island_seed_orphan_differs_across_directions, test_should_migrate_this_round_parametrized (14 cases), test_migration_cadence_uses_rounds_not_clusters, test_round_counter_name_used, test_migration_guard_uses_helper.",
+  "notes": "Item 6 is correctly and completely implemented. Item 7's helper function and loop restructuring are correct, but the migration guard is broken by a NameError on 'n_clusters' (line 468) — this variable was removed by Task 1's compute_cluster_generation_budgets extraction and never restored. The implementer flagged this correctly but mischaracterized it as 'pre-existing' and 'out of scope'. It is neither: Task 1 introduced it, and it is in the direct code path of Item 7's migration fix. Fix is one line: add 'n_clusters = len(cluster_ids)' after the cluster_ids assignment at line 401. Recommend also adding a test that exercises the migration guard with migration enabled and n_clusters > 1 to catch this class of regression."
 }
