@@ -1127,12 +1127,17 @@ PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN = 10
 PHASE2_ISLAND_MONTHLY_MIN_MONTHS = 4
 # Migration — exchange top elites between islands every N epochs.
 # PHASE2_MIGRATION_ENABLED — master switch for inter-island elite exchange.
-#   True (default) → guarded migration every PHASE2_MIGRATION_EPOCH_INTERVAL
-#                     epochs. Migrants are re-evaluated on the receiver's data
-#                     via filter_migrants_for_cluster (admission gates, symbol
-#                     deployability) before seeding into the receiver's
-#                     population. This prevents near-zero-return migrants from
-#                     displacing converged locals.
+#   True (default) → guarded sequential post-cluster chain migration:
+#                     after cluster N finishes its epochs, its best
+#                     individuals are forwarded to cluster N+1 (the next
+#                     cluster in the sequential order).  There is no
+#                     epoch-round interval migration; the chain fires once
+#                     per cluster boundary.  Migrants are re-evaluated on
+#                     the receiver's data via filter_migrants_for_cluster
+#                     (admission gates, symbol deployability) before seeding
+#                     into the receiver's population.  This prevents
+#                     near-zero-return migrants from displacing converged
+#                     locals.
 #   False           → migration block in _run_cluster_islands is skipped
 #                     entirely; islands run independently and the final pool
 #                     merge is unchanged.
@@ -1140,6 +1145,10 @@ PHASE2_ISLAND_MONTHLY_MIN_MONTHS = 4
 # showed that loose admission gates admitted near-zero-return migrants that
 # displaced up to 25% of converged locals.
 PHASE2_MIGRATION_ENABLED: bool = True
+# PHASE2_MIGRATION_EPOCH_INTERVAL — legacy config retained for backward
+# compatibility.  The active sequential post-cluster chain scheduler does
+# NOT use epoch-interval gating; migration fires once after each cluster
+# finishes.  This value is a no-op in the current code path.
 PHASE2_MIGRATION_EPOCH_INTERVAL = 1
 PHASE2_MIGRATION_TOP_K = 5
 PHASE2_MIGRATION_REQUIRE_DEPLOYABILITY = True

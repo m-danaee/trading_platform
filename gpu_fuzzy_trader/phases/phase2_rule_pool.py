@@ -86,6 +86,23 @@ def _saturating_sortino(raw: float) -> float:
     return float(np.tanh(raw / scale) * cap)
 
 
+def _derive_val_sample_seed(train_sample_seed: int) -> int:
+    """Derive a deterministic validation sample seed from the training seed.
+
+    This ensures train and validation sampling windows use different RNG
+    states, avoiding the scenario where both splits select the same relative
+    chronological window.  The derivation is a simple deterministic offset
+    outside the typical seed range so the two seeds never alias.
+
+    Returns
+    -------
+    int
+        A value in ``[0, 2**31 - 1)``, guaranteed different from the input.
+    """
+    offset = 1_000_003  # large prime offset
+    return (train_sample_seed + offset) % (2**31)
+
+
 # ---------------------------------------------------------------------------
 # Output paths
 # ---------------------------------------------------------------------------
@@ -2214,6 +2231,10 @@ class Rule_Pool_Generator:
         self._train_df = slim_backtest_df(sampled, feature_names)
         self._feature_names = feature_names
         self._sample_seed = sample_seed
+        # Derive a distinct but deterministic validation sample seed so
+        # train and validation windows do not select the same relative
+        # chronological regime (Task 4).
+        self._val_sample_seed = _derive_val_sample_seed(sample_seed)
 
         # Build feature_modes dict for engine
         self._feature_modes = {fi["name"]: fi["mode"] for fi in feature_infos}
@@ -2277,7 +2298,7 @@ class Rule_Pool_Generator:
                 val_sampled = _sample_df(
                     self._scoped_val_df,
                     _cfg.PHASE1_SAMPLING_TOTAL,
-                    random_state=self._sample_seed,
+                    random_state=self._val_sample_seed,
                 )
                 slim_val = slim_backtest_df(val_sampled, self._feature_names)
                 self._val_engine = self._build_engine_for_df(slim_val)
