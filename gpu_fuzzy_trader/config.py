@@ -405,13 +405,13 @@ PHASE2_EVAL_BATCH_DEDUP = True
 PHASE2_EVAL_GLOBAL_CACHE = True
 
 # PHASE2_EVAL_GLOBAL_CACHE_MAX_SIZE — hard cap on the global eval cache.
-#   600 = 200 (population) × 2 (eval runs) × 1.5 (cache generations).
+#   200 = 200 (population) × 1 (cache generation) × 1.0.
 #   Higher → more cache hits; less RAM.
 #   Lower  → less RAM; more re-evaluations.
-# Halved from 1200 to reduce Colab RAM footprint (~0.4 GB saving).
+# Halved twice (1200 → 600 → 200) to reduce Colab RAM footprint (~0.4 GB per cut).
 # Rationale: cache hit rate was observed at 0-4% in the 2026-07-05 22:09 log,
-# so a 50% cut is near-free — the working set is ~1.5 gens at 200 pop.
-PHASE2_EVAL_GLOBAL_CACHE_MAX_SIZE = 600
+# so successive cuts are near-free — the working set is ~1 gen at 200 pop.
+PHASE2_EVAL_GLOBAL_CACHE_MAX_SIZE = 200
 
 # PHASE2_SKIP_ZERO_SIGNAL_SCAN — skip equity scan when rule matches 0 bars.
 #   True  → faster; infeasible rules get penalty without full scan.
@@ -1101,7 +1101,12 @@ PHASE2_ISLAND_TOTAL_GENERATIONS = PHASE2_GENERATIONS
 # PHASE2_ISLAND_EPOCH_GENERATIONS — generations per island epoch before migration.
 # Increased 15→25: fewer epoch rebuilds (~40% overhead reduction); 15-gen
 # epochs caused 10+ epoch starts with ~15s engine rebuild overhead each.
-PHASE2_ISLAND_EPOCH_GENERATIONS = 25
+# 2026-07-06 reversal 25→13: makes trim_evolution_state_memory (which fires
+# once per epoch via park_engines()) run ~2× more often within a cluster's
+# 44-gen lifetime, capping in-cluster RAM growth. Total budget unchanged
+# (44 gens × 3 clusters). Adds ~1 extra epoch boundary per cluster (~30s
+# rebuild) but the RAM benefit outweighs the small time cost.
+PHASE2_ISLAND_EPOCH_GENERATIONS = 13
 # PHASE2_ISLAND_MIN_EPOCH_GENERATIONS — skip epochs with fewer remaining gens
 # than this threshold (engine rebuild ~30s with negligible benefit for <5 gens).
 PHASE2_ISLAND_MIN_EPOCH_GENERATIONS = 5
