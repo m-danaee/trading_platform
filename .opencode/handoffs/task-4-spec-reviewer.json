@@ -1,6 +1,16 @@
 {
-  "task": "task-4-phase5-filtering",
+  "task_id": 4,
   "verdict": "APPROVED",
-  "issues": [],
-  "summary": "All 13 acceptance criteria are satisfied. Config.py contains PHASE5_REMOVE_NEGATIVE_PNL_RULES=True, PHASE3_GLOBAL_MIN_RULES=2, WRITE_EVALUATOR_CLEAN=True. _remove_negative_pnl_rules() correctly removes rules with Net_PnL <= 0 on test split while keeping rules with empty trade_log. Minimum rule safeguard prevents dropping below PHASE3_GLOBAL_MIN_RULES. After pruning, test split is re-evaluated with cleaned rules. Cleaned strategy overwrites outputs/{direction}.json. Evaluator-clean JSON written to outputs/evaluator_clean/{direction}_evaluator_clean.json. _maybe_write_evaluator_clean() implemented in output/writer.py. Gated by PHASE5_REMOVE_NEGATIVE_PNL_RULES flag. All existing tests pass (21 friend project tests + 1186 main project tests). No changes to data splitter, Phase 1, Phase 2, or RB Governor. Implementation is clean and focused on the specified scope."
+  "previous_issues": {
+    "stale_comment": "resolved: Comment block at config.py:406-412 now correctly states '600 = 200 (population) × 2 (eval runs) × 1.5 (cache generations)', includes reduction rationale (cache hit rate 0-4%, ~0.4 GB saving), and only historical mention of 1200 is 'Halved from 1200'."
+  },
+  "items_reviewed": {
+    "fix_1_cache_size": "approved. PHASE2_EVAL_GLOBAL_CACHE_MAX_SIZE = 600 at config.py:413. Comment block (lines 406-412) accurately describes the value and reduction rationale. No stale references.",
+    "fix_2_cache_clear": "approved. clear_global_metrics_cache(cache) defined at evox_runner.py:1498. Called in _run_cluster_islands after the while loop and before pool merge (lines 503-510). Correctly iterates all generators and clears each gen._evolution_state.global_metrics_cache.",
+    "fix_3_engine_teardown": "approved. del generators[cid]; gc.collect() added after each cluster's finalize_island() + _annotate_archive_entries + extend (lines 519-522). Order is correct.",
+    "fix_4_gc_frequency": "approved. evox_runner.py:2793 now uses 'gen % 3 == 0' (was 'gen % 10 == 0')."
+  },
+  "stages_1_3_intact": "approved. No diff in overfit-gap behavior, _derive_island_seed, _should_migrate_this_round, or related logic.",
+  "out_of_scope_check": "approved. Only 3 source files touched (config.py, evox_runner.py, phase2_island_scheduler.py) matching the spec. No push, no merge. Commit message uses correct prefix.",
+  "notes": "Previous issue (stale comment referencing 1200) fully resolved in commit 7584a6d. All 4 fixes are functionally correct and purely memory-management changes. 221 tests pass. Ready for code review."
 }

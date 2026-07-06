@@ -510,7 +510,7 @@ def _run_cluster_islands(
             clear_global_metrics_cache(gen._evolution_state.global_metrics_cache)
 
     cluster_pools: list[dict] = []
-    for cid, gen in generators.items():
+    for cid, gen in list(generators.items()):
         pool_part = gen.finalize_island()
         annotated = Rule_Pool_Generator._annotate_archive_entries(
             pool_part,
