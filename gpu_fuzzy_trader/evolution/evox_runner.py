@@ -2215,6 +2215,27 @@ def _run_nsga2_fallback(
             loop_start=gen_loop_start,
         )
 
+        if val_count < 10:
+            from gpu_fuzzy_trader.phases.phase2_support import (
+                _feasibility_gate_failures,
+            )
+            breakdown = {k: 0 for k in [
+                "train_trade_floor", "train_return_floor", "train_pf_floor",
+                "val_required", "val_ret_positive", "val_trade_floor",
+                "val_return_floor", "val_pf_floor", "train_val_gap",
+            ]}
+            for i in range(len(metrics_cache)):
+                train_m = metrics_cache[i]
+                val_m = _val_metrics_from_cache(train_m)
+                gate_fails = _feasibility_gate_failures(train_m, val_m)
+                for k in breakdown:
+                    breakdown[k] += gate_fails[k]
+            logger.warning(
+                "Phase 2 [%s] gen %d/%d: feasibility collapse breakdown "
+                "(valid_rules=%d < 10): %s",
+                tag, gen + 1, n_generations, val_count, breakdown,
+            )
+
         pareto_ret = _pareto_return_pct_for_early_stop(
             pareto_indices, metrics_cache,
         )
@@ -2927,6 +2948,27 @@ def _run_nsga3(
             restarts="%d/%d" % (restart_count, max_restarts),
             loop_start=gen_loop_start,
         )
+
+        if val_count < 10:
+            from gpu_fuzzy_trader.phases.phase2_support import (
+                _feasibility_gate_failures,
+            )
+            breakdown = {k: 0 for k in [
+                "train_trade_floor", "train_return_floor", "train_pf_floor",
+                "val_required", "val_ret_positive", "val_trade_floor",
+                "val_return_floor", "val_pf_floor", "train_val_gap",
+            ]}
+            for i in range(len(metrics_cache)):
+                train_m = metrics_cache[i]
+                val_m = _val_metrics_from_cache(train_m)
+                gate_fails = _feasibility_gate_failures(train_m, val_m)
+                for k in breakdown:
+                    breakdown[k] += gate_fails[k]
+            logger.warning(
+                "Phase 2 [%s] gen %d/%d: feasibility collapse breakdown "
+                "(valid_rules=%d < 10): %s",
+                tag, gen + 1, n_generations, val_count, breakdown,
+            )
 
         pareto_ret = _pareto_return_pct_for_early_stop(
             pareto_indices, metrics_cache,
