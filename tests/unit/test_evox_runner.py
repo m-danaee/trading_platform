@@ -25,7 +25,9 @@ from gpu_fuzzy_trader.evolution.evox_runner import (
     _update_deployable_archive,
     _update_hall_of_fame,
     _update_max_return_plateau,
+    Phase2EvolutionState,
     run_phase2_evolution,
+    run_phase2_evolution_epoch,
 )
 
 
@@ -1034,3 +1036,186 @@ class TestResetPlateauRecoveryCounters:
             f"post_restart_best_progress should be preserved (5.0) with "
             f"reset_plateau=False, got {new_state.post_restart_best_progress}"
         )
+
+
+class TestRefreshObjectivesOnResume:
+    """Task 2: Verify refresh_objectives_on_resume resets stale objectives
+    on resumed evolution states without clearing population/archives."""
+
+    @staticmethod
+    def _make_resumable_state(
+        pop_size: int = 6,
+        n_features: int = 1,
+        objectives_fill: float = 5.0,
+    ) -> Phase2EvolutionState:
+        """Create a state with non-inf objectives and non-empty metrics_cache."""
+        return Phase2EvolutionState(
+            population=np.zeros((pop_size, n_features), dtype=np.int32),
+            objectives=np.full((pop_size, 3), objectives_fill, dtype=np.float64),
+            metrics_cache=[
+                {"total_return_pct": 10.0, "sortino_ratio": 1.0}
+                for _ in range(pop_size)
+            ],
+            pareto_archive=[],
+            hall_of_fame={
+                (0,): np.array([0], dtype=np.int32),
+            },
+            deployable_archive={
+                (0,): {
+                    "chromosome": np.array([0], dtype=np.int32),
+                    "rank_score": 1.0,
+                },
+            },
+            global_metrics_cache={
+                (0,): {"total_return_pct": 10.0},
+            },
+        )
+
+    class _FakeEngine:
+        def simulate_rule_batch(self, chromosomes, tp, sl, capital_pct, **kwargs):
+            B = chromosomes.shape[0]
+            return [
+                {
+                    "sortino_ratio": 1.0,
+                    "total_return_pct": 1.0,
+                    "max_drawdown_pct": 2.0,
+                    "win_rate": 50.0,
+                    "executed_trades": 25,
+                }
+                for _ in range(B)
+            ]
+
+    def test_refresh_true_with_state_resets_objectives(self):
+        """refresh_objectives_on_resume=True with state≠None sets objectives
+        to inf and clears metrics_cache (verified with n_generations=0)."""
+        feature_infos = [{"name": "feat_0", "mode": "binary", "score": 0.5}]
+        state = self._make_resumable_state(
+            pop_size=6, n_features=1, objectives_fill=5.0,
+        )
+        rng = np.random.default_rng(42)
+
+        new_state, history = run_phase2_evolution_epoch(
+            feature_infos=feature_infos,
+            engine=self._FakeEngine(),
+            pop_size=6,
+            n_generations=0,
+            rng=rng,
+            state=state,
+            refresh_objectives_on_resume=True,
+        )
+
+        # Objectives should all be inf (reset by refresh, no gen loop to re-evaluate)
+        assert np.all(np.isinf(new_state.objectives)), (
+            "All objectives should be inf after refresh with n_generations=0"
+        )
+        # metrics_cache should be cleared
+        assert all(len(m) == 0 for m in new_state.metrics_cache), (
+            "All metrics_cache entries should be cleared after refresh"
+        )
+        # Population preserved
+        assert new_state.population.shape == (6, 1)
+        assert np.array_equal(new_state.population, np.zeros((6, 1), dtype=np.int32))
+
+    def test_refresh_preserves_population_and_archives(self):
+        """Population, hall_of_fame, deployable_archive, and global_metrics_cache
+        are preserved after refresh (unless cache is clearly stale)."""
+        feature_infos = [{"name": "feat_0", "mode": "binary", "score": 0.5}]
+        state = self._make_resumable_state(
+            pop_size=6, n_features=1, objectives_fill=5.0,
+        )
+        rng = np.random.default_rng(42)
+
+        new_state, history = run_phase2_evolution_epoch(
+            feature_infos=feature_infos,
+            engine=self._FakeEngine(),
+            pop_size=6,
+            n_generations=0,
+            rng=rng,
+            state=state,
+            refresh_objectives_on_resume=True,
+        )
+
+        # Population shape and values preserved
+        assert new_state.population.shape == state.population.shape
+        assert np.array_equal(new_state.population, state.population)
+
+        # Hall of fame preserved
+        assert len(new_state.hall_of_fame) == len(state.hall_of_fame)
+        for key, chrom in state.hall_of_fame.items():
+            assert key in new_state.hall_of_fame
+            assert np.array_equal(new_state.hall_of_fame[key], chrom)
+
+        # Deployable archive preserved
+        assert len(new_state.deployable_archive) == len(state.deployable_archive)
+        for key, entry in state.deployable_archive.items():
+            assert key in new_state.deployable_archive
+            assert np.array_equal(
+                new_state.deployable_archive[key]["chromosome"],
+                entry["chromosome"],
+            )
+
+        # Pareo archive preserved
+        assert len(new_state.pareto_archive) == len(state.pareto_archive)
+
+    def test_refresh_false_preserves_old_objectives(self):
+        """When refresh_objectives_on_resume=False (default), resumed
+        objectives keep their old values (verified with n_generations=0)."""
+        feature_infos = [{"name": "feat_0", "mode": "binary", "score": 0.5}]
+        state = self._make_resumable_state(
+            pop_size=6, n_features=1, objectives_fill=5.0,
+        )
+        rng = np.random.default_rng(42)
+
+        new_state, history = run_phase2_evolution_epoch(
+            feature_infos=feature_infos,
+            engine=self._FakeEngine(),
+            pop_size=6,
+            n_generations=0,
+            rng=rng,
+            state=state,
+            refresh_objectives_on_resume=False,
+        )
+
+        # Objectives should be unchanged (still 5.0, not inf)
+        assert np.allclose(new_state.objectives, 5.0), (
+            "Objectives should be preserved when refresh_objectives_on_resume=False"
+        )
+        # metrics_cache should be unchanged
+        assert all(
+            m.get("total_return_pct") == 10.0 for m in new_state.metrics_cache
+        ), "metrics_cache should be preserved when refresh_objectives_on_resume=False"
+
+    def test_refresh_without_state_noop(self):
+        """When state is None (fresh run), refresh_objectives_on_resume has
+        no effect — behavior is identical to default."""
+        feature_infos = [{"name": "feat_0", "mode": "binary", "score": 0.5}]
+        rng = np.random.default_rng(42)
+
+        new_state, history = run_phase2_evolution_epoch(
+            feature_infos=feature_infos,
+            engine=self._FakeEngine(),
+            pop_size=6,
+            n_generations=2,
+            rng=rng,
+            state=None,
+            refresh_objectives_on_resume=True,
+        )
+
+        # Should have run successfully with 2 generations of history
+        assert len(history) == 2
+        # Objectives should be finite (evaluated during gen loop)
+        assert np.all(np.isfinite(new_state.objectives))
+        # metrics_cache should be populated
+        assert all(len(m) > 0 for m in new_state.metrics_cache)
+
+        # Compare with default (no refresh flag) — should produce same result
+        new_state_default, history_default = run_phase2_evolution_epoch(
+            feature_infos=feature_infos,
+            engine=self._FakeEngine(),
+            pop_size=6,
+            n_generations=2,
+            rng=rng,
+            state=None,
+        )
+        assert len(history_default) == 2
+        assert np.all(np.isfinite(new_state_default.objectives))

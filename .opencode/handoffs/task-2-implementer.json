@@ -1,21 +1,27 @@
 {
-  "task_id": 2,
-  "task_title": "Stage 2 seed collision + migration cadence",
-  "branch": "fix/phase2-stage2-seed-migration",
-  "status": "DONE",
-  "commit": "0c8d014",
+  "task_id": "task-2",
+  "status": "SUCCESS",
+  "commit_hash": "669deb0",
+  "branch": "feature/task-2-refresh-resumed-objectives",
   "files_changed": [
-    "gpu_fuzzy_trader/phases/phase2_island_scheduler.py",
-    "tests/unit/test_phase2_island_scheduler.py"
+    "gpu_fuzzy_trader/evolution/evox_runner.py",
+    "gpu_fuzzy_trader/phases/phase2_rule_pool.py",
+    "tests/unit/test_evox_runner.py"
   ],
-  "tests": {
-    "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_phase2_island_scheduler.py tests/unit/test_island_scheduler_migration.py tests/unit/test_migration_safety.py tests/unit/test_phase2_rule_pool.py -v": "183 passed, 1 failed (pre-existing failure in test_phase2_rule_pool.py::test_f3_uses_min_train_val_return)"
-  },
-  "notes_for_reviewer": [
-    "Item 6: _derive_island_seed call sites now include direction prefix at both cluster and orphan paths. Signature unchanged.",
-    "Item 7: _should_migrate_this_round helper added. round_counter increments once per outer while round (not per cluster). Inline modulo replaced with helper call.",
-    "n_clusters NameError fixed: n_clusters = len(cluster_ids) added at line 401; new regression tests added (test_n_clusters_assigned_in_function, test_n_clusters_referenced_in_migration_guard).",
-    "All new tests pass including regression tests for n_clusters NameError fix.",
-    "One pre-existing failure in test_phase2_rule_pool.py::TestRobustReturnObjective::test_f3_uses_min_train_val_return unrelated to changes."
+  "tests_run": [
+    "tests/unit/test_evox_runner.py — 41 passed (incl. 5 new)",
+    "tests/unit/test_phase2_rule_pool.py — 134 passed",
+    "tests/unit/test_phase2_plateau_restart.py, test_phase2_island_scheduler.py, test_phase2_stage.py, test_phase2_post_restart_stop.py — 74 passed"
+  ],
+  "notes": [
+    "Conservative always-refresh-on-island-resume: refresh_objectives_on_resume=True when not first_epoch in run_epoch()",
+    "global_metrics_cache is cleared on refresh since cached values reflect stale context — this is a 'clearly necessary targeted invalidation' per scope",
+    "Fresh-run (state=None) behavior is completely unchanged — the refresh condition checks state is not None",
+    "All existing tests pass with no regressions",
+    "The refresh happens AFTER migrant seed application so both migrated and existing individuals get reset objectives"
+  ],
+  "risks": [
+    "Clear global_metrics_cache may cause slightly more GPU evaluations on the first generation of each resumed epoch — this is the intended trade-off for correctness",
+    "If a future task relies on global_metrics_cache persisting across epoch boundaries for speed, it should be noted that the cache is now cleared on resume"
   ]
 }
