@@ -369,11 +369,19 @@ def _should_skip_epoch(remaining: int) -> bool:
 def _should_migrate_this_round(round_index: int, interval: int) -> bool:
     """Return True if migration should fire on this outer round (1-indexed).
 
+    .. note::
+       This helper is **legacy/unused** in the active sequential scheduler.
+       ``_run_cluster_islands`` performs **sequential post-cluster chain
+       migration** (cluster N → N+1 after cluster N finishes) and does NOT
+       use epoch-round interval checking.  The helper is kept for reference
+       and for any future round-robin mode.
+
     Parameters
     ----------
     round_index : int
         The current outer-round count (starts at 0, incremented after each
-        ``while`` iteration in ``_run_cluster_islands``).
+        ``while`` iteration in ``_run_cluster_islands`` if round-robin mode
+        were active).
     interval : int
         The configured migration epoch interval (``PHASE2_MIGRATION_EPOCH_INTERVAL``).
         Values <= 0 are treated as "never migrate".
@@ -613,13 +621,24 @@ def run_cluster_phase2(
         len(cluster_map),
         reference_rows,
     )
+    migration_status = (
+        "enabled sequential post-cluster chain"
+        if _cfg.PHASE2_MIGRATION_ENABLED
+        else "disabled (independent islands)"
+    )
+    receiver_guards = (
+        "deployability+admission+val_return"
+        if _cfg.PHASE2_MIGRATION_REQUIRE_DEPLOYABILITY
+        else "admission"
+    )
     logger.info(
-        "Phase 2 [%s]: island mode migration=%s (interval=%d, top_k=%d, seed_frac=%.2f)",
+        "Phase 2 [%s]: island mode migration=%s"
+        " (top_k=%d, seed_frac=%.2f, receiver_guards=%s)",
         direction,
-        "enabled" if _cfg.PHASE2_MIGRATION_ENABLED else "disabled (independent islands)",
-        int(_cfg.PHASE2_MIGRATION_EPOCH_INTERVAL),
+        migration_status,
         int(_cfg.PHASE2_MIGRATION_TOP_K),
         float(_cfg.PHASE2_MIGRATION_SEED_FRACTION),
+        receiver_guards,
     )
 
     pool = _run_cluster_islands(

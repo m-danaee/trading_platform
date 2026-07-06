@@ -1,25 +1,24 @@
 {
-  "task_id": 4,
-  "task_title": "RAM quick wins",
-  "branch": "fix/ram-quick-wins",
-  "status": "DONE",
-  "commit": "1b647ca + 7584a6d + a0b4c76",
+  "task_id": "task-4",
+  "status": "SUCCESS",
+  "commit_hash": "19032740733c47d12090d209b04541f94b1ef760",
   "files_changed": [
     "gpu_fuzzy_trader/config.py",
-    "gpu_fuzzy_trader/evolution/evox_runner.py",
-    "gpu_fuzzy_trader/phases/phase2_island_scheduler.py"
+    "gpu_fuzzy_trader/phases/phase2_island_scheduler.py",
+    "gpu_fuzzy_trader/phases/phase2_rule_pool.py",
+    "tests/unit/test_phase2_rule_pool.py"
   ],
-  "tests": {
-    "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_phase2_island_scheduler.py tests/unit/test_phase2_rule_pool.py tests/unit/test_evox_runner.py tests/unit/test_migration_safety.py tests/unit/test_island_scheduler_migration.py -v": "221 passed in 109.23s"
-  },
-  "notes_for_reviewer": [
-    "Fix 1: PHASE2_EVAL_GLOBAL_CACHE_MAX_SIZE changed from 1200 to 600 in config.py:413",
-    "Fix 2: Added clear_global_metrics_cache(cache) to evox_runner.py. It accepts an optional cache dict parameter (since there's no module-level global_metrics_cache — it lives on Phase2EvolutionState). Called in _run_cluster_islands after the while loop, clearing each generator's _evolution_state.global_metrics_cache.",
-    "Fix 3: del generators[cid]; gc.collect() added after each cluster's finalize_island() in _run_cluster_islands. Verified that finalize_island() creates an independent copy via dict(entry) in _annotate_archive_entries and calls _release_resources() which sets internal references to None.",
-    "Fix 4: gc.collect() in evox_runner.py changed from gen % 10 to gen % 3.",
-    "All 221 tests pass. No behavior changes — all 4 fixes are pure memory-management.",
-    "Stages 1-3 (overfit-gap behavior) completely untouched.",
-    "Comment block in config.py:407-411 updated to reflect new value 600 and reduction rationale (cache hit rate 0-4%; halved from 1200 for ~0.4 GB saving).",
-    "Critical dict-iteration RuntimeError fixed: list() wrap added before for-loop in _run_cluster_islands to snapshot generators.items() keys. Secondary style fix for gc import left as-is (no module-level import existed)."
+  "tests_run": [
+    "tests/unit/test_phase2_rule_pool.py",
+    "tests/unit/test_phase2_island_scheduler.py",
+    "tests/unit/test_migration_safety.py",
+    "tests/unit/test_island_scheduler_migration.py"
+  ],
+  "test_results": "190 passed (phase2_rule_pool + island scheduler), 18 passed (migration safety), all passing",
+  "summary": "Migration semantics: updated log and config comments to accurately describe sequential post-cluster chain migration (cluster N -> N+1 after cluster N finishes), removed misleading 'interval=N' epoch language, annotated _should_migrate_this_round as legacy. Train/val seed distinctness: added _derive_val_sample_seed() helper with prime offset; Rule_Pool_Generator now stores and uses _val_sample_seed for validation sampling. All existing deterministic sampling behavior preserved. 7 new tests added for seed distinctness, determinism, and generator integration.",
+  "notes": "PHASE2_MIGRATION_EPOCH_INTERVAL retained as no-op legacy config for backward compatibility. The sequential chain migration does not use epoch-interval gating; migration fires unconditionally after each cluster finishes (when enabled). Receiver guards (deployability+admission+val_return) are logged. _should_migrate_this_round is kept as a legacy helper with docstring noting it's unused in the active scheduler.",
+  "risks": [
+    "The val sampling window will now differ from train (by design), which means backtest results may shift slightly due to different sample regions. This is the intended behavior to reduce train/val regime overlap.",
+    "If any external code reads _sample_seed and expects it to control val sampling, it may need updating. All internal paths use _val_sample_seed for val sampling."
   ]
 }

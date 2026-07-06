@@ -31,6 +31,7 @@ from gpu_fuzzy_trader.phases.phase2_rule_pool import (
     Rule_Pool_Generator,
     _count_active_conditions,
     _crowding_distance,
+    _derive_val_sample_seed,
     _dominates,
     _get_dont_cares,
     _hamming_distance,
@@ -770,6 +771,94 @@ class TestSampleDf:
         with_seed = _sample_df(df, total_rows=80, random_state=0)
         with_none = _sample_df(df, total_rows=80)
         assert not with_seed.equals(with_none)
+
+
+# ---------------------------------------------------------------------------
+# Tests: _derive_val_sample_seed — distinct train/val sampling seeds
+# ---------------------------------------------------------------------------
+
+
+class TestDeriveValSampleSeed:
+    """AC: Train and validation sampling use distinct RNG seeds by default."""
+
+    def test_val_seed_differs_from_train_seed(self):
+        """_derive_val_sample_seed returns a value different from the input."""
+        for train_seed in [0, 1, 42, 999999, 2**31 - 2]:
+            val_seed = _derive_val_sample_seed(train_seed)
+            assert val_seed != train_seed, (
+                f"val seed {val_seed} must differ from train seed {train_seed}"
+            )
+
+    def test_val_seed_is_deterministic(self):
+        """Same train seed always produces same val seed."""
+        for train_seed in [0, 42, 123456]:
+            a = _derive_val_sample_seed(train_seed)
+            b = _derive_val_sample_seed(train_seed)
+            assert a == b
+
+    def test_val_seed_in_valid_range(self):
+        """Result is in [0, 2**31) so it is a valid random seed."""
+        for train_seed in range(0, 100, 7):
+            val_seed = _derive_val_sample_seed(train_seed)
+            assert 0 <= val_seed < 2**31
+
+    def test_rule_pool_generator_has_distinct_val_seed(self):
+        """Rule_Pool_Generator stores distinct _sample_seed and _val_sample_seed."""
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+            Rule_Pool_Generator,
+            _derive_val_sample_seed,
+        )
+        fi = _make_feature_infos(["positive"] * 3)
+        df = _make_train_df()
+        gen = Rule_Pool_Generator(df, fi, "long", seed=42)
+        assert gen._sample_seed != gen._val_sample_seed
+        assert gen._val_sample_seed == _derive_val_sample_seed(gen._sample_seed)
+
+    def test_rule_pool_generator_val_seed_default_phase2_seed(self, monkeypatch):
+        """When seed=None, val seed is derived from PHASE2_SEED."""
+        monkeypatch.setattr(_cfg, "PHASE2_SEED", 9999)
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+            Rule_Pool_Generator,
+            _derive_val_sample_seed,
+        )
+        fi = _make_feature_infos(["positive"] * 3)
+        df = _make_train_df()
+        gen = Rule_Pool_Generator(df, fi, "long", seed=None)
+        assert gen._sample_seed == 9999
+        assert gen._val_sample_seed == _derive_val_sample_seed(9999)
+
+    def test_val_seed_changes_validation_sample(self):
+        """Using val seed for validation sampling produces a different
+        slice than using the train seed (same data, same budget)."""
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+            _derive_val_sample_seed,
+            _sample_df,
+        )
+        df = _make_train_df(n_rows=400, symbols=["A", "B"])
+        budget = 80
+        for train_seed in [0, 42, 100]:
+            val_seed = _derive_val_sample_seed(train_seed)
+            train_sample = _sample_df(df, budget, random_state=train_seed)
+            val_sample = _sample_df(df, budget, random_state=val_seed)
+            # The two samples should differ in at least one row for some seeds
+            if train_seed == 42:
+                # Not strictly required for all seeds, but a useful check
+                assert not train_sample.equals(val_sample), (
+                    f"train sample (seed={train_seed}) unexpectedly equals "
+                    f"val sample (seed={val_seed}) — seed derivation may "
+                    f"collide"
+                )
+
+    def test_total_rows_exact_still_works_with_val_seed(self):
+        """divmod distribution must still work correctly with val seed."""
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+            _derive_val_sample_seed,
+            _sample_df,
+        )
+        df = _make_train_df(n_rows=400, symbols=["A", "B", "C", "D"])
+        val_seed = _derive_val_sample_seed(42)
+        sampled = _sample_df(df, total_rows=101, random_state=val_seed)
+        assert len(sampled) == 101
 
 
 # ---------------------------------------------------------------------------
