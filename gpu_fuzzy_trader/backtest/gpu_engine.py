@@ -230,6 +230,16 @@ def _jax_compute_trade_outcomes(
     long_both_result = jnp.where(max_before_min == 1, tp_f, -sl_f)
     long_result = jnp.where(
         long_both_hit, long_both_result,
+        # INTENTIONALLY UNCAPPED time-exit return.
+        # This branch returns the raw close_ret/-close_ret when a trade
+        # holds to MAX_HOLD_CANDLES without hitting TP or SL. A previous
+        # attempt to cap this with MAX_TIME_EXIT_RETURN_PCT (commit
+        # 46cb88a, default 50.0) was reverted (commit 072c527) to preserve
+        # parity with evaluator_v5.ipynb (lines 958, 971), which is the
+        # user's ground truth for rule testing per AGENTS.md. Re-applying
+        # any cap here would create a divergence that invalidates the
+        # user's standalone OOS check. If you want to re-introduce a cap,
+        # update evaluator_v5.ipynb FIRST and document the change.
         jnp.where(long_hit_tp, tp_f, jnp.where(long_hit_sl, -sl_f, close_ret)),
     )
 
@@ -241,6 +251,16 @@ def _jax_compute_trade_outcomes(
     short_result = jnp.where(
         short_both_hit, short_both_result,
         jnp.where(short_hit_tp, tp_f, jnp.where(
+            # INTENTIONALLY UNCAPPED time-exit return.
+            # This branch returns the raw close_ret/-close_ret when a trade
+            # holds to MAX_HOLD_CANDLES without hitting TP or SL. A previous
+            # attempt to cap this with MAX_TIME_EXIT_RETURN_PCT (commit
+            # 46cb88a, default 50.0) was reverted (commit 072c527) to preserve
+            # parity with evaluator_v5.ipynb (lines 958, 971), which is the
+            # user's ground truth for rule testing per AGENTS.md. Re-applying
+            # any cap here would create a divergence that invalidates the
+            # user's standalone OOS check. If you want to re-introduce a cap,
+            # update evaluator_v5.ipynb FIRST and document the change.
             short_hit_sl, -sl_f, -close_ret)),
     )
 

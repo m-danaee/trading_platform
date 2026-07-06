@@ -569,6 +569,16 @@ class CPUBacktestEngine:
                 return float(tp), "TP"
             if hit_sl:
                 return float(-sl), "SL"
+            # INTENTIONALLY UNCAPPED time-exit return.
+            # This branch returns the raw close_ret/-close_ret when a trade
+            # holds to MAX_HOLD_CANDLES without hitting TP or SL. A previous
+            # attempt to cap this with MAX_TIME_EXIT_RETURN_PCT (commit
+            # 46cb88a, default 50.0) was reverted (commit 072c527) to preserve
+            # parity with evaluator_v5.ipynb (lines 958, 971), which is the
+            # user's ground truth for rule testing per AGENTS.md. Re-applying
+            # any cap here would create a divergence that invalidates the
+            # user's standalone OOS check. If you want to re-introduce a cap,
+            # update evaluator_v5.ipynb FIRST and document the change.
             return float(s_close), "Time_288"
 
         # short
@@ -581,6 +591,16 @@ class CPUBacktestEngine:
             return float(tp), "TP"
         if hit_sl:
             return float(-sl), "SL"
+        # INTENTIONALLY UNCAPPED time-exit return.
+        # This branch returns the raw close_ret/-close_ret when a trade
+        # holds to MAX_HOLD_CANDLES without hitting TP or SL. A previous
+        # attempt to cap this with MAX_TIME_EXIT_RETURN_PCT (commit
+        # 46cb88a, default 50.0) was reverted (commit 072c527) to preserve
+        # parity with evaluator_v5.ipynb (lines 958, 971), which is the
+        # user's ground truth for rule testing per AGENTS.md. Re-applying
+        # any cap here would create a divergence that invalidates the
+        # user's standalone OOS check. If you want to re-introduce a cap,
+        # update evaluator_v5.ipynb FIRST and document the change.
         return float(-s_close), "Time_288"
 
     def _calculate_position_notional(
