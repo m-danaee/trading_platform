@@ -2146,6 +2146,7 @@ class Rule_Pool_Generator:
         island_profile: str = "global",
         reference_rows: int | None = None,
         pending_migrant_seeds: list[dict] | None = None,
+        defer_warmup: bool = False,
     ) -> None:
         if direction not in ("long", "short"):
             raise ValueError(
@@ -2169,6 +2170,7 @@ class Rule_Pool_Generator:
         self.island_profile = str(island_profile)
         self.reference_rows = reference_rows
         self._pending_migrant_seeds = list(pending_migrant_seeds or [])
+        self._defer_warmup = defer_warmup
 
         self._scoped_train_df = train_df
         self._scoped_val_df = val_df
@@ -2324,14 +2326,16 @@ class Rule_Pool_Generator:
                 )
                 self._val_engine = None
 
-        from gpu_fuzzy_trader._gpu_runtime import configure_phase2_gpu_runtime
         from gpu_fuzzy_trader._memory import log_memory_rss
 
-        configure_phase2_gpu_runtime(
-            self._engine,
-            val_engine=self._val_engine,
-            cluster_id=self.island_id,
-        )
+        if not self._defer_warmup:
+            from gpu_fuzzy_trader._gpu_runtime import configure_phase2_gpu_runtime
+
+            configure_phase2_gpu_runtime(
+                self._engine,
+                val_engine=self._val_engine,
+                cluster_id=self.island_id,
+            )
         log_memory_rss(f"Phase2 [{self.direction}] engine init")
 
     def _rebuild_train_df(self) -> None:

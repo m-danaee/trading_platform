@@ -1,1 +1,24 @@
-{"task_id": "task-5", "branch": "fix/plateau-config-tuning-and-banner", "status": "DONE", "commit": "d99ea42", "files_changed": ["gpu_fuzzy_trader/config.py", "gpu_fuzzy_trader/run_pipeline.py", "README.md"], "tests": {"config import": "config OK (all asserts pass)", "tests/unit full": "1204 passed, 2 pre-existing MAX_CONDITIONS failures (out of scope)", "test_new_config_parameters_exist": "PASSES (was failing before — EPOCH_GENERATIONS now 15)"}, "config_values": {"patience": 8, "min_gen": 6, "min_delta": 0.05, "epoch_gens": 15}, "banner_format": "cluster mode: island_total=%d per_cluster=%d epoch=%d; single: gen=%d", "test_new_config_parameters_exist": "pass (fixed by EPOCH_GENERATIONS=15)", "max_conditions_failures": "still failing — out of scope, flag to user", "notes_for_reviewer": ["Fixed pre-existing test_new_config_parameters_exist failure", "README includes task-4 deferred entries (balanced clustering, min_profitable_symbols scaling)", "2 MAX_CONDITIONS failures remain pre-existing and out of scope"], "acceptance_criteria_met": [1, 2, 3, 4]}
+{
+  "task_id": 5,
+  "task_title": "Sequential cluster warmup (drop 3/4 signatures)",
+  "branch": "fix/ram-sequential-clusters",
+  "status": "DONE",
+  "commit": "e643d2d",
+  "files_changed": [
+    "gpu_fuzzy_trader/phases/phase2_rule_pool.py",
+    "gpu_fuzzy_trader/phases/phase2_island_scheduler.py",
+    "tests/unit/test_phase2_island_scheduler.py"
+  ],
+  "tests": {
+    "tests/unit/test_phase2_island_scheduler.py": "45 passed (including 4 new deferred warmup structural tests)",
+    "tests/unit/test_phase2_rule_pool.py + test_evox_runner.py + test_migration_safety.py + test_island_scheduler_migration.py": "186 passed",
+    "all touched": "231 passed"
+  },
+  "notes_for_reviewer": [
+    "Eviction timing fixed: warmup deferred out of Rule_Pool_Generator.__init__ via defer_warmup flag; warmup now happens per-cluster inside _run_cluster_islands; eviction happens between clusters. Test updated to verify signatures grow/shrink around each cluster's epochs.",
+    "Clusters are processed sequentially (not round-robin) — each cluster warms, runs all its epochs, then evicts before the next cluster starts. Peak signatures = 2 (one cluster's train+val) instead of 4 (all clusters).",
+    "Migration changed from round-robin mesh to sequential chain: after cluster N finishes, its best individuals are forwarded to cluster N+1 as seed archives.",
+    "Orphan-boost path and all other warmup callers unaffected (defer_warmup defaults to False).",
+    "_run_cluster_islands still calls evict_cluster_signatures in the cluster_pools finalization loop (redundant but safe)."
+  ]
+}

@@ -431,18 +431,44 @@ def _run_cluster_islands(
             island_hyperparams=hp,
             island_profile="cluster",
             reference_rows=reference_rows,
+            defer_warmup=True,
         )
 
-    round_counter = 0
-    while any(
-        generators[cid]._island_generations_done < cluster_budgets[cid]
-        for cid in cluster_ids
-    ):
-        for cid in cluster_ids:
-            gen = generators[cid]
-            gens_per_cluster = cluster_budgets[cid]
-            if gen._island_generations_done >= gens_per_cluster:
-                continue
+    # ------------------------------------------------------------------
+    # Sequential per-cluster processing (Fix 5: sequential cluster warmup)
+    #
+    # Each cluster is processed one at a time: warm → run epochs → evict.
+    # This ensures only 1 cluster's JAX signatures are alive at any time,
+    # reducing peak VRAM from ~4 signatures to ~2.
+    #
+    # Migration: after a cluster finishes, its best individuals are
+    # forwarded to the next cluster as seed archives.
+    # ------------------------------------------------------------------
+    from gpu_fuzzy_trader._gpu_runtime import (
+        evict_cluster_signatures,
+        warmup_phase2_gpu_kernels,
+    )
+
+    cluster_order = list(cluster_ids)
+    for idx, cid in enumerate(cluster_order):
+        gen = generators[cid]
+        gens_per_cluster = cluster_budgets[cid]
+
+        # 1. Warm this cluster's GPU engines before its first epoch
+        try:
+            warmup_phase2_gpu_kernels(
+                gen._engine,
+                gen._val_engine,
+                cluster_id=cid,
+            )
+        except Exception as exc:
+            logger.debug(
+                "Phase 2 [%s]: warmup failed for cluster %s: %s",
+                direction, cid, exc,
+            )
+
+        # 2. Run all epochs for this cluster sequentially
+        while gen._island_generations_done < gens_per_cluster:
             remaining = gens_per_cluster - gen._island_generations_done
 
             # Skip tiny remaining epochs (engine rebuild ~30s with negligible benefit)
@@ -454,50 +480,58 @@ def _run_cluster_islands(
                     direction, cid, remaining, min_gens,
                 )
                 gen._island_generations_done = gens_per_cluster  # exit loop cleanly
-                continue
+                break
 
             gen.run_epoch(n_generations=min(epoch_gens, remaining))
             gen.park_engines()
 
-        round_counter += 1
+        # 3. Evict this cluster's JAX signatures after all epochs are done
+        try:
+            evicted = evict_cluster_signatures(cluster_id=cid)
+            if evicted > 0:
+                logger.info(
+                    "Phase 2 [%s]: evicted %d signatures for cluster %s",
+                    direction, evicted, cid,
+                )
+        except Exception as exc:
+            logger.debug(
+                "Phase 2 [%s]: evict_cluster_signatures failed for cluster %s: %s",
+                direction, cid, exc,
+            )
 
+        # 4. Migration: forward best individuals to the next cluster
         if (
             _cfg.PHASE2_MIGRATION_ENABLED
-            and _should_migrate_this_round(
-                round_counter, int(_cfg.PHASE2_MIGRATION_EPOCH_INTERVAL),
-            )
             and n_clusters > 1
+            and idx + 1 < len(cluster_order)
         ):
+            next_cid = cluster_order[idx + 1]
+            next_gen = generators[next_cid]
             from gpu_fuzzy_trader.evolution.evox_runner import (
                 extract_deployable_migrants,
             )
 
-            migrants_by_source: dict[str, list[dict]] = {}
-            for src_id, src_gen in generators.items():
-                if src_gen._evolution_state is None:
-                    migrants_by_source[src_id] = []
-                else:
-                    migrants_by_source[src_id] = extract_deployable_migrants(
-                        src_gen._evolution_state,
+            if gen._evolution_state is not None:
+                try:
+                    migrants = extract_deployable_migrants(
+                        gen._evolution_state,
                         top_k=int(_cfg.PHASE2_MIGRATION_TOP_K),
                     )
-
-            for tgt_id, tgt_gen in generators.items():
-                inbound: list[dict] = []
-                for src_id, migrants in migrants_by_source.items():
-                    if src_id == tgt_id:
-                        continue
-                    inbound.extend(
-                        filter_migrants_for_cluster(
+                    if migrants:
+                        inbound = filter_migrants_for_cluster(
                             migrants[: int(_cfg.PHASE2_MIGRATION_TOP_K)],
-                            tgt_gen,
-                            source_cluster_id=src_id,
-                            target_cluster_id=tgt_id,
+                            next_gen,
+                            source_cluster_id=cid,
+                            target_cluster_id=next_cid,
                         )
-                    )
-                if inbound:
-                    tgt_gen.set_pending_migrant_seeds(
-                        _merge_archive_entries(inbound),
+                        if inbound:
+                            next_gen.set_pending_migrant_seeds(
+                                _merge_archive_entries(inbound),
+                            )
+                except Exception as exc:
+                    logger.debug(
+                        "Phase 2 [%s]: migration from cluster %s to %s failed: %s",
+                        direction, cid, next_cid, exc,
                     )
 
     # Free cache memory across all cluster generators before finalizing
@@ -519,13 +553,14 @@ def _run_cluster_islands(
         cluster_pools.extend(annotated)
         # (Fix 3: RAM quick wins — explicit engine teardown + GC)
         # (Fix 5: sequential cluster warmup — evict JAX signatures for this cluster)
+        # Eviction already done in sequential processing above; re-call is safe.
         try:
             from gpu_fuzzy_trader._gpu_runtime import evict_cluster_signatures
 
             evicted = evict_cluster_signatures(cluster_id=cid)
             if evicted > 0:
                 logger.info(
-                    "Phase 2 [%s]: evicted %d signatures for cluster %s",
+                    "Phase 2 [%s]: evicted %d signatures for cluster %s (cleanup)",
                     direction,
                     evicted,
                     cid,

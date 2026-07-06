@@ -195,82 +195,52 @@ class TestMigrationCadenceHelper:
         """Verify pure helper returns correct boolean for various inputs."""
         assert _should_migrate_this_round(round_index, interval) is expected
 
-    def test_migration_cadence_uses_rounds_not_clusters(self):
-        """Verify _run_cluster_islands increments round_counter at outer scope,
-        NOT inside the ``for cid in cluster_ids:`` loop."""
+    def test_sequential_cluster_processing_uses_for_cid_outer(self):
+        """Verify _run_cluster_islands processes clusters sequentially
+        (outer ``for cid in cluster_ids``, NOT round-robin while + inner for)."""
         from gpu_fuzzy_trader.phases.phase2_island_scheduler import _run_cluster_islands
         import inspect
 
         source = inspect.getsource(_run_cluster_islands)
-
-        # The old bug: epoch_counter += 1 inside the for cid loop
-        # The fix: round_counter += 1 at outer while scope (after for cid)
-
-        # Assert the increment happens OUTSIDE the for-cid loop.
-        # Strategy: find the 'for cid in cluster_ids:' block and assert
-        # that 'round_counter += 1' is NOT indented inside it.
-        lines = source.splitlines()
-        in_for_cid_block = False
-        for_cid_indent = None
-        round_increment_found = False
-        round_increment_indent = None
-
-        for i, line in enumerate(lines):
-            stripped = line.lstrip()
-            indent = len(line) - len(stripped)
-
-            if "for cid in cluster_ids:" in stripped:
-                in_for_cid_block = True
-                for_cid_indent = indent
-                continue
-
-            if in_for_cid_block and "round_counter += 1" in stripped:
-                round_increment_found = True
-                round_increment_indent = indent
-                break
-
-            # Detect end of for-cid block by checking if a line at same or lesser
-            # indent as the 'for' keyword appears (and is not a comment/blank)
-            if in_for_cid_block and stripped and not stripped.startswith("#"):
-                if indent <= for_cid_indent:
-                    in_for_cid_block = False
-
-        assert round_increment_found, (
-            "round_counter += 1 not found in _run_cluster_islands source"
-        )
-        # If the increment were inside the for-cid block, its indent would be
-        # greater than for_cid_indent. It should be at the same or lesser indent.
-        assert round_increment_indent is not None and round_increment_indent <= for_cid_indent, (
-            f"round_counter += 1 (indent={round_increment_indent}) is INSIDE "
-            f"the 'for cid' block (indent={for_cid_indent}); "
-            f"it must be at outer while scope"
+        # The sequential approach has an outer for-cid loop with an inner while loop
+        # per cluster, NOT a while loop with inner for-cid.
+        assert "for idx, cid in enumerate(cluster_order):" in source or (
+            "for cid in cluster_ids:" in source
+            and "while gen._island_generations_done < gens_per_cluster:" in source
+        ), (
+            "_run_cluster_islands must use sequential per-cluster processing "
+            "(outer for-cid, inner while), not round-robin"
         )
 
-    def test_round_counter_name_used(self):
-        """Verify _run_cluster_islands uses 'round_counter' not 'epoch_counter'."""
+    def test_no_round_counter_in_sequential_mode(self):
+        """Verify _run_cluster_islands no longer uses 'round_counter'
+        since clusters are processed sequentially, not in round-robin."""
         from gpu_fuzzy_trader.phases.phase2_island_scheduler import _run_cluster_islands
         import inspect
 
         source = inspect.getsource(_run_cluster_islands)
-        assert "round_counter" in source, (
-            "'round_counter' not found; variable not renamed"
-        )
-        assert "epoch_counter" not in source, (
-            "'epoch_counter' still present; should be renamed to 'round_counter'"
+        assert "round_counter" not in source, (
+            "'round_counter' should be removed in sequential cluster processing"
         )
 
-    def test_migration_guard_uses_helper(self):
-        """Verify the migration guard calls _should_migrate_this_round."""
+    def test_migration_uses_chain_pattern(self):
+        """Verify migration in _run_cluster_islands uses sequential chain
+        (cluster → next cluster), not round-robin mesh."""
         from gpu_fuzzy_trader.phases.phase2_island_scheduler import _run_cluster_islands
         import inspect
 
         source = inspect.getsource(_run_cluster_islands)
-        assert "_should_migrate_this_round" in source, (
-            "Migration guard must use the _should_migrate_this_round helper"
+        # The sequential migration guard checks idx + 1 < len(cluster_order)
+        # to forward migrants from one cluster to the next.
+        assert "n_clusters > 1" in source, (
+            "Migration guard must reference n_clusters > 1"
         )
-        # Ensure the old inline modulo is gone
-        assert "round_counter % int" not in source, (
-            "Inline modulo still present; should use _should_migrate_this_round"
+        assert "idx + 1" in source or "next_cid" in source, (
+            "Sequential migration must use next-cluster pattern"
+        )
+        # Ensure the old round-robin style is gone
+        assert "migrants_by_source" not in source, (
+            "Round-robin mesh migration should be replaced by sequential chain"
         )
 
 
@@ -445,4 +415,65 @@ class TestEvictClusterSignatures:
         source = inspect.getsource(Rule_Pool_Generator._build_engines)
         assert "cluster_id=self.island_id" in source, (
             "_build_engines must pass cluster_id to configure_phase2_gpu_runtime"
+        )
+
+
+# ============================================================================
+# Task 5 extension: Deferred warmup — warm happens per-cluster, not at init
+# ============================================================================
+
+
+class TestDeferredWarmup:
+    """Unit tests for the ``defer_warmup`` flag on ``Rule_Pool_Generator``.
+
+    When ``defer_warmup=True`` the ``configure_phase2_gpu_runtime`` call is
+    skipped inside ``_build_engines``, so no JAX signatures are created at
+    init. The caller (``_run_cluster_islands``) must then warm each cluster
+    separately with ``warmup_phase2_gpu_kernels``.
+    """
+
+    def test_default_defer_warmup_is_false(self):
+        """Existing callers without defer_warmup still warm at init."""
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import Rule_Pool_Generator
+        import inspect
+
+        sig = inspect.signature(Rule_Pool_Generator.__init__)
+        assert "defer_warmup" in sig.parameters
+        default = sig.parameters["defer_warmup"].default
+        assert default is False, (
+            f"defer_warmup must default to False, got {default}"
+        )
+
+    def test_defer_warmup_skips_configure_call_in_source(self):
+        """The configure_phase2_gpu_runtime call is inside
+        'if not self._defer_warmup:' guard."""
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import Rule_Pool_Generator
+        import inspect
+
+        source = inspect.getsource(Rule_Pool_Generator._build_engines)
+        assert "if not self._defer_warmup:" in source, (
+            "_build_engines must conditionally skip warming when defer_warmup is True"
+        )
+        assert "configure_phase2_gpu_runtime" in source, (
+            "configure_phase2_gpu_runtime must still be callable in non-deferred mode"
+        )
+
+    def test_run_cluster_islands_passes_defer_warmup(self):
+        """_run_cluster_islands passes defer_warmup=True to all generators."""
+        from gpu_fuzzy_trader.phases.phase2_island_scheduler import _run_cluster_islands
+        import inspect
+
+        source = inspect.getsource(_run_cluster_islands)
+        assert "defer_warmup=True" in source, (
+            "_run_cluster_islands must pass defer_warmup=True to Rule_Pool_Generator"
+        )
+
+    def test_run_cluster_islands_calls_warmup_before_epochs(self):
+        """_run_cluster_islands calls warmup_phase2_gpu_kernels per cluster."""
+        from gpu_fuzzy_trader.phases.phase2_island_scheduler import _run_cluster_islands
+        import inspect
+
+        source = inspect.getsource(_run_cluster_islands)
+        assert "warmup_phase2_gpu_kernels" in source, (
+            "_run_cluster_islands must call warmup_phase2_gpu_kernels per cluster"
         )
