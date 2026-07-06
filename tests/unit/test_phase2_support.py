@@ -7,6 +7,7 @@ import pytest
 
 from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.phases.phase2_support import (
+    _feasibility_gate_failures,
     _raw_feasibility_violation_score,
     compute_support_penalty_and_specialist,
     deployability_rank_score,
@@ -276,3 +277,136 @@ class TestPoolAdmissionScaledFloors:
         _, _, _, _, small_min = _pool_admission_floors(40_000)
         assert small_min < full_min
         assert small_min >= _cfg.PURGED_WF_MIN_TRADE_FLOOR_ABSOLUTE
+
+
+class TestFeasibilityGateFailures:
+    """Tests for _feasibility_gate_failures — per-gate breakdown."""
+
+    @pytest.fixture
+    def high_metrics(self) -> dict:
+        """A rule that should pass all 9 gates."""
+        return {
+            "executed_trades": 100,
+            "total_return_pct": 5.0,
+            "profit_factor": 2.0,
+        }
+
+    @pytest.fixture
+    def high_val_metrics(self) -> dict:
+        return {
+            "executed_trades": 50,
+            "total_return_pct": 3.0,
+            "profit_factor": 1.5,
+        }
+
+    @pytest.fixture
+    def low_trade_metrics(self) -> dict:
+        """A rule with too few train trades."""
+        return {
+            "executed_trades": 5,
+            "total_return_pct": 5.0,
+            "profit_factor": 2.0,
+        }
+
+    def test_all_pass(
+        self, high_metrics: dict, high_val_metrics: dict,
+    ) -> None:
+        """A rule passing all gates returns all-zero dict."""
+        result = _feasibility_gate_failures(high_metrics, high_val_metrics)
+        assert all(v == 0 for v in result.values())
+        assert len(result) == 9
+
+    def test_val_none(self, high_metrics: dict) -> None:
+        """When val_metrics is None, only val_required=1, others=0."""
+        result = _feasibility_gate_failures(high_metrics, None)
+        assert result["val_required"] == 1
+        # Train gates still evaluated
+        assert result["train_trade_floor"] == 0
+        assert result["train_return_floor"] == 0
+        assert result["train_pf_floor"] == 0
+        # Val gates never reached (returned early)
+        assert result["val_ret_positive"] == 0
+        assert result["val_trade_floor"] == 0
+        assert result["val_return_floor"] == 0
+        assert result["val_pf_floor"] == 0
+        assert result["train_val_gap"] == 0
+        assert len(result) == 9
+
+    def test_train_trade_floor(
+        self, low_trade_metrics: dict, high_val_metrics: dict,
+    ) -> None:
+        """A rule with too few train trades fails train_trade_floor."""
+        result = _feasibility_gate_failures(
+            low_trade_metrics, high_val_metrics,
+        )
+        assert result["train_trade_floor"] == 1
+        # Other train gates still pass
+        assert result["train_return_floor"] == 0
+        assert result["train_pf_floor"] == 0
+        # Val gates left at 0 (not reached in this case since train_trade_floor
+        # is a soft gate — unlike _passes_pool_admission_impl it does NOT
+        # short-circuit the rest, so val gates are still evaluated)
+        assert result["val_required"] == 0
+
+    def test_val_ret_positive(
+        self, high_metrics: dict, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When PHASE2_REQUIRE_LAST_FOLD_POSITIVE=True and val_ret <= 0,
+        val_ret_positive = 1. (val_return_floor also triggers because
+        val_ret <= val_ret_min=0.0 — both gates fire simultaneously.)"""
+        monkeypatch.setattr(
+            _cfg, "PHASE2_REQUIRE_LAST_FOLD_POSITIVE", True,
+        )
+        val = {"executed_trades": 50, "total_return_pct": -1.0, "profit_factor": 1.5}
+        result = _feasibility_gate_failures(high_metrics, val)
+        assert result["val_ret_positive"] == 1
+        # val_return_floor also fires because val_ret=-1.0 <= val_ret_min=0.0
+        assert result["val_return_floor"] == 1
+        # Other gates should pass
+        assert result["val_trade_floor"] == 0
+        assert result["val_pf_floor"] == 0
+
+    def test_val_return_floor(
+        self, high_metrics: dict, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When val_ret <= val_ret_min (default 0.0), val_return_floor=1."""
+        monkeypatch.setattr(_cfg, "PHASE2_REQUIRE_LAST_FOLD_POSITIVE", False)
+        val = {
+            "executed_trades": 50,
+            "total_return_pct": -0.5,
+            "profit_factor": 1.5,
+        }
+        result = _feasibility_gate_failures(high_metrics, val)
+        # val_ret_positive should be 0 (PHASE2_REQUIRE_LAST_FOLD_POSITIVE=False)
+        assert result["val_ret_positive"] == 0
+        # but val_return_floor should be 1 (val_ret=-0.5 <= 0.0)
+        assert result["val_return_floor"] == 1
+
+    def test_all_fail(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Multi-gate failure: low trades, low return, low pf, and val_ret <= 0."""
+        monkeypatch.setattr(
+            _cfg, "PHASE2_REQUIRE_LAST_FOLD_POSITIVE", True,
+        )
+        train = {
+            "executed_trades": 5,
+            "total_return_pct": -2.0,
+            "profit_factor": 0.5,
+        }
+        val = {
+            "executed_trades": 2,
+            "total_return_pct": -3.0,
+            "profit_factor": 0.8,
+        }
+        result = _feasibility_gate_failures(train, val)
+        assert result["train_trade_floor"] == 1
+        assert result["train_return_floor"] == 1
+        assert result["train_pf_floor"] == 1
+        assert result["val_ret_positive"] == 1
+        assert result["val_trade_floor"] == 1
+        assert result["val_return_floor"] == 1
+        assert result["val_pf_floor"] == 1
+        # train_val_gap = train_ret - val_ret = -2 - (-3) = 1, max_gap=20, so 0
+        assert result["train_val_gap"] == 0
+        assert len(result) == 9

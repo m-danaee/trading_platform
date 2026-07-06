@@ -207,6 +207,92 @@ def _passes_pool_admission_impl(
     return True
 
 
+def _feasibility_gate_failures(
+    train_metrics: dict,
+    val_metrics: dict | None,
+    *,
+    n_valid_rows: int | None = None,
+) -> dict[str, int]:
+    """Return per-gate failure flags for the 9 pool-admission gates.
+
+    Each value is 1 if the rule FAILS that gate, 0 if it passes. A rule
+    that passes all gates returns all zeros. A rule that fails multiple
+    gates has multiple 1s (gates are AND-combined, but a rule can fail
+    several simultaneously).
+
+    The 9 gates mirror ``_passes_pool_admission_impl`` exactly:
+    - train_trade_floor   : train_trades < train_floor
+    - train_return_floor  : train_ret <= train_ret_min
+    - train_pf_floor      : train_pf < pf_floor
+    - val_required        : val_metrics is None (cannot evaluate val gates)
+    - val_ret_positive    : PHASE2_REQUIRE_LAST_FOLD_POSITIVE and val_ret <= 0
+    - val_trade_floor     : val_trades < min_val_trades
+    - val_return_floor    : val_ret <= val_ret_min
+    - val_pf_floor        : val_pf < pf_floor
+    - train_val_gap       : train_ret - val_ret > max_gap
+
+    Args:
+        train_metrics: Train dict with executed_trades, total_return_pct,
+            profit_factor, etc.
+        val_metrics: Validation dict (same shape) or None.
+        n_valid_rows: Optional row count for island-floor scaling.
+
+    Returns:
+        Dict mapping gate name to 0 (passed) or 1 (failed).
+    """
+    train_floor, train_ret_min, val_ret_min, pf_floor, min_val_trades = (
+        _pool_admission_floors(n_valid_rows)
+    )
+    failures: dict[str, int] = {
+        "train_trade_floor": 0,
+        "train_return_floor": 0,
+        "train_pf_floor": 0,
+        "val_required": 0,
+        "val_ret_positive": 0,
+        "val_trade_floor": 0,
+        "val_return_floor": 0,
+        "val_pf_floor": 0,
+        "train_val_gap": 0,
+    }
+
+    train_trades = int(train_metrics.get("executed_trades", 0))
+    if train_trades < train_floor:
+        failures["train_trade_floor"] = 1
+
+    train_ret = float(train_metrics.get("total_return_pct", 0.0))
+    if train_ret <= train_ret_min:
+        failures["train_return_floor"] = 1
+
+    train_pf = float(train_metrics.get("profit_factor", 0.0))
+    if train_pf < pf_floor:
+        failures["train_pf_floor"] = 1
+
+    if val_metrics is None:
+        failures["val_required"] = 1
+        return failures
+
+    if _cfg.PHASE2_REQUIRE_LAST_FOLD_POSITIVE and float(val_metrics.get("total_return_pct", 0.0)) <= 0.0:
+        failures["val_ret_positive"] = 1
+
+    val_trades = int(val_metrics.get("executed_trades", 0))
+    if val_trades < min_val_trades:
+        failures["val_trade_floor"] = 1
+
+    val_ret = float(val_metrics.get("total_return_pct", 0.0))
+    if val_ret <= val_ret_min:
+        failures["val_return_floor"] = 1
+
+    val_pf = float(val_metrics.get("profit_factor", 0.0))
+    if val_pf < pf_floor:
+        failures["val_pf_floor"] = 1
+
+    max_gap = float(getattr(_cfg, "PHASE2_MAX_TRAIN_VAL_GAP_PCT", 20.0))
+    if train_ret - val_ret > max_gap:
+        failures["train_val_gap"] = 1
+
+    return failures
+
+
 def passes_pool_admission_gate(
     train_metrics: dict,
     val_metrics: dict | None = None,
