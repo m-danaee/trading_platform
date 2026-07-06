@@ -2502,6 +2502,7 @@ def _run_nsga3(
     apply_seed_chromosomes: bool | None = None,
     island_profile: str = "global",
     island_hyperparams: _cfg.IslandHyperparams | None = None,
+    refresh_objectives_on_resume: bool = False,
 ) -> tuple[list[dict], list[dict]] | tuple[list[dict], list[dict], Phase2EvolutionState]:
     """NSGA-III evolutionary loop for Phase 2 rule pool generation."""
     from gpu_fuzzy_trader.phases.phase2_rule_pool import (
@@ -2600,6 +2601,17 @@ def _run_nsga3(
                 population[i] = np.asarray(seed_chromosomes[i], dtype=np.int32).copy()
                 objectives[i] = np.full(3, np.inf)
                 metrics_cache[i] = {}
+
+        # --- Task 2: Refresh objectives when resuming with potentially stale context ---
+        if refresh_objectives_on_resume and state is not None:
+            objectives[:] = np.full((pop_size, 3), np.inf)
+            metrics_cache = [{} for _ in range(pop_size)]
+            if _cfg.PHASE2_EVAL_GLOBAL_CACHE and global_metrics_cache is not None:
+                global_metrics_cache.clear()
+            logger.info(
+                "%s: refresh_objectives_on_resume enabled — all objectives reset to inf, "
+                "metrics_cache cleared", tag,
+            )
 
     logger.info(
         "%s: %d features, pop=%d, gen=%d, mutation=%.3f%s",
@@ -3306,6 +3318,7 @@ def run_phase2_evolution_epoch(
     reset_plateau: bool = False,
     island_profile: str = "global",
     island_hyperparams: _cfg.IslandHyperparams | None = None,
+    refresh_objectives_on_resume: bool = False,
 ) -> tuple[Phase2EvolutionState, list[dict]]:
     """Evolve one island epoch and return updated resumable state."""
     result = run_phase2_evolution(
@@ -3329,6 +3342,7 @@ def run_phase2_evolution_epoch(
         reset_plateau=reset_plateau,
         island_profile=island_profile,
         island_hyperparams=island_hyperparams,
+        refresh_objectives_on_resume=refresh_objectives_on_resume,
     )
     _, history, new_state = result
     return new_state, history
@@ -3359,6 +3373,7 @@ def run_phase2_evolution(
     apply_seed_chromosomes: bool | None = None,
     island_profile: str = "global",
     island_hyperparams: _cfg.IslandHyperparams | None = None,
+    refresh_objectives_on_resume: bool = False,
 ) -> tuple[list[dict], list[dict]] | tuple[list[dict], list[dict], Phase2EvolutionState]:
     """Run Phase 2 NSGA-III evolution. Returns (pareto_pool, history) or state."""
     evo_kwargs = dict(
@@ -3375,6 +3390,7 @@ def run_phase2_evolution(
         train_n_rows=train_n_rows,
         island_profile=island_profile,
         island_hyperparams=island_hyperparams,
+        refresh_objectives_on_resume=refresh_objectives_on_resume,
     )
     if not _EVOX_AVAILABLE:
         logger.warning(

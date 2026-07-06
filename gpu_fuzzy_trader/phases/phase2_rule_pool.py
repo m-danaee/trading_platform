@@ -3064,6 +3064,10 @@ class Rule_Pool_Generator:
         if stage_plan.two_stage_active and stage_plan.stage is not None:
             tag += f" Stage {stage_plan.stage}"
 
+        # --- Task 2: Refresh objectives on island resume to prevent stale fitness ---
+        # Conservative: always refresh when resuming an existing state (not first epoch).
+        # Context may have changed due to migrants, Stage B entry, engine rebuilds, etc.
+        refresh_objectives_on_resume = not first_epoch
         self._evolution_state, epoch_history = run_phase2_evolution_epoch(
             feature_infos=self.feature_infos,
             engine=self._engine,
@@ -3083,6 +3087,7 @@ class Rule_Pool_Generator:
             reset_plateau=reset_plateau,
             island_profile=self.island_profile,
             island_hyperparams=self.island_hyperparams,
+            refresh_objectives_on_resume=refresh_objectives_on_resume,
         )
         for entry in epoch_history:
             if stage_plan.two_stage_active and stage_plan.stage is not None:
