@@ -304,3 +304,145 @@ class TestNClustersDefined:
         assert "n_clusters > 1" in source, (
             "Migration guard must reference n_clusters > 1"
         )
+
+
+# ============================================================================
+# Task 5: Sequential cluster warmup — evict_cluster_signatures helper
+# ============================================================================
+
+
+class TestEvictClusterSignatures:
+    """Unit tests for ``evict_cluster_signatures`` in ``_gpu_runtime.py``.
+
+    These tests verify the signature-tagging and eviction logic without
+    requiring JAX or a GPU.
+    """
+
+    def test_warmup_signature_embeds_cluster_id(self):
+        """_warmup_signature() appends cluster_id to the returned tuple."""
+        from gpu_fuzzy_trader._gpu_runtime import _warmup_signature
+
+        # Use a minimal mock engine with the attributes _warmup_signature
+        # reads (n_rows via df, k via _data_matrix_jax).
+        class _MockEngine:
+            df = [0] * 50
+            _data_matrix_jax = __import__("numpy").zeros((10, 7), dtype="int32")
+
+        sig_no_cid = _warmup_signature(_MockEngine(), batch_size=32)
+        sig_with_cid = _warmup_signature(
+            _MockEngine(), batch_size=32, cluster_id="0",
+        )
+
+        assert isinstance(sig_no_cid, tuple)
+        assert isinstance(sig_with_cid, tuple)
+        # The cluster_id version should be longer by one element
+        assert len(sig_with_cid) == len(sig_no_cid) + 1
+        # The extra element should be the string form of cluster_id
+        assert sig_with_cid[-1] == "0"
+
+    def test_evict_by_cluster_id(self):
+        """evict_cluster_signatures(cluster_id=cid) removes only signatures
+        tagged with that cluster_id and returns the correct count."""
+        from gpu_fuzzy_trader._gpu_runtime import (
+            _WARMED_SIGNATURES,
+            _warmup_signature,
+            evict_cluster_signatures,
+        )
+
+        class _MockEngine:
+            df = [0] * 50
+            _data_matrix_jax = __import__("numpy").zeros((10, 7), dtype="int32")
+
+        # Pre-populate signatures for two clusters
+        _WARMED_SIGNATURES.clear()
+        sig_a0 = _warmup_signature(_MockEngine(), 32, cluster_id="c0")
+        sig_a1 = _warmup_signature(_MockEngine(), 64, cluster_id="c0")
+        sig_b0 = _warmup_signature(_MockEngine(), 32, cluster_id="c1")
+        _WARMED_SIGNATURES.update([sig_a0, sig_a1, sig_b0])
+
+        assert len(_WARMED_SIGNATURES) == 3
+
+        # Evict cluster "c0" — should remove 2 signatures
+        evicted = evict_cluster_signatures(cluster_id="c0")
+        assert evicted == 2
+        assert len(_WARMED_SIGNATURES) == 1
+        # Only cluster "c1" signature remains
+        remaining_sigs = list(_WARMED_SIGNATURES)
+        assert all(str(s[-1]) == "c1" for s in remaining_sigs)
+
+        # Clean up
+        _WARMED_SIGNATURES.clear()
+
+    def test_evict_all_when_cluster_id_none(self):
+        """evict_cluster_signatures(cluster_id=None) evicts ALL signatures."""
+        from gpu_fuzzy_trader._gpu_runtime import (
+            _WARMED_SIGNATURES,
+            _warmup_signature,
+            evict_cluster_signatures,
+        )
+
+        class _MockEngine:
+            df = [0] * 50
+            _data_matrix_jax = __import__("numpy").zeros((10, 7), dtype="int32")
+
+        _WARMED_SIGNATURES.clear()
+        sigs = [
+            _warmup_signature(_MockEngine(), 32, cluster_id="c0"),
+            _warmup_signature(_MockEngine(), 64, cluster_id="c1"),
+        ]
+        _WARMED_SIGNATURES.update(sigs)
+        assert len(_WARMED_SIGNATURES) == 2
+
+        evicted = evict_cluster_signatures(cluster_id=None)
+        assert evicted == 2
+        assert len(_WARMED_SIGNATURES) == 0
+
+    def test_evict_nonexistent_cluster_returns_zero(self):
+        """evict_cluster_signatures with a cluster_id that has no signatures
+        returns 0 and does not affect other signatures."""
+        from gpu_fuzzy_trader._gpu_runtime import (
+            _WARMED_SIGNATURES,
+            _warmup_signature,
+            evict_cluster_signatures,
+        )
+
+        class _MockEngine:
+            df = [0] * 50
+            _data_matrix_jax = __import__("numpy").zeros((10, 7), dtype="int32")
+
+        _WARMED_SIGNATURES.clear()
+        sig = _warmup_signature(_MockEngine(), 32, cluster_id="c0")
+        _WARMED_SIGNATURES.add(sig)
+        assert len(_WARMED_SIGNATURES) == 1
+
+        evicted = evict_cluster_signatures(cluster_id="nonexistent")
+        assert evicted == 0
+        assert len(_WARMED_SIGNATURES) == 1
+        _WARMED_SIGNATURES.clear()
+
+    def test_run_cluster_islands_has_eviction(self):
+        """Structural test: _run_cluster_islands must contain the
+        evict_cluster_signatures call and log message."""
+        from gpu_fuzzy_trader.phases.phase2_island_scheduler import (
+            _run_cluster_islands,
+        )
+        import inspect
+
+        source = inspect.getsource(_run_cluster_islands)
+        assert "evict_cluster_signatures" in source, (
+            "_run_cluster_islands must call evict_cluster_signatures"
+        )
+        assert "evicted %d signatures" in source, (
+            "_run_cluster_islands must log how many signatures were evicted"
+        )
+
+    def test_rule_pool_generator_passes_cluster_id(self):
+        """Structural test: _build_engines in Rule_Pool_Generator passes
+        cluster_id to configure_phase2_gpu_runtime."""
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import Rule_Pool_Generator
+        import inspect
+
+        source = inspect.getsource(Rule_Pool_Generator._build_engines)
+        assert "cluster_id=self.island_id" in source, (
+            "_build_engines must pass cluster_id to configure_phase2_gpu_runtime"
+        )

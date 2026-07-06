@@ -13,8 +13,19 @@
 
 | Task | Title | Branch | Status |
 |------|-------|--------|--------|
-| 4 | RAM quick wins (cache + teardown + gc) | `fix/ram-quick-wins` | ⏳ Pending |
+| 4 | RAM quick wins (cache + teardown + gc) | `fix/ram-quick-wins` | ✅ Merged (commits 1b647ca, 7584a6d, a0b4c76) |
 | 5 | Sequential cluster warmup (drop 3/4 signatures) | `fix/ram-sequential-clusters` | ⏳ Pending |
+
+### Task 4 — RAM quick wins (merged)
+- Cache size 1200 → 600 (saves ~0.4 GB)
+- `clear_global_metrics_cache()` added; called between clusters
+- `del generators[cid]; gc.collect()` after each cluster's `finalize_island()` (with `list()` wrap to prevent dict-iteration RuntimeError — caught in code review)
+- `gc.collect()` every 3 gens (was 10)
+- Expected savings: ~1.3-2.0 GB
+
+### Task 4 review highlights
+- Spec review found 1 minor (stale comment) — fixed
+- Code review found 1 HIGH-severity bug: `del generators[cid]` inside `for cid, gen in generators.items():` would raise `RuntimeError: dictionary changed size during iteration` on the 2nd cluster. **All 221 tests passed despite the bug** because tests use `inspect.getsource()` (structural), never invoke the function with multiple clusters. Classic "tests pass but bug is real" pattern — flagged for awareness.
 
 ## Previous plan (completed)
 **Plan: Fix Phase 2 overfit-gap blind spots + confirmed bugs (Stages 1-3)**

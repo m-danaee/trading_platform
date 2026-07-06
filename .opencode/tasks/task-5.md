@@ -1,80 +1,220 @@
-# Task 5 — `fix/plateau-config-tuning-and-banner` (Fix F + config)
+# Task 5: Sequential cluster warmup (drop 3/4 signatures)
+
+## Source plan
+`.opencode/plans/PLAN.md` — Task 5
 
 ## Branch
-`fix/plateau-config-tuning-and-banner` (from latest `main`, after task-4 merge).
+`fix/ram-sequential-clusters` (from `main` after Task 4)
 
-## Problem
-(a) The pipeline banner advertises `gen=132` but actual per-run gen is 10/4 —
-misleading. (b) Plateau config is over-twitchy: patience=5, min_gen=3,
-min_delta=0.02 — combined with the (now-fixed) leak this killed runs at gen 3.
-Now that the leak and behavior are fixed (tasks 1-4), tune the knobs against
-correct behavior.
+## Files to touch
+- `gpu_fuzzy_trader/_gpu_runtime.py` — add `_evict_cluster_signatures()` helper
+- `gpu_fuzzy_trader/phases/phase2_island_scheduler.py` — call the helper between clusters
+- `gpu_fuzzy_trader/evolution/evox_runner.py` — may need to expose a per-cluster cache eviction
+- `tests/unit/test_phase2_island_scheduler.py` — new test for the eviction path
+- `tests/unit/test_evox_runner.py` (possibly) — test the helper
 
-## Required Changes
+## Changes
 
-### Fix F — Honest banner
-**File:** `gpu_fuzzy_trader/run_pipeline.py` (line ~223, the
-`"PHASE2 algo=%s pop=%d gen=%d ..."` format string).
+### Background
+Currently `_gpu_runtime.py:warmup_phase2_gpu_kernels` is called ONCE at startup with all 3 cluster engines + their val engines. The result: `signatures=4` stays alive for the entire run. JAX keeps the compiled programs in memory as Python objects + buffers (~3 GB across 4 signatures).
 
-Surface the real island budget when island mode is active:
+The fix: warm only the current cluster's engines, run it, evict its signatures, warm the next cluster. At any time, only 1 cluster's signatures are alive.
+
+### Implementation
+
+**1. New helper in `gpu_fuzzy_trader/_gpu_runtime.py`:**
+
 ```python
-# When island mode:
-"PHASE2 algo=%s pop=%d island_total=%d per_cluster=%d epoch=%d joint_train_val=%s | "
-# When single-island:
-"PHASE2 algo=%s pop=%d gen=%d joint_train_val=%s | "
+def evict_cluster_signatures(cluster_id: str | int | None = None) -> int:
+    """Evict JAX compiled signatures for a completed cluster.
+    
+    Removes entries from ``_WARMED_SIGNATURES`` that belong to a specific
+    cluster and tries to free the JAX-compiled programs. Returns the number
+    of signatures evicted.
+    
+    Strategy:
+    - If ``cluster_id`` is provided, evict only that cluster's signatures
+    - If ``cluster_id`` is None, evict ALL signatures
+    - Use ``jax.clear_caches()`` if available (JAX ≥ 0.4.x)
+    - Fallback: best-effort GC + cache clear
+    
+    The signatures are tagged with cluster_id via the ``_warmup_signature``
+    helper, which must be updated to include it (see below).
+    """
+    global _WARMED_SIGNATURES
+    if cluster_id is not None:
+        before = len(_WARMED_SIGNATURES)
+        _WARMED_SIGNATURES = {
+            sig for sig in _WARMED_SIGNATURES
+            if not (isinstance(sig, tuple) and len(sig) >= 2 and sig[-1] == cluster_id)
+        }
+        evicted = before - len(_WARMED_SIGNATURES)
+    else:
+        evicted = len(_WARMED_SIGNATURES)
+        _WARMED_SIGNATURES = set()
+    
+    if evicted > 0:
+        try:
+            import jax
+            if hasattr(jax, "clear_caches"):
+                jax.clear_caches()
+        except Exception:
+            pass
+        import gc as _gc
+        _gc.collect()
+    
+    return evicted
 ```
-Use `PHASE2_ISLAND_TOTAL_GENERATIONS`, `gens_per_cluster = total // n_clusters`,
-and `PHASE2_ISLAND_EPOCH_GENERATIONS`. Compute `gens_per_cluster` the same way
-`_run_cluster_islands` does (`max(1, total // max(1, n_clusters))`). Keep the
-existing surrounding log format; only the labeled fields change.
 
-### Config tuning
-**File:** `gpu_fuzzy_trader/config.py`
+**2. Update `_warmup_signature()` to include `cluster_id` tag:**
 
-| Key | Current | New | Rationale |
-|-----|---------|-----|-----------|
-| `PHASE2_PLATEAU_EARLY_STOP_PATIENCE` | 5 | 8 | Let epochs explore before stopping |
-| `PHASE2_PLATEAU_EARLY_STOP_MIN_GENERATION` | 3 | 6 | Avoid stopping in transient |
-| `PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT` | 0.02 | 0.05 | 0.02% is below noise floor |
-| `PHASE2_ISLAND_EPOCH_GENERATIONS` | 10 | 15 | Fewer, longer epochs = less migration overhead, more convergence headroom per epoch |
-
-Note: `PHASE2_ISLAND_TOTAL_GENERATIONS = PHASE2_GENERATIONS` (132) stays, so
-`gens_per_cluster = 132 // 3 = 44`, run in epochs of 15 (→ 3 epochs per cluster,
-last one short). Verify the `assert` statements at the bottom of `config.py`
-(e.g. `PHASE2_PLATEAU_EARLY_STOP_MIN_GENERATION <= PHASE2_STAGE_A_GENERATIONS`)
-still hold — `PHASE2_STAGE_A_GENERATIONS=85` so `6 <= 85` ✓. If any assert
-would break, adjust the *asserted constant* consistently, not the knob.
-
-### Docs
-Update `README.md` config table for all four changed keys + the banner.
-
-## Acceptance Criteria
-1. Banner shows `island_total=132 per_cluster=44 epoch=15` (when island mode) —
-   not the misleading `gen=132`.
-2. The four config keys have the new values.
-3. `config.py` asserts at import still pass (run
-   `.venv/bin/python -c "import gpu_fuzzy_trader.config"`).
-4. `PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit -q` passes — fix
-   any test that hard-coded the old values (update to new values, do not weaken
-   assertions incorrectly).
-
-## Target Files
-- `gpu_fuzzy_trader/run_pipeline.py`
-- `gpu_fuzzy_trader/config.py`
-- `README.md`
-- any test hard-coding old values.
-
-## Verification
+The current signature is `(n_rows, n_features, batch_size)` (or similar — read the actual function). Append a cluster_id marker:
+```python
+def _warmup_signature(target, batch_size, cluster_id=None):
+    base_sig = ...  # existing logic
+    if cluster_id is not None:
+        return base_sig + (cluster_id,)
+    return base_sig
 ```
-PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit -q
-.venv/bin/python -c "import gpu_fuzzy_trader.config; print('config OK')"
-```
-Do NOT run the full pipeline.
 
-## Notes
-- This task is intentionally last: tuning must be measured against the corrected
-  behavior from tasks 1-4, not the leaky behavior.
-- If a test legitimately encodes the old twitchy threshold as a *correctness*
-  expectation (not a hard-coded value), discuss before changing — prefer
-  updating the value to match the new tuned default.
-- Clean up dead code after changes (per AGENTS.md).
+This way the eviction helper can filter by cluster.
+
+**3. Update `warmup_phase2_gpu_kernels()` to accept `cluster_id`:**
+
+```python
+def warmup_phase2_gpu_kernels(
+    engine: object,
+    val_engine: object | None = None,
+    cluster_id: str | int | None = None,
+) -> None:
+    """..."""
+    batch_size = resolve_phase2_gpu_batch_size()
+    targets = _iter_warmup_targets(engine, val_engine)
+    if not targets:
+        logger.warning("Phase 2 JAX warmup: no engines to warm")
+        return
+
+    warmed = 0
+    skipped = 0
+    for target in targets:
+        sig = _warmup_signature(target, batch_size, cluster_id=cluster_id)
+        if sig in _WARMED_SIGNATURES:
+            skipped += 1
+            continue
+        _warmup_engine(target, batch_size=batch_size)
+        warmed += 1
+
+    used = detect_gpu_memory_used_gb()
+    used_str = f"{used:.2f} GiB" if used is not None else "unknown"
+    logger.info(
+        "Phase 2 JAX warmup complete (%d engines warmed, %d skipped, "
+        "batch_size=%d, gpu_used=%s, signatures=%d, cluster_id=%s)",
+        warmed, skipped, batch_size, used_str,
+        len(_WARMED_SIGNATURES), cluster_id,
+    )
+```
+
+**4. Wire the per-cluster warmup in `phase2_island_scheduler.py:_run_cluster_islands`:**
+
+The current flow:
+1. Build all 3 cluster generators (each calls `_gpu_runtime.configure_phase2_gpu_runtime` or similar)
+2. Run the while loop, processing each cluster per epoch
+
+New flow (per-cluster warmup):
+1. Build all 3 cluster generators **without** warming
+2. For each cluster, in order:
+   a. Warm this cluster's engines via `warmup_phase2_gpu_kernels(..., cluster_id=cid)`
+   b. Run its epochs
+   c. After all epochs done, `evict_cluster_signatures(cluster_id=cid)`
+3. Continue to next cluster
+
+This means:
+- The `configure_phase2_gpu_runtime` call currently in `Rule_Pool_Generator.__init__` (or wherever) should accept a `cluster_id` parameter
+- OR the warmup is moved out of generator init and into `_run_cluster_islands`
+
+**The simpler refactor:** keep the warmup inside generator init, but tag signatures with cluster_id, and call `evict_cluster_signatures` at the end of each cluster's epochs in `_run_cluster_islands`.
+
+Look at the `Rule_Pool_Generator` constructor or wherever `configure_phase2_gpu_runtime` is called from. It should pass `cluster_id` to the warmup.
+
+### Required changes summary
+
+1. `_gpu_runtime.py`:
+   - Update `_warmup_signature` to accept and embed `cluster_id`
+   - Add `evict_cluster_signatures(cluster_id=None)` helper
+   - Update `warmup_phase2_gpu_kernels` to accept and log `cluster_id`
+
+2. `phase2_rule_pool.py` (or wherever warmup is called from generator init):
+   - Pass `cluster_id=self._cluster_id` (or similar) to `warmup_phase2_gpu_kernels` and `configure_phase2_gpu_runtime`
+
+3. `phase2_island_scheduler.py:_run_cluster_islands`:
+   - After each cluster's epochs are done and BEFORE `del generators[cid]` (the Task 4 fix), call `evict_cluster_signatures(cluster_id=cid)`
+   - Log how many signatures were evicted
+
+### Expected behavior after fix
+
+Re-run log should show:
+```
+Phase 2 [long] cluster_0: JAX warmup complete (2 engines warmed, 0 skipped, ..., signatures=2, cluster_id=0)
+Phase 2 [long] cluster_0: evicted 2 signatures
+Phase 2 [long] cluster_1: JAX warmup complete (2 engines warmed, 0 skipped, ..., signatures=2, cluster_id=1)
+Phase 2 [long] cluster_1: evicted 2 signatures
+Phase 2 [long] cluster_2: JAX warmup complete (2 engines warmed, 0 skipped, ..., signatures=2, cluster_id=2)
+Phase 2 [long] cluster_2: evicted 2 signatures
+```
+
+Instead of:
+```
+Phase 2 [long] cluster_0: JAX warmup complete (..., signatures=2)
+Phase 2 [long] cluster_1: JAX warmup complete (..., signatures=4)
+Phase 2 [long] cluster_2: JAX warmup complete (0 warmed, 2 skipped, ..., signatures=4)
+```
+
+## Acceptance criteria
+- [ ] `_evict_cluster_signatures()` helper exists in `_gpu_runtime.py`
+- [ ] `_warmup_signature()` embeds `cluster_id` in the signature tuple
+- [ ] `warmup_phase2_gpu_kernels()` accepts and logs `cluster_id`
+- [ ] `phase2_island_scheduler.py` calls `evict_cluster_signatures(cluster_id=cid)` after each cluster's epochs
+- [ ] `Rule_Pool_Generator` (or whatever calls warmup from init) passes cluster_id
+- [ ] New test in `test_phase2_island_scheduler.py` (or `test_evox_runner.py`) exercises `evict_cluster_signatures` and asserts `_WARMED_SIGNATURES` shrinks
+- [ ] All touched test suites pass with `PYTEST_LOW_MEMORY=1`
+- [ ] No regressions in existing overfit-gap behavior (Stages 1-3) or RAM quick wins (Task 4)
+
+## Hard rules
+- Do NOT change behavior of existing tests (they pass on `_WARMED_SIGNATURES` shape, may need updating)
+- Do NOT change the `warmup_phase2_gpu_kernels` return type or existing call sites — only add a new optional parameter
+- Do NOT push to remote, do NOT merge to main
+- Use `.venv/bin/python` for any test command
+- Use `PYTEST_LOW_MEMORY=1`
+- Only run touched test suites, not full suite
+- Commit message prefix: `fix(task-5): <item summary>`
+
+## Verification command
+```
+cd /home/danaee/trading_platform
+PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_phase2_island_scheduler.py tests/unit/test_phase2_rule_pool.py tests/unit/test_evox_runner.py tests/unit/test_migration_safety.py tests/unit/test_island_scheduler_migration.py -v
+```
+
+## Implementation hints
+
+### Read these files first
+- `gpu_fuzzy_trader/_gpu_runtime.py` — the full warmup flow
+- `gpu_fuzzy_trader/phases/phase2_rule_pool.py` — Rule_Pool_Generator.__init__ and where warmup is called
+- `gpu_fuzzy_trader/phases/phase2_island_scheduler.py` — _run_cluster_islands (where eviction should be added)
+- `gpu_fuzzy_trader/evolution/evox_runner.py` — confirm warmup is NOT called from evox_runner (it's only _gpu_runtime)
+
+### Likely implementation order
+1. Update `_warmup_signature` to add cluster_id
+2. Add `evict_cluster_signatures` helper
+3. Update `warmup_phase2_gpu_kernels` to accept cluster_id
+4. Update `Rule_Pool_Generator.__init__` to pass cluster_id to warmup
+5. Update `_run_cluster_islands` to call evict after each cluster
+6. Add new test for the eviction
+
+### Backward compatibility
+- Old call sites of `warmup_phase2_gpu_kernels` (without cluster_id) should still work
+- The signature tuple shape changes — but signatures are internal (in `_WARMED_SIGNATURES` set), not exposed
+
+## Important risks
+- Changing signature tuple shape may break existing tests that check signature count
+- `jax.clear_caches()` may not exist in older JAX versions (check version)
+- Per-cluster recompile cost: each cluster pays ~60s JIT compile time (per the log timing). Total overhead: ~3 min for K=3 clusters. Acceptable trade.

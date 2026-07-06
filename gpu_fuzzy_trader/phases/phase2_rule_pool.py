@@ -2327,7 +2327,11 @@ class Rule_Pool_Generator:
         from gpu_fuzzy_trader._gpu_runtime import configure_phase2_gpu_runtime
         from gpu_fuzzy_trader._memory import log_memory_rss
 
-        configure_phase2_gpu_runtime(self._engine, val_engine=self._val_engine)
+        configure_phase2_gpu_runtime(
+            self._engine,
+            val_engine=self._val_engine,
+            cluster_id=self.island_id,
+        )
         log_memory_rss(f"Phase2 [{self.direction}] engine init")
 
     def _rebuild_train_df(self) -> None:

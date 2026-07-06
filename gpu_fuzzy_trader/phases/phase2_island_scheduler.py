@@ -518,6 +518,25 @@ def _run_cluster_islands(
         )
         cluster_pools.extend(annotated)
         # (Fix 3: RAM quick wins — explicit engine teardown + GC)
+        # (Fix 5: sequential cluster warmup — evict JAX signatures for this cluster)
+        try:
+            from gpu_fuzzy_trader._gpu_runtime import evict_cluster_signatures
+
+            evicted = evict_cluster_signatures(cluster_id=cid)
+            if evicted > 0:
+                logger.info(
+                    "Phase 2 [%s]: evicted %d signatures for cluster %s",
+                    direction,
+                    evicted,
+                    cid,
+                )
+        except Exception as exc:
+            logger.debug(
+                "Phase 2 [%s]: evict_cluster_signatures failed for cluster %s: %s",
+                direction,
+                cid,
+                exc,
+            )
         del generators[cid]
         import gc as _gc
         _gc.collect()

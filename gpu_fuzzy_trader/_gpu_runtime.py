@@ -192,8 +192,16 @@ def _resolve_warmup_inner(engine: object) -> object:
     return getattr(engine, "_inner", engine)
 
 
-def _warmup_signature(engine: object, batch_size: int) -> tuple:
-    """Hashable key for JAX kernels already compiled for this engine shape."""
+def _warmup_signature(
+    engine: object,
+    batch_size: int,
+    cluster_id: str | int | None = None,
+) -> tuple:
+    """Hashable key for JAX kernels already compiled for this engine shape.
+
+    When *cluster_id* is provided it is appended as the last tuple element
+    so that ``evict_cluster_signatures`` can filter signatures per cluster.
+    """
     from gpu_fuzzy_trader.phases.phase2_sparse_encoding import use_sparse_slots
 
     inner = _resolve_warmup_inner(engine)
@@ -203,11 +211,22 @@ def _warmup_signature(engine: object, batch_size: int) -> tuple:
     else:
         k = 0
     encoding = "sparse" if use_sparse_slots() else "dense"
-    return (n_rows, k, int(batch_size), encoding)
+    base = (n_rows, k, int(batch_size), encoding)
+    if cluster_id is not None:
+        return base + (str(cluster_id),)
+    return base
 
 
-def _warmup_engine(engine: object, batch_size: int = 1) -> None:
-    """Run a representative ``simulate_rule_batch`` to compile JAX kernels."""
+def _warmup_engine(
+    engine: object,
+    batch_size: int = 1,
+    cluster_id: str | int | None = None,
+) -> None:
+    """Run a representative ``simulate_rule_batch`` to compile JAX kernels.
+
+    The signature is tagged with *cluster_id* so the later eviction helper
+    can filter per-cluster entries from ``_WARMED_SIGNATURES``.
+    """
     import numpy as np
 
     from gpu_fuzzy_trader.phases.phase2_sparse_encoding import (
@@ -215,7 +234,7 @@ def _warmup_engine(engine: object, batch_size: int = 1) -> None:
         use_sparse_slots,
     )
 
-    signature = _warmup_signature(engine, batch_size)
+    signature = _warmup_signature(engine, batch_size, cluster_id=cluster_id)
     if signature in _WARMED_SIGNATURES:
         return
 
@@ -273,12 +292,16 @@ def _iter_warmup_targets(*engines: object | None) -> list[object]:
 def warmup_phase2_gpu_kernels(
     engine: object,
     val_engine: object | None = None,
+    cluster_id: str | int | None = None,
 ) -> None:
     """
     Compile JAX kernels with representative shapes before evolution.
 
     Warms every fold engine in train (and optional val) CV facades at full
     production batch size so Generation 1 does not pay lazy JIT costs.
+
+    When *cluster_id* is provided the compiled signatures are tagged so
+    ``evict_cluster_signatures`` can evict them when the cluster finishes.
     """
     batch_size = resolve_phase2_gpu_batch_size()
     targets = _iter_warmup_targets(engine, val_engine)
@@ -289,36 +312,90 @@ def warmup_phase2_gpu_kernels(
     warmed = 0
     skipped = 0
     for target in targets:
-        sig = _warmup_signature(target, batch_size)
+        sig = _warmup_signature(target, batch_size, cluster_id=cluster_id)
         if sig in _WARMED_SIGNATURES:
             skipped += 1
             continue
-        _warmup_engine(target, batch_size=batch_size)
+        _warmup_engine(target, batch_size=batch_size, cluster_id=cluster_id)
         warmed += 1
 
     used = detect_gpu_memory_used_gb()
     used_str = f"{used:.2f} GiB" if used is not None else "unknown"
     logger.info(
         "Phase 2 JAX warmup complete (%d engines warmed, %d skipped, "
-        "batch_size=%d, gpu_used=%s, signatures=%d)",
+        "batch_size=%d, gpu_used=%s, signatures=%d, cluster_id=%s)",
         warmed,
         skipped,
         batch_size,
         used_str,
         len(_WARMED_SIGNATURES),
+        cluster_id or "none",
     )
+
+
+def evict_cluster_signatures(cluster_id: str | int | None = None) -> int:
+    """Evict JAX compiled signatures for a completed cluster.
+
+    Removes entries from ``_WARMED_SIGNATURES`` that belong to a specific
+    cluster and tries to free the JAX-compiled programs. Returns the number
+    of signatures evicted.
+
+    When *cluster_id* is ``None``, **all** signatures are evicted (useful
+    between long / short directions).
+    """
+    global _WARMED_SIGNATURES
+
+    if cluster_id is not None:
+        before = len(_WARMED_SIGNATURES)
+        cid_str = str(cluster_id)
+        to_evict = {
+            sig
+            for sig in _WARMED_SIGNATURES
+            if (
+                isinstance(sig, tuple)
+                and len(sig) >= 2
+                and str(sig[-1]) == cid_str
+            )
+        }
+        _WARMED_SIGNATURES -= to_evict
+        evicted = before - len(_WARMED_SIGNATURES)
+    else:
+        evicted = len(_WARMED_SIGNATURES)
+        _WARMED_SIGNATURES.clear()
+
+    if evicted > 0:
+        try:
+            import jax
+
+            if hasattr(jax, "clear_caches"):
+                jax.clear_caches()
+        except Exception:
+            pass
+        import gc as _gc
+
+        _gc.collect()
+
+    return evicted
 
 
 def configure_phase2_gpu_runtime(
     engine: object,
     val_engine: object | None = None,
+    cluster_id: str | int | None = None,
 ) -> None:
-    """Log GPU config and warm up JAX kernels when Phase 2 uses GPU."""
+    """Log GPU config and warm up JAX kernels when Phase 2 uses GPU.
+
+    *cluster_id* is forwarded to ``warmup_phase2_gpu_kernels`` so every
+    compiled signature is tagged with the cluster identifier, enabling
+    per-cluster eviction later.
+    """
     if not _cfg.PHASE2_USE_GPU:
         return
     log_gpu_runtime_config()
     try:
-        warmup_phase2_gpu_kernels(engine, val_engine=val_engine)
+        warmup_phase2_gpu_kernels(
+            engine, val_engine=val_engine, cluster_id=cluster_id,
+        )
     except Exception as exc:
         logger.warning(
             "Phase 2 JAX warmup failed — Generation 1 will pay JIT compile cost: %s",
