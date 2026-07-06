@@ -3,7 +3,7 @@
   "task_title": "RAM quick wins",
   "branch": "fix/ram-quick-wins",
   "status": "DONE",
-  "commit": "1b647ca + 7584a6d (comment fix)",
+  "commit": "1b647ca + 7584a6d + a0b4c76",
   "files_changed": [
     "gpu_fuzzy_trader/config.py",
     "gpu_fuzzy_trader/evolution/evox_runner.py",
@@ -19,6 +19,7 @@
     "Fix 4: gc.collect() in evox_runner.py changed from gen % 10 to gen % 3.",
     "All 221 tests pass. No behavior changes — all 4 fixes are pure memory-management.",
     "Stages 1-3 (overfit-gap behavior) completely untouched.",
-    "Comment block in config.py:407-411 updated to reflect new value 600 and reduction rationale (cache hit rate 0-4%; halved from 1200 for ~0.4 GB saving)."
+    "Comment block in config.py:407-411 updated to reflect new value 600 and reduction rationale (cache hit rate 0-4%; halved from 1200 for ~0.4 GB saving).",
+    "Critical dict-iteration RuntimeError fixed: list() wrap added before for-loop in _run_cluster_islands to snapshot generators.items() keys. Secondary style fix for gc import left as-is (no module-level import existed)."
   ]
 }
