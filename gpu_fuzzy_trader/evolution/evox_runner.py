@@ -1982,23 +1982,28 @@ def _run_nsga2_fallback(
         tag, K, pop_size, n_generations, stage_params.mutation_rate,
     )
     gen_loop_start = time.monotonic()
-    plateau_best_progress = -np.inf
-    plateau_streak = 0
     if reset_plateau:
+        plateau_best_progress = -np.inf
+        plateau_streak = 0
+        restart_count = 0
+        post_restart_gens_remaining = 0
+        post_restart_no_improve_streak = 0
+        post_restart_best_progress = -np.inf
+    else:
+        plateau_best_progress = -np.inf
+        plateau_streak = 0
+        restart_count = 0
+        post_restart_gens_remaining = 0
         post_restart_no_improve_streak = 0
         post_restart_best_progress = -np.inf
     mutation_rate = _stage_mutation_rate(stage_params)
     weighted_activate_prob = _stage_weighted_activate_prob(stage_params)
     # restart_count is per-stage (Stage A and Stage B each have their own),
     # deliberately more lenient than per-epoch.
-    restart_count = 0
     viability_collapse_streak = 0
     max_restarts = int(getattr(
         _cfg, "PHASE2_PLATEAU_MAX_RESTARTS", 1,
     ))
-    post_restart_gens_remaining: int = 0
-    post_restart_no_improve_streak: int = 0
-    post_restart_best_progress: float = -np.inf
 
     for gen in range(n_generations):
         just_restarted = False
@@ -2597,13 +2602,16 @@ def _run_nsga3(
                 metrics_cache[i] = {}
 
     logger.info(
-        "%s: %d features, pop=%d, gen=%d, mutation=%.3f",
+        "%s: %d features, pop=%d, gen=%d, mutation=%.3f%s",
         tag, K, pop_size, n_generations, stage_params.mutation_rate,
+        f", offset={generation_offset}" if generation_offset > 0 else "",
     )
     gen_loop_start = time.monotonic()
     if reset_plateau:
         plateau_best_progress = -np.inf
         plateau_streak = 0
+        restart_count = 0
+        post_restart_gens_remaining = 0
         post_restart_no_improve_streak = 0
         post_restart_best_progress = -np.inf
 

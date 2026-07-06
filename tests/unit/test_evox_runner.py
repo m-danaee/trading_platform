@@ -896,3 +896,141 @@ class TestPhase2EvolutionStateRestartCount:
             global_metrics_cache={},
         )
         assert state.restart_count == 0
+
+
+class TestResetPlateauRecoveryCounters:
+    """Verify reset_plateau clears restart counters on resumed state."""
+
+    @staticmethod
+    def _make_state_with_nonzero_counters(
+        pop_size: int = 6,
+        restart_count: int = 2,
+        post_restart_gens_remaining: int = 1,
+        post_restart_no_improve_streak: int = 3,
+        post_restart_best_progress: float = 5.0,
+    ) -> "Phase2EvolutionState":
+        from gpu_fuzzy_trader.evolution.evox_runner import Phase2EvolutionState
+
+        return Phase2EvolutionState(
+            population=np.zeros((pop_size, 1), dtype=np.int32),
+            objectives=np.full((pop_size, 3), np.inf),
+            metrics_cache=[{} for _ in range(pop_size)],
+            pareto_archive=[],
+            hall_of_fame={},
+            deployable_archive={},
+            global_metrics_cache={},
+            restart_count=restart_count,
+            post_restart_gens_remaining=post_restart_gens_remaining,
+            post_restart_no_improve_streak=post_restart_no_improve_streak,
+            post_restart_best_progress=post_restart_best_progress,
+        )
+
+    class _FakeEngine:
+        def simulate_rule_batch(self, chromosomes, **kwargs):
+            B = chromosomes.shape[0]
+            return [
+                {
+                    "sortino_ratio": 1.0,
+                    "total_return_pct": 1.0,
+                    "max_drawdown_pct": 2.0,
+                    "win_rate": 50.0,
+                    "executed_trades": 25,
+                }
+                for _ in range(B)
+            ]
+
+    def test_reset_plateau_true_clears_restart_counters(self):
+        """AC: resumed island epoch with reset_plateau=True clears restart counters."""
+        from gpu_fuzzy_trader.evolution.evox_runner import run_phase2_evolution_epoch
+
+        feature_infos = [
+            {"name": "feat_0", "mode": "binary", "score": 0.5},
+        ]
+        state = self._make_state_with_nonzero_counters(
+            pop_size=6,
+            restart_count=2,
+            post_restart_gens_remaining=1,
+            post_restart_no_improve_streak=3,
+            post_restart_best_progress=5.0,
+        )
+        rng = np.random.default_rng(42)
+
+        new_state, history = run_phase2_evolution_epoch(
+            feature_infos=feature_infos,
+            engine=self._FakeEngine(),
+            pop_size=6,
+            n_generations=1,
+            rng=rng,
+            state=state,
+            reset_plateau=True,
+        )
+
+        assert new_state.restart_count == 0, (
+            f"restart_count should be 0 after reset_plateau, got {new_state.restart_count}"
+        )
+        assert new_state.post_restart_gens_remaining == 0, (
+            f"post_restart_gens_remaining should be 0 after reset_plateau, "
+            f"got {new_state.post_restart_gens_remaining}"
+        )
+        assert new_state.post_restart_no_improve_streak == 0, (
+            f"post_restart_no_improve_streak should be 0 after reset_plateau, "
+            f"got {new_state.post_restart_no_improve_streak}"
+        )
+        assert new_state.post_restart_best_progress == -np.inf, (
+            f"post_restart_best_progress should be -inf after reset_plateau, "
+            f"got {new_state.post_restart_best_progress}"
+        )
+        assert new_state.plateau_streak == 0, (
+            f"plateau_streak should be 0 after reset_plateau, "
+            f"got {new_state.plateau_streak}"
+        )
+        # Note: plateau_best_progress may be updated by the evolution loop
+        # during generation 0; only restart counters are guaranteed reset.
+
+    def test_reset_plateau_false_preserves_restart_counters(self):
+        """Global/non-island mode: reset_plateau=False preserves counters.
+
+        Uses restart_count=0 so post-restart counters are not mutated
+        by the generation loop (which only tracks post-restart progress
+        when restart_count > 0).
+        """
+        from gpu_fuzzy_trader.evolution.evox_runner import run_phase2_evolution_epoch
+
+        feature_infos = [
+            {"name": "feat_0", "mode": "binary", "score": 0.5},
+        ]
+        state = self._make_state_with_nonzero_counters(
+            pop_size=6,
+            restart_count=0,
+            post_restart_gens_remaining=1,
+            post_restart_no_improve_streak=3,
+            post_restart_best_progress=5.0,
+        )
+        rng = np.random.default_rng(43)
+
+        new_state, history = run_phase2_evolution_epoch(
+            feature_infos=feature_infos,
+            engine=self._FakeEngine(),
+            pop_size=6,
+            n_generations=1,
+            rng=rng,
+            state=state,
+            reset_plateau=False,
+        )
+
+        assert new_state.restart_count == 0, (
+            f"restart_count should be preserved (0) with reset_plateau=False, "
+            f"got {new_state.restart_count}"
+        )
+        assert new_state.post_restart_gens_remaining == 1, (
+            f"post_restart_gens_remaining should be preserved (1) with "
+            f"reset_plateau=False, got {new_state.post_restart_gens_remaining}"
+        )
+        assert new_state.post_restart_no_improve_streak == 3, (
+            f"post_restart_no_improve_streak should be preserved (3) with "
+            f"reset_plateau=False, got {new_state.post_restart_no_improve_streak}"
+        )
+        assert new_state.post_restart_best_progress == 5.0, (
+            f"post_restart_best_progress should be preserved (5.0) with "
+            f"reset_plateau=False, got {new_state.post_restart_best_progress}"
+        )
