@@ -2794,12 +2794,13 @@ def _run_nsga3(
             import gc as _gc
             _gc.collect()
             # Return freed glibc arena memory to the OS. Colab (Linux/glibc)
-            # is the primary host; the OSError guard makes this a no-op on
-            # non-glibc systems (macOS, musl) and when ctypes.CDLL fails.
+            # is the primary host; the (OSError, AttributeError) guard makes
+            # this a no-op on non-glibc systems (macOS, musl), when ctypes
+            # is missing, or when the loaded libc doesn't export malloc_trim.
             try:
                 import ctypes
                 ctypes.CDLL("libc.so.6").malloc_trim(0)
-            except OSError:
+            except (OSError, AttributeError):
                 pass
 
         is_last_gen = gen == n_generations - 1
