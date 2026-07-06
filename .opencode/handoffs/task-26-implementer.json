@@ -1,0 +1,53 @@
+{
+  "task": 26,
+  "status": "DONE",
+  "commit": "2e36db6",
+  "branch": "fix/f3-train-val-blend",
+  "files_changed": [
+    "gpu_fuzzy_trader/phases/phase2_rule_pool.py",
+    "tests/unit/test_phase2_rule_pool.py"
+  ],
+  "summary": "Extended the profit_factor branch in f3_objective selection with train+val blend mirroring the win_rate branch pattern.",
+  "behavior_change": {
+    "description": "When PHASE2_JOINT_TRAIN_VAL=True and val_metrics is provided, f3_val becomes min(train_profit_factor, val_profit_factor) (or min(train_pf, 0.0) if val trades < val_trade_floor). When JOINT_TRAIN_VAL=False, behavior is unchanged (train-only).",
+    "unchanged": [
+      "cv_fold_min branch",
+      "win_rate branch",
+      "PHASE2_USE_TOTAL_RETURN_OBJ override",
+      "PHASE2_F3_OBJECTIVE default",
+      "PHASE2_JOINT_TRAIN_VAL default",
+      "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS default"
+    ]
+  },
+  "test_coverage": {
+    "test_name": "test_evaluate_chromosome_f3_blends_train_val_pf",
+    "class": "TestEvaluateChromosome",
+    "cases": [
+      {
+        "case": 1,
+        "config": "JOINT_TRAIN_VAL=True, val_trades=50 >= val_trade_floor=10",
+        "expected": "objectives[2] = -2.0 (min(5.0, 2.0) = 2.0, no penalties)",
+        "result": "PASSED"
+      },
+      {
+        "case": 2,
+        "config": "JOINT_TRAIN_VAL=True, val_trades=5 < val_trade_floor=10",
+        "expected": "objectives[2] = 3.0 (f3_val=0.0, support_penalty=max(0,5)=5, weighted by 0.6)",
+        "result": "PASSED"
+      },
+      {
+        "case": 3,
+        "config": "JOINT_TRAIN_VAL=False (val provided but ignored)",
+        "expected": "objectives[2] = -5.0 (train-only profit_factor=5.0)",
+        "result": "PASSED"
+      }
+    ]
+  },
+  "notes_for_reviewer": [
+    "The spec code used val_metrics.get('val_profit_factor', ...) but the engine returns key 'profit_factor' (confirmed at cpu_engine.py:1130). Corrected to val_metrics.get('profit_factor', profit_factor) to match the existing read at line 655 and the win_rate branch pattern.",
+    "Case 2 expected value is 3.0, not 0.0, because PHASE2_SUPPORT_PENALTY_WEIGHT_F3=0.6 applies to the support_penalty=5.0 cap triggered by val_trades < val_trade_floor. This is consistent with how the win_rate branch's val gate interacts with support penalties.",
+    "Set PHASE2_POOL_REQUIRE_POSITIVE_SPLITS=False in the test to avoid _raw_feasibility_violation_score adding penalties unrelated to the f3 blend logic (val_trades < min_val_trades would add 5*15=75 to support_penalty). This matches the convention used by TestRobustReturnObjective and TestPhenotypeDiversityPenalty.",
+    "All 134 tests pass (133 existing + 1 new)."
+  ],
+  "all_tests_pass": true
+}

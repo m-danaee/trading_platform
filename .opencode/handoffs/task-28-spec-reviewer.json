@@ -1,0 +1,33 @@
+{
+  "task_id": "28",
+  "verdict": "APPROVED",
+  "reviewer": "spec-reviewer",
+  "base_branch": "main",
+  "feature_branch": "feat/feasibility-observability",
+  "diff_command": "git diff main...feat/feasibility-observability",
+  "spec_compliance": {
+    "criterion_1": "PASS — _feasibility_gate_failures exists in phase2_support.py (lines 210-298) with correct signature (train_metrics, val_metrics, *, n_valid_rows=None) returning dict[str, int]",
+    "criterion_2": "PASS — Returns dict of exactly 9 keys, all values 0 or 1. Verified by test_all_pass asserting len(result)==9 and all values 0",
+    "criterion_3": "PASS — New WARNING log block in evox_runner.py after maybe_log_generation (lines 2218-2237 for NSGA2, 2952-2971 for NSGA3), triggered only when val_count < 10",
+    "criterion_4": "PASS — Uses logger.warning() (WARNING level)",
+    "criterion_5": "PASS — Iterates over all len(metrics_cache) individuals, sums per-gate failures into breakdown dict, logs single aggregated line",
+    "criterion_6": "PASS — 6 new tests in TestFeasibilityGateFailures class (test_all_pass, test_val_none, test_train_trade_floor, test_val_ret_positive, test_val_return_floor, test_all_fail)",
+    "criterion_7": "PASS — 25/25 tests pass in test_phase2_support.py, 35/35 pass in test_evox_runner.py (verified by running with PYTEST_LOW_MEMORY=1)",
+    "criterion_8": "PASS — Diff limited to 3 files: phase2_support.py (+86), evox_runner.py (+42), test_phase2_support.py (+134). Total 262 insertions, 0 deletions"
+  },
+  "gate_parity_check": {
+    "train_trade_floor": "MATCH — train_trades < train_floor (same as original line 149)",
+    "train_return_floor": "MATCH — train_ret <= train_ret_min (same as original line 153)",
+    "train_pf_floor": "MATCH — train_pf < pf_floor (same as original line 155)",
+    "val_required": "MATCH — val_metrics is None → return early (same as original line 159)",
+    "val_ret_positive": "MATCH — PHASE2_REQUIRE_LAST_FOLD_POSITIVE and val_ret <= 0.0 (same as original lines 165-167)",
+    "val_trade_floor": "MATCH — val_trades < min_val_trades (same as original line 170)",
+    "val_return_floor": "MATCH — val_ret <= val_ret_min (same as original line 174)",
+    "val_pf_floor": "MATCH — val_pf < pf_floor (same as original line 176)",
+    "train_val_gap": "MATCH — train_ret - val_ret > max_gap with PHASE2_MAX_TRAIN_VAL_GAP_PCT (same as original lines 178-180)",
+    "note": "Original's PHASE2_STRICT_POSITIVE_GOOD 10th gate intentionally excluded per spec ('just the 9 pool gates'). PHASE2_POOL_REQUIRE_POSITIVE_SPLITS outer guard omitted (meta-switch, not a gate; defaults True anyway). Short-circuit on val_metrics=None preserved."
+  },
+  "issues_found": [],
+  "out_of_scope_additions": [],
+  "notes": "Implementation is clean and spec-compliant. Both evox_runner.py call sites (NSGA2 fallback + NSGA3) have identical log blocks placed correctly: after maybe_log_generation, before _pareto_return_pct_for_early_stop. Lazy import inside the if-block avoids cost in the common case (val_count >= 10). Test test_val_ret_positive correctly monkeypatches PHASE2_REQUIRE_LAST_FOLD_POSITIVE to True (since it defaults False in config.py:630) and acknowledges the dual-gate trigger (val_ret_positive + val_return_floor both fire when val_ret <= 0.0 and val_ret_min defaults to 0.0). Test test_val_return_floor isolates the gate by monkeypatching PHASE2_REQUIRE_LAST_FOLD_POSITIVE to False. All 6 tests pass. No out-of-scope changes, no behavior changes to existing feasibility logic."
+}

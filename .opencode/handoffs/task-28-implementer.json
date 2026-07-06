@@ -1,0 +1,23 @@
+{
+  "task": 28,
+  "title": "Feasibility collapse observability (D)",
+  "status": "DONE",
+  "commit": "1d17268",
+  "branch": "feat/feasibility-observability",
+  "base_branch": "main",
+  "files_changed": {
+    "gpu_fuzzy_trader/phases/phase2_support.py": "Added _feasibility_gate_failures() after _passes_pool_admission_impl (lines 207-292)",
+    "gpu_fuzzy_trader/evolution/evox_runner.py": "Added WARNING log block after each maybe_log_generation call (lines 2218-2239, 2952-2973) — triggered when val_count < 10",
+    "tests/unit/test_phase2_support.py": "Added TestFeasibilityGateFailures class with 6 tests"
+  },
+  "tests_run": [
+    "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_phase2_support.py -v — 25 passed (all existing + 6 new)",
+    "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_evox_runner.py -v — 35 passed (no regressions)"
+  ],
+  "notes": {
+    "config_discrepancy": "PHASE2_REQUIRE_LAST_FOLD_POSITIVE defaults to False (config.py:630), not True as stated in the task spec. Test test_val_ret_positive monkeypatches it to True to test the gate.",
+    "dual_gate_trigger": "When val_ret <= 0.0, both val_ret_positive and val_return_floor fire simultaneously (val_ret_min defaults to 0.0). This is expected — the gates are independent AND conditions that happen to share the same threshold.",
+    "no_behavior_change": "The new function is purely additive. It is only called from the new log-only path in evox_runner.py. Existing feasibility logic is unchanged.",
+    "lazy_import": "The import of _feasibility_gate_failures inside the if val_count < 10 block avoids the import cost for the common case (val_count >= 10)."
+  }
+}

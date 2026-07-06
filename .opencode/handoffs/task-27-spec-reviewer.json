@@ -1,0 +1,18 @@
+{
+  "task_id": "27",
+  "verdict": "APPROVED",
+  "reviewer": "spec-reviewer",
+  "base_branch": "main",
+  "feature_branch": "docs/time-exit-evaluator-parity",
+  "diff_command": "git diff main...docs/time-exit-evaluator-parity",
+  "spec_compliance": {
+    "comment_count": "PASS — 4 comment blocks added (2 in cpu_engine.py at lines 569-578 and 581-590, 2 in gpu_engine.py at lines 230-239 and 241-250)",
+    "template_text_exact": "PASS — All 4 blocks use identical verbatim template text (10 comment lines each). References to commits 46cb88a/072c527, evaluator_v5.ipynb lines 958/971, AGENTS.md, and 'update evaluator_v5.ipynb FIRST' all present.",
+    "indentation_correct": "PASS — cpu_engine.py long: 12 spaces (matches surrounding `return float(s_close)`); cpu_engine.py short: 8 spaces (matches surrounding `return float(-s_close)`); gpu_engine.py long: 8 spaces (matches surrounding `jnp.where(long_hit_tp,...)`); gpu_engine.py short: 12 spaces (matches surrounding `short_hit_sl, -sl_f, -close_ret`).",
+    "positioning_correct": "PASS — Each comment block is immediately above the correct time-exit return: (1) above `return float(s_close), \"Time_288\"` in cpu long, (2) above `return float(-s_close), \"Time_288\"` in cpu short, (3) above `jnp.where(long_hit_tp, tp_f, jnp.where(long_hit_sl, -sl_f, close_ret))` in gpu long, (4) above `short_hit_sl, -sl_f, -close_ret)),` in gpu short.",
+    "comment_only": "PASS — git diff --stat shows 2 files changed, 40 insertions(+), 0 deletions(-). No code logic modified.",
+    "tests_pass": "PASS — 148 passed in 36.88s (test_cpu_engine.py + test_gpu_engine.py with PYTEST_LOW_MEMORY=1)"
+  },
+  "issues_found": [],
+  "notes": "Full spec compliance verified. 40 insertions / 0 deletions. All 4 comment blocks use exact template text with correct indentation matching surrounding code at each location. Comments positioned immediately above the time-exit return statements/sub-expressions. All 148 existing tests pass unchanged."
+}
