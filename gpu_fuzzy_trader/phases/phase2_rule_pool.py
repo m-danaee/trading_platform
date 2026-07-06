@@ -11,16 +11,19 @@ Chromosome encoding:
     gene_i ∈ {0, ..., num_classes_i - 1, dont_care_i}
     dont_care_i = num_classes_i  (inactive condition)
 
-Three objectives (all minimised):
-    f1 = -sortino_ratio
-    f2 = max_drawdown_pct
-    f3 = -(objective)  — objective driven by PHASE2_F3_OBJECTIVE
-                         (default ``"profit_factor"`` → f3 = -profit_factor).
+Three objectives (all minimised, decoupled per Task 3):
+    f1 = -sortino_ratio + support + diversity
+    f2 = max_drawdown_pct + support + dd_gate + trade_penalty
+    f3 = -(robust_return_pct) + support + diversity + cond_penalty + overfit_gap
+         (robust_return = min(train_return, val_return) when JOINT_TRAIN_VAL).
 
-Penalties:
-    support_penalty        — if executed_trades < MIN_TRADE_SUPPORT
-    diversity_penalty      — Hamming + phenotype bucket crowding (f1/f3)
-    condition_count_penalty — active conditions outside [MIN_CONDITIONS, MAX_CONDITIONS]
+Penalties (NOT identically applied to all objectives to avoid Pareto collapse):
+    support_penalty        — if executed_trades < MIN_TRADE_SUPPORT (weighted per obj)
+    diversity_penalty      — Hamming + phenotype bucket crowding (f1 and f3 only)
+    trade_penalty          — if executed < MIN_TRADE_POOL_FLOOR (f2 only)
+    drawdown_gate_penalty  — if dd > PHASE2_MAX_DRAWDOWN_GATE (f2 only)
+    overfit_gap_penalty    — train_ret - val_ret > threshold (f3 only)
+    cond_penalty           — active conditions outside [MIN_CONDITIONS, MAX_CONDITIONS] (f3 only)
 
 Static risk parameters during Phase 2:
     TP = PHASE2_TP, SL = PHASE2_SL, capital_pct = PHASE2_CAPITAL_PCT
@@ -746,8 +749,8 @@ def compute_phase2_objectives_from_metrics(
             else:
                 f3_val = min(win_rate, val_wr)
 
-    # PHASE2_USE_TOTAL_RETURN_OBJ override (backward compat): when True,
-    # f3 uses robust return instead of the F3_OBJECTIVE-based value.
+    # PHASE2_USE_TOTAL_RETURN_OBJ (now default True): f3 uses robust return
+    # (min train/val return) instead of the F3_OBJECTIVE-based value.
     if _cfg.PHASE2_USE_TOTAL_RETURN_OBJ:
         joint_return = (
             bool(_cfg.PHASE2_JOINT_TRAIN_VAL)
@@ -840,12 +843,16 @@ def compute_phase2_objectives_from_metrics(
                 * float(_cfg.PHASE2_OVERFIT_GAP_PENALTY_WEIGHT)
             )
 
+    # Decoupled objectives (Task 3):
+    #   f1 = -Sortino + support + diversity        (no trade_penalty, no overfit_gap)
+    #   f2 = DD + support + trade_penalty + DD_gate(only f2 uses trade_penalty)
+    #   f3 = -robust_return + support + diversity + cond + overfit_gap
+    # Previous code added trade_penalty and overfit_gap_penalty identically to
+    # all three objectives, causing objective_corr_f1_f3≈1.00 (Pareto collapse).
     f1 = (
         -sortino_for_obj
         + (_cfg.PHASE2_SUPPORT_PENALTY_WEIGHT_F1 * support_penalty)
         + diversity_penalty
-        + trade_penalty
-        + overfit_gap_penalty
     )
     f2 = (
         dd_for_obj
@@ -858,7 +865,6 @@ def compute_phase2_objectives_from_metrics(
         + (_cfg.PHASE2_SUPPORT_PENALTY_WEIGHT_F3 * support_penalty)
         + diversity_penalty
         + cond_penalty
-        + trade_penalty
         + overfit_gap_penalty
     )
 

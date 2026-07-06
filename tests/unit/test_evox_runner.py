@@ -210,10 +210,13 @@ def test_low_trade_drawdown_penalty():
             pop, [0], dont_cares, engine, [], objectives, metrics_cache
         )
         
-        # Assert that all 3 objectives receive the full dominating penalty
-        assert objectives[0, 0] >= 0.0
-        assert objectives[0, 1] >= 150.0
-        assert objectives[0, 2] >= 50.0
+        # Task 3: trade_penalty is now on f2 only (decoupled objectives).
+        # f1 gets no trade_penalty, f2 gets the full penalty (DD + trade),
+        # f3 gets no trade_penalty.
+        # f1 has PF-floor and min-symbols penalties from missing mock fields.
+        assert objectives[0, 0] > 0.0  # support penalty from pf/min_symbols, no trade_penalty
+        assert objectives[0, 1] >= 150.0  # dd_for_obj(100) + penalty(50)
+        assert objectives[0, 2] < objectives[0, 1]  # f3 < f2 (f3 has no trade_penalty, f2 does)
     finally:
         _cfg.MIN_TRADE_POOL_FLOOR = orig_floor
         _cfg.MIN_TRADE_SUPPORT = orig_support
