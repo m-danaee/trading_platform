@@ -2,33 +2,34 @@
 **base_branch:** `main`
 **branch_policy:** isolated
 **execution_mode:** checkpoint
-**status:** EXECUTING — Task 2 in progress
+**status:** CHECKPOINT — Task 2 complete and reviewed; waiting for user resume signal
 
 ## Active Objective
 Implement Phase 2 island/NSGA-III robustness fixes from the latest run-log analysis.
 
 ## Current Phase
-Orchestration: Task 2 implementation branch active.
+Orchestration checkpoint after Task 2.
 
-## Completed Task
+## Completed Tasks
 - **Task:** `task-1` — Clarify Island Epoch State And Reset Recovery Counters
-- **Merged to main:** `7bdf9c9`
-- **Task commit:** `b1bf34d`
-- **Spec review:** APPROVED
-- **Code review:** APPROVED
-
-## Active Task
+  - **Merged to main:** `7bdf9c9`
+  - **Task commit:** `b1bf34d`
+  - **Spec review:** APPROVED
+  - **Code review:** APPROVED
 - **Task:** `task-2` — Recompute Resumed Objectives At Safe Epoch Boundaries
-- **Task file:** `.opencode/tasks/task-2.md`
-- **Branch:** `feature/task-2-refresh-resumed-objectives`
-- **Base branch:** `main`
+  - **Branch:** `feature/task-2-refresh-resumed-objectives`
+  - **Commit:** `669deb0` — `Task 2: Add refresh_objectives_on_resume to recompute stale objectives on resumed island epochs`
+  - **Implementer:** SUCCESS; handoff `.opencode/handoffs/task-2-implementer.json`
+  - **Spec review:** APPROVED
+  - **Code review:** APPROVED
+  - **Tests reported:** `test_evox_runner.py` 41 passed; `test_phase2_rule_pool.py` 134 passed; additional related phase2 tests 74 passed
 
 ## Active Plan
 **Plan:** `.opencode/plans/PLAN.md`
 
 ### Ordered Tasks
 1. Clarify Island Epoch State And Reset Recovery Counters — COMPLETE, merged
-2. Recompute Resumed Objectives At Safe Epoch Boundaries — IN PROGRESS
+2. Recompute Resumed Objectives At Safe Epoch Boundaries — COMPLETE, reviewed
 3. Decouple Phase 2 Objectives And Prefer Robust Return For OOS — pending
 4. Make Sampling And Migration Semantics Honest — pending
 
@@ -47,7 +48,7 @@ Orchestration: Task 2 implementation branch active.
 - Stop after each completed task until user says `continue task N`.
 
 ## Pending Blockers
-None.
+Checkpoint mode requires user resume signal. Also Task 2 branch must be merged to `main` before Task 3 under isolated branch policy.
 
 ## Next Action
-Dispatch implementer for Task 2, save handoff, then perform spec-reviewer and code-reviewer checks.
+Wait for user to merge Task 2 branch to `main`, then say `continue task 3` before starting Task 3.
