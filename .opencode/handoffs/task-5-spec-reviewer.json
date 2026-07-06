@@ -1,51 +1,20 @@
 {
-  "task": 5,
-  "title": "Create friend.ipynb Colab Notebook",
+  "task_id": 5,
   "verdict": "APPROVED",
-  "reviewer": "spec-reviewer",
-  "criteria_review": {
-    "1_seven_cells": {
-      "status": "PASS",
-      "detail": "Notebook has exactly 7 cells: cell 1 (markdown instructions), cell 2 (GitHub token), cell 3 (bootstrap), cell 4 (install), cell 5 (import/config), cell 6 (run pipeline), cell 7 (markdown results). Cell types: [markdown, code, code, code, code, code, markdown]."
-    },
-    "2_bootstrap_discovers": {
-      "status": "PASS",
-      "detail": "Cell 3 (bootstrap) includes _discover_project_root() that searches CWD, /content/friend_project, /content, and rglobs for requirements.txt. _ensure_drive_mounted() mounts Google Drive. _discover_dataset_paths() finds train.csv/test.csv from explicit paths, DATA_ROOT, project data/, Drive, or /content rglob. GITHUB_CLONE_DIR defaults to /content/friend_project."
-    },
-    "3_install_colab_gpu": {
-      "status": "PASS",
-      "detail": "Cell 4 installs COLAB_CORE_PINS, COLAB_TORCH_CPU (torch==2.5.1 CPU), COLAB_EVOX, and COLAB_JAX (jax[cuda12]==0.10.1) on Colab. Falls back to requirements.txt locally with optional jax-cuda13-plugin for local GPU. Same pin set as main.ipynb."
-    },
-    "4_import_config": {
-      "status": "PASS",
-      "detail": "Cell 5 sets cfg.PER_SYMBOL_PHASE2=True, cfg.PHASE5_REMOVE_NEGATIVE_PNL_RULES=True, cfg.PHASE2_SCAN_UNROLL=16. Calls configure_jax_env(). Reports GPU info via detect_gpu_vram_gb(), jax.default_backend(), jax.devices(), and package versions for evox, optuna, numba, torch, jax."
-    },
-    "5_run_sync": {
-      "status": "PASS",
-      "detail": "Cell 6 runs 'python -m gpu_fuzzy_trader.run_pipeline --output /content/friend_project_outputs'. After success, syncs local outputs to MyDrive/friend_project/outputs/, phase2_rule_archive to MyDrive/friend_project/phase2_rule_archive/, and pools/per_symbol to MyDrive/friend_project/pools/per_symbol/. Uses _ensure_drive_mounted() from cell 3."
-    },
-    "6_numba_ops_graceful": {
-      "status": "PASS",
-      "detail": "_repair_stale_numba_ops() in cell 3 returns 'numba_ops.py not present (friend_project)' when numba_ops.py does not exist. When present, repairs stale JIT empty branches. No crash on missing file."
-    },
-    "7_friend_paths": {
-      "status": "PASS",
-      "detail": "All paths reference friend_project: /content/friend_project, /content/friend_project_data, /content/friend_project_outputs, MyDrive/friend_project/outputs, MyDrive/friend_project/phase2_rule_archive, MyDrive/friend_project/pools/per_symbol. Zero references to /content/trading_platform. The only 'trading_platform' reference is the upstream GitHub repo URL (correct)."
-    },
-    "8_valid_json": {
-      "status": "PASS",
-      "detail": "Notebook JSON is valid Jupyter format: nbformat=4, nbformat_minor=5. Validated with json.load."
-    },
-    "9_tests_pass": {
-      "status": "PASS",
-      "detail": "29 friend_project tests passed in 4.50s. No changes to Python code or existing tests."
-    }
+  "previous_issues": {
+    "eviction_timing_too_late": "resolved — warmup is now deferred out of __init__ via defer_warmup=True flag; warmup happens per-cluster inside _run_cluster_islands BEFORE each cluster's first epoch; eviction happens AFTER each cluster's epochs complete and BEFORE the next cluster's warmup. Peak signatures reduced from 4 to 2 during the run.",
+    "plan_goal_not_met": "resolved — the plan's goal (drop 3/4 signatures during the run to reduce peak VRAM) is now achieved. Sequential per-cluster processing ensures only 1 cluster's signatures are alive at any time."
   },
-  "summary": "All 9 acceptance criteria pass. The notebook is well-structured, uses friend_project-specific paths throughout, handles Colab and local execution paths, and gracefully manages missing numba_ops.py. No out-of-scope additions detected.",
-  "diff_scope": {
-    "files_changed": 1,
-    "file": "friend_project/friend.ipynb",
-    "change_type": "NEW",
-    "lines_added": 723
-  }
+  "new_issues": {
+    "defer_warmup_in_init": "approved — defer_warmup flag added to Rule_Pool_Generator.__init__ with default=False; _build_engines skips configure_phase2_gpu_runtime when defer_warmup=True; other callers (orphan-boost) unaffected.",
+    "per_cluster_warmup_call": "approved — warmup_phase2_gpu_kernels called with cluster_id=cid inside the for-loop, BEFORE the while-loop for each cluster's epochs. Verified in source.",
+    "eviction_between_clusters": "approved — evict_cluster_signatures(cluster_id=cid) called AFTER each cluster's while-loop completes, still inside the for-loop. Cluster 0's signatures are evicted before cluster 1's warmup. Redundant re-call in cleanup loop is safe (returns 0).",
+    "migration_round_robin_to_sequential": "approved — migration changed from round-robin mesh (all clusters exchange migrants every epoch interval) to sequential chain (cluster N → cluster N+1 after cluster N finishes all epochs). This is: (a) explicitly described in the task spec ('after a cluster finishes, its best individuals are forwarded to the next cluster as seed archives'), (b) a natural consequence of sequential processing, (c) verified by structural test test_migration_uses_chain_pattern. The round_counter from Task 2 is replaced by sequential idx-based forwarding. Migration still functions correctly — migrants flow forward through the cluster chain."
+  },
+  "out_of_scope_check": "approved — task-5.md was modified (previous review flagged this). The modification appears to be the actual task spec for sequential cluster warmup (the original file on main was for a different task). All changes are within the scope of the plan's goal (reduce peak RAM via per-cluster warmup/eviction). No unrelated features added.",
+  "notes": "All 231 tests pass (45 in test_phase2_island_scheduler.py including 4 new deferred warmup tests + 6 eviction tests + 3 sequential processing tests; 186 in other touched suites). The implementation correctly addresses the critical issue from the previous review: eviction now happens BETWEEN clusters during the run, not AFTER all clusters finish. Peak VRAM reduced from ~4 signatures to ~2 signatures. The migration pattern change (round-robin → sequential chain) is acceptable per the task spec and is a natural consequence of sequential processing.",
+  "verification_commands_run": [
+    "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_phase2_island_scheduler.py -v → 45 passed",
+    "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_phase2_rule_pool.py tests/unit/test_evox_runner.py tests/unit/test_migration_safety.py tests/unit/test_island_scheduler_migration.py -v → 186 passed"
+  ]
 }
