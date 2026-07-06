@@ -1588,6 +1588,110 @@ class TestEvaluateChromosome:
                     delattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ")
             _cfg.PHASE2_F3_OBJECTIVE = orig_f3_obj
 
+    def test_evaluate_chromosome_f3_blends_train_val_pf(self):
+        """f3 profit_factor branch mirrors win_rate train+val blend.
+
+        Covers three branches:
+          1. JOINT_TRAIN_VAL=True, val_trades >= floor → f3_val = min(train_pf, val_pf)
+          2. JOINT_TRAIN_VAL=True, val_trades < floor  → f3_val = min(train_pf, 0.0)
+          3. JOINT_TRAIN_VAL=False                      → f3_val = train_pf (unchanged)
+        """
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import _evaluate_chromosome
+
+        orig_joint = getattr(_cfg, "PHASE2_JOINT_TRAIN_VAL", True)
+        orig_f3 = str(getattr(_cfg, "PHASE2_F3_OBJECTIVE", "profit_factor"))
+        orig_floor = _cfg.MIN_TRADE_SUPPORT
+        has_ret_obj = hasattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ")
+        orig_ret_obj = getattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ", False)
+        orig_require_splits = _cfg.PHASE2_POOL_REQUIRE_POSITIVE_SPLITS
+
+        try:
+            _cfg.PHASE2_F3_OBJECTIVE = "profit_factor"
+            _cfg.PHASE2_USE_TOTAL_RETURN_OBJ = False
+            _cfg.PHASE2_JOINT_TRAIN_VAL = True
+            _cfg.MIN_TRADE_SUPPORT = 5
+            _cfg.PHASE2_POOL_REQUIRE_POSITIVE_SPLITS = False
+
+            chromosome = _chromosome_with_min_active()
+            dont_cares = np.ones(10, dtype=np.int32) * 5
+
+            class MockEngine:
+                def simulate_rule_batch(self, chromosomes, **kwargs):
+                    return [{
+                        "executed_trades": 100,
+                        "total_return_pct": 15.0,
+                        "sortino_ratio": 0.5,
+                        "max_drawdown_pct": 2.0,
+                        "win_rate": 50.0,
+                        "profit_factor": 5.0,
+                        "per_symbol_metrics": {
+                            "SYM1": {"net_pnl": 100.0},
+                            "SYM2": {"net_pnl": 200.0},
+                            "SYM3": {"net_pnl": 300.0},
+                        },
+                    }]
+
+            class MockValEngine:
+                def __init__(self, pf=2.0, trades=50):
+                    self.pf = pf
+                    self.trades = trades
+                def simulate_rule_batch(self, chromosomes, **kwargs):
+                    return [{
+                        "executed_trades": self.trades,
+                        "total_return_pct": 10.0,
+                        "sortino_ratio": 0.5,
+                        "max_drawdown_pct": 1.0,
+                        "win_rate": 50.0,
+                        "profit_factor": self.pf,
+                    }]
+
+            engine = MockEngine()
+
+            # Case 1: JOINT_TRAIN_VAL=True, val_trades=50 >= val_trade_floor
+            # f3_val = min(5.0, 2.0) = 2.0 → objectives[2] = -2.0
+            _cfg.PHASE2_JOINT_TRAIN_VAL = True
+            val_engine = MockValEngine(pf=2.0, trades=50)
+            objectives, _ = _evaluate_chromosome(
+                chromosome, dont_cares, engine, [], val_engine=val_engine,
+            )
+            assert np.isclose(objectives[2], -2.0), (
+                f"Case 1 (joint, val ok): expected -2.0, got {objectives[2]}"
+            )
+
+            # Case 2: JOINT_TRAIN_VAL=True, val_trades=5 < val_trade_floor
+            # f3_val = min(5.0, 0.0) = 0.0
+            # support_penalty = max(0, SUPPORT_PENALTY_MAX=5) = 5 from the val gate
+            # f3 = -0.0 + (0.6 * 5.0) = 3.0 (support penalty weight on f3)
+            val_engine = MockValEngine(pf=2.0, trades=5)
+            objectives, _ = _evaluate_chromosome(
+                chromosome, dont_cares, engine, [], val_engine=val_engine,
+            )
+            assert np.isclose(objectives[2], 3.0, atol=0.01), (
+                f"Case 2 (joint, val gate): expected 3.0, got {objectives[2]}"
+            )
+
+            # Case 3: JOINT_TRAIN_VAL=False (val metrics provided but ignored)
+            # f3_val = profit_factor = 5.0 → objectives[2] = -5.0
+            _cfg.PHASE2_JOINT_TRAIN_VAL = False
+            val_engine = MockValEngine(pf=2.0, trades=50)
+            objectives, _ = _evaluate_chromosome(
+                chromosome, dont_cares, engine, [], val_engine=val_engine,
+            )
+            assert np.isclose(objectives[2], -5.0), (
+                f"Case 3 (train-only): expected -5.0, got {objectives[2]}"
+            )
+
+        finally:
+            _cfg.PHASE2_JOINT_TRAIN_VAL = orig_joint
+            _cfg.PHASE2_F3_OBJECTIVE = orig_f3
+            _cfg.MIN_TRADE_SUPPORT = orig_floor
+            _cfg.PHASE2_POOL_REQUIRE_POSITIVE_SPLITS = orig_require_splits
+            if has_ret_obj:
+                _cfg.PHASE2_USE_TOTAL_RETURN_OBJ = orig_ret_obj
+            else:
+                if hasattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ"):
+                    delattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ")
+
     def test_evaluate_chromosome_diversity_penalty_avoids_self_penalization(self):
         from gpu_fuzzy_trader.phases.phase2_rule_pool import _evaluate_chromosome
         

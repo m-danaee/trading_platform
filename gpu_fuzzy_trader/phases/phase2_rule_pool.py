@@ -731,6 +731,12 @@ def compute_phase2_objectives_from_metrics(
             f3_val = profit_factor
     elif f3_objective == "profit_factor":
         f3_val = profit_factor
+        if val_metrics is not None and _cfg.PHASE2_JOINT_TRAIN_VAL:
+            val_pf = float(val_metrics.get("profit_factor", profit_factor))
+            if int(val_metrics.get("executed_trades", 0)) < val_trade_floor:
+                f3_val = min(profit_factor, 0.0)
+            else:
+                f3_val = min(profit_factor, val_pf)
     else:  # "win_rate" legacy
         f3_val = win_rate
         if val_metrics is not None and _cfg.PHASE2_JOINT_TRAIN_VAL:
