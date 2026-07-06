@@ -1760,6 +1760,9 @@ class TestEvaluateChromosome:
 
 class TestRobustReturnObjective:
     def test_f3_uses_min_train_val_return(self, monkeypatch):
+        """f3 uses robust return = min(train_return, val_return) when
+        PHASE2_USE_TOTAL_RETURN_OBJ=True (now the default) and JOINT_TRAIN_VAL
+        is enabled. This is the OOS-focused mode."""
         from gpu_fuzzy_trader.phases.phase2_rule_pool import (
             compute_phase2_objectives_from_metrics,
         )
@@ -1865,11 +1868,11 @@ class TestRobustReturnObjective:
             chrom, dont_cares, metrics, [], val_metrics=val_metrics_mild,
         )
 
-        # The overfit_gap_penalty ADDSto f1 (positive = worse). So a larger gap
-        # → higher f1 (since f1 = -sortino + penalties...).
-        # f1 is objectives[0]; the penalty makes f1 less negative / more positive.
-        assert obj_neg[0] > obj_mild[0], (
-            "Worst-case gap (99 / -10) should have HIGHER f1 than mild gap (99 / 1)."
+        # Task 3: overfit_gap_penalty is on f3 (not f1 now). A larger gap
+        # → higher f3 (since f3 = -f3_val + penalties...).
+        # f3 is objectives[2]; the penalty makes f3 more positive.
+        assert obj_neg[2] > obj_mild[2], (
+            "Worst-case gap (99 / -10) should have HIGHER f3 than mild gap (99 / 1)."
         )
 
     def test_overfit_gap_penalty_nonzero_for_negative_val_ret(self, monkeypatch):
@@ -1921,15 +1924,241 @@ class TestRobustReturnObjective:
         obj, out = compute_phase2_objectives_from_metrics(
             chrom, dont_cares, metrics, [], val_metrics=val_metrics_zero,
         )
-        # f1 = -sortino + support_penalty + diversity_penalty + trade_penalty + overfit_gap_penalty
-        # sortino is 1.0 → -1.0 base. overfit_gap_penalty should be > 0, making f1 > -1.0
-        # Actually, let's check out_metrics for the penalty directly.
-        # But _overfit_gap_penalty isn't in out_metrics. Let's check f1 difference.
+        # Task 3: overfit_gap_penalty is on f3 (not f1).
+        # f3 = -f3_val + support + diversity + cond + overfit_gap_penalty
         # With val_ret=0, gap=99-0=99 >> 5 threshold → penalty = (99-5)*10 = 940.
-        # f1 = -1.0 + 0 + 0 + 0 + 940 = 939. So f1 should be > 0.
-        assert obj[0] > 0.0, (
-            f"Expected positive f1 when overfit_gap_penalty applies, got {obj[0]}"
+        # f3 = -(f3_val) + 0 + 0 + 0 + 940. f3_val depends on settings (PHASE2_USE_TOTAL_RETURN_OBJ=True
+        # here, so f3_val = robust_return = min(99, 0) = 0). So f3 ≈ 940.
+        assert obj[2] > 0.0, (
+            f"Expected positive f3 when overfit_gap_penalty applies, got {obj[2]}"
         )
+
+
+class TestDecoupledObjectives:
+    """Task 3 tests: penalties are not identically added to all objectives."""
+
+    def test_penalties_not_identical_across_objectives(self, monkeypatch):
+        """The three objectives should respond differently to the same metrics,
+        proving that penalties are not identically applied."""
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+            compute_phase2_objectives_from_metrics,
+        )
+
+        monkeypatch.setattr(_cfg, "PHASE2_JOINT_TRAIN_VAL", False)
+        monkeypatch.setattr(_cfg, "PHASE2_VAL_IN_FITNESS_PENALTY", False)
+        monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", False)
+        monkeypatch.setattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ", True)
+        monkeypatch.setattr(_cfg, "PHASE2_USE_ROBUST_RETURN_OBJ", False)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 1)
+        monkeypatch.setattr(_cfg, "PHASE2_RETURN_FLOOR_PCT", -100.0)
+        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR", 0.0)
+        monkeypatch.setattr(_cfg, "PHASE2_VAL_RETURN_FLOOR_PCT", -100.0)
+        monkeypatch.setattr(_cfg, "PHASE2_MAX_DRAWDOWN_GATE", 200.0)
+        monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
+
+        dont_cares = np.full(4, 5, dtype=np.int32)
+        chrom = np.array([0, 1, 2, 3], dtype=np.int32)
+
+        # Metrics where Sortino is good but DD is large → different f1 vs f2
+        metrics = {
+            "executed_trades": 100,
+            "total_return_pct": 5.0,
+            "sortino_ratio": 3.0,
+            "max_drawdown_pct": 25.0,
+            "win_rate": 60.0,
+            "profit_factor": 1.5,
+            "per_symbol_metrics": {
+                "SYM1": {"net_pnl": 100.0},
+                "SYM2": {"net_pnl": 200.0},
+                "SYM3": {"net_pnl": 150.0},
+            },
+        }
+        objectives, _ = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, metrics, [],
+        )
+
+        # f1 = -sortino + support + diversity ≈ -(tanh(3/10)*20) + 0 + 0 ≈ -5.9
+        # f2 = dd + support + dd_gate + trade = 25 + 0 + (25-20)*2 + 0 = 35
+        # f3 = -f3_val + support + diversity + cond = -5 + 0 + 0 + 0 = -5
+        # Key assertion: f2 should be significantly different from f1 and f3
+        # (high DD penalizes f2 heavily while f1 is driven by good Sortino)
+        assert objectives[1] > objectives[0] + 10.0, (
+            f"f2 (DD-penalized) should be much higher than f1 (Sortino-driven): "
+            f"f1={objectives[0]:.2f}, f2={objectives[1]:.2f}, f3={objectives[2]:.2f}"
+        )
+        # f2 should also differ significantly from f3
+        assert objectives[1] > objectives[2] + 10.0, (
+            f"f2 should be much higher than f3: "
+            f"f1={objectives[0]:.2f}, f2={objectives[1]:.2f}, f3={objectives[2]:.2f}"
+        )
+
+    def test_trade_penalty_only_on_f2(self, monkeypatch):
+        """When the trade floor is triggered, only f2 gets the trade_penalty.
+        f1 and f3 should NOT receive the large PHASE2_INFEASIBLE_OBJECTIVE_PENALTY."""
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+            compute_phase2_objectives_from_metrics,
+        )
+
+        monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 100)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
+        monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
+        monkeypatch.setattr(_cfg, "PHASE2_INFEASIBLE_OBJECTIVE_PENALTY", 99.9)
+        monkeypatch.setattr(_cfg, "PHASE2_RETURN_FLOOR_PCT", -100.0)
+        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR", 0.0)
+        monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", False)
+        monkeypatch.setattr(_cfg, "PHASE2_MAX_DRAWDOWN_GATE", 200.0)
+        monkeypatch.setattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ", False)
+
+        dont_cares = np.full(4, 5, dtype=np.int32)
+        chrom = np.array([0, 1, 2, 3], dtype=np.int32)
+        metrics = {
+            "executed_trades": 10,  # < 100 → hard reject
+            "total_return_pct": 5.0,
+            "sortino_ratio": 1.0,
+            "max_drawdown_pct": 2.0,
+            "win_rate": 50.0,
+            "profit_factor": 1.2,
+            "per_symbol_metrics": {
+                "SYM1": {"net_pnl": 100.0},
+                "SYM2": {"net_pnl": 200.0},
+                "SYM3": {"net_pnl": 300.0},
+            },
+        }
+
+        objectives, _ = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, metrics, [],
+        )
+        # f2 = dd_for_obj(100) + 0 + 0 + trade(99.9) = 199.9
+        assert np.isclose(objectives[1], 199.9, atol=0.1), (
+            f"Expected f2 ≈ 199.9 (dd=100 + trade=99.9), got {objectives[1]}"
+        )
+        # f1 = -sortino_for_obj(0) + 0 support + 0 diversity = 0.0
+        # (no trade_penalty on f1)
+        assert np.isclose(objectives[0], 0.0, atol=0.1), (
+            f"Expected f1 ≈ 0.0 (no trade_penalty on f1), got {objectives[0]}"
+        )
+        # f3 = -f3_val(0) + 0 support + 0 diversity + 0 cond = 0.0
+        # (no trade_penalty on f3)
+        assert np.isclose(objectives[2], 0.0, atol=0.1), (
+            f"Expected f3 ≈ 0.0 (no trade_penalty on f3), got {objectives[2]}"
+        )
+
+    def test_f3_uses_robust_return_by_default(self, monkeypatch):
+        """Without any monkeypatching of PHASE2_USE_TOTAL_RETURN_OBJ, the new
+        default True means f3 should use robust_return_pct."""
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+            compute_phase2_objectives_from_metrics,
+        )
+
+        monkeypatch.setattr(_cfg, "PHASE2_JOINT_TRAIN_VAL", True)
+        # NOTE: PHASE2_USE_TOTAL_RETURN_OBJ is NOT set here → uses the new
+        # default True from config.
+        monkeypatch.setattr(_cfg, "PHASE2_USE_ROBUST_RETURN_OBJ", True)
+        monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", False)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 1)
+        monkeypatch.setattr(_cfg, "PHASE2_RETURN_FLOOR_PCT", -100.0)
+        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR", 0.0)
+        monkeypatch.setattr(_cfg, "PHASE2_VAL_RETURN_FLOOR_PCT", -100.0)
+        monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
+
+        dont_cares = np.full(4, 5, dtype=np.int32)
+        chrom = np.array([0, 1, 2, 3], dtype=np.int32)
+        metrics = {
+            "executed_trades": 100,
+            "total_return_pct": 10.0,
+            "sortino_ratio": 1.0,
+            "max_drawdown_pct": 2.0,
+            "win_rate": 50.0,
+            "profit_factor": 1.2,
+            "per_symbol_metrics": {
+                "SYM1": {"net_pnl": 100.0},
+                "SYM2": {"net_pnl": 200.0},
+                "SYM3": {"net_pnl": 300.0},
+            },
+        }
+        val_metrics = {
+            "executed_trades": 50,
+            "total_return_pct": 3.0,
+            "sortino_ratio": 0.8,
+            "max_drawdown_pct": 1.0,
+            "win_rate": 55.0,
+            "profit_factor": 1.1,
+        }
+        objectives, out_metrics = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, metrics, [], val_metrics=val_metrics,
+        )
+        # f3 = -robust_return = -min(10, 3) = -3.0
+        assert np.isclose(objectives[2], -3.0), (
+            f"Expected f3 ≈ -3.0 (robust return), got {objectives[2]}"
+        )
+        assert out_metrics["robust_return_pct"] == pytest.approx(3.0)
+
+    def test_pf_floor_still_penalizes_support(self, monkeypatch):
+        """PF floor adds to support_penalty even after decoupling. This ensures
+        the profit_factor floor remains an effective feasibility gate."""
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+            compute_phase2_objectives_from_metrics,
+        )
+
+        monkeypatch.setattr(_cfg, "PHASE2_JOINT_TRAIN_VAL", False)
+        monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", False)
+        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR", 2.0)  # high floor
+        monkeypatch.setattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ", False)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 1)
+        monkeypatch.setattr(_cfg, "PHASE2_RETURN_FLOOR_PCT", -100.0)
+        monkeypatch.setattr(_cfg, "PHASE2_VAL_RETURN_FLOOR_PCT", -100.0)
+        monkeypatch.setattr(_cfg, "PHASE2_MAX_DRAWDOWN_GATE", 200.0)
+        monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
+
+        dont_cares = np.full(4, 5, dtype=np.int32)
+        chrom = np.array([0, 1, 2, 3], dtype=np.int32)
+
+        # Rule with PF below floor
+        metrics_low_pf = {
+            "executed_trades": 100,
+            "total_return_pct": 5.0,
+            "sortino_ratio": 1.0,
+            "max_drawdown_pct": 2.0,
+            "win_rate": 50.0,
+            "profit_factor": 0.5,  # below floor of 2.0
+            "per_symbol_metrics": {
+                "SYM1": {"net_pnl": 100.0},
+                "SYM2": {"net_pnl": 200.0},
+                "SYM3": {"net_pnl": 300.0},
+            },
+        }
+        metrics_high_pf = {
+            "executed_trades": 100,
+            "total_return_pct": 5.0,
+            "sortino_ratio": 1.0,
+            "max_drawdown_pct": 2.0,
+            "win_rate": 50.0,
+            "profit_factor": 3.0,  # above floor of 2.0
+            "per_symbol_metrics": {
+                "SYM1": {"net_pnl": 100.0},
+                "SYM2": {"net_pnl": 200.0},
+                "SYM3": {"net_pnl": 300.0},
+            },
+        }
+
+        obj_low, _ = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, metrics_low_pf, [],
+        )
+        obj_high, _ = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, metrics_high_pf, [],
+        )
+
+        # PF floor penalty: (floor - pf) * 5.0 = (2.0 - 0.5) * 5.0 = 7.5
+        # This gets multiplied by support_penalty_weights and added to each objective.
+        # All objectives should be worse (higher) for the low-PF rule.
+        for i in range(3):
+            assert obj_low[i] > obj_high[i], (
+                f"Objective f{i+1} should be worse for low PF rule: "
+                f"low={obj_low[i]:.2f}, high={obj_high[i]:.2f}"
+            )
 
 
 class TestPhenotypeDiversityPenalty:
@@ -2064,6 +2293,8 @@ class TestJointValF2F3:
         assert np.isclose(objectives[1], 12.0)
 
     def test_f3_joint_win_rate_when_not_return_mode(self, monkeypatch):
+        """Legacy win_rate mode still works when PHASE2_USE_TOTAL_RETURN_OBJ
+        is explicitly set to False (overriding the new default True)."""
         from gpu_fuzzy_trader.phases.phase2_rule_pool import (
             compute_phase2_objectives_from_metrics,
         )
@@ -2388,9 +2619,10 @@ class TestIslandAwareTradeFloor:
         assert np.isclose(objectives[1], 199.9, atol=0.1), (
             f"Expected f2 ≈ 199.9 (100 dd + 99.9 penalty), got {objectives[1]}"
         )
-        # f3 = -f3_val(0) + 0 support + 0 diversity + 0 cond + trade(99.9) = 99.9
-        assert np.isclose(objectives[2], 99.9, atol=0.1), (
-            f"Expected f3 ≈ 99.9 (0 + 99.9 penalty), got {objectives[2]}"
+        # Task 3: trade_penalty removed from f3.
+        # f3 = -f3_val(0) + 0 support + 0 diversity + 0 cond + 0 overfit_gap = 0.0
+        assert np.isclose(objectives[2], 0.0, atol=0.1), (
+            f"Expected f3 ≈ 0.0 (no trade_penalty on f3), got {objectives[2]}"
         )
 
     def test_fallback_to_effective_floor(self, monkeypatch):

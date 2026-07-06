@@ -504,20 +504,24 @@ PHASE2_SUPPORT_PENALTY_WEIGHT_F1 = 0.4  # Sortino objective
 PHASE2_SUPPORT_PENALTY_WEIGHT_F2 = 0.6  # drawdown objective
 PHASE2_SUPPORT_PENALTY_WEIGHT_F3 = 0.6  # return / win-rate objective
 
-# PHASE2_USE_TOTAL_RETURN_OBJ — f3 uses return instead of win rate.
-#   True  → optimize deployable return; aligns with PnL goals.
-#   False → optimize win rate; may favor many small wins over net PnL.
-PHASE2_USE_TOTAL_RETURN_OBJ = False
+# PHASE2_USE_TOTAL_RETURN_OBJ — f3 uses robust return (min train, val) instead
+# of profit_factor or win rate.
+#   True  → f3 = -robust_return_pct (min of train/val return); aligns with OOS PnL.
+#   False → f3 uses PHASE2_F3_OBJECTIVE (profit_factor or win_rate).
+# Changed True as default: OOS-focused mode prefers robust return signal over
+# profit_factor to reduce Pareto collapse (see Task 3).
+PHASE2_USE_TOTAL_RETURN_OBJ = True
 
-# PHASE2_F3_OBJECTIVE — third objective: "profit_factor" (default),
+# PHASE2_F3_OBJECTIVE — third objective: "profit_factor" (default when
+# PHASE2_USE_TOTAL_RETURN_OBJ=False),
 # "cv_fold_min" (min of CV fold returns), or "win_rate" (legacy).
 #   profit_factor → f3 = -profit_factor (aligns with edge quality over noise).
 #   cv_fold_min  → f3 = -min(CV fold returns); requires CvFoldValEvaluator
 #                  which is too expensive for NSGA-III inner loop — disabled.
 #   win_rate     → f3 = -win_rate (degenerate, not recommended).
-# NOTE: cv_fold_min requires batched CV-fold evaluation which is prohibitively
-# expensive in the NSGA-III inner loop.  The truthful config label is
-# profit_factor — what actually executes in all batch-evaluated individuals.
+# NOTE: PHASE2_USE_TOTAL_RETURN_OBJ=True (now default) takes precedence, so f3
+# uses robust_return_pct instead of PHASE2_F3_OBJECTIVE.  The legacy F3_OBJECTIVE
+# setting only takes effect when USE_TOTAL_RETURN_OBJ is False.
 # CV-fold robustness is enforced at the pool-admission gate and RB Governor
 # scoring stages instead.
 PHASE2_F3_OBJECTIVE = "profit_factor"
@@ -536,9 +540,10 @@ PHASE2_SYMBOL_GENE_DONT_CARE_PROB = 0.4
 
 # PHASE2_USE_ROBUST_RETURN_OBJ — store min(train_return, val_return) as
 #   robust_return_pct on metrics when PHASE2_JOINT_TRAIN_VAL=True.
-#   Does NOT change f3 when PHASE2_F3_OBJECTIVE="profit_factor" and
-#   PHASE2_USE_TOTAL_RETURN_OBJ=False; use USE_TOTAL_RETURN_OBJ=True to
-#   override f3 to robust return.
+#   When PHASE2_USE_TOTAL_RETURN_OBJ=True (now default), this controls whether
+#   the joint return uses min(train, val) or just train-only.
+#   True  → robust_return_pct = min(train_return, val_return).
+#   False → robust_return_pct = train_return (equivalent to no robustness).
 PHASE2_USE_ROBUST_RETURN_OBJ = True
 
 # PHASE2_SORTINO_MIN_TRADE_THRESHOLD — trade count below which Sortino is scaled down.
