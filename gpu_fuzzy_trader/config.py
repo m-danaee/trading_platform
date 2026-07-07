@@ -377,6 +377,21 @@ PHASE1_STATIONARITY_RANK_DRIFT_MAX = 8
 #   Lower  → faster, less RAM; trade/support floors may need proportional cut.
 PHASE1_SAMPLING_TOTAL = 701_000
 
+# PHASE2_PER_EPOCH_WINDOW_ROTATION — rotate train-window start per epoch
+#   True  → each epoch samples a different contiguous sub-window from the
+#           training data, using a deterministic per-epoch seed derived
+#           from (island_seed, epoch_idx). The per-sym request is capped
+#           to fit within the largest safe range so the RNG start bar
+#           branch in _sample_df fires.
+#   False → preserve pre-task-1 behavior: sample once at cluster init
+#           (useful for A/B comparison / regression guard).
+PHASE2_PER_EPOCH_WINDOW_ROTATION = True
+
+# PHASE2_PER_EPOCH_WINDOW_SEED_MODE — how to derive the per-epoch seed.
+#   "hash_island_epoch" → hash(island_seed, epoch_idx) via SHA-256,
+#                          deterministic, no RNG state leak.
+PHASE2_PER_EPOCH_WINDOW_SEED_MODE = "hash_island_epoch"
+
 # PHASE2_GPU_BATCH_SIZE — chromosomes per JAX vmap chunk in simulate_rule_batch.
 # Peak VRAM scales ~linearly (rule matching is O(batch × rows × conditions)).
 # Used directly when PHASE2_GPU_BATCH_SIZE_AUTO is False; otherwise VRAM/RAM-capped.
