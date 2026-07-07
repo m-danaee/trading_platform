@@ -122,7 +122,7 @@ def _pool_admission_floors(
         int(train_floor),
         float(_cfg.PHASE2_POOL_TRAIN_RETURN_MIN_PCT),
         float(_cfg.PHASE2_POOL_VAL_RETURN_MIN_PCT),
-        float(_cfg.PHASE2_PROFIT_FACTOR_FLOOR),
+        float(_cfg.PHASE2_PROFIT_FACTOR_FLOOR_ADMISSION),  # → fixes audit finding #9
         int(min_val),
     )
 

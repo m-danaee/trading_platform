@@ -278,6 +278,17 @@ class TestPoolAdmissionScaledFloors:
         assert small_min < full_min
         assert small_min >= _cfg.PURGED_WF_MIN_TRADE_FLOOR_ABSOLUTE
 
+    def test_pf_floor_uses_admission_not_evolution(self, monkeypatch) -> None:
+        """_pool_admission_floors returns the ADMISSION floor (1.15),
+        not the EVOLUTION floor (1.05). This is the hard gate regression guard."""
+        from gpu_fuzzy_trader.phases.phase2_support import _pool_admission_floors
+
+        _, _, _, pf_floor, _ = _pool_admission_floors(None)
+        assert pf_floor == pytest.approx(1.15), (
+            f"_pool_admission_floors returned pf_floor={pf_floor}, "
+            f"expected 1.15 (ADMISSION floor)"
+        )
+
 
 class TestFeasibilityGateFailures:
     """Tests for _feasibility_gate_failures — per-gate breakdown."""
