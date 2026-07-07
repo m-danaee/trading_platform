@@ -804,33 +804,39 @@ def compute_phase2_objectives_from_metrics(
         drawdown_gate_penalty = excess * 2.0
 
     # H2: f3_val based on PHASE2_F3_OBJECTIVE
-    f3_objective = str(getattr(_cfg, "PHASE2_F3_OBJECTIVE", "profit_factor"))
-    if f3_objective == "cv_fold_min":
-        cv_fold_returns = metrics.get("_cv_fold_returns", [])
-        if cv_fold_returns:
-            f3_val = min(cv_fold_returns)
-        else:
-            # Fallback when CV not available: use profit_factor
+    # → fixes audit finding #5 (dead f3 profit_factor branch;
+    # USE_TOTAL_RETURN_OBJ takes precedence when True).
+    if not _cfg.PHASE2_USE_TOTAL_RETURN_OBJ:
+        f3_objective = str(getattr(_cfg, "PHASE2_F3_OBJECTIVE", "profit_factor"))
+        if f3_objective == "cv_fold_min":
+            cv_fold_returns = metrics.get("_cv_fold_returns", [])
+            if cv_fold_returns:
+                f3_val = min(cv_fold_returns)
+            else:
+                # Fallback when CV not available: use profit_factor
+                f3_val = profit_factor
+        elif f3_objective == "profit_factor":
             f3_val = profit_factor
-    elif f3_objective == "profit_factor":
-        f3_val = profit_factor
-        if val_metrics is not None and _cfg.PHASE2_JOINT_TRAIN_VAL:
-            val_pf = float(val_metrics.get("profit_factor", profit_factor))
-            if int(val_metrics.get("executed_trades", 0)) < val_trade_floor:
-                f3_val = min(profit_factor, 0.0)
-            else:
-                f3_val = min(profit_factor, val_pf)
-    else:  # "win_rate" legacy
-        f3_val = win_rate
-        if val_metrics is not None and _cfg.PHASE2_JOINT_TRAIN_VAL:
-            val_wr = float(val_metrics.get("win_rate", 0.0))
-            if int(val_metrics.get("executed_trades", 0)) < val_trade_floor:
-                f3_val = min(win_rate, 0.0)
-            else:
-                f3_val = min(win_rate, val_wr)
+            if val_metrics is not None and _cfg.PHASE2_JOINT_TRAIN_VAL:
+                val_pf = float(val_metrics.get("profit_factor", profit_factor))
+                if int(val_metrics.get("executed_trades", 0)) < val_trade_floor:
+                    f3_val = min(profit_factor, 0.0)
+                else:
+                    f3_val = min(profit_factor, val_pf)
+        else:  # "win_rate" legacy
+            f3_val = win_rate
+            if val_metrics is not None and _cfg.PHASE2_JOINT_TRAIN_VAL:
+                val_wr = float(val_metrics.get("win_rate", 0.0))
+                if int(val_metrics.get("executed_trades", 0)) < val_trade_floor:
+                    f3_val = min(win_rate, 0.0)
+                else:
+                    f3_val = min(win_rate, val_wr)
 
-    # PHASE2_USE_TOTAL_RETURN_OBJ (now default True): f3 uses robust return
-    # (min train/val return) instead of the F3_OBJECTIVE-based value.
+    # PHASE2_USE_TOTAL_RETURN_OBJ=True (default): f3 uses robust return
+    # (min train/val return) — overrides the PHASE2_F3_OBJECTIVE setting.
+    # Set USE_TOTAL_RETURN_OBJ=False to opt into the legacy
+    # profit_factor / cv_fold_min / win_rate path.
+    # (fixes audit finding #5)
     if _cfg.PHASE2_USE_TOTAL_RETURN_OBJ:
         joint_return = (
             bool(_cfg.PHASE2_JOINT_TRAIN_VAL)
