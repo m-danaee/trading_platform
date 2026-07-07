@@ -30,6 +30,7 @@ from gpu_fuzzy_trader.features.selector import (
     Feature_Selector,
     _align_feature_array,
     _build_target,
+    _check_spearman_sign_consistency,
     _compute_stability,
     _mutual_info_discrete_mask,
     _reduce_overlap,
@@ -915,6 +916,91 @@ class TestAlignFeatureArray:
         assert len(result) > 0
         assert all(entry["score"] > 0.0 for entry in result)
         assert {entry["name"] for entry in result}.issubset(set(stable_cols))
+
+
+class TestSpearmanSignConsistency:
+    """Tests for _check_spearman_sign_consistency, including the val_df check."""
+
+    def _make_corr_df(
+        self,
+        feat_values: np.ndarray,
+        label_values: np.ndarray,
+    ) -> pd.DataFrame:
+        """Build a minimal DataFrame without 'symbol' to avoid symbol-based folding."""
+        return pd.DataFrame({
+            "feat_0": feat_values,
+            "label_close_288": label_values,
+        })
+
+    def test_val_sign_disagrees_negative_blacklists(self):
+        """AC1: Train all positive, val negative → feature blacklisted."""
+        n = 100
+        # Train: feat_0 and label are perfectly positively correlated (rho=1.0)
+        train_df = self._make_corr_df(np.arange(n, dtype=float), np.arange(n, dtype=float))
+        # Val: feat_0 ascending, label descending → rho = -1.0
+        val_df = self._make_corr_df(np.arange(n, dtype=float), np.arange(n - 1, -1, -1, dtype=float))
+        stable = _check_spearman_sign_consistency(
+            train_df, ["feat_0"], n_folds=2, min_folds=2, val_df=val_df, min_abs_corr=0.05,
+        )
+        assert "feat_0" not in stable, (
+            "Feature with train=positive, val=negative should be blacklisted"
+        )
+
+    def test_val_sign_matches_positive_kept(self):
+        """AC2: Train all positive, val positive → feature still kept."""
+        n = 100
+        train_df = self._make_corr_df(np.arange(n, dtype=float), np.arange(n, dtype=float))
+        val_df = self._make_corr_df(np.arange(n, dtype=float), np.arange(n, dtype=float))
+        stable = _check_spearman_sign_consistency(
+            train_df, ["feat_0"], n_folds=2, min_folds=2, val_df=val_df, min_abs_corr=0.05,
+        )
+        assert "feat_0" in stable, (
+            "Feature with train=positive, val=positive should be kept"
+        )
+
+    def test_val_sign_tiny_corr_kept(self):
+        """AC3: Train all positive, tiny |val_rho| < min_abs_corr → feature still kept."""
+        n = 100
+        train_df = self._make_corr_df(np.arange(n, dtype=float), np.arange(n, dtype=float))
+        # Val: shuffled label so |rho| ~ 0 < 0.05
+        rng = np.random.default_rng(42)
+        val_label = np.arange(n, dtype=float)
+        rng.shuffle(val_label)
+        val_df = self._make_corr_df(np.arange(n, dtype=float), val_label)
+        stable = _check_spearman_sign_consistency(
+            train_df, ["feat_0"], n_folds=2, min_folds=2, val_df=val_df, min_abs_corr=0.05,
+        )
+        assert "feat_0" in stable, (
+            "Feature with train=positive, tiny val corr should be kept"
+        )
+
+    def test_val_df_none_matches_previous_behavior(self):
+        """AC4: val_df=None → pre-task-8 behavior (mixed train signs still blacklisted)."""
+        n = 100
+        n_half = n // 2
+        # Fold 0: rho = +1.0, Fold 1: rho = -1.0 → has_pos=True, has_neg=True → blacklisted
+        feat = np.concatenate([np.arange(n_half, dtype=float), -np.arange(n_half, dtype=float)])
+        label = np.arange(n, dtype=float)
+        train_df = self._make_corr_df(feat, label)
+        stable = _check_spearman_sign_consistency(
+            train_df, ["feat_0"], n_folds=2, min_folds=2, val_df=None, min_abs_corr=0.05,
+        )
+        assert "feat_0" not in stable, (
+            "Feature with mixed train signs should be blacklisted with val_df=None"
+        )
+
+    def test_val_df_missing_label_col_skips_check(self):
+        """AC5: val_df without label_close_288 column → val check skipped (no crash)."""
+        n = 100
+        train_df = self._make_corr_df(np.arange(n, dtype=float), np.arange(n, dtype=float))
+        # val_df has 'feat_0' but no 'label_close_288' column
+        val_df = pd.DataFrame({"feat_0": np.arange(n, dtype=float)})
+        stable = _check_spearman_sign_consistency(
+            train_df, ["feat_0"], n_folds=2, min_folds=2, val_df=val_df, min_abs_corr=0.05,
+        )
+        assert "feat_0" in stable, (
+            "Feature should be kept when val_df is missing the label column"
+        )
 
 
 class TestReduceOverlap:

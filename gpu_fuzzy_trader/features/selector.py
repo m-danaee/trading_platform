@@ -229,6 +229,14 @@ def _check_spearman_sign_consistency(
 
     Only correlations with ``|rho| >= min_abs_corr`` participate in the sign-flip
     check so near-zero noise does not blacklist features.
+
+    When ``val_df`` is provided, the val Spearman correlation is also computed.
+    If the val sign disagrees with the train majority sign (above ``min_abs_corr``
+    threshold), the feature is blacklisted. This catches features that have a
+    stable train sign but fail on val (silent OOS leak).
+
+    → fixes audit finding #11 (val_df was dead parameter; now actually checks
+    val sign consistency)
     """
     if min_abs_corr is None:
         min_abs_corr = float(config.PHASE1_SIGN_CONSISTENCY_MIN_ABS_CORR)
@@ -264,6 +272,29 @@ def _check_spearman_sign_consistency(
                 col, min_abs_corr, significant, corrs,
             )
         else:
+            # → fixes audit finding #11 (val_df was dead parameter; now actually
+            # checks val sign consistency)
+            if val_df is not None and label_col in val_df.columns and col in val_df.columns:
+                if has_pos and not has_neg:
+                    # Train is all positive; check val
+                    val_corr = _spearman(val_df[col], val_df[label_col])
+                    if not np.isnan(val_corr) and val_corr < -min_abs_corr:
+                        logger.info(
+                            "Blacklisting non-stationary feature %s: train sign positive, "
+                            "val sign negative (val_rho=%.3f, threshold=%.3f)",
+                            col, val_corr, min_abs_corr,
+                        )
+                        continue  # don't add to stable_features
+                elif has_neg and not has_pos:
+                    # Train is all negative; check val
+                    val_corr = _spearman(val_df[col], val_df[label_col])
+                    if not np.isnan(val_corr) and val_corr > min_abs_corr:
+                        logger.info(
+                            "Blacklisting non-stationary feature %s: train sign negative, "
+                            "val sign positive (val_rho=%.3f, threshold=%.3f)",
+                            col, val_corr, min_abs_corr,
+                        )
+                        continue  # don't add to stable_features
             stable_features.add(col)
     return stable_features
 
