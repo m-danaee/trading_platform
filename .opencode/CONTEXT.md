@@ -3,21 +3,19 @@
 Active objective: Fix the 13 CONFIRMED/SUSPECTED findings from the
 gpu_fuzzy_trader OOS audit (long 58.21%→49.92%→22.22%, short
 60.57%→50.47%→15.11% collapse on 2026-07-07 run).
-Current phase: task-7 implementer dispatching
-Current task: task-7 (DRAFTED; spec committed, implementer dispatching)
-  - task-1 MERGED (per-epoch window rotation)
-  - task-2 MERGED (4th NSGA objective)
-  - task-3 MERGED (RB walk-forward)
-  - task-4 MERGED (monthly gate on val)
-  - task-5 MERGED (dead f3 branch)
-  - task-6 MERGED (overfit ratio gate)
-  - task-7 in flight (PF floor split — 1.05 evolution, 1.15 admission)
+Current phase: task-7 reviews complete, awaiting user merge
+Current task: task-7 COMPLETE (spec APPROVED, code APPROVED)
+  - Implementer commit 1: 0b866d4 (feat — split floor flags)
+  - Fix commit:          19df0a1 (true alias + test aligned with spec)
+  - 304/304 tests pass (3 new + 301 prior)
+  - 2 INFO code-review findings (optuna_search.py patches old alias;
+    ~16 tests monkeypatch old alias; both out of scope per spec)
 base_branch: main
 feature_branch: feature/task-7-pf-floor-split
 branch_policy: isolated
 execution_mode: checkpoint
-Pending blockers: none
-Next action: dispatch implementer subagent for task-7; await handoff
-JSON at .opencode/handoffs/task-7-implementer.json; then spec-review
-then code-review before user merges and proceeds to task-8
-(use val_df in Phase 1 sign consistency filter).
+Pending blockers: user must merge feature/task-7-pf-floor-split
+  to main before task-8 can dispatch.
+Next action: user merges the feature branch; then "continue" or
+"start task-8" dispatches the val_df usage fix in Phase 1 sign
+consistency filter (audit fix #11).
