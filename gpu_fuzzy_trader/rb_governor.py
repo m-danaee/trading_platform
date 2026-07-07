@@ -700,15 +700,101 @@ def _compose_ruleset(
     return selected, cur_train, cur_valid, cur_score, history
 
 
+def _make_walk_forward_fold_engines(
+    val_selection_df: pd.DataFrame,
+    n_splits: int,
+    tail_holdout_frac: float,
+    direction: str,
+) -> tuple[list[CPUBacktestEngine], CPUBacktestEngine | None]:
+    """Split val_selection into n_splits chronological folds + optional tail holdout.
+
+    Per-symbol chronological split (matches data/splitter.py convention).
+    Returns (fold_engines, tail_holdout_engine_or_None).
+    """
+    if "symbol" not in val_selection_df.columns or "datetime" not in val_selection_df.columns:
+        # Single-symbol or no-symbol data: treat entire df as one symbol
+        symbols = ["_all"]
+        sym_data = {"_all": val_selection_df.copy().sort_values("datetime").reset_index(drop=True)}
+    else:
+        sym_data = {}
+        df_sorted = val_selection_df.copy().sort_values(["symbol", "datetime"]).reset_index(drop=True)
+        for sym, grp in df_sorted.groupby("symbol", sort=False):
+            sym_data[str(sym)] = grp.reset_index(drop=True)
+        symbols = sorted(sym_data.keys())
+
+    fold_dfs: list[pd.DataFrame] = [pd.DataFrame() for _ in range(n_splits)]
+    tail_dfs: list[pd.DataFrame] = []
+
+    for sym in symbols:
+        sym_df = sym_data[sym]
+        n = len(sym_df)
+        if n < n_splits + 1:
+            # Too few rows; duplicate to make splitting possible
+            sym_df = pd.concat([sym_df] * (n_splits + 1), ignore_index=True)
+            n = len(sym_df)
+
+        # Reserve tail holdout fraction
+        if tail_holdout_frac > 0.0 and n_splits >= 1:
+            tail_n = max(1, int(round(n * tail_holdout_frac)))
+            head_n = n - tail_n
+            head_df = sym_df.iloc[:head_n].reset_index(drop=True)
+            tail_df = sym_df.iloc[head_n:].reset_index(drop=True)
+            tail_dfs.append(tail_df)
+        else:
+            head_df = sym_df.copy()
+            tail_dfs.append(pd.DataFrame())
+
+        # Split head into n_splits contiguous chunks
+        head_len = len(head_df)
+        chunk_size = max(1, head_len // n_splits)
+        for i in range(n_splits):
+            start = i * chunk_size
+            if i < n_splits - 1:
+                end = start + chunk_size
+            else:
+                end = head_len
+            if start < head_len:
+                fold_dfs[i] = pd.concat([fold_dfs[i], head_df.iloc[start:end]], ignore_index=True)
+
+    # Build fold engines
+    fold_engines: list[CPUBacktestEngine] = []
+    for fold_df in fold_dfs:
+        if len(fold_df) == 0:
+            # Empty fold — pad with a copy of another fold's data
+            fallback = next((fd for fd in fold_dfs if len(fd) > 0), val_selection_df)
+            fold_df = fallback.copy()
+        prepared = _prepare_scoring_frame(fold_df)
+        fold_engines.append(CPUBacktestEngine(prepared, {}, direction))
+
+    # Build tail holdout engine (if any tail data)
+    tail_engine: CPUBacktestEngine | None = None
+    if tail_holdout_frac > 0.0:
+        combined_tail = pd.concat(tail_dfs, ignore_index=True)
+        if len(combined_tail) > 0:
+            prepared_tail = _prepare_scoring_frame(combined_tail)
+            tail_engine = CPUBacktestEngine(prepared_tail, {}, direction)
+        # Build tail holdout engine even from the fallback head portion
+        if tail_engine is None:
+            prepared_tail = _prepare_scoring_frame(fold_dfs[0].head(1))
+            tail_engine = CPUBacktestEngine(prepared_tail, {}, direction)
+
+    return fold_engines, tail_engine
+
+
 def _optimize_risk(
     selected: list[CandidateRecord],
     train_engine: CPUBacktestEngine,
     valid_engine: CPUBacktestEngine,
     direction: str,
+    fold_engines: list[CPUBacktestEngine] | None = None,
+    tail_holdout_engine: CPUBacktestEngine | None = None,
 ) -> tuple[list[dict], dict, dict, float, list[dict]]:
     rules = [_rule_to_engine(r.rule) for r in selected]
     cur_train, cur_valid, cur_score = _evaluate_ruleset(train_engine, valid_engine, rules)
     best_rules = [dict(r) for r in rules]
+
+    use_walk_forward = fold_engines is not None and len(fold_engines) > 1
+
     hist: list[dict] = [{
         "pass": 0,
         "rule_index": -1,
@@ -718,6 +804,14 @@ def _optimize_risk(
         "train_pf": _f(cur_train, "profit_factor"),
         "valid_pf": _f(cur_valid, "profit_factor"),
     }]
+    if use_walk_forward:
+        # Compute initial fold scores
+        init_fold_scores: list[float] = []
+        for fold_engine in fold_engines:
+            _, fold_m, fold_s = _evaluate_ruleset(train_engine, fold_engine, rules)
+            init_fold_scores.append(fold_s)
+        hist[0]["fold_scores"] = init_fold_scores
+        hist[0]["min_fold_score"] = min(init_fold_scores)
 
     tp_grid = tuple(float(x) for x in getattr(_cfg, "RB_TP_GRID", getattr(_cfg, "PHASE4_TP_GRID", (1.5, 2.0, 2.5, 3.0))))
     sl_grid = tuple(float(x) for x in getattr(_cfg, "RB_SL_GRID", getattr(_cfg, "PHASE4_SL_GRID", (0.8, 1.0, 1.2, 1.5))))
@@ -725,11 +819,13 @@ def _optimize_risk(
     max_total_cap = float(getattr(_cfg, "RB_MAX_TOTAL_CAPITAL", 65.0))
     passes = int(getattr(_cfg, "RB_RISK_OPT_PASSES", 2))
     min_improve = float(getattr(_cfg, "RB_RISK_MIN_IMPROVEMENT", 0.02))
+    min_train_trades = int(getattr(_cfg, "RB_RULESET_MIN_TRAIN_TRADES", getattr(_cfg, "RB_MIN_TRAIN_TRADES", 25)))
+    min_valid_trades = int(getattr(_cfg, "RB_RULESET_MIN_VALID_TRADES", getattr(_cfg, "RB_MIN_VALID_TRADES", 15)))
 
     for p in range(1, passes + 1):
         improved = False
         for idx in range(len(best_rules)):
-            local_best: tuple[float, list[dict], dict, dict] | None = None
+            local_best: tuple[float, list[dict], dict, dict, list[float] | None] | None = None
             for tp in tp_grid:
                 for sl in sl_grid:
                     for cap in cap_grid:
@@ -740,19 +836,32 @@ def _optimize_risk(
                         if sum(float(r.get("capital_pct", 0.0)) for r in trial) > max_total_cap:
                             continue
                         train_m, valid_m, score = _evaluate_ruleset(train_engine, valid_engine, trial)
-                        if not _is_positive_good(
-                            train_m,
-                            valid_m,
-                            min_train_trades=int(getattr(_cfg, "RB_RULESET_MIN_TRAIN_TRADES", getattr(_cfg, "RB_MIN_TRAIN_TRADES", 25))),
-                            min_valid_trades=int(getattr(_cfg, "RB_RULESET_MIN_VALID_TRADES", getattr(_cfg, "RB_MIN_VALID_TRADES", 15))),
-                        ):
+                        if not _is_positive_good(train_m, valid_m, min_train_trades=min_train_trades, min_valid_trades=min_valid_trades):
                             continue
-                        if local_best is None or score > local_best[0]:
-                            local_best = (score, trial, train_m, valid_m)
+
+                        if use_walk_forward:
+                            # Score on each fold engine and compute min fold score
+                            fold_scores_local: list[float] = []
+                            all_folds_pass = True
+                            for fold_engine in fold_engines:
+                                _, fold_m, fold_s = _evaluate_ruleset(train_engine, fold_engine, trial)
+                                if not _is_positive_good(train_m, fold_m, min_train_trades=min_train_trades, min_valid_trades=min_valid_trades):
+                                    all_folds_pass = False
+                                    break
+                                fold_scores_local.append(fold_s)
+                            if not all_folds_pass:
+                                continue
+                            selection_score = min(fold_scores_local)
+                        else:
+                            selection_score = score
+                            fold_scores_local = None
+
+                        if local_best is None or selection_score > local_best[0]:
+                            local_best = (selection_score, trial, train_m, valid_m, fold_scores_local)
             if local_best is not None and local_best[0] > cur_score + min_improve:
-                cur_score, best_rules, cur_train, cur_valid = local_best
+                cur_score, best_rules, cur_train, cur_valid, fold_scores_improved = local_best
                 improved = True
-                hist.append({
+                entry: dict[str, Any] = {
                     "pass": p,
                     "rule_index": idx + 1,
                     "score": cur_score,
@@ -765,13 +874,26 @@ def _optimize_risk(
                     "tp": best_rules[idx]["tp"],
                     "sl": best_rules[idx]["sl"],
                     "capital_pct": best_rules[idx]["capital_pct"],
-                })
+                }
+                if use_walk_forward and fold_scores_improved is not None:
+                    entry["fold_scores"] = fold_scores_improved
+                    entry["min_fold_score"] = min(fold_scores_improved)
+                hist.append(entry)
                 logger.info(
                     "RB [%s]: risk improve pass=%d rule=%d score=%.2f train=%.2f%% valid=%.2f%%",
                     direction, p, idx + 1, cur_score, _f(cur_train, "total_return_pct"), _f(cur_valid, "total_return_pct"),
                 )
         if not improved:
             break
+
+    # Tail holdout scoring on final selected combo (not used during search)
+    if tail_holdout_engine is not None and hist:
+        _, tail_m, _ = _evaluate_ruleset(train_engine, tail_holdout_engine, best_rules)
+        final_entry = hist[-1]
+        final_entry["risk_tail_holdout_return_pct"] = _f(tail_m, "total_return_pct")
+        final_entry["risk_tail_holdout_pf"] = _f(tail_m, "profit_factor")
+        final_entry["risk_tail_holdout_dd"] = _f(tail_m, "max_drawdown_pct")
+
     return best_rules, cur_train, cur_valid, cur_score, hist
 
 
@@ -1234,7 +1356,22 @@ def run_rb_governor_pipeline(
                 continue
 
         selected, sel_train, sel_test, sel_score, compose_history = _compose_ruleset(candidates, train_engine, valid_engine, direction)
-        opt_rules, opt_train, opt_test, opt_score, risk_history = _optimize_risk(selected, train_engine, valid_engine, direction)
+
+        # Build walk-forward fold engines for risk grid (task-3: 2-fold)
+        wf_splits = int(getattr(_cfg, "RB_RISK_GRID_WF_SPLITS", 1))
+        use_tail = bool(getattr(_cfg, "RB_RISK_GRID_USE_TAIL_HOLDOUT", False))
+        tail_frac = float(getattr(_cfg, "PHASE4_TAIL_HOLDOUT_FRACTION", 0.0))
+        wf_fold_engines: list[CPUBacktestEngine] | None = None
+        wf_tail_engine: CPUBacktestEngine | None = None
+        if wf_splits > 1 or use_tail:
+            wf_fold_engines, wf_tail_engine = _make_walk_forward_fold_engines(
+                scoring_val, wf_splits, tail_frac if use_tail else 0.0, direction,
+            )
+
+        opt_rules, opt_train, opt_test, opt_score, risk_history = _optimize_risk(
+            selected, train_engine, valid_engine, direction,
+            fold_engines=wf_fold_engines, tail_holdout_engine=wf_tail_engine,
+        )
         profit_rules, profit_train, profit_test, profit_objective, profit_meta = _run_profit_amplifier(
             opt_rules,
             opt_train,
