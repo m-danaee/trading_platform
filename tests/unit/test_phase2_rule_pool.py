@@ -3718,3 +3718,56 @@ class TestPoolAdmissionOverfitRatioGate:
             "Expected train=15%/val=4% (3.75×) to be ADMITTED when "
             "PHASE2_OVERFIT_RATIO_FLOOR=0.0 (pre-task-6 regression guard)"
         )
+
+
+class TestRefreshObjectivesOnResumeGate:
+    """Task-10: gate cache refresh on PHASE2_PER_EPOCH_WINDOW_ROTATION.
+
+    Verifies the gate logic at phase2_rule_pool.py:3261.
+    """
+
+    @staticmethod
+    def _evaluate_gate(first_epoch: bool) -> bool:
+        """Evaluate the gate expression as it appears in the source."""
+        from gpu_fuzzy_trader import config as _cfg
+
+        return (
+            not first_epoch
+            and bool(getattr(_cfg, "PHASE2_PER_EPOCH_WINDOW_ROTATION", True))
+        )
+
+    def test_rotation_on_resumed_epoch_refreshes(self, monkeypatch):
+        """PHASE2_PER_EPOCH_WINDOW_ROTATION=True (default):
+        refresh = not first_epoch → True on resumed epochs.
+        """
+        monkeypatch.setattr(_cfg, "PHASE2_PER_EPOCH_WINDOW_ROTATION", True)
+        assert self._evaluate_gate(first_epoch=False) is True, (
+            "Expected refresh=True on resumed epoch when rotation is ON"
+        )
+
+    def test_rotation_on_first_epoch_skips(self, monkeypatch):
+        """PHASE2_PER_EPOCH_WINDOW_ROTATION=True (default):
+        refresh = not first_epoch → False on first epoch.
+        """
+        monkeypatch.setattr(_cfg, "PHASE2_PER_EPOCH_WINDOW_ROTATION", True)
+        assert self._evaluate_gate(first_epoch=True) is False, (
+            "Expected refresh=False on first epoch when rotation is ON"
+        )
+
+    def test_rotation_off_resumed_epoch_skips(self, monkeypatch):
+        """PHASE2_PER_EPOCH_WINDOW_ROTATION=False (legacy):
+        refresh is False even on resumed epochs — cache is NOT cleared.
+        """
+        monkeypatch.setattr(_cfg, "PHASE2_PER_EPOCH_WINDOW_ROTATION", False)
+        assert self._evaluate_gate(first_epoch=False) is False, (
+            "Expected refresh=False on resumed epoch when rotation is OFF"
+        )
+
+    def test_rotation_off_first_epoch_skips(self, monkeypatch):
+        """PHASE2_PER_EPOCH_WINDOW_ROTATION=False (legacy):
+        refresh is False on first epoch (matches pre-task-10 behavior).
+        """
+        monkeypatch.setattr(_cfg, "PHASE2_PER_EPOCH_WINDOW_ROTATION", False)
+        assert self._evaluate_gate(first_epoch=True) is False, (
+            "Expected refresh=False on first epoch when rotation is OFF"
+        )

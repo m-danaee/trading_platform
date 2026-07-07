@@ -3256,9 +3256,15 @@ class Rule_Pool_Generator:
             tag += f" Stage {stage_plan.stage}"
 
         # --- Task 2: Refresh objectives on island resume to prevent stale fitness ---
-        # Conservative: always refresh when resuming an existing state (not first epoch).
-        # Context may have changed due to migrants, Stage B entry, engine rebuilds, etc.
-        refresh_objectives_on_resume = not first_epoch
+        # Refresh on resume only when the train window changes per epoch
+        # (PHASE2_PER_EPOCH_WINDOW_ROTATION=True, the default after task-1).
+        # When rotation is off (legacy fixed-window), the cache is valid and
+        # the wipe is wasteful — cache_hit_rate drops to 0.
+        # → fixes audit finding #8 (cache refresh was wasteful in fixed-window mode)
+        refresh_objectives_on_resume = (
+            not first_epoch
+            and bool(getattr(_cfg, "PHASE2_PER_EPOCH_WINDOW_ROTATION", True))
+        )
         self._evolution_state, epoch_history = run_phase2_evolution_epoch(
             feature_infos=self.feature_infos,
             engine=self._engine,
