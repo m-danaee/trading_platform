@@ -1,27 +1,59 @@
 {
-  "task_id": 2,
+  "status": "APPROVED",
+  "task_id": "task-2",
+  "reviewer": "code-reviewer",
+  "commit_hash": "c89c087",
+  "branch": "feature/task-2-return-concentration-objective",
   "verdict": "APPROVED",
-  "findings": [
+  "issues": [
     {
-      "severity": "low",
-      "category": "test",
-      "finding": "5 of the new tests use source-inspection (inspect.getsource) rather than behavioral testing. While they serve as regression guards against specific code-structure mistakes, they are fragile: a refactor renaming 'round_counter' or restructuring indentation would cause false failures even when behavior is correct. The plan explicitly asked to 'drive _run_cluster_islands (or just _should_migrate_this_round directly) with n_clusters=3, interval=2' — only the parametrized test on _should_migrate_this_round does this behaviorally. The loop-level test (test_migration_cadence_uses_rounds_not_clusters) is source-inspection only."
-    },
-    {
-      "severity": "low",
-      "category": "maintainability",
-      "finding": "Commit message on 0c8d014 mentions only 'define n_clusters' but the commit includes all three fixes (seed collision, migration cadence, n_clusters). Future readers of git blame may be confused about when the seed/migration changes were introduced."
+      "severity": "MEDIUM",
+      "category": "diagnostic_accuracy",
+      "description": "f4 concentration gate in _feasibility_gate_failures lacks trade-floor override",
+      "location": "gpu_fuzzy_trader/phases/phase2_support.py:313-329",
+      "detail": "In compute_phase2_objectives_from_metrics (phase2_rule_pool.py:974), when executed_trades < trade_floor, f4 is set to 0.0 ('no concentration signal on thin data'). However, in _feasibility_gate_failures, the f4 gate computes f4_val from raw metrics without applying the trade-floor override. If a rule has executed_trades < train_floor AND max_single_trade_pnl / sum_positive_trade_pnl > 0.5, the gate failures dict will show f4_concentration=1 while the actual objective uses f4=0. This creates misleading diagnostics. Algorithm correctness is not affected (the train_trade_floor gate also fires), but the diagnostic accuracy is compromised.",
+      "fix": "Before computing the f4 gate, add a check: if train_trades < train_floor, skip the f4 gate (leave f4_concentration=0) — matching the objective computation's intent. Alternatively, compute f4_val as 0.0 when train_trades < train_floor."
     }
   ],
-  "positive_observations": [
-    "Item 6 (seed collision): _derive_island_seed called with direction prefix at both call sites — f\"{direction}_{cid}\" (line 424) and f\"{direction}_orphan_{sym}\" (line 326). direction is a string parameter in scope at both sites. Signature unchanged. Seed uniqueness tests use real _derive_island_seed values, not mock assertions.",
-    "Item 7 (migration cadence): _should_migrate_this_round is a clean pure function with correct docstring. Handles edge cases (interval <= 0 → False, round_index=0 % interval=0 → True). round_counter increments once per outer while loop (line 461), NOT inside the for-cid loop. All epoch_counter references purged from production code.",
-    "n_clusters fix: n_clusters = len(cluster_ids) placed correctly at line 401, immediately after cluster_ids is sorted. AST verified: 1 assignment, 2 references (the second is in 'and n_clusters > 1' at the migration guard). Regression tests for this exist.",
-    "Parametrized test (test_should_migrate_this_round_parametrized) covers 14 cases including edge cases: interval=0 (never fires), interval=-1 (never fires), interval=1 (always fires), interval=2, interval=3 with various round_index values. This is the strongest test in the set.",
-    "Edge cases covered: base_seed=None returns None (test_derive_island_seed_none_input_returns_none), signature unchanged verified (test_derive_island_seed_signature_unchanged), interval <= 0 handled in helper.",
-    "No dead code: zero epoch_counter references in production code (grep confirmed). No unused imports introduced.",
-    "All 53 tests pass (39 test_phase2_island_scheduler + 4 test_island_scheduler_migration + 10 test_migration_safety). 130/131 pass in test_phase2_rule_pool (1 pre-existing, unrelated failure).",
-    "Backward compatibility: _derive_island_seed signature unchanged. Seed values will differ (intentional bug fix), but no tests depend on exact historical seed values — test_derive_island_seed_distinct_for_distinct_ids in test_phase2_rule_pool.py checks uniqueness, not exact values."
+  "correctness_review": {
+    "f4_formula_edge_cases": "PASS — sum_positive=0 → f4=0 (correct, since max_single_trade_pnl also tracks positive-only trades). max_single_trade_pnl negative impossible (tracked only for net_pnl > 0). JOINT_TRAIN_VAL min() picks the less-bad leg — correct behavior.",
+    "gpu_engine_jax_scan": "PASS — max_single_trade_pnl is correctly threaded through lax.scan with jnp.maximum update. Numerical stability is fine (simple comparison, no gradients needed). Array grew 10→13 elements; indexing in _batch_metrics_from_array (indices 10/11/12) is correct.",
+    "n_obj_wiring": "PASS — N_OBJ module-level variable reads PHASE2_N_OBJECTIVES from config when F4_ENABLED=True (default 4), falls back to 3 otherwise. No remaining hardcoded (3,) or (pop_size, 3) anywhere in evolution directory. _pareto_diagnostics uses shape-adaptive guards (>= 2, >= 3).",
+    "non_dominate_rank": "PASS — EvoX non_dominate_rank(f) accepts torch.Tensor of any shape; function is dimension-agnostic.",
+    "objective_array_shape": "PASS — All np.full((pop_size, ...), inf) calls use N_OBJ. _plateau_diversity_restart uses np.full(N_OBJ, np.inf). No shape mismatch risk when F4_ENABLED=False."
+  },
+  "performance_review": {
+    "gpu_engine_array_growth": "PASS — 10→13 elements = 3 floats per call. With batch_size=128, n_gen=13, n_clusters=3: ~150K extra floats total. Negligible.",
+    "nsga3_4d_pareto": "PASS — non_dominate_rank is O(M·N²) with M=obj count. Going from 3→4 objectives is marginal for pop_size=120. _get_reference_vectors with uniform_sampling(pop_size, 4) handles 4D correctly.",
+    "cpu_engine_per_trade_tracking": "PASS — max_single_trade_pnl is O(1) per positive trade (simple max comparison). No regression."
+  },
+  "security_review": "PASS — No security-sensitive code paths. All changes are internal metric computations and config constants.",
+  "test_adequacy": {
+    "f4_unit_tests": "PASS — 5 tests: outlier_trade (f4=1.0), uniform_trades (f4=0.0125), disabled_returns_3, zero_below_trade_floor, default_is_3_when_config_deleted. All test compute_phase2_objectives_from_metrics directly — the production code path.",
+    "property_tests": "PASS — 2 Hypothesis tests (test_property_29, 29b) with max_examples=100, bounded floats [0, 1e6], no NaN/Inf. Properly monkeypatched with undo in finally block. Test f4 monotonicity (increasing max_pnl → non-decreasing f4) and inverse monotonicity (increasing sum_pos → non-increasing f4).",
+    "joint_min_gate_test": "PASS — test_f4_gate_uses_joint_min_when_joint_train_val_enabled correctly sets train f4=0.9 (>0.5 floor) and val f4=0.2 (≤0.5 floor), asserts f4_concentration=0 (gate passes with joint min).",
+    "default_mismatch_test": "PASS — test_f4_default_is_three_objectives_when_config_deleted uses monkeypatch.delattr to delete PHASE2_F4_ENABLED, then asserts 3 objectives and no f4 key. Both getattr defaults now False (fix verified).",
+    "coverage_gap": "f4_concentration gate when trades < train_floor not explicitly tested in _feasibility_gate_failures (see MEDIUM finding above)."
+  },
+  "maintainability_review": {
+    "f4_epsilon": "PASS — PHASE2_F4_EPSILON=1e-6 is adequate. Division by near-zero only happens when sum_positive is essentially zero; in that case max_single_trade_pnl is also zero (positive-only tracking).",
+    "n_obj_module_level": "ACCEPTABLE — N_OBJ computed at import time. Stale-value risk exists if config changes at runtime, but config is set at startup and never mutated in production. Tests monkeypatch at function level, testing through compute_phase2_objectives_from_metrics (not through N_OBJ).",
+    "audit_linkage": "PASS — config.py:536 has comment '→ fixes audit finding #2 (outlier-driven f3 from uncapped time-exit returns)'. Grep-able.",
+    "f4_concentration_gate_integration": "PASS — Clean 10th gate. Gate breakdown dict in both NSGA2 and NSGA3 paths includes f4_concentration. _feasibility_gate_failures docstring updated from 9→10 gates. No bolt-on feel."
+  },
+  "regression_check": {
+    "evaluator_v5.ipynb": "NOT MODIFIED",
+    "time_exit_return_branch": "NOT MODIFIED (gpu_engine.py, cpu_engine.py)",
+    "rb_governor.py": "NOT MODIFIED",
+    "phase2_island_scheduler.py": "NOT MODIFIED",
+    "phases_other_than_pool_support": "NOT MODIFIED",
+    "f4_disabled_bit_identical": "PASS — Verified by test_f4_disabled_returns_three_objectives and test_f4_default_is_three_objectives_when_config_deleted. When PHASE2_F4_ENABLED=False, objectives.shape=(3,), no f4 key in metrics."
+  },
+  "tests_run": [
+    {"file": "tests/unit/test_phase2_rule_pool.py", "result": "150 passed (5 f4 tests)"},
+    {"file": "tests/unit/test_phase2_support.py", "result": "26 passed (1 new f4 gate test)"},
+    {"file": "tests/unit/test_evox_runner.py", "result": "41 passed"},
+    {"file": "tests/property/test_cpu_engine_properties.py", "result": "9 passed (2 new f4 property tests)"}
   ],
-  "notes": "The implementation is correct across all three fixes. The seed collision fix and migration cadence fix address real, reproducible bugs. The n_clusters NameError introduced by Task 1 is properly resolved. The test strategy could be stronger — 5 source-inspection tests are fragile and the plan's explicit request for a behavioral loop-drive test was only partially satisfied (the parametrized test on _should_migrate_this_round, while excellent, is the helper function in isolation, not the full loop). However, the combination of isolation tests on the helper + source-inspection regression guards + all existing integration-level tests passing provides adequate coverage for the risk level of these changes. No blocking issues."
+  "summary": "Code review PASS. Implementation correctly adds f4 return-concentration as 4th NSGA-III objective with proper engine tracking, NSGA-III plumbing, pool admission gate, and regression guard. All 4 spec-review findings resolved in fix commit c89c087. One MEDIUM finding: _feasibility_gate_failures should skip the f4 gate when trades < train_floor to match the objective's trade-floor override (diagnostic accuracy only — algorithm correctness unaffected). All 226 tests pass with no regressions."
 }

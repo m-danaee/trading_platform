@@ -1,0 +1,64 @@
+{
+  "status": "DONE",
+  "task_id": "task-2",
+  "commit_hash": "c89c087",
+  "branch": "feature/task-2-return-concentration-objective",
+  "fixes_applied": [
+    {
+      "issue": "1",
+      "severity": "HIGH",
+      "description": "Inconsistent getattr default for PHASE2_F4_ENABLED",
+      "file": "gpu_fuzzy_trader/phases/phase2_rule_pool.py",
+      "fix": "Changed line 981 from `bool(getattr(_cfg, 'PHASE2_F4_ENABLED', True))` to `bool(getattr(_cfg, 'PHASE2_F4_ENABLED', False))` so both call sites use False as the default when the config attribute is deleted."
+    },
+    {
+      "issue": "2",
+      "severity": "MEDIUM",
+      "description": "Pool admission gate uses train-only f4, objective uses min(train, val)",
+      "file": "gpu_fuzzy_trader/phases/phase2_support.py",
+      "fix": "In both _passes_pool_admission_impl and _feasibility_gate_failures, when PHASE2_JOINT_TRAIN_VAL=True and val_metrics is not None, compute f4_val from val_metrics and use min(f4_train, f4_val) for the gate check — matching the objective computation in compute_phase2_objectives_from_metrics."
+    },
+    {
+      "issue": "3",
+      "severity": "LOW",
+      "description": "PHASE2_N_OBJECTIVES config constant is dead",
+      "file": "gpu_fuzzy_trader/evolution/evox_runner.py",
+      "fix": "Replaced hardcoded `4` in N_OBJ assignment with `int(getattr(_cfg, 'PHASE2_N_OBJECTIVES', 4))` when F4_ENABLED=True, falling back to 3 when F4_ENABLED=False. The centralized PHASE2_N_OBJECTIVES in config.py is now read by evox_runner.py."
+    },
+    {
+      "issue": "4",
+      "severity": "LOW",
+      "description": "Missing explicit audit-finding linkage",
+      "file": "gpu_fuzzy_trader/config.py",
+      "fix": "Added comment `# → fixes audit finding #2 (outlier-driven f3 from uncapped time-exit returns)` next to PHASE2_F4_ENABLED definition."
+    }
+  ],
+  "tests_added": [
+    {
+      "file": "tests/unit/test_phase2_rule_pool.py",
+      "test": "TestF4ReturnConcentration::test_f4_default_is_three_objectives_when_config_deleted",
+      "description": "Asserts that when PHASE2_F4_ENABLED is deleted from config (monkeypatch.delattr), both getattr defaults use False → 3 objectives, no f4 key."
+    },
+    {
+      "file": "tests/unit/test_phase2_support.py",
+      "test": "TestFeasibilityGateFailures::test_f4_gate_uses_joint_min_when_joint_train_val_enabled",
+      "description": "Asserts that _feasibility_gate_failures uses min(train_f4, val_f4) when PHASE2_JOINT_TRAIN_VAL=True: train_f4=0.9 (>0.5 floor but val_f4=0.2 so joint min=0.2 ≤ 0.5, gate passes)."
+    }
+  ],
+  "tests_run": [
+    {"file": "tests/unit/test_phase2_rule_pool.py", "result": "150 passed (5 f4 tests, +1 new)"},
+    {"file": "tests/unit/test_phase2_support.py", "result": "26 passed (+1 new)"},
+    {"file": "tests/unit/test_evox_runner.py", "result": "41 passed"},
+    {"file": "tests/property/test_cpu_engine_properties.py", "result": "9 passed"}
+  ],
+  "notes": [
+    "Fix commit c89c087 is on top of 793f9cd (no rebase/reset).",
+    "Issue 1 fix: Both getattr call sites now use default=False — consistent.",
+    "Issue 2 fix: Joint-min logic added to both gate functions, matching compute_phase2_objectives_from_metrics exactly.",
+    "Issue 3 fix: evox_runner.py now reads PHASE2_N_OBJECTIVES from config when F4_ENABLED=True.",
+    "Issue 4 fix: Audit finding #2 comment added in config.py.",
+    "Did NOT modify evox_runner.py more than necessary (just the N_OBJ line).",
+    "Did NOT modify gpu/cpu engines, evaluator_v5.ipynb, or other phase files.",
+    "All 226 tests pass with no regressions."
+  ]
+}
