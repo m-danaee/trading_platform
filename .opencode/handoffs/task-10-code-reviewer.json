@@ -1,31 +1,82 @@
 {
   "task_id": "task-10",
+  "review_type": "code-review",
   "verdict": "APPROVED",
+  "reviewer": "code-reviewer",
+  "commit_reviewed": "7cde019",
+  "branch": "feature/task-10-cache-refresh-gate",
+  "summary": "Thorough code review confirms the implementation is correct, minimal, and well-tested. The gate logic correctly handles all 4 truth-table cases. The getattr default of True matches the config default. The single call site is verified. Downstream refresh logic is a clean no-op when the flag is False. All 166 tests pass (including 4 new). Two non-blocking findings noted.",
   "findings": [
     {
-      "severity": "nit",
-      "finding": "Docstring in `_try_lean_fallback` says `The val_floor sanity check (default 2.5%)` but the actual default from `effective_phase3_val_return_floor_pct()` is 5.0% (or 4.0% in debug-scope mode via `_debug_symbol_universe_size`). The function uses the live config value, so the wrong default in the docstring could mislead future maintainers.",
-      "fix": "Update the docstring in `gpu_fuzzy_trader/phases/phase3_rule_set.py:618` to either remove the parenthetical default or replace `(default 2.5%)` with `(default 5.0% in production, 4.0% under DEBUG_SYMBOL_SCOPE_ENABLED)`. No code change required.",
-      "status": "OPEN"
+      "severity": "LOW",
+      "finding": "Two PNG binary artifacts (outputs/reports/phase2_long_metrics.png +22 bytes, phase2_short_metrics.png +26 bytes) were modified in the commit. These are out-of-scope binary report files. Recommend reverting before merge to keep the diff clean.",
+      "recommended_fix": "Run `git checkout main -- outputs/reports/phase2_long_metrics.png outputs/reports/phase2_short_metrics.png` before merging."
     },
     {
-      "severity": "nit",
-      "finding": "In `plot_equity_curve` (reporter.py:540-541), `equity = trade_log['Equity_After'].values` is computed unconditionally before the `if has_entry_time:` check, but is then reassigned inside the `if` branch. The first extraction is therefore wasted in the date-axis path (per AGENTS.md 'remove additional wasted parts from old implementation').",
-      "fix": "Move the `equity = trade_log['Equity_After'].values` line into the `else` branch so it is only computed for the trade-number fallback path. Minor cleanup; behavior is unchanged.",
-      "status": "OPEN"
-    },
-    {
-      "severity": "nit",
-      "finding": "Test coverage for `plot_equity_curve` is missing a few realistic edge cases: (a) `Entry_Time` as a string column (not datetime) — would crash on `mdates.DateFormatter`; (b) timezone-aware `Entry_Time`; (c) unsorted `Entry_Time` from interleaved symbols (the implementation sorts, but no test asserts the equity line is chronological); (d) a trade log where some `Entry_Time` are NaN and others valid (the `.notna().any()` check would treat it as date-axis, but `sort_values` would interleave NaN at the end). The spec said 'small, fast tests only', so these are nice-to-haves.",
-      "fix": "Optional: add 2-3 more tests in `tests/unit/test_reporter_equity_date_axis.py` covering unsorted Entry_Time (assert order changes) and mixed-NaN Entry_Time. Lower priority than the docstring fix.",
-      "status": "OPEN"
-    },
-    {
-      "severity": "nit",
-      "finding": "`_try_lean_fallback` does not deduplicate pool rules by `conditions` key, unlike its sibling `_best_rules_from_pool_fallback` (line 695) which uses a `seen: set[frozenset]` dedup. In practice pool rules are unique by conditions (Phase 2 dedups), so this is safe today but is a subtle inconsistency between the two fallbacks.",
-      "fix": "Optional: mirror the dedup pattern from `_best_rules_from_pool_fallback` for symmetry. Low priority — current Phase 2 invariants already guarantee uniqueness.",
-      "status": "OPEN"
+      "severity": "LOW",
+      "finding": "Test design: the `_evaluate_gate()` helper copies the gate expression rather than testing the actual source call site at phase2_rule_pool.py:3261. A refactoring that changes the call site (variable name, location) wouldn't be caught by these tests. However, the expression is trivial (one line) and the docstrings pin it to the exact source line, so the risk of test/source divergence is minimal.",
+      "recommended_fix": "Not required for merge. If a future refactoring changes the call site, add an integration-level test that exercises the actual code path."
     }
   ],
-  "summary": "Code quality is solid: 19 new tests pass (9 for _try_lean_fallback, 10 for plot_equity_curve), imports are clean, the two wiring sites in Rule_Set_Selector.run are correctly chained (global fallback -> lean fallback -> reject), the config threshold comments are dated and well-justified, and the README accurately describes the evaluator_clean folder. Security review found no eval/exec, no path-traversal, no SQL/shell-injection vectors. The four findings are all low/nit (docstring default, minor wasted-code cleanup, optional additional test cases, optional dedup symmetry) and do not block merge."
+  "correctness_checks": {
+    "gate_logic": {
+      "status": "CORRECT",
+      "details": "not first_epoch AND bool(getattr(_cfg, 'PHASE2_PER_EPOCH_WINDOW_ROTATION', True)). bool() handles True/False/0/1/None correctly."
+    },
+    "truth_table": {
+      "rotation_ON_resumed": "True AND True = True (refresh) PASS",
+      "rotation_ON_first": "False AND True = False (skip) PASS",
+      "rotation_OFF_resumed": "True AND False = False (skip) PASS",
+      "rotation_OFF_first": "False AND False = False (skip) PASS"
+    },
+    "single_call_site": {
+      "status": "VERIFIED",
+      "details": "refresh_objectives_on_resume is set exactly once (phase2_rule_pool.py:3264) and passed at line 3287. All other references are parameter defaults (=False) or passthroughs in evox_runner.py."
+    },
+    "downstream_noop": {
+      "status": "VERIFIED",
+      "details": "evox_runner.py:2620: `if refresh_objectives_on_resume and state is not None:` — entire block is skipped when flag is False. No side effects."
+    },
+    "comment_greppable": {
+      "status": "VERIFIED",
+      "details": "Search for 'audit finding #8' returns exactly one hit at the gate site."
+    }
+  },
+  "maintainability_checks": {
+    "getattr_default": {
+      "status": "CORRECT",
+      "rationale": "Default True matches config.py:390 (PHASE2_PER_EPOCH_WINDOW_ROTATION = True). A missing flag preserves correct behavior (rotation on → refresh on)."
+    },
+    "comment_accuracy": {
+      "status": "ACCURATE",
+      "covers": ["gating logic", "cache validity rationale", "audit finding #8 linkage"]
+    }
+  },
+  "test_checks": {
+    "new_tests": 4,
+    "covers_all_4_combinations": true,
+    "all_pass": true,
+    "test_design": "Helper _evaluate_gate() copies expression; low risk given trivial expression and source-line documentation in docstrings."
+  },
+  "scope_compliance": {
+    "files_changed_in_scope": [
+      "gpu_fuzzy_trader/phases/phase2_rule_pool.py (+9 -3)",
+      "tests/unit/test_phase2_rule_pool.py (+53)"
+    ],
+    "files_changed_out_of_scope": [
+      "outputs/reports/phase2_long_metrics.png (+22 bytes, binary artifact)",
+      "outputs/reports/phase2_short_metrics.png (+26 bytes, binary artifact)"
+    ],
+    "evox_runner_unchanged": true,
+    "config_unchanged": true,
+    "evaluator_v5_unchanged": true
+  },
+  "test_results": {
+    "pytest_rule_pool": "166 passed (4 new, 162 existing)",
+    "pytest_window_rotation": "16 passed",
+    "pytest_island_scheduler": "29 passed",
+    "pytest_monthly_admission": "10 passed",
+    "pytest_evox_runner": "41 passed",
+    "new_tests_class": "TestRefreshObjectivesOnResumeGate — 4/4 passed"
+  }
 }
