@@ -3,17 +3,19 @@
 Active objective: Fix the 13 CONFIRMED/SUSPECTED findings from the
 gpu_fuzzy_trader OOS audit (long 58.21%→49.92%→22.22%, short
 60.57%→50.47%→15.11% collapse on 2026-07-07 run).
-Current phase: task-3 implementer dispatching
-Current task: task-3 (DRAFTED; spec committed, implementer dispatching)
-  - task-1 MERGED (per-epoch window rotation; commit 44f8631)
-  - task-2 MERGED (4th NSGA objective; commit 703a777)
-  - task-3 in flight (RB Governor 2-fold walk-forward)
+Current phase: task-3 reviews complete, awaiting user merge
+Current task: task-3 COMPLETE (spec APPROVED, code APPROVED)
+  - Implementer commit 1: 447f2ed (feat — 2-fold walk-forward + tail holdout)
+  - Fix commit:          32a2f49 (cur_score baseline + audit linkage)
+  - 25/25 tests pass (5 walk-forward + 5 tail holdout + 14 prior RB)
+  - 1 MEDIUM code-review note (small-data duplication warning, optional)
+  - 2 LOW code-review notes (redundant train backtests, missing edge-case test)
 base_branch: main
 feature_branch: feature/task-3-rb-walk-forward
 branch_policy: isolated
 execution_mode: checkpoint
-Pending blockers: none
-Next action: dispatch implementer subagent for task-3; await handoff
-JSON at .opencode/handoffs/task-3-implementer.json; then spec-review
-then code-review before user merges and proceeds to task-4
-(monthly admission gate on val, not train).
+Pending blockers: user must merge feature/task-3-rb-walk-forward
+  to main before task-4 can dispatch.
+Next action: user merges the feature branch; then "continue" or
+"start task-4" dispatches the monthly admission gate on val
+(audit fix #4).
