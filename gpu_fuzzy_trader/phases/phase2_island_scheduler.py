@@ -88,6 +88,49 @@ def _derive_island_seed(base_seed: int | None, island_id: str) -> int | None:
     return int.from_bytes(h[:4], "big") % (2**31)
 
 
+def _derive_epoch_seed(base_seed: int | None, epoch_idx: int) -> int | None:
+    """Return a deterministic per-epoch seed derived from *base_seed* + epoch.
+
+    Used by :func:`_run_cluster_islands` to rotate the train-window start
+    bar each epoch so every generation backtests a different contiguous
+    sub-window of the training data.
+
+    → fixes audit finding #1 (per-epoch window resampling is dead),
+      implements N2
+
+    The derivation mode is controlled by
+    :attr:`config.PHASE2_PER_EPOCH_WINDOW_SEED_MODE`:
+
+    * ``"hash_island_epoch"`` (default) — hash(base_seed, epoch_idx)
+      via SHA-256, deterministic, no RNG state leak.
+
+    Raises ``ValueError`` for unknown seed-mode values.
+
+    Parameters
+    ----------
+    base_seed : int or None
+        The island's base seed (already derived from global seed + island_id).
+        If None, returns None.
+    epoch_idx : int
+        0-indexed epoch number for this cluster.
+
+    Returns
+    -------
+    int or None
+        A derived seed in [0, 2**31), or None when base_seed is None.
+    """
+    if base_seed is None:
+        return None
+    mode = _cfg.PHASE2_PER_EPOCH_WINDOW_SEED_MODE
+    if mode == "hash_island_epoch":
+        h = hashlib.sha256(f"{base_seed}:epoch_{epoch_idx}".encode()).digest()
+        return int.from_bytes(h[:4], "big") % (2**31)
+    raise ValueError(
+        f"Unknown PHASE2_PER_EPOCH_WINDOW_SEED_MODE={mode!r}. "
+        f"Supported modes: 'hash_island_epoch'."
+    )
+
+
 def _load_phase1_feature_lists() -> tuple[list[dict], list[dict]]:
     from gpu_fuzzy_trader.features import selector as sel_mod
 
@@ -476,6 +519,7 @@ def _run_cluster_islands(
             )
 
         # 2. Run all epochs for this cluster sequentially
+        epoch_idx = 0
         while gen._island_generations_done < gens_per_cluster:
             remaining = gens_per_cluster - gen._island_generations_done
 
@@ -490,8 +534,14 @@ def _run_cluster_islands(
                 gen._island_generations_done = gens_per_cluster  # exit loop cleanly
                 break
 
+            # Per-epoch window rotation: re-sample for epoch > 0 so each
+            # epoch sees a different contiguous sub-window (Fix 1).
+            if epoch_idx > 0 and _cfg.PHASE2_PER_EPOCH_WINDOW_ROTATION:
+                gen.resample_train_for_epoch(epoch_idx)
+
             gen.run_epoch(n_generations=min(epoch_gens, remaining))
             gen.park_engines()
+            epoch_idx += 1
 
         # 3. Evict this cluster's JAX signatures after all epochs are done
         try:

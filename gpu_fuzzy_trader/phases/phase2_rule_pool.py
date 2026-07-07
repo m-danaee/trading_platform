@@ -388,6 +388,69 @@ def _largest_safe_range(
     return (best_start, best_end)
 
 
+def _resolve_sample_total_rows(
+    df: pd.DataFrame,
+    total_rows: int,
+    forbidden_ranges: list[tuple[int, int]] | None = None,
+) -> int:
+    """Cap *total_rows* so the per-symbol request fits within the safe range.
+
+    When :attr:`config.PHASE2_PER_EPOCH_WINDOW_ROTATION` is enabled, the
+    per-symbol row count must not exceed the largest safe (non-forbidden)
+    contiguous bar range.  Without this cap, ``_sample_df`` falls back to
+    ``start = safe_start = 0`` for every call, preventing window rotation.
+
+    The cap ensures ``n_per_sym < safe_len`` (strictly less) so the RNG
+    branch at ``_sample_df`` (line ~471) fires and picks a different start
+    bar each epoch.  A 1 % margin (``safe_len // 100``) is reserved for
+    rotation so the start bar has room to vary across epochs; the exact
+    margin is a practical trade-off between data quantity and rotation
+    diversity.
+
+    Args:
+        df: Input DataFrame with a ``symbol`` column.
+        total_rows: Target row count across all symbols.
+        forbidden_ranges: Per-symbol ``(start_bar, end_bar)`` intervals
+            that the sampled slice must NOT overlap.
+
+    Returns
+    -------
+    int
+        Potentially reduced total_rows that allows rotated start bars.
+    """
+    if not _cfg.PHASE2_PER_EPOCH_WINDOW_ROTATION:
+        return total_rows
+    if "symbol" not in df.columns or df.empty:
+        return total_rows
+    symbols = df["symbol"].unique()
+    n_sym = len(symbols)
+    if n_sym == 0:
+        return total_rows
+    sym_groups = {sym: df[df["symbol"] == sym] for sym in symbols}
+    min_sym_len = min(len(g) for g in sym_groups.values())
+    if min_sym_len <= 0:
+        return total_rows
+    safe_start, safe_end = _largest_safe_range(
+        min_sym_len, forbidden_ranges or []
+    )
+    safe_len = safe_end - safe_start + 1 if safe_end >= safe_start else 0
+    if safe_len <= 0:
+        return total_rows
+    # Reserve a 1 % margin so n_per_sym < safe_len, giving the RNG branch
+    # room to vary the start bar across epochs (at least safe_len // 100
+    # different positions, minimum 1).
+    margin = max(1, safe_len // 100)
+    max_per_sym = max(1, safe_len - margin)
+    capped = min(total_rows, n_sym * max_per_sym)
+    if capped < total_rows:
+        logger.debug(
+            "_resolve_sample_total_rows: capped %d → %d "
+            "(safe_len=%d, margin=%d, max_per_sym=%d, n_sym=%d)",
+            total_rows, capped, safe_len, margin, max_per_sym, n_sym,
+        )
+    return capped
+
+
 def _sample_df(
     df: pd.DataFrame,
     total_rows: int,
@@ -2217,19 +2280,24 @@ class Rule_Pool_Generator:
         forbidden_ranges = (
             build_forbidden_ranges(self._cv_folds) if self._cv_folds else []
         )
+        self._forbidden_ranges = forbidden_ranges
+
+        feature_names = [fi["name"] for fi in feature_infos]
+        self._feature_names = feature_names
 
         # Sample training data to budget, then slim to backtest-only columns
         sample_seed = seed if seed is not None else _cfg.PHASE2_SEED
+        total_rows = _resolve_sample_total_rows(
+            self._scoped_train_df, _cfg.PHASE1_SAMPLING_TOTAL, forbidden_ranges,
+        )
         sampled = _sample_df(
             self._scoped_train_df,
-            _cfg.PHASE1_SAMPLING_TOTAL,
+            total_rows,
             random_state=sample_seed,
             forbidden_ranges=forbidden_ranges,
         )
-        feature_names = [fi["name"] for fi in feature_infos]
 
         self._train_df = slim_backtest_df(sampled, feature_names)
-        self._feature_names = feature_names
         self._sample_seed = sample_seed
         # Derive a distinct but deterministic validation sample seed so
         # train and validation windows do not select the same relative
@@ -2259,9 +2327,16 @@ class Rule_Pool_Generator:
                 self._cv_val_evaluator.n_valid_rows,
             )
 
-        # Keep slimmed copy for park/unpark cycles, free the full DataFrames
+        # Keep slimmed copy for park/unpark cycles
         self._cached_slim_train = self._train_df
-        self._scoped_train_df = None
+        # Keep the full scoped train for per-epoch window re-sampling
+        # (freed in park_engines if rotation is disabled).
+        if _cfg.PHASE2_PER_EPOCH_WINDOW_ROTATION:
+            self._cached_scoped_train_df = self._scoped_train_df
+            self._scoped_train_df = None
+        else:
+            self._cached_scoped_train_df = None
+            self._scoped_train_df = None
         self._scoped_val_df = None
 
         if self.island_hyperparams is not None:
@@ -2374,6 +2449,59 @@ class Rule_Pool_Generator:
     def _rebuild_train_df(self) -> None:
         """Restore slimmed training data from cache (no re-sampling needed)."""
         self._train_df = self._cached_slim_train
+
+    def resample_train_for_epoch(self, epoch_idx: int) -> None:
+        """Re-sample training data with a per-epoch rotated window.
+
+        Each epoch gets a different contiguous sub-window of the training
+        data by deriving a deterministic seed from ``(self._sample_seed,
+        epoch_idx)`` and passing it to :func:`_sample_df`.  The total row
+        count is capped so the per-symbol request fits within the largest
+        safe bar range, ensuring the RNG start-bar branch fires.
+
+        When :attr:`config.PHASE2_PER_EPOCH_WINDOW_ROTATION` is ``False``,
+        this is a no-op (legacy single-sample behavior preserved).
+
+        .. note::
+           The first epoch (epoch_idx=0) uses the sample taken during
+           ``__init__``; this method is intended for *subsequent* epochs
+           (called from the scheduler loop between ``run_epoch`` calls).
+        """
+        if not _cfg.PHASE2_PER_EPOCH_WINDOW_ROTATION:
+            return
+        if self._cached_scoped_train_df is None:
+            logger.warning(
+                "Phase 2 [%s]: _cached_scoped_train_df is None; "
+                "cannot resample. Using cached slim train.",
+                self.direction,
+            )
+            return
+
+        from gpu_fuzzy_trader.phases.phase2_island_scheduler import (
+            _derive_epoch_seed,
+        )
+        from gpu_fuzzy_trader.backtest.df_slim import slim_backtest_df
+
+        epoch_seed = _derive_epoch_seed(self._sample_seed, epoch_idx)
+        total_rows = _resolve_sample_total_rows(
+            self._cached_scoped_train_df,
+            _cfg.PHASE1_SAMPLING_TOTAL,
+            self._forbidden_ranges,
+        )
+        sampled = _sample_df(
+            self._cached_scoped_train_df,
+            total_rows,
+            random_state=epoch_seed,
+            forbidden_ranges=self._forbidden_ranges,
+        )
+        self._cached_slim_train = slim_backtest_df(
+            sampled, self._feature_names,
+        )
+        logger.debug(
+            "Phase 2 [%s]: resampled train window for epoch %d "
+            "(total_rows=%d, seed=%s)",
+            self.direction, epoch_idx, total_rows, epoch_seed,
+        )
 
     def _ensure_engines(self) -> None:
         """Rebuild engines after ``park_engines`` dropped GPU state."""
