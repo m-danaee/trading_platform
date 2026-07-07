@@ -1,18 +1,58 @@
 {
-  "task_id": 2,
-  "verdict": "APPROVED",
-  "previous_issues": {
-    "n_clusters_undefined": "resolved — n_clusters = len(cluster_ids) added at line 403 inside _run_cluster_islands, immediately after cluster_ids assignment. AST analysis confirms 1 assignment, 2 references. Migration guard at line 469 ('and n_clusters > 1') now resolves correctly."
+  "status": "REQUEST_CHANGES",
+  "task_id": "task-2",
+  "reviewer": "spec-reviewer",
+  "commit_hash": "793f9cd",
+  "branch": "feature/task-2-return-concentration-objective",
+  "verdict": "REQUEST_CHANGES",
+  "issues": [
+    {
+      "severity": "HIGH",
+      "category": "incorrect_behavior",
+      "description": "Inconsistent default in getattr for PHASE2_F4_ENABLED",
+      "location": "gpu_fuzzy_trader/phases/phase2_rule_pool.py:981",
+      "detail": "Line 960 uses `getattr(_cfg, 'PHASE2_F4_ENABLED', False)` (default False) to compute f4, but line 981 uses `getattr(_cfg, 'PHASE2_F4_ENABLED', True)` (default True) to decide objective array size. If the config attribute is deleted, f4 computation is skipped (f4=0) but objectives array still has 4 elements with f4=0. Both should use the same default (False).",
+      "fix": "Change line 981 to `if bool(getattr(_cfg, 'PHASE2_F4_ENABLED', False)):` to match line 960."
+    },
+    {
+      "severity": "MEDIUM",
+      "category": "incorrect_behavior",
+      "description": "Pool admission gate uses train-only f4, objective uses min(train, val)",
+      "location": "gpu_fuzzy_trader/phases/phase2_support.py:183-190 and 305-312",
+      "detail": "The f4_concentration gate in _passes_pool_admission_impl and _feasibility_gate_failures computes f4 from train_metrics only. But compute_phase2_objectives_from_metrics uses min(train_f4, val_f4) when PHASE2_JOINT_TRAIN_VAL=True. This creates inconsistency: a rule could fail the gate (f4_train=0.6) but the objective would accept it (min(0.6, 0.3)=0.3). For consistency with the objective computation, the gate should use the same min(train, val) logic when JOINT_TRAIN_VAL is enabled.",
+      "fix": "In both _passes_pool_admission_impl and _feasibility_gate_failures, when PHASE2_JOINT_TRAIN_VAL=True and val_metrics is not None, compute f4_val = min(f4_train, f4_val) and use that for the gate check."
+    },
+    {
+      "severity": "LOW",
+      "category": "missing_requirement",
+      "description": "PHASE2_N_OBJECTIVES config constant is defined but never used",
+      "location": "gpu_fuzzy_trader/config.py:544",
+      "detail": "The spec says 'PHASE2_N_OBJECTIVES=4 (centralize so all np.full(..., 4) and reference vector calls use this)' but evox_runner.py defines its own N_OBJ local variable and never references PHASE2_N_OBJECTIVES. This is a dead config constant.",
+      "fix": "Either use PHASE2_N_OBJECTIVES in evox_runner.py (e.g., `N_OBJ = _cfg.PHASE2_N_OBJECTIVES if _cfg.PHASE2_F4_ENABLED else 3`) or remove the constant from config.py."
+    },
+    {
+      "severity": "LOW",
+      "category": "missing_requirement",
+      "description": "Missing explicit audit-finding linkage in code comments",
+      "location": "Multiple files",
+      "detail": "The spec says '→ fixes #2' should be in a code comment or docstring. Current comments say 'Task 2' but don't explicitly reference 'audit finding #2' or 'fixes #2'. While 'Task 2' is present in 5 places, the explicit audit linkage is missing.",
+      "fix": "Add a comment like '# → fixes audit finding #2 (outlier-driven f3)' in config.py where PHASE2_F4_ENABLED is defined, or in the f4 computation block in phase2_rule_pool.py."
+    }
+  ],
+  "acceptance_criteria_status": {
+    "AC1_outlier_trade_f4_approx_1": "PASS - test_f4_one_outlier_trade passes, f4=1.0 as expected",
+    "AC2_uniform_trades_f4_approx_0.0125": "PASS - test_f4_uniform_trades passes, f4=0.0125 as expected",
+    "AC3_disabled_returns_3_objectives": "PASS - test_f4_disabled_returns_three_objectives passes",
+    "AC4_f4_concentration_gate_key": "PASS - f4_concentration key added to _feasibility_gate_failures dict",
+    "AC5_reference_vectors_4D": "PASS - _get_reference_vectors uses N_OBJ=4, tests pass",
+    "AC6_all_tests_pass": "PASS - 276 unit tests + 9 property tests + 61 GPU engine tests pass"
   },
-  "items_reviewed": {
-    "item_6_seed_collision": "approved — _derive_island_seed called with direction prefix at both cluster (line 427: f\"{direction}_{cid}\") and orphan (line 326: f\"{direction}_orphan_{sym}\") paths. Signature unchanged. direction is in scope at both sites.",
-    "item_7_migration_cadence": "approved — _should_migrate_this_round helper exists at line 369. round_counter increments once per outer while round (line 462, after for-cid loop ends). Inline modulo replaced with helper call. n_clusters NameError is now fixed (line 403), so the migration guard at line 469 is fully functional."
-  },
-  "regression_tests": {
-    "test_n_clusters_assigned_in_function": "PASSED",
-    "test_n_clusters_referenced_in_migration_guard": "PASSED"
-  },
-  "test_results": "183 passed, 1 failed (pre-existing failure in test_phase2_rule_pool.py::TestRobustReturnObjective::test_f3_uses_min_train_val_return, unrelated to task 2 changes).",
-  "out_of_scope_check": "approved — Only production files touched: gpu_fuzzy_trader/phases/phase2_island_scheduler.py and tests/unit/test_phase2_island_scheduler.py (both listed in task-2.md). Other changes are .opencode/ workflow files. No push, no merge, no base branch modifications.",
-  "notes": "All previous issues resolved. The n_clusters NameError fix is a single-line addition at line 403 (n_clusters = len(cluster_ids)), placed correctly after cluster_ids is computed. Two regression tests added in TestNClustersDefined class to prevent future regressions. Items 6 and 7 remain correctly implemented. All acceptance criteria met."
+  "tests_run": [
+    {"file": "tests/unit/test_phase2_rule_pool.py::TestF4ReturnConcentration", "result": "4 passed"},
+    {"file": "tests/property/test_cpu_engine_properties.py::test_property_29_f4_monotonicity_in_max_pnl", "result": "1 passed"},
+    {"file": "tests/property/test_cpu_engine_properties.py::test_property_29b_f4_not_affected_by_sum_pos_increase", "result": "1 passed"},
+    {"file": "tests/unit/test_phase2_support.py::TestFeasibilityGateFailures", "result": "6 passed"},
+    {"file": "tests/unit/test_evox_runner.py", "result": "41 passed"}
+  ],
+  "summary": "Implementation correctly adds f4 return-concentration objective with proper engine tracking, NSGA-III plumbing, and pool admission gate. All acceptance criteria tests pass. However, there are 4 issues to fix: (1) HIGH: inconsistent getattr default for PHASE2_F4_ENABLED could cause 4-objective array with f4=0 if config is deleted; (2) MEDIUM: pool admission gate uses train-only f4 but objective uses min(train, val) when JOINT_TRAIN_VAL=True, creating inconsistency; (3) LOW: PHASE2_N_OBJECTIVES config constant is defined but never used; (4) LOW: missing explicit 'fixes #2' audit linkage in code comments."
 }

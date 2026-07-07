@@ -2425,6 +2425,191 @@ class TestJointValF2F3:
         assert np.isclose(objectives[2], -40.0)
 
 
+class TestF4ReturnConcentration:
+    """Tests for the f4 return-concentration objective (Task 2)."""
+
+    def test_f4_one_outlier_trade(self, monkeypatch):
+        """A rule with 1 trade = +60 and 79 trades avg -0.5% receives f4 ≈ 1.0."""
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+            compute_phase2_objectives_from_metrics,
+        )
+
+        monkeypatch.setattr(_cfg, "PHASE2_F4_ENABLED", True)
+        monkeypatch.setattr(_cfg, "PHASE2_F4_EPSILON", 1e-6)
+        monkeypatch.setattr(_cfg, "PHASE2_JOINT_TRAIN_VAL", False)
+        monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", False)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 1)
+        monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
+
+        dont_cares = np.full(4, 5, dtype=np.int32)
+        chrom = np.array([0, 1, 2, 3], dtype=np.int32)
+        metrics = {
+            "executed_trades": 80,
+            "total_return_pct": 5.0,
+            "sortino_ratio": 0.5,
+            "max_drawdown_pct": 10.0,
+            "win_rate": 1.25,
+            "profit_factor": 1.5,
+            "per_symbol_metrics": {},
+            "sum_positive_trade_pnl": 60.0,
+            "sum_negative_trade_pnl": 39.5,
+            "max_single_trade_pnl": 60.0,
+        }
+        objectives, out_metrics = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, metrics, [],
+        )
+        # f4 = 60.0 / 60.0 = 1.0
+        assert len(objectives) == 4, f"Expected 4 objectives, got {len(objectives)}"
+        assert np.isclose(objectives[3], 1.0), f"Expected f4≈1.0, got {objectives[3]}"
+        assert np.isclose(out_metrics["f4_concentration"], 1.0)
+
+    def test_f4_uniform_trades(self, monkeypatch):
+        """A rule with uniform +1% across 80 trades receives f4 ≈ 0.0125."""
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+            compute_phase2_objectives_from_metrics,
+        )
+
+        monkeypatch.setattr(_cfg, "PHASE2_F4_ENABLED", True)
+        monkeypatch.setattr(_cfg, "PHASE2_F4_EPSILON", 1e-6)
+        monkeypatch.setattr(_cfg, "PHASE2_JOINT_TRAIN_VAL", False)
+        monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", False)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 1)
+        monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
+
+        dont_cares = np.full(4, 5, dtype=np.int32)
+        chrom = np.array([0, 1, 2, 3], dtype=np.int32)
+        metrics = {
+            "executed_trades": 80,
+            "total_return_pct": 80.0,
+            "sortino_ratio": 5.0,
+            "max_drawdown_pct": 0.5,
+            "win_rate": 100.0,
+            "profit_factor": 99.0,
+            "per_symbol_metrics": {},
+            "sum_positive_trade_pnl": 80.0,
+            "sum_negative_trade_pnl": 0.0,
+            "max_single_trade_pnl": 1.0,
+        }
+        objectives, out_metrics = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, metrics, [],
+        )
+        # f4 = 1.0 / 80.0 = 0.0125
+        assert len(objectives) == 4, f"Expected 4 objectives, got {len(objectives)}"
+        assert np.isclose(objectives[3], 0.0125), f"Expected f4≈0.0125, got {objectives[3]}"
+        assert np.isclose(out_metrics["f4_concentration"], 0.0125)
+
+    def test_f4_disabled_returns_three_objectives(self, monkeypatch):
+        """When PHASE2_F4_ENABLED = False, objectives.shape == (3,) and no f4 in metrics."""
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+            compute_phase2_objectives_from_metrics,
+        )
+
+        monkeypatch.setattr(_cfg, "PHASE2_F4_ENABLED", False)
+        monkeypatch.setattr(_cfg, "PHASE2_JOINT_TRAIN_VAL", False)
+        monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", False)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 1)
+        monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
+
+        dont_cares = np.full(4, 5, dtype=np.int32)
+        chrom = np.array([0, 1, 2, 3], dtype=np.int32)
+        metrics = {
+            "executed_trades": 100,
+            "total_return_pct": 10.0,
+            "sortino_ratio": 1.0,
+            "max_drawdown_pct": 2.0,
+            "win_rate": 50.0,
+            "profit_factor": 1.2,
+            "per_symbol_metrics": {},
+            "sum_positive_trade_pnl": 60.0,
+            "sum_negative_trade_pnl": 40.0,
+            "max_single_trade_pnl": 60.0,
+        }
+        objectives, out_metrics = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, metrics, [],
+        )
+        assert objectives.shape == (3,), f"Expected 3 objectives, got {objectives.shape}"
+        assert "f4_concentration" not in out_metrics or out_metrics["f4_concentration"] == 0.0
+
+    def test_f4_zero_when_below_trade_floor(self, monkeypatch):
+        """f4 is 0 when executed_trades < trade_floor (no concentration signal)."""
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+            compute_phase2_objectives_from_metrics,
+        )
+
+        monkeypatch.setattr(_cfg, "PHASE2_F4_ENABLED", True)
+        monkeypatch.setattr(_cfg, "PHASE2_F4_EPSILON", 1e-6)
+        monkeypatch.setattr(_cfg, "PHASE2_JOINT_TRAIN_VAL", False)
+        monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", False)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 100)
+        monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
+
+        dont_cares = np.full(4, 5, dtype=np.int32)
+        chrom = np.array([0, 1, 2, 3], dtype=np.int32)
+        metrics = {
+            "executed_trades": 5,  # below floor of 100
+            "total_return_pct": 5.0,
+            "sortino_ratio": 0.5,
+            "max_drawdown_pct": 10.0,
+            "win_rate": 60.0,
+            "profit_factor": 2.0,
+            "per_symbol_metrics": {},
+            "sum_positive_trade_pnl": 50.0,
+            "sum_negative_trade_pnl": 10.0,
+            "max_single_trade_pnl": 40.0,
+        }
+        objectives, _ = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, metrics, [],
+        )
+        # f4 should be 0 because executed_trades (5) < trade_floor
+        assert len(objectives) == 4, f"Expected 4 objectives, got {len(objectives)}"
+        assert objectives[3] == 0.0, f"Expected f4=0, got {objectives[3]}"
+
+    def test_f4_default_is_three_objectives_when_config_deleted(self, monkeypatch):
+        """When PHASE2_F4_ENABLED is deleted from config (missing attr),
+        both the f4 computation gate and the objectives-array-size gate
+        must default to False — producing 3 objectives, not 4 with all-zero f4."""
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+            compute_phase2_objectives_from_metrics,
+        )
+
+        # Explicitly delete the attribute so getattr falls to its default.
+        if hasattr(_cfg, "PHASE2_F4_ENABLED"):
+            monkeypatch.delattr(_cfg, "PHASE2_F4_ENABLED")
+        monkeypatch.setattr(_cfg, "PHASE2_JOINT_TRAIN_VAL", False)
+        monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", False)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 1)
+        monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
+
+        dont_cares = np.full(4, 5, dtype=np.int32)
+        chrom = np.array([0, 1, 2, 3], dtype=np.int32)
+        metrics = {
+            "executed_trades": 100,
+            "total_return_pct": 10.0,
+            "sortino_ratio": 1.0,
+            "max_drawdown_pct": 2.0,
+            "win_rate": 50.0,
+            "profit_factor": 1.2,
+            "per_symbol_metrics": {},
+            "sum_positive_trade_pnl": 60.0,
+            "sum_negative_trade_pnl": 40.0,
+            "max_single_trade_pnl": 60.0,
+        }
+        objectives, out_metrics = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, metrics, [],
+        )
+        # Without PHASE2_F4_ENABLED, both getattr defaults are False → 3 objectives
+        assert objectives.shape == (3,), (
+            f"Expected 3 objectives when config attr is deleted, "
+            f"got {objectives.shape}"
+        )
+        assert "f4_concentration" not in out_metrics or out_metrics["f4_concentration"] == 0.0
+
+
 class TestTwoStageOrchestration:
     def test_run_uses_two_stages_when_enabled(self, monkeypatch):
         from gpu_fuzzy_trader.phases.phase2_rule_pool import (

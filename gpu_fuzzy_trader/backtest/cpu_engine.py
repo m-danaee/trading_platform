@@ -670,6 +670,9 @@ class CPUBacktestEngine:
                         sym = pos["symbol"]
                         sym_wins[sym] = sym_wins.get(sym, 0) + 1
                     stats["gross_profit_sum"] += pos["net_pnl"]
+                    # Track max single positive trade PnL for f4 concentration
+                    prev_max = float(stats.get("max_single_trade_pnl", 0.0))
+                    stats["max_single_trade_pnl"] = max(prev_max, pos["net_pnl"])
                 elif pos["net_pnl"] < 0:
                     stats["loss_count"] += 1
                     stats["gross_loss_sum"] += abs(pos["net_pnl"])
@@ -1153,6 +1156,9 @@ class CPUBacktestEngine:
             "max_simultaneous_positions": max_simultaneous_positions,
             "max_total_open_exposure": max_total_open_exposure,
             "per_symbol_metrics": per_symbol_metrics,
+            "sum_positive_trade_pnl": float(stats.get("gross_profit_sum", 0.0)),
+            "sum_negative_trade_pnl": float(stats.get("gross_loss_sum", 0.0)),
+            "max_single_trade_pnl": float(stats.get("max_single_trade_pnl", 0.0)),
         }
 
         if return_logs:

@@ -1,0 +1,60 @@
+{
+  "status": "APPROVED",
+  "task_id": "task-2",
+  "reviewer": "spec-reviewer",
+  "commit_hash": "c89c087",
+  "branch": "feature/task-2-return-concentration-objective",
+  "fix_verification": [
+    {
+      "issue": "1",
+      "severity": "HIGH",
+      "description": "Inconsistent getattr default for PHASE2_F4_ENABLED",
+      "resolved": true,
+      "evidence": "phase2_rule_pool.py:962 and :981 both use getattr(_cfg, 'PHASE2_F4_ENABLED', False). New test test_f4_default_is_three_objectives_when_config_deleted passes — confirms 3-objective output when config attr is deleted."
+    },
+    {
+      "issue": "2",
+      "severity": "MEDIUM",
+      "description": "Pool admission gate uses train-only f4, objective uses min(train, val)",
+      "resolved": true,
+      "evidence": "Both _passes_pool_admission_impl (lines ~190-196) and _feasibility_gate_failures (lines ~319-325) now compute f4_val_v from val_metrics and use min(f4_val, f4_val_v) when PHASE2_JOINT_TRAIN_VAL=True — matching compute_phase2_objectives_from_metrics exactly. New test test_f4_gate_uses_joint_min_when_joint_train_val_enabled passes."
+    },
+    {
+      "issue": "3",
+      "severity": "LOW",
+      "description": "PHASE2_N_OBJECTIVES config constant is dead",
+      "resolved": true,
+      "evidence": "evox_runner.py:42 now reads int(getattr(_cfg, 'PHASE2_N_OBJECTIVES', 4)) when F4_ENABLED=True. All np.full and _get_reference_vectors calls use N_OBJ."
+    },
+    {
+      "issue": "4",
+      "severity": "LOW",
+      "description": "Missing explicit audit-finding linkage",
+      "resolved": true,
+      "evidence": "config.py:536 has comment '# → fixes audit finding #2 (outlier-driven f3 from uncapped time-exit returns)' directly above PHASE2_F4_ENABLED definition."
+    }
+  ],
+  "regression_check": {
+    "evaluator_v5.ipynb": "NOT MODIFIED",
+    "rb_governor.py": "NOT MODIFIED",
+    "phase2_island_scheduler.py": "NOT MODIFIED",
+    "engines": "NOT MODIFIED in fix commit (only in original feat commit)",
+    "evox_runner.py": "Changes limited to N_OBJ wiring and _pareto_diagnostics safety guards — no logic changes beyond scope"
+  },
+  "tests_run": [
+    {"file": "tests/unit/test_phase2_rule_pool.py", "result": "150 passed"},
+    {"file": "tests/unit/test_phase2_support.py", "result": "26 passed"},
+    {"file": "tests/unit/test_evox_runner.py", "result": "41 passed"},
+    {"file": "tests/property/test_cpu_engine_properties.py", "result": "9 passed"}
+  ],
+  "total_tests": 226,
+  "acceptance_criteria_status": {
+    "AC1_outlier_trade_f4_approx_1": "PASS",
+    "AC2_uniform_trades_f4_approx_0.0125": "PASS",
+    "AC3_disabled_returns_3_objectives": "PASS",
+    "AC4_f4_concentration_gate_key": "PASS",
+    "AC5_reference_vectors_4D": "PASS",
+    "AC6_all_tests_pass": "PASS — 226 tests (150+26+41+9)"
+  },
+  "summary": "All 4 spec-review issues resolved. Fix commit c89c087 is minimal and focused — 6 files, +101/-2 lines. No regression introduced. All acceptance criteria pass. Ready for code-review."
+}

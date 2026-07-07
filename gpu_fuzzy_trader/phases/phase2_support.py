@@ -180,6 +180,24 @@ def _passes_pool_admission_impl(
     if train_ret - val_ret > max_gap:
         return False
 
+    # f4 return-concentration gate (Task 2): reject if f4 > floor
+    if getattr(_cfg, "PHASE2_F4_ENABLED", False):
+        max_tr = float(train_metrics.get("max_single_trade_pnl", 0.0))
+        sum_pos = float(train_metrics.get("sum_positive_trade_pnl", 0.0))
+        eps = float(getattr(_cfg, "PHASE2_F4_EPSILON", 1e-6))
+        f4_val = max_tr / max(sum_pos, eps) if sum_pos > 0 else 0.0
+        # When JOINT_TRAIN_VAL is enabled, match the objective computation
+        # exactly by using min(train_f4, val_f4) for the gate check.
+        if (val_metrics is not None
+                and bool(getattr(_cfg, "PHASE2_JOINT_TRAIN_VAL", False))):
+            max_tr_v = float(val_metrics.get("max_single_trade_pnl", 0.0))
+            sum_pos_v = float(val_metrics.get("sum_positive_trade_pnl", 0.0))
+            f4_val_v = max_tr_v / max(sum_pos_v, eps) if sum_pos_v > 0 else 0.0
+            f4_val = min(f4_val, f4_val_v)
+        f4_floor = float(getattr(_cfg, "PHASE2_F4_CONCENTRATION_FLOOR", 0.5))
+        if f4_val > f4_floor:
+            return False
+
     # Optional stricter positive-good gate (default OFF; enabled in Task 5).
     if bool(getattr(_cfg, "PHASE2_STRICT_POSITIVE_GOOD", False)):
         # Lazy import to avoid circular dependency (phase3_rule_set is a sibling).
@@ -220,16 +238,17 @@ def _feasibility_gate_failures(
     gates has multiple 1s (gates are AND-combined, but a rule can fail
     several simultaneously).
 
-    The 9 gates mirror ``_passes_pool_admission_impl`` exactly:
-    - train_trade_floor   : train_trades < train_floor
-    - train_return_floor  : train_ret <= train_ret_min
-    - train_pf_floor      : train_pf < pf_floor
-    - val_required        : val_metrics is None (cannot evaluate val gates)
-    - val_ret_positive    : PHASE2_REQUIRE_LAST_FOLD_POSITIVE and val_ret <= 0
-    - val_trade_floor     : val_trades < min_val_trades
-    - val_return_floor    : val_ret <= val_ret_min
-    - val_pf_floor        : val_pf < pf_floor
-    - train_val_gap       : train_ret - val_ret > max_gap
+    The 10 gates mirror ``_passes_pool_admission_impl`` exactly:
+    - train_trade_floor    : train_trades < train_floor
+    - train_return_floor   : train_ret <= train_ret_min
+    - train_pf_floor       : train_pf < pf_floor
+    - val_required         : val_metrics is None (cannot evaluate val gates)
+    - val_ret_positive     : PHASE2_REQUIRE_LAST_FOLD_POSITIVE and val_ret <= 0
+    - val_trade_floor      : val_trades < min_val_trades
+    - val_return_floor     : val_ret <= val_ret_min
+    - val_pf_floor         : val_pf < pf_floor
+    - train_val_gap        : train_ret - val_ret > max_gap
+    - f4_concentration     : PHASE2_F4_ENABLED and f4 > PHASE2_F4_CONCENTRATION_FLOOR
 
     Args:
         train_metrics: Train dict with executed_trades, total_return_pct,
@@ -253,6 +272,7 @@ def _feasibility_gate_failures(
         "val_return_floor": 0,
         "val_pf_floor": 0,
         "train_val_gap": 0,
+        "f4_concentration": 0,
     }
 
     train_trades = int(train_metrics.get("executed_trades", 0))
@@ -289,6 +309,24 @@ def _feasibility_gate_failures(
     max_gap = float(getattr(_cfg, "PHASE2_MAX_TRAIN_VAL_GAP_PCT", 20.0))
     if train_ret - val_ret > max_gap:
         failures["train_val_gap"] = 1
+
+    # f4 return-concentration gate (Task 2): reject if f4 > floor
+    if getattr(_cfg, "PHASE2_F4_ENABLED", False):
+        max_tr = float(train_metrics.get("max_single_trade_pnl", 0.0))
+        sum_pos = float(train_metrics.get("sum_positive_trade_pnl", 0.0))
+        eps = float(getattr(_cfg, "PHASE2_F4_EPSILON", 1e-6))
+        f4_val = max_tr / max(sum_pos, eps) if sum_pos > 0 else 0.0
+        # When JOINT_TRAIN_VAL is enabled, match the objective computation
+        # exactly by using min(train_f4, val_f4) for the gate check.
+        if (val_metrics is not None
+                and bool(getattr(_cfg, "PHASE2_JOINT_TRAIN_VAL", False))):
+            max_tr_v = float(val_metrics.get("max_single_trade_pnl", 0.0))
+            sum_pos_v = float(val_metrics.get("sum_positive_trade_pnl", 0.0))
+            f4_val_v = max_tr_v / max(sum_pos_v, eps) if sum_pos_v > 0 else 0.0
+            f4_val = min(f4_val, f4_val_v)
+        f4_floor = float(getattr(_cfg, "PHASE2_F4_CONCENTRATION_FLOOR", 0.5))
+        if f4_val > f4_floor:
+            failures["f4_concentration"] = 1
 
     return failures
 

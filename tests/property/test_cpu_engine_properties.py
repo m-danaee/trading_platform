@@ -32,7 +32,14 @@ from hypothesis import strategies as st
 
 from tests.property.hypothesis_config import prop_settings
 
+from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
+from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+    compute_phase2_objectives_from_metrics,
+)
+
+# For f4 property tests that monkeypatch config
+import gpu_fuzzy_trader.phases.phase2_rule_pool as _phase2_module
 
 
 # ---------------------------------------------------------------------------
@@ -1024,3 +1031,135 @@ def test_property_28_per_symbol_metrics_consistency(scenario: dict) -> None:
         f"({total_return_pct:.6f}% * {initial_capital:.2f} / 100 = {expected_total_net_pnl:.8f}). "
         f"Difference: {abs(total_sym_net_pnl - expected_total_net_pnl):.2e}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Property 29: f4 return-concentration monotonicity
+# Validates: Task 2 — f4 is non-decreasing in max_single_trade_pnl
+# ---------------------------------------------------------------------------
+
+@given(
+    max_pnl=st.floats(min_value=0.0, max_value=1e6, allow_nan=False, allow_infinity=False),
+    sum_pos=st.floats(min_value=1e-6, max_value=1e6, allow_nan=False, allow_infinity=False),
+    delta=st.floats(min_value=0.0, max_value=1e5, allow_nan=False, allow_infinity=False),
+)
+@prop_settings(max_examples=100, deadline=None)
+def test_property_29_f4_monotonicity_in_max_pnl(
+    max_pnl: float,
+    sum_pos: float,
+    delta: float,
+) -> None:
+    """f4 is monotonically non-decreasing in max_single_trade_pnl.
+
+    For fixed sum_positive_trade_pnl, increasing the max single trade PnL
+    must not decrease f4.
+    """
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(_cfg, "PHASE2_F4_ENABLED", True)
+    monkeypatch.setattr(_cfg, "PHASE2_F4_EPSILON", 1e-6)
+    monkeypatch.setattr(_cfg, "PHASE2_JOINT_TRAIN_VAL", False)
+    monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", False)
+    monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
+    monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 1)
+    monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
+
+    try:
+        dont_cares = np.full(4, 5, dtype=np.int32)
+        chrom = np.array([0, 1, 2, 3], dtype=np.int32)
+
+        base_metrics = {
+            "executed_trades": 100,
+            "total_return_pct": 10.0,
+            "sortino_ratio": 1.0,
+            "max_drawdown_pct": 2.0,
+            "win_rate": 50.0,
+            "profit_factor": 1.2,
+            "per_symbol_metrics": {},
+            "sum_positive_trade_pnl": sum_pos,
+            "sum_negative_trade_pnl": 0.0,
+            "max_single_trade_pnl": max_pnl,
+        }
+        inc_metrics = dict(base_metrics)
+        inc_metrics["max_single_trade_pnl"] = max_pnl + delta
+
+        obj_base, _ = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, base_metrics, [],
+        )
+        obj_inc, _ = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, inc_metrics, [],
+        )
+
+        f4_base = obj_base[3] if len(obj_base) == 4 else 0.0
+        f4_inc = obj_inc[3] if len(obj_inc) == 4 else 0.0
+
+        assert f4_inc >= f4_base - 1e-10, (
+            f"f4 decreased when max_single_trade_pnl increased: "
+            f"max_pnl={max_pnl}, delta={delta}, "
+            f"f4_base={f4_base}, f4_inc={f4_inc}"
+        )
+    finally:
+        monkeypatch.undo()
+
+
+@given(
+    max_pnl=st.floats(min_value=0.0, max_value=1e6, allow_nan=False, allow_infinity=False),
+    sum_pos=st.floats(min_value=1e-6, max_value=1e6, allow_nan=False, allow_infinity=False),
+    delta=st.floats(min_value=0.0, max_value=1e5, allow_nan=False, allow_infinity=False),
+)
+@prop_settings(max_examples=100, deadline=None)
+def test_property_29b_f4_not_affected_by_sum_pos_increase(
+    max_pnl: float,
+    sum_pos: float,
+    delta: float,
+) -> None:
+    """f4 is non-increasing when sum_positive_trade_pnl increases (for fixed max_pnl).
+
+    This is the inverse monotonicity: larger sum_pos for the same max_pnl
+    means lower concentration (more diversified positive edge).
+    """
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(_cfg, "PHASE2_F4_ENABLED", True)
+    monkeypatch.setattr(_cfg, "PHASE2_F4_EPSILON", 1e-6)
+    monkeypatch.setattr(_cfg, "PHASE2_JOINT_TRAIN_VAL", False)
+    monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", False)
+    monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
+    monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 1)
+    monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
+
+    try:
+        dont_cares = np.full(4, 5, dtype=np.int32)
+        chrom = np.array([0, 1, 2, 3], dtype=np.int32)
+
+        base_metrics = {
+            "executed_trades": 100,
+            "total_return_pct": 10.0,
+            "sortino_ratio": 1.0,
+            "max_drawdown_pct": 2.0,
+            "win_rate": 50.0,
+            "profit_factor": 1.2,
+            "per_symbol_metrics": {},
+            "sum_positive_trade_pnl": sum_pos,
+            "sum_negative_trade_pnl": 0.0,
+            "max_single_trade_pnl": max_pnl,
+        }
+        inc_metrics = dict(base_metrics)
+        inc_metrics["sum_positive_trade_pnl"] = sum_pos + delta
+
+        obj_base, _ = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, base_metrics, [],
+        )
+        obj_inc, _ = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, inc_metrics, [],
+        )
+
+        f4_base = obj_base[3] if len(obj_base) == 4 else 0.0
+        f4_inc = obj_inc[3] if len(obj_inc) == 4 else 0.0
+
+        # f4 should not increase when sum_pos increases
+        assert f4_inc <= f4_base + 1e-10, (
+            f"f4 increased when sum_positive_trade_pnl increased: "
+            f"sum_pos={sum_pos}, delta={delta}, "
+            f"f4_base={f4_base}, f4_inc={f4_inc}"
+        )
+    finally:
+        monkeypatch.undo()
