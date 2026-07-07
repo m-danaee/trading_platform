@@ -706,6 +706,8 @@ def _make_walk_forward_fold_engines(
     tail_holdout_frac: float,
     direction: str,
 ) -> tuple[list[CPUBacktestEngine], CPUBacktestEngine | None]:
+    # → fixes audit finding #3 (RB Governor risk-grid overfits val_selection)
+    # → fixes audit finding #12 (PHASE4_TAIL_HOLDOUT_FRACTION orphan, now wired)
     """Split val_selection into n_splits chronological folds + optional tail holdout.
 
     Per-symbol chronological split (matches data/splitter.py convention).
@@ -812,6 +814,12 @@ def _optimize_risk(
             init_fold_scores.append(fold_s)
         hist[0]["fold_scores"] = init_fold_scores
         hist[0]["min_fold_score"] = min(init_fold_scores)
+        # fix(task-3): recompute cur_score as min(init_fold_scores) so the
+        # improvement threshold compares fold-min against fold-min (same scale).
+        # Without this, cur_score remains the full-validation score (higher),
+        # and walk-forward becomes overly conservative.
+        cur_score = min(init_fold_scores)
+        hist[0]["score"] = cur_score
 
     tp_grid = tuple(float(x) for x in getattr(_cfg, "RB_TP_GRID", getattr(_cfg, "PHASE4_TP_GRID", (1.5, 2.0, 2.5, 3.0))))
     sl_grid = tuple(float(x) for x in getattr(_cfg, "RB_SL_GRID", getattr(_cfg, "PHASE4_SL_GRID", (0.8, 1.0, 1.2, 1.5))))
@@ -1358,6 +1366,8 @@ def run_rb_governor_pipeline(
         selected, sel_train, sel_test, sel_score, compose_history = _compose_ruleset(candidates, train_engine, valid_engine, direction)
 
         # Build walk-forward fold engines for risk grid (task-3: 2-fold)
+        # → fixes audit finding #3 (RB Governor risk-grid overfits val_selection)
+        # → fixes audit finding #12 (PHASE4_TAIL_HOLDOUT_FRACTION orphan, now wired)
         wf_splits = int(getattr(_cfg, "RB_RISK_GRID_WF_SPLITS", 1))
         use_tail = bool(getattr(_cfg, "RB_RISK_GRID_USE_TAIL_HOLDOUT", False))
         tail_frac = float(getattr(_cfg, "PHASE4_TAIL_HOLDOUT_FRACTION", 0.0))

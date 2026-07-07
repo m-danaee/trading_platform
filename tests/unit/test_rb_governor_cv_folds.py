@@ -537,6 +537,100 @@ class TestTwoFoldRejectsOverfitCombo:
             f"History fold_scores: {[e.get('fold_scores', []) for e in hist]}"
         )
 
+    def test_baseline_cur_score_uses_min_fold_in_walk_forward(self, monkeypatch):
+        """HIGH-fix: When cur_score (full-val) is high but min(fold_scores) is low,
+        and a candidate has lower full-val score but HIGHER min(fold_scores),
+        walk-forward must ACCEPT the candidate.
+
+        Without the fix, cur_score stays at the full-validation score (400),
+        so the candidate's min-fold score (150) fails the improvement threshold
+        (150 > 400 + 0.01 → False) and is incorrectly rejected.
+        With the fix, cur_score = min(init_fold_scores) = 100,
+        so 150 > 100 + 0.01 → True → candidate accepted.
+        """
+        from gpu_fuzzy_trader import rb_governor as _rg
+
+        def mock_eval(train_eng, valid_eng, rules):
+            ck = self._combo_key(rules)
+            engine_is_fold1 = getattr(valid_eng, "_fold_id", None) == 1
+            engine_is_fold2 = getattr(valid_eng, "_fold_id", None) == 2
+            engine_is_main = not (engine_is_fold1 or engine_is_fold2)
+
+            # Baseline combo (tp=2.0, sl=1.2, cap=20.0): high full-val, low folds
+            if ck == (2.0, 1.2, 20.0):
+                if engine_is_fold1:
+                    valid_ret, score_val = 2.0, 100.0
+                elif engine_is_fold2:
+                    valid_ret, score_val = 2.0, 100.0
+                else:
+                    valid_ret, score_val = 6.0, 400.0  # high full-val
+            # Candidate combo (tp=2.5, sl=1.2, cap=20.0): lower full-val, higher folds
+            elif ck == (2.5, 1.2, 20.0):
+                if engine_is_fold1:
+                    valid_ret, score_val = 3.5, 150.0
+                elif engine_is_fold2:
+                    valid_ret, score_val = 3.5, 150.0
+                else:
+                    valid_ret, score_val = 4.0, 200.0  # lower full-val
+            else:
+                valid_ret, score_val = 3.0, 200.0
+
+            train_m = _train_metrics(return_pct=5.0)
+            valid_m = _valid_metrics(
+                return_pct=valid_ret,
+                pf=1.5 if valid_ret > 0 else 1.1,
+                trades=25,
+            )
+            return train_m, valid_m, score_val
+
+        monkeypatch.setattr(_rg, "_evaluate_ruleset", mock_eval)
+
+        train_mock = _MockEngine(_train_metrics(return_pct=5.0))
+        valid_mock = _MockEngine(_valid_metrics(return_pct=4.0))
+        fold1_mock = _MockEngine(_valid_metrics(return_pct=4.0))
+        fold1_mock._fold_id = 1
+        fold2_mock = _MockEngine(_valid_metrics(return_pct=4.0))
+        fold2_mock._fold_id = 2
+
+        monkeypatch.setattr(_cfg, "RB_TP_GRID", (2.0, 2.5))
+        monkeypatch.setattr(_cfg, "RB_SL_GRID", (1.2,))
+        monkeypatch.setattr(_cfg, "RB_CAPITAL_GRID", (20.0,))
+        monkeypatch.setattr(_cfg, "RB_RISK_OPT_PASSES", 1)
+        monkeypatch.setattr(_cfg, "RB_MAX_TOTAL_CAPITAL", 100.0)
+        monkeypatch.setattr(_cfg, "RB_RULESET_MIN_TRAIN_TRADES", 5)
+        monkeypatch.setattr(_cfg, "RB_RULESET_MIN_VALID_TRADES", 5)
+        monkeypatch.setattr(_cfg, "RB_MIN_TRAIN_TRADES", 5)
+        monkeypatch.setattr(_cfg, "RB_MIN_VALID_TRADES", 5)
+        monkeypatch.setattr(_cfg, "RB_RISK_MIN_IMPROVEMENT", 0.01)
+        monkeypatch.setattr(_cfg, "RB_REQUIRE_TRAIN_SLIGHTLY_ABOVE_VALID", False)
+
+        selected = self._make_selected()
+        # Baseline combo needs tp=2.0 to match what the mock expects
+        selected[0].rule["tp"] = 2.0
+        selected[0].rule["sl"] = 1.2
+        selected[0].rule["capital_pct"] = 20.0
+
+        rules, train, valid, score, hist = _optimize_risk(
+            selected, train_mock, valid_mock, "long",
+            fold_engines=[fold1_mock, fold2_mock],
+            tail_holdout_engine=None,
+        )
+
+        assert len(rules) == 1
+        selected_combo = (rules[0].get("tp"), rules[0].get("sl"), rules[0].get("capital_pct"))
+        # Candidate (2.5, 1.2, 20.0) must be accepted: its min-fold (150) > baseline min-fold (100)
+        assert selected_combo == (2.5, 1.2, 20.0), (
+            f"Expected candidate (2.5,1.2,20.0) to be accepted by walk-forward, "
+            f"but got {selected_combo}. Without the cur_score fix, the baseline's "
+            f"full-val score (400) would reject the candidate. "
+            f"History: {hist}"
+        )
+        # Verify the initial history entry's score is the min-fold score, not full-val
+        assert hist[0]["score"] == pytest.approx(100.0, abs=1e-9), (
+            f"Initial hist entry score should be min fold score (100) in walk-forward mode, "
+            f"not the full-validation score (400). Got: {hist[0]['score']}"
+        )
+
     def test_legacy_single_fold_picks_top_fold1_combo(self, monkeypatch):
         """With fold_engines=None (legacy), the single valid engine's scores
         are used, so combo A (best on fold-1) is selected."""
