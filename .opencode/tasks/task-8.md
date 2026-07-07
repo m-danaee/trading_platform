@@ -1,105 +1,146 @@
-# Task 8 — `fix/trade-floor-island-aware` (make hard reject floor island-aware + use config constant)
+# Task 8: Use val_df in Phase 1 Sign Consistency Filter
 
-## Branch
-`fix/trade-floor-island-aware` (from latest `main`).
+## Task ID
+`task-8` (eighth of 12 tasks in the 2026-07-07 audit fix plan)
 
-## Problem
-The hard-reject trade floor (`MIN_TRADE_POOL_FLOOR=25`) in
-`compute_phase2_objectives_from_metrics` is hardcoded and does NOT respect
-island mode. The `IslandHyperparams` object already has a correctly-scaled
-`min_trade_pool_floor` (set at island creation via
-`scale_trade_floor_by_universe`), but line 640 reads the global default
-directly, ignoring it.
+## Title
+Use val_df in Phase 1 Sign Consistency Filter
 
-This means for smaller islands (cluster_1, cluster_2 with `min_trade_support=22`):
-- The graduated penalty target is 22 (island-aware ✅)
-- But the hard reject floor is 25 (hardcoded, NOT island-aware ❌)
-- So a rule with 22 trades passes the graduated target but gets HARD-KILLED
-  by the hardcoded floor (22 < 25)
+## Goal
+Fix audit finding #11: `_check_spearman_sign_consistency(df, ...,
+val_df=None, ...)` in `features/selector.py:219` accepts a
+`val_df` parameter but never reads it. The function body only uses
+`df` (the train df) for fold-based Spearman correlation. A
+feature whose train sign is stable but whose val sign is flipped
+silently survives the Phase 1 sign-consistency gate. Either
+actually use the val_df to add a val-side sign check, or remove
+the dead parameter.
 
-Additionally, the inline magic number `50.0` at line 644 should use the
-existing config constant `PHASE2_INFEASIBLE_OBJECTIVE_PENALTY` (defined at
-config.py:699 but never referenced anywhere — dead config).
+This task implements Option (a): actually use the val_df to
+add a val sign check. The val sign must match the train majority
+sign; if not, the feature is blacklisted.
 
-## Required Changes
-
-### Fix 1 — Make the hard reject floor island-aware
-**File:** `gpu_fuzzy_trader/phases/phase2_rule_pool.py` (line ~640)
-
-Current:
-```python
-trade_floor = _cfg.MIN_TRADE_POOL_FLOOR
-```
-
-Change to use the island's scaled pool floor when available, falling back to
-the existing scaling function for non-island mode:
-```python
-if island_hyperparams is not None:
-    trade_floor = int(island_hyperparams.min_trade_pool_floor)
-else:
-    trade_floor = _cfg.effective_min_trade_pool_floor(n_valid_rows)
-```
-
-This makes the hard reject coherent with the graduated penalty (which already
-uses `floors.min_trade_support` from `resolve_evolution_floors`, which in turn
-reads `island_hyperparams.min_trade_support`). Both paths now respect island
-scaling.
-
-### Fix 2 — Use config constant instead of inline magic number
-**File:** `gpu_fuzzy_trader/phases/phase2_rule_pool.py` (line ~644)
-
-Current:
-```python
-trade_penalty = 50.0
-```
-
-Change to:
-```python
-trade_penalty = float(_cfg.PHASE2_INFEASIBLE_OBJECTIVE_PENALTY)
-```
-
-This wires up the dead `PHASE2_INFEASIBLE_OBJECTIVE_PENALTY` config constant
-(defined at config.py:699 but never referenced). Now it's tunable.
-
-### No other changes needed
-- The `island_hyperparams` parameter is already in scope (it's a function
-  parameter at line 479).
-- `n_valid_rows` is also in scope (line 478).
-- The `effective_min_trade_pool_floor` function already exists (config.py:1856)
-  and calls `scale_trade_floor` correctly.
-- `IslandHyperparams.min_trade_pool_floor` is already set correctly at island
-  creation time via `resolve_island_hyperparams`.
-
-## Acceptance Criteria
-1. When `island_hyperparams is not None`, `trade_floor` equals
-   `island_hyperparams.min_trade_pool_floor` (not the global 25).
-2. When `island_hyperparams is None`, `trade_floor` equals
-   `_cfg.effective_min_trade_pool_floor(n_valid_rows)` (scales by rows).
-3. `trade_penalty` uses `_cfg.PHASE2_INFEASIBLE_OBJECTIVE_PENALTY` (not inline 50.0).
-4. `config.py` asserts at import still pass.
-5. `PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit -q` passes (no NEW failures beyond the 2 pre-existing MAX_CONDITIONS ones).
-6. Add or update a unit test that verifies the hard reject floor respects
-   `island_hyperparams.min_trade_pool_floor` when provided. Use the established
-   mocking pattern from existing Phase 2 tests.
-
-## Verification Commands
-```
-cd /home/danaee/trading_platform
-.venv/bin/python -c "import gpu_fuzzy_trader.config; print('asserts OK')"
-PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_phase2_rule_pool.py tests/unit/test_evox_runner.py -q 2>&1 | tail -10
-PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit -q 2>&1 | tail -5
-```
-Do NOT run the full pipeline.
+## Audit Citation
+- Confirmed by static inspection:
+  - `features/selector.py:219` — function signature accepts `val_df`
+  - `features/selector.py:228-258` — function body only uses `df`
+    (the train df), never reads `val_df`
+  - `features/selector.py:363` — call site passes `val_df=val_df`
+    but the value is discarded
+- Run log evidence: no direct log evidence (this is a silent
+  pass-through bug — the function works correctly on train, but
+  the val-side check is missing).
 
 ## Target Files
-- `gpu_fuzzy_trader/phases/phase2_rule_pool.py` (2 lines changed)
-- `tests/unit/test_phase2_rule_pool.py` (add 1-2 tests for island-aware floor)
-- `README.md` — no config table change needed (PHASE2_INFEASIBLE_OBJECTIVE_PENALTY already documented; MIN_TRADE_POOL_FLOOR already documented)
+- `gpu_fuzzy_trader/features/selector.py`
+  - In `_check_spearman_sign_consistency` (line 219-258):
+    - After computing the train fold sign, compute the val
+      Spearman correlation if `val_df is not None`.
+    - If the val sign disagrees with the train majority sign
+      (i.e., train is all positive, val is negative, or vice
+      versa), blacklist the feature.
+    - Update the docstring to describe the new behavior.
+  - In the call site at line 363: no change needed (already
+    passes `val_df=val_df`).
+- `tests/unit/test_feature_selector.py`
+  - Add a test asserting that a feature with consistent train
+    signs but flipped val sign is NOW blacklisted.
+  - Add a test asserting that a feature with consistent train
+    signs and matching val sign is still kept.
+  - Add a test asserting that when `val_df=None` (the default),
+    behavior matches the pre-task-8 behavior (regression guard).
+
+## Current Behavior
+- `features/selector.py:228-258`: the function loops over
+  `_get_spearman_folds(df, n_folds)` (train folds only). It
+  computes Spearman correlation for each fold, then checks if
+  significant correlations are all positive or all negative
+  (the "stable sign" check).
+- The `val_df` parameter is declared in the signature (line 224)
+  but never read in the body. The function returns the same
+  `stable_features` set whether or not `val_df` is provided.
+- At the call site (line 363): `stable_cols = _check_spearman_sign_consistency(
+  train_df, feature_cols, n_folds, min_folds, val_df=val_df)`. The
+  `val_df` value is passed but discarded.
+
+## Scope
+1. **Use val_df in the sign check** (features/selector.py:228-258):
+   - After the train-folds loop (after computing `corrs`,
+     `significant`, `has_pos`, `has_neg`), add a val-side check:
+     ```python
+     if val_df is not None and has_pos and not has_neg:
+         # Train is all positive; check val
+         val_corr = _spearman(val_df[col], val_df[label_col])
+         if not np.isnan(val_corr) and val_corr < -min_abs_corr:
+             # Val sign disagrees; blacklist
+             logger.info("Blacklisting non-stationary feature %s: train sign positive, val sign negative (val_rho=%.3f)", col, val_corr)
+             continue  # don't add to stable_features
+     elif val_df is not None and has_neg and not has_pos:
+         # Train is all negative; check val
+         val_corr = _spearman(val_df[col], val_df[label_col])
+         if not np.isnan(val_corr) and val_corr > min_abs_corr:
+             # Val sign disagrees; blacklist
+             logger.info("Blacklisting non-stationary feature %s: train sign negative, val sign positive (val_rho=%.3f)", col, val_corr)
+             continue
+     ```
+   - The `min_abs_corr` threshold ensures we only check against
+     significant val correlations (consistent with the train-side
+     logic).
+   - When `val_df is None` (e.g., no val provided at init), the
+     val check is skipped — preserves the pre-task-8 behavior.
+2. **Update the docstring** (features/selector.py:228-232):
+   - Add a new paragraph: "When `val_df` is provided, the val
+     Spearman correlation is also computed. If the val sign
+     disagrees with the train majority sign (above
+     `min_abs_corr` threshold), the feature is blacklisted.
+     This catches features that have a stable train sign but
+     fail on val (silent OOS leak)."
+3. **Add audit-finding linkage**:
+   - Add `# → fixes audit finding #11 (val_df was dead parameter;
+     now actually checks val sign consistency)` in the function
+     docstring.
+4. **Do NOT change**:
+   - The `_get_spearman_folds` function (correct as-is).
+   - The `_spearman` function (correct as-is).
+   - Any other file outside `features/selector.py` and the test.
+
+## Acceptance Criteria
+1. A feature with consistent train signs (all positive) but
+   val sign negative (val_rho < -min_abs_corr) is NOW blacklisted
+   (was admitted previously).
+2. A feature with consistent train signs (all positive) and
+   matching val sign positive is still kept.
+3. A feature with consistent train signs and tiny val
+   correlation (|val_rho| < min_abs_corr) is still kept
+   (the val check requires the val corr to be significant
+   to override the train sign).
+4. When `val_df=None` (the default), behavior matches
+   pre-task-8 exactly (regression guard).
+5. When `val_df` is provided but doesn't have `label_close_288`
+   column (degenerate case), the val check is skipped
+   (no crash).
+6. The function's signature is unchanged (backward compat).
+7. All existing `test_feature_selector.py` tests pass.
+
+## Verification
+Run only related unit tests with `PYTEST_LOW_MEMORY=1` and `.venv`:
+
+```bash
+PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_feature_selector.py -q
+```
 
 ## Notes
-- This is a coherence/correctness fix, not a tuning change.
-- The island's `min_trade_pool_floor` is already correctly scaled at creation
-  time — this fix just makes the hard reject READ it.
-- `PHASE2_INFEASIBLE_OBJECTIVE_PENALTY` is no longer dead config after this.
-- Do NOT change the default value of MIN_TRADE_POOL_FLOOR (25) or
-  PHASE2_INFEASIBLE_OBJECTIVE_PENALTY (50.0) — just wire them correctly.
+- Do NOT modify `evaluator_v5.ipynb`.
+- Do NOT run the full project or full test suite locally (OOM risk
+  per AGENTS.md).
+- This is a small surgical fix (~15 lines of source code, ~50
+  lines in 1 test file). Keep the diff minimal.
+- The val-side check uses the same `_spearman` helper as the
+  train-side; no new dependencies.
+- The val_df may be much smaller than the train_df; the
+  Spearman correlation is still well-defined as long as
+  both have at least ~30 rows.
+- This task is the cleanup twin of task-4 (monthly gate on val)
+  and task-5 (delete dead f3 branch). All three are small
+  fixes with no behavior change in default config (when
+  val_df is provided, which is the standard case).
