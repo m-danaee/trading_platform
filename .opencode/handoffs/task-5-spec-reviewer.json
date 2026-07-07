@@ -1,20 +1,55 @@
 {
-  "task_id": 5,
+  "task": "task-5",
+  "review_type": "spec-review",
   "verdict": "APPROVED",
-  "previous_issues": {
-    "eviction_timing_too_late": "resolved — warmup is now deferred out of __init__ via defer_warmup=True flag; warmup happens per-cluster inside _run_cluster_islands BEFORE each cluster's first epoch; eviction happens AFTER each cluster's epochs complete and BEFORE the next cluster's warmup. Peak signatures reduced from 4 to 2 during the run.",
-    "plan_goal_not_met": "resolved — the plan's goal (drop 3/4 signatures during the run to reduce peak VRAM) is now achieved. Sequential per-cluster processing ensures only 1 cluster's signatures are alive at any time."
+  "reviewer": "spec-reviewer",
+  "commit_reviewed": "54a885a",
+  "branch": "feature/task-5-dead-f3-branch",
+  "acceptance_criteria_check": {
+    "AC1_f3_switch_wrapped": {
+      "status": "PASS",
+      "evidence": "phase2_rule_pool.py:808 — `if not _cfg.PHASE2_USE_TOTAL_RETURN_OBJ:` wraps the entire f3_objective switch (cv_fold_min / profit_factor / win_rate branches). Guard is placed BEFORE the switch, not after."
+    },
+    "AC2_audit_finding_comment": {
+      "status": "PASS",
+      "evidence": "Two comment blocks reference 'audit finding #5': (1) above the wrapped branch: '# → fixes audit finding #5 (dead f3 profit_factor branch; USE_TOTAL_RETURN_OBJ takes precedence when True).' (2) above the USE_TOTAL_RETURN_OBJ block: '# (fixes audit finding #5)'."
+    },
+    "AC3_parametrized_test": {
+      "status": "PASS",
+      "evidence": "TestF3PathResolution::test_f3_path_resolution covers 6 cases (superset of required 4): 3 with USE_TOTAL_RETURN_OBJ=True (one per F3_OBJECTIVE value, all asserting robust return = -3.0) + 3 with USE_TOTAL_RETURN_OBJ=False (profit_factor=-1.1, win_rate=-50.0, cv_fold_min=-3.5). All 6 pass. Test calls the production function compute_phase2_objectives_from_metrics directly."
+    },
+    "AC4_default_bit_identical": {
+      "status": "PASS",
+      "evidence": "When USE_TOTAL_RETURN_OBJ=True (default): the new guard skips the dead switch entirely; the robust_return_pct block (unchanged) assigns f3_val. Net effect: f3_val = robust_return_pct(...) — identical to pre-task-5. No other code paths are affected. No changes to config.py, phase2_support.py, or any other file."
+    },
+    "AC5_legacy_opt_in": {
+      "status": "PASS",
+      "evidence": "When USE_TOTAL_RETURN_OBJ=False: all 3 F3_OBJECTIVE values are exercised by the parametrized test and produce correct values. cv_fold_min fallback to profit_factor is preserved in code (line 815-817) though not explicitly tested as a separate case (acceptable — spec requires 4 cases, 6 are provided)."
+    },
+    "AC6_existing_tests_pass": {
+      "status": "PASS",
+      "evidence": "test_phase2_rule_pool.py: 156 passed (includes 6 new). test_phase2_monthly_admission.py + test_phase2_window_rotation.py + test_phase2_island_scheduler.py: 71 passed. All verified by running with PYTEST_LOW_MEMORY=1."
+    }
   },
-  "new_issues": {
-    "defer_warmup_in_init": "approved — defer_warmup flag added to Rule_Pool_Generator.__init__ with default=False; _build_engines skips configure_phase2_gpu_runtime when defer_warmup=True; other callers (orphan-boost) unaffected.",
-    "per_cluster_warmup_call": "approved — warmup_phase2_gpu_kernels called with cluster_id=cid inside the for-loop, BEFORE the while-loop for each cluster's epochs. Verified in source.",
-    "eviction_between_clusters": "approved — evict_cluster_signatures(cluster_id=cid) called AFTER each cluster's while-loop completes, still inside the for-loop. Cluster 0's signatures are evicted before cluster 1's warmup. Redundant re-call in cleanup loop is safe (returns 0).",
-    "migration_round_robin_to_sequential": "approved — migration changed from round-robin mesh (all clusters exchange migrants every epoch interval) to sequential chain (cluster N → cluster N+1 after cluster N finishes all epochs). This is: (a) explicitly described in the task spec ('after a cluster finishes, its best individuals are forwarded to the next cluster as seed archives'), (b) a natural consequence of sequential processing, (c) verified by structural test test_migration_uses_chain_pattern. The round_counter from Task 2 is replaced by sequential idx-based forwarding. Migration still functions correctly — migrants flow forward through the cluster chain."
+  "out_of_scope_check": {
+    "evaluator_v5.ipynb": "UNTOUCHED",
+    "config.py": "UNTOUCHED",
+    "phase2_support.py": "UNTOUCHED",
+    "evolution/": "UNTOUCHED",
+    "other_phase_files": "UNTOUCHED",
+    "task_6_or_later": "NO PRE-IMPLEMENTATION"
   },
-  "out_of_scope_check": "approved — task-5.md was modified (previous review flagged this). The modification appears to be the actual task spec for sequential cluster warmup (the original file on main was for a different task). All changes are within the scope of the plan's goal (reduce peak RAM via per-cluster warmup/eviction). No unrelated features added.",
-  "notes": "All 231 tests pass (45 in test_phase2_island_scheduler.py including 4 new deferred warmup tests + 6 eviction tests + 3 sequential processing tests; 186 in other touched suites). The implementation correctly addresses the critical issue from the previous review: eviction now happens BETWEEN clusters during the run, not AFTER all clusters finish. Peak VRAM reduced from ~4 signatures to ~2 signatures. The migration pattern change (round-robin → sequential chain) is acceptable per the task spec and is a natural consequence of sequential processing.",
-  "verification_commands_run": [
-    "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_phase2_island_scheduler.py -v → 45 passed",
-    "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_phase2_rule_pool.py tests/unit/test_evox_runner.py tests/unit/test_migration_safety.py tests/unit/test_island_scheduler_migration.py -v → 186 passed"
+  "files_changed": [
+    ".opencode/CONTEXT.md",
+    ".opencode/tasks/task-5.md",
+    "gpu_fuzzy_trader/phases/phase2_rule_pool.py",
+    "tests/unit/test_phase2_rule_pool.py"
+  ],
+  "notes": [
+    "The guard placement is correct: `if not _cfg.PHASE2_USE_TOTAL_RETURN_OBJ:` is BEFORE the switch, wrapping the entire switch body with proper indentation.",
+    "The f3_val variable is guaranteed to be set in all reachable paths: legacy switch covers all 3 branches (cv_fold_min with fallback, profit_factor, win_rate as else); robust return block covers the default path.",
+    "The parametrized test provides 6 cases (superset of the required 4), covering both default and legacy paths with concrete expected values.",
+    "The task-5.md was rewritten from a different task (sequential cluster warmup) to the correct task (dead f3 branch). This is a spec correction, not an out-of-scope change.",
+    "Minor observation (not blocking): the cv_fold_min fallback path (empty cv_folds → profit_factor) is not explicitly tested as a separate parametrized case. The fallback code is preserved and the spec's 4 required cases are all covered."
   ]
 }

@@ -2610,6 +2610,82 @@ class TestF4ReturnConcentration:
         assert "f4_concentration" not in out_metrics or out_metrics["f4_concentration"] == 0.0
 
 
+class TestF3PathResolution:
+    """Parametrized tests for f3 path resolution (Task 5: audit finding #5).
+
+    Verifies that:
+      - USE_TOTAL_RETURN_OBJ=True (default) → robust_return_pct (val-blended min).
+      - USE_TOTAL_RETURN_OBJ=False → legacy PHASE2_F3_OBJECTIVE path
+        (profit_factor, win_rate, or cv_fold_min).
+    """
+
+    @pytest.mark.parametrize("use_total,f3_obj,expected_f3,train_ret,val_ret,pf,wr,cv_folds", [
+        (True,  "profit_factor", -3.0,    10.0, 3.0,  1.2, 50.0, []),    # default: robust wins
+        (True,  "win_rate",      -3.0,    10.0, 3.0,  1.2, 50.0, []),    # default: robust wins
+        (True,  "cv_fold_min",    -3.0,    10.0, 3.0,  1.2, 50.0, []),   # default: robust wins
+        (False, "profit_factor",  -1.1,    10.0, 3.0,  1.2, 50.0, []),   # f3 = -min(pf, val_pf) = -min(1.2, 1.1) = -1.1
+        (False, "win_rate",       -50.0,   10.0, 3.0,  1.2, 50.0, []),   # f3 = -win_rate
+        (False, "cv_fold_min",    -3.5,    10.0, 3.0,  1.2, 50.0, [3.5, 4.0, 5.0]),  # f3 = -min(cv_folds)
+    ])
+    def test_f3_path_resolution(
+        self, monkeypatch,
+        use_total, f3_obj, expected_f3,
+        train_ret, val_ret, pf, wr, cv_folds,
+    ):
+        """Verify the correct f3 formula runs for each (USE_TOTAL_RETURN_OBJ, F3_OBJECTIVE) pair."""
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+            compute_phase2_objectives_from_metrics,
+        )
+
+        monkeypatch.setattr(_cfg, "PHASE2_JOINT_TRAIN_VAL", True)
+        monkeypatch.setattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ", use_total)
+        monkeypatch.setattr(_cfg, "PHASE2_USE_ROBUST_RETURN_OBJ", True)
+        monkeypatch.setattr(_cfg, "PHASE2_F3_OBJECTIVE", f3_obj)
+        monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", False)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 1)
+        monkeypatch.setattr(_cfg, "PHASE2_RETURN_FLOOR_PCT", -100.0)
+        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR", 0.0)
+        monkeypatch.setattr(_cfg, "PHASE2_VAL_RETURN_FLOOR_PCT", -100.0)
+        monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
+
+        dont_cares = np.full(4, 5, dtype=np.int32)
+        chrom = np.array([0, 1, 2, 3], dtype=np.int32)
+        metrics = {
+            "executed_trades": 100,
+            "total_return_pct": train_ret,
+            "sortino_ratio": 1.0,
+            "max_drawdown_pct": 2.0,
+            "win_rate": wr,
+            "profit_factor": pf,
+            "per_symbol_metrics": {
+                "SYM1": {"net_pnl": 100.0},
+                "SYM2": {"net_pnl": 200.0},
+                "SYM3": {"net_pnl": 300.0},
+            },
+        }
+        if cv_folds:
+            metrics["_cv_fold_returns"] = cv_folds
+
+        val_metrics = {
+            "executed_trades": 50,
+            "total_return_pct": val_ret,
+            "sortino_ratio": 0.8,
+            "max_drawdown_pct": 1.0,
+            "win_rate": 55.0,
+            "profit_factor": 1.1,
+        }
+
+        objectives, out_metrics = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, metrics, [],
+            val_metrics=val_metrics,
+        )
+        # f3 is at index 2; it's minimised, so robust_return gives -min(train, val)
+        assert np.isclose(objectives[2], expected_f3), (
+            f"USE_TOTAL={use_total}, F3_OBJ={f3_obj}: expected f3≈{expected_f3}, got {objectives[2]}"
+        )
+
+
 class TestTwoStageOrchestration:
     def test_run_uses_two_stages_when_enabled(self, monkeypatch):
         from gpu_fuzzy_trader.phases.phase2_rule_pool import (
