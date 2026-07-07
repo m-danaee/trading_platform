@@ -1,6 +1,67 @@
 {
   "task": "task-8",
+  "review_type": "spec-review",
   "verdict": "APPROVED",
-  "issues": [],
-  "summary": "Implementation matches the task spec exactly: 3 new config keys (PHASE2_REGIME_STRATUM_ENABLED, _FRAC, _KEYWORDS) added — note that the task's acceptance criteria mentions \"4 keys\" but only 3 are defined in Step 1, which is a spec typo. Stratum literal extended to \"elite\"|\"explorer\"|\"regime\". _regime_feature_indices, assign_three_strata_to_indices, and sample_regime_stratum_chromosome are all importable and correct. Wire-in into _init_population handles both enabled/disabled paths and dense/sparse encodings. Backward compatibility preserved: original assign_strata_to_indices untouched, and setting PHASE2_REGIME_STRATUM_ENABLED=False falls back to 2-stratum behavior. 19 new tests pass (exceeding the ≥4 minimum), all 135 existing tests pass. No changes to evaluator_v5.ipynb, GPU engine, JSON output contract, or any out-of-scope files. Only 4 files changed. All acceptance criteria met."
+  "branch": "feature/task-8-sign-consistency-val",
+  "commit": "8936ac8",
+  "acceptance_criteria_verification": {
+    "AC1": {
+      "description": "Feature with consistent positive train signs but negative val sign is blacklisted",
+      "met": true,
+      "evidence": "selector.py:278-287 — `if has_pos and not has_neg` → computes val_corr → `if val_corr < -min_abs_corr: continue`. Test `test_val_sign_disagrees_negative_blacklists` confirms."
+    },
+    "AC2": {
+      "description": "Feature with consistent positive train signs and matching positive val sign is kept",
+      "met": true,
+      "evidence": "When val_corr > 0, `val_corr < -min_abs_corr` is False → falls through to `stable_features.add(col)`. Test `test_val_sign_matches_positive_kept` confirms."
+    },
+    "AC3": {
+      "description": "Feature with tiny |val_rho| < min_abs_corr is kept",
+      "met": true,
+      "evidence": "`val_corr < -min_abs_corr` won't fire when |val_corr| < min_abs_corr. Test `test_val_sign_tiny_corr_kept` confirms with shuffled labels."
+    },
+    "AC4": {
+      "description": "val_df=None preserves pre-task-8 behavior",
+      "met": true,
+      "evidence": "Entire val check gated on `val_df is not None` (line 277). Test `test_val_df_none_matches_previous_behavior` confirms mixed train signs still blacklisted."
+    },
+    "AC5": {
+      "description": "val_df without label_close_288 column skips val check (no crash)",
+      "met": true,
+      "evidence": "`label_col in val_df.columns` guard at line 277. Also `col in val_df.columns` for extra robustness. Test `test_val_df_missing_label_col_skips_check` confirms."
+    },
+    "AC6": {
+      "description": "Function signature unchanged (backward compat)",
+      "met": true,
+      "evidence": "Byte-for-byte identical signature verified: `_check_spearman_sign_consistency(df, feature_cols, n_folds, min_folds, val_df=None, min_abs_corr=None) -> set[str]`."
+    },
+    "AC7": {
+      "description": "All existing test_feature_selector.py tests pass",
+      "met": true,
+      "evidence": "74 passed (69 existing + 5 new) in 8.38s with PYTEST_LOW_MEMORY=1."
+    }
+  },
+  "code_placement_checks": {
+    "val_check_before_add": true,
+    "val_check_inside_loop": true,
+    "guards_correct": "val_df is not None AND label_col in val_df.columns AND col in val_df.columns",
+    "threshold_logic_correct": "|val_rho| >= min_abs_corr required to override train sign",
+    "sign_comparison_correct": "val_corr < -min_abs_corr for train-pos/val-neg; val_corr > min_abs_corr for train-neg/val-pos",
+    "signature_unchanged": true,
+    "docstring_updated": true,
+    "audit_finding_greppable": true,
+    "audit_finding_locations": ["docstring line 238", "inline comment line 275"]
+  },
+  "out_of_scope_checks": {
+    "no_evaluator_changes": true,
+    "no_get_spearman_folds_changes": true,
+    "no_spearman_changes": true,
+    "no_phase2_config_changes": true,
+    "no_task9_premature": true,
+    "no_train_side_logic_changes": true,
+    "call_site_unchanged": true
+  },
+  "minor_observations": [
+    "No explicit test for symmetric case 'train all negative, val positive → blacklisted'. Code handles it correctly (lines 288-297) but test coverage only covers AC1 direction. Not a spec violation since spec only explicitly requires AC1 direction."
+  ]
 }
