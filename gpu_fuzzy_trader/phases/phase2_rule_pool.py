@@ -2829,11 +2829,16 @@ class Rule_Pool_Generator:
         # --- Monthly-window shadow-test gate (Task 13, 2026-06-17) ---
         # After the existing pool-admission filter, apply a hard gate that
         # requires each candidate rule to be profitable on at least 50% of
-        # monthly rolling windows in the train split.  This addresses the
-        # rules that work on one validation slice but
-        # bleed on test are rejected early.
-        if _cfg.PHASE2_MONTHLY_ADMISSION_ENABLED:
-            monthly_windows = build_monthly_windows(self._train_df)
+        # monthly rolling windows in the val split (OOS stability check).
+        # → fixes audit finding #4 (monthly gate on train was no-op)
+        if self._cached_slim_val is None:
+            logger.warning(
+                "Phase 2 [%s]: no val DataFrame available; skipping "
+                "monthly-admission gate",
+                self.direction,
+            )
+        elif _cfg.PHASE2_MONTHLY_ADMISSION_ENABLED:
+            monthly_windows = build_monthly_windows(self._cached_slim_val)
             min_months = (
                 self.island_hyperparams.monthly_admission_min_months
                 if self.island_hyperparams is not None
@@ -3312,8 +3317,15 @@ class Rule_Pool_Generator:
             pool = _filter_pool_by_admission(list(new_pool))
 
             # --- Monthly-window gate for islands ---
-            if _cfg.PHASE2_MONTHLY_ADMISSION_ENABLED:
-                monthly_windows = build_monthly_windows(self._train_df)
+            # → fixes audit finding #4 (monthly gate on train was no-op)
+            if self._cached_slim_val is None:
+                logger.warning(
+                    "Phase 2 [%s]: no val DataFrame available; skipping "
+                    "monthly-admission gate",
+                    self.direction,
+                )
+            elif _cfg.PHASE2_MONTHLY_ADMISSION_ENABLED:
+                monthly_windows = build_monthly_windows(self._cached_slim_val)
                 min_months = (
                     self.island_hyperparams.monthly_admission_min_months
                     if self.island_hyperparams is not None

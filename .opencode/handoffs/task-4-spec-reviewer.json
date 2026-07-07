@@ -1,16 +1,31 @@
 {
-  "task_id": 4,
+  "task_id": "task-4",
+  "reviewer": "spec-reviewer",
   "verdict": "APPROVED",
-  "previous_issues": {
-    "stale_comment": "resolved: Comment block at config.py:406-412 now correctly states '600 = 200 (population) × 2 (eval runs) × 1.5 (cache generations)', includes reduction rationale (cache hit rate 0-4%, ~0.4 GB saving), and only historical mention of 1200 is 'Halved from 1200'."
+  "summary": "Implementation meets all 6 acceptance criteria. The deviation from self._scoped_val_df to self._cached_slim_val is correct and necessary (scoped_val_df is freed to None at line 2365 during __init__). slim_backtest_df preserves META_COLUMNS (datetime, symbol) and LABEL_COLUMNS, so build_monthly_windows and _evaluate_rule_on_window have all needed columns. Both call sites updated, defensive None guard present at both sites, audit-finding #4 linkage in comments, 3 new tests cover val-source assertion, None-skip guard, and non-trivial filtering. All 211 tests pass across 4 suites. Diff is minimal and surgical — no out-of-scope changes.",
+  "acceptance_criteria": {
+    "1_call_sites_use_val_df": "PASS — Both call sites (lines 2841, 3328) use self._cached_slim_val. Deviation from self._scoped_val_df is justified: scoped_val_df is None at call time (freed at line 2365). PLAN.md explicitly recommended _cached_slim_val.",
+    "2_test_confirms_val_df": "PASS — test_gate_uses_cached_slim_val monkeypatches build_monthly_windows, records the DataFrame, asserts it is NOT gen._train_df and has datetime >= 2022-01-01 (val range).",
+    "3_non_trivial_filtering": "PASS — test_non_trivial_filtering_on_val confirms 50% rejection (2/4 rules kept) with mixed-profitability rules across 6 months.",
+    "4_none_guard": "PASS — Both call sites guard on self._cached_slim_val is None with logger.warning. test_gate_skipped_when_cached_slim_val_none verifies warning logged and build_monthly_windows NOT called.",
+    "5_comment_accuracy": "PASS — Comments updated from 'train split' to 'val split (OOS stability check)' with '→ fixes audit finding #4' linkage at both sites.",
+    "6_all_existing_tests_pass": "PASS — 10/10 in test_phase2_monthly_admission.py, 211/211 across 4 suites (rule_pool, window_rotation, island_scheduler, monthly_admission)."
   },
-  "items_reviewed": {
-    "fix_1_cache_size": "approved. PHASE2_EVAL_GLOBAL_CACHE_MAX_SIZE = 600 at config.py:413. Comment block (lines 406-412) accurately describes the value and reduction rationale. No stale references.",
-    "fix_2_cache_clear": "approved. clear_global_metrics_cache(cache) defined at evox_runner.py:1498. Called in _run_cluster_islands after the while loop and before pool merge (lines 503-510). Correctly iterates all generators and clears each gen._evolution_state.global_metrics_cache.",
-    "fix_3_engine_teardown": "approved. del generators[cid]; gc.collect() added after each cluster's finalize_island() + _annotate_archive_entries + extend (lines 519-522). Order is correct.",
-    "fix_4_gc_frequency": "approved. evox_runner.py:2793 now uses 'gen % 3 == 0' (was 'gen % 10 == 0')."
+  "deviation_assessment": {
+    "scoped_val_df_vs_cached_slim_val": "JUSTIFIED — self._scoped_val_df is set to None at line 2365 during __init__ (before the gate call sites at 2841/3328). Using it would make the gate always skip. self._cached_slim_val is the slim_backtest_df output which preserves META_COLUMNS (datetime, symbol) and LABEL_COLUMNS — all columns needed by build_monthly_windows and _evaluate_rule_on_window. PLAN.md explicitly recommended this attribute.",
+    "column_availability": "VERIFIED — slim_backtest_df (backtest/df_slim.py) retains META_COLUMNS=['datetime','symbol'] + LABEL_COLUMNS + _symbol_bar_index + feature columns. build_monthly_windows requires 'datetime' (present). _evaluate_rule_on_window requires label/meta columns (present)."
   },
-  "stages_1_3_intact": "approved. No diff in overfit-gap behavior, _derive_island_seed, _should_migrate_this_round, or related logic.",
-  "out_of_scope_check": "approved. Only 3 source files touched (config.py, evox_runner.py, phase2_island_scheduler.py) matching the spec. No push, no merge. Commit message uses correct prefix.",
-  "notes": "Previous issue (stale comment referencing 1200) fully resolved in commit 7584a6d. All 4 fixes are functionally correct and purely memory-management changes. 221 tests pass. Ready for code review."
+  "out_of_scope_check": {
+    "evaluator_v5_ipynb": "UNTOUCHED",
+    "validation_monthly_windows_py": "UNTOUCHED",
+    "rb_governor_py": "UNTOUCHED",
+    "other_phase_files": "UNTOUCHED",
+    "task_5_or_later_preview": "NONE — no dead f3 branch deletion or overfit ratio gate pre-implementation",
+    "context_and_task_md_changes": "ORCHESTRATOR WORKFLOW UPDATES — CONTEXT.md advances state from task-3 to task-4; task-4.md was rewritten by orchestrator to match PLAN.md task-4 spec (replaced placeholder from prior plan iteration). Not production code."
+  },
+  "notes_for_code_reviewer": [
+    "The defensive guard structure (if None → warn/skip, elif enabled → run) is duplicated at both call sites. Code reviewer may want to note this for potential extraction into a helper, but it's acceptable for a surgical 2-site fix.",
+    "test_gate_skipped_when_cached_slim_val_none uses object.__new__ + manual attribute setup to avoid __init__ side effects. This is fragile but functional — code reviewer should assess if a simpler construction path exists.",
+    "The test_gate_uses_cached_slim_val test asserts gen._scoped_val_df is None as a sanity check, which independently validates the deviation justification."
+  ]
 }
