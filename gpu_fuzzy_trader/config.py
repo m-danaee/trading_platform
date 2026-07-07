@@ -108,14 +108,14 @@ DATA_ROOT = os.environ.get("DATA_ROOT", "").strip()
 TRAIN_CSV_PATH = _env_str(
     "TRAIN_CSV_PATH",
     os.path.join(
-        DATA_ROOT, "train.csv") if DATA_ROOT else "data/train.csv",
+        DATA_ROOT, "train_2.csv") if DATA_ROOT else "data/train_2.csv",
 )
 TEST_CSV_PATH = _env_str(
     "TEST_CSV_PATH",
-    os.path.join(DATA_ROOT, "test.csv") if DATA_ROOT else "data/test.csv",
+    os.path.join(DATA_ROOT, "test_2.csv") if DATA_ROOT else "data/test_2.csv",
 )
 
-# Cached splits from train.csv (Phases 2–5). Rebuilt when train.csv is newer.
+# Cached splits from train_2.csv (Phases 2–5). Rebuilt when train_2.csv is newer.
 TRAIN_70_PATH = "data/train_70.parquet"
 VALIDATION_30_PATH = "data/validation_30.parquet"
 VALIDATION_FITNESS_PATH = "data/validation_fitness.parquet"
@@ -172,7 +172,7 @@ TAIL_DROP_ROWS = 288
 # =============================================================================
 # Phases 4–5 always use persisted train_70 + validation_30 (see splitter.py).
 
-# SPLIT_MODE — how train.csv is divided before Phase 2.
+# SPLIT_MODE — how train_2.csv is divided before Phase 2.
 #   holdout             → single per-symbol chronological split with embargo
 #                         (288 bars dropped between train and val).
 #                         The actual train/val fraction is set by

@@ -3,12 +3,39 @@
   "rules_set": [
     {
       "conditions": [
-        "[feat_0] IS Very High",
-        "symbol is SYM_A"
+        "[close_location_value] IS Very High",
+        "[realized_vol_20] IS Very High",
+        "[tr_to_atr_14] IS Low",
+        "[vol_ratio_20_100] IS Low",
+        "symbol is 6"
       ],
-      "tp": 2.0,
+      "tp": 2.5,
       "sl": 1.0,
-      "capital_pct": 30.0
+      "capital_pct": 35.0
+    },
+    {
+      "conditions": [
+        "[atr_pct_14] IS High",
+        "[efficiency_ratio_20] IS Low",
+        "[range_compression_20_100] IS Very Low",
+        "[roc_10] IS Extreme Bullish",
+        "symbol is 3"
+      ],
+      "tp": 3.0,
+      "sl": 1.0,
+      "capital_pct": 35.0
+    },
+    {
+      "conditions": [
+        "[channel_pos_20] IS Very Low",
+        "[ret_autocorr_1_30] IS Neutral Negative",
+        "[mom_stoch_rsi_14_14_3] IS Medium",
+        "[log_range_over_vol_100] IS Very High",
+        "symbol is 5"
+      ],
+      "tp": 4.0,
+      "sl": 1.0,
+      "capital_pct": 25.0
     }
   ]
 }

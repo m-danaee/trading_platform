@@ -970,7 +970,7 @@ class Pipeline_Orchestrator:
 
     def _load_and_split_data(self) -> tuple[pd.DataFrame, pd.DataFrame]:
         """
-        Load train.csv and split into train/validation DataFrames.
+        Load train_2.csv and split into train/validation DataFrames.
 
         When ``SPLIT_MODE`` is ``purged_walk_forward``, also rebuilds CV folds
         (stored on ``self._cv_folds``) for Phases 2–3.

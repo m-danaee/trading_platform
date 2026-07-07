@@ -3,30 +3,129 @@
   "rules_set": [
     {
       "conditions": [
-        "[feat_1] IS Very High",
-        "symbol is SYM_A"
+        "[band_bb_percB_20_2] IS Neutral Positive",
+        "[downside_semivol_20] IS Low",
+        "[parkinson_vol_20] IS Medium",
+        "[log_range_over_vol_100] IS Very High",
+        "symbol is 3"
+      ],
+      "tp": 2.0,
+      "sl": 1.0,
+      "capital_pct": 30.0
+    },
+    {
+      "conditions": [
+        "[atr_pct_14] IS Low",
+        "[close_location_value] IS Very High",
+        "[range_compression_20_100] IS High",
+        "[upside_semivol_20] IS Very High",
+        "symbol is 5"
+      ],
+      "tp": 2.0,
+      "sl": 1.0,
+      "capital_pct": 30.0
+    },
+    {
+      "conditions": [
+        "[atr_pct_14] IS Very High",
+        "[macd_hist_atr] IS Neutral Negative",
+        "[rsi_centered_14] IS Bullish",
+        "[vol_over_ema20] IS Very Low",
+        "symbol is 7"
+      ],
+      "tp": 2.0,
+      "sl": 1.0,
+      "capital_pct": 30.0
+    },
+    {
+      "conditions": [
+        "[band_bb_percB_20_2] IS Strong Bullish",
+        "[ema_gap_atr_20] IS Extreme Bullish",
+        "[up_close_ratio_5] IS Very Low",
+        "[upside_semivol_20] IS Low",
+        "symbol is 2"
+      ],
+      "tp": 2.0,
+      "sl": 1.0,
+      "capital_pct": 30.0
+    },
+    {
+      "conditions": [
+        "[close_location_value] IS Very Low",
+        "[ema_gap_atr_20] IS Extreme Bullish",
+        "[upside_semivol_20] IS High",
+        "[vol_ratio_20_100] IS Medium",
+        "symbol is 1"
+      ],
+      "tp": 2.0,
+      "sl": 1.0,
+      "capital_pct": 30.0
+    },
+    {
+      "conditions": [
+        "[efficiency_ratio_20] IS Medium",
+        "[ret_autocorr_1_30] IS Extreme Bullish",
+        "[roc_10] IS Neutral Positive",
+        "[log_range_over_vol_100] IS Very High",
+        "symbol is 5"
+      ],
+      "tp": 2.0,
+      "sl": 1.0,
+      "capital_pct": 30.0
+    },
+    {
+      "conditions": [
+        "[atr_pct_14] IS Very High",
+        "[macd_hist_atr] IS Neutral Negative",
+        "[rsi_centered_14] IS Bullish",
+        "[log_range_over_vol_100] IS Very High",
+        "symbol is 7"
+      ],
+      "tp": 2.0,
+      "sl": 1.0,
+      "capital_pct": 30.0
+    },
+    {
+      "conditions": [
+        "[ema_gap_atr_20] IS Extreme Bullish",
+        "[range_compression_20_100] IS Very High",
+        "[return_skew_30] IS Bullish",
+        "[vol_over_ema20] IS Medium",
+        "symbol is 5"
+      ],
+      "tp": 2.0,
+      "sl": 1.0,
+      "capital_pct": 30.0
+    },
+    {
+      "conditions": [
+        "[channel_pos_20] IS Very Low",
+        "[dmi_balance_14] IS Extreme Bullish",
+        "[ret_autocorr_1_30] IS Extreme Bearish",
+        "[tr_to_atr_14] IS Very High",
+        "symbol is 3"
       ],
       "tp": 2.0,
       "sl": 1.0,
       "capital_pct": 30.0
     }
   ],
-  "risk_optimized": false,
-  "deployment_accepted": false,
+  "risk_optimized": true,
+  "deployment_accepted": true,
   "validation_gate": {
-    "return_pct": 1.1920928955078125e-05,
-    "profit_factor": 1.0,
+    "return_pct": 50.4694709777832,
+    "profit_factor": 5.29212760925293,
     "required_return_pct": 2.0,
     "required_profit_factor": 1.05
   },
-  "rb_score": -7901.831477499737,
-  "rb_train_return_pct": 0.9000062942504883,
-  "rb_valid_return_pct": 1.1920928955078125e-05,
-  "rb_valid_profit_factor": 1.0,
-  "rb_valid_max_drawdown_pct": 0.7199950814247131,
-  "rb_valid_executed_trades": 4,
-  "rb_train_minus_valid_return_pct": 0.8999943733215332,
-  "rb_train_valid_ratio": 75498.0,
-  "rb_profit_amp_objective": -400.0311456150281,
+  "rb_score": 5716.355245240237,
+  "rb_train_return_pct": 60.57430648803711,
+  "rb_valid_return_pct": 50.4694709777832,
+  "rb_valid_profit_factor": 5.29212760925293,
+  "rb_valid_max_drawdown_pct": 0.7200067043304443,
+  "rb_valid_executed_trades": 132,
+  "rb_train_minus_valid_return_pct": 10.104835510253906,
+  "rb_train_valid_ratio": 1.2002167907545946,
+  "rb_profit_amp_objective": 156.29227128553393,
   "rb_profit_amp_accepted": false
 }

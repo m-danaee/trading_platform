@@ -3,30 +3,57 @@
   "rules_set": [
     {
       "conditions": [
-        "[feat_0] IS Very High",
-        "symbol is SYM_A"
+        "[close_location_value] IS Very High",
+        "[realized_vol_20] IS Very High",
+        "[tr_to_atr_14] IS Low",
+        "[vol_ratio_20_100] IS Low",
+        "symbol is 6"
       ],
-      "tp": 2.0,
+      "tp": 2.5,
       "sl": 1.0,
-      "capital_pct": 30.0
+      "capital_pct": 35.0
+    },
+    {
+      "conditions": [
+        "[atr_pct_14] IS High",
+        "[efficiency_ratio_20] IS Low",
+        "[range_compression_20_100] IS Very Low",
+        "[roc_10] IS Extreme Bullish",
+        "symbol is 3"
+      ],
+      "tp": 3.0,
+      "sl": 1.0,
+      "capital_pct": 35.0
+    },
+    {
+      "conditions": [
+        "[channel_pos_20] IS Very Low",
+        "[ret_autocorr_1_30] IS Neutral Negative",
+        "[mom_stoch_rsi_14_14_3] IS Medium",
+        "[log_range_over_vol_100] IS Very High",
+        "symbol is 5"
+      ],
+      "tp": 4.0,
+      "sl": 1.0,
+      "capital_pct": 25.0
     }
   ],
-  "risk_optimized": false,
-  "deployment_accepted": false,
+  "risk_optimized": true,
+  "deployment_accepted": true,
   "validation_gate": {
-    "return_pct": 0.6000041961669922,
-    "profit_factor": 2.25,
+    "return_pct": 49.923789978027344,
+    "profit_factor": 5.218581676483154,
     "required_return_pct": 2.0,
     "required_profit_factor": 1.05
   },
-  "rb_score": -6902.431809009689,
-  "rb_train_return_pct": 0.9000062942504883,
-  "rb_valid_return_pct": 0.6000041961669922,
-  "rb_valid_profit_factor": 2.25,
-  "rb_valid_max_drawdown_pct": 0.47487014532089233,
-  "rb_valid_executed_trades": 4,
-  "rb_train_minus_valid_return_pct": 0.3000020980834961,
-  "rb_train_valid_ratio": 1.5,
-  "rb_profit_amp_objective": -408.5115791876898,
+  "rb_score": 4620.725422747295,
+  "rb_train_return_pct": 58.210418701171875,
+  "rb_valid_return_pct": 49.923789978027344,
+  "rb_valid_profit_factor": 5.218581676483154,
+  "rb_valid_max_drawdown_pct": 0.8400066494941711,
+  "rb_valid_executed_trades": 87,
+  "rb_train_minus_valid_return_pct": 8.286628723144531,
+  "rb_train_valid_ratio": 1.1659855697412331,
+  "rb_profit_amp_objective": 152.7741407738924,
   "rb_profit_amp_accepted": false
 }
