@@ -1,100 +1,165 @@
-# Task 6 — `fix/oos-honesty-and-amplifier-tune` (OOS honesty + conservative amplifier de-tune)
+# Task 6: Hard Overfit Ratio Gate + Raise Penalty Weight
 
-## Branch
-`fix/oos-honesty-and-amplifier-tune` (from latest `main`).
+## Task ID
+`task-6` (sixth of 12 tasks in the 2026-07-07 audit fix plan)
 
-## Problem
-Two issues found in the 2026-06-27 completed run:
+## Title
+Hard Overfit Ratio Gate + Raise Penalty Weight
 
-1. **Phase 5 test-set leakage (CRITICAL):** `PHASE5_REMOVE_NEGATIVE_PNL_RULES=True`
-   removes rules with negative PnL **on the test trade log**, then re-evaluates on
-   test. This is post-hoc selection on the OOS set — the reported 6.21%/6.53% are
-   inflated. Log evidence: "removed 2 negative-PnL rules, kept 6" (long) and
-   "removed 6 negative-PnL rules, kept 2" (short) — both decided using test PnL.
+## Goal
+Fix audit finding #7: the soft overfit-gap penalty
+`(gap_pct - 8) × 5` is too weak relative to the return signal.
+With train=76% / val=7.6% (gap=68.4pp), the penalty adds 302 to
+f3, but a "clean" rule (train=20%, val=15%, gap=5pp) gets
+penalty=0 and dominates. The outlier rule still wins the Pareto
+front on f1 (Sortino) because nothing else beats its train-side
+Sortino. The hard gate `PHASE2_MAX_TRAIN_VAL_GAP_PCT=16.0pp` only
+checks absolute pp, not ratio — a 10× ratio with 7.6% val passes
+through.
 
-2. **RB Governor amplifier over-fits LONG to val (HIGH):** The profit amplifier
-   weights val 1.6× over train (`RB_PROFIT_AMP_VALID_WEIGHT=1.60`) and runs 2
-   capital-reallocation passes (`RB_PROFIT_AMP_CAPITAL_PASSES=2`), pushing
-   capital_pct to 25-35%. Result: LONG val=14.9% → test=6.2% (8.7% gap) while
-   SHORT val=6.5% → test=6.5% (0% gap). The asymmetry shows LONG rules were
-   val-fitted by the amplifier.
-
-## Required Changes (all config-only, no code changes)
-
-### Change 1 — Stop Phase 5 test leakage (CRITICAL)
-**File:** `gpu_fuzzy_trader/config.py` (line ~1419)
-```python
-# BEFORE
-PHASE5_REMOVE_NEGATIVE_PNL_RULES = True
-# AFTER
-PHASE5_REMOVE_NEGATIVE_PNL_RULES = False
-```
-Rule removal already happens upstream (RB Governor selects on train+val). Phase 5
-must ONLY evaluate — never select. With this off, the reported test metrics are
-honest OOS (no post-hoc cleanup).
-
-NOTE: Verify that when `False`, Phase 5 still reports all rules and does NOT
-crash on the `cleaned` flag path. Read `phase5_oos.py:167-180` — if `cleaned`
-is False, the re-evaluation block is skipped (correct). Confirm no test fails.
-
-### Change 2 — Stop over-weighting val in amplifier (HIGH)
-**File:** `gpu_fuzzy_trader/config.py` (line ~1619)
-```python
-# BEFORE
-RB_PROFIT_AMP_VALID_WEIGHT: float = 1.60
-# AFTER
-RB_PROFIT_AMP_VALID_WEIGHT: float = 1.00
-```
-Equal-weight train and val in the amplifier objective. This stops the amplifier
-from greedily fitting val at the expense of train robustness. Train and val are
-both holdouts from Phase 2 (after the JOINT_TRAIN_VAL=False fix), so equal
-weighting is the honest choice.
-
-### Change 3 — Reduce capital amplification passes (HIGH)
-**File:** `gpu_fuzzy_trader/config.py` (line ~1635)
-```python
-# BEFORE
-RB_PROFIT_AMP_CAPITAL_PASSES: int = 2
-# AFTER
-RB_PROFIT_AMP_CAPITAL_PASSES: int = 1
-```
-One capital-reallocation pass instead of two. This caps how aggressively
-capital_pct gets pushed up based on val. The amplifier still selects rules and
-does one reallocation pass — just less aggressive.
-
-### Docs
-Update `README.md` config table for all three changed keys with new values +
-rationale.
-
-## Acceptance Criteria
-1. `PHASE5_REMOVE_NEGATIVE_PNL_RULES == False`.
-2. `RB_PROFIT_AMP_VALID_WEIGHT == 1.00`.
-3. `RB_PROFIT_AMP_CAPITAL_PASSES == 1`.
-4. `config.py` asserts at import still pass (`.venv/bin/python -c "import gpu_fuzzy_trader.config"`).
-5. `PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit -q` passes (no NEW failures beyond the 2 pre-existing MAX_CONDITIONS ones).
-6. If any test hard-codes the old values (1.60, 2, True), update them to the new values — do NOT weaken correctness assertions.
-7. README config table updated for all 3 keys.
-
-## Verification Commands
-```
-cd /home/danaee/trading_platform
-.venv/bin/python -c "from gpu_fuzzy_trader import config as c; print('P5_REMOVE=',c.PHASE5_REMOVE_NEGATIVE_PNL_RULES); print('AMP_VAL_W=',c.RB_PROFIT_AMP_VALID_WEIGHT); print('AMP_CAP_PASSES=',c.RB_PROFIT_AMP_CAPITAL_PASSES)"
-.venv/bin/python -c "import gpu_fuzzy_trader.config; print('config asserts OK')"
-PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit -q 2>&1 | tail -5
-```
-Do NOT run the full pipeline.
+## Audit Citation
+- Confirmed by static inspection:
+  - `phases/phase2_rule_pool.py:912-921` — overfit_gap_penalty calc.
+  - `phases/phase2_support.py:177-179` — pool admission uses
+    absolute pp gap (`train_ret - val_ret > max_gap`), not ratio.
+  - `config.py:626-650` — `PHASE2_MAX_TRAIN_VAL_GAP_PCT=16.0`,
+    `PHASE2_OVERFIT_GAP_PENALTY_WEIGHT=5.0`,
+    `PHASE2_OVERFIT_GAP_PCT_THRESHOLD=8.0`.
+- Run log evidence (2026-07-07): `max_train_val_gap_ratio` reaches
+  2.5-10.3× persistently across clusters. The 10×-ratio case with
+  val=7.6% passes the absolute gap gate (gap=68pp > 16pp should
+  reject... but this gate runs at pool admission, and rules
+  still entered the pool because the monthly gate (task #4) was
+  a no-op). After task-4 merges, this will be partially fixed
+  by the monthly-on-val gate, but a hard ratio gate is still
+  needed for cases the monthly gate misses.
 
 ## Target Files
-- `gpu_fuzzy_trader/config.py` (3 values)
-- `README.md` (config table)
-- any test hard-coding old values.
+- `gpu_fuzzy_trader/phases/phase2_support.py`
+  - Add a 10th gate in `_passes_pool_admission_impl` (after the
+    existing 9+1 gates) for the overfit ratio.
+  - Add the same gate to `_feasibility_gate_failures` (the
+    diagnostic mirror).
+- `gpu_fuzzy_trader/config.py`
+  - Add `PHASE2_OVERFIT_RATIO_FLOOR = 3.0` (default; reject if
+    `train_return / max(val_return, 0.1) > 3.0`).
+  - Raise `PHASE2_OVERFIT_GAP_PENALTY_WEIGHT` from 5.0 → 15.0.
+  - Update the comment to reference audit finding #7.
+- `tests/unit/test_phase2_rule_pool.py`
+  - Add a test asserting the ratio gate rejects a rule with
+    train=30% / val=5% (6× ratio, was admitted before).
+  - Add a test asserting a rule with train=15% / val=10% (1.5×
+    ratio) is admitted.
+- `tests/unit/test_phase2_support.py`
+  - Add a test asserting `_feasibility_gate_failures` includes
+    the `overfit_ratio` key when the ratio gate fires.
+
+## Current Behavior
+- `phases/phase2_rule_pool.py:912-921`:
+  ```python
+  overfit_gap_penalty = 0.0
+  if val_metrics is not None and PHASE2_OVERFIT_GAP_PENALTY_WEIGHT > 0 and (...):
+      train_ret = float(metrics.get("total_return_pct", 0.0))
+      val_ret = float(val_metrics.get("total_return_pct", 0.0))
+      gap_pct = train_ret - val_ret
+      gap_threshold = float(PHASE2_OVERFIT_GAP_PCT_THRESHOLD)  # 8.0
+      if gap_pct > gap_threshold:
+          overfit_gap_penalty = (gap_pct - gap_threshold) * weight  # weight=5
+  ```
+  Penalty adds to f3 but is dominated by the return signal.
+- `phases/phase2_support.py:177-179` (pool admission):
+  ```python
+  max_gap = float(PHASE2_MAX_TRAIN_VAL_GAP_PCT)  # 16.0
+  if train_ret - val_ret > max_gap:
+      return False
+  ```
+  Only checks absolute pp, not ratio.
+- `config.py:641`: `PHASE2_OVERFIT_GAP_PENALTY_WEIGHT = 5.0`
+
+## Scope
+1. **Add hard ratio gate** (phase2_support.py):
+   - In `_passes_pool_admission_impl` (after the existing absolute
+     pp gap gate at line 177-179), add:
+     ```python
+     max_ratio = float(getattr(_cfg, "PHASE2_OVERFIT_RATIO_FLOOR", 3.0))
+     val_ret_safe = max(val_ret, 0.1)  # avoid div-by-near-zero
+     if max_ratio > 0 and train_ret / val_ret_safe > max_ratio:
+         return False
+     ```
+   - In `_feasibility_gate_failures` (the diagnostic mirror), add
+     an `overfit_ratio` key that returns 1 if the gate fires.
+   - Update the docstring "The 9 gates mirror..." to "The 10 gates
+     mirror..." (or 11 if you count the f4 gate from task-2).
+2. **Raise penalty weight** (config.py):
+   - Change `PHASE2_OVERFIT_GAP_PENALTY_WEIGHT` from 5.0 to 15.0.
+   - Update the comment to reference audit finding #7 and explain
+     the 3× raise rationale.
+3. **Add new config flag** (config.py):
+   - Add `PHASE2_OVERFIT_RATIO_FLOOR = 3.0` with a clear docstring.
+4. **Regression guard**:
+   - `PHASE2_OVERFIT_RATIO_FLOOR = 0.0` or `= float('inf')` must
+     preserve pre-task-6 behavior (no ratio gate).
+   - The default `= 3.0` enables the new gate.
+5. **Add audit-finding linkage**:
+   - Add `# → fixes audit finding #7 (overfit-gap penalty too weak
+     vs return signal; absolute-pp gate missed high-ratio cases)`
+     in the comment block at the gate site.
+6. **Do NOT change**:
+   - The existing absolute-pp gate (`PHASE2_MAX_TRAIN_VAL_GAP_PCT=16.0`).
+     The two gates are complementary: absolute pp catches huge gaps;
+     ratio catches smaller gaps that are still suspect.
+   - The existing `PHASE2_OVERFIT_GAP_PCT_THRESHOLD=8.0` (the soft
+     penalty threshold).
+   - Any other file outside `phases/phase2_support.py`, `config.py`,
+     and the test files.
+
+## Acceptance Criteria
+1. A rule with train=30% / val=5% (6× ratio) is REJECTED at pool
+   admission (was admitted previously because gap=25pp > 16pp but
+   the gate at line 177-179 only triggers when gap > 16pp; with
+   25pp it should fire; but the 10× case with val=7.6% has gap=68pp
+   which DOES fire the absolute gate; the test should target a
+   case where absolute pp is small but ratio is high, e.g.,
+   train=15% / val=4% (3.75× ratio, gap=11pp < 16pp, ratio
+   gate should fire).
+2. A rule with train=15% / val=10% (1.5× ratio) is ADMITTED.
+3. A rule with train=20% / val=8% (2.5× ratio) is ADMITTED (under
+   the 3.0 default).
+4. `_feasibility_gate_failures` includes the `overfit_ratio` key
+   when the ratio gate fires.
+5. The soft overfit-gap penalty is now 3× stronger (weight=15.0
+   vs 5.0); the same rule gets a penalty of (gap-8)×15 instead
+   of (gap-8)×5.
+6. With `PHASE2_OVERFIT_RATIO_FLOOR = 0.0`, behavior matches
+   pre-task-6 (regression guard).
+7. All existing tests pass: `test_phase2_rule_pool.py`,
+   `test_phase2_support.py`, `test_phase2_monthly_admission.py`,
+   `test_phase2_window_rotation.py`, `test_phase2_island_scheduler.py`,
+   `test_evox_runner.py`, etc.
+
+## Verification
+Run only related unit tests with `PYTEST_LOW_MEMORY=1` and `.venv`:
+
+```bash
+PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_phase2_rule_pool.py -q
+PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_phase2_support.py -q
+PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_phase2_monthly_admission.py -q
+PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_phase2_window_rotation.py -q
+PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_phase2_island_scheduler.py -q
+```
 
 ## Notes
-- All three changes are config-only — no production code changes.
-- This is intentionally conservative: the amplifier stays enabled (it does
-  valuable rule selection + monthly certificate), just less aggressive on val.
-- After this, the user should re-run on Colab and compare:
-  (a) test returns are now HONEST (no post-hoc rule removal)
-  (b) LONG val→test gap should shrink (less val-fitting)
-- Symbol-pinning (rules have "symbol is X" conditions) is deferred to a future
-  round — wait to see if these 3 changes are enough first.
+- Do NOT modify `evaluator_v5.ipynb`.
+- Do NOT run the full project or full test suite locally (OOM risk
+  per AGENTS.md).
+- The 3× penalty weight raise is a heuristic; the OOS gain will
+  be validated by the user's next Colab run (post all tasks).
+- The ratio gate is a hard reject at pool admission; the soft
+  penalty applies to all rules (in evolution) regardless of
+  pool admission. They serve different purposes.
+- This is a small surgical fix (similar in scope to task-4 and
+  task-5). Keep the diff minimal.
+- The ratio gate and the absolute-pp gate are complementary;
+  do NOT remove the absolute-pp gate.
+- The `val_ret_safe = max(val_ret, 0.1)` guards against
+  division-by-near-zero when val_ret is tiny positive.

@@ -314,7 +314,7 @@ class TestFeasibilityGateFailures:
         """A rule passing all gates returns all-zero dict."""
         result = _feasibility_gate_failures(high_metrics, high_val_metrics)
         assert all(v == 0 for v in result.values())
-        assert len(result) == 10
+        assert len(result) == 11
 
     def test_val_none(self, high_metrics: dict) -> None:
         """When val_metrics is None, only val_required=1, others=0."""
@@ -330,7 +330,8 @@ class TestFeasibilityGateFailures:
         assert result["val_return_floor"] == 0
         assert result["val_pf_floor"] == 0
         assert result["train_val_gap"] == 0
-        assert len(result) == 10
+        assert result["overfit_ratio"] == 0
+        assert len(result) == 11
 
     def test_train_trade_floor(
         self, low_trade_metrics: dict, high_val_metrics: dict,
@@ -409,7 +410,9 @@ class TestFeasibilityGateFailures:
         assert result["val_pf_floor"] == 1
         # train_val_gap = train_ret - val_ret = -2 - (-3) = 1, max_gap=20, so 0
         assert result["train_val_gap"] == 0
-        assert len(result) == 10
+        # overfit_ratio = train_ret / max(val_ret, 0.1) = -2.0 / 0.1 = -20.0, not > 3.0
+        assert result["overfit_ratio"] == 0
+        assert len(result) == 11
 
     def test_f4_gate_uses_joint_min_when_joint_train_val_enabled(
         self, monkeypatch: pytest.MonkeyPatch,
@@ -446,4 +449,71 @@ class TestFeasibilityGateFailures:
         assert result["f4_concentration"] == 0, (
             f"Expected f4 gate to pass (joint min=0.2 ≤ 0.5), "
             f"but got f4_concentration={result['f4_concentration']}"
+        )
+
+    def test_overfit_ratio_fires_when_high_ratio(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When train_ret / max(val_ret, 0.1) > PHASE2_OVERFIT_RATIO_FLOOR,
+        overfit_ratio=1.
+        """
+        monkeypatch.setattr(_cfg, "PHASE2_OVERFIT_RATIO_FLOOR", 3.0)
+        train = {
+            "executed_trades": 100,
+            "total_return_pct": 15.0,
+            "profit_factor": 2.0,
+        }
+        val = {
+            "executed_trades": 50,
+            "total_return_pct": 4.0,  # 15/4 = 3.75 > 3.0
+            "profit_factor": 1.5,
+        }
+        result = _feasibility_gate_failures(train, val)
+        assert result["overfit_ratio"] == 1, (
+            f"Expected overfit_ratio=1 for 15%/4% (3.75×), "
+            f"got {result['overfit_ratio']}"
+        )
+
+    def test_overfit_ratio_zero_when_floor_disabled(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When PHASE2_OVERFIT_RATIO_FLOOR=0.0, the gate is disabled
+        and overfit_ratio stays 0 (pre-task-6 regression guard).
+        """
+        monkeypatch.setattr(_cfg, "PHASE2_OVERFIT_RATIO_FLOOR", 0.0)
+        train = {
+            "executed_trades": 100,
+            "total_return_pct": 15.0,
+            "profit_factor": 2.0,
+        }
+        val = {
+            "executed_trades": 50,
+            "total_return_pct": 4.0,
+            "profit_factor": 1.5,
+        }
+        result = _feasibility_gate_failures(train, val)
+        assert result["overfit_ratio"] == 0, (
+            f"Expected overfit_ratio=0 with floor=0.0, "
+            f"got {result['overfit_ratio']}"
+        )
+
+    def test_overfit_ratio_zero_when_moderate_ratio(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When ratio is below PHASE2_OVERFIT_RATIO_FLOOR, overfit_ratio=0."""
+        monkeypatch.setattr(_cfg, "PHASE2_OVERFIT_RATIO_FLOOR", 3.0)
+        train = {
+            "executed_trades": 100,
+            "total_return_pct": 15.0,
+            "profit_factor": 2.0,
+        }
+        val = {
+            "executed_trades": 50,
+            "total_return_pct": 10.0,  # 15/10 = 1.5 < 3.0
+            "profit_factor": 1.5,
+        }
+        result = _feasibility_gate_failures(train, val)
+        assert result["overfit_ratio"] == 0, (
+            f"Expected overfit_ratio=0 for 15%/10% (1.5×), "
+            f"got {result['overfit_ratio']}"
         )
