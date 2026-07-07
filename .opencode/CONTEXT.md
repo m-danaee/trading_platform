@@ -3,17 +3,20 @@
 Active objective: Fix the 13 CONFIRMED/SUSPECTED findings from the
 gpu_fuzzy_trader OOS audit (long 58.21%→49.92%→22.22%, short
 60.57%→50.47%→15.11% collapse on 2026-07-07 run).
-Current phase: task-5 reviews complete, awaiting user merge
-Current task: task-5 COMPLETE (spec APPROVED, code APPROVED)
-  - Implementer commit: 54a885a (single commit, no fix round needed)
-  - 156/156 tests pass (6 new f3-path + 150 pre-existing)
-  - 0 blocking/high code-review findings
+Current phase: task-6 implementer dispatching
+Current task: task-6 (DRAFTED; spec committed, implementer dispatching)
+  - task-1 MERGED (per-epoch window rotation; commit 44f8631)
+  - task-2 MERGED (4th NSGA objective; commit 703a777)
+  - task-3 MERGED (RB walk-forward; commit 1d9521d)
+  - task-4 MERGED (monthly gate on val; commit 588fd9f)
+  - task-5 MERGED (dead f3 branch; commit c3eea2d)
+  - task-6 in flight (hard overfit ratio gate + raise penalty weight)
 base_branch: main
-feature_branch: feature/task-5-dead-f3-branch
+feature_branch: feature/task-6-overfit-ratio-gate
 branch_policy: isolated
 execution_mode: checkpoint
-Pending blockers: user must merge feature/task-5-dead-f3-branch
-  to main before task-6 can dispatch.
-Next action: user merges the feature branch; then "continue" or
-"start task-6" dispatches the hard overfit ratio gate + raise
-penalty weight (audit fix #7).
+Pending blockers: none
+Next action: dispatch implementer subagent for task-6; await handoff
+JSON at .opencode/handoffs/task-6-implementer.json; then spec-review
+then code-review before user merges and proceeds to task-7
+(lower val PF floor to 1.05 during evolution).
