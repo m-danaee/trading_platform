@@ -197,7 +197,7 @@ def test_low_trade_drawdown_penalty():
         # population of 1 candidate with valid active count (no cond penalty)
         pop = _chromosome_with_min_active()[np.newaxis, :]
         dont_cares = np.ones(10, dtype=np.int32) * 5
-        objectives = np.full((1, 3), np.inf)
+        objectives = np.full((1, 4), np.inf)
         metrics_cache = [{}]
         
         class MockEngine:
@@ -233,7 +233,7 @@ def test_phase2_use_total_return_obj():
         
         pop = _chromosome_with_min_active()[np.newaxis, :]
         dont_cares = np.ones(10, dtype=np.int32) * 5
-        objectives = np.full((1, 3), np.inf)
+        objectives = np.full((1, 4), np.inf)
         metrics_cache = [{}]
         
         class MockEngine:
@@ -317,7 +317,7 @@ class TestEvalOptimizations:
                 ]
 
         pop = np.array([[0, 1], [0, 1], [2, 3]], dtype=np.int32)
-        objectives = np.full((3, 3), np.inf)
+        objectives = np.full((3, 4), np.inf)
         metrics_cache: list[dict] = [{}, {}, {}]
         dont_cares = np.array([2, 2], dtype=np.int32)
 
@@ -354,7 +354,7 @@ class TestEvalOptimizations:
         engine = CountingEngine()
         global_cache: dict[tuple[int, ...], dict] = {}
 
-        objectives_first = np.full((1, 3), np.inf)
+        objectives_first = np.full((1, 4), np.inf)
         metrics_first: list[dict] = [{}]
         _evaluate_population_indices(
             pop[:1],
@@ -367,7 +367,7 @@ class TestEvalOptimizations:
             global_metrics_cache=global_cache,
         )
 
-        objectives_second = np.full((1, 3), np.inf)
+        objectives_second = np.full((1, 4), np.inf)
         metrics_second: list[dict] = [{}]
         _evaluate_population_indices(
             pop[1:2],
@@ -400,7 +400,7 @@ class TestEvalOptimizations:
         dont_cares = np.array([2, 2], dtype=np.int32)
         engine = CountingEngine()
         global_cache: dict[tuple[int, ...], dict] = {}
-        objectives = np.full((1, 3), np.inf)
+        objectives = np.full((1, 4), np.inf)
         metrics_cache: list[dict] = [{}]
 
         _evaluate_population_indices(
@@ -892,8 +892,8 @@ class TestPhase2EvolutionStateRestartCount:
         from gpu_fuzzy_trader.evolution.evox_runner import Phase2EvolutionState
 
         state = Phase2EvolutionState(
-            population=np.zeros((1, 3), dtype=np.int32),
-            objectives=np.zeros((1, 3)),
+            population=np.zeros((1, 4), dtype=np.int32),
+            objectives=np.zeros((1, 4)),
             metrics_cache=[{}],
             pareto_archive=[],
             hall_of_fame={},
@@ -918,7 +918,7 @@ class TestResetPlateauRecoveryCounters:
 
         return Phase2EvolutionState(
             population=np.zeros((pop_size, 1), dtype=np.int32),
-            objectives=np.full((pop_size, 3), np.inf),
+            objectives=np.full((pop_size, 4), np.inf),
             metrics_cache=[{} for _ in range(pop_size)],
             pareto_archive=[],
             hall_of_fame={},
@@ -1054,7 +1054,7 @@ class TestRefreshObjectivesOnResume:
         """Create a state with non-inf objectives and non-empty metrics_cache."""
         return Phase2EvolutionState(
             population=np.zeros((pop_size, n_features), dtype=np.int32),
-            objectives=np.full((pop_size, 3), objectives_fill, dtype=np.float64),
+            objectives=np.full((pop_size, 4), objectives_fill, dtype=np.float64),
             metrics_cache=[
                 {"total_return_pct": 10.0, "sortino_ratio": 1.0}
                 for _ in range(pop_size)

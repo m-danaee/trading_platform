@@ -529,6 +529,20 @@ PHASE2_SUPPORT_PENALTY_WEIGHT_F3 = 0.6  # return / win-rate objective
 # profit_factor to reduce Pareto collapse (see Task 3).
 PHASE2_USE_TOTAL_RETURN_OBJ = True
 
+# --- Task 2: Return-concentration 4th NSGA objective -------------------------
+# PHASE2_F4_ENABLED — adds f4 = max_single_trade_pnl / max(sum_positive_trade_pnl, ε)
+#   as a 4th NSGA-III objective to penalise rules whose edge comes from a single
+#   outlier trade. True = 4-objective; False = 3-objective (regression guard).
+PHASE2_F4_ENABLED = True
+# PHASE2_F4_CONCENTRATION_FLOOR — rules with f4 > this floor are rejected at pool
+#   admission via the f4_concentration gate in _feasibility_gate_failures.
+PHASE2_F4_CONCENTRATION_FLOOR = 0.5
+# PHASE2_F4_EPSILON — small constant to avoid division by zero in the f4 ratio.
+PHASE2_F4_EPSILON = 1e-6
+# PHASE2_N_OBJECTIVES — number of NSGA-III objectives (3 or 4). Used to size
+#   objective arrays and reference vector calls in evox_runner.py.
+PHASE2_N_OBJECTIVES = 4
+
 # PHASE2_F3_OBJECTIVE — third objective: "profit_factor" (default when
 # PHASE2_USE_TOTAL_RETURN_OBJ=False),
 # "cv_fold_min" (min of CV fold returns), or "win_rate" (legacy).

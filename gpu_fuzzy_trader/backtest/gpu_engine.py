@@ -408,14 +408,15 @@ def _jax_simulate_equity_batch(
             _JXF(0.0),   # open_exposure
             jnp.int32(0),       # wins
             jnp.int32(0),       # losses
-            _JXF(0.0),   # gross_profit
-            _JXF(0.0),   # gross_loss
+            _JXF(0.0),   # gross_profit (sum_positive_trade_pnl)
+            _JXF(0.0),   # gross_loss (sum_negative_trade_pnl)
             jnp.int32(0),       # executed
             jnp.int32(0),       # skipped
             jnp.bool_(False),   # account_ruined
             _JXF(0.0),   # trade_return_sum
             jnp.int32(0),       # n_neg
             _JXF(0.0),   # neg_sq_sum
+            _JXF(0.0),   # max_single_trade_pnl (max positive net_pnl per entry)
             init_slot_release,
             init_slot_notional,
             init_slot_pnl,
@@ -426,6 +427,7 @@ def _jax_simulate_equity_batch(
              wins, losses, gross_profit, gross_loss,
              executed, skipped, account_ruined,
              trade_return_sum, n_neg, neg_sq_sum,
+             max_single_trade_pnl,
              slot_release, slot_notional, slot_pnl) = carry
 
             is_sig = x[0]
@@ -467,6 +469,12 @@ def _jax_simulate_equity_batch(
             fee = position_notional * fee_rate_f
             net_pnl = gross_pnl - fee
 
+            # Track max single-trade PnL (positive only for concentration metric)
+            new_max_single_trade_pnl = jnp.maximum(
+                max_single_trade_pnl,
+                jnp.where(can_trade & (net_pnl > 0.0), net_pnl, 0.0),
+            )
+
             # ----- 3. Entry: store PnL in slot (NOT added to equity yet) -----
             new_executed = executed + jnp.where(
                 can_trade, 1, 0).astype(jnp.int32)
@@ -504,6 +512,7 @@ def _jax_simulate_equity_batch(
                 new_wins, new_losses, new_gross_profit, new_gross_loss,
                 new_executed, new_skipped, new_ruined,
                 new_trade_return_sum, new_n_neg, new_neg_sq_sum,
+                new_max_single_trade_pnl,
                 slot_release, slot_notional, slot_pnl,
             )
             return new_carry, None
@@ -515,6 +524,7 @@ def _jax_simulate_equity_batch(
          wins, losses, gross_profit, gross_loss,
          executed, skipped, account_ruined,
          trade_return_sum, n_neg, neg_sq_sum,
+         max_single_trade_pnl,
          _slot_release, _slot_notional, slot_pnl) = final_carry
 
         # ----- 4. Final release: credit PnL from positions still open at scan end -----
@@ -572,6 +582,7 @@ def _jax_simulate_equity_batch(
             profit_factor, n_trades, equity,
             account_ruined.astype(_JXF),
             raw_signal_count, skipped.astype(_JXF),
+            gross_profit, gross_loss, max_single_trade_pnl,
         ])
 
     # vmap over the batch dimension
@@ -585,13 +596,16 @@ def _jax_simulate_equity_batch(
 # ---------------------------------------------------------------------------
 
 def _zero_signal_result_row(initial_capital: float) -> jnp.ndarray:
-    """10-element row matching _jax_simulate_equity_batch when no bars match."""
+    """13-element row matching _jax_simulate_equity_batch when no bars match."""
     return jnp.array([
         0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
         float(initial_capital),
         0.0,
         0.0,
         0.0,
+        0.0,  # gross_profit (sum_positive_trade_pnl)
+        0.0,  # gross_loss (sum_negative_trade_pnl)
+        0.0,  # max_single_trade_pnl
     ], dtype=_JXF)
 
 
@@ -607,7 +621,7 @@ def _fast_reject_result_rows(
     """
     host_dtype = np.float32 if bool(
         getattr(_cfg, "PHASE2_GPU_USE_FP32", True)) else np.float64
-    rows = np.zeros((len(counts), 10), dtype=host_dtype)
+    rows = np.zeros((len(counts), 13), dtype=host_dtype)
     rows[:, 6] = initial_capital
     rows[:, 8] = counts.astype(host_dtype, copy=False)
     infeasible = counts > 0
@@ -620,7 +634,7 @@ def _batch_metrics_from_array(
     results_np: np.ndarray,
     trade_direction: str,
 ) -> list[dict]:
-    """Convert (B, 10) GPU result rows to list[dict] with minimal Python overhead."""
+    """Convert (B, 13) GPU result rows to list[dict] with minimal Python overhead."""
     if results_np.ndim == 1:
         results_np = results_np[None, :]
     b_count = results_np.shape[0]
@@ -640,6 +654,9 @@ def _batch_metrics_from_array(
         "account_ruined": ruined,
         "raw_signal_count": results_np[:, 8],
         "skipped_min_notional_count": results_np[:, 9],
+        "sum_positive_trade_pnl": results_np[:, 10],
+        "sum_negative_trade_pnl": results_np[:, 11],
+        "max_single_trade_pnl": results_np[:, 12],
     }
 
     out: list[dict] = []
@@ -657,6 +674,9 @@ def _batch_metrics_from_array(
             "raw_signal_count": int(base["raw_signal_count"][b]),
             "skipped_min_notional_count": int(
                 base["skipped_min_notional_count"][b]),
+            "sum_positive_trade_pnl": float(base["sum_positive_trade_pnl"][b]),
+            "sum_negative_trade_pnl": float(base["sum_negative_trade_pnl"][b]),
+            "max_single_trade_pnl": float(base["max_single_trade_pnl"][b]),
         }
         out.append(entry)
     return out
@@ -993,7 +1013,7 @@ class GPUBacktestEngine:
                 scan_idx = np.flatnonzero(counts_np >= min_scan)
                 skip_idx = np.flatnonzero(counts_np < min_scan)
 
-                results_jax = jnp.zeros((chunk_b, 10), dtype=_JXF)
+                results_jax = jnp.zeros((chunk_b, 13), dtype=_JXF)
                 if skip_idx.size:
                     skip_rows = _fast_reject_result_rows(
                         counts_np[skip_idx], self.initial_capital)

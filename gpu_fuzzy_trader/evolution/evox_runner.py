@@ -35,6 +35,10 @@ from gpu_fuzzy_trader.phases.phase2_stage import (
 
 logger = logging.getLogger(__name__)
 
+# Number of NSGA-III objectives (3 or 4). Controlled by PHASE2_F4_ENABLED.
+# All np.full((pop_size, ...), inf) and _get_reference_vectors calls use this.
+N_OBJ = 4 if getattr(_cfg, "PHASE2_F4_ENABLED", False) else 3
+
 
 @dataclass
 class Phase2EvolutionState:
@@ -1115,7 +1119,7 @@ def _plateau_diversity_restart(
         )
         for idx, pos in enumerate(chosen):
             population[pos] = seeds[idx]
-            objectives[pos] = np.full(3, np.inf)
+            objectives[pos] = np.full(N_OBJ, np.inf)
             metrics_cache[pos] = {}
 
     return n_elite
@@ -1288,18 +1292,22 @@ def _pareto_diagnostics(
             cap_hits += 1
 
     if len(pareto_obj):
-        std_f1, std_f2, std_f3 = np.std(pareto_obj, axis=0)
+        std_all = np.std(pareto_obj, axis=0)
+        std_f1 = float(std_all[0]) if len(std_all) > 0 else 0.0
+        std_f2 = float(std_all[1]) if len(std_all) > 1 else 0.0
+        std_f3 = float(std_all[2]) if len(std_all) > 2 else 0.0
+        std_f4 = float(std_all[3]) if len(std_all) > 3 else 0.0
     else:
-        std_f1 = std_f2 = std_f3 = 0.0
+        std_f1 = std_f2 = std_f3 = std_f4 = 0.0
 
     corr_f1_f2 = corr_f1_f3 = corr_f2_f3 = 0.0
     if len(pareto_obj) >= 2:
         obj = np.asarray(pareto_obj, dtype=np.float64)
-        if np.std(obj[:, 0]) > 1e-12 and np.std(obj[:, 1]) > 1e-12:
+        if obj.shape[1] >= 2 and np.std(obj[:, 0]) > 1e-12 and np.std(obj[:, 1]) > 1e-12:
             corr_f1_f2 = float(np.corrcoef(obj[:, 0], obj[:, 1])[0, 1])
-        if np.std(obj[:, 0]) > 1e-12 and np.std(obj[:, 2]) > 1e-12:
+        if obj.shape[1] >= 3 and np.std(obj[:, 0]) > 1e-12 and np.std(obj[:, 2]) > 1e-12:
             corr_f1_f3 = float(np.corrcoef(obj[:, 0], obj[:, 2])[0, 1])
-        if np.std(obj[:, 1]) > 1e-12 and np.std(obj[:, 2]) > 1e-12:
+        if obj.shape[1] >= 3 and np.std(obj[:, 1]) > 1e-12 and np.std(obj[:, 2]) > 1e-12:
             corr_f2_f3 = float(np.corrcoef(obj[:, 1], obj[:, 2])[0, 1])
 
     chromosomes: list[np.ndarray] = []
@@ -1322,6 +1330,7 @@ def _pareto_diagnostics(
         "objective_std_f1": float(std_f1),
         "objective_std_f2": float(std_f2),
         "objective_std_f3": float(std_f3),
+        "objective_std_f4": float(std_f4) if N_OBJ >= 4 else 0.0,
         "objective_corr_f1_f2": corr_f1_f2,
         "objective_corr_f1_f3": corr_f1_f3,
         "objective_corr_f2_f3": corr_f2_f3,
@@ -1968,7 +1977,7 @@ def _run_nsga2_fallback(
         stratum_fractions=stratum_fractions,
         feature_probs=feature_probs,
     )
-    objectives = np.full((pop_size, 3), np.inf)
+    objectives = np.full((pop_size, N_OBJ), np.inf)
     metrics_cache: list[dict] = [{} for _ in range(pop_size)]
     pareto_archive: list[np.ndarray] = []
     hall_of_fame: dict[tuple[int, ...], np.ndarray] = {}
@@ -2228,6 +2237,7 @@ def _run_nsga2_fallback(
                 "train_trade_floor", "train_return_floor", "train_pf_floor",
                 "val_required", "val_ret_positive", "val_trade_floor",
                 "val_return_floor", "val_pf_floor", "train_val_gap",
+                "f4_concentration",
             ]}
             for i in range(len(metrics_cache)):
                 train_m = metrics_cache[i]
@@ -2419,7 +2429,7 @@ def _run_nsga2_fallback(
             mutation_rate=mutation_rate,
             weighted_activate_prob=weighted_activate_prob,
         )
-        off_obj = np.full((pop_size, 3), np.inf)
+        off_obj = np.full((pop_size, N_OBJ), np.inf)
         off_metrics: list[dict] = [{} for _ in range(pop_size)]
         # Batched offspring eval: a single simulate_rule_batch over all
         # pop_size offspring (vs pop_size batch=1 dispatches). Reuses the same
@@ -2531,14 +2541,14 @@ def _run_nsga3(
             stratum_fractions=stratum_fractions,
             feature_probs=feature_probs,
         )
-        objectives = np.full((pop_size, 3), np.inf)
+        objectives = np.full((pop_size, N_OBJ), np.inf)
         metrics_cache: list[dict] = [{} for _ in range(pop_size)]
         pareto_archive: list[np.ndarray] = []
         hall_of_fame: dict[tuple[int, ...], np.ndarray] = {}
         deployable_archive: dict[tuple[int, ...], dict] = {}
         global_metrics_cache: dict[tuple[int, ...], dict] = {}
         history: list[dict] = []
-        ref_vec = _get_reference_vectors(pop_size, 3, rng)
+        ref_vec = _get_reference_vectors(pop_size, N_OBJ, rng)
         plateau_best_progress = -np.inf
         plateau_streak = 0
         mutation_rate = _stage_mutation_rate(stage_params)
@@ -2563,7 +2573,7 @@ def _run_nsga3(
         history = list(state.history)
         ref_vec = state.ref_vec
         if ref_vec is None:
-            ref_vec = _get_reference_vectors(pop_size, 3, rng)
+            ref_vec = _get_reference_vectors(pop_size, N_OBJ, rng)
         plateau_best_progress = float(state.plateau_best_progress)
         plateau_streak = int(state.plateau_streak)
         mutation_rate = (
@@ -2599,12 +2609,12 @@ def _run_nsga3(
             )
             for i in range(migrant_slots):
                 population[i] = np.asarray(seed_chromosomes[i], dtype=np.int32).copy()
-                objectives[i] = np.full(3, np.inf)
+                objectives[i] = np.full(N_OBJ, np.inf)
                 metrics_cache[i] = {}
 
         # --- Task 2: Refresh objectives when resuming with potentially stale context ---
         if refresh_objectives_on_resume and state is not None:
-            objectives[:] = np.full((pop_size, 3), np.inf)
+            objectives[:] = np.full((pop_size, N_OBJ), np.inf)
             metrics_cache = [{} for _ in range(pop_size)]
             if _cfg.PHASE2_EVAL_GLOBAL_CACHE and global_metrics_cache is not None:
                 global_metrics_cache.clear()
@@ -2910,7 +2920,7 @@ def _run_nsga3(
                 mutation_rate=mutation_rate,
                 weighted_activate_prob=weighted_activate_prob,
             )
-            off_obj = np.full((pop_size, 3), np.inf)
+            off_obj = np.full((pop_size, N_OBJ), np.inf)
             off_metrics: list[dict] = [{} for _ in range(pop_size)]
             # Batched offspring eval: a single simulate_rule_batch over all
             # pop_size offspring (vs pop_size batch=1 dispatches). Reuses the
@@ -2977,6 +2987,7 @@ def _run_nsga3(
                 "train_trade_floor", "train_return_floor", "train_pf_floor",
                 "val_required", "val_ret_positive", "val_trade_floor",
                 "val_return_floor", "val_pf_floor", "train_val_gap",
+                "f4_concentration",
             ]}
             for i in range(len(metrics_cache)):
                 train_m = metrics_cache[i]

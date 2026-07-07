@@ -956,7 +956,32 @@ def compute_phase2_objectives_from_metrics(
             metrics, val_metrics, joint=joint_ret,
         )
 
-    objectives = np.array([f1, f2, f3], dtype=np.float64)
+    # f4: return-concentration ratio (Task 2)
+    #   f4 = max_single_trade_pnl / max(sum_positive_trade_pnl, ε)
+    #   High f4 → rule edge depends on one outlier trade (bad).
+    if getattr(_cfg, "PHASE2_F4_ENABLED", False):
+        max_tr = float(metrics.get("max_single_trade_pnl", 0.0))
+        sum_pos = float(metrics.get("sum_positive_trade_pnl", 0.0))
+        _f4_eps = float(getattr(_cfg, "PHASE2_F4_EPSILON", 1e-6))
+        f4 = max_tr / max(sum_pos, _f4_eps)
+
+        if val_metrics is not None and bool(getattr(_cfg, "PHASE2_JOINT_TRAIN_VAL", False)):
+            max_tr_v = float(val_metrics.get("max_single_trade_pnl", 0.0))
+            sum_pos_v = float(val_metrics.get("sum_positive_trade_pnl", 0.0))
+            f4_v = max_tr_v / max(sum_pos_v, _f4_eps)
+            f4 = min(f4, f4_v)
+
+        if executed < trade_floor:
+            f4 = 0.0
+    else:
+        f4 = 0.0
+
+    metrics["f4_concentration"] = f4
+
+    if bool(getattr(_cfg, "PHASE2_F4_ENABLED", True)):
+        objectives = np.array([f1, f2, f3, f4], dtype=np.float64)
+    else:
+        objectives = np.array([f1, f2, f3], dtype=np.float64)
     return objectives, metrics
 
 

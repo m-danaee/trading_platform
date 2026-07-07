@@ -314,7 +314,7 @@ class TestFeasibilityGateFailures:
         """A rule passing all gates returns all-zero dict."""
         result = _feasibility_gate_failures(high_metrics, high_val_metrics)
         assert all(v == 0 for v in result.values())
-        assert len(result) == 9
+        assert len(result) == 10
 
     def test_val_none(self, high_metrics: dict) -> None:
         """When val_metrics is None, only val_required=1, others=0."""
@@ -330,7 +330,7 @@ class TestFeasibilityGateFailures:
         assert result["val_return_floor"] == 0
         assert result["val_pf_floor"] == 0
         assert result["train_val_gap"] == 0
-        assert len(result) == 9
+        assert len(result) == 10
 
     def test_train_trade_floor(
         self, low_trade_metrics: dict, high_val_metrics: dict,
@@ -409,4 +409,4 @@ class TestFeasibilityGateFailures:
         assert result["val_pf_floor"] == 1
         # train_val_gap = train_ret - val_ret = -2 - (-3) = 1, max_gap=20, so 0
         assert result["train_val_gap"] == 0
-        assert len(result) == 9
+        assert len(result) == 10
