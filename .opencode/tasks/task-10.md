@@ -1,178 +1,143 @@
-# Task 10 — Fix empty rules + Date-based equity plot
+# Task 10: Gate Cache Refresh on Per-Epoch Window Rotation
+
+## Task ID
+`task-10` (tenth of 12 tasks in the 2026-07-07 audit fix plan)
+
+## Title
+Gate Cache Refresh on Per-Epoch Window Rotation
 
 ## Goal
+Fix audit finding #8. The `refresh_objectives_on_resume` flag
+(evolution/evox_runner.py:2620) wipes `objectives`,
+`metrics_cache`, and `global_metrics_cache` at every epoch
+resume. This is CORRECT when the train window changes between
+epochs (per-epoch rotation, default after task-1) — the cache
+IS stale. But it's WASTEFUL when the window is fixed
+(`PHASE2_PER_EPOCH_WINDOW_ROTATION=False`, legacy mode) — the
+cache is valid, and the wipe forces re-evaluation of the entire
+population, dropping the cache hit rate to 0-7% in the log.
 
-Restore non-empty `outputs/long.json` and `outputs/short.json` (≥ 2 rules
-each, evaluator-valid) and switch equity-curve plots from `Trade #` to
-`Date`. This unblocks the hidden-test pipeline (currently produces 0
-rules → 0 OOS results).
+Gate the refresh on `PHASE2_PER_EPOCH_WINDOW_ROTATION`: refresh
+when rotation is on, skip when rotation is off.
 
-## Background
+## Audit Citation
+- Confirmed by static inspection:
+  - `evolution/evox_runner.py:2620-2628` — the refresh block
+  - `phases/phase2_rule_pool.py:3261` — the call site that sets
+    `refresh_objectives_on_resume = not first_epoch` unconditionally
+  - `config.py:380-390` — `PHASE2_PER_EPOCH_WINDOW_ROTATION = True`
+    (default after task-1)
+- Run log evidence (2026-07-07): cache_hit_rate=0.00 at most gens,
+  0.06 at best. The cache is being cleared before it can do useful
+  work.
 
-The current run (Jun 16) produced:
+## Target Files
+- `gpu_fuzzy_trader/phases/phase2_rule_pool.py`
+  - Line 3261: gate `refresh_objectives_on_resume` on
+    `PHASE2_PER_EPOCH_WINDOW_ROTATION`. If rotation is ON (default),
+    keep the current behavior (`refresh = not first_epoch`). If
+    rotation is OFF (legacy), set `refresh = False` (skip the
+    wipe).
+  - Update the comment block to reflect the gating.
+- `tests/unit/test_phase2_rule_pool.py`
+  - Add a test asserting that when
+    `PHASE2_PER_EPOCH_WINDOW_ROTATION=True` (default),
+    `refresh_objectives_on_resume` is `not first_epoch` (current
+    behavior, regression guard).
+  - Add a test asserting that when
+    `PHASE2_PER_EPOCH_WINDOW_ROTATION=False`, the refresh is
+    skipped even on resumed epochs.
 
-- Phase 1: 20 features per direction ✓
-- Phase 2 long: pool=4, short: pool=9 ✓
-- Phase 3: 0 rules for any symbol (per-symbol threshold too strict)
-- Phase 3 team fallback: failed `_is_positive_good` gate
-- Phase 4: skipped
-- Phase 5: "rules_set must have ≥ 2 rules" — skipped
-- Result: empty `{direction}.json`, empty `evaluator_clean/`, no OOS
-  report
+## Current Behavior
+- `phases/phase2_rule_pool.py:3261`:
+  ```python
+  refresh_objectives_on_resume = not first_epoch
+  ```
+  This sets the refresh to True on every resumed epoch regardless
+  of whether the window changes. When `PHASE2_PER_EPOCH_WINDOW_ROTATION=True`
+  (the default after task-1), the window DOES change (resampled
+  per epoch), so refresh IS correct. When `PHASE2_PER_EPOCH_WINDOW_ROTATION=False`
+  (legacy fixed-window mode), the window does NOT change, so the
+  refresh is wasteful.
+- The actual refresh logic is in `evolution/evox_runner.py:2620-2628`:
+  ```python
+  if refresh_objectives_on_resume and state is not None:
+      objectives[:] = np.full((pop_size, N_OBJ), np.inf)
+      metrics_cache = [{} for _ in range(pop_size)]
+      if _cfg.PHASE2_EVAL_GLOBAL_CACHE and global_metrics_cache is not None:
+          global_metrics_cache.clear()
+      logger.info(...)
+  ```
+  This is the engine-side wipe. It runs whenever the caller passes
+  `refresh_objectives_on_resume=True`.
 
-User also asked for `Date` on the x-axis of `*_equity.png` to make
-monthly-window reasoning easier.
+## Scope
+1. **Gate the refresh on rotation** (phase2_rule_pool.py:3261):
+   - Replace:
+     ```python
+     refresh_objectives_on_resume = not first_epoch
+     ```
+   - With:
+     ```python
+     # → fixes audit finding #8: only refresh when the window changes
+     # (rotation on, default). If rotation is off, the cache is valid
+     # and the wipe is wasteful (cache_hit_rate drops to 0).
+     refresh_objectives_on_resume = (
+         not first_epoch
+         and bool(getattr(_cfg, "PHASE2_PER_EPOCH_WINDOW_ROTATION", True))
+     )
+     ```
+2. **Update the comment** at line 3257-3260:
+   - Replace the "Conservative: always refresh when resuming..."
+   comment with a more accurate one explaining the gating.
+3. **Add audit-finding linkage**:
+   - Add `# → fixes audit finding #8 (cache refresh was wasteful
+     in fixed-window mode; now gated on rotation flag)` in the
+     comment block.
+4. **Do NOT change**:
+   - The actual refresh logic in `evox_runner.py:2620` (it remains
+     a no-op when `refresh_objectives_on_resume=False`).
+   - The `PHASE2_PER_EPOCH_WINDOW_ROTATION` config flag (set by
+     task-1).
+   - Any other file outside `phases/phase2_rule_pool.py` and the
+     test file.
 
-## Sub-tasks
+## Acceptance Criteria
+1. When `PHASE2_PER_EPOCH_WINDOW_ROTATION=True` (default), behavior
+   matches pre-task-10 exactly (`refresh = not first_epoch`,
+   cache cleared on resumed epochs, log shows "refresh_objectives_on_resume enabled").
+2. When `PHASE2_PER_EPOCH_WINDOW_ROTATION=False` (legacy), the
+   refresh is SKIPPED on resumed epochs (cache NOT cleared,
+   log does NOT show "refresh_objectives_on_resume enabled").
+3. The log line `cache_hit_rate` is expected to rise to ≥ 0.4 in
+   mid-gen when rotation is OFF (verifiable in the test by
+   asserting the refresh flag is False).
+4. The default config behavior is bit-identical to pre-task-10
+   (since `PHASE2_PER_EPOCH_WINDOW_ROTATION=True` is the default).
+5. All existing tests pass: `test_phase2_rule_pool.py`,
+   `test_phase2_window_rotation.py`, `test_phase2_island_scheduler.py`,
+   `test_phase2_monthly_admission.py`, `test_evox_runner.py`, etc.
 
-### 10.1 — Lower per-symbol thresholds
+## Verification
+Run only related unit tests with `PYTEST_LOW_MEMORY=1` and `.venv`:
 
-In `gpu_fuzzy_trader/config.py`:
-- `PHASE3_PER_SYMBOL_MIN_TRADES`: `50` → `15`
-- `PHASE3_PER_SYMBOL_MIN_RETURN`: `3.0` → `1.5`
+```bash
+PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_phase2_rule_pool.py -q
+PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_phase2_window_rotation.py -q
+PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_phase2_island_scheduler.py -q
+PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_phase2_monthly_admission.py -q
+PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_evox_runner.py -q
+```
 
-Both currently unreachable given a 4–9 rule pool. The friend project
-uses similar floors (`SYMBOL_SPECIALIZATION_MIN_TRADES=20`,
-`AUTO_SEARCH_SCORE_MIN_TRADES=60` for tighter cases).
-
-### 10.2 — Add `_try_lean_fallback` to Phase 3
-
-In `gpu_fuzzy_trader/phases/phase3_rule_set.py`:
-
-When per-symbol selection fails AND the strict team fallback fails,
-add a third path: `_try_lean_fallback` that picks the **top-2 pool
-rules by `min(train, val) return`** without requiring PF or evaluator
-health on the team (those gates were calibrated for the friend
-project's 140-rule pool, not ours). The Phase 4 risk optimization
-and evaluator parity checks in Phase 5 will filter out weak rules.
-
-Document the path clearly so future readers understand why it's
-deliberate.
-
-The new path should:
-- Pick the top 2 pool rules by `_pool_rule_val_score` (already
-  exists; `min(train_ret, val_ret)`).
-- Skip the positive-good gate, the PF floor, and the evaluator
-  health check.
-- Apply only the `val_floor` (from `effective_phase3_val_return_floor_pct`)
-  as a sanity check.
-- Log a WARNING explaining the relaxation.
-- Return the 2-rule list (or `None` if `min(train, val) <= val_floor`).
-
-The fallback should be tried in this order:
-1. Per-symbol greedy (current)
-2. `_try_global_pool_fallback` (current, strict)
-3. `_try_lean_fallback` (new, relaxed) — only if (1) and (2) both fail
-
-### 10.3 — Date-based x-axis in `plot_equity_curve`
-
-In `gpu_fuzzy_trader/reporting/reporter.py`, update
-`Reporter.plot_equity_curve` (line 494):
-- Use `trade_log["Entry_Time"]` for x-axis (already in the log).
-- Sort the trade log by `Entry_Time` first (trades can interleave
-  across symbols).
-- Set `ax.set_xlabel("Date")` and use matplotlib date formatter
-  (`mdates.DateFormatter("%Y-%m-%d")`).
-- Fall back to `range(len(equity))` + `"Trade #"` if `Entry_Time`
-  is missing or all-NaN (so existing test fixtures don't break).
-- Keep the initial-capital reference line and the title format.
-
-### 10.4 — Document `outputs/evaluator_clean/`
-
-Add `outputs/evaluator_clean/README.md` (≈ 30 lines) explaining:
-- What the folder is (defensive stripped copy of the strategy files)
-- When it's written (Phase 3 / 4 / 5 via `_maybe_write_evaluator_clean`)
-- Why it exists (a stricter evaluator might reject extra keys like
-  `risk_optimized`, `selection_accepted`, `selection_rejection_reason`)
-- How to interpret the `rules_set: []` case (Phase 3 rejected all
-  rules — see the `selection_rejection_reason` in the metadata JSON)
-
-### 10.5 — Add tests
-
-Add 2 new test files (per AGENTS.md: small, fast tests only — DO NOT
-run the full test suite):
-- `tests/unit/test_reporter_equity_date_axis.py` — verify date
-  formatting is applied when `Entry_Time` is present, and falls
-  back to "Trade #" when missing.
-- `tests/unit/test_phase3_lean_fallback.py` — verify the new lean
-  fallback returns 2 rules when called and `None` when the team
-  return is below the floor.
-
-Use `pytest` patterns already in the test suite.
-
-## Acceptance criteria
-
-1. `outputs/long.json` and `outputs/short.json` each have
-   `len(rules_set) >= 2` after a re-run on the user's data.
-2. Each rule in the final `rules_set` still passes either:
-   - `_is_positive_good` (per-symbol or team fallback path), OR
-   - The new lean fallback (deliberate relaxation, documented).
-3. `outputs/evaluator_clean/{long,short}_evaluator_clean.json` are
-   both present after a run, with the strict `{direction, rules_set}`
-   shape.
-4. `outputs/reports/{train,validation,test}_{long,short}_equity.png`
-   show `Date` on the x-axis (or `Trade #` for the no-Entry_Time
-   fallback path, e.g. test fixtures).
-5. `outputs/evaluator_clean/README.md` exists and documents the
-   folder.
-6. New unit tests pass: `pytest tests/unit/test_reporter_equity_date_axis.py
-   tests/unit/test_phase3_lean_fallback.py -v`.
-7. **No new files outside the agreed scope** — no junk, no stale
-   code paths, no orphaned imports (per AGENTS.md: "remove additional
-   wasted parts from old implementation"). If you find any unused
-   import or dead code, remove it.
-8. All commits are on the assigned feature branch, never on `main`.
-
-## Target files
-
-| File | Change |
-|---|---|
-| `gpu_fuzzy_trader/config.py` | Lower 2 per-symbol thresholds |
-| `gpu_fuzzy_trader/phases/phase3_rule_set.py` | Add `_try_lean_fallback` + wire into `Rule_Set_Selector.run` |
-| `gpu_fuzzy_trader/reporting/reporter.py` | Date-based x-axis |
-| `outputs/evaluator_clean/README.md` | **new** — documentation |
-| `tests/unit/test_reporter_equity_date_axis.py` | **new** — test |
-| `tests/unit/test_phase3_lean_fallback.py` | **new** — test |
-| `.opencode/CONTEXT.md` | Update task ledger (last row of task-10 → DONE) |
-| `.opencode/handoffs/task-10-implementer.json` | **new** — handoff JSON |
-
-## Verification steps
-
-1. `python -c "import ast; ast.parse(open('gpu_fuzzy_trader/config.py').read())"`
-2. `python -c "from gpu_fuzzy_trader.phases.phase3_rule_set import _try_lean_fallback; print('OK')"`
-3. `python -c "from gpu_fuzzy_trader.reporting.reporter import Reporter; print('OK')"`
-4. `python -m pytest tests/unit/test_reporter_equity_date_axis.py tests/unit/test_phase3_lean_fallback.py -v`
-5. `git diff main...HEAD --stat` — confirm the diff is scoped to task 10
-
-## Constraints (per AGENTS.md)
-
-- Use `.venv` for any Python commands.
-- Do NOT run the full test suite (user has RAM limits).
+## Notes
 - Do NOT modify `evaluator_v5.ipynb`.
-- Do NOT modify the working `outputs/` (they'll be regenerated on
-  the user's next run).
-- Keep the venv workflow.
-
-## Risks
-
-- **Lean fallback bypasses the positive-good gate**. This is
-  deliberate (the gate was too strict for our 4-rule pool) but
-  means a 2-rule team with weak PF could leak through.
-  **Mitigation**: Phase 4 risk optimization will not optimize risk
-  for a 0-PF team (it'll keep the Phase 2 defaults), and Phase 5's
-  evaluator will score it as-is.
-- **Date formatting** may not be the user's exact format.
-  **Mitigation**: the implementation uses `YYYY-MM-DD` and falls
-  back to `Trade #` if the trade log has no `Entry_Time`.
-- **Lower per-symbol thresholds** may admit noisy rules.
-  **Mitigation**: the Phase 3 monthly penalty + Phase 4 risk grid
-  search will still down-weight bad months.
-
-## Out of scope (deferred)
-
-- Changing `SPLIT_MODE` to `purged_rolling_cv` (would re-run Phase 2
-  for ~2 hours, user already approved `holdout_70_30` for Task 5).
-- Improving the Phase 2 pool size (Task 5 already raised the cap
-  to 140; the current 4-rule pool is from a different filter path).
-- Re-tuning `PHASE3_MAX_TRAIN_VAL_GAP_PCT` (separate concern; will
-  be addressed if test still shows overfit after this fix).
+- Do NOT run the full project or full test suite locally (OOM risk
+  per AGENTS.md).
+- This is a small surgical fix (~5 lines of source code, ~30
+  lines in 1 test file). Keep the diff minimal.
+- The fix is a one-line behavioral change; the default behavior
+  is preserved (rotation on → refresh on).
+- This task is the dependency child of task-1 (per-epoch
+  window rotation). With task-1 merged, the refresh is correct
+  by default. With task-1 disabled (legacy mode), the refresh
+  is now correctly disabled too.
