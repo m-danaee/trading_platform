@@ -198,6 +198,16 @@ def _passes_pool_admission_impl(
         if f4_val > f4_floor:
             return False
 
+    # Overfit ratio gate (Task 6): hard-reject when train_return / val_return
+    # exceeds PHASE2_OVERFIT_RATIO_FLOOR. Complements the absolute-pp gate above:
+    # catches high-ratio but low-absolute-gap cases (e.g., train=15%/val=4%).
+    # → fixes audit finding #7 (absolute-pp gate missed high-ratio cases)
+    max_ratio = float(getattr(_cfg, "PHASE2_OVERFIT_RATIO_FLOOR", 3.0))
+    if max_ratio > 0.0:
+        val_ret_safe = max(val_ret, 0.1)  # avoid div-by-near-zero
+        if train_ret / val_ret_safe > max_ratio:
+            return False
+
     # Optional stricter positive-good gate (default OFF; enabled in Task 5).
     if bool(getattr(_cfg, "PHASE2_STRICT_POSITIVE_GOOD", False)):
         # Lazy import to avoid circular dependency (phase3_rule_set is a sibling).
@@ -231,14 +241,14 @@ def _feasibility_gate_failures(
     *,
     n_valid_rows: int | None = None,
 ) -> dict[str, int]:
-    """Return per-gate failure flags for the 9 pool-admission gates.
+    """Return per-gate failure flags for the 10 pool-admission gates.
 
     Each value is 1 if the rule FAILS that gate, 0 if it passes. A rule
     that passes all gates returns all zeros. A rule that fails multiple
     gates has multiple 1s (gates are AND-combined, but a rule can fail
     several simultaneously).
 
-    The 10 gates mirror ``_passes_pool_admission_impl`` exactly:
+    The 11 gates mirror ``_passes_pool_admission_impl`` exactly:
     - train_trade_floor    : train_trades < train_floor
     - train_return_floor   : train_ret <= train_ret_min
     - train_pf_floor       : train_pf < pf_floor
@@ -249,6 +259,7 @@ def _feasibility_gate_failures(
     - val_pf_floor         : val_pf < pf_floor
     - train_val_gap        : train_ret - val_ret > max_gap
     - f4_concentration     : PHASE2_F4_ENABLED and f4 > PHASE2_F4_CONCENTRATION_FLOOR
+    - overfit_ratio        : PHASE2_OVERFIT_RATIO_FLOOR > 0 and train_ret / max(val_ret, 0.1) > floor
 
     Args:
         train_metrics: Train dict with executed_trades, total_return_pct,
@@ -273,6 +284,7 @@ def _feasibility_gate_failures(
         "val_pf_floor": 0,
         "train_val_gap": 0,
         "f4_concentration": 0,
+        "overfit_ratio": 0,
     }
 
     train_trades = int(train_metrics.get("executed_trades", 0))
@@ -327,6 +339,15 @@ def _feasibility_gate_failures(
         f4_floor = float(getattr(_cfg, "PHASE2_F4_CONCENTRATION_FLOOR", 0.5))
         if f4_val > f4_floor:
             failures["f4_concentration"] = 1
+
+    # Overfit ratio gate (Task 6): hard-reject when train_return / val_return
+    # exceeds PHASE2_OVERFIT_RATIO_FLOOR.
+    # → fixes audit finding #7 (absolute-pp gate missed high-ratio cases)
+    max_ratio = float(getattr(_cfg, "PHASE2_OVERFIT_RATIO_FLOOR", 3.0))
+    if max_ratio > 0.0:
+        val_ret_safe = max(val_ret, 0.1)  # avoid div-by-near-zero
+        if train_ret / val_ret_safe > max_ratio:
+            failures["overfit_ratio"] = 1
 
     return failures
 

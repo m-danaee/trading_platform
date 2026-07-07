@@ -638,7 +638,10 @@ PHASE2_OVERFIT_WARNING_RATIO = 3.0
 
 # PHASE2_OVERFIT_GAP_PENALTY_WEIGHT — fitness penalty when train_return - val_return
 #   exceeds PHASE2_OVERFIT_GAP_PCT_THRESHOLD (applied to f1 and f3).
-PHASE2_OVERFIT_GAP_PENALTY_WEIGHT = 5.0
+#   Default 15.0 (raised from 5.0 in task-6) so the soft penalty is comparable to the
+#   return signal — kills rules where train>>val even before pool admission.
+# → fixes audit finding #7
+PHASE2_OVERFIT_GAP_PENALTY_WEIGHT = 15.0
 
 # PHASE2_OVERFIT_GAP_PCT_THRESHOLD — train/val return gap (in percentage points)
 #   above which the overfit-gap penalty starts accumulating. Subtraction-based,
@@ -646,6 +649,16 @@ PHASE2_OVERFIT_GAP_PENALTY_WEIGHT = 5.0
 #   Default 8.0pp is below PHASE2_MAX_TRAIN_VAL_GAP_PCT=16.0 so the soft penalty
 #   starts ramping before the hard gate rejects outright.
 PHASE2_OVERFIT_GAP_PCT_THRESHOLD = 8.0
+
+# PHASE2_OVERFIT_RATIO_FLOOR — hard reject pool admission when train_return /
+#   max(val_return, 0.1) exceeds this ratio. Catches cases where the absolute-pp
+#   gate (PHASE2_MAX_TRAIN_VAL_GAP_PCT) misses high-ratio / low-absolute-gap
+#   situations, e.g., train=15% / val=4% (gap=11pp < 16pp, ratio=3.75×).
+#   Higher → more lenient; only extreme ratio mismatches rejected.
+#   Lower  → stricter; smaller ratios also trigger.
+#   0.0 or float('inf') → disables the ratio gate (regression guard).
+# → fixes audit finding #7 (absolute-pp gate missed high-ratio cases)
+PHASE2_OVERFIT_RATIO_FLOOR = 3.0
 
 # PHASE2_OBJECTIVE_CORR_WARN_THRESHOLD — log a debug warning when Pareto-front
 #   objective pairwise correlation exceeds this (Pareto collapse risk).

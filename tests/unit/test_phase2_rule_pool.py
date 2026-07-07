@@ -3526,3 +3526,127 @@ def test_derive_island_seed_different_base_differs():
         f"Different base seeds should give different derived seeds, "
         f"got {s1} == {s2}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Overfit ratio gate tests (Task 6)
+# ---------------------------------------------------------------------------
+
+class TestPoolAdmissionOverfitRatioGate:
+    """Tests for the hard overfit ratio gate in pool admission.
+
+    The ratio gate rejects rules where train_return / max(val_return, 0.1)
+    exceeds PHASE2_OVERFIT_RATIO_FLOOR (default 3.0). It catches cases the
+    absolute-pp gate misses (e.g., train=15%/val=4%, gap=11pp < 16pp).
+    """
+
+    def test_rejects_high_ratio_low_abs_gap(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """train=15%/val=4% (3.75× ratio, gap=11pp < 16pp) is REJECTED
+        by the ratio gate even though absolute gap passes.
+        """
+        from gpu_fuzzy_trader.phases.phase2_support import (
+            passes_pool_admission_gate,
+        )
+
+        monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", True)
+        monkeypatch.setattr(_cfg, "PHASE2_STRICT_POSITIVE_GOOD", False)
+        monkeypatch.setattr(_cfg, "PHASE2_MAX_TRAIN_VAL_GAP_PCT", 16.0)
+        monkeypatch.setattr(_cfg, "PHASE2_OVERFIT_RATIO_FLOOR", 3.0)
+
+        train = {
+            "executed_trades": 100,
+            "total_return_pct": 15.0,
+            "profit_factor": 2.0,
+        }
+        val = {
+            "executed_trades": 50,
+            "total_return_pct": 4.0,
+            "profit_factor": 1.5,
+        }
+        assert passes_pool_admission_gate(train, val) is False, (
+            "Expected train=15%/val=4% (3.75×) to be REJECTED at pool admission"
+        )
+
+    def test_admits_low_ratio(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """train=15%/val=10% (1.5× ratio) is ADMITTED."""
+        from gpu_fuzzy_trader.phases.phase2_support import (
+            passes_pool_admission_gate,
+        )
+
+        monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", True)
+        monkeypatch.setattr(_cfg, "PHASE2_STRICT_POSITIVE_GOOD", False)
+        monkeypatch.setattr(_cfg, "PHASE2_OVERFIT_RATIO_FLOOR", 3.0)
+
+        train = {
+            "executed_trades": 100,
+            "total_return_pct": 15.0,
+            "profit_factor": 2.0,
+        }
+        val = {
+            "executed_trades": 50,
+            "total_return_pct": 10.0,
+            "profit_factor": 1.5,
+        }
+        assert passes_pool_admission_gate(train, val) is True, (
+            "Expected train=15%/val=10% (1.5×) to be ADMITTED"
+        )
+
+    def test_admits_moderate_ratio(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """train=20%/val=8% (2.5× ratio) is ADMITTED (under 3.0 default)."""
+        from gpu_fuzzy_trader.phases.phase2_support import (
+            passes_pool_admission_gate,
+        )
+
+        monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", True)
+        monkeypatch.setattr(_cfg, "PHASE2_STRICT_POSITIVE_GOOD", False)
+        monkeypatch.setattr(_cfg, "PHASE2_OVERFIT_RATIO_FLOOR", 3.0)
+
+        train = {
+            "executed_trades": 100,
+            "total_return_pct": 20.0,
+            "profit_factor": 2.0,
+        }
+        val = {
+            "executed_trades": 50,
+            "total_return_pct": 8.0,
+            "profit_factor": 1.5,
+        }
+        assert passes_pool_admission_gate(train, val) is True, (
+            "Expected train=20%/val=8% (2.5×) to be ADMITTED"
+        )
+
+    def test_floor_zero_preserves_pre_task6_behavior(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """With PHASE2_OVERFIT_RATIO_FLOOR=0.0, the ratio gate is disabled
+        and the high-ratio but low-abs-gap rule is ADMITTED (regression guard).
+        """
+        from gpu_fuzzy_trader.phases.phase2_support import (
+            passes_pool_admission_gate,
+        )
+
+        monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", True)
+        monkeypatch.setattr(_cfg, "PHASE2_STRICT_POSITIVE_GOOD", False)
+        monkeypatch.setattr(_cfg, "PHASE2_MAX_TRAIN_VAL_GAP_PCT", 16.0)
+        monkeypatch.setattr(_cfg, "PHASE2_OVERFIT_RATIO_FLOOR", 0.0)
+
+        train = {
+            "executed_trades": 100,
+            "total_return_pct": 15.0,
+            "profit_factor": 2.0,
+        }
+        val = {
+            "executed_trades": 50,
+            "total_return_pct": 4.0,
+            "profit_factor": 1.5,
+        }
+        assert passes_pool_admission_gate(train, val) is True, (
+            "Expected train=15%/val=4% (3.75×) to be ADMITTED when "
+            "PHASE2_OVERFIT_RATIO_FLOOR=0.0 (pre-task-6 regression guard)"
+        )
