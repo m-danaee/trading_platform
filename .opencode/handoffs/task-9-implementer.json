@@ -1,34 +1,36 @@
 {
   "task_id": "task-9",
-  "title": "Add evaluator_clean writer — fix phase 3/4/5 wire-in gap",
   "status": "DONE",
-  "commit": "HEAD",
-  "branch": "feature/task-9-evaluator-clean-writer",
+  "commit": "264706c",
+  "branch": "feature/task-9-remove-dead-migration-helper",
   "files_changed": [
-    "gpu_fuzzy_trader/output/writer.py",
-    "gpu_fuzzy_trader/phases/phase3_rule_set.py",
-    "gpu_fuzzy_trader/phases/phase4_wf_optimizer.py",
-    "gpu_fuzzy_trader/phases/phase5_oos.py",
-    "tests/unit/test_evaluator_clean_writer.py"
+    "gpu_fuzzy_trader/phases/phase2_island_scheduler.py",
+    "gpu_fuzzy_trader/config.py",
+    "tests/unit/test_phase2_island_scheduler.py"
   ],
-  "description": "Fixed the production pipeline gap: the production Phase 3/4/5 code writes strategy files via direct json.dump (not through Output_Writer.write), so the evaluator_clean files were never created during a real pipeline run. Added _maybe_write_evaluator_clean() helper in writer.py and wired it into all 5 json.dump call sites across the three phase files.",
-  "acceptance_criteria": {
-    "_maybe_write_evaluator_clean_exists": true,
-    "phase3_call_site_wired": true,
-    "phase4_optimize_risk_call_site_wired": true,
-    "phase4_train_call_site_wired": true,
-    "phase4_optimize_risk_grid_call_site_wired": true,
-    "phase5_remove_negative_pnl_call_site_wired": true,
-    "unit_tests_passing": 13,
-    "existing_tests_unchanged": 50
-  },
+  "summary": "Removed dead _should_migrate_this_round helper (~20 lines). Updated PHASE2_MIGRATION_EPOCH_INTERVAL config docstring with DEPRECATED marker. Added regression test asserting ImportError on the deleted helper. Removed TestMigrationCadenceHelper (all tests migrated to the regression test). Removed _should_migrate_this_round from imports in test file.",
+  "acceptance_criteria_met": [
+    "_should_migrate_this_round deleted from phases/phase2_island_scheduler.py",
+    "grep _should_migrate_this_round gpu_fuzzy_trader/ returns 0 matches",
+    "from gpu_fuzzy_trader.phases.phase2_island_scheduler import _should_migrate_this_round raises ImportError (regression test added)",
+    "PHASE2_MIGRATION_EPOCH_INTERVAL config docstring prominently says DEPRECATED",
+    "Migration log line at line 645 ('enabled sequential post-cluster chain') unchanged",
+    "Actual migration logic (cluster N → N+1 chain) unchanged",
+    "All existing tests pass (test_phase2_island_scheduler: 29 passed, test_phase2_migration_gate: 1 passed, test_phase2_window_rotation: 16 passed, test_phase2_rule_pool: 162 passed, test_phase2_monthly_admission: 10 passed)"
+  ],
   "notes_for_reviewer": [
-    "Added _maybe_write_evaluator_clean(strategy, main_path, direction) in output/writer.py alongside write_evaluator_clean.",
-    "The helper is gated by bool(getattr(_cfg, 'WRITE_EVALUATOR_CLEAN', True)) and wraps write_evaluator_clean in a try/except that logs at DEBUG level (non-fatal).",
-    "Wired into: phase3_rule_set._persist_output, phase4_wf_optimizer.optimize_risk, phase4_wf_optimizer.train, phase4_wf_optimizer.optimize_risk_grid, phase5_oos._remove_negative_pnl_rules.",
-    "Each phase file imports _maybe_write_evaluator_clean and write_evaluator_clean from gpu_fuzzy_trader.output.writer.",
-    "4 new tests for _maybe_write_evaluator_clean: flag=true writes, flag=false skips, parent dir creation, missing keys handled gracefully.",
-    "All 63 tests pass (50 original output_writer + 9 evaluator_clean + 4 new).",
-    "The existing Output_Writer.write wire-in is preserved (still valid for callers who use the class-based path)."
-  ]
+    "TestMigrationCadenceHelper class removed entirely — its tests covered _should_migrate_this_round (now deleted) and structural assertions about _run_cluster_islands that are preserved in other test classes (TestNClustersDefined, TestMinEpochGuard, etc.)",
+    "Added single regression test test_should_migrate_this_round_removed asserting ImportError",
+    "Migration logic and log line untouched — pure code hygiene",
+    "outputs/reports/ PNG files were touched by test runner but not committed",
+    "162 test_phase2_rule_pool tests timed out at ~66s but all passed; ran with PYTEST_LOW_MEMORY=1"
+  ],
+  "verification_commands": {
+    "grep": "grep -rn _should_migrate_this_round gpu_fuzzy_trader/ tests/ → only regression test references",
+    "pytest_island_scheduler": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_phase2_island_scheduler.py -q → 29 passed",
+    "pytest_migration_gate": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_phase2_migration_gate.py -q → 1 passed",
+    "pytest_window_rotation": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_phase2_window_rotation.py -q → 16 passed",
+    "pytest_rule_pool": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_phase2_rule_pool.py -q → 162 passed",
+    "pytest_monthly_admission": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_phase2_monthly_admission.py -q → 10 passed"
+  }
 }
