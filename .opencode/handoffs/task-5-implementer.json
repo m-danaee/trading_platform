@@ -1,24 +1,25 @@
 {
-  "task_id": 5,
-  "task_title": "Sequential cluster warmup (drop 3/4 signatures)",
-  "branch": "fix/ram-sequential-clusters",
+  "task": "task-5",
   "status": "DONE",
-  "commit": "e643d2d",
+  "commit": "54a885a",
+  "summary": "Wrapped dead f3 profit_factor switch behind `if not _cfg.PHASE2_USE_TOTAL_RETURN_OBJ:` guard. Added audit finding #5 comment. Updated comment on USE_TOTAL_RETURN_OBJ block to clarify precedence. Added parametrized test covering all 4 cases (default robust return + 3 legacy paths).",
   "files_changed": [
     "gpu_fuzzy_trader/phases/phase2_rule_pool.py",
-    "gpu_fuzzy_trader/phases/phase2_island_scheduler.py",
-    "tests/unit/test_phase2_island_scheduler.py"
+    "tests/unit/test_phase2_rule_pool.py"
   ],
-  "tests": {
-    "tests/unit/test_phase2_island_scheduler.py": "45 passed (including 4 new deferred warmup structural tests)",
-    "tests/unit/test_phase2_rule_pool.py + test_evox_runner.py + test_migration_safety.py + test_island_scheduler_migration.py": "186 passed",
-    "all touched": "231 passed"
+  "verification_results": {
+    "test_phase2_rule_pool.py": "156 passed",
+    "test_phase2_monthly_admission.py": "10 passed",
+    "test_phase2_window_rotation.py": "16 passed",
+    "test_phase2_island_scheduler.py": "34 skipped, 45 passed",
+    "test_evox_runner.py": "41 passed"
   },
   "notes_for_reviewer": [
-    "Eviction timing fixed: warmup deferred out of Rule_Pool_Generator.__init__ via defer_warmup flag; warmup now happens per-cluster inside _run_cluster_islands; eviction happens between clusters. Test updated to verify signatures grow/shrink around each cluster's epochs.",
-    "Clusters are processed sequentially (not round-robin) — each cluster warms, runs all its epochs, then evicts before the next cluster starts. Peak signatures = 2 (one cluster's train+val) instead of 4 (all clusters).",
-    "Migration changed from round-robin mesh to sequential chain: after cluster N finishes, its best individuals are forwarded to cluster N+1 as seed archives.",
-    "Orphan-boost path and all other warmup callers unaffected (defer_warmup defaults to False).",
-    "_run_cluster_islands still calls evict_cluster_signatures in the cluster_pools finalization loop (redundant but safe)."
+    "The dead f3_objective switch (lines 806-830) is now wrapped in `if not _cfg.PHASE2_USE_TOTAL_RETURN_OBJ:` — legacy path only fires when user explicitly opts in.",
+    "The robust_return override (lines 833-841) is unchanged; it remains the default path.",
+    "The `PHASE2_F3_OBJECTIVE` config flag is preserved for backward compat with the legacy opt-in path.",
+    "Parametrized test `TestF3PathResolution::test_f3_path_resolution` covers 6 cases (3 with USE_TOTAL_RETURN_OBJ=True default, 3 with False + each F3_OBJECTIVE).",
+    "No behavior change in default config (USE_TOTAL_RETURN_OBJ=True) — bit-identical to pre-task-5.",
+    "All 156 existing tests in test_phase2_rule_pool.py pass; all related module tests pass."
   ]
 }
