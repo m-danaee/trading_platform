@@ -1,1 +1,31 @@
-{"task_id": "task-8", "branch": "fix/trade-floor-island-aware", "status": "DONE", "commit": "5e9549a", "files_changed": ["gpu_fuzzy_trader/phases/phase2_rule_pool.py", "tests/unit/test_phase2_rule_pool.py"], "tests": {"config import": "asserts OK", "targeted (phase2_rule_pool + evox_runner)": "115 passed, 2 pre-existing failures", "tests/unit full": "1209 passed, 2 pre-existing failures, 1 skipped"}, "notes_for_reviewer": ["Fix 1: trade_floor uses island_hyperparams.min_trade_pool_floor when available, else effective_min_trade_pool_floor(n_valid_rows)", "Fix 2: trade_penalty uses _cfg.PHASE2_INFEASIBLE_OBJECTIVE_PENALTY instead of inline 50.0", "3 new tests: island-aware floor, config constant usage, fallback path"], "acceptance_criteria_met": [1, 2, 3, 4, 5, 6]}
+{
+  "task": "task-8",
+  "status": "DONE",
+  "commit": "8936ac8",
+  "branch": "feature/task-8-sign-consistency-val",
+  "summary": "Implemented val_df check in _check_spearman_sign_consistency. Previously the val_df parameter was accepted but never read. Now the function computes the Spearman correlation on val_df and blacklists features whose val sign disagrees with the train majority sign (above min_abs_corr threshold).",
+  "files_changed": [
+    "gpu_fuzzy_trader/features/selector.py",
+    "tests/unit/test_feature_selector.py"
+  ],
+  "acceptance_criteria_tested": {
+    "AC1": "Feature with consistent positive train signs but negative val sign is blacklisted",
+    "AC2": "Feature with consistent positive train signs and matching positive val sign is kept",
+    "AC3": "Feature with consistent positive train signs and tiny |val_rho| < min_abs_corr is kept",
+    "AC4": "val_df=None preserves pre-task-8 behavior (regression guard)",
+    "AC5": "val_df without label_close_288 column skips val check (no crash)",
+    "AC6": "Function signature unchanged (backward compat)",
+    "AC7": "All 69 existing tests pass (74 total with new tests)"
+  },
+  "changes": {
+    "selector.py": [
+      "Updated docstring to describe new val_df behavior with audit finding reference",
+      "Added val-side sign check in the else branch before stable_features.add(col) — checks val Spearman corr against train majority sign when val_df is provided and has the required columns"
+    ],
+    "test_feature_selector.py": [
+      "Added import for _check_spearman_sign_consistency",
+      "Added TestSpearmanSignConsistency class with 5 tests covering all acceptance criteria"
+    ]
+  },
+  "verification": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_feature_selector.py -q → 74 passed"
+}

@@ -1,22 +1,46 @@
 {
   "task": "task-8",
+  "review_type": "code-review",
   "verdict": "APPROVED",
+  "branch": "feature/task-8-sign-consistency-val",
+  "commit": "8936ac8",
+  "summary": "Code is correct, clean, and well-tested. The val_df sign check is correctly placed, properly guarded, and uses symmetric threshold logic. All 5 new tests pass (74 total). No blocking or high-severity issues found.",
+  "correctness_checks": {
+    "val_check_placement_correct": true,
+    "three_guards_correct": "val_df is not None AND label_col in val_df.columns AND col in val_df.columns — all necessary and correctly short-circuit",
+    "sign_comparison_logic_correct": "train+ / val-: val_corr < -min_abs_corr; train- / val+: val_corr > min_abs_corr; mixed: unreachable; no-significant: unreachable. All correct.",
+    "val_no_symbol_column_ok": "val_df passed directly to _spearman, no symbol required",
+    "val_mismatched_symbols_ok": "per-column correlation indifferent to symbols",
+    "val_empty_df_ok": "_spearman returns NaN; not np.isnan() guard handles it",
+    "signature_unchanged": "byte-for-byte identical verified"
+  },
+  "maintainability_checks": {
+    "docstring_accurate": true,
+    "audit_finding_greppable": true,
+    "audit_finding_locations": ["docstring line 238", "inline comment line 275"],
+    "threshold_symmetric": "train: abs(c) >= min_abs_corr; val: val_corr < -min_abs_corr / val_corr > min_abs_corr — symmetric in both directions"
+  },
+  "test_adequacy": {
+    "test_val_sign_disagrees_negative_blacklists": "AC1: correct synthetic data (rho=+1.0 in train, rho=-1.0 in val), calls with val_df=val_df, asserts not in stable. PASS.",
+    "test_val_sign_matches_positive_kept": "AC2: correct. PASS.",
+    "test_val_sign_tiny_corr_kept": "AC3: shuffled label for near-zero rho, asserts kept. PASS.",
+    "test_val_df_none_matches_previous_behavior": "AC4: mixed train signs blacklisted when val_df=None — regression guard. PASS.",
+    "test_val_df_missing_label_col_skips_check": "AC5: val_df without label column skips check, no crash. PASS.",
+    "all_tests_pass": "74/74 passed (69 existing + 5 new) in 8.24s with PYTEST_LOW_MEMORY=1"
+  },
   "findings": [
     {
-      "severity": "low",
-      "finding": "Type hint for `feature_probs` in `sample_regime_stratum_chromosome` is `np.ndarray` (non-optional) but the function body checks `if feature_probs is not None`. Not a runtime bug (always called with an ndarray from `_init_population`), but a minor annotation inconsistency.",
-      "fix": "Consider changing the type hint to `np.ndarray | None` or removing the None check if it's truly unreachable."
-    },
-    {
-      "severity": "low",
-      "finding": "Substring matching with keyword `'range'` could theoretically match pathological feature names containing the substring (e.g., `'strange_value'`). Practically zero risk in a trading feature set.",
-      "fix": "Could add word-boundary checks (e.g., `re.search(r'\\brange\\b', name)`) but not necessary given the existing feature naming conventions."
-    },
-    {
-      "severity": "low",
-      "finding": "No unit test for edge-case `PHASE2_REGIME_STRATUM_FRAC` values of 0.0 (no-op) or 1.0 (all-regime). The mechanism is verified for 0.25 and 0.50, so this is low priority.",
-      "fix": "Add parametric tests for boundary fractions if desired."
+      "severity": "LOW",
+      "category": "test_coverage",
+      "description": "No explicit test for the symmetric case 'train all negative, val positive → blacklisted'. The code handles this correctly at lines 288-294 (elif has_neg and not has_pos) but only the train-positive/val-negative direction is tested. The spec only explicitly requires AC1, so this is a non-blocking coverage gap — same observation as the spec-reviewer noted.",
+      "suggested_fix": "Optionally add a test like test_val_sign_disagrees_positive_blacklists where train feat and label are inversely correlated and val feat is positively correlated, asserting the feature is blacklisted."
     }
   ],
-  "summary": "Implementation is correct, robust, and matches the task spec exactly. All 19 new tests pass, all 135 existing tests pass (no regressions). Only 4 files changed, all within scope. The `Stratum` literal extension is a strict superset preserving backward compatibility. The `_regime_feature_indices` helper correctly performs case-insensitive substring matching and handles edge cases (empty input, missing keys, no match). The `assign_three_strata_to_indices` function correctly distributes fractions with rounding correction. `sample_regime_stratum_chromosome` always anchors the first active gene on a regime feature with proper fallback when none exist. The wire-in into `_init_population` correctly routes regime-stratum rows. Three minor/low findings noted (type hint inconsistency, theoretical substring overmatch, missing boundary fraction tests) — none affect correctness or stability."
+  "out_of_scope_checks": {
+    "no_evaluator_changes": true,
+    "no_get_spearman_folds_changes": true,
+    "no_spearman_changes": true,
+    "call_site_unchanged": true,
+    "no_train_side_logic_changes": "train-folds loop untouched"
+  }
 }
