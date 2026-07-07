@@ -385,6 +385,8 @@ PHASE1_SAMPLING_TOTAL = 701_000
 #           branch in _sample_df fires.
 #   False → preserve pre-task-1 behavior: sample once at cluster init
 #           (useful for A/B comparison / regression guard).
+#   → fixes audit finding #1 (per-epoch window resampling is dead),
+#     implements N2
 PHASE2_PER_EPOCH_WINDOW_ROTATION = True
 
 # PHASE2_PER_EPOCH_WINDOW_SEED_MODE — how to derive the per-epoch seed.

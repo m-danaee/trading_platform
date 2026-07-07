@@ -88,6 +88,28 @@ class TestDeriveEpochSeed:
         """None base seed returns None."""
         assert _derive_epoch_seed(None, 0) is None
 
+    def test_seed_mode_hash_island_epoch_deterministic(self, monkeypatch):
+        """PHASE2_PER_EPOCH_WINDOW_SEED_MODE='hash_island_epoch' produces
+        deterministic seeds."""
+        monkeypatch.setattr(
+            cfg, "PHASE2_PER_EPOCH_WINDOW_SEED_MODE", "hash_island_epoch"
+        )
+        s1 = _derive_epoch_seed(12345, 0)
+        s2 = _derive_epoch_seed(12345, 0)
+        assert s1 == s2
+        assert s1 is not None
+        # Also verify different epoch indices differ
+        s3 = _derive_epoch_seed(12345, 1)
+        assert s1 != s3
+
+    def test_seed_mode_unknown_raises_value_error(self, monkeypatch):
+        """An unknown PHASE2_PER_EPOCH_WINDOW_SEED_MODE raises ValueError."""
+        monkeypatch.setattr(
+            cfg, "PHASE2_PER_EPOCH_WINDOW_SEED_MODE", "unknown_mode"
+        )
+        with pytest.raises(ValueError, match="unknown_mode"):
+            _derive_epoch_seed(12345, 0)
+
 
 class TestResolveSampleTotalRows:
     """Capping logic for per-epoch window rotation."""

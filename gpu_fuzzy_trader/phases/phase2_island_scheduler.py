@@ -95,6 +95,17 @@ def _derive_epoch_seed(base_seed: int | None, epoch_idx: int) -> int | None:
     bar each epoch so every generation backtests a different contiguous
     sub-window of the training data.
 
+    → fixes audit finding #1 (per-epoch window resampling is dead),
+      implements N2
+
+    The derivation mode is controlled by
+    :attr:`config.PHASE2_PER_EPOCH_WINDOW_SEED_MODE`:
+
+    * ``"hash_island_epoch"`` (default) — hash(base_seed, epoch_idx)
+      via SHA-256, deterministic, no RNG state leak.
+
+    Raises ``ValueError`` for unknown seed-mode values.
+
     Parameters
     ----------
     base_seed : int or None
@@ -110,8 +121,14 @@ def _derive_epoch_seed(base_seed: int | None, epoch_idx: int) -> int | None:
     """
     if base_seed is None:
         return None
-    h = hashlib.sha256(f"{base_seed}:epoch_{epoch_idx}".encode()).digest()
-    return int.from_bytes(h[:4], "big") % (2**31)
+    mode = _cfg.PHASE2_PER_EPOCH_WINDOW_SEED_MODE
+    if mode == "hash_island_epoch":
+        h = hashlib.sha256(f"{base_seed}:epoch_{epoch_idx}".encode()).digest()
+        return int.from_bytes(h[:4], "big") % (2**31)
+    raise ValueError(
+        f"Unknown PHASE2_PER_EPOCH_WINDOW_SEED_MODE={mode!r}. "
+        f"Supported modes: 'hash_island_epoch'."
+    )
 
 
 def _load_phase1_feature_lists() -> tuple[list[dict], list[dict]]:
