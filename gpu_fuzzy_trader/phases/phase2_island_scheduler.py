@@ -409,36 +409,6 @@ def _should_skip_epoch(remaining: int) -> bool:
     return remaining < int(_cfg.PHASE2_ISLAND_MIN_EPOCH_GENERATIONS)
 
 
-def _should_migrate_this_round(round_index: int, interval: int) -> bool:
-    """Return True if migration should fire on this outer round (1-indexed).
-
-    .. note::
-       This helper is **legacy/unused** in the active sequential scheduler.
-       ``_run_cluster_islands`` performs **sequential post-cluster chain
-       migration** (cluster N → N+1 after cluster N finishes) and does NOT
-       use epoch-round interval checking.  The helper is kept for reference
-       and for any future round-robin mode.
-
-    Parameters
-    ----------
-    round_index : int
-        The current outer-round count (starts at 0, incremented after each
-        ``while`` iteration in ``_run_cluster_islands`` if round-robin mode
-        were active).
-    interval : int
-        The configured migration epoch interval (``PHASE2_MIGRATION_EPOCH_INTERVAL``).
-        Values <= 0 are treated as "never migrate".
-
-    Returns
-    -------
-    bool
-        True when migration should be performed this round.
-    """
-    if interval <= 0:
-        return False
-    return round_index % interval == 0
-
-
 def _run_cluster_islands(
     train_df: pd.DataFrame,
     val_df: pd.DataFrame,

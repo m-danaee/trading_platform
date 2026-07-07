@@ -1203,10 +1203,12 @@ PHASE2_ISLAND_MONTHLY_MIN_MONTHS = 4
 # showed that loose admission gates admitted near-zero-return migrants that
 # displaced up to 25% of converged locals.
 PHASE2_MIGRATION_ENABLED: bool = True
-# PHASE2_MIGRATION_EPOCH_INTERVAL — legacy config retained for backward
-# compatibility.  The active sequential post-cluster chain scheduler does
-# NOT use epoch-interval gating; migration fires once after each cluster
-# finishes.  This value is a no-op in the current code path.
+# PHASE2_MIGRATION_EPOCH_INTERVAL — DEPRECATED.  This is a no-op in
+# the current code path.  Migration fires once after each cluster
+# finishes (sequential post-cluster chain, see _run_cluster_islands).
+# Retained for backward compat only; do not use in new code.
+# → fixes audit finding #6 (dead migration helper was misleading
+# future maintainers about how migration actually works)
 PHASE2_MIGRATION_EPOCH_INTERVAL = 1
 PHASE2_MIGRATION_TOP_K = 5
 PHASE2_MIGRATION_REQUIRE_DEPLOYABILITY = True

@@ -9,7 +9,6 @@ import pytest
 from gpu_fuzzy_trader import config as cfg
 from gpu_fuzzy_trader.phases.phase2_island_scheduler import (
     _derive_island_seed,
-    _should_migrate_this_round,
     _should_skip_epoch,
     compute_cluster_generation_budgets,
 )
@@ -166,81 +165,16 @@ class TestSeedDirectionUniqueness:
 
 
 # ============================================================================
-# Item 7: Migration cadence — _should_migrate_this_round helper + loop fix
+# Regression: _should_migrate_this_round was removed (task-9, audit fix #6)
 # ============================================================================
 
 
-class TestMigrationCadenceHelper:
-    """Pure-function tests for _should_migrate_this_round."""
-
-    @pytest.mark.parametrize("round_index,interval,expected", [
-        (0, 2, True),
-        (1, 2, False),
-        (2, 2, True),
-        (3, 2, False),
-        (0, 1, True),
-        (1, 1, True),
-        (0, 3, True),
-        (1, 3, False),
-        (2, 3, False),
-        (3, 3, True),
-        (0, 0, False),   # interval <= 0 never fires
-        (5, 0, False),
-        (0, -1, False),
-        (3, -1, False),
-    ])
-    def test_should_migrate_this_round_parametrized(
-        self, round_index, interval, expected,
-    ):
-        """Verify pure helper returns correct boolean for various inputs."""
-        assert _should_migrate_this_round(round_index, interval) is expected
-
-    def test_sequential_cluster_processing_uses_for_cid_outer(self):
-        """Verify _run_cluster_islands processes clusters sequentially
-        (outer ``for cid in cluster_ids``, NOT round-robin while + inner for)."""
-        from gpu_fuzzy_trader.phases.phase2_island_scheduler import _run_cluster_islands
-        import inspect
-
-        source = inspect.getsource(_run_cluster_islands)
-        # The sequential approach has an outer for-cid loop with an inner while loop
-        # per cluster, NOT a while loop with inner for-cid.
-        assert "for idx, cid in enumerate(cluster_order):" in source or (
-            "for cid in cluster_ids:" in source
-            and "while gen._island_generations_done < gens_per_cluster:" in source
-        ), (
-            "_run_cluster_islands must use sequential per-cluster processing "
-            "(outer for-cid, inner while), not round-robin"
-        )
-
-    def test_no_round_counter_in_sequential_mode(self):
-        """Verify _run_cluster_islands no longer uses 'round_counter'
-        since clusters are processed sequentially, not in round-robin."""
-        from gpu_fuzzy_trader.phases.phase2_island_scheduler import _run_cluster_islands
-        import inspect
-
-        source = inspect.getsource(_run_cluster_islands)
-        assert "round_counter" not in source, (
-            "'round_counter' should be removed in sequential cluster processing"
-        )
-
-    def test_migration_uses_chain_pattern(self):
-        """Verify migration in _run_cluster_islands uses sequential chain
-        (cluster → next cluster), not round-robin mesh."""
-        from gpu_fuzzy_trader.phases.phase2_island_scheduler import _run_cluster_islands
-        import inspect
-
-        source = inspect.getsource(_run_cluster_islands)
-        # The sequential migration guard checks idx + 1 < len(cluster_order)
-        # to forward migrants from one cluster to the next.
-        assert "n_clusters > 1" in source, (
-            "Migration guard must reference n_clusters > 1"
-        )
-        assert "idx + 1" in source or "next_cid" in source, (
-            "Sequential migration must use next-cluster pattern"
-        )
-        # Ensure the old round-robin style is gone
-        assert "migrants_by_source" not in source, (
-            "Round-robin mesh migration should be replaced by sequential chain"
+def test_should_migrate_this_round_removed():
+    """The dead migration helper _should_migrate_this_round has been deleted.
+    Verify it is no longer importable."""
+    with pytest.raises(ImportError):
+        from gpu_fuzzy_trader.phases.phase2_island_scheduler import (  # type: ignore[import-unused]
+            _should_migrate_this_round,
         )
 
 
