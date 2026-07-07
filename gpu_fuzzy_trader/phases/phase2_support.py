@@ -241,7 +241,7 @@ def _feasibility_gate_failures(
     *,
     n_valid_rows: int | None = None,
 ) -> dict[str, int]:
-    """Return per-gate failure flags for the 10 pool-admission gates.
+    """Return per-gate failure flags for the 11 pool-admission gates.
 
     Each value is 1 if the rule FAILS that gate, 0 if it passes. A rule
     that passes all gates returns all zeros. A rule that fails multiple
