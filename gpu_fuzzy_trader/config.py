@@ -594,11 +594,6 @@ PHASE2_RETURN_FLOOR_PCT = 0.5
 #   Lower  → allow negative val return during search (gates may still catch later).
 PHASE2_VAL_RETURN_FLOOR_PCT = 1.0
 
-# PHASE2_PROFIT_FACTOR_FLOOR — DEPRECATED alias for PHASE2_PROFIT_FACTOR_FLOOR_ADMISSION.
-#   Kept for backward compat; do not use in new code.
-#   → fixes audit finding #9: split into EVOLUTION (soft penalty) and ADMISSION (hard gate).
-PHASE2_PROFIT_FACTOR_FLOOR = 1.15
-
 # PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION — soft penalty threshold during NSGA-III fitness.
 #   Lower than the admission floor so the feasible set isn't artificially collapsed
 #   when val trade counts are thin (random rules rarely have val PF > 1.15).
@@ -611,6 +606,11 @@ PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION = 1.05
 #   The original PHASE2_PROFIT_FACTOR_FLOOR=1.15; kept for the hard gate.
 #   → fixes audit finding #9
 PHASE2_PROFIT_FACTOR_FLOOR_ADMISSION = 1.15
+
+# PHASE2_PROFIT_FACTOR_FLOOR — DEPRECATED alias for PHASE2_PROFIT_FACTOR_FLOOR_ADMISSION.
+#   Kept for backward compat; do not use in new code. Tracks ADMISSION automatically.
+#   → fixes audit finding #9: split into EVOLUTION (soft penalty) and ADMISSION (hard gate).
+PHASE2_PROFIT_FACTOR_FLOOR = PHASE2_PROFIT_FACTOR_FLOOR_ADMISSION
 
 # PHASE2_SYMBOL_MEDIAN_RETURN_FLOOR_PCT — min median return across symbols.
 #   Higher → rules must work on typical symbols, not one outlier.
