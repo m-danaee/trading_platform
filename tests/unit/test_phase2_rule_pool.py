@@ -2249,6 +2249,74 @@ class TestDecoupledObjectives:
                 f"low={obj_low[i]:.2f}, high={obj_high[i]:.2f}"
             )
 
+    def test_evolution_pf_floor_is_lower_than_admission(self, monkeypatch):
+        """Spec scenario: pf=1.10, EVOLUTION=1.05 (new) vs 1.15 (old);
+        the new floor produces a smaller penalty."""
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+            compute_phase2_objectives_from_metrics,
+        )
+
+        monkeypatch.setattr(_cfg, "PHASE2_JOINT_TRAIN_VAL", False)
+        monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", False)
+        monkeypatch.setattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ", True)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 1)
+        monkeypatch.setattr(_cfg, "PHASE2_RETURN_FLOOR_PCT", -100.0)
+        monkeypatch.setattr(_cfg, "PHASE2_VAL_RETURN_FLOOR_PCT", -100.0)
+        monkeypatch.setattr(_cfg, "PHASE2_MAX_DRAWDOWN_GATE", 200.0)
+        monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
+
+        dont_cares = np.full(4, 5, dtype=np.int32)
+        chrom = np.array([0, 1, 2, 3], dtype=np.int32)
+
+        # Rule with PF=1.10 (above EVOLUTION floor=1.05, below ADMISSION floor=1.15)
+        #   → with EVOLUTION=1.05: pf > floor, no penalty
+        #   → with EVOLUTION=1.15: pf < floor, penalty = (1.15 - 1.10) * 5.0 = 0.25
+        metrics = {
+            "executed_trades": 100,
+            "total_return_pct": 5.0,
+            "sortino_ratio": 1.0,
+            "max_drawdown_pct": 2.0,
+            "win_rate": 50.0,
+            "profit_factor": 1.10,
+            "per_symbol_metrics": {
+                "SYM1": {"net_pnl": 100.0},
+                "SYM2": {"net_pnl": 200.0},
+                "SYM3": {"net_pnl": 300.0},
+            },
+        }
+
+        # First compute with EVOLUTION floor = 1.05 (new behavior) → pf > floor, no penalty
+        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION", 1.05)
+        objectives_low_floor, _ = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, metrics, [],
+        )
+
+        # Now re-compute with EVOLUTION floor = 1.15 (old ADMISSION floor) → pf < floor, penalty
+        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION", 1.15)
+        objectives_high_floor, _ = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, metrics, [],
+        )
+
+        # The penalty adds (floor - pf) * 5.0 = (1.15 - 1.10) * 5.0 = 0.25 to
+        # support_penalty, which flows into the first 3 objectives via penalty_weights.
+        # f4 (concentration objective) may be independent, so only check f1-f3.
+        # The new floor (1.05) produces a strictly SMALLER penalty than the old floor (1.15).
+        for i in range(3):
+            assert objectives_high_floor[i] > objectives_low_floor[i], (
+                f"Objective f{i+1} should be worse with higher EVOLUTION floor: "
+                f"floor=1.05 gave {objectives_low_floor[i]:.4f}, "
+                f"floor=1.15 gave {objectives_high_floor[i]:.4f}"
+            )
+
+    def test_deprecated_pf_floor_alias_returns_115(self):
+        """PHASE2_PROFIT_FACTOR_FLOOR (deprecated alias) still returns
+        1.15 by default for backward compat."""
+        assert _cfg.PHASE2_PROFIT_FACTOR_FLOOR == 1.15, (
+            f"Expected deprecated alias PHASE2_PROFIT_FACTOR_FLOOR=1.15, "
+            f"got {_cfg.PHASE2_PROFIT_FACTOR_FLOOR}"
+        )
+
 
 class TestPhenotypeDiversityPenalty:
     def test_phenotype_penalty_same_bucket_different_genes(self, monkeypatch):

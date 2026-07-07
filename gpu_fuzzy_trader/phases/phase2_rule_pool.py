@@ -755,9 +755,9 @@ def compute_phase2_objectives_from_metrics(
         if _cfg.PHASE2_JOINT_TRAIN_VAL or getattr(_cfg, "PHASE2_VAL_IN_FITNESS_PENALTY", False):
             if val_total_return < _cfg.PHASE2_VAL_RETURN_FLOOR_PCT:
                 val_floor_penalty += _cfg.SUPPORT_PENALTY_MAX
-            if val_profit_factor < _cfg.PHASE2_PROFIT_FACTOR_FLOOR:
+            if val_profit_factor < _cfg.PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION:
                 val_floor_penalty += (
-                    _cfg.PHASE2_PROFIT_FACTOR_FLOOR - val_profit_factor
+                    _cfg.PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION - val_profit_factor
                 ) * 5.0
 
     support_penalty, _, _ = compute_support_penalty_and_specialist(
@@ -776,8 +776,8 @@ def compute_phase2_objectives_from_metrics(
 
     if total_return < floors.return_floor_pct:
         support_penalty = max(support_penalty, _cfg.SUPPORT_PENALTY_MAX)
-    if profit_factor < _cfg.PHASE2_PROFIT_FACTOR_FLOOR:
-        support_penalty += (_cfg.PHASE2_PROFIT_FACTOR_FLOOR - profit_factor) * 5.0
+    if profit_factor < _cfg.PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION:
+        support_penalty += (_cfg.PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION - profit_factor) * 5.0
 
     # C5: Symbol-spread penalty — penalize when few symbols are profitable
     per_sym = metrics.get("per_symbol_metrics", {}) or {}
@@ -2822,7 +2822,7 @@ class Rule_Pool_Generator:
                 self.direction,
                 pool_before_admission,
                 len(pool),
-                _cfg.PHASE2_PROFIT_FACTOR_FLOOR,
+                _cfg.PHASE2_PROFIT_FACTOR_FLOOR_ADMISSION,
             )
         logger.info(
             "Phase 2 [%s]: merged pool %d previous + %d new → %d retained",

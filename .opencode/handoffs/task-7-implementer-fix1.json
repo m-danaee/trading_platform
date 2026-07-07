@@ -1,0 +1,30 @@
+{
+  "task_id": "task-7",
+  "status": "DONE",
+  "commit": "19df0a1bf5236d272b523d1bf1346ba93dca9471",
+  "fix_type": "spec-review-fix1",
+  "summary": "Fixed 2 spec-review issues: (1) deprecated alias now references ADMISSION flag, (2) test uses exact spec scenario (pf=1.10, floors 1.05 vs 1.15)",
+  "changes": {
+    "gpu_fuzzy_trader/config.py": "Reordered flags: EVOLUTION→ADMISSION→alias; alias now = PHASE2_PROFIT_FACTOR_FLOOR_ADMISSION (true alias)",
+    "tests/unit/test_phase2_rule_pool.py": "Updated test_evolution_pf_floor_is_lower_than_admission: pf=1.10, EVOLUTION floors 1.05 (new) vs 1.15 (old admission floor); spec scenario reproduced exactly"
+  },
+  "verification": {
+    "test_phase2_rule_pool.py": "162 passed",
+    "test_phase2_support.py": "30 passed",
+    "test_phase2_monthly_admission.py": "10 passed",
+    "test_phase2_window_rotation.py": "16 passed",
+    "test_phase2_island_scheduler.py": "45 passed",
+    "test_evox_runner.py": "41 passed",
+    "total": "304 passed"
+  },
+  "fixes": {
+    "issue1_deprecated_alias": "PHASE2_PROFIT_FACTOR_FLOOR now = PHASE2_PROFIT_FACTOR_FLOOR_ADMISSION (not hardcoded 1.15); reordered so alias is defined AFTER ADMISSION flag",
+    "issue2_test_scenario": "Now uses pf=1.10, EVOLUTION=1.05 (new) vs EVOLUTION=1.15 (old); penalty=(1.15-1.10)*5=0.25 vs none; assertion checks high_floor > low_floor for f1-f3"
+  },
+  "notes": [
+    "Only 2 files changed (config.py, test_phase2_rule_pool.py), 17 insertions + 17 deletions",
+    "Deprecated alias tracks ADMISSION flag automatically for backward compat",
+    "Test now exactly reproduces spec scenario: 'A rule with pf=1.10 gets a SMALLER penalty using 1.05 than using 1.15'",
+    "Adds explanatory comment to test: 'Spec scenario: pf=1.10, EVOLUTION=1.05 (new) vs 1.15 (old); the new floor produces a smaller penalty'"
+  ]
+}
