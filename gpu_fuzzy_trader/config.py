@@ -1520,6 +1520,8 @@ PHASE4_WF_SPLITS = 2
 PHASE4_INCLUDE_TAIL_HOLDOUT = True
 
 # PHASE4_TAIL_HOLDOUT_FRACTION — fraction of val reserved as final holdout window.
+#   Used by RB Governor risk grid when RB_RISK_GRID_USE_TAIL_HOLDOUT=True
+#   (the final tie-break holdout reported but not searched).
 #   Higher → more recent data held out; fewer trades in WF folds.
 #   Lower  → more data in WF folds; less independent tail check.
 PHASE4_TAIL_HOLDOUT_FRACTION = 0.25
@@ -1834,6 +1836,18 @@ RB_RISK_MIN_IMPROVEMENT: float = 0.02
 
 # RB_MAX_TOTAL_CAPITAL — hard cap on sum(capital_pct) across all rules.
 RB_MAX_TOTAL_CAPITAL: float = 100.0
+
+# RB_RISK_GRID_WF_SPLITS — walk-forward folds for risk grid (1 = legacy single-fold).
+#   Score every TP/SL/capital combo on N chronological folds of val_selection,
+#   pick the combo with the best min(fold1, fold2, ...) score (worst-case selection).
+#   → fixes audit finding #3 (RB Governor risk-grid overfits val_selection)
+RB_RISK_GRID_WF_SPLITS: int = 2
+
+# RB_RISK_GRID_USE_TAIL_HOLDOUT — reserve final PHASE4_TAIL_HOLDOUT_FRACTION
+#   of val_selection as an untouched tie-break holdout (reported but NOT used
+#   during search).  Set False to use the full val_selection for folds.
+#   → fixes audit finding #12 (PHASE4_TAIL_HOLDOUT_FRACTION orphan)
+RB_RISK_GRID_USE_TAIL_HOLDOUT: bool = True
 
 
 # --- Symbol specialization (per-rule ``symbol is X`` conditions) ---

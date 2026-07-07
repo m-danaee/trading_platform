@@ -1,0 +1,38 @@
+{
+  "task_id": "task-3",
+  "status": "DONE",
+  "previous_commit_hash": "447f2ed",
+  "fix_commit_hash": "32a2f49",
+  "branch": "feature/task-3-rb-walk-forward",
+  "issues_fixed": [
+    {
+      "severity": "HIGH",
+      "title": "cur_score baseline mismatch in walk-forward mode",
+      "location": "gpu_fuzzy_trader/rb_governor.py:808-821",
+      "fix": "Added `cur_score = min(init_fold_scores)` and `hist[0][\"score\"] = cur_score` after computing init_fold_scores when use_walk_forward=True. This ensures the improvement threshold (local_best[0] > cur_score + min_improve) compares fold-min against fold-min (same scale). Without the fix, cur_score remained the full-validation score, causing walk-forward to be overly conservative.",
+      "new_test": "test_baseline_cur_score_uses_min_fold_in_walk_forward in tests/unit/test_rb_governor_cv_folds.py — sets up baseline with high full-val (400) but low min fold (100), candidate with lower full-val (200) but higher min fold (150); asserts walk-forward ACCEPTS the candidate. Without the fix the comparison 150 > 400+0.01 fails; with the fix 150 > 100+0.01 succeeds."
+    },
+    {
+      "severity": "LOW",
+      "title": "Audit-finding linkage missing from rb_governor.py",
+      "location": "gpu_fuzzy_trader/rb_governor.py:709-710 (function header) and 1369-1370 (caller site)",
+      "fix": "Added '# → fixes audit finding #3 (RB Governor risk-grid overfits val_selection)' and '# → fixes audit finding #12 (PHASE4_TAIL_HOLDOUT_FRACTION orphan, now wired)' at the top of _make_walk_forward_fold_engines' docstring and at the caller in run_rb_governor_pipeline where fold engines are built. Both are greppable."
+    }
+  ],
+  "files_changed": [
+    "gpu_fuzzy_trader/rb_governor.py",
+    "tests/unit/test_rb_governor_cv_folds.py"
+  ],
+  "tests_run": [
+    {"file": "tests/unit/test_rb_governor_cv_folds.py", "result": "20 passed (19 existing + 1 new: test_baseline_cur_score_uses_min_fold_in_walk_forward)"},
+    {"file": "tests/unit/test_rb_governor_tail_holdout.py", "result": "5 passed (unchanged)"}
+  ],
+  "audit_linkage_grep": "grep found 4 matches for 'audit finding #3|audit finding #12' in rb_governor.py — 2 at function header, 2 at caller site",
+  "notes": [
+    "The HIGH fix is 2 lines (+ comments); the LOW fix is 2 comment blocks (4 lines total).",
+    "Hist[0]['score'] is also updated to min(init_fold_scores) in walk-forward mode, ensuring the baseline history entry reflects the fold-min scale, not the full-validation scale.",
+    "Do NOT reset or rebase. The fix commit 32a2f49 is on top of 447f2ed.",
+    "PNG files changed during test run were reverted via git checkout; they are not part of this fix.",
+    "Handoff files (.opencode/handoffs/) were not modified by this fix commit."
+  ]
+}
