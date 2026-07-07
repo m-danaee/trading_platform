@@ -108,14 +108,14 @@ DATA_ROOT = os.environ.get("DATA_ROOT", "").strip()
 TRAIN_CSV_PATH = _env_str(
     "TRAIN_CSV_PATH",
     os.path.join(
-        DATA_ROOT, "train_2.csv") if DATA_ROOT else "data/train_2.csv",
+        DATA_ROOT, "train.csv") if DATA_ROOT else "data/train.csv",
 )
 TEST_CSV_PATH = _env_str(
     "TEST_CSV_PATH",
-    os.path.join(DATA_ROOT, "test_2.csv") if DATA_ROOT else "data/test_2.csv",
+    os.path.join(DATA_ROOT, "test.csv") if DATA_ROOT else "data/test.csv",
 )
 
-# Cached splits from train_2.csv (Phases 2–5). Rebuilt when train_2.csv is newer.
+# Cached splits from train.csv (Phases 2–5). Rebuilt when train.csv is newer.
 TRAIN_70_PATH = "data/train_70.parquet"
 VALIDATION_30_PATH = "data/validation_30.parquet"
 VALIDATION_FITNESS_PATH = "data/validation_fitness.parquet"
@@ -172,7 +172,7 @@ TAIL_DROP_ROWS = 288
 # =============================================================================
 # Phases 4–5 always use persisted train_70 + validation_30 (see splitter.py).
 
-# SPLIT_MODE — how train_2.csv is divided before Phase 2.
+# SPLIT_MODE — how train.csv is divided before Phase 2.
 #   holdout             → single per-symbol chronological split with embargo
 #                         (288 bars dropped between train and val).
 #                         The actual train/val fraction is set by
@@ -320,7 +320,7 @@ PHASE1_TOP_K_FEATURES = 25
 # detected by Feature_Detector. Phase 2 then evolves over the full feature set.
 #   True  → larger GA search space, more GPU RAM per chromosome, no MI prefilter.
 #   False → normal top-K MI-ranked selection.
-PHASE1_DISABLED: bool = True
+PHASE1_DISABLED: bool = False
 
 # PHASE1_MAX_FEATURE_OVERLAP — max shared feature names between long & short lists.
 #   Enforced as int(TOP_K × overlap) shared names (e.g. 25 × 0.8 → 20 shared).
@@ -375,7 +375,7 @@ PHASE1_STATIONARITY_RANK_DRIFT_MAX = 8
 # Peak GPU RAM scales ~linearly with this value (largest VRAM lever).
 #   Higher → more statistical power, slower, OOM risk on small GPUs.
 #   Lower  → faster, less RAM; trade/support floors may need proportional cut.
-PHASE1_SAMPLING_TOTAL = 700_000
+PHASE1_SAMPLING_TOTAL = 701_000
 
 # PHASE2_GPU_BATCH_SIZE — chromosomes per JAX vmap chunk in simulate_rule_batch.
 # Peak VRAM scales ~linearly (rule matching is O(batch × rows × conditions)).
