@@ -186,6 +186,14 @@ def _passes_pool_admission_impl(
         sum_pos = float(train_metrics.get("sum_positive_trade_pnl", 0.0))
         eps = float(getattr(_cfg, "PHASE2_F4_EPSILON", 1e-6))
         f4_val = max_tr / max(sum_pos, eps) if sum_pos > 0 else 0.0
+        # When JOINT_TRAIN_VAL is enabled, match the objective computation
+        # exactly by using min(train_f4, val_f4) for the gate check.
+        if (val_metrics is not None
+                and bool(getattr(_cfg, "PHASE2_JOINT_TRAIN_VAL", False))):
+            max_tr_v = float(val_metrics.get("max_single_trade_pnl", 0.0))
+            sum_pos_v = float(val_metrics.get("sum_positive_trade_pnl", 0.0))
+            f4_val_v = max_tr_v / max(sum_pos_v, eps) if sum_pos_v > 0 else 0.0
+            f4_val = min(f4_val, f4_val_v)
         f4_floor = float(getattr(_cfg, "PHASE2_F4_CONCENTRATION_FLOOR", 0.5))
         if f4_val > f4_floor:
             return False
@@ -308,6 +316,14 @@ def _feasibility_gate_failures(
         sum_pos = float(train_metrics.get("sum_positive_trade_pnl", 0.0))
         eps = float(getattr(_cfg, "PHASE2_F4_EPSILON", 1e-6))
         f4_val = max_tr / max(sum_pos, eps) if sum_pos > 0 else 0.0
+        # When JOINT_TRAIN_VAL is enabled, match the objective computation
+        # exactly by using min(train_f4, val_f4) for the gate check.
+        if (val_metrics is not None
+                and bool(getattr(_cfg, "PHASE2_JOINT_TRAIN_VAL", False))):
+            max_tr_v = float(val_metrics.get("max_single_trade_pnl", 0.0))
+            sum_pos_v = float(val_metrics.get("sum_positive_trade_pnl", 0.0))
+            f4_val_v = max_tr_v / max(sum_pos_v, eps) if sum_pos_v > 0 else 0.0
+            f4_val = min(f4_val, f4_val_v)
         f4_floor = float(getattr(_cfg, "PHASE2_F4_CONCENTRATION_FLOOR", 0.5))
         if f4_val > f4_floor:
             failures["f4_concentration"] = 1

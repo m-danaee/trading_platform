@@ -533,6 +533,7 @@ PHASE2_USE_TOTAL_RETURN_OBJ = True
 # PHASE2_F4_ENABLED — adds f4 = max_single_trade_pnl / max(sum_positive_trade_pnl, ε)
 #   as a 4th NSGA-III objective to penalise rules whose edge comes from a single
 #   outlier trade. True = 4-objective; False = 3-objective (regression guard).
+# → fixes audit finding #2 (outlier-driven f3 from uncapped time-exit returns)
 PHASE2_F4_ENABLED = True
 # PHASE2_F4_CONCENTRATION_FLOOR — rules with f4 > this floor are rejected at pool
 #   admission via the f4_concentration gate in _feasibility_gate_failures.

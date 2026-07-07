@@ -37,7 +37,11 @@ logger = logging.getLogger(__name__)
 
 # Number of NSGA-III objectives (3 or 4). Controlled by PHASE2_F4_ENABLED.
 # All np.full((pop_size, ...), inf) and _get_reference_vectors calls use this.
-N_OBJ = 4 if getattr(_cfg, "PHASE2_F4_ENABLED", False) else 3
+# Reads the centralized PHASE2_N_OBJECTIVES from config when enabled (→ fixes
+# audit finding #2: prevents drift between config and evox_runner array sizes).
+N_OBJ = (int(getattr(_cfg, "PHASE2_N_OBJECTIVES", 4))
+         if getattr(_cfg, "PHASE2_F4_ENABLED", False)
+         else 3)
 
 
 @dataclass

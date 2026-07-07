@@ -410,3 +410,40 @@ class TestFeasibilityGateFailures:
         # train_val_gap = train_ret - val_ret = -2 - (-3) = 1, max_gap=20, so 0
         assert result["train_val_gap"] == 0
         assert len(result) == 10
+
+    def test_f4_gate_uses_joint_min_when_joint_train_val_enabled(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When PHASE2_JOINT_TRAIN_VAL=True, the f4 gate must use
+        min(train_f4, val_f4) — matching the objective computation exactly.
+
+        Train f4 is high (0.9 > 0.5 floor), but val f4 is low (0.2).
+        Without joint-min the gate would reject; with joint-min it passes.
+        """
+        monkeypatch.setattr(_cfg, "PHASE2_F4_ENABLED", True)
+        monkeypatch.setattr(_cfg, "PHASE2_JOINT_TRAIN_VAL", True)
+        monkeypatch.setattr(_cfg, "PHASE2_F4_EPSILON", 1e-6)
+        monkeypatch.setattr(_cfg, "PHASE2_F4_CONCENTRATION_FLOOR", 0.5)
+        monkeypatch.setattr(_cfg, "PHASE2_REQUIRE_LAST_FOLD_POSITIVE", False)
+
+        train = {
+            "executed_trades": 100,
+            "total_return_pct": 5.0,
+            "profit_factor": 2.0,
+            "max_single_trade_pnl": 90.0,
+            "sum_positive_trade_pnl": 100.0,  # f4 = 0.9
+        }
+        val = {
+            "executed_trades": 50,
+            "total_return_pct": 3.0,
+            "profit_factor": 1.5,
+            "max_single_trade_pnl": 10.0,
+            "sum_positive_trade_pnl": 50.0,  # f4 = 0.2
+        }
+        result = _feasibility_gate_failures(train, val)
+        # Train-only f4 would be 0.9 > 0.5 → gate would fail.
+        # Joint min(train=0.9, val=0.2) = 0.2 ≤ 0.5 → gate passes.
+        assert result["f4_concentration"] == 0, (
+            f"Expected f4 gate to pass (joint min=0.2 ≤ 0.5), "
+            f"but got f4_concentration={result['f4_concentration']}"
+        )

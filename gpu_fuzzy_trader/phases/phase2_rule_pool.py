@@ -978,7 +978,7 @@ def compute_phase2_objectives_from_metrics(
 
     metrics["f4_concentration"] = f4
 
-    if bool(getattr(_cfg, "PHASE2_F4_ENABLED", True)):
+    if bool(getattr(_cfg, "PHASE2_F4_ENABLED", False)):
         objectives = np.array([f1, f2, f3, f4], dtype=np.float64)
     else:
         objectives = np.array([f1, f2, f3], dtype=np.float64)

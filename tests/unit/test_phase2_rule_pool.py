@@ -2568,6 +2568,47 @@ class TestF4ReturnConcentration:
         assert len(objectives) == 4, f"Expected 4 objectives, got {len(objectives)}"
         assert objectives[3] == 0.0, f"Expected f4=0, got {objectives[3]}"
 
+    def test_f4_default_is_three_objectives_when_config_deleted(self, monkeypatch):
+        """When PHASE2_F4_ENABLED is deleted from config (missing attr),
+        both the f4 computation gate and the objectives-array-size gate
+        must default to False — producing 3 objectives, not 4 with all-zero f4."""
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+            compute_phase2_objectives_from_metrics,
+        )
+
+        # Explicitly delete the attribute so getattr falls to its default.
+        if hasattr(_cfg, "PHASE2_F4_ENABLED"):
+            monkeypatch.delattr(_cfg, "PHASE2_F4_ENABLED")
+        monkeypatch.setattr(_cfg, "PHASE2_JOINT_TRAIN_VAL", False)
+        monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", False)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 1)
+        monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
+
+        dont_cares = np.full(4, 5, dtype=np.int32)
+        chrom = np.array([0, 1, 2, 3], dtype=np.int32)
+        metrics = {
+            "executed_trades": 100,
+            "total_return_pct": 10.0,
+            "sortino_ratio": 1.0,
+            "max_drawdown_pct": 2.0,
+            "win_rate": 50.0,
+            "profit_factor": 1.2,
+            "per_symbol_metrics": {},
+            "sum_positive_trade_pnl": 60.0,
+            "sum_negative_trade_pnl": 40.0,
+            "max_single_trade_pnl": 60.0,
+        }
+        objectives, out_metrics = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, metrics, [],
+        )
+        # Without PHASE2_F4_ENABLED, both getattr defaults are False → 3 objectives
+        assert objectives.shape == (3,), (
+            f"Expected 3 objectives when config attr is deleted, "
+            f"got {objectives.shape}"
+        )
+        assert "f4_concentration" not in out_metrics or out_metrics["f4_concentration"] == 0.0
+
 
 class TestTwoStageOrchestration:
     def test_run_uses_two_stages_when_enabled(self, monkeypatch):
