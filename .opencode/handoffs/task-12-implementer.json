@@ -1,34 +1,35 @@
 {
-  "branch": "feature/task-12-lower-phase3-thresholds",
-  "base_branch": "main",
-  "commit": "df70cc3",
-  "summary": "Lowered PHASE3_PER_SYMBOL_MIN_TRADES from 15 to 8 and PHASE3_PER_SYMBOL_MIN_RETURN from 1.5 to 0.5 in gpu_fuzzy_trader/config.py to allow more symbols to pass per-symbol greedy selection. Added PHASE3_DIAGNOSTIC_REPORT_ENABLED=True flag. In Rule_Set_Selector.run(), added per-symbol diagnostic accumulation that writes outputs/reports/gen_diag_iter12.csv with columns: direction, symbol, val_trades, val_return_pct, train_val_gap_pct, n_rules_selected, top_rule_condition_signature. Added comprehensive unit test in tests/unit/test_phase3_threshold_diagnostic.py that verifies config values, threshold filtering logic (monkeypatched scoring confirms 8-trade/0.5%-return rules pass while 7-trade or 0.4%-return rules are rejected), and integration-level diagnostic CSV writing with correct columns.",
-  "verification": {
-    "ast_import_sanity": "PASS",
-    "new_unit_test_passed": true,
-    "existing_phase3_tests_passed": true,
-    "new_test_count": 10,
-    "existing_test_count": 76,
-    "existing_skipped": 1,
-    "test_commands": {
-      "ast_config_parse": ".venv/bin/python -c \"import ast; ast.parse(open('gpu_fuzzy_trader/config.py').read()); print('config ok')\"",
-      "import_phase3": ".venv/bin/python -c \"from gpu_fuzzy_trader.phases.phase3_rule_set import Rule_Set_Selector; print('phase3 ok')\"",
-      "new_test": ".venv/bin/python -m pytest tests/unit/test_phase3_threshold_diagnostic.py -v",
-      "existing_tests": ".venv/bin/python -m pytest tests/unit/test_phase3_rule_set.py tests/unit/test_phase3_lean_fallback.py -v"
-    }
-  },
+  "task_id": "task-12",
+  "status": "DONE",
+  "commit": "9bfe77a",
+  "branch": "feature/task-12-gate-pareto-collapse-warn",
+  "summary": "Gated Pareto-collapse warning to pareto_size >= 5",
   "files_changed": [
-    ".opencode/CONTEXT.md",
     "gpu_fuzzy_trader/config.py",
-    "gpu_fuzzy_trader/phases/phase3_rule_set.py",
-    "tests/unit/test_phase3_threshold_diagnostic.py"
+    "gpu_fuzzy_trader/evolution/evox_runner.py",
+    "tests/unit/test_phase2_corr_warn_gate.py"
+  ],
+  "acceptance_criteria_met": [
+    "AC1: Warning at evox_runner.py:2736-2745 is gated on len(pareto_indices) >= PHASE2_OBJECTIVE_CORR_MIN_PARETO_SIZE",
+    "AC2: When pareto size < 5, no 'Pareto collapse risk' warning fires (tested with pop_size=4, min=5)",
+    "AC3: When pareto size >= 5 with |corr| >= 0.9, warning fires (tested with pop_size=7, min=5, threshold=0.0)",
+    "AC4: PHASE2_OBJECTIVE_CORR_MIN_PARETO_SIZE = 5 is the new config default (verified by test)",
+    "AC5: With PHASE2_OBJECTIVE_CORR_MIN_PARETO_SIZE = 0, warning fires regardless of pareto size (tested)",
+    "AC6: All existing tests pass (test_phase2_rule_pool.py: 166, test_phase2_window_rotation.py: 16, test_phase2_island_scheduler.py: 29, test_evox_runner.py: 41, test_config_additions.py: 4)"
+  ],
+  "tests_run": [
+    "pytest tests/unit/test_phase2_corr_warn_gate.py -q: 5 passed",
+    "pytest tests/unit/test_evox_runner.py -q: 41 passed",
+    "pytest tests/unit/test_phase2_rule_pool.py -q: 166 passed",
+    "pytest tests/unit/test_phase2_window_rotation.py -q: 16 passed",
+    "pytest tests/unit/test_phase2_island_scheduler.py -q: 29 passed",
+    "pytest tests/unit/test_config_additions.py -q: 4 passed"
   ],
   "notes_for_reviewer": [
-    "The threshold filtering test uses monkeypatched _score_pool_rule_on_symbol to verify that 8-trades/0.5%-return rules are admitted and 7-trades or 0.4%-return rules are rejected. This is necessary because the real engine simulation in _per_symbol_greedy's _robust_combo_return uses the actual CPUBacktestEngine which makes exact trade/return control impractical.",
-    "The diagnostic CSV uses append mode ('a') when the file already exists, so both long and short direction runs accumulate rows into the same gen_diag_iter12.csv file. This matches the expected format with both directions' data.",
-    "Legacy tp/sl/capital_pct fields at the top level of each rule in the output JSON are preserved (no changes to _build_output_dict).",
-    "The CONDITION_SIGNATURE uses ';'.join of all conditions of the top selected pool rule for each symbol. This is a simple string fingerprint for human readability.",
-    "No changes to evaluator_v5.ipynb or friend_project/.",
-    "Full pipeline re-run not performed in this step (orchestrator will trigger after merge)."
+    "New config: PHASE2_OBJECTIVE_CORR_MIN_PARETO_SIZE = 5 (config.py)",
+    "Warning loop now guarded by if len(pareto_indices) >= min_pareto_size (evox_runner.py)",
+    "Warning message now includes 'pareto_size=N' suffix for observability",
+    "All 261 tests pass across all related test files",
+    "This is the FINAL task of the 12-task audit fix plan"
   ]
 }

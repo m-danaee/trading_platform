@@ -1,66 +1,75 @@
 {
-  "branch": "feature/task-12-lower-phase3-thresholds",
-  "base_branch": "main",
-  "implementer_commit": "df70cc3",
+  "task_id": "task-12",
+  "review_type": "code-review",
   "verdict": "APPROVED",
-  "blocking_issues": [],
-  "nits_non_blocking": [
-    {
-      "id": "N1",
-      "category": "Pythonic style",
-      "location": "gpu_fuzzy_trader/phases/phase3_rule_set.py:1446",
-      "description": "`import csv as _csv` is inside the diagnostic method. `csv` is stdlib with no lazy-loading benefit; the file already imports `json` at the top (line 21).",
-      "recommendation": "Move it to the top of the file and drop the `_csv` alias."
+  "correctness_checks": {
+    "gate_logic_correct": {
+      "status": "PASS",
+      "detail": "`if len(pareto_indices) >= min_pareto_size:` correctly guards the warning loop; skipped when pareto is too small."
     },
-    {
-      "id": "N2",
-      "category": "Error handling consistency",
-      "location": "gpu_fuzzy_trader/phases/phase3_rule_set.py:1444-1469",
-      "description": "The diagnostic CSV block is NOT wrapped in try/except, while the two reporter blocks immediately above ARE wrapped with `except Exception as exc: logger.warning(...)`. If the CSV write fails, the exception propagates and `Rule_Set_Selector.run()` raises, even though `self._persist_output(output_dict)` has already been called and the main output is safe on disk.",
-      "recommendation": "Match the reporter-block pattern: wrap the CSV write in try/except and log a non-fatal warning."
+    "config_value_is_5": {
+      "status": "PASS",
+      "detail": "PHASE2_OBJECTIVE_CORR_MIN_PARETO_SIZE = 5 at config.py:684."
     },
-    {
-      "id": "N3",
-      "category": "Test quality",
-      "location": "tests/unit/test_phase3_threshold_diagnostic.py:180-238",
-      "description": "`test_scoring_threshold_filter` has a misleading docstring — it claims to verify `_per_symbol_greedy`'s filter but never calls `_per_symbol_greedy`. The test loops over the mock pool and compares the mock's return values directly against the config constants. This is a tautology given the mock. The positive path is covered by `test_excellent_rule_selected_by_greedy`; the negative paths are not actually verified.",
-      "recommendation": "Either call `_per_symbol_greedy` and assert exclusion of the failing rules, or rewrite the docstring to be honest."
+    "getattr_default_is_5": {
+      "status": "PASS",
+      "detail": "getattr(_cfg, 'PHASE2_OBJECTIVE_CORR_MIN_PARETO_SIZE', 5) — default matches config.py; graceful degradation if attribute missing."
     },
-    {
-      "id": "N4",
-      "category": "Branch policy",
-      "location": "git log on feature branch",
-      "description": "Two commits on the feature branch (`df70cc3` for the change, `974e7a2` for the handoff JSON). Spec says 'one commit on the feature branch'. Second commit is trivial (34-line JSON) and harmless, but technically a minor violation.",
-      "recommendation": "Optional: squash the two commits with `git rebase -i main` before merge. Not blocking."
+    "edge_min_0_regression_guard": {
+      "status": "PASS",
+      "detail": "min=0, pop=4: len=4 >= 0 → warning fires. Tested by test_regression_min_pareto_zero."
     },
-    {
-      "id": "N5",
-      "category": "Test coverage",
-      "location": "tests/unit/test_phase3_threshold_diagnostic.py",
-      "description": "No test exercises the append-mode + conditional-header behavior. All CSV tests use a fresh `tmp_path` per test, so the `'a' if file_exists else 'w'` branch and the `if not file_exists: writer.writeheader()` are unverified.",
-      "recommendation": "Add a two-call test: first call writes a file with header, second call appends without re-writing the header."
+    "edge_min_1_4_boundary": {
+      "status": "PASS",
+      "detail": "All boundary values (min=1, min=4=pop, min=5=pop) handled correctly by >= comparison. No gaps."
     },
-    {
-      "id": "N6",
-      "category": "Performance polish",
-      "location": "gpu_fuzzy_trader/phases/phase3_rule_set.py:1287-1320",
-      "description": "The diagnostic re-simulates the top rule per symbol (one `_score_pool_rule_on_symbol` call plus a `t_engine.simulate_rule_set` call). `_per_symbol_greedy` already has `(idx, return_pct, trades)` in its internal `scored` list — the re-sim is technically wasted work.",
-      "recommendation": "Acceptable for a 10-symbol universe. Could be optimized in a follow-up by having `_per_symbol_greedy` return the top rule's metrics alongside `selected`. Not blocking."
-    }
-  ],
-  "verification": {
-    "diff_size": "5 files changed, 568 insertions(+), 5 deletions(-)",
-    "scope_check": "All 5 changed files are within expected scope (config.py, phase3_rule_set.py, test file, handoff JSON, CONTEXT.md).",
-    "evaluator_v5_untouched": "git diff main..feature/task-12-lower-phase3-thresholds -- evaluator_v5.ipynb is empty (verified).",
-    "friend_project_untouched": "Not in diff (verified).",
-    "print_TODO_FIXME_check": "No print/TODO/FIXME added in source (verified via grep).",
-    "hardcoded_old_values": "No hardcoded 15 or 1.5 remain in Phase 3 (verified via grep).",
-    "test_results": {
-      "new_threshold_diagnostic_test": "10/10 PASS in 2.72s",
-      "existing_phase3_rule_set_test": "76/77 PASS in 2.14s (1 expected skip)",
-      "existing_phase3_lean_fallback_test": "covered in the 76 PASS above",
-      "all_targeted_tests_combined": "86/87 PASS (1 expected skip) in ~5s"
+    "edge_empty_pareto": {
+      "status": "PASS",
+      "detail": "len=0: gate skips correctly; no crash even if min=0 (pareto_diag values are 0/NaN — non-fatal)."
+    },
+    "pareto_size_suffix_in_log": {
+      "status": "PASS",
+      "detail": "Format string includes 'pareto_size=%d' with len(pareto_indices) arg. Verified by test_warning_message_contains_pareto_size."
+    },
+    "corr_threshold_unchanged": {
+      "status": "PASS",
+      "detail": "PHASE2_OBJECTIVE_CORR_WARN_THRESHOLD = 0.9 at config.py:678 — not modified."
     }
   },
-  "summary": "Task 12 implementation is correct, clean, and well-tested. All 13 spec criteria are met. The 6 nits are stylistic / minor — none of them block merging. The most useful one to fix before merge is N2 (error handling consistency in the diagnostic CSV block); the rest can be deferred to a follow-up task if the user prefers."
+  "maintainability_checks": {
+    "audit_finding_13_greppable": {
+      "status": "PASS",
+      "detail": "Both config.py:683 and evox_runner.py:2738 have '# → fixes audit finding #13' comments."
+    },
+    "config_docstring_clear": {
+      "status": "PASS",
+      "detail": "Docstring explains why 2-point correlations are degenerate and what the flag gates."
+    },
+    "default_value_sensible": {
+      "status": "PASS",
+      "detail": "Default of 5 is a conservative heuristic; spec notes 3 would also work. No issue."
+    },
+    "diff_scope_clean": {
+      "status": "PASS",
+      "detail": "Only 3 source files changed: config.py, evox_runner.py, test_phase2_corr_warn_gate.py. No evaluator_v5.ipynb changes."
+    },
+    "code_clarity": {
+      "status": "PASS",
+      "detail": "Gate comment placed immediately above min_pareto_size computation; logic flow is easy to follow."
+    }
+  },
+  "test_adequacy_checks": {
+    "test_count": 5,
+    "tests": [
+      {"name": "test_no_warning_below_min_pareto", "ac": "AC2", "status": "PASS"},
+      {"name": "test_warning_fires_above_min_pareto", "ac": "AC3", "status": "PASS"},
+      {"name": "test_config_default_is_five", "ac": "AC4", "status": "PASS"},
+      {"name": "test_regression_min_pareto_zero", "ac": "AC5", "status": "PASS"},
+      {"name": "test_warning_message_contains_pareto_size", "ac": "AC3 suffix", "status": "PASS"}
+    ],
+    "test_design_quality": "PASS — _FakeEngine deterministically produces fully non-dominated population (pareto_size == pop_size) by returning metrics with strict f1/f2 tradeoff. Tests exercise the real run_phase2_evolution call path, not a mock. Right level of abstraction.",
+    "test_file_location": "PASS — tests/unit/test_phase2_corr_warn_gate.py is focused, discoverable, and doesn't bloat existing test files."
+  },
+  "summary": "Clean, surgical fix. Gate logic correct. All edge cases handled. Audit linkage greppable. All 5 acceptance criteria met with passing tests. No defects, no regressions, no out-of-scope changes. APPROVED — this completes the final task of the 12-task audit fix plan.",
+  "recommendation": "APPROVED for merge to main."
 }
