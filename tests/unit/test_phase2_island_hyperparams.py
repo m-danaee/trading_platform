@@ -16,7 +16,7 @@ def test_cluster_k4_scaling(monkeypatch):
     )
     assert hp.min_trade_support == 11
     assert hp.min_trade_pool_floor >= 8
-    assert hp.min_profitable_symbols <= 2
+    assert hp.min_profitable_symbols == 3
     assert hp.monthly_admission_min_months == cfg.PHASE2_ISLAND_MONTHLY_MIN_MONTHS
 
 
@@ -42,16 +42,16 @@ def test_scale_trade_floor_absolute_min():
 @pytest.mark.parametrize("n_symbols,expected_min_profitable", [
     (1, 1),   # orphan-like: max(1, round(0.5)) = 1
     (2, 1),   # max(1, round(1.0)) = 1
-    (3, 2),   # max(1, round(1.5)) = 2
-    (4, 2),   # max(1, round(2.0)) = 2
-    (5, 3),   # max(1, round(2.5)) = 3
-    (6, 3),   # max(1, round(3.0)) = 3
-    (7, 4),   # max(1, round(3.5)) = 4
+    (3, 3),   # cluster floor: max(3, 2) = 3
+    (4, 3),   # max(3, 2) = 3
+    (5, 3),   # max(3, 3) = 3
+    (6, 3),   # max(3, 3) = 3
+    (7, 4),   # max(3, 4) = 4
 ])
 def test_min_profitable_symbols_scales_with_cluster_size(
     monkeypatch, n_symbols, expected_min_profitable,
 ):
-    """Verify the scaling formula: max(1, round(n_symbols * 0.5))."""
+    """Verify cluster islands enforce at least 3 profitable symbols when possible."""
     # Ensure PHASE2_MIN_PROFITABLE_SYMBOLS is high enough not to cap
     monkeypatch.setattr(cfg, "PHASE2_MIN_PROFITABLE_SYMBOLS", 99)
     hp = cfg.resolve_island_hyperparams(

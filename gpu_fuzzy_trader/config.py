@@ -458,17 +458,17 @@ PHASE2_GPU_DATA_INT8 = True
 # PHASE2_TP — take-profit % used when scoring rules in Phase 2 (and Phase 1 targets).
 #   Higher → fewer "wins" in labels/objectives; rules must catch larger moves.
 #   Lower  → more wins, higher turnover, may favor noisy frequent signals.
-PHASE2_TP = 2.0
+PHASE2_TP = 1.5
 
 # PHASE2_SL — stop-loss % during Phase 2 scoring.
 #   Higher → wider stops, fewer stop-outs, larger per-trade risk.
 #   Lower  → tighter stops; forces higher precision rules to survive.
-PHASE2_SL = 1.0
+PHASE2_SL = 1.2
 
 # PHASE2_CAPITAL_PCT — % of equity allocated per rule signal in Phase 2.
 #   Higher → larger simulated positions; drawdown and return scale up.
 #   Lower  → conservative sizing; may understate overlap effects until Phase 4.
-PHASE2_CAPITAL_PCT = 30.0
+PHASE2_CAPITAL_PCT = 18.0
 
 
 # =============================================================================
@@ -512,7 +512,7 @@ TRADE_SUPPORT_PENALTY_EXPONENT = 3.0
 # MIN_TRADE_POOL_FLOOR — hard reject below this executed trade count.
 #   Higher → archive/pool never keeps very rare rules.
 #   Lower  → extremely sparse rules can survive if other metrics excel.
-MIN_TRADE_POOL_FLOOR = 40
+MIN_TRADE_POOL_FLOOR = 35
 
 # PHASE2_SUPPORT_PENALTY_WEIGHT_F1/F2/F3 — per-objective support penalty scale.
 #   Higher → that objective punishes low support more (steer Sortino vs DD vs return).
@@ -537,7 +537,7 @@ PHASE2_USE_TOTAL_RETURN_OBJ = True
 PHASE2_F4_ENABLED = True
 # PHASE2_F4_CONCENTRATION_FLOOR — rules with f4 > this floor are rejected at pool
 #   admission via the f4_concentration gate in _feasibility_gate_failures.
-PHASE2_F4_CONCENTRATION_FLOOR = 0.5
+PHASE2_F4_CONCENTRATION_FLOOR = 0.35
 # PHASE2_F4_EPSILON — small constant to avoid division by zero in the f4 ratio.
 PHASE2_F4_EPSILON = 1e-6
 # PHASE2_N_OBJECTIVES — number of NSGA-III objectives (3 or 4). Used to size
@@ -568,7 +568,7 @@ PHASE2_MIN_PROFITABLE_SYMBOLS_PENALTY = 3
 # PHASE2_SYMBOL_GENE_DONT_CARE_PROB — probability of forcing a symbol gene to
 #   dont_care during mutation. Higher → more cross-symbol rules; prevents
 #   symbol-locked evolution.
-PHASE2_SYMBOL_GENE_DONT_CARE_PROB = 0.4
+PHASE2_SYMBOL_GENE_DONT_CARE_PROB = 0.6
 
 # PHASE2_USE_ROBUST_RETURN_OBJ — store min(train_return, val_return) as
 #   robust_return_pct on metrics when PHASE2_JOINT_TRAIN_VAL=True.
@@ -587,12 +587,12 @@ PHASE2_SORTINO_MIN_TRADE_THRESHOLD = 50
 # PHASE2_RETURN_FLOOR_PCT — min train return % to avoid feasibility penalty.
 #   Higher → only profitable-on-train rules stay feasible; emptier search.
 #   Lower  → more exploration; weak rules linger until other gates remove them.
-PHASE2_RETURN_FLOOR_PCT = 0.5
+PHASE2_RETURN_FLOOR_PCT = 0.0
 
 # PHASE2_VAL_RETURN_FLOOR_PCT — min validation return % for feasibility.
 #   Higher → stricter OOS alignment during evolution.
 #   Lower  → allow negative val return during search (gates may still catch later).
-PHASE2_VAL_RETURN_FLOOR_PCT = 1.0
+PHASE2_VAL_RETURN_FLOOR_PCT = 3.0
 
 # PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION — soft penalty threshold during NSGA-III fitness.
 #   Lower than the admission floor so the feasible set isn't artificially collapsed
@@ -605,7 +605,7 @@ PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION = 1.05
 # PHASE2_PROFIT_FACTOR_FLOOR_ADMISSION — hard gate at pool admission.
 #   The original PHASE2_PROFIT_FACTOR_FLOOR=1.15; kept for the hard gate.
 #   → fixes audit finding #9
-PHASE2_PROFIT_FACTOR_FLOOR_ADMISSION = 1.15
+PHASE2_PROFIT_FACTOR_FLOOR_ADMISSION = 1.25
 
 # PHASE2_PROFIT_FACTOR_FLOOR — DEPRECATED alias for PHASE2_PROFIT_FACTOR_FLOOR_ADMISSION.
 #   Kept for backward compat; do not use in new code. Tracks ADMISSION automatically.
@@ -615,7 +615,7 @@ PHASE2_PROFIT_FACTOR_FLOOR = PHASE2_PROFIT_FACTOR_FLOOR_ADMISSION
 # PHASE2_SYMBOL_MEDIAN_RETURN_FLOOR_PCT — min median return across symbols.
 #   Higher → rules must work on typical symbols, not one outlier.
 #   Lower  → single-symbol heroes can survive longer.
-PHASE2_SYMBOL_MEDIAN_RETURN_FLOOR_PCT = -0.5
+PHASE2_SYMBOL_MEDIAN_RETURN_FLOOR_PCT = 0.0
 
 # PHASE2_MIN_PROFITABLE_SYMBOLS — min count of symbols with positive PnL.
 #   Higher → demand broad cross-symbol edge; stricter for 10-symbol universe.
@@ -640,7 +640,7 @@ PHASE2_POOL_VAL_RETURN_MIN_PCT = 0.0
 # val return by more than this threshold (classic overfit signal).
 #   Higher → more lenient; only extreme train>>val gaps rejected.
 #   Lower  → stricter alignment between train and val required.
-PHASE2_MAX_TRAIN_VAL_GAP_PCT = 16.0
+PHASE2_MAX_TRAIN_VAL_GAP_PCT = 10.0
 
 # PHASE2_OVERFIT_WARNING_RATIO — threshold ratio (max_return / max_robust_return)
 # above which a WARNING is logged during evolution. Signals a rule that performs
@@ -654,14 +654,14 @@ PHASE2_OVERFIT_WARNING_RATIO = 3.0
 #   Default 15.0 (raised from 5.0 in task-6) so the soft penalty is comparable to the
 #   return signal — kills rules where train>>val even before pool admission.
 # → fixes audit finding #7
-PHASE2_OVERFIT_GAP_PENALTY_WEIGHT = 15.0
+PHASE2_OVERFIT_GAP_PENALTY_WEIGHT = 22.0
 
 # PHASE2_OVERFIT_GAP_PCT_THRESHOLD — train/val return gap (in percentage points)
 #   above which the overfit-gap penalty starts accumulating. Subtraction-based,
 #   well-defined for any sign of val_ret (unlike the old ratio-based definition).
 #   Default 8.0pp is below PHASE2_MAX_TRAIN_VAL_GAP_PCT=16.0 so the soft penalty
 #   starts ramping before the hard gate rejects outright.
-PHASE2_OVERFIT_GAP_PCT_THRESHOLD = 8.0
+PHASE2_OVERFIT_GAP_PCT_THRESHOLD = 5.0
 
 # PHASE2_OVERFIT_RATIO_FLOOR — hard reject pool admission when train_return /
 #   max(val_return, 0.1) exceeds this ratio. Catches cases where the absolute-pp
@@ -671,7 +671,7 @@ PHASE2_OVERFIT_GAP_PCT_THRESHOLD = 8.0
 #   Lower  → stricter; smaller ratios also trigger.
 #   0.0 or float('inf') → disables the ratio gate (regression guard).
 # → fixes audit finding #7 (absolute-pp gate missed high-ratio cases)
-PHASE2_OVERFIT_RATIO_FLOOR = 3.0
+PHASE2_OVERFIT_RATIO_FLOOR = 2.5
 
 # PHASE2_OBJECTIVE_CORR_WARN_THRESHOLD — log a debug warning when Pareto-front
 #   objective pairwise correlation exceeds this (Pareto collapse risk).
@@ -689,7 +689,7 @@ PHASE2_OBJECTIVE_CORR_MIN_PARETO_SIZE = 5
 #   Higher → larger pool for Phase 3 greedy selection.
 #   Lower  → smaller pool; faster Phase 3, fewer combinations.
 # widened for RB Governor candidate pool (was 80 for legacy Phase 3)
-PHASE2_KEEP_TOP_RULES = 120
+PHASE2_KEEP_TOP_RULES = 80
 
 # PHASE2_REQUIRE_LAST_FOLD_POSITIVE — in the holdout pool-admission path,
 # require the (single) validation fold to have positive total return.
@@ -720,7 +720,7 @@ PHASE2_MONTHLY_ADMISSION_ENABLED = True
 #   0.0  → strict profit only (return must be > 0; flat months do not count).
 #   2.0  → month must earn at least +2% to count as good.
 #   -1.0 → month counts if return >= -1% (more lenient non-loss bar).
-PHASE2_MONTHLY_GOOD_RETURN_MIN_PCT = 0.0
+PHASE2_MONTHLY_GOOD_RETURN_MIN_PCT = 0.5
 
 # PHASE2_MONTHLY_ADMISSION_MIN_RATIO — fraction of monthly windows that must
 # be profitable for a rule to be admitted (non-island path; island uses
@@ -729,7 +729,7 @@ PHASE2_MONTHLY_GOOD_RETURN_MIN_PCT = 0.0
 #   0.667 → rule must be profitable in two-thirds of windows; tighter stability.
 # Lowered 0.667→0.5: island-friendly threshold; island-evolved rules trained on
 # 3-4 symbols have noisier monthly windows, 0.667 was too strict.
-PHASE2_MONTHLY_ADMISSION_MIN_RATIO = 0.5
+PHASE2_MONTHLY_ADMISSION_MIN_RATIO = 0.65
 
 # PHASE2_MONTHLY_ADMISSION_MIN_MONTHS — minimum number of monthly windows
 # required before the gate is applied.  When the train split is shorter than
@@ -766,7 +766,7 @@ PHASE2_JOINT_TRAIN_VAL = True
 #   excluded from fitness computation. Val metrics are still stored on the metrics
 #   dict for reporting and pool admission, but do NOT affect NSGA-III objectives.
 #   When True, val penalties enter fitness even when PHASE2_JOINT_TRAIN_VAL=False.
-PHASE2_VAL_IN_FITNESS_PENALTY = False
+PHASE2_VAL_IN_FITNESS_PENALTY = True
 
 # PHASE2_VAL_SIM_INTERVAL — run val backtest every N generations during
 # evolution (default 3, was 1 before task-11).  With per-epoch window
@@ -779,7 +779,7 @@ PHASE2_VAL_IN_FITNESS_PENALTY = False
 #   3 → val every 3rd gen (default post task-11; ~33% GPU savings).
 # → fixes audit finding #10 (val every gen is wasteful when
 # window is fixed; cache is safe)
-PHASE2_VAL_SIM_INTERVAL = 3
+PHASE2_VAL_SIM_INTERVAL = 1
 assert PHASE2_VAL_SIM_INTERVAL >= 1, "PHASE2_VAL_SIM_INTERVAL must be >= 1"
 
 # PHASE2_DIVERSITY_HAMMING_THRESHOLD — min Hamming distance for "unique" rule.
@@ -804,7 +804,7 @@ PHASE2_HOF_EPOCH_CARRYOVER = 10
 # Increased 0.5→2.0: 0.5 was negligible vs 50+ infeasible penalties, allowing
 # phenotype collapse. 2.0 provides meaningful push toward diversity without
 # overwhelming feasible objectives on the Pareto front.
-PHASE2_DIVERSITY_PENALTY = 2.0
+PHASE2_DIVERSITY_PENALTY = 6.0
 
 # PHASE2_PHENOTYPE_SORTINO_STEP — Sortino bucket width for behavioral diversity.
 # Tightened 0.5→0.3→0.15: with compressed Sortino in ~0–20 and pop 200, finer
@@ -857,7 +857,7 @@ PHASE2_PLATEAU_EARLY_STOP_MIN_GENERATION = 6
 # PHASE2_PLATEAU_EARLY_STOP_PATIENCE — gens without improvement before stop.
 #   Higher → wait longer for breakthrough; uses more compute.
 #   Lower  → stop quickly when progress stalls.
-PHASE2_PLATEAU_EARLY_STOP_PATIENCE = 8
+PHASE2_PLATEAU_EARLY_STOP_PATIENCE = 6
 
 # PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT — min return improvement to reset patience.
 #   Higher → need larger gains to count as progress.
@@ -927,7 +927,7 @@ PHASE2_ISLAND_PLATEAU_POST_RESTART_STOP_PATIENCE = 8
 # PHASE2_PLATEAU_MAX_RESTARTS — restarts per epoch before final break.
 #   3       → up to 3 diversity restarts, then break on the next plateau.
 #   0       → immediately break (disables restart regardless of ENABLED flag).
-PHASE2_PLATEAU_MAX_RESTARTS = 3
+PHASE2_PLATEAU_MAX_RESTARTS = 2
 
 # PHASE2_VIABILITY_COLLAPSE_THRESHOLD — pop_viable fraction below which viability
 #   is considered collapsed (triggers forced restart after streak).
@@ -997,17 +997,17 @@ PHASE2_DIVERSITY_RECOVERY_MUTATION_BOOST = 1.75
 
 # --- Two-stage evolution: wide exploration → val-robust refinement ---
 
-PHASE2_TWO_STAGE_ENABLED = False
+PHASE2_TWO_STAGE_ENABLED = True
 
 # PHASE2_STAGE_A_GENERATIONS — Stage A (exploration) generation budget.
 #   Higher → more diverse initial Pareto before val-focused Stage B.
 #   Lower  → quicker handoff; Stage B may miss good regions.
-PHASE2_STAGE_A_GENERATIONS = 85
+PHASE2_STAGE_A_GENERATIONS = 60
 
 # PHASE2_STAGE_B_GENERATIONS — Stage B (refinement) generation budget.
 #   Higher → more val-robust polishing; total time = A + B gens.
 #   Lower  → less refinement after exploration.
-PHASE2_STAGE_B_GENERATIONS = 45
+PHASE2_STAGE_B_GENERATIONS = 36
 
 # PHASE2_STAGE_B_SEED_TOP_K — elites from Stage A seeded into Stage B.
 #   Higher → broader refinement starting set; slower Stage B per gen.
@@ -1129,14 +1129,12 @@ PHASE2_ENRICH_SYMBOL_METRICS_EVERY_N_GENS = 5
 # PHASE2_POPULATION_SIZE — individuals per generation.
 #   Higher → better Pareto coverage, ~linear GPU cost per generation.
 #   Lower  → faster gens, risk of premature convergence.
-PHASE2_POPULATION_SIZE = 120
+PHASE2_POPULATION_SIZE = 100
 
 # PHASE2_GENERATIONS — total evolutionary generations (before early stop).
 #   Higher → more search budget; diminishing returns after plateau.
 #   Lower  → faster runs; may under-explore gene space.
-# Reduced 132→100: diminishing returns past 100; latest run hit plateau
-# well before 132, wasting ~30 generations of compute.
-PHASE2_GENERATIONS = 132
+PHASE2_GENERATIONS = 96
 
 PHASE2_ALGORITHM = "NSGA3"
 
@@ -1281,7 +1279,7 @@ PHASE2_INIT_UNIFORM_MIX = 0.1
 #   Lower  → finer local search, risk of premature convergence.
 # Increased 0.3→0.35: more exploration to compensate for fewer generations
 # (132→100); helps escape local optima in tighter budget.
-PHASE2_MUTATION_RATE = 0.35
+PHASE2_MUTATION_RATE = 0.22
 
 # PHASE2_MUTATION_WEIGHTED_ACTIVATE_PROB — bias mutations toward activating genes.
 #   Higher → mutations tend to add conditions rather than dont_care.
@@ -1769,7 +1767,7 @@ RB_MAX_POOL_RULES_TO_EVALUATE: int = 200
 # RB_KEEP_TOP_RULES — how many positive-good candidates survive the
 #   single-rule ranking to feed ``_compose_ruleset``.
 #   Should be comfortably larger than PHASE2_KEEP_TOP_RULES.
-RB_KEEP_TOP_RULES: int = 120
+RB_KEEP_TOP_RULES: int = 150
 
 
 # --- Team composition ---
@@ -1777,13 +1775,13 @@ RB_KEEP_TOP_RULES: int = 120
 # RB_MAX_RULES — maximum rules in the composed team (hard cap; keep aligned
 #   with PHASE3_GLOBAL_MAX_RULES).  To reach RB_MAX_RULES with the default
 #   RB_CAPITAL_GRID min (15%), lower grid min or raise RB_MAX_TOTAL_CAPITAL.
-RB_MAX_RULES: int = 20
+RB_MAX_RULES: int = 5
 
 # RB_MAX_PAIR_OVERLAP — max Hamming-style overlap between any two rules in
 #   the team. Lower = more diverse team, harder to grow.
 #   Set slightly higher than the friend's 0.24 because the incoming pool is
 #   already symbol-specialized and therefore more likely to share conditions.
-RB_MAX_PAIR_OVERLAP: float = 0.35
+RB_MAX_PAIR_OVERLAP: float = 0.25
 
 # RB_RULESET_MUST_BEAT_SUBSETS — a candidate team must beat both its parent
 #   subset and the standalone candidate on both train and val return.
@@ -1824,7 +1822,8 @@ RB_RULE_ADD_BY_RETURN_ONLY: bool = False
 RB_RULE_ADD_IGNORE_OVERLAP: bool = False
 RB_RULE_ADD_IGNORE_SUBSET_BEAT: bool = True
 # Active only when RB_RULE_ADD_BY_RETURN_ONLY=True.
-RB_MIN_COMBINED_RETURN_IMPROVEMENT: float = 2.0  # min combined return-% uplift to add a new rule
+# min combined return-% uplift to add a new rule
+RB_MIN_COMBINED_RETURN_IMPROVEMENT: float = 3.5
 
 
 # --- Train-valid shape prior (anti-overfit) ---
@@ -1834,7 +1833,7 @@ RB_MIN_COMBINED_RETURN_IMPROVEMENT: float = 2.0  # min combined return-% uplift 
 #   healthy sign) but not wildly above (overfit sign).
 RB_REQUIRE_TRAIN_SLIGHTLY_ABOVE_VALID: bool = True
 RB_TRAIN_VALID_MIN_RATIO: float = 1.03
-RB_TRAIN_VALID_MAX_RATIO: float = 1.35
+RB_TRAIN_VALID_MAX_RATIO: float = 1.22
 RB_TRAIN_VALID_MIN_ABS_GAP: float = 0.20
 RB_TRAIN_VALID_MAX_ABS_GAP: float = 12.0
 RB_TRAIN_BELOW_VALID_PENALTY: float = 900.0
@@ -1847,7 +1846,7 @@ RB_TRAIN_VALID_SHAPE_BONUS: float = 160.0
 
 RB_DEFAULT_TP: float = 2.0
 RB_DEFAULT_SL: float = 1.2
-RB_DEFAULT_CAPITAL_PCT: float = 20.0
+RB_DEFAULT_CAPITAL_PCT: float = 18.0
 RB_REQUIRE_TP_SL_ABOVE_ONE: bool = True
 RB_MIN_TP: float = 1.0
 RB_MIN_SL: float = 1.0
@@ -1862,7 +1861,7 @@ RB_MIN_SL: float = 1.0
 #   raise RB_MAX_TOTAL_CAPITAL or lower grid min to approach RB_MAX_RULES.
 RB_TP_GRID: tuple[float, ...] = (1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0)
 RB_SL_GRID: tuple[float, ...] = (1.0, 1.2, 1.5, 2.0, 2.5)
-RB_CAPITAL_GRID: tuple[float, ...] = (15.0, 20.0, 25.0, 35.0)
+RB_CAPITAL_GRID: tuple[float, ...] = (15.0, 18.0, 22.0, 25.0)
 
 # RB_RISK_OPT_PASSES — round-robin passes through all rules.
 RB_RISK_OPT_PASSES: int = 1
@@ -1877,7 +1876,7 @@ RB_MAX_TOTAL_CAPITAL: float = 100.0
 #   Score every TP/SL/capital combo on N chronological folds of val_selection,
 #   pick the combo with the best min(fold1, fold2, ...) score (worst-case selection).
 #   → fixes audit finding #3 (RB Governor risk-grid overfits val_selection)
-RB_RISK_GRID_WF_SPLITS: int = 2
+RB_RISK_GRID_WF_SPLITS: int = 3
 
 # RB_RISK_GRID_USE_TAIL_HOLDOUT — reserve final PHASE4_TAIL_HOLDOUT_FRACTION
 #   of val_selection as an untouched tie-break holdout (reported but NOT used
@@ -2314,9 +2313,13 @@ def resolve_island_hyperparams(
             min_support = int(MIN_TRADE_SUPPORT)
             pool_floor = int(MIN_TRADE_POOL_FLOOR)
             sortino_thr = int(PHASE2_SORTINO_MIN_TRADE_THRESHOLD)
+        if sym_n >= 3:
+            scaled = max(3, (sym_n + 1) // 2)
+        else:
+            scaled = max(1, (sym_n + 1) // 2)
         min_profitable = min(
             int(PHASE2_MIN_PROFITABLE_SYMBOLS),
-            max(1, (sym_n + 1) // 2),
+            scaled,
         )
         monthly_months = int(PHASE2_ISLAND_MONTHLY_MIN_MONTHS)
         monthly_ratio = float(PHASE2_MONTHLY_ADMISSION_MIN_RATIO)
@@ -2335,12 +2338,7 @@ def resolve_island_hyperparams(
         min_profitable_symbols=int(min_profitable),
         monthly_admission_min_months=int(monthly_months),
         monthly_admission_min_profitable_ratio=float(monthly_ratio),
-        # skip_symbol_robustness_penalty is always True for island-scoped runs
-        # (cluster/orphan) because the per-symbol median profit check is
-        # too aggressive for small symbol sets (most clusters have 2-5 symbols).
-        # The min_profitable_symbols gate already provides cross-symbol quality
-        # control at an appropriate threshold.
-        skip_symbol_robustness_penalty=True,
+        skip_symbol_robustness_penalty=(profile == "orphan"),
         n_rows=int(rows),
         n_symbols=int(sym_n),
     )

@@ -59,51 +59,43 @@ def compute_labels(raw: pd.DataFrame) -> pd.DataFrame:
         lab_close = np.full(n, np.nan, dtype=np.float64)
         lab_close[:n-TAIL_DROP_ROWS] = c[TAIL_DROP_ROWS:]
 
-        # label_min_288: min(low[t+1:t+289])
+        # label_min_288: min(low[t+1:t+289]) — forward window via shift(-288)
         lab_min = np.full(n, np.nan, dtype=np.float64)
         if n > TAIL_DROP_ROWS:
-            # Use rolling min on low[1:] with window=288
-            lo_shifted = np.roll(lo, -1)
-            lo_shifted[-1] = np.nan
-            rolling_min = pd.Series(lo_shifted).rolling(
-                TAIL_DROP_ROWS, min_periods=TAIL_DROP_ROWS).min().to_numpy()
-            lab_min[:n-TAIL_DROP_ROWS] = rolling_min[:n-TAIL_DROP_ROWS]
+            rolling_min = (
+                pd.Series(lo)
+                .rolling(TAIL_DROP_ROWS, min_periods=TAIL_DROP_ROWS)
+                .min()
+                .shift(-TAIL_DROP_ROWS)
+                .to_numpy()
+            )
+            lab_min[: n - TAIL_DROP_ROWS] = rolling_min[: n - TAIL_DROP_ROWS]
 
-        # label_max_288: max(high[t+1:t+289])
+        # label_max_288: max(high[t+1:t+289]) — forward window via shift(-288)
         lab_max = np.full(n, np.nan, dtype=np.float64)
         if n > TAIL_DROP_ROWS:
-            hi_shifted = np.roll(hi, -1)
-            hi_shifted[-1] = np.nan
-            rolling_max = pd.Series(hi_shifted).rolling(
-                TAIL_DROP_ROWS, min_periods=TAIL_DROP_ROWS).max().to_numpy()
-            lab_max[:n-TAIL_DROP_ROWS] = rolling_max[:n-TAIL_DROP_ROWS]
+            rolling_max = (
+                pd.Series(hi)
+                .rolling(TAIL_DROP_ROWS, min_periods=TAIL_DROP_ROWS)
+                .max()
+                .shift(-TAIL_DROP_ROWS)
+                .to_numpy()
+            )
+            lab_max[: n - TAIL_DROP_ROWS] = rolling_max[: n - TAIL_DROP_ROWS]
 
-        # label_max_before_min: 1 if argmax(high) < argmin(low) in window
+        # label_max_before_min: 1 if argmax(high[t+1:t+289]) < argmin(low[t+1:t+289])
         lab_mbm = np.full(n, np.nan, dtype=np.float64)
         if n > TAIL_DROP_ROWS:
-            # Recompute shifted arrays if not already done (they should be from label_min_288/max blocks)
-            if 'hi_shifted' not in locals():
-                hi_shifted = np.roll(hi, -1)
-                hi_shifted[-1] = np.nan
-            if 'lo_shifted' not in locals():
-                lo_shifted = np.roll(lo, -1)
-                lo_shifted[-1] = np.nan
+            from numpy.lib.stride_tricks import sliding_window_view
 
-            hi_s = pd.Series(hi_shifted)
-            lo_s = pd.Series(lo_shifted)
-            argmax_idx = hi_s.rolling(TAIL_DROP_ROWS, min_periods=TAIL_DROP_ROWS).apply(
-                lambda x: x.argmax(), raw=True
-            ).to_numpy()
-            argmin_idx = lo_s.rolling(TAIL_DROP_ROWS, min_periods=TAIL_DROP_ROWS).apply(
-                lambda x: x.argmin(), raw=True
-            ).to_numpy()
-            valid = ~np.isnan(argmax_idx) & ~np.isnan(argmin_idx)
-            lab_mbm[:n-TAIL_DROP_ROWS] = np.where(
-                valid[:n-TAIL_DROP_ROWS],
-                (argmax_idx[:n-TAIL_DROP_ROWS] <
-                 argmin_idx[:n-TAIL_DROP_ROWS]).astype(float),
-                np.nan
-            )
+            hi_windows = sliding_window_view(hi, TAIL_DROP_ROWS)
+            lo_windows = sliding_window_view(lo, TAIL_DROP_ROWS)
+            valid_rows = n - TAIL_DROP_ROWS
+            hi_fwd = hi_windows[1: valid_rows + 1]
+            lo_fwd = lo_windows[1: valid_rows + 1]
+            argmax_idx = np.argmax(hi_fwd, axis=1)
+            argmin_idx = np.argmin(lo_fwd, axis=1)
+            lab_mbm[:valid_rows] = (argmax_idx < argmin_idx).astype(float)
 
         sym_labels = pd.DataFrame({
             "datetime": g["datetime"].to_numpy(),

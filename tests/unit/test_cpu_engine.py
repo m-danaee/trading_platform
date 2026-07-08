@@ -710,6 +710,42 @@ class TestPositionSizing:
         # target = 1000 * 0.5 * 2 = 1000; max_exposure = 1000 * 1.0 * 2 = 2000
         assert notional == pytest.approx(1000.0)
 
+    def test_three_rule_stack_never_exceeds_equity_exposure_cap(self):
+        """max_total_open_exposure is in dollars; cap is vs current equity, not initial capital."""
+        n = 40
+        df = _make_df(
+            n,
+            entry=100.0,
+            label_max=105.0,
+            label_min=97.0,
+            label_close=102.0,
+            max_before_min=1,
+            feature_val=0.9,
+        )
+        rule_set = [
+            {
+                "conditions": ["[feat_a] IS Very High"],
+                "tp": 2.0,
+                "sl": 1.0,
+                "capital_pct": 30.0,
+            }
+            for _ in range(3)
+        ]
+        eng = _make_engine(
+            df,
+            initial_capital=1000.0,
+            leverage=1.0,
+            max_total_exposure_pct=100.0,
+            max_hold_candles=5,
+        )
+        metrics = eng.simulate_rule_set(rule_set)
+        final_equity = float(metrics["final_equity"])
+        max_open = float(metrics["max_total_open_exposure"])
+        cap = final_equity * \
+            (_cfg.MAX_TOTAL_EXPOSURE_PCT / 100.0) * eng.leverage
+        assert max_open <= cap + 1e-6
+        assert max_open <= 1000.0 + 1e-6 or final_equity > 1000.0
+
 
 # ---------------------------------------------------------------------------
 # Fee deduction

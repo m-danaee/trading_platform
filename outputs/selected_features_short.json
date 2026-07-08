@@ -1,0 +1,141 @@
+{
+  "direction": "short",
+  "features": [
+    {
+      "name": "atr_pct_14",
+      "mode": "positive",
+      "score": 0.0
+    },
+    {
+      "name": "band_bb_percB_20_2",
+      "mode": "signed",
+      "score": 0.0
+    },
+    {
+      "name": "channel_pos_20",
+      "mode": "positive",
+      "score": 0.0
+    },
+    {
+      "name": "close_location_value",
+      "mode": "positive",
+      "score": 0.0
+    },
+    {
+      "name": "dmi_balance_14",
+      "mode": "signed",
+      "score": 0.0
+    },
+    {
+      "name": "dollar_vol_rel_20",
+      "mode": "positive",
+      "score": 0.0
+    },
+    {
+      "name": "downside_semivol_20",
+      "mode": "positive",
+      "score": 0.0
+    },
+    {
+      "name": "efficiency_ratio_20",
+      "mode": "positive",
+      "score": 0.0
+    },
+    {
+      "name": "ema_gap_atr_20",
+      "mode": "signed",
+      "score": 0.0
+    },
+    {
+      "name": "ema_slope_atr_20_5",
+      "mode": "signed",
+      "score": 0.0
+    },
+    {
+      "name": "macd_hist_atr",
+      "mode": "signed",
+      "score": 0.0
+    },
+    {
+      "name": "parkinson_vol_20",
+      "mode": "positive",
+      "score": 0.0
+    },
+    {
+      "name": "percent_b_20",
+      "mode": "signed",
+      "score": 0.0
+    },
+    {
+      "name": "range_compression_20_100",
+      "mode": "positive",
+      "score": 0.0
+    },
+    {
+      "name": "realized_vol_20",
+      "mode": "positive",
+      "score": 0.0
+    },
+    {
+      "name": "ret_autocorr_1_30",
+      "mode": "signed",
+      "score": 0.0
+    },
+    {
+      "name": "return_skew_30",
+      "mode": "signed",
+      "score": 0.0
+    },
+    {
+      "name": "roc_10",
+      "mode": "signed",
+      "score": 0.0
+    },
+    {
+      "name": "rsi_centered_14",
+      "mode": "signed",
+      "score": 0.0
+    },
+    {
+      "name": "tr_to_atr_14",
+      "mode": "positive",
+      "score": 0.0
+    },
+    {
+      "name": "up_close_ratio_5",
+      "mode": "sparse_positive",
+      "score": 0.0
+    },
+    {
+      "name": "upside_semivol_20",
+      "mode": "positive",
+      "score": 0.0
+    },
+    {
+      "name": "vol_over_ema20",
+      "mode": "positive",
+      "score": 0.0
+    },
+    {
+      "name": "vol_over_median20",
+      "mode": "positive",
+      "score": 0.0
+    },
+    {
+      "name": "mom_stoch_rsi_14_14_3",
+      "mode": "positive",
+      "score": 0.0
+    },
+    {
+      "name": "vol_ratio_20_100",
+      "mode": "positive",
+      "score": 0.0
+    },
+    {
+      "name": "log_range_over_vol_100",
+      "mode": "positive",
+      "score": 0.0
+    }
+  ],
+  "phase1_disabled": true
+}

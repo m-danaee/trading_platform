@@ -147,8 +147,43 @@ def _rule_to_engine(rule: dict) -> dict:
     }
 
 
+def _enforce_capital_budget(
+    rules: list[dict],
+    *,
+    max_total: float | None = None,
+) -> list[dict]:
+    """Normalize rule capital_pct so sum <= RB_MAX_TOTAL_CAPITAL."""
+    cap_limit = float(
+        max_total
+        if max_total is not None
+        else getattr(_cfg, "RB_MAX_TOTAL_CAPITAL", 100.0)
+    )
+    cleaned = [_rule_to_engine(r) for r in rules]
+    total = sum(float(r["capital_pct"]) for r in cleaned)
+    if total <= cap_limit + 1e-9:
+        return cleaned
+    scale = cap_limit / max(total, 1e-12)
+    for rule in cleaned:
+        rule["capital_pct"] = round(float(rule["capital_pct"]) * scale, 6)
+    return cleaned
+
+
+def _assert_capital_budget(rules: list[dict], *, max_total: float | None = None) -> None:
+    cap_limit = float(
+        max_total
+        if max_total is not None
+        else getattr(_cfg, "RB_MAX_TOTAL_CAPITAL", 100.0)
+    )
+    total = sum(float(r.get("capital_pct", 0.0)) for r in rules)
+    if total > cap_limit + 1e-6:
+        raise ValueError(
+            f"RB capital budget exceeded: sum(capital_pct)={total:.4f} > {cap_limit:.4f}"
+        )
+
+
 def _strategy(direction: str, rules: list[dict], *, risk_optimized: bool = False, extra: dict | None = None) -> dict:
-    clean_rules = [_rule_to_engine(r) for r in rules]
+    clean_rules = _enforce_capital_budget(rules)
+    _assert_capital_budget(clean_rules)
     out = {
         "direction": direction,
         "rules_set": clean_rules,
@@ -1290,6 +1325,8 @@ def _write_clean_evaluator(strategy: dict, output_path: Path) -> None:
             "sl": float(r.get("sl", 1.0)),
             "capital_pct": float(r.get("capital_pct", 1.0)),
         })
+    rules = _enforce_capital_budget(rules)
+    _assert_capital_budget(rules)
     clean = {
         "direction": strategy.get("direction"),
         "rules_set": rules,

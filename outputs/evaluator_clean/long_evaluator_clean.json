@@ -1,0 +1,41 @@
+{
+  "direction": "long",
+  "rules_set": [
+    {
+      "conditions": [
+        "[band_bb_percB_20_2] IS Extreme Bearish",
+        "[realized_vol_20] IS Medium",
+        "[vol_over_ema20] IS Very High",
+        "[log_range_over_vol_100] IS Very Low",
+        "symbol is 6"
+      ],
+      "tp": 2.0,
+      "sl": 1.0,
+      "capital_pct": 30.0
+    },
+    {
+      "conditions": [
+        "[dmi_balance_14] IS Neutral Negative",
+        "[ema_slope_atr_20_5] IS Neutral Negative",
+        "[parkinson_vol_20] IS Very High",
+        "[vol_over_median20] IS Very Low",
+        "symbol is 1"
+      ],
+      "tp": 2.0,
+      "sl": 1.0,
+      "capital_pct": 30.0
+    },
+    {
+      "conditions": [
+        "[downside_semivol_20] IS Very High",
+        "[rsi_centered_14] IS Neutral Negative",
+        "[vol_over_ema20] IS Very High",
+        "[log_range_over_vol_100] IS Very High",
+        "symbol is 5"
+      ],
+      "tp": 2.0,
+      "sl": 1.0,
+      "capital_pct": 30.0
+    }
+  ]
+}

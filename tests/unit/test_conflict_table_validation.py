@@ -341,6 +341,6 @@ class TestConflict12Phase2CapitalPctSingleRule:
   """PHASE2_CAPITAL_PCT=48 + single rule — exposure semantics, not a failure mode."""
 
   def test_single_rule_uses_configured_capital_pct_directly(self):
-      assert _cfg.PHASE2_CAPITAL_PCT == 30.0
+      assert _cfg.PHASE2_CAPITAL_PCT == 18.0
       rule = {"capital_pct": 48.0}
       assert rule["capital_pct"] == 48.0
