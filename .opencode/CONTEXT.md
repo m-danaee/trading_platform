@@ -3,18 +3,18 @@
 Active objective: Fix the 13 CONFIRMED/SUSPECTED findings from the
 gpu_fuzzy_trader OOS audit (long 58.21%→49.92%→22.22%, short
 60.57%→50.47%→15.11% collapse on 2026-07-07 run).
-Current phase: task-11 reviews complete, awaiting user merge
-Current task: task-11 COMPLETE (spec APPROVED, code APPROVED)
-  - Implementer commit: 46ed075 (single commit, no fix round needed)
-  - 229/229 tests pass (3 new + 3 pre-existing bug fixes + 223 prior)
-  - 1 LOW code-review note (test name slightly overstates assertions;
-    non-blocking)
+Current phase: task-12 implementer dispatching
+Current task: task-12 (DRAFTED; FINAL task of the 12-task plan)
+  - task-1..11 MERGED
+  - task-12 in flight (gate Pareto-collapse warning to
+    pareto_size >= 5 — audit fix #13, the FINAL audit item
+    before the deferred SUSPECTED S1 profit amplifier)
 base_branch: main
-feature_branch: feature/task-11-raise-val-interval
+feature_branch: feature/task-12-gate-pareto-collapse-warn
 branch_policy: isolated
 execution_mode: checkpoint
-Pending blockers: user must merge feature/task-11-raise-val-interval
-  to main before task-12 can dispatch.
-Next action: user merges the feature branch; then "continue" or
-"start task-12" dispatches the final task (gate Pareto-collapse
-warning to pareto_size >= 5, audit fix #13).
+Pending blockers: none
+Next action: dispatch implementer subagent for task-12; await
+handoff JSON at .opencode/handoffs/task-12-implementer.json; then
+spec-review then code-review. After this merges, the full
+12-task audit fix plan is complete.
