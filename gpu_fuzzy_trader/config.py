@@ -320,7 +320,7 @@ PHASE1_TOP_K_FEATURES = 25
 # detected by Feature_Detector. Phase 2 then evolves over the full feature set.
 #   True  → larger GA search space, more GPU RAM per chromosome, no MI prefilter.
 #   False → normal top-K MI-ranked selection.
-PHASE1_DISABLED: bool = False
+PHASE1_DISABLED: bool = True
 
 # PHASE1_MAX_FEATURE_OVERLAP — max shared feature names between long & short lists.
 #   Enforced as int(TOP_K × overlap) shared names (e.g. 25 × 0.8 → 20 shared).
@@ -375,7 +375,7 @@ PHASE1_STATIONARITY_RANK_DRIFT_MAX = 8
 # Peak GPU RAM scales ~linearly with this value (largest VRAM lever).
 #   Higher → more statistical power, slower, OOM risk on small GPUs.
 #   Lower  → faster, less RAM; trade/support floors may need proportional cut.
-PHASE1_SAMPLING_TOTAL = 701_000
+PHASE1_SAMPLING_TOTAL = 1_000_000
 
 # PHASE2_PER_EPOCH_WINDOW_ROTATION — rotate train-window start per epoch
 #   True  → each epoch samples a different contiguous sub-window from the
