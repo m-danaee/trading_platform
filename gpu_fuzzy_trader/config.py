@@ -762,16 +762,17 @@ PHASE2_JOINT_TRAIN_VAL = True
 PHASE2_VAL_IN_FITNESS_PENALTY = False
 
 # PHASE2_VAL_SIM_INTERVAL — run val backtest every N generations during
-# evolution (1 = every gen, original behaviour).  Only matters when
-# PHASE2_JOINT_TRAIN_VAL=False (val doesn't affect objectives then); val
-# metrics feed deployable_archive tracking + pool admission.  Val ALWAYS runs
-# on the epoch's last gen regardless of this setting (pool-admission freshness).
-#   1 → val every gen (original, 2x GPU work for no objective benefit).
-#   2 → val every 2nd gen; more frequent archive updates (current).
-#   3 → val every 3rd gen; deployable_archive refreshes every 3 gens (default).
-# Changed 3→2→1: val every gen for honest robust metrics and joint fitness;
-# slot-index val staling bug fixed — frequent val is now safe and necessary.
-PHASE2_VAL_SIM_INTERVAL = 1
+# evolution (default 3, was 1 before task-11).  With per-epoch window
+# rotation (PHASE2_PER_EPOCH_WINDOW_ROTATION, post task-1), the val
+# window is fixed across epochs, so val metrics for a given chromosome
+# are deterministic and safe to cache.  Skipping val on gens 2/3 cuts
+# GPU work ~33% with zero metric drift.
+# Val ALWAYS runs on the epoch's last gen (pool-admission freshness).
+#   1 → val every gen (legacy, expensive).
+#   3 → val every 3rd gen (default post task-11; ~33% GPU savings).
+# → fixes audit finding #10 (val every gen is wasteful when
+# window is fixed; cache is safe)
+PHASE2_VAL_SIM_INTERVAL = 3
 assert PHASE2_VAL_SIM_INTERVAL >= 1, "PHASE2_VAL_SIM_INTERVAL must be >= 1"
 
 # PHASE2_DIVERSITY_HAMMING_THRESHOLD — min Hamming distance for "unique" rule.
