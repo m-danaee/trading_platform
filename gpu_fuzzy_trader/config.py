@@ -677,6 +677,13 @@ PHASE2_OVERFIT_RATIO_FLOOR = 3.0
 #   objective pairwise correlation exceeds this (Pareto collapse risk).
 PHASE2_OBJECTIVE_CORR_WARN_THRESHOLD = 0.9
 
+# PHASE2_OBJECTIVE_CORR_MIN_PARETO_SIZE — minimum Pareto front size before
+#   the "Pareto collapse risk" warning fires. 2-point Pearson correlations
+#   are degenerate (trivially ±1.0 by construction); the warning is only
+#   meaningful when the front has enough rules.
+# → fixes audit finding #13 (noisy 2-point correlation warning)
+PHASE2_OBJECTIVE_CORR_MIN_PARETO_SIZE = 5
+
 # PHASE2_KEEP_TOP_RULES — max rules kept in the final Phase 2 pool after
 # admission filtering, sorted by deployability_rank_score descending.
 #   Higher → larger pool for Phase 3 greedy selection.

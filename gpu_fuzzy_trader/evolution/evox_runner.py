@@ -2733,17 +2733,27 @@ def _run_nsga3(
         corr_threshold = float(
             getattr(_cfg, "PHASE2_OBJECTIVE_CORR_WARN_THRESHOLD", 0.9),
         )
-        for corr_key in (
-            "objective_corr_f1_f2",
-            "objective_corr_f1_f3",
-            "objective_corr_f2_f3",
-        ):
-            corr_val = float(pareto_diag.get(corr_key, 0.0))
-            if abs(corr_val) >= corr_threshold:
-                logger.warning(
-                    "Phase 2 [%s] gen %d: %s=%.2f (Pareto collapse risk)",
-                    tag, gen + 1, corr_key, corr_val,
-                )
+        # → fixes audit finding #13: 2-point Pearson correlations are
+        # degenerate (trivially ±1.0 by construction when the 2
+        # objectives differ). Only flag real collapse risk when the
+        # Pareto front has enough rules for the correlation to be
+        # statistically meaningful.
+        min_pareto_size = int(getattr(
+            _cfg, "PHASE2_OBJECTIVE_CORR_MIN_PARETO_SIZE", 5,
+        ))
+        if len(pareto_indices) >= min_pareto_size:
+            for corr_key in (
+                "objective_corr_f1_f2",
+                "objective_corr_f1_f3",
+                "objective_corr_f2_f3",
+            ):
+                corr_val = float(pareto_diag.get(corr_key, 0.0))
+                if abs(corr_val) >= corr_threshold:
+                    logger.warning(
+                        "Phase 2 [%s] gen %d: %s=%.2f (Pareto collapse risk, "
+                        "pareto_size=%d)",
+                        tag, gen + 1, corr_key, corr_val, len(pareto_indices),
+                    )
         history.append({
             "generation": generation_offset + gen,
             "pareto_size": len(pareto_indices),

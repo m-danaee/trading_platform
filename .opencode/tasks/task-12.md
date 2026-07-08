@@ -1,159 +1,157 @@
-# Task 12 — Lower per-symbol Phase 3 thresholds + diagnostic CSV
+# Task 12: Gate Pareto-Collapse Warning to pareto_size >= 5
+
+## Task ID
+`task-12` (twelfth and FINAL task in the 2026-07-07 audit fix plan)
+
+## Title
+Gate Pareto-Collapse Warning to pareto_size >= 5
 
 ## Goal
+Fix audit finding #13: the `Pareto collapse risk` warning at
+`evolution/evox_runner.py:2740-2744` fires on degenerate 2-point
+correlations. When the Pareto front has only 2 rules with
+different objective values, the Pearson correlation is ±1.0 by
+construction — a degenerate artifact, not a real collapse signal.
+By gen 13, the correlation settles to -0.3 to -0.6 (healthy
+sortino↔return tension), but the noisy gen-1 warnings are
+misleading. Gate the warning to fire only when
+`len(pareto_indices) >= 5` (a configurable threshold).
 
-Reduce `PHASE3_PER_SYMBOL_MIN_TRADES` and `PHASE3_PER_SYMBOL_MIN_RETURN`
-so that more symbols (out of 10) get at least one rule assigned on
-test, and add a per-symbol diagnostic CSV so the user can see exactly
-which symbols are still being dropped and why.
+## Audit Citation
+- Confirmed by static inspection:
+  - `evolution/evox_runner.py:2736-2745` — the warning site (no
+    pareto_size guard)
+  - `config.py:676-678` — `PHASE2_OBJECTIVE_CORR_WARN_THRESHOLD = 0.9`
+- Run log evidence (2026-07-07): "Pareto collapse risk" warnings
+  fire at gen 1-2 when pareto size is 1-3 rules. By gen 13,
+  the warning settles to no-fire (corr_f1_f3 = -0.3 to -0.6).
 
-The full plan is in `.opencode/plans/PLAN.md` (Task 12 section).
-The CONTEXT.md is in `.opencode/CONTEXT.md`.
+## Target Files
+- `gpu_fuzzy_trader/evolution/evox_runner.py`
+  - Lines 2736-2745: gate the warning on `len(pareto_indices)`.
+    Skip the loop when pareto size is below the threshold.
+  - Add a code comment explaining the gate (2-point correlation
+    is degenerate).
+- `gpu_fuzzy_trader/config.py`
+  - Add `PHASE2_OBJECTIVE_CORR_MIN_PARETO_SIZE = 5` (default; the
+    minimum pareto size before the warning fires).
+  - Add `# → fixes audit finding #13` comment.
+- `tests/unit/test_phase2_rule_pool.py` (or new
+  `tests/unit/test_phase2_corr_warn_gate.py`)
+  - Add a test asserting that the warning does NOT fire when
+    pareto size < 5 (degenerate case).
+  - Add a test asserting that the warning DOES fire when
+    pareto size >= 5 with high correlation.
+  - Add a test for the configurable threshold (e.g.,
+    `PHASE2_OBJECTIVE_CORR_MIN_PARETO_SIZE=3` allows the
+    warning to fire at pareto=3).
 
-## Background
+## Current Behavior
+- `evolution/evox_runner.py:2736-2745`:
+  ```python
+  for corr_key in ("objective_corr_f1_f2", "objective_corr_f1_f3", "objective_corr_f2_f3"):
+      corr_val = float(pareto_diag.get(corr_key, 0.0))
+      if abs(corr_val) >= corr_threshold:
+          logger.warning(
+              "Phase 2 [%s] gen %d: %s=%.2f (Pareto collapse risk)",
+              tag, gen + 1, corr_key, corr_val,
+          )
+  ```
+  No pareto_size guard. With 2 rules in the Pareto front, the
+  Pearson correlation is degenerate (trivially ±1.0 if the
+  objectives differ on those 2 points).
+- `config.py:676-678`:
+  ```python
+  PHASE2_OBJECTIVE_CORR_WARN_THRESHOLD = 0.9
+  ```
+  Only the correlation threshold is configurable; the minimum
+  pareto size is not.
 
-The current run (with `PHASE3_PER_SYMBOL_MIN_TRADES = 15` and
-`PHASE3_PER_SYMBOL_MIN_RETURN = 1.5`) produces only 4/10 symbols
-with rules on the test split, and the surviving rules have
-negative PnL on 3 of those 4 symbols. Our analysis suggests
-these thresholds are too strict for the ~7k-row per-symbol
-validation windows (15 trades on a 7k-row window is ~0.2%
-of bars, which is the same effective density as ~150 trades
-on a 70k-row cross-symbol window — the latter is currently
-the Phase 2 pool floor, not a per-symbol floor).
+## Scope
+1. **Gate the warning** (`evolution/evox_runner.py:2736-2745`):
+   - Add a `min_pareto_size` check at the top of the loop:
+     ```python
+     # → fixes audit finding #13: 2-point Pearson correlations are
+     # degenerate (trivially ±1.0 by construction when the 2
+     # objectives differ). Only flag real collapse risk when the
+     # Pareto front has enough rules for the correlation to be
+     # statistically meaningful.
+     min_pareto_size = int(getattr(
+         _cfg, "PHASE2_OBJECTIVE_CORR_MIN_PARETO_SIZE", 5,
+     ))
+     if len(pareto_indices) < min_pareto_size:
+         continue  # skip the warning loop
+     for corr_key in (
+         "objective_corr_f1_f2",
+         "objective_corr_f1_f3",
+         "objective_corr_f2_f3",
+     ):
+         corr_val = float(pareto_diag.get(corr_key, 0.0))
+         if abs(corr_val) >= corr_threshold:
+             logger.warning(
+                 "Phase 2 [%s] gen %d: %s=%.2f (Pareto collapse risk, "
+                 "pareto_size=%d)",
+                 tag, gen + 1, corr_key, corr_val, len(pareto_indices),
+             )
+     ```
+2. **Add new config flag** (`config.py`):
+   - Add `PHASE2_OBJECTIVE_CORR_MIN_PARETO_SIZE = 5` near the
+     existing `PHASE2_OBJECTIVE_CORR_WARN_THRESHOLD` (line 676).
+   - Update the comment block to reference audit finding #13.
+3. **Update log message** to include the pareto_size (already
+   covered by the change above).
+4. **Add audit-finding linkage**:
+   - Add `# → fixes audit finding #13` comment at both sites.
+5. **Do NOT change**:
+   - The correlation computation itself (`pareto_diag` building
+     and the Pearson calc).
+   - The `PHASE2_OBJECTIVE_CORR_WARN_THRESHOLD` value (still 0.9).
+   - Any other file outside `evolution/evox_runner.py`,
+     `config.py`, and the test file.
 
-The user's primary concern is **regime shift between train
-(Jan 2024 – Jun 2024) and test (Sep 2024 – Feb 2025)**. Task 12
-is a *diagnostic*: if the number of symbols with rules on test
-does not rise after this change, the regime-shift hypothesis is
-the dominant cause and we need Tasks 13-14 (regime-aware gates)
-to address it.
+## Acceptance Criteria
+1. The warning at `evox_runner.py:2736-2745` is gated on
+   `len(pareto_indices) >= PHASE2_OBJECTIVE_CORR_MIN_PARETO_SIZE`.
+2. When pareto size < 5 (default), no `Pareto collapse risk`
+   warning fires (the loop is skipped).
+3. When pareto size >= 5 with |corr| >= 0.9, the warning fires
+   (with the new `pareto_size=N` suffix in the message).
+4. `PHASE2_OBJECTIVE_CORR_MIN_PARETO_SIZE = 5` is the new config
+   default.
+5. With `PHASE2_OBJECTIVE_CORR_MIN_PARETO_SIZE = 0` (or 1), the
+   warning fires regardless of pareto size (regression guard for
+   pre-task-12 behavior).
+6. All existing tests pass: `test_phase2_rule_pool.py`,
+   `test_phase2_window_rotation.py`, `test_phase2_island_scheduler.py`,
+   `test_evox_runner.py`, etc.
 
-## Branch
-
-- base_branch: `main`
-- feature branch: `feature/task-12-lower-phase3-thresholds`
-- branch_policy: isolated (one branch per task)
-- execution_mode: checkpoint (stop after implementer for user review)
-
-## Workflow
-
-1. Implementer creates the branch (already done by orchestrator),
-   lowers the two constants, adds the diagnostic CSV, and writes
-   the unit test.
-2. Spec-reviewer verifies acceptance criteria.
-3. Code-reviewer checks for unintended side effects.
-4. User is asked for confirmation before merging to `main`.
-5. After merge, the full pipeline is re-run and the user is shown
-   the `gen_diag_iter12.csv` summary.
-
-## Acceptance criteria
-
-1. **`PHASE3_PER_SYMBOL_MIN_TRADES` lowered from 15 to 8** in
-   `gpu_fuzzy_trader/config.py`. The `effective_phase3_per_symbol_min_trades()`
-   helper must still respect the new value.
-2. **`PHASE3_PER_SYMBOL_MIN_RETURN` lowered from 1.5 to 0.5** in
-   `gpu_fuzzy_trader/config.py`. The `effective_phase3_per_symbol_min_return()`
-   helper must still respect the new value.
-3. **`PHASE3_DIAGNOSTIC_REPORT_ENABLED` flag added** (default
-   `True`) in `gpu_fuzzy_trader/config.py`.
-4. **`outputs/reports/gen_diag_iter12.csv` is written** by
-   `Rule_Set_Selector.run()` when the flag is enabled. Columns
-   are: `direction, symbol, val_trades, val_return_pct,
-   train_val_gap_pct, n_rules_selected, top_rule_condition_signature`.
-   The CSV must have one row per `(direction, symbol)` pair that
-   had at least 1 rule selected.
-5. **Unit test added** in `tests/unit/test_phase3_threshold_diagnostic.py`
-   that:
-   - Constructs a small pool (5 rules) and a small train+val
-     split (2 symbols, 1k rows each).
-   - Runs `Rule_Set_Selector.run()` and asserts the diagnostic
-     CSV is written.
-   - Asserts that a rule with `8` trades and `0.5%` val return
-     is selected for a symbol.
-   - Asserts that a rule with `7` trades is NOT selected.
-   - Asserts that a rule with `0.4%` val return is NOT selected.
-6. **All existing unit tests still pass**:
-   ```bash
-   .venv/bin/python -m pytest \
-     tests/unit/test_phase3_rule_set.py \
-     tests/unit/test_phase3_lean_fallback.py \
-     tests/unit/test_phase3_threshold_diagnostic.py \
-     -v
-   ```
-7. **No `evaluator_v5.ipynb` modification.**
-8. **No `friend_project/` modification.**
-9. **The Phase 2 pool is reused from the existing archive**
-   (`outputs/phase2_*_pool.json`); only Phase 3-4-5 should
-   re-run. The full pipeline re-run time should be ~10 min
-   (Phase 3-5 only, no Phase 2).
-
-## Files to modify
-
-- `gpu_fuzzy_trader/config.py` — change 2 constants, add 1 flag
-- `gpu_fuzzy_trader/phases/phase3_rule_set.py` — add diagnostic
-  CSV writing logic in `Rule_Set_Selector.run()`
-- `tests/unit/test_phase3_threshold_diagnostic.py` — new file
-- `.opencode/handoffs/task-12-implementer.json` — handoff JSON
-
-## Verification commands
-
-The implementer must run these and record results in the handoff:
+## Verification
+Run only related unit tests with `PYTEST_LOW_MEMORY=1` and `.venv`:
 
 ```bash
-# 1. AST / import sanity
-.venv/bin/python -c "import ast; ast.parse(open('gpu_fuzzy_trader/config.py').read()); print('config ok')"
-.venv/bin/python -c "from gpu_fuzzy_trader.phases.phase3_rule_set import Rule_Set_Selector; print('phase3 ok')"
-
-# 2. New unit test passes
-.venv/bin/python -m pytest tests/unit/test_phase3_threshold_diagnostic.py -v
-
-# 3. Existing Phase 3 tests still pass
-.venv/bin/python -m pytest tests/unit/test_phase3_rule_set.py tests/unit/test_phase3_lean_fallback.py -v
-
-# 4. Full pipeline re-run (Phase 2-3-4-5; reuses Phase 2 pool from cache)
-.venv/bin/python -m gpu_fuzzy_trader.run_pipeline
-
-# 5. Verify diagnostic CSV is written
-head outputs/reports/gen_diag_iter12.csv
+PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_phase2_rule_pool.py -q
+PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_phase2_window_rotation.py -q
+PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_phase2_island_scheduler.py -q
+PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_evox_runner.py -q
 ```
 
-## Skip / proceed decision (for the orchestrator / user)
+If a new test file `test_phase2_corr_warn_gate.py` is created:
+```bash
+PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest tests/unit/test_phase2_corr_warn_gate.py -q
+```
 
-After the implementer merges, the user will be shown:
-
-1. `outputs/reports/gen_diag_iter12.csv` — the per-symbol diagnostic
-2. `outputs/reports/test_{long,short}_per_symbol_performance.csv` —
-   the test per-symbol performance
-3. The test `total_return_pct` for both directions
-
-**Decision rule**:
-
-- **If test PnL improves by ≥3pp on either direction** AND
-  **the number of symbols with rules on test reaches ≥7/10**:
-  declare Task 12 a success; consider skipping Task 13 and
-  going straight to Task 14.
-- **If test PnL is still negative on both directions** but
-  **the number of symbols with rules on test rises to ≥6/10**:
-  Task 12 is a partial improvement; proceed to Task 13
-  (monthly-window shadow test).
-- **If the number of symbols with rules on test does not rise**:
-  the regime-shift hypothesis is confirmed; proceed to
-  Task 13 immediately.
-
-## Constraints
-
-- Per AGENTS.md: **always use `.venv/bin/python`** for commands.
-- Per AGENTS.md: **remove additional (wasted) parts from old
-  implementation** to keep the project clean.
-- Per AGENTS.md: **do not run all tests** (RAM limits) — only
-  the unit tests listed above.
-- Per AGENTS.md: **evaluator_v5.ipynb is sacred** — do not
-  modify it.
-- The `outputs/long.json` and `outputs/short.json` shape must
-  stay compatible with `evaluator_v5.ipynb` (i.e. the legacy
-  `tp/sl/capital_pct` fields are still at the top level of each
-  rule).
-- One commit on the feature branch (no need to split into
-  multiple commits for a 1-line threshold change + diagnostic
-  CSV).
+## Notes
+- Do NOT modify `evaluator_v5.ipynb`.
+- Do NOT run the full project or full test suite locally (OOM risk
+  per AGENTS.md).
+- This is a small surgical fix (~5 lines in source, ~5 lines in
+  config, ~30 lines in 1 test file). Keep the diff minimal.
+- This is the FINAL task of the 12-task audit fix plan. After
+  this merges, the audit is fully addressed (all CONFIRMED and
+  SUSPECTED findings except SUSPECTED S1 — the profit amplifier,
+  which was deferred from the plan).
+- The pareto_size threshold of 5 is a heuristic; a lower value
+  (3) would also work. The implementer may use 5 as the spec
+  suggests or 3 if there's a clear rationale.
+- This task is purely cosmetic (no behavior change, only log
+  noise reduction).
