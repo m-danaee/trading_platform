@@ -3,48 +3,10 @@
   "rules_set": [
     {
       "conditions": [
-        "[atr_pct_14] IS Very Low",
-        "[ema_gap_atr_20] IS Bullish",
-        "[rsi_centered_14] IS Extreme Bullish",
-        "[vol_over_median20] IS Very Low",
-        "symbol is 8"
-      ],
-      "tp": 1.5,
-      "sl": 1.2,
-      "capital_pct": 18.0
-    },
-    {
-      "conditions": [
-        "[channel_pos_20] IS Medium",
-        "[parkinson_vol_20] IS Low",
-        "[range_compression_20_100] IS Very Low",
-        "[vol_ratio_20_100] IS High",
-        "[log_range_over_vol_100] IS Very High",
-        "symbol is 3"
-      ],
-      "tp": 1.5,
-      "sl": 1.2,
-      "capital_pct": 18.0
-    },
-    {
-      "conditions": [
-        "[downside_semivol_20] IS Very Low",
-        "[range_compression_20_100] IS High",
-        "[realized_vol_20] IS Low",
-        "[vol_over_median20] IS Very High",
-        "[log_range_over_vol_100] IS Very High",
-        "symbol is 2"
-      ],
-      "tp": 1.5,
-      "sl": 1.2,
-      "capital_pct": 18.0
-    },
-    {
-      "conditions": [
-        "[downside_semivol_20] IS Medium",
-        "[efficiency_ratio_20] IS Very Low",
-        "[ema_gap_atr_20] IS Bullish",
-        "[rsi_centered_14] IS Strong Bullish",
+        "[atr_pct_14] IS Very High",
+        "[dollar_vol_rel_20] IS Very High",
+        "[ema_gap_atr_20] IS Extreme Bullish",
+        "[ret_autocorr_1_30] IS Neutral Negative",
         "symbol is 7"
       ],
       "tp": 1.5,
@@ -53,11 +15,24 @@
     },
     {
       "conditions": [
-        "[atr_pct_14] IS Low",
-        "[dmi_balance_14] IS Extreme Bullish",
-        "[downside_semivol_20] IS Medium",
-        "[range_compression_20_100] IS Low",
-        "symbol is 1"
+        "[dollar_vol_rel_20] IS High",
+        "[downside_semivol_20] IS Very Low",
+        "[rsi_centered_14] IS Extreme Bullish",
+        "[tr_to_atr_14] IS Medium",
+        "[log_range_over_vol_100] IS Very High",
+        "symbol is 8"
+      ],
+      "tp": 1.5,
+      "sl": 1.2,
+      "capital_pct": 18.0
+    },
+    {
+      "conditions": [
+        "[ema_gap_atr_20] IS Extreme Bullish",
+        "[ema_slope_atr_20_5] IS Extreme Bullish",
+        "[range_compression_20_100] IS Medium",
+        "[mom_stoch_rsi_14_14_3] IS Low",
+        "symbol is 10"
       ],
       "tp": 1.5,
       "sl": 1.2,
@@ -67,19 +42,19 @@
   "risk_optimized": true,
   "deployment_accepted": true,
   "validation_gate": {
-    "return_pct": 18.808794021606445,
-    "profit_factor": 5.07902717590332,
+    "return_pct": 20.21143341064453,
+    "profit_factor": 3.6214375495910645,
     "required_return_pct": 2.0,
     "required_profit_factor": 1.05
   },
-  "rb_score": 3116.96389257299,
-  "rb_train_return_pct": 22.629154205322266,
-  "rb_valid_return_pct": 18.808794021606445,
-  "rb_valid_profit_factor": 5.07902717590332,
-  "rb_valid_max_drawdown_pct": 0.5077652931213379,
-  "rb_valid_executed_trades": 105,
-  "rb_train_minus_valid_return_pct": 3.8203601837158203,
-  "rb_train_valid_ratio": 1.2031156372560203,
-  "rb_profit_amp_objective": 58.2575806646347,
+  "rb_score": 2281.6400932765105,
+  "rb_train_return_pct": 22.855615615844727,
+  "rb_valid_return_pct": 20.21143341064453,
+  "rb_valid_profit_factor": 3.6214375495910645,
+  "rb_valid_max_drawdown_pct": 0.7720826864242554,
+  "rb_valid_executed_trades": 136,
+  "rb_train_minus_valid_return_pct": 2.6441822052001953,
+  "rb_train_valid_ratio": 1.1308260602539755,
+  "rb_profit_amp_objective": 61.10066476988793,
   "rb_profit_amp_accepted": false
 }

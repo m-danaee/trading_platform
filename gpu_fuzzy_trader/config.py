@@ -312,7 +312,7 @@ PHASE1_DISPERSION_THRESHOLD = 0.95
 # PHASE1_TOP_K_FEATURES — shortlist size per direction (long / short).
 #   Higher → wider Phase 2 search space, slower evolution, more combinations.
 #   Lower  → faster search, risk of missing predictive features.
-PHASE1_TOP_K_FEATURES = 25
+PHASE1_TOP_K_FEATURES = 20
 
 # PHASE1_DISABLED — bypass MI ranking, sign-consistency, stationarity, and top-K
 # selection. When True, Feature_Selector.run returns ALL features that pass the
@@ -320,7 +320,7 @@ PHASE1_TOP_K_FEATURES = 25
 # detected by Feature_Detector. Phase 2 then evolves over the full feature set.
 #   True  → larger GA search space, more GPU RAM per chromosome, no MI prefilter.
 #   False → normal top-K MI-ranked selection.
-PHASE1_DISABLED: bool = True
+PHASE1_DISABLED: bool = False
 
 # PHASE1_MAX_FEATURE_OVERLAP — max shared feature names between long & short lists.
 #   Enforced as int(TOP_K × overlap) shared names (e.g. 25 × 0.8 → 20 shared).
@@ -469,7 +469,7 @@ PHASE2_GPU_DATA_INT8 = True
 # PHASE2_TP — take-profit % used when scoring rules in Phase 2 (and Phase 1 targets).
 #   Higher → fewer "wins" in labels/objectives; rules must catch larger moves.
 #   Lower  → more wins, higher turnover, may favor noisy frequent signals.
-PHASE2_TP = 1.5
+PHASE2_TP = 2.0
 
 # PHASE2_SL — stop-loss % during Phase 2 scoring.
 #   Higher → wider stops, fewer stop-outs, larger per-trade risk.
@@ -748,11 +748,13 @@ PHASE2_MONTHLY_GOOD_RETURN_MIN_PCT = 0.5
 PHASE2_MONTHLY_ADMISSION_MIN_RATIO = 0.55
 
 # PHASE2_MONTHLY_ADMISSION_MIN_MONTHS — minimum number of monthly windows
-# required before the gate is applied.  When the train split is shorter than
-# this, the gate is skipped (with a warning) and the original pool is kept.
-#   Higher → skip the gate more often on short data; avoid false negatives.
+# required before the gate is applied. validation_fitness is ~110 calendar days
+# (~3×30d windows), so 4 was structurally incompatible and silently skipped.
+# When fewer windows exist but at least one is available, the gate still runs
+# (degraded) instead of being skipped.
+#   Higher → skip/degrade more often on short data.
 #   Lower  → require monthly evidence even on short trains.
-PHASE2_MONTHLY_ADMISSION_MIN_MONTHS = 4
+PHASE2_MONTHLY_ADMISSION_MIN_MONTHS = 3
 
 
 # =============================================================================
@@ -813,6 +815,11 @@ PHASE2_DIVERSITY_HAMMING_THRESHOLD_AUTO = True
 #   Higher → more prior-generation chromosomes kept for diversity reference.
 #   Lower  → epoch boundary acts as harder reset of the diversity reference set.
 PHASE2_HOF_EPOCH_CARRYOVER = 10
+
+# PHASE2_DIVERSITY_ON_F4 — when True (default), diversity_penalty is applied to
+#   f4 only (or f2 if f4 disabled). When False, legacy behavior applies diversity
+#   to both f1 and f3 (causes objective_corr_f1_f3 collapse).
+PHASE2_DIVERSITY_ON_F4: bool = True
 
 # PHASE2_DIVERSITY_PENALTY — objective penalty when crowding near existing rules.
 #   Higher → stronger push toward novel chromosomes.
@@ -1204,7 +1211,7 @@ PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE: int = 6
 # PHASE2_ISLAND_SCALE_TRADE_FLOORS — scale support floors to island row count.
 PHASE2_ISLAND_SCALE_TRADE_FLOORS = True
 PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN = 10
-PHASE2_ISLAND_MONTHLY_MIN_MONTHS = 4
+PHASE2_ISLAND_MONTHLY_MIN_MONTHS = 3
 # Migration — exchange top elites between islands every N epochs.
 # PHASE2_MIGRATION_ENABLED — master switch for inter-island elite exchange.
 #   True (default) → guarded sequential post-cluster chain migration:
@@ -1899,6 +1906,17 @@ RB_RISK_GRID_WF_SPLITS: int = 3
 #   during search).  Set False to use the full val_selection for folds.
 #   → fixes audit finding #12 (PHASE4_TAIL_HOLDOUT_FRACTION orphan)
 RB_RISK_GRID_USE_TAIL_HOLDOUT: bool = True
+
+# RB_TAIL_HOLDOUT_HARD_GATE — when True, strategies whose tail-holdout return
+#   is below RB_TAIL_HOLDOUT_MIN_RETURN_PCT are marked deployment_accepted=False.
+RB_TAIL_HOLDOUT_HARD_GATE: bool = True
+RB_TAIL_HOLDOUT_MIN_RETURN_PCT: float = 0.0
+
+# RB_MAX_SYMBOL_SHARE_ABS_PNL — max fraction of abs PnL from a single symbol on
+#   the RB validation frame; above this → deployment_accepted=False.
+RB_MAX_SYMBOL_SHARE_ABS_PNL: float = 0.50
+# RB_MAX_SYMBOL_HHI — max Herfindahl index of abs PnL across symbols on valid.
+RB_MAX_SYMBOL_HHI: float = 0.55
 
 
 # --- Symbol specialization (per-rule ``symbol is X`` conditions) ---

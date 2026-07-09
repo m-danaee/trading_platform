@@ -11,15 +11,16 @@ Chromosome encoding:
     gene_i ∈ {0, ..., num_classes_i - 1, dont_care_i}
     dont_care_i = num_classes_i  (inactive condition)
 
-Three objectives (all minimised, decoupled per Task 3):
-    f1 = -sortino_ratio + support + diversity
+Three objectives (all minimised, decoupled per Task 3 + OOS fix):
+    f1 = -sortino_ratio + support
     f2 = max_drawdown_pct + support + dd_gate + trade_penalty
-    f3 = -(robust_return_pct) + support + diversity + cond_penalty + overfit_gap
+    f3 = -(robust_return_pct) + support + cond_penalty + overfit_gap
          (robust_return = min(train_return, val_return) when JOINT_TRAIN_VAL).
+    f4 = concentration (+ diversity when PHASE2_DIVERSITY_ON_F4)
 
 Penalties (NOT identically applied to all objectives to avoid Pareto collapse):
     support_penalty        — if executed_trades < MIN_TRADE_SUPPORT (weighted per obj)
-    diversity_penalty      — Hamming + phenotype bucket crowding (f1 and f3 only)
+    diversity_penalty      — Hamming + phenotype crowding (f4 by default; legacy f1+f3)
     trade_penalty          — if executed < MIN_TRADE_POOL_FLOOR (f2 only)
     drawdown_gate_penalty  — if dd > PHASE2_MAX_DRAWDOWN_GATE (f2 only)
     overfit_gap_penalty    — train_ret - val_ret > threshold (f3 only)
@@ -967,27 +968,31 @@ def compute_phase2_objectives_from_metrics(
                 * float(_cfg.PHASE2_OVERFIT_GAP_PENALTY_WEIGHT)
             )
 
-    # Decoupled objectives (Task 3):
-    #   f1 = -Sortino + support + diversity        (no trade_penalty, no overfit_gap)
-    #   f2 = DD + support + trade_penalty + DD_gate(only f2 uses trade_penalty)
-    #   f3 = -robust_return + support + diversity + cond + overfit_gap
-    # Previous code added trade_penalty and overfit_gap_penalty identically to
-    # all three objectives, causing objective_corr_f1_f3≈1.00 (Pareto collapse).
+    # Decoupled objectives:
+    #   f1 = -Sortino + support                    (no diversity — avoids f1↔f3 collapse)
+    #   f2 = DD + support + trade_penalty + DD_gate
+    #   f3 = -robust_return + support + cond + overfit_gap
+    #   f4 = concentration (+ diversity when PHASE2_DIVERSITY_ON_F4)
+    diversity_on_f4 = bool(getattr(_cfg, "PHASE2_DIVERSITY_ON_F4", True))
+    diversity_f1_f3 = 0.0 if diversity_on_f4 else diversity_penalty
+    diversity_f4 = diversity_penalty if diversity_on_f4 else 0.0
+
     f1 = (
         -sortino_for_obj
         + (_cfg.PHASE2_SUPPORT_PENALTY_WEIGHT_F1 * support_penalty)
-        + diversity_penalty
+        + diversity_f1_f3
     )
     f2 = (
         dd_for_obj
         + (_cfg.PHASE2_SUPPORT_PENALTY_WEIGHT_F2 * support_penalty)
         + drawdown_gate_penalty
         + trade_penalty
+        + (0.0 if getattr(_cfg, "PHASE2_F4_ENABLED", False) else diversity_f4)
     )
     f3 = (
         -f3_val
         + (_cfg.PHASE2_SUPPORT_PENALTY_WEIGHT_F3 * support_penalty)
-        + diversity_penalty
+        + diversity_f1_f3
         + cond_penalty
         + overfit_gap_penalty
     )
@@ -1003,24 +1008,25 @@ def compute_phase2_objectives_from_metrics(
     # f4: return-concentration ratio (Task 2)
     #   f4 = max_single_trade_pnl / max(sum_positive_trade_pnl, ε)
     #   High f4 → rule edge depends on one outlier trade (bad).
+    #   Diversity is added to the NSGA objective only (not the stored metric).
+    f4_concentration = 0.0
     if getattr(_cfg, "PHASE2_F4_ENABLED", False):
         max_tr = float(metrics.get("max_single_trade_pnl", 0.0))
         sum_pos = float(metrics.get("sum_positive_trade_pnl", 0.0))
         _f4_eps = float(getattr(_cfg, "PHASE2_F4_EPSILON", 1e-6))
-        f4 = max_tr / max(sum_pos, _f4_eps)
+        f4_concentration = max_tr / max(sum_pos, _f4_eps)
 
         if val_metrics is not None and bool(getattr(_cfg, "PHASE2_JOINT_TRAIN_VAL", False)):
             max_tr_v = float(val_metrics.get("max_single_trade_pnl", 0.0))
             sum_pos_v = float(val_metrics.get("sum_positive_trade_pnl", 0.0))
             f4_v = max_tr_v / max(sum_pos_v, _f4_eps)
-            f4 = min(f4, f4_v)
+            f4_concentration = min(f4_concentration, f4_v)
 
         if executed < trade_floor:
-            f4 = 0.0
-    else:
-        f4 = 0.0
+            f4_concentration = 0.0
 
-    metrics["f4_concentration"] = f4
+    metrics["f4_concentration"] = f4_concentration
+    f4 = f4_concentration + diversity_f4
 
     if bool(getattr(_cfg, "PHASE2_F4_ENABLED", False)):
         objectives = np.array([f1, f2, f3, f4], dtype=np.float64)
@@ -2264,6 +2270,69 @@ def _apply_monthly_admission_gate(
     return keep
 
 
+def _monthly_admission_source_df(gen: "Rule_Pool_Generator") -> pd.DataFrame | None:
+    """Prefer unsampled monthly val; fall back to sampled slim val."""
+    monthly = getattr(gen, "_cached_monthly_val", None)
+    if monthly is not None and len(monthly) > 0:
+        return monthly
+    slim = getattr(gen, "_cached_slim_val", None)
+    if slim is not None and len(slim) > 0:
+        return slim
+    return None
+
+
+def _run_monthly_admission_on_pool(
+    pool: list[dict],
+    gen: "Rule_Pool_Generator",
+) -> list[dict]:
+    """Build monthly windows from unsampled val and apply the admission gate.
+
+    Never silently skips when at least one monthly window exists. If window
+    count is below ``MIN_MONTHS``, still runs the gate (degraded) with a warning.
+    """
+    if not bool(getattr(_cfg, "PHASE2_MONTHLY_ADMISSION_ENABLED", True)):
+        return pool
+
+    val_df = _monthly_admission_source_df(gen)
+    if val_df is None:
+        logger.warning(
+            "Phase 2 [%s]: no val DataFrame available; skipping "
+            "monthly-admission gate",
+            gen.direction,
+        )
+        return pool
+
+    monthly_windows = build_monthly_windows(val_df)
+    min_months = (
+        gen.island_hyperparams.monthly_admission_min_months
+        if gen.island_hyperparams is not None
+        else _cfg.PHASE2_MONTHLY_ADMISSION_MIN_MONTHS
+    )
+    if len(monthly_windows) == 0:
+        logger.warning(
+            "Phase 2 [%s]: zero monthly windows on val; skipping "
+            "monthly-admission gate",
+            gen.direction,
+        )
+        return pool
+
+    if len(monthly_windows) < int(min_months):
+        logger.warning(
+            "Phase 2 [%s]: only %d monthly windows (< MIN_MONTHS=%d); "
+            "running monthly-admission gate in degraded mode",
+            gen.direction,
+            len(monthly_windows),
+            min_months,
+        )
+
+    return _apply_monthly_admission_gate(
+        pool,
+        monthly_windows,
+        gen.direction,
+        island_hyperparams=gen.island_hyperparams,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Rule_Pool_Generator
 # ---------------------------------------------------------------------------
@@ -2378,6 +2447,8 @@ class Rule_Pool_Generator:
         self._val_engine = None
         # Cached val data for rebuilds after park_engines
         self._cached_slim_val = None
+        # Unsampled val (slimmed) for monthly admission — full calendar span
+        self._cached_monthly_val = None
         self._build_engines()
         if self._cv_folds:
             self._cv_val_evaluator = CvFoldValEvaluator(
@@ -2437,6 +2508,11 @@ class Rule_Pool_Generator:
         if self._scoped_val_df is not None:
             # First-time build from scoped val df
             try:
+                # Keep unsampled slim val for monthly admission (full calendar span).
+                # Sampled slim val is used only for joint fitness / pool engines.
+                self._cached_monthly_val = slim_backtest_df(
+                    self._scoped_val_df, self._feature_names,
+                )
                 val_sampled = sample_df_for_phase2(
                     self._scoped_val_df,
                     random_state=self._val_sample_seed,
@@ -2450,9 +2526,10 @@ class Rule_Pool_Generator:
                 if _cfg.PHASE2_JOINT_TRAIN_VAL:
                     logger.info(
                         "Phase 2 [%s]: joint train+val fitness enabled "
-                        "(val_rows=%d)",
+                        "(val_rows=%d, monthly_val_rows=%d)",
                         self.direction,
                         len(slim_val),
+                        len(self._cached_monthly_val),
                     )
                 else:
                     logger.info(
@@ -2469,6 +2546,7 @@ class Rule_Pool_Generator:
                     exc,
                 )
                 self._val_engine = None
+                self._cached_monthly_val = None
         elif self._cached_slim_val is not None:
             # Rebuild from cached data after park_engines (no re-sampling needed)
             try:
@@ -2861,37 +2939,10 @@ class Rule_Pool_Generator:
             len(pool),
         )
 
-        # --- Monthly-window shadow-test gate (Task 13, 2026-06-17) ---
-        # After the existing pool-admission filter, apply a hard gate that
-        # requires each candidate rule to be profitable on at least 50% of
-        # monthly rolling windows in the val split (OOS stability check).
-        # → fixes audit finding #4 (monthly gate on train was no-op)
-        if self._cached_slim_val is None:
-            logger.warning(
-                "Phase 2 [%s]: no val DataFrame available; skipping "
-                "monthly-admission gate",
-                self.direction,
-            )
-        elif _cfg.PHASE2_MONTHLY_ADMISSION_ENABLED:
-            monthly_windows = build_monthly_windows(self._cached_slim_val)
-            min_months = (
-                self.island_hyperparams.monthly_admission_min_months
-                if self.island_hyperparams is not None
-                else _cfg.PHASE2_MONTHLY_ADMISSION_MIN_MONTHS
-            )
-            if len(monthly_windows) < min_months:
-                logger.warning(
-                    "Phase 2 [%s]: only %d monthly windows (< MIN_MONTHS=%d); "
-                    "skipping monthly-admission gate",
-                    self.direction,
-                    len(monthly_windows),
-                    min_months,
-                )
-            else:
-                pool = _apply_monthly_admission_gate(
-                    pool, monthly_windows, self.direction,
-                    island_hyperparams=self.island_hyperparams,
-                )
+        # --- Monthly-window shadow-test gate ---
+        # Uses unsampled validation_fitness (full calendar span). Never silent-skip
+        # when ≥1 monthly window exists (degraded mode if < MIN_MONTHS).
+        pool = _run_monthly_admission_on_pool(pool, self)
 
         if self.island_id is not None:
             pool = _filter_pool_by_admission(list(pool))
@@ -3358,33 +3409,7 @@ class Rule_Pool_Generator:
             pool = _filter_pool_by_admission(list(new_pool))
 
             # --- Monthly-window gate for islands ---
-            # → fixes audit finding #4 (monthly gate on train was no-op)
-            if self._cached_slim_val is None:
-                logger.warning(
-                    "Phase 2 [%s]: no val DataFrame available; skipping "
-                    "monthly-admission gate",
-                    self.direction,
-                )
-            elif _cfg.PHASE2_MONTHLY_ADMISSION_ENABLED:
-                monthly_windows = build_monthly_windows(self._cached_slim_val)
-                min_months = (
-                    self.island_hyperparams.monthly_admission_min_months
-                    if self.island_hyperparams is not None
-                    else _cfg.PHASE2_MONTHLY_ADMISSION_MIN_MONTHS
-                )
-                if len(monthly_windows) < min_months:
-                    logger.warning(
-                        "Phase 2 [%s]: only %d monthly windows (< MIN_MONTHS=%d); "
-                        "skipping monthly-admission gate",
-                        self.direction,
-                        len(monthly_windows),
-                        min_months,
-                    )
-                else:
-                    pool = _apply_monthly_admission_gate(
-                        pool, monthly_windows, self.direction,
-                        island_hyperparams=self.island_hyperparams,
-                    )
+            pool = _run_monthly_admission_on_pool(pool, self)
 
             pool = Rule_Pool_Generator._annotate_archive_entries(
                 pool,

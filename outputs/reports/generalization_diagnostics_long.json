@@ -2,48 +2,48 @@
   "direction": "long",
   "split_metrics": {
     "train": {
-      "total_return_pct": 9.423446655273438,
-      "profit_factor": 1.4202173948287964,
-      "win_rate": 60.526315789473685,
-      "max_drawdown_pct": 2.1382105350494385,
-      "executed_trades": 228
+      "total_return_pct": 25.07447052001953,
+      "profit_factor": 1.570482611656189,
+      "win_rate": 62.997658079625296,
+      "max_drawdown_pct": 3.968397617340088,
+      "executed_trades": 427
     },
     "validation": {
-      "total_return_pct": 13.6195068359375,
-      "profit_factor": 2.8235082626342773,
-      "win_rate": 73.77049180327869,
-      "max_drawdown_pct": 1.2727453708648682,
-      "executed_trades": 122
+      "total_return_pct": 25.96731185913086,
+      "profit_factor": 2.0685999393463135,
+      "win_rate": 69.25675675675676,
+      "max_drawdown_pct": 2.746079921722412,
+      "executed_trades": 296
     },
     "test": {
-      "total_return_pct": 14.228963851928711,
-      "profit_factor": 5.989005088806152,
-      "win_rate": 85.54216867469879,
-      "max_drawdown_pct": 1.0062843561172485,
-      "executed_trades": 83
+      "total_return_pct": 5.834543704986572,
+      "profit_factor": 1.6055608987808228,
+      "win_rate": 63.46153846153846,
+      "max_drawdown_pct": 2.690173387527466,
+      "executed_trades": 104
     }
   },
   "split_shift": {
-    "train_to_validation_delta_pct": 4.1960601806640625,
-    "validation_to_test_delta_pct": 0.6094570159912109,
-    "train_to_test_delta_pct": 4.805517196655273,
+    "train_to_validation_delta_pct": 0.8928413391113281,
+    "validation_to_test_delta_pct": -20.132768154144287,
+    "train_to_test_delta_pct": -19.23992681503296,
     "train_to_test_sign_flip": false
   },
   "symbol_concentration": {
     "train": {
-      "hhi_abs_pnl": 0.25875858309094024,
-      "top_symbol_share_abs_pnl": 0.3151314637492896,
-      "top_symbol": "6"
+      "hhi_abs_pnl": 0.3372625964510557,
+      "top_symbol_share_abs_pnl": 0.37601759412831265,
+      "top_symbol": "5"
     },
     "validation": {
-      "hhi_abs_pnl": 0.4374145603596264,
-      "top_symbol_share_abs_pnl": 0.6182604568413314,
-      "top_symbol": "6"
+      "hhi_abs_pnl": 0.34018090246431304,
+      "top_symbol_share_abs_pnl": 0.3899076078107194,
+      "top_symbol": "5"
     },
     "test": {
-      "hhi_abs_pnl": 0.4702259699596236,
-      "top_symbol_share_abs_pnl": 0.6557954013600443,
-      "top_symbol": "6"
+      "hhi_abs_pnl": 0.37248172433701066,
+      "top_symbol_share_abs_pnl": 0.4360559469759279,
+      "top_symbol": "5"
     }
   },
   "feature_bucket_concentration": {

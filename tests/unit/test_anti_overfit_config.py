@@ -17,14 +17,20 @@ def test_anti_overfit_config_bundle():
     assert cfg.PHASE2_MONTHLY_ADMISSION_MIN_RATIO == 0.55
     assert cfg.PHASE2_DIVERSITY_PENALTY == 3.0
     assert cfg.PHASE2_MUTATION_RATE == 0.32
-    assert cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE == 10
+    assert cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE == 7
     assert cfg.PHASE2_PLATEAU_MAX_RESTARTS == 3
     assert cfg.PHASE2_PROFIT_FACTOR_FLOOR_ADMISSION == 1.15
     assert cfg.PHASE2_GENERATIONS == 96
     assert cfg.PHASE2_TWO_STAGE_ENABLED is True
     assert cfg.PHASE2_SAMPLE_MAX_BARS_PER_SYMBOL == 60_000
     assert cfg.PHASE2_SAMPLE_ROTATION_FRACTION == 0.65
-    assert cfg.RB_MAX_RULES == 5
+    assert cfg.PHASE2_TP == 2.0
+    assert cfg.PHASE2_MONTHLY_ADMISSION_MIN_MONTHS == 3
+    assert cfg.PHASE1_DISABLED is False
+    assert cfg.PHASE2_DIVERSITY_ON_F4 is True
+    assert cfg.RB_TAIL_HOLDOUT_HARD_GATE is True
+    assert cfg.RB_MAX_SYMBOL_SHARE_ABS_PNL == 0.50
+    assert cfg.RB_MAX_RULES == 10
     assert cfg.RB_TRAIN_VALID_MAX_RATIO == 1.15
     assert cfg.PHASE2_VAL_RETURN_FLOOR_PCT_SHORT == 2.0
     assert cfg.effective_phase2_val_return_floor_pct("short") == 2.0

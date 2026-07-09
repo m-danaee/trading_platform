@@ -1829,13 +1829,18 @@ class TestEvaluateChromosome:
                 chromosome, dont_cares, engine, [similar_chrom]
             )
             
-            # objectives[2] is -f3_val + penalties
+            # objectives[2] is -f3_val + penalties (diversity no longer on f3)
             # f3_val is total_return = 15.0 since PHASE2_USE_TOTAL_RETURN_OBJ is True.
             # cond_penalty is 10.0 because chromosome has 6 active conditions while MAX_CONDITIONS is 5.
-            # Without diversity penalty: -15.0 + 10.0 = -5.0
-            # With diversity penalty: -15.0 + 10.0 + 10.0 = 5.0
+            # Without diversity on f3: -15.0 + 10.0 = -5.0 for both cases.
+            # Diversity lands on f4 when PHASE2_DIVERSITY_ON_F4=True.
             assert np.isclose(objectives_self[2], -5.0)
-            assert np.isclose(objectives_similar[2], 5.0)
+            assert np.isclose(objectives_similar[2], -5.0)
+            if bool(getattr(_cfg, "PHASE2_F4_ENABLED", False)) and bool(
+                getattr(_cfg, "PHASE2_DIVERSITY_ON_F4", True)
+            ):
+                assert objectives_similar[3] > objectives_self[3] - 1e-9
+                assert objectives_similar[3] >= 10.0 - 1e-9
             
         finally:
             _cfg.PHASE2_DIVERSITY_PENALTY = orig_penalty

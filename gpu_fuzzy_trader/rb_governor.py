@@ -48,6 +48,67 @@ def _f(metrics: dict | None, key: str, default: float = 0.0) -> float:
     return value if math.isfinite(value) else default
 
 
+def _symbol_concentration_stats(metrics: dict | None) -> tuple[float, float, str]:
+    """Return (hhi_abs_pnl, top_symbol_share, top_symbol) from per_symbol_metrics."""
+    per_sym = (metrics or {}).get("per_symbol_metrics", {}) or {}
+    pnls: list[float] = []
+    top_symbol = ""
+    top_abs = 0.0
+    for sym, v in per_sym.items():
+        if not isinstance(v, dict):
+            continue
+        val = float(v.get("net_pnl", 0.0))
+        abs_val = abs(val)
+        pnls.append(abs_val)
+        if abs_val > top_abs:
+            top_abs = abs_val
+            top_symbol = str(sym)
+    total_abs = float(np.sum(pnls)) if pnls else 0.0
+    if total_abs <= 0.0:
+        return 0.0, 0.0, top_symbol
+    shares = np.asarray(pnls, dtype=np.float64) / total_abs
+    return float(np.sum(shares * shares)), float(np.max(shares)), top_symbol
+
+
+def _passes_symbol_concentration_gate(valid_m: dict) -> tuple[bool, dict[str, Any]]:
+    """Hard gate: reject strategies dominated by one symbol on validation."""
+    hhi, top_share, top_sym = _symbol_concentration_stats(valid_m)
+    max_share = float(getattr(_cfg, "RB_MAX_SYMBOL_SHARE_ABS_PNL", 0.50))
+    max_hhi = float(getattr(_cfg, "RB_MAX_SYMBOL_HHI", 0.55))
+    ok = top_share <= max_share + 1e-12 and hhi <= max_hhi + 1e-12
+    return ok, {
+        "hhi_abs_pnl": hhi,
+        "top_symbol_share_abs_pnl": top_share,
+        "top_symbol": top_sym,
+        "max_share": max_share,
+        "max_hhi": max_hhi,
+        "passed": bool(ok),
+    }
+
+
+def _passes_tail_holdout_gate(
+    risk_history: list[dict],
+) -> tuple[bool, dict[str, Any]]:
+    """Hard gate on risk-grid tail holdout return (when enabled and present)."""
+    if not bool(getattr(_cfg, "RB_TAIL_HOLDOUT_HARD_GATE", True)):
+        return True, {"enabled": False, "passed": True}
+    if not risk_history:
+        return True, {"enabled": True, "available": False, "passed": True}
+    final = risk_history[-1]
+    if "risk_tail_holdout_return_pct" not in final:
+        return True, {"enabled": True, "available": False, "passed": True}
+    tail_ret = float(final.get("risk_tail_holdout_return_pct", 0.0))
+    min_ret = float(getattr(_cfg, "RB_TAIL_HOLDOUT_MIN_RETURN_PCT", 0.0))
+    ok = tail_ret >= min_ret - 1e-12
+    return ok, {
+        "enabled": True,
+        "available": True,
+        "tail_return_pct": tail_ret,
+        "min_return_pct": min_ret,
+        "passed": bool(ok),
+    }
+
+
 def _i(metrics: dict | None, key: str, default: int = 0) -> int:
     try:
         return int((metrics or {}).get(key, default))
@@ -1444,10 +1505,31 @@ def run_rb_governor_pipeline(
         val_pf = _f(opt_test, "profit_factor")
         ret_gate = float(_cfg.PHASE5_VALIDATION_RETURN_GATE_PCT)
         pf_gate = float(_cfg.PHASE5_VALIDATION_PROFIT_FACTOR_GATE)
+        sym_ok, sym_gate = _passes_symbol_concentration_gate(opt_test)
+        tail_ok, tail_gate = _passes_tail_holdout_gate(risk_history)
         deployable = (
             val_ret >= (ret_gate - 1e-9)
             and val_pf >= (pf_gate - 1e-9)
+            and sym_ok
+            and tail_ok
         )
+        if not sym_ok:
+            logger.warning(
+                "RB [%s]: symbol-concentration gate failed "
+                "(top_share=%.3f hhi=%.3f top=%s)",
+                direction,
+                sym_gate["top_symbol_share_abs_pnl"],
+                sym_gate["hhi_abs_pnl"],
+                sym_gate["top_symbol"],
+            )
+        if not tail_ok:
+            logger.warning(
+                "RB [%s]: tail-holdout hard gate failed "
+                "(tail_ret=%.2f%% min=%.2f%%)",
+                direction,
+                float(tail_gate.get("tail_return_pct", 0.0)),
+                float(tail_gate.get("min_return_pct", 0.0)),
+            )
 
         strategy = _strategy(
             direction,
@@ -1461,6 +1543,8 @@ def run_rb_governor_pipeline(
                     "required_return_pct": ret_gate,
                     "required_profit_factor": pf_gate,
                 },
+                "symbol_concentration_gate": sym_gate,
+                "tail_holdout_gate": tail_gate,
                 "rb_score": opt_score,
                 "rb_train_return_pct": _f(opt_train, "total_return_pct"),
                 "rb_valid_return_pct": val_ret,

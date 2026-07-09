@@ -90,6 +90,12 @@ POOL_THREE = [
 class TestMonthlyAdmissionGate:
     """Verify the gate keeps / rejects rules based on profitable_ratio."""
 
+    @pytest.fixture(autouse=True)
+    def _gate_thresholds(self, monkeypatch):
+        """Pin thresholds so tests assert gate logic, not current config churn."""
+        monkeypatch.setattr(_cfg, "PHASE2_MONTHLY_ADMISSION_MIN_RATIO", 0.5)
+        monkeypatch.setattr(_cfg, "PHASE2_MONTHLY_GOOD_RETURN_MIN_PCT", 0.0)
+
     # ------------------------------------------------------------------
     # Test 1: basic profitability filtering
     # ------------------------------------------------------------------
@@ -270,9 +276,9 @@ class TestMonthlyGateDataSource:
         return [{"name": f"feat_{i}", "mode": m, "score": 0.5}
                 for i, m in enumerate(modes)]
 
-    def test_gate_uses_cached_slim_val(self, monkeypatch):
-        """``build_monthly_windows`` receives the val DataFrame
-        (``_cached_slim_val``), not the train DataFrame.
+    def test_gate_uses_cached_monthly_val(self, monkeypatch):
+        """``build_monthly_windows`` receives unsampled monthly val
+        (``_cached_monthly_val``), not the train DataFrame.
 
         Uses monkeypatch to record the DataFrame passed to
         ``build_monthly_windows`` and asserts it is the slimmed val,
@@ -309,8 +315,8 @@ class TestMonthlyGateDataSource:
             lambda pool_entry, window_df, direction: 1.0,
         )
 
-        # Create generator with val_df — after init, _cached_slim_val
-        # will point to the slimmed val data, and _scoped_val_df is freed
+        # Create generator with val_df — after init, _cached_monthly_val
+        # holds unsampled slim val, and _scoped_val_df is freed
         gen = Rule_Pool_Generator(
             train_df, fi, "long",
             pop_size=4,
@@ -323,6 +329,7 @@ class TestMonthlyGateDataSource:
 
         # Sanity-check the attrs after init
         assert gen._cached_slim_val is not None
+        assert gen._cached_monthly_val is not None
         assert gen._scoped_val_df is None
 
         # --- Trip the gate via finalize_island ---
@@ -366,6 +373,10 @@ class TestMonthlyGateDataSource:
         # The recorded DataFrame must NOT be the slimmed train
         assert used_df is not gen._train_df, (
             "build_monthly_windows received the TRAIN DataFrame!"
+        )
+        # Prefer unsampled monthly val over sampled slim val
+        assert used_df is gen._cached_monthly_val, (
+            "build_monthly_windows should receive _cached_monthly_val"
         )
         # Verify the datetime range matches the slimmed val (year 2022+)
         dt_min = used_df["datetime"].min()
@@ -413,6 +424,7 @@ class TestMonthlyGateDataSource:
         gen.direction = "long"
         gen.pop_size = 4
         gen._cached_slim_val = None
+        gen._cached_monthly_val = None
         gen._train_df = train_df
         gen._engine = None
         gen._val_engine = None
