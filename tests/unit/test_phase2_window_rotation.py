@@ -13,6 +13,7 @@ from gpu_fuzzy_trader.phases.phase2_island_scheduler import _derive_epoch_seed
 from gpu_fuzzy_trader.phases.phase2_rule_pool import (
     _resolve_sample_total_rows,
     _sample_df,
+    sample_df_for_phase2,
 )
 
 
@@ -114,6 +115,17 @@ class TestDeriveEpochSeed:
 class TestResolveSampleTotalRows:
     """Capping logic for per-epoch window rotation."""
 
+    @staticmethod
+    def _expected_max_per_sym(safe_len: int) -> int:
+        rotation_frac = float(cfg.PHASE2_SAMPLE_ROTATION_FRACTION)
+        max_bars_cap = int(cfg.PHASE2_SAMPLE_MAX_BARS_PER_SYMBOL)
+        margin = max(1, safe_len // 100)
+        return min(
+            max(1, int(safe_len * rotation_frac)),
+            max_bars_cap,
+            max(1, safe_len - margin),
+        )
+
     def test_no_cap_when_rotation_disabled(self, monkeypatch):
         """With PHASE2_PER_EPOCH_WINDOW_ROTATION=False, total_rows is unchanged."""
         monkeypatch.setattr(cfg, "PHASE2_PER_EPOCH_WINDOW_ROTATION", False)
@@ -122,36 +134,48 @@ class TestResolveSampleTotalRows:
         assert result == 701_000
 
     def test_caps_to_fit_safe_range(self, monkeypatch):
-        """With rotation enabled, total_rows is capped with 1% margin."""
+        """With rotation enabled, total_rows is capped by rotation fraction."""
         monkeypatch.setattr(cfg, "PHASE2_PER_EPOCH_WINDOW_ROTATION", True)
-        # 4 symbols, 200 rows each → safe_len = 200 (no forbidden ranges)
-        # margin = max(1, 200//100) = 2, max_per_sym = 198
-        # cap = min(701_000, 4 * 198) = 792
         df = _make_multi_sym_df(n_rows_per_sym=200, n_symbols=4)
         result = _resolve_sample_total_rows(df, 701_000)
-        expected = 4 * (200 - max(1, 200 // 100))  # 4 * 198 = 792
+        max_per_sym = self._expected_max_per_sym(200)
+        expected = 4 * max_per_sym
         assert result == expected, f"Expected {expected}, got {result}"
 
     def test_cap_respects_forbidden_ranges(self, monkeypatch):
         """Forbidden ranges reduce safe_len, so the cap is tighter."""
         monkeypatch.setattr(cfg, "PHASE2_PER_EPOCH_WINDOW_ROTATION", True)
-        # 4 symbols, 300 rows each, forbid bars 250-299 → safe_len = 250
-        # margin = max(1, 250//100) = 2, max_per_sym = 248
-        # cap = min(701_000, 4 * 248) = 992
         df = _make_multi_sym_df(n_rows_per_sym=300, n_symbols=4)
-        forbidden = [(250, 299)]  # last 50 bars forbidden
+        forbidden = [(250, 299)]  # last 50 bars forbidden → safe_len = 250
         result = _resolve_sample_total_rows(df, 701_000, forbidden)
-        expected = 4 * (250 - max(1, 250 // 100))  # 4 * 248 = 992
+        max_per_sym = self._expected_max_per_sym(250)
+        expected = 4 * max_per_sym
         assert result == expected, f"Expected {expected}, got {result}"
 
     def test_no_cap_when_request_fits(self, monkeypatch):
-        """If total_rows already fits, the cap is a no-op."""
+        """If total_rows already fits under the rotation cap, it is unchanged."""
         monkeypatch.setattr(cfg, "PHASE2_PER_EPOCH_WINDOW_ROTATION", True)
         df = _make_multi_sym_df(n_rows_per_sym=500, n_symbols=2)
-        # safe_len = 500, margin = 5, max_per_sym = 495
-        # n_sym * max_per_sym = 2 * 495 = 990 > 800 → no cap
-        result = _resolve_sample_total_rows(df, 800)
-        assert result == 800  # unchanged
+        max_per_sym = self._expected_max_per_sym(500)
+        request = 2 * max_per_sym - 10
+        assert request > 0
+        result = _resolve_sample_total_rows(df, request)
+        assert result == request
+
+
+class TestSampleDfForPhase2:
+    """sample_df_for_phase2 applies resolve before sampling."""
+
+    def test_matches_resolve_then_sample(self, monkeypatch):
+        monkeypatch.setattr(cfg, "PHASE2_PER_EPOCH_WINDOW_ROTATION", True)
+        df = _make_multi_sym_df(n_rows_per_sym=200, n_symbols=4)
+        expected = _sample_df(
+            df,
+            _resolve_sample_total_rows(df, cfg.PHASE1_SAMPLING_TOTAL),
+            random_state=42,
+        )
+        actual = sample_df_for_phase2(df, random_state=42)
+        assert actual.equals(expected)
 
 
 class TestSampleEpochRotation:
@@ -238,9 +262,8 @@ class TestSampleEpochRotation:
         monkeypatch.setattr(cfg, "PHASE2_PER_EPOCH_WINDOW_ROTATION", True)
         df = _make_multi_sym_df(n_rows_per_sym=200, n_symbols=4)
         total_rows = _resolve_sample_total_rows(df, 701_000)
-        # total_rows should be capped well below 701_000
-        margin = max(1, 200 // 100)
-        expected_max = 4 * (200 - margin)  # 4 * 198 = 792
+        max_per_sym = TestResolveSampleTotalRows._expected_max_per_sym(200)
+        expected_max = 4 * max_per_sym
         assert total_rows <= expected_max, (
             f"Capped total_rows {total_rows} exceeds expected max {expected_max}"
         )

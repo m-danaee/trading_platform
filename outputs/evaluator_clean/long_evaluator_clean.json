@@ -3,39 +3,51 @@
   "rules_set": [
     {
       "conditions": [
-        "[band_bb_percB_20_2] IS Extreme Bearish",
-        "[realized_vol_20] IS Medium",
-        "[vol_over_ema20] IS Very High",
-        "[log_range_over_vol_100] IS Very Low",
-        "symbol is 6"
-      ],
-      "tp": 2.0,
-      "sl": 1.0,
-      "capital_pct": 30.0
-    },
-    {
-      "conditions": [
-        "[dmi_balance_14] IS Neutral Negative",
-        "[ema_slope_atr_20_5] IS Neutral Negative",
-        "[parkinson_vol_20] IS Very High",
-        "[vol_over_median20] IS Very Low",
-        "symbol is 1"
-      ],
-      "tp": 2.0,
-      "sl": 1.0,
-      "capital_pct": 30.0
-    },
-    {
-      "conditions": [
-        "[downside_semivol_20] IS Very High",
-        "[rsi_centered_14] IS Neutral Negative",
-        "[vol_over_ema20] IS Very High",
-        "[log_range_over_vol_100] IS Very High",
+        "[downside_semivol_20] IS Medium",
+        "[macd_hist_atr] IS Strong Bearish",
+        "[upside_semivol_20] IS Very Low",
+        "[vol_ratio_20_100] IS Very High",
         "symbol is 5"
       ],
-      "tp": 2.0,
-      "sl": 1.0,
-      "capital_pct": 30.0
+      "tp": 1.5,
+      "sl": 1.2,
+      "capital_pct": 18.0
+    },
+    {
+      "conditions": [
+        "[efficiency_ratio_20] IS Very High",
+        "[percent_b_20] IS Strong Bullish",
+        "[upside_semivol_20] IS Very High",
+        "[vol_ratio_20_100] IS Very Low",
+        "symbol is 6"
+      ],
+      "tp": 1.5,
+      "sl": 1.2,
+      "capital_pct": 18.0
+    },
+    {
+      "conditions": [
+        "[downside_semivol_20] IS Medium",
+        "[macd_hist_atr] IS Extreme Bullish",
+        "[upside_semivol_20] IS Very Low",
+        "[vol_ratio_20_100] IS Very High",
+        "symbol is 3"
+      ],
+      "tp": 1.5,
+      "sl": 1.2,
+      "capital_pct": 18.0
+    },
+    {
+      "conditions": [
+        "[atr_pct_14] IS Very High",
+        "[macd_hist_atr] IS Weak Bullish",
+        "[range_compression_20_100] IS Very Low",
+        "[log_range_over_vol_100] IS High",
+        "symbol is 8"
+      ],
+      "tp": 1.5,
+      "sl": 1.2,
+      "capital_pct": 18.0
     }
   ]
 }

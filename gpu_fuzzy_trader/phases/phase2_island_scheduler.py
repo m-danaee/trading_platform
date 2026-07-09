@@ -27,7 +27,7 @@ from gpu_fuzzy_trader.phases.phase2_rule_pool import (
     Rule_Pool_Generator,
     _get_dont_cares,
     _merge_archive_entries,
-    _sample_df,
+    sample_df_for_phase2,
 )
 from gpu_fuzzy_trader.phases.phase2_support import (
     passes_evolution_deployability_preview,
@@ -272,9 +272,8 @@ def filter_migrants_for_cluster(
 
 
 def _reference_sample_rows(train_df: pd.DataFrame, seed: int | None) -> int:
-    sampled = _sample_df(
+    sampled = sample_df_for_phase2(
         train_df,
-        _cfg.PHASE1_SAMPLING_TOTAL,
         random_state=seed if seed is not None else _cfg.PHASE2_SEED,
     )
     return len(sampled)
@@ -353,8 +352,9 @@ def _run_orphan_boosts(
     for sym in orphans:
         sym_train = _cfg.filter_df_to_symbols(train_df, [sym])
         sym_val = _cfg.filter_df_to_symbols(val_df, [sym])
-        sampled_rows = len(_sample_df(
-            sym_train, _cfg.PHASE1_SAMPLING_TOTAL, random_state=seed))
+        sampled_rows = len(
+            sample_df_for_phase2(sym_train, random_state=seed),
+        )
         hp = _cfg.resolve_island_hyperparams(
             "orphan", sampled_rows, reference_rows, n_symbols=1,
         )
@@ -433,8 +433,7 @@ def _run_cluster_islands(
         scoped_train = _cfg.filter_df_to_symbols(train_df, syms)
         scoped_val = _cfg.filter_df_to_symbols(val_df, syms)
         sampled_rows = len(
-            _sample_df(scoped_train, _cfg.PHASE1_SAMPLING_TOTAL,
-                       random_state=seed),
+            sample_df_for_phase2(scoped_train, random_state=seed),
         )
         hp = _cfg.resolve_island_hyperparams(
             "cluster", sampled_rows, reference_rows, n_symbols=len(syms),

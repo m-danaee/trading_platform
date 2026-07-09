@@ -3,99 +3,65 @@
   "rules_set": [
     {
       "conditions": [
-        "[downside_semivol_20] IS Low",
-        "[percent_b_20] IS Weak Bullish",
-        "[mom_stoch_rsi_14_14_3] IS Low",
-        "[log_range_over_vol_100] IS Very High",
-        "symbol is 5"
-      ],
-      "tp": 2.0,
-      "sl": 1.0,
-      "capital_pct": 30.0
-    },
-    {
-      "conditions": [
-        "[atr_pct_14] IS High",
-        "[dmi_balance_14] IS Strong Bullish",
-        "[up_close_ratio_5] IS Medium",
-        "[vol_over_ema20] IS Very Low",
-        "symbol is 10"
-      ],
-      "tp": 2.0,
-      "sl": 1.0,
-      "capital_pct": 30.0
-    },
-    {
-      "conditions": [
-        "[efficiency_ratio_20] IS Very Low",
-        "[percent_b_20] IS Strong Bearish",
-        "[return_skew_30] IS Neutral Negative",
-        "[log_range_over_vol_100] IS Very High",
-        "symbol is 2"
-      ],
-      "tp": 2.0,
-      "sl": 1.0,
-      "capital_pct": 30.0
-    },
-    {
-      "conditions": [
-        "[atr_pct_14] IS Very High",
-        "[downside_semivol_20] IS Low",
-        "[range_compression_20_100] IS Low",
-        "[vol_over_ema20] IS Very High",
-        "symbol is 1"
-      ],
-      "tp": 2.0,
-      "sl": 1.0,
-      "capital_pct": 30.0
-    },
-    {
-      "conditions": [
-        "[downside_semivol_20] IS Low",
-        "[percent_b_20] IS Weak Bullish",
-        "[mom_stoch_rsi_14_14_3] IS Low",
-        "[log_range_over_vol_100] IS Very High",
+        "[atr_pct_14] IS Very Low",
+        "[ema_gap_atr_20] IS Bullish",
+        "[rsi_centered_14] IS Extreme Bullish",
+        "[vol_over_median20] IS Very Low",
         "symbol is 8"
       ],
-      "tp": 2.0,
-      "sl": 1.0,
-      "capital_pct": 30.0
+      "tp": 1.5,
+      "sl": 1.2,
+      "capital_pct": 18.0
     },
     {
       "conditions": [
-        "[atr_pct_14] IS Medium",
-        "[range_compression_20_100] IS Medium",
-        "[tr_to_atr_14] IS Very High",
-        "[log_range_over_vol_100] IS High",
-        "symbol is 2"
+        "[channel_pos_20] IS Medium",
+        "[parkinson_vol_20] IS Low",
+        "[range_compression_20_100] IS Very Low",
+        "[vol_ratio_20_100] IS High",
+        "[log_range_over_vol_100] IS Very High",
+        "symbol is 3"
       ],
-      "tp": 2.0,
-      "sl": 1.0,
-      "capital_pct": 30.0
+      "tp": 1.5,
+      "sl": 1.2,
+      "capital_pct": 18.0
     },
     {
       "conditions": [
-        "[downside_semivol_20] IS Low",
-        "[ema_slope_atr_20_5] IS Bullish",
-        "[upside_semivol_20] IS High",
+        "[downside_semivol_20] IS Very Low",
+        "[range_compression_20_100] IS High",
+        "[realized_vol_20] IS Low",
+        "[vol_over_median20] IS Very High",
         "[log_range_over_vol_100] IS Very High",
         "symbol is 2"
       ],
-      "tp": 2.0,
-      "sl": 1.0,
-      "capital_pct": 30.0
+      "tp": 1.5,
+      "sl": 1.2,
+      "capital_pct": 18.0
     },
     {
       "conditions": [
-        "[close_location_value] IS Very Low",
-        "[downside_semivol_20] IS Low",
-        "[parkinson_vol_20] IS High",
-        "[tr_to_atr_14] IS Medium",
-        "symbol is 10"
+        "[downside_semivol_20] IS Medium",
+        "[efficiency_ratio_20] IS Very Low",
+        "[ema_gap_atr_20] IS Bullish",
+        "[rsi_centered_14] IS Strong Bullish",
+        "symbol is 7"
       ],
-      "tp": 2.0,
-      "sl": 1.0,
-      "capital_pct": 30.0
+      "tp": 1.5,
+      "sl": 1.2,
+      "capital_pct": 18.0
+    },
+    {
+      "conditions": [
+        "[atr_pct_14] IS Low",
+        "[dmi_balance_14] IS Extreme Bullish",
+        "[downside_semivol_20] IS Medium",
+        "[range_compression_20_100] IS Low",
+        "symbol is 1"
+      ],
+      "tp": 1.5,
+      "sl": 1.2,
+      "capital_pct": 18.0
     }
   ]
 }

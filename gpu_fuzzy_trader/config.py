@@ -375,7 +375,7 @@ PHASE1_STATIONARITY_RANK_DRIFT_MAX = 8
 # Peak GPU RAM scales ~linearly with this value (largest VRAM lever).
 #   Higher → more statistical power, slower, OOM risk on small GPUs.
 #   Lower  → faster, less RAM; trade/support floors may need proportional cut.
-PHASE1_SAMPLING_TOTAL = 1_000_000
+PHASE1_SAMPLING_TOTAL = 1_200_000
 
 # PHASE2_PER_EPOCH_WINDOW_ROTATION — rotate train-window start per epoch
 #   True  → each epoch samples a different contiguous sub-window from the
@@ -393,6 +393,17 @@ PHASE2_PER_EPOCH_WINDOW_ROTATION = True
 #   "hash_island_epoch" → hash(island_seed, epoch_idx) via SHA-256,
 #                          deterministic, no RNG state leak.
 PHASE2_PER_EPOCH_WINDOW_SEED_MODE = "hash_island_epoch"
+
+# PHASE2_SAMPLE_MAX_BARS_PER_SYMBOL — hard cap on per-symbol bars in Phase 2
+# sampling.  Keeps windows rotatable (n_per_sym < safe_len) on long histories.
+#   Higher → more statistical power per epoch, less rotation headroom.
+#   Lower  → more epoch-to-epoch diversity, faster backtests.
+PHASE2_SAMPLE_MAX_BARS_PER_SYMBOL = 60_000
+
+# PHASE2_SAMPLE_ROTATION_FRACTION — when rotation is enabled, request at most
+# this fraction of the largest safe contiguous range per symbol (before the
+# hard cap above).  Must be < 1.0 so start-bar RNG has room to vary.
+PHASE2_SAMPLE_ROTATION_FRACTION = 0.65
 
 # PHASE2_GPU_BATCH_SIZE — chromosomes per JAX vmap chunk in simulate_rule_batch.
 # Peak VRAM scales ~linearly (rule matching is O(batch × rows × conditions)).
@@ -497,7 +508,7 @@ PHASE2_ENCODING = "sparse_slots"
 # MIN_TRADE_SUPPORT — target executed trades before support penalty vanishes.
 #   Higher → penalize low-frequency rules harder; pool favors robust sample size.
 #   Lower  → allow rare-pattern rules; noisier Sortino/return estimates.
-MIN_TRADE_SUPPORT = 120
+MIN_TRADE_SUPPORT = 200
 
 # SUPPORT_PENALTY_MAX — cap on quadratic support shortfall penalty.
 #   Higher → stronger push away from under-supported rules on all objectives.
@@ -517,7 +528,7 @@ MIN_TRADE_POOL_FLOOR = 35
 # PHASE2_SUPPORT_PENALTY_WEIGHT_F1/F2/F3 — per-objective support penalty scale.
 #   Higher → that objective punishes low support more (steer Sortino vs DD vs return).
 #   Lower  → support matters less for that objective.
-PHASE2_SUPPORT_PENALTY_WEIGHT_F1 = 0.4  # Sortino objective
+PHASE2_SUPPORT_PENALTY_WEIGHT_F1 = 0.15  # Sortino objective
 PHASE2_SUPPORT_PENALTY_WEIGHT_F2 = 0.6  # drawdown objective
 PHASE2_SUPPORT_PENALTY_WEIGHT_F3 = 0.6  # return / win-rate objective
 
@@ -592,7 +603,12 @@ PHASE2_RETURN_FLOOR_PCT = 0.0
 # PHASE2_VAL_RETURN_FLOOR_PCT — min validation return % for feasibility.
 #   Higher → stricter OOS alignment during evolution.
 #   Lower  → allow negative val return during search (gates may still catch later).
-PHASE2_VAL_RETURN_FLOOR_PCT = 3.0
+PHASE2_VAL_RETURN_FLOOR_PCT = 1.0
+
+# PHASE2_VAL_RETURN_FLOOR_PCT_SHORT — stricter val floor for short evolution.
+#   Short still showed val→test collapse after the label fix; raise the bar so
+#   val-lucky rules are penalized earlier during search.
+PHASE2_VAL_RETURN_FLOOR_PCT_SHORT = 2.0
 
 # PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION — soft penalty threshold during NSGA-III fitness.
 #   Lower than the admission floor so the feasible set isn't artificially collapsed
@@ -605,7 +621,7 @@ PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION = 1.05
 # PHASE2_PROFIT_FACTOR_FLOOR_ADMISSION — hard gate at pool admission.
 #   The original PHASE2_PROFIT_FACTOR_FLOOR=1.15; kept for the hard gate.
 #   → fixes audit finding #9
-PHASE2_PROFIT_FACTOR_FLOOR_ADMISSION = 1.25
+PHASE2_PROFIT_FACTOR_FLOOR_ADMISSION = 1.15
 
 # PHASE2_PROFIT_FACTOR_FLOOR — DEPRECATED alias for PHASE2_PROFIT_FACTOR_FLOOR_ADMISSION.
 #   Kept for backward compat; do not use in new code. Tracks ADMISSION automatically.
@@ -654,14 +670,14 @@ PHASE2_OVERFIT_WARNING_RATIO = 3.0
 #   Default 15.0 (raised from 5.0 in task-6) so the soft penalty is comparable to the
 #   return signal — kills rules where train>>val even before pool admission.
 # → fixes audit finding #7
-PHASE2_OVERFIT_GAP_PENALTY_WEIGHT = 22.0
+PHASE2_OVERFIT_GAP_PENALTY_WEIGHT = 15.0
 
 # PHASE2_OVERFIT_GAP_PCT_THRESHOLD — train/val return gap (in percentage points)
 #   above which the overfit-gap penalty starts accumulating. Subtraction-based,
 #   well-defined for any sign of val_ret (unlike the old ratio-based definition).
-#   Default 8.0pp is below PHASE2_MAX_TRAIN_VAL_GAP_PCT=16.0 so the soft penalty
+#   Default 8.0pp is below PHASE2_MAX_TRAIN_VAL_GAP_PCT=10.0 so the soft penalty
 #   starts ramping before the hard gate rejects outright.
-PHASE2_OVERFIT_GAP_PCT_THRESHOLD = 5.0
+PHASE2_OVERFIT_GAP_PCT_THRESHOLD = 8.0
 
 # PHASE2_OVERFIT_RATIO_FLOOR — hard reject pool admission when train_return /
 #   max(val_return, 0.1) exceeds this ratio. Catches cases where the absolute-pp
@@ -729,7 +745,7 @@ PHASE2_MONTHLY_GOOD_RETURN_MIN_PCT = 0.5
 #   0.667 → rule must be profitable in two-thirds of windows; tighter stability.
 # Lowered 0.667→0.5: island-friendly threshold; island-evolved rules trained on
 # 3-4 symbols have noisier monthly windows, 0.667 was too strict.
-PHASE2_MONTHLY_ADMISSION_MIN_RATIO = 0.65
+PHASE2_MONTHLY_ADMISSION_MIN_RATIO = 0.55
 
 # PHASE2_MONTHLY_ADMISSION_MIN_MONTHS — minimum number of monthly windows
 # required before the gate is applied.  When the train split is shorter than
@@ -779,7 +795,7 @@ PHASE2_VAL_IN_FITNESS_PENALTY = True
 #   3 → val every 3rd gen (default post task-11; ~33% GPU savings).
 # → fixes audit finding #10 (val every gen is wasteful when
 # window is fixed; cache is safe)
-PHASE2_VAL_SIM_INTERVAL = 1
+PHASE2_VAL_SIM_INTERVAL = 2
 assert PHASE2_VAL_SIM_INTERVAL >= 1, "PHASE2_VAL_SIM_INTERVAL must be >= 1"
 
 # PHASE2_DIVERSITY_HAMMING_THRESHOLD — min Hamming distance for "unique" rule.
@@ -804,7 +820,7 @@ PHASE2_HOF_EPOCH_CARRYOVER = 10
 # Increased 0.5→2.0: 0.5 was negligible vs 50+ infeasible penalties, allowing
 # phenotype collapse. 2.0 provides meaningful push toward diversity without
 # overwhelming feasible objectives on the Pareto front.
-PHASE2_DIVERSITY_PENALTY = 6.0
+PHASE2_DIVERSITY_PENALTY = 3.0
 
 # PHASE2_PHENOTYPE_SORTINO_STEP — Sortino bucket width for behavioral diversity.
 # Tightened 0.5→0.3→0.15: with compressed Sortino in ~0–20 and pop 200, finer
@@ -857,7 +873,7 @@ PHASE2_PLATEAU_EARLY_STOP_MIN_GENERATION = 6
 # PHASE2_PLATEAU_EARLY_STOP_PATIENCE — gens without improvement before stop.
 #   Higher → wait longer for breakthrough; uses more compute.
 #   Lower  → stop quickly when progress stalls.
-PHASE2_PLATEAU_EARLY_STOP_PATIENCE = 6
+PHASE2_PLATEAU_EARLY_STOP_PATIENCE = 7
 
 # PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT — min return improvement to reset patience.
 #   Higher → need larger gains to count as progress.
@@ -927,7 +943,7 @@ PHASE2_ISLAND_PLATEAU_POST_RESTART_STOP_PATIENCE = 8
 # PHASE2_PLATEAU_MAX_RESTARTS — restarts per epoch before final break.
 #   3       → up to 3 diversity restarts, then break on the next plateau.
 #   0       → immediately break (disables restart regardless of ENABLED flag).
-PHASE2_PLATEAU_MAX_RESTARTS = 2
+PHASE2_PLATEAU_MAX_RESTARTS = 3
 
 # PHASE2_VIABILITY_COLLAPSE_THRESHOLD — pop_viable fraction below which viability
 #   is considered collapsed (triggers forced restart after streak).
@@ -1279,7 +1295,7 @@ PHASE2_INIT_UNIFORM_MIX = 0.1
 #   Lower  → finer local search, risk of premature convergence.
 # Increased 0.3→0.35: more exploration to compensate for fewer generations
 # (132→100); helps escape local optima in tighter budget.
-PHASE2_MUTATION_RATE = 0.22
+PHASE2_MUTATION_RATE = 0.32
 
 # PHASE2_MUTATION_WEIGHTED_ACTIVATE_PROB — bias mutations toward activating genes.
 #   Higher → mutations tend to add conditions rather than dont_care.
@@ -1775,7 +1791,7 @@ RB_KEEP_TOP_RULES: int = 150
 # RB_MAX_RULES — maximum rules in the composed team (hard cap; keep aligned
 #   with PHASE3_GLOBAL_MAX_RULES).  To reach RB_MAX_RULES with the default
 #   RB_CAPITAL_GRID min (15%), lower grid min or raise RB_MAX_TOTAL_CAPITAL.
-RB_MAX_RULES: int = 5
+RB_MAX_RULES: int = 10
 
 # RB_MAX_PAIR_OVERLAP — max Hamming-style overlap between any two rules in
 #   the team. Lower = more diverse team, harder to grow.
@@ -1833,7 +1849,7 @@ RB_MIN_COMBINED_RETURN_IMPROVEMENT: float = 3.5
 #   healthy sign) but not wildly above (overfit sign).
 RB_REQUIRE_TRAIN_SLIGHTLY_ABOVE_VALID: bool = True
 RB_TRAIN_VALID_MIN_RATIO: float = 1.03
-RB_TRAIN_VALID_MAX_RATIO: float = 1.22
+RB_TRAIN_VALID_MAX_RATIO: float = 1.15
 RB_TRAIN_VALID_MIN_ABS_GAP: float = 0.20
 RB_TRAIN_VALID_MAX_ABS_GAP: float = 12.0
 RB_TRAIN_BELOW_VALID_PENALTY: float = 900.0
@@ -2070,6 +2086,13 @@ def effective_phase3_val_return_floor_pct() -> float:
     if _debug_symbol_universe_size() is None:
         return base
     return min(base, 4.0)
+
+
+def effective_phase2_val_return_floor_pct(direction: str | None = None) -> float:
+    """Direction-aware Phase 2 validation return floor for fitness penalties."""
+    if direction == "short":
+        return float(PHASE2_VAL_RETURN_FLOOR_PCT_SHORT)
+    return float(PHASE2_VAL_RETURN_FLOOR_PCT)
 
 
 def phase2_pool_path(

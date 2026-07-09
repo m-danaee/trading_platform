@@ -1454,6 +1454,8 @@ def _assign_eval_result(
         compute_phase2_objectives_from_metrics,
     )
 
+    direction = getattr(engine, "trade_direction",
+                        None) if engine is not None else None
     obj, processed = compute_phase2_objectives_from_metrics(
         chromosome,
         dont_cares,
@@ -1464,6 +1466,7 @@ def _assign_eval_result(
         diversity_metrics_by_key=diversity_metrics_by_key,
         stage_params=stage_params,
         n_valid_rows=n_valid_rows,
+        direction=direction,
     )
     objectives[i] = obj
     metrics_cache[i] = processed

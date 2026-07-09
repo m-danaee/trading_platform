@@ -639,7 +639,7 @@ def _compose_ruleset(
         "rules": 1,
     }]
 
-    max_rules = int(getattr(_cfg, "RB_MAX_RULES", getattr(_cfg, "PHASE3_MAX_RULES", 5)))
+    max_rules = int(_cfg.RB_MAX_RULES)
     min_distinct_symbols = int(getattr(_cfg, "RB_MIN_DISTINCT_SYMBOLS", 0))
     max_overlap = float(getattr(_cfg, "RB_MAX_PAIR_OVERLAP", 0.22))
     min_score_improve = float(getattr(_cfg, "RB_MIN_SCORE_IMPROVEMENT", 0.05))
@@ -1112,7 +1112,7 @@ def _profit_amp_select_rules(
     direction: str,
 ) -> tuple[list[dict], dict, dict, float, tuple[bool, dict], list[dict], list[dict]] | None:
     """Greedily select rules by marginal profit while keeping every trial certificate-safe."""
-    max_rules = int(getattr(_cfg, "RB_PROFIT_AMP_MAX_RULES", getattr(_cfg, "RB_MAX_RULES", 5)))
+    max_rules = int(_cfg.RB_MAX_RULES)
     max_overlap = float(getattr(_cfg, "RB_PROFIT_AMP_MAX_PAIR_OVERLAP", 0.55))
     min_improve = float(getattr(_cfg, "RB_PROFIT_AMP_MIN_OBJECTIVE_IMPROVEMENT", 0.10))
     min_return_improve = float(getattr(_cfg, "RB_PROFIT_AMP_MIN_RETURN_IMPROVEMENT", 0.05))

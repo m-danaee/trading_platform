@@ -396,16 +396,14 @@ def _resolve_sample_total_rows(
     """Cap *total_rows* so the per-symbol request fits within the safe range.
 
     When :attr:`config.PHASE2_PER_EPOCH_WINDOW_ROTATION` is enabled, the
-    per-symbol row count must not exceed the largest safe (non-forbidden)
-    contiguous bar range.  Without this cap, ``_sample_df`` falls back to
-    ``start = safe_start = 0`` for every call, preventing window rotation.
+    per-symbol row count is capped to a fraction of the largest safe
+    (non-forbidden) contiguous bar range (and to
+    :attr:`config.PHASE2_SAMPLE_MAX_BARS_PER_SYMBOL`).  Without this cap,
+    ``_sample_df`` falls back to ``start = safe_start`` for every call,
+    preventing window rotation.
 
-    The cap ensures ``n_per_sym < safe_len`` (strictly less) so the RNG
-    branch at ``_sample_df`` (line ~471) fires and picks a different start
-    bar each epoch.  A 1 % margin (``safe_len // 100``) is reserved for
-    rotation so the start bar has room to vary across epochs; the exact
-    margin is a practical trade-off between data quantity and rotation
-    diversity.
+    The cap ensures ``n_per_sym < safe_len`` so the RNG start-bar branch in
+    ``_sample_df`` fires and epochs can see different chronological windows.
 
     Args:
         df: Input DataFrame with a ``symbol`` column.
@@ -436,19 +434,46 @@ def _resolve_sample_total_rows(
     safe_len = safe_end - safe_start + 1 if safe_end >= safe_start else 0
     if safe_len <= 0:
         return total_rows
-    # Reserve a 1 % margin so n_per_sym < safe_len, giving the RNG branch
-    # room to vary the start bar across epochs (at least safe_len // 100
-    # different positions, minimum 1).
+
+    rotation_frac = float(
+        getattr(_cfg, "PHASE2_SAMPLE_ROTATION_FRACTION", 0.65)
+    )
+    max_bars_cap = int(
+        getattr(_cfg, "PHASE2_SAMPLE_MAX_BARS_PER_SYMBOL", 60_000)
+    )
+    # Reserve a small margin so n_per_sym stays strictly below safe_len.
     margin = max(1, safe_len // 100)
-    max_per_sym = max(1, safe_len - margin)
+    max_per_sym = min(
+        max(1, int(safe_len * rotation_frac)),
+        max_bars_cap,
+        max(1, safe_len - margin),
+    )
     capped = min(total_rows, n_sym * max_per_sym)
     if capped < total_rows:
         logger.debug(
             "_resolve_sample_total_rows: capped %d → %d "
-            "(safe_len=%d, margin=%d, max_per_sym=%d, n_sym=%d)",
-            total_rows, capped, safe_len, margin, max_per_sym, n_sym,
+            "(safe_len=%d, max_per_sym=%d, n_sym=%d, rotation_frac=%.2f)",
+            total_rows, capped, safe_len, max_per_sym, n_sym, rotation_frac,
         )
     return capped
+
+
+def sample_df_for_phase2(
+    df: pd.DataFrame,
+    total_rows: int | None = None,
+    random_state: int | np.random.Generator | None = None,
+    forbidden_ranges: list[tuple[int, int]] | None = None,
+) -> pd.DataFrame:
+    """Resolve Phase 2 row budget then sample with aligned symbol windows."""
+    budget = int(
+        total_rows if total_rows is not None else _cfg.PHASE1_SAMPLING_TOTAL)
+    capped = _resolve_sample_total_rows(df, budget, forbidden_ranges)
+    return _sample_df(
+        df,
+        capped,
+        random_state=random_state,
+        forbidden_ranges=forbidden_ranges,
+    )
 
 
 def _sample_df(
@@ -555,7 +580,17 @@ def _sample_df(
 
     if not parts:
         return df.iloc[0:0].reset_index(drop=True)
-    return pd.concat(parts, ignore_index=True)
+    result = pd.concat(parts, ignore_index=True)
+    bars_per_sym = int(sizes_to_use[0]) if sizes_to_use else 0
+    logger.info(
+        "_sample_df: bars/sym=%d start=%d safe_len=%d n_sym=%d sampled_rows=%d",
+        bars_per_sym,
+        start,
+        safe_len,
+        n_sym,
+        len(result),
+    )
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -689,6 +724,7 @@ def compute_phase2_objectives_from_metrics(
     stage_params=None,
     n_valid_rows: int | None = None,
     island_hyperparams: _cfg.IslandHyperparams | None = None,
+    direction: str | None = None,
 ) -> tuple[np.ndarray, dict]:
     """
     Build Phase 2 minimisation objectives from precomputed train/val metrics.
@@ -753,7 +789,9 @@ def compute_phase2_objectives_from_metrics(
                 sortino_for_obj = min(sortino_train, sortino_val)
         # C6: Gate val-derived floor penalties behind JOINT_TRAIN_VAL or VAL_IN_FITNESS_PENALTY
         if _cfg.PHASE2_JOINT_TRAIN_VAL or getattr(_cfg, "PHASE2_VAL_IN_FITNESS_PENALTY", False):
-            if val_total_return < _cfg.PHASE2_VAL_RETURN_FLOOR_PCT:
+            val_return_floor = _cfg.effective_phase2_val_return_floor_pct(
+                direction)
+            if val_total_return < val_return_floor:
                 val_floor_penalty += _cfg.SUPPORT_PENALTY_MAX
             if val_profit_factor < _cfg.PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION:
                 val_floor_penalty += (
@@ -1093,6 +1131,7 @@ def _evaluate_chromosome(
         else None
     )
 
+    direction = getattr(engine, "trade_direction", None)
     return compute_phase2_objectives_from_metrics(
         chromosome,
         dont_cares,
@@ -1104,6 +1143,7 @@ def _evaluate_chromosome(
         stage_params=stage_params,
         n_valid_rows=n_valid_rows,
         island_hyperparams=island_hyperparams,
+        direction=direction,
     )
 
 
@@ -2318,12 +2358,8 @@ class Rule_Pool_Generator:
 
         # Sample training data to budget, then slim to backtest-only columns
         sample_seed = seed if seed is not None else _cfg.PHASE2_SEED
-        total_rows = _resolve_sample_total_rows(
-            self._scoped_train_df, _cfg.PHASE1_SAMPLING_TOTAL, forbidden_ranges,
-        )
-        sampled = _sample_df(
+        sampled = sample_df_for_phase2(
             self._scoped_train_df,
-            total_rows,
             random_state=sample_seed,
             forbidden_ranges=forbidden_ranges,
         )
@@ -2401,9 +2437,8 @@ class Rule_Pool_Generator:
         if self._scoped_val_df is not None:
             # First-time build from scoped val df
             try:
-                val_sampled = _sample_df(
+                val_sampled = sample_df_for_phase2(
                     self._scoped_val_df,
-                    _cfg.PHASE1_SAMPLING_TOTAL,
                     random_state=self._val_sample_seed,
                 )
                 slim_val = slim_backtest_df(val_sampled, self._feature_names)
@@ -2514,14 +2549,8 @@ class Rule_Pool_Generator:
         from gpu_fuzzy_trader.backtest.df_slim import slim_backtest_df
 
         epoch_seed = _derive_epoch_seed(self._sample_seed, epoch_idx)
-        total_rows = _resolve_sample_total_rows(
+        sampled = sample_df_for_phase2(
             self._cached_scoped_train_df,
-            _cfg.PHASE1_SAMPLING_TOTAL,
-            self._forbidden_ranges,
-        )
-        sampled = _sample_df(
-            self._cached_scoped_train_df,
-            total_rows,
             random_state=epoch_seed,
             forbidden_ranges=self._forbidden_ranges,
         )
@@ -2530,8 +2559,8 @@ class Rule_Pool_Generator:
         )
         logger.debug(
             "Phase 2 [%s]: resampled train window for epoch %d "
-            "(total_rows=%d, seed=%s)",
-            self.direction, epoch_idx, total_rows, epoch_seed,
+            "(sampled_rows=%d, seed=%s)",
+            self.direction, epoch_idx, len(sampled), epoch_seed,
         )
 
     def _ensure_engines(self) -> None:

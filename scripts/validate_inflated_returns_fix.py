@@ -24,6 +24,9 @@ def main() -> int:
 
     assert cfg.PHASE2_CAPITAL_PCT == 18.0
     assert cfg.PHASE2_JOINT_TRAIN_VAL is True
+    assert cfg.RB_TRAIN_VALID_MAX_RATIO == 1.15
+    assert cfg.RB_MAX_RULES == 5
+    assert cfg.PHASE2_VAL_RETURN_FLOOR_PCT_SHORT == 2.0
 
     label_test = (
         "tests/unit/test_build_train2_labels.py::"
