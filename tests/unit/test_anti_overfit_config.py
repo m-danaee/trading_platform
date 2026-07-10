@@ -20,6 +20,8 @@ def test_anti_overfit_config_bundle():
     assert cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE == 7
     assert cfg.PHASE2_PLATEAU_MAX_RESTARTS == 3
     assert cfg.PHASE2_PROFIT_FACTOR_FLOOR_ADMISSION == 1.15
+    assert cfg.PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION == 1.0
+    assert cfg.PHASE2_RETURN_FLOOR_PCT == 0.0
     assert cfg.PHASE2_GENERATIONS == 96
     assert cfg.PHASE2_TWO_STAGE_ENABLED is True
     assert cfg.PHASE2_SAMPLE_MAX_BARS_PER_SYMBOL == 60_000

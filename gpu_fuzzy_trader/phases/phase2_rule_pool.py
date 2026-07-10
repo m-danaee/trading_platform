@@ -925,15 +925,19 @@ def compute_phase2_objectives_from_metrics(
         diversity_metrics_by_key=diversity_metrics_by_key,
     )
 
-    if val_metrics is not None:
-        raw_violation = _raw_feasibility_violation_score(
-            metrics, val_metrics,
+    from gpu_fuzzy_trader.phases.phase2_support import _val_terms_in_fitness
+
+    include_val = _val_terms_in_fitness()
+    raw_violation = _raw_feasibility_violation_score(
+        metrics,
+        val_metrics,
+        include_val=include_val,
+    )
+    if raw_violation > 0.0:
+        metrics["feasibility_violation"] = raw_violation
+        support_penalty += (
+            raw_violation * float(_cfg.PHASE2_FEASIBILITY_VIOLATION_WEIGHT)
         )
-        if raw_violation > 0.0:
-            metrics["feasibility_violation"] = raw_violation
-            support_penalty += (
-                raw_violation * float(_cfg.PHASE2_FEASIBILITY_VIOLATION_WEIGHT)
-            )
 
     trade_penalty = 0.0
     if island_hyperparams is not None:

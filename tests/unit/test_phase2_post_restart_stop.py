@@ -13,7 +13,7 @@ def test_config_defaults():
     assert cfg.PHASE2_PLATEAU_POST_RESTART_STOP_PATIENCE == 5
     assert cfg.PHASE2_ISLAND_PLATEAU_POST_RESTART_STOP_ENABLED is True
     assert cfg.PHASE2_ISLAND_PLATEAU_POST_RESTART_STOP_PATIENCE == 8
-    assert cfg.PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE == 6
+    assert cfg.PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE == 10
 
 
 def test_island_streak_below_patience_no_stop():

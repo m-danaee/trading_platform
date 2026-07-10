@@ -280,7 +280,7 @@ class TestPoolAdmissionScaledFloors:
 
     def test_pf_floor_uses_admission_not_evolution(self, monkeypatch) -> None:
         """_pool_admission_floors returns the ADMISSION floor (1.15),
-        not the EVOLUTION floor (1.05). This is the hard gate regression guard."""
+        not the EVOLUTION floor (1.0). This is the hard gate regression guard."""
         from gpu_fuzzy_trader.phases.phase2_support import _pool_admission_floors
 
         _, _, _, pf_floor, _ = _pool_admission_floors(None)
@@ -291,19 +291,19 @@ class TestPoolAdmissionScaledFloors:
 
 
 class TestEvolutionFeasibilityFloors:
-    """Tests for _evolution_feasibility_floors — EVOLUTION PF 1.05 vs ADMISSION PF 1.15."""
+    """Tests for _evolution_feasibility_floors — EVOLUTION PF 1.0 vs ADMISSION PF 1.15."""
 
     def test_evolution_feasibility_floors_uses_evolution_pf(self, monkeypatch) -> None:
-        """_evolution_feasibility_floors returns PF=1.05, not ADMISSION 1.15."""
+        """_evolution_feasibility_floors returns PF=1.0, not ADMISSION 1.15."""
         from gpu_fuzzy_trader.phases.phase2_support import (
             _evolution_feasibility_floors,
             _pool_admission_floors,
         )
 
         _, _, _, evo_pf, _ = _evolution_feasibility_floors(None)
-        assert evo_pf == pytest.approx(1.05), (
+        assert evo_pf == pytest.approx(1.0), (
             f"_evolution_feasibility_floors returned pf_floor={evo_pf}, "
-            f"expected 1.05 (EVOLUTION floor)"
+            f"expected 1.0 (EVOLUTION floor)"
         )
 
         _, _, _, adm_pf, _ = _pool_admission_floors(None)
@@ -313,8 +313,8 @@ class TestEvolutionFeasibilityFloors:
         )
 
     def test_raw_violation_score_uses_evolution_pf(self, monkeypatch) -> None:
-        """_raw_feasibility_violation_score uses EVOLUTION PF (1.05) so
-        a rule with PF between 1.05 and 1.15 has zero PF violation,
+        """_raw_feasibility_violation_score uses EVOLUTION PF (1.0) so
+        a rule with PF between 1.0 and 1.15 has zero PF violation,
         while pool admission would reject it."""
         from gpu_fuzzy_trader.phases.phase2_support import (
             _raw_feasibility_violation_score,
@@ -326,7 +326,7 @@ class TestEvolutionFeasibilityFloors:
         monkeypatch.setattr(_cfg, "PHASE2_VAL_RETURN_FLOOR_PCT", -100.0)
         monkeypatch.setattr(_cfg, "PHASE2_MAX_TRAIN_VAL_GAP_PCT", 99.0)
 
-        # Rule with PF=1.10 — above EVOLUTION floor (1.05) but below ADMISSION (1.15)
+        # Rule with PF=1.10 — above EVOLUTION floor (1.0) but below ADMISSION (1.15)
         train = {
             "total_return_pct": 3.0,
             "profit_factor": 1.10,
@@ -338,9 +338,9 @@ class TestEvolutionFeasibilityFloors:
             "executed_trades": 50,
         }
         score = _raw_feasibility_violation_score(train, val)
-        # The violation score should be 0 because PF 1.10 >= 1.05 (evolution floor)
+        # The violation score should be 0 because PF 1.10 >= 1.0 (evolution floor)
         assert score == 0.0, (
-            f"Expected score=0 for PF=1.10 >= evolution floor 1.05, got {score}"
+            f"Expected score=0 for PF=1.10 >= evolution floor 1.0, got {score}"
         )
 
         # Pool admission still checks against ADMISSION floor 1.15
@@ -350,6 +350,56 @@ class TestEvolutionFeasibilityFloors:
         assert passes_pool_admission_gate(train, val) is False, (
             "PF=1.10 should fail pool admission (requires 1.15)"
         )
+
+
+class TestTrainOnlyFitnessValGating:
+    """Val terms in _raw_feasibility_violation_score respect include_val flag."""
+
+    def test_train_only_fitness_ignores_bad_val(self, monkeypatch) -> None:
+        monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", True)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 1)
+        monkeypatch.setattr(_cfg, "PHASE2_RETURN_FLOOR_PCT", -100.0)
+        monkeypatch.setattr(_cfg, "PHASE2_MAX_TRAIN_VAL_GAP_PCT", 99.0)
+
+        train = {
+            "total_return_pct": 3.0,
+            "profit_factor": 1.2,
+            "executed_trades": 100,
+        }
+        val = {
+            "total_return_pct": -5.0,
+            "profit_factor": 0.5,
+            "executed_trades": 2,
+        }
+
+        train_only = _raw_feasibility_violation_score(
+            train, val, include_val=False,
+        )
+        full = _raw_feasibility_violation_score(
+            train, val, include_val=True,
+        )
+
+        assert train_only == 0.0
+        assert full > 0.0
+
+    def test_deployability_preview_still_checks_val(self, monkeypatch) -> None:
+        monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", True)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 1)
+        monkeypatch.setattr(_cfg, "PHASE2_RETURN_FLOOR_PCT", -100.0)
+        monkeypatch.setattr(_cfg, "PHASE2_MAX_TRAIN_VAL_GAP_PCT", 99.0)
+
+        train = {
+            "total_return_pct": 3.0,
+            "profit_factor": 1.2,
+            "executed_trades": 100,
+        }
+        val = {
+            "total_return_pct": -5.0,
+            "profit_factor": 0.5,
+            "executed_trades": 50,
+        }
+
+        assert passes_evolution_deployability_preview(train, val) is False
 
 
 class TestFeasibilityGateFailures:

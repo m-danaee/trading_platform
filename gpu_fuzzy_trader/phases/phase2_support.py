@@ -135,7 +135,7 @@ def _evolution_feasibility_floors(
 ) -> tuple[int, float, float, float, int]:
     """Return (train_trade_floor, train_ret_min, val_ret_min, pf_floor, min_val_trades).
 
-    Uses EVOLUTION PF 1.05 — softer penalty threshold during NSGA-III fitness
+    Uses EVOLUTION PF 1.0 — softer penalty threshold during NSGA-III fitness
     so the feasible set isn't artificially collapsed when val trade counts are thin.
     Pool admission (hard gate) still uses ADMISSION PF 1.15.
     """
@@ -495,16 +495,28 @@ def robust_win_rate_pct(
     return _joint_primary_metric(train_wr, val_wr, joint=joint)
 
 
+def _val_terms_in_fitness() -> bool:
+    """True when val-derived feasibility penalties belong in NSGA-III fitness."""
+    return bool(_cfg.PHASE2_JOINT_TRAIN_VAL) or bool(
+        getattr(_cfg, "PHASE2_VAL_IN_FITNESS_PENALTY", False),
+    )
+
+
 def _raw_feasibility_violation_score(
     train_metrics: dict,
     val_metrics: dict | None,
     *,
     n_valid_rows: int | None = None,
+    include_val: bool = True,
 ) -> float:
     """Compute violation score using evolution PF floors (1.05) during NSGA-III fitness.
 
     Pool admission (hard gate) still uses ADMISSION PF 1.15 via
     ``_pool_admission_floors`` / ``_passes_pool_admission_impl``.
+
+    When ``include_val`` is False (train-only fitness with
+    ``PHASE2_VAL_IN_FITNESS_PENALTY=False``), only train-side floors contribute.
+    Deployability preview passes ``include_val=True`` to keep full val checks.
     """
     if not _cfg.PHASE2_POOL_REQUIRE_POSITIVE_SPLITS:
         return 0.0
@@ -524,6 +536,9 @@ def _raw_feasibility_violation_score(
         score += abs(train_ret_min - train_ret) + 1.0
     if train_pf < pf_floor:
         score += (pf_floor - train_pf) * 5.0
+
+    if not include_val:
+        return score
 
     if val_metrics is None:
         return score + 5.0

@@ -320,7 +320,7 @@ PHASE1_TOP_K_FEATURES = 20
 # detected by Feature_Detector. Phase 2 then evolves over the full feature set.
 #   True  → larger GA search space, more GPU RAM per chromosome, no MI prefilter.
 #   False → normal top-K MI-ranked selection.
-PHASE1_DISABLED: bool = False
+PHASE1_DISABLED: bool = True
 
 # PHASE1_MAX_FEATURE_OVERLAP — max shared feature names between long & short lists.
 #   Enforced as int(TOP_K × overlap) shared names (e.g. 25 × 0.8 → 20 shared).
@@ -528,7 +528,7 @@ MIN_TRADE_POOL_FLOOR = 35
 # PHASE2_SUPPORT_PENALTY_WEIGHT_F1/F2/F3 — per-objective support penalty scale.
 #   Higher → that objective punishes low support more (steer Sortino vs DD vs return).
 #   Lower  → support matters less for that objective.
-PHASE2_SUPPORT_PENALTY_WEIGHT_F1 = 0.15  # Sortino objective
+PHASE2_SUPPORT_PENALTY_WEIGHT_F1 = 0.1  # Sortino objective
 PHASE2_SUPPORT_PENALTY_WEIGHT_F2 = 0.6  # drawdown objective
 PHASE2_SUPPORT_PENALTY_WEIGHT_F3 = 0.6  # return / win-rate objective
 
@@ -598,11 +598,10 @@ PHASE2_SORTINO_MIN_TRADE_THRESHOLD = 50
 # PHASE2_RETURN_FLOOR_PCT — min train return % to avoid feasibility penalty.
 #   Higher → only profitable-on-train rules stay feasible; emptier search.
 #   Lower  → more exploration; weak rules linger until other gates remove them.
-#   Set to 1.0 (was 0.0) to grow a robust Phase 2 pool for RB composition.
-#   A non-zero floor removes strictly-negative-train rules earlier so that
-#   the remaining pool has more cross-symbol candidates for RB to combine.
-#   This is a pool quality knob, NOT a TP/SL retune or OOS chase.
-PHASE2_RETURN_FLOOR_PCT = 1.0
+#   Set to 0.0 during exploration so island/cluster search is not starved before
+#   pool admission (which still requires strictly positive train/val returns via
+#   PHASE2_POOL_*_RETURN_MIN_PCT).  Raise only after deployable pool is healthy.
+PHASE2_RETURN_FLOOR_PCT = 0.0
 
 # PHASE2_VAL_RETURN_FLOOR_PCT — min validation return % for feasibility.
 #   Higher → stricter OOS alignment during evolution.
@@ -620,7 +619,7 @@ PHASE2_VAL_RETURN_FLOOR_PCT_SHORT = 2.0
 #   Higher → fewer rules pass the soft penalty during evolution.
 #   Lower  → more rules explore; admission gate (1.15) is the real filter.
 #   → fixes audit finding #9 (feasibility collapse is val-driven, not objective-design)
-PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION = 1.05
+PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION = 1.0
 
 # PHASE2_PROFIT_FACTOR_FLOOR_ADMISSION — hard gate at pool admission.
 #   The original PHASE2_PROFIT_FACTOR_FLOOR=1.15; kept for the hard gate.
@@ -790,10 +789,11 @@ SORTINO_SCALE = 10.0
 PHASE2_JOINT_TRAIN_VAL = False
 
 # PHASE2_VAL_IN_FITNESS_PENALTY — when False (default), val-derived penalties
-#   (val_floor_penalty, val symbol_robustness, val trade-floor support cap) are
-#   excluded from fitness computation. Val metrics are still stored on the metrics
-#   dict for reporting and pool admission, but do NOT affect NSGA-III objectives.
-#   When True, val penalties enter fitness even when PHASE2_JOINT_TRAIN_VAL=False.
+#   (val_floor_penalty, val symbol_robustness, val trade-floor support cap, and
+#   val terms inside _raw_feasibility_violation_score) are excluded from fitness.
+#   Val metrics are still stored on the metrics dict for reporting, deployability
+#   preview, and pool admission. When True, val penalties enter fitness even when
+#   PHASE2_JOINT_TRAIN_VAL=False.
 #   With JOINT=False (current default), val penalties during evolution starved
 #   the feasible set; hard gates remain at pool admission.
 #   → Phase 2 feasible-search item 4
@@ -1222,16 +1222,21 @@ PHASE2_ISLAND_TOTAL_GENERATIONS = PHASE2_GENERATIONS
 # 44-gen lifetime, capping in-cluster RAM growth. Total budget unchanged
 # (44 gens × 3 clusters). Adds ~1 extra epoch boundary per cluster (~30s
 # rebuild) but the RAM benefit outweighs the small time cost.
-PHASE2_ISLAND_EPOCH_GENERATIONS = 13
+# 2026-07-10: 13→20 — longer continuous search per epoch; fewer plateau stops
+# at gen 13 with deployable=0 (see run.log feasibility collapse).
+PHASE2_ISLAND_EPOCH_GENERATIONS = 20
 # PHASE2_ISLAND_MIN_EPOCH_GENERATIONS — skip epochs with fewer remaining gens
 # than this threshold (engine rebuild ~30s with negligible benefit for <5 gens).
 PHASE2_ISLAND_MIN_EPOCH_GENERATIONS = 5
 # Island overrides — disable two-stage / early-stop by default in cluster mode.
+# Stage A soft floors (RETURN_FLOOR_PCT=0, SOFT_FEASIBILITY) apply only when
+# PHASE2_ISLAND_TWO_STAGE_ENABLED=True; with the default False, global floors
+# above are used for the entire island run.
 PHASE2_ISLAND_TWO_STAGE_ENABLED = False
 PHASE2_ISLAND_EARLY_STOP_ENABLED = False
 PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED = True
-PHASE2_ISLAND_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO: bool = False
-PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE: int = 6
+PHASE2_ISLAND_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO: bool = True
+PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE: int = 10
 # PHASE2_ISLAND_SCALE_TRADE_FLOORS — scale support floors to island row count.
 PHASE2_ISLAND_SCALE_TRADE_FLOORS = True
 PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN = 10

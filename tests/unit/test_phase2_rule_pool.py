@@ -2383,6 +2383,7 @@ class TestInfeasiblePenaltyRemoved:
         )
 
         monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", True)
+        monkeypatch.setattr(_cfg, "PHASE2_VAL_IN_FITNESS_PENALTY", True)
         monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
         monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 1)
         monkeypatch.setattr(_cfg, "PHASE2_RETURN_FLOOR_PCT", 0.0)
@@ -3371,6 +3372,34 @@ class TestValLeakGate:
             f"  no_val:  {obj_no_val}\n"
             f"  val_closed: {obj_val_closed}"
         )
+
+    def test_raw_feasibility_violation_gated_closed(self, monkeypatch):
+        """Bad val must not set feasibility_violation when gate is closed."""
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+            compute_phase2_objectives_from_metrics,
+        )
+
+        self._apply_settings(monkeypatch,
+                             PHASE2_JOINT_TRAIN_VAL=False,
+                             PHASE2_VAL_IN_FITNESS_PENALTY=False,
+                             PHASE2_POOL_REQUIRE_POSITIVE_SPLITS=True,
+                             )
+
+        dont_cares = np.full(4, 5, dtype=np.int32)
+        chrom = np.array([0, 1, 2, 3], dtype=np.int32)
+        metrics = self._make_clean_metrics()
+        val_metrics = self._make_bad_val_metrics()
+
+        _, out_closed = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, metrics, [], val_metrics=val_metrics,
+        )
+        assert out_closed.get("feasibility_violation", 0.0) == 0.0
+
+        monkeypatch.setattr(_cfg, "PHASE2_VAL_IN_FITNESS_PENALTY", True)
+        _, out_open = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, metrics, [], val_metrics=val_metrics,
+        )
+        assert out_open.get("feasibility_violation", 0.0) > 0.0
 
     def test_val_penalties_gated_open(self, monkeypatch):
         """When VAL_IN_FITNESS_PENALTY=True, val-derived penalties DO enter objectives."""
