@@ -6,7 +6,7 @@ from gpu_fuzzy_trader import config as cfg
 
 
 def test_anti_overfit_config_bundle():
-    assert cfg.PHASE2_JOINT_TRAIN_VAL is True
+    assert cfg.PHASE2_JOINT_TRAIN_VAL is False
     assert cfg.PHASE2_VAL_SIM_INTERVAL == 2
     assert cfg.PHASE2_VAL_IN_FITNESS_PENALTY is True
     assert cfg.PHASE2_CAPITAL_PCT == 18.0

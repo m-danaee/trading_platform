@@ -23,7 +23,7 @@ def main() -> int:
     from gpu_fuzzy_trader import config as cfg
 
     assert cfg.PHASE2_CAPITAL_PCT == 18.0
-    assert cfg.PHASE2_JOINT_TRAIN_VAL is True
+    assert cfg.PHASE2_JOINT_TRAIN_VAL is False
     assert cfg.RB_TRAIN_VALID_MAX_RATIO == 1.15
     assert cfg.RB_MAX_RULES == 5
     assert cfg.PHASE2_VAL_RETURN_FLOOR_PCT_SHORT == 2.0
