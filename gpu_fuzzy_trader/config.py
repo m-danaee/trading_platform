@@ -598,7 +598,11 @@ PHASE2_SORTINO_MIN_TRADE_THRESHOLD = 50
 # PHASE2_RETURN_FLOOR_PCT — min train return % to avoid feasibility penalty.
 #   Higher → only profitable-on-train rules stay feasible; emptier search.
 #   Lower  → more exploration; weak rules linger until other gates remove them.
-PHASE2_RETURN_FLOOR_PCT = 0.0
+#   Set to 1.0 (was 0.0) to grow a robust Phase 2 pool for RB composition.
+#   A non-zero floor removes strictly-negative-train rules earlier so that
+#   the remaining pool has more cross-symbol candidates for RB to combine.
+#   This is a pool quality knob, NOT a TP/SL retune or OOS chase.
+PHASE2_RETURN_FLOOR_PCT = 1.0
 
 # PHASE2_VAL_RETURN_FLOOR_PCT — min validation return % for feasibility.
 #   Higher → stricter OOS alignment during evolution.
@@ -743,9 +747,12 @@ PHASE2_MONTHLY_GOOD_RETURN_MIN_PCT = 0.5
 # island_hyperparams.monthly_admission_min_profitable_ratio from this value).
 #   0.500 → rule must be profitable in half the windows.
 #   0.667 → rule must be profitable in two-thirds of windows; tighter stability.
-# Lowered 0.667→0.5: island-friendly threshold; island-evolved rules trained on
-# 3-4 symbols have noisier monthly windows, 0.667 was too strict.
-PHASE2_MONTHLY_ADMISSION_MIN_RATIO = 0.55
+# Lowered 0.667→0.55 earlier, now to 0.50 to slightly ease admission so RB
+# gets a larger, more diverse cross-symbol pool to compose from.  This is a
+# pool quality/size knob, NOT a TP/SL retune or OOS chase.  The fail-closed
+# gates (task-1) are already on, so a slightly lower ratio still gates hard
+# failures while letting borderline-useful rules survive for RB to combine.
+PHASE2_MONTHLY_ADMISSION_MIN_RATIO = 0.50
 
 # PHASE2_MONTHLY_ADMISSION_MIN_MONTHS — minimum number of monthly windows
 # required before the gate is applied. validation_fitness is ~110 calendar days

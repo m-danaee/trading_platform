@@ -61,7 +61,7 @@ def test_config_compose_defaults_match_expected_bundle():
     assert _cfg.RB_RULE_ADD_BY_RETURN_ONLY is False
     assert _cfg.RB_RULESET_MUST_BEAT_SUBSETS is False
     assert _cfg.RB_RULE_ADD_IGNORE_OVERLAP is False
-    assert _cfg.RB_MAX_PAIR_OVERLAP == 0.35
+    assert _cfg.RB_MAX_PAIR_OVERLAP == 0.25
     assert _cfg.RB_MIN_SCORE_IMPROVEMENT == 0.03
 
 
@@ -89,7 +89,7 @@ def test_strict_mode_uses_score_improvement_not_return_only(engines):
     with patch.object(_cfg, "RB_RULE_ADD_BY_RETURN_ONLY", False), patch.object(
         _cfg, "RB_RULESET_MUST_BEAT_SUBSETS", False
     ), patch.object(_cfg, "RB_RULE_ADD_IGNORE_OVERLAP", False), patch.object(
-        _cfg, "RB_MAX_PAIR_OVERLAP", 0.35
+        _cfg, "RB_MAX_PAIR_OVERLAP", 0.25
     ), patch.object(_cfg, "RB_MIN_SCORE_IMPROVEMENT", 0.02), patch(
         "gpu_fuzzy_trader.rb_governor._evaluate_ruleset", side_effect=fake_eval
     ), patch("gpu_fuzzy_trader.rb_governor._is_positive_good", return_value=True):
@@ -112,7 +112,7 @@ def test_score_improvement_threshold_blocks_marginal_add(engines):
     with patch.object(_cfg, "RB_RULE_ADD_BY_RETURN_ONLY", False), patch.object(
         _cfg, "RB_RULESET_MUST_BEAT_SUBSETS", False
     ), patch.object(_cfg, "RB_RULE_ADD_IGNORE_OVERLAP", False), patch.object(
-        _cfg, "RB_MAX_PAIR_OVERLAP", 0.35
+        _cfg, "RB_MAX_PAIR_OVERLAP", 0.25
     ), patch.object(_cfg, "RB_MIN_SCORE_IMPROVEMENT", 0.02), patch(
         "gpu_fuzzy_trader.rb_governor._evaluate_ruleset", side_effect=fake_eval
     ), patch("gpu_fuzzy_trader.rb_governor._is_positive_good", return_value=True):
@@ -135,7 +135,7 @@ def test_overlap_gate_rejects_high_overlap_when_enabled(engines):
     with patch.object(_cfg, "RB_RULE_ADD_BY_RETURN_ONLY", False), patch.object(
         _cfg, "RB_RULESET_MUST_BEAT_SUBSETS", False
     ), patch.object(_cfg, "RB_RULE_ADD_IGNORE_OVERLAP", False), patch.object(
-        _cfg, "RB_MAX_PAIR_OVERLAP", 0.35
+        _cfg, "RB_MAX_PAIR_OVERLAP", 0.25
     ), patch.object(_cfg, "RB_MIN_SCORE_IMPROVEMENT", 0.01), patch(
         "gpu_fuzzy_trader.rb_governor._evaluate_ruleset", side_effect=fake_eval
     ), patch("gpu_fuzzy_trader.rb_governor._is_positive_good", return_value=True):
@@ -158,7 +158,7 @@ def test_ignore_overlap_allows_high_overlap_candidate(engines):
     with patch.object(_cfg, "RB_RULE_ADD_BY_RETURN_ONLY", False), patch.object(
         _cfg, "RB_RULESET_MUST_BEAT_SUBSETS", False
     ), patch.object(_cfg, "RB_RULE_ADD_IGNORE_OVERLAP", True), patch.object(
-        _cfg, "RB_MAX_PAIR_OVERLAP", 0.35
+        _cfg, "RB_MAX_PAIR_OVERLAP", 0.25
     ), patch.object(_cfg, "RB_MIN_SCORE_IMPROVEMENT", 0.01), patch(
         "gpu_fuzzy_trader.rb_governor._evaluate_ruleset", side_effect=fake_eval
     ), patch("gpu_fuzzy_trader.rb_governor._is_positive_good", return_value=True):

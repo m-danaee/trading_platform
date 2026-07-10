@@ -14,7 +14,7 @@ def test_anti_overfit_config_bundle():
     assert cfg.PHASE2_OVERFIT_RATIO_FLOOR == 2.5
     assert cfg.PHASE2_OVERFIT_GAP_PENALTY_WEIGHT == 15.0
     assert cfg.PHASE2_OVERFIT_GAP_PCT_THRESHOLD == 8.0
-    assert cfg.PHASE2_MONTHLY_ADMISSION_MIN_RATIO == 0.55
+    assert cfg.PHASE2_MONTHLY_ADMISSION_MIN_RATIO == 0.50
     assert cfg.PHASE2_DIVERSITY_PENALTY == 3.0
     assert cfg.PHASE2_MUTATION_RATE == 0.32
     assert cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE == 7
