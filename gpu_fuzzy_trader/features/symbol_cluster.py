@@ -33,11 +33,9 @@ def _return_series_per_symbol(
 ) -> np.ndarray:
     """Build a 1-D return series for *symbol*.
 
-    Prefers ``label_close_288`` (pct-change), falls back to
-    pct-change of ``label_open_next``, then the first available
-    price-like column from ``_PRICE_LIKE_COLUMNS``, then any
-    numeric column whose name starts with ``label_``, then any
-    numeric column at all.
+    Prefers OHLC ``close`` when present, then ``label_close_288``,
+    then ``label_open_next`` (pct-change). Falls back to the first
+    numeric ``label_*`` column, then any numeric column.
     """
     sym_df = train_df[train_df["symbol"].astype(str) == str(symbol)].copy()
     if sym_df.empty:
@@ -184,7 +182,9 @@ def build_hybrid_symbol_clusters(
             w_corr /= w_sum
         else:
             w_feat, w_corr = 0.5, 0.5
-        # Blend: concat scaled feature means and scaled corr embedding
+        # Blend: concat group-scaled blocks * weights.  Do NOT re-StandardScale
+        # the concatenated matrix — that would zero out the weight knobs
+        # (column-wise unit variance undoes w_feat / w_corr).
         feat_scaled = StandardScaler().fit_transform(block_a)
         corr_scaled = StandardScaler().fit_transform(block_b)
         embedding = np.column_stack([
@@ -192,9 +192,11 @@ def build_hybrid_symbol_clusters(
             corr_scaled * w_corr,
         ])
         method_tag = "hybrid_corr_v1"
+        scaled = embedding  # already column-group scaled; weights preserved
     else:
         embedding = block_a
         method_tag = "hybrid_v1"
+        scaled = StandardScaler().fit_transform(embedding)
 
     if k == len(symbols):
         clusters = {str(i): [symbols[i]] for i in range(len(symbols))}
@@ -205,7 +207,6 @@ def build_hybrid_symbol_clusters(
             "symbols": symbols,
         }
 
-    scaled = StandardScaler().fit_transform(embedding)
     seed = int(random_state if random_state is not None else config.PHASE2_SEED)
     kmeans = KMeans(n_clusters=k, random_state=seed, n_init=10).fit(scaled)
 
