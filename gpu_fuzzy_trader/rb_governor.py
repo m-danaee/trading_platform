@@ -1440,6 +1440,49 @@ def run_rb_governor_pipeline(
 
         candidates = _filter_good_rules(pool, train_like, valid_df, direction, fold_engines=fold_engines)
         if not candidates:
+            allow_fallback = bool(getattr(_cfg, "RB_ALLOW_FALLBACK", False))
+            if not allow_fallback:
+                logger.warning(
+                    "RB [%s]: no positive-good single rules; fail closed (RB_ALLOW_FALLBACK=False).",
+                    direction,
+                )
+                strategy = _strategy(
+                    direction, [],
+                    risk_optimized=False,
+                    extra={
+                        "deployment_accepted": False,
+                        "no_positive_good_candidates": True,
+                        "reason": "no_positive_good_candidates",
+                    },
+                )
+                strategy_path = out_dir / f"{direction}.json"
+                with strategy_path.open("w", encoding="utf-8") as fh:
+                    json.dump(strategy, fh, indent=2)
+                _write_clean_evaluator(strategy, out_dir / "evaluator_clean" / f"{direction}_evaluator_clean.json")
+                report = {
+                    "direction": direction,
+                    "rb_score": 0.0,
+                    "train_metrics": {},
+                    "valid_metrics": {},
+                    "train_minus_valid_return_pct": 0.0,
+                    "train_valid_ratio": 0.0,
+                    "n_positive_single_rules": 0,
+                    "selected_rules": 0,
+                    "compose_history": [],
+                    "risk_history": [],
+                    "profit_amplifier": {"accepted": False, "reason": "no_positive_good_candidates"},
+                    "top_single_rules": [],
+                    "fail_closed": True,
+                    "reason": "no_positive_good_candidates",
+                }
+                with (reports_dir / f"rb_governor_{direction}_report.json").open("w", encoding="utf-8") as fh:
+                    json.dump(report, fh, indent=2, default=str)
+                logger.info(
+                    "RB [%s]: fail-closed empty strategy written (deployment_accepted=false).",
+                    direction,
+                )
+                results[direction] = strategy
+                continue
             logger.warning("RB [%s]: no single rules positive on both training and validation; falling back to best raw governor score.", direction)
             candidates = []
             symbols = _available_symbols(train_like, valid_df)
