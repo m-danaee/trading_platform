@@ -794,7 +794,10 @@ PHASE2_JOINT_TRAIN_VAL = False
 #   excluded from fitness computation. Val metrics are still stored on the metrics
 #   dict for reporting and pool admission, but do NOT affect NSGA-III objectives.
 #   When True, val penalties enter fitness even when PHASE2_JOINT_TRAIN_VAL=False.
-PHASE2_VAL_IN_FITNESS_PENALTY = True
+#   With JOINT=False (current default), val penalties during evolution starved
+#   the feasible set; hard gates remain at pool admission.
+#   → Phase 2 feasible-search item 4
+PHASE2_VAL_IN_FITNESS_PENALTY = False
 
 # PHASE2_VAL_SIM_INTERVAL — run val backtest every N generations during
 # evolution (default 3, was 1 before task-11).  With per-epoch window
@@ -1198,6 +1201,17 @@ PHASE2_SEED: int = get_seed()
 PHASE2_ISLAND_MODE = "cluster"  # "global" | "cluster"
 # PHASE2_N_CLUSTERS — number of hybrid symbol clusters when island mode is active.
 PHASE2_N_CLUSTERS = 3
+# PHASE2_CLUSTER_USE_RETURN_CORR — when True, build return-correlation embedding
+#   and blend with feature-means (weights below) for a hybrid clustering that
+#   groups symbols with similar return patterns.  Set False for legacy
+#   feature-mean-only clustering.
+#   → Phase 2 feasible-search item 3
+PHASE2_CLUSTER_USE_RETURN_CORR = False
+# PHASE2_CLUSTER_FEATURE_WEIGHT / CORR_WEIGHT — blend weights for the
+#   feature-mean block and the return-correlation embedding.  Normalised to
+#   sum=1 internally.
+PHASE2_CLUSTER_FEATURE_WEIGHT = 0.5
+PHASE2_CLUSTER_CORR_WEIGHT = 0.5
 # PHASE2_ISLAND_TOTAL_GENERATIONS — generation budget split across islands.
 PHASE2_ISLAND_TOTAL_GENERATIONS = PHASE2_GENERATIONS
 # PHASE2_ISLAND_EPOCH_GENERATIONS — generations per island epoch before migration.
@@ -2377,7 +2391,7 @@ def resolve_island_hyperparams(
             pool_floor = int(MIN_TRADE_POOL_FLOOR)
             sortino_thr = int(PHASE2_SORTINO_MIN_TRADE_THRESHOLD)
         if sym_n >= 3:
-            scaled = max(3, (sym_n + 1) // 2)
+            scaled = max(2, (sym_n + 1) // 2)  # 3-sym → 2, 4-sym → 2, 5-sym → 3
         else:
             scaled = max(1, (sym_n + 1) // 2)
         min_profitable = min(

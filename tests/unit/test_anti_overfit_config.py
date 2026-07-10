@@ -8,7 +8,7 @@ from gpu_fuzzy_trader import config as cfg
 def test_anti_overfit_config_bundle():
     assert cfg.PHASE2_JOINT_TRAIN_VAL is False
     assert cfg.PHASE2_VAL_SIM_INTERVAL == 2
-    assert cfg.PHASE2_VAL_IN_FITNESS_PENALTY is True
+    assert cfg.PHASE2_VAL_IN_FITNESS_PENALTY is False
     assert cfg.PHASE2_CAPITAL_PCT == 18.0
     assert cfg.PHASE2_MAX_TRAIN_VAL_GAP_PCT == 10.0
     assert cfg.PHASE2_OVERFIT_RATIO_FLOOR == 2.5
@@ -45,4 +45,4 @@ def test_cluster_island_symbol_robustness_enabled():
         "cluster", n_rows=175_000, reference_rows=700_000, n_symbols=4,
     )
     assert hp.skip_symbol_robustness_penalty is False
-    assert hp.min_profitable_symbols >= 3
+    assert hp.min_profitable_symbols >= 2

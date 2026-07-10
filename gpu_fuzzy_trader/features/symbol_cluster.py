@@ -22,6 +22,75 @@ logger = logging.getLogger(__name__)
 SYMBOL_CLUSTERS_PATH = os.path.join(config.OUTPUTS_DIR, "symbol_clusters.json")
 
 
+# Price-like column candidates for return-series computation, in preference order.
+_PRICE_LIKE_COLUMNS = ("label_close_288", "label_open_next")
+
+
+def _return_series_per_symbol(
+    train_df: pd.DataFrame,
+    symbol: str,
+) -> np.ndarray:
+    """Build a 1-D return series for *symbol*.
+
+    Prefers ``label_close_288`` (pct-change), falls back to
+    pct-change of ``label_open_next``, then the first available
+    price-like column from ``_PRICE_LIKE_COLUMNS``, then any
+    numeric column whose name starts with ``label_``, then any
+    numeric column at all.
+    """
+    sym_df = train_df[train_df["symbol"].astype(str) == str(symbol)].copy()
+    if sym_df.empty:
+        return np.zeros(10, dtype=np.float64)
+
+    series: pd.Series | None = None
+    for col in _PRICE_LIKE_COLUMNS:
+        if col in sym_df.columns:
+            series = sym_df[col].astype(float)
+            break
+    if series is None:
+        label_cols = [c for c in sym_df.columns
+                      if c.startswith("label_") and pd.api.types.is_numeric_dtype(sym_df[c])]
+        if label_cols:
+            series = sym_df[label_cols[0]].astype(float)
+        else:
+            numeric_cols = sym_df.select_dtypes(include="number").columns.tolist()
+            if numeric_cols:
+                series = sym_df[numeric_cols[0]].astype(float)
+    if series is None:
+        return np.zeros(10, dtype=np.float64)
+
+    ret = series.pct_change().fillna(0.0).replace([np.inf, -np.inf], 0.0).to_numpy(dtype=np.float64)
+    return ret
+
+
+def _corr_embedding_block(
+    train_df: pd.DataFrame,
+    symbols: list[str],
+) -> np.ndarray:
+    """Build a (n_symbols, n_symbols) embedding from pairwise return correlations.
+
+    Each row of the output is the Pearson correlation of that symbol's return
+    series with every other symbol's return series.
+    """
+    n = len(symbols)
+    if n <= 1:
+        return np.zeros((n, max(n, 1)), dtype=np.float64)
+
+    # Build columnar return matrix (rows=time, cols=symbols).
+    # Align by finding the min length across symbols.
+    series_list: list[np.ndarray] = []
+    for sym in symbols:
+        s = _return_series_per_symbol(train_df, sym)
+        series_list.append(s)
+    min_len = min(len(s) for s in series_list)
+    aligned = np.column_stack([s[:min_len] for s in series_list])  # (T, n)
+
+    # Pairwise Pearson correlation.
+    corr = np.corrcoef(aligned, rowvar=False)  # (n, n)
+    corr = np.nan_to_num(corr, nan=0.0, posinf=0.0, neginf=0.0)
+    return corr
+
+
 def _feature_names_union(
     feature_infos_long: list[dict],
     feature_infos_short: list[dict],
@@ -65,13 +134,19 @@ def build_hybrid_symbol_clusters(
     balance: bool = True,
 ) -> dict[str, Any]:
     """
-    Cluster symbols by feature profile embedding.
+    Cluster symbols by feature profile (and optionally return-correlation) embedding.
+
+    When ``config.PHASE2_CLUSTER_USE_RETURN_CORR`` is True, the embedding blends
+    feature means with pairwise return-correlation rows (weighted by
+    ``PHASE2_CLUSTER_FEATURE_WEIGHT`` / ``PHASE2_CLUSTER_CORR_WEIGHT``) so
+    symbols with similar return patterns cluster together.
 
     When ``balance=True`` (default), symbols are greedily assigned to K clusters
     so that no cluster exceeds ``ceil(n_symbols / k)`` symbols.  This prevents
     the degenerate 1-symbol cluster that overfits (Fix E1).
 
-    Returns dict with keys ``clusters`` (id -> symbol list), ``method``, ``n_clusters``.
+    Returns dict with keys ``clusters`` (id -> symbol list), ``method`` (``hybrid_v1``
+    or ``hybrid_corr_v1``), ``n_clusters``.
     """
     if "symbol" not in train_df.columns:
         raise ValueError("train_df must contain a 'symbol' column")
@@ -94,13 +169,36 @@ def build_hybrid_symbol_clusters(
     feature_names = _feature_names_union(
         feature_infos_long, feature_infos_short)
     block_a = _feature_profile_block(train_df, symbols, feature_names)
-    embedding = block_a
-    embedding = np.nan_to_num(embedding, nan=0.0, posinf=0.0, neginf=0.0)
+    block_a = np.nan_to_num(block_a, nan=0.0, posinf=0.0, neginf=0.0)
+
+    # ── Correlation-aware hybrid embedding ────────────────────────────
+    use_corr = bool(config.PHASE2_CLUSTER_USE_RETURN_CORR)
+    if use_corr:
+        block_b = _corr_embedding_block(train_df, symbols)  # (n_sym, n_sym)
+        w_feat = float(config.PHASE2_CLUSTER_FEATURE_WEIGHT)
+        w_corr = float(config.PHASE2_CLUSTER_CORR_WEIGHT)
+        w_sum = w_feat + w_corr
+        if w_sum > 0.0:
+            w_feat /= w_sum
+            w_corr /= w_sum
+        else:
+            w_feat, w_corr = 0.5, 0.5
+        # Blend: concat scaled feature means and scaled corr embedding
+        feat_scaled = StandardScaler().fit_transform(block_a)
+        corr_scaled = StandardScaler().fit_transform(block_b)
+        embedding = np.column_stack([
+            feat_scaled * w_feat,
+            corr_scaled * w_corr,
+        ])
+        method_tag = "hybrid_corr_v1"
+    else:
+        embedding = block_a
+        method_tag = "hybrid_v1"
 
     if k == len(symbols):
         clusters = {str(i): [symbols[i]] for i in range(len(symbols))}
         return {
-            "method": "hybrid_v1",
+            "method": method_tag,
             "n_clusters": k,
             "clusters": clusters,
             "symbols": symbols,
@@ -153,12 +251,13 @@ def build_hybrid_symbol_clusters(
     clusters = {cid: syms for cid, syms in clusters.items() if syms}
 
     logger.info(
-        "symbol_cluster: K=%d assignment=%s",
+        "symbol_cluster: method=%s K=%d assignment=%s",
+        method_tag,
         len(clusters),
         {cid: syms for cid, syms in clusters.items()},
     )
     return {
-        "method": "hybrid_v1",
+        "method": method_tag,
         "n_clusters": len(clusters),
         "clusters": clusters,
         "symbols": symbols,
