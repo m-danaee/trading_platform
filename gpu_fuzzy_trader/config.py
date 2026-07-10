@@ -1751,6 +1751,14 @@ PHASE5_REMOVE_NEGATIVE_PNL_RULES = False
 #   False → legacy Phase 3 + Phase 4 modules (backwards compatible).
 RB_GOVERNOR_ENABLED: bool = True
 
+# RB_ALLOW_FALLBACK — when no positive-good single rules exist, fall back to
+#   the best raw-score candidates (legacy behaviour).
+#   False → fail closed: write an empty strategy with deployment_accepted=false
+#           and reason "no_positive_good_candidates".  Skip compose/risk/amp.
+#   True  → preserve legacy raw-score fallback path (rebuild candidates from
+#           all specialized variants ranked by raw score).
+RB_ALLOW_FALLBACK: bool = False
+
 
 # --- Rule scoring / gating ---
 
