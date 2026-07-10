@@ -1019,3 +1019,170 @@ class TestPhase5CachedSplitFreshness:
         monkeypatch.setattr(_cfg, "SPLIT_MODE", "holdout")
 
         assert load_cached_split_if_fresh() is None
+
+
+# ---------------------------------------------------------------------------
+# Tests: plot_equity_curve — train, validation, test + empty trade log safety
+# ---------------------------------------------------------------------------
+
+class TestEquityCurvePlots:
+    """Verify plot_equity_curve is called for all three splits and handles empty logs."""
+
+    def _run_with_mocks(self, tmp_path, train_log, val_log, test_log):
+        """Helper: run OOS_Evaluator.run() with mocked internals and capture plot calls."""
+        import gpu_fuzzy_trader.phases.phase5_oos as m
+
+        orig_s, orig_r = self._setup_paths(m, tmp_path, directions=("long",))
+        strategy = _make_rule_set("long", n_rules=2)
+
+        datasets = {
+            "train": _make_df(n_rows=20),
+            "validation": _make_df(n_rows=20),
+            "test": _make_df(n_rows=20),
+        }
+        evaluate_calls = {"count": 0}
+        split_order = ["train", "validation", "test"]
+
+        def mock_evaluate(_self, _df, _strategy, direction):
+            idx = evaluate_calls["count"]
+            evaluate_calls["count"] += 1
+            split = split_order[idx]
+            logs = {"train": train_log, "validation": val_log, "test": test_log}
+            tl = logs[split]
+            n_trades = len(tl) if tl is not None and not tl.empty else 0
+            metrics = {"total_return_pct": 1.0, "executed_trades": n_trades}
+            return metrics, [], tl
+
+        with patch.object(
+            OOS_Evaluator,
+            "_load_datasets_by_split",
+            return_value=datasets,
+        ), patch.object(
+            OOS_Evaluator,
+            "_evaluate_strategy",
+            mock_evaluate,
+        ), patch.object(
+            OOS_Evaluator,
+            "_load_selected_features",
+            return_value=[],
+        ), patch(
+            "gpu_fuzzy_trader.phases.phase5_oos.Reporter"
+        ) as reporter_cls:
+            reporter_cls.return_value.plot_equity_curve.return_value = ""
+            reporter_cls.return_value.write_per_symbol_csv.return_value = None
+            reporter_cls.return_value.write_strategy_evaluation_table.return_value = None
+            reporter_cls.return_value.plot_per_rule_breakdown.return_value = None
+            reporter_cls.return_value.plot_distribution_and_equity.return_value = None
+            reporter_cls.return_value.write_spearman_correlation_report.return_value = None
+            reporter_cls.return_value.write_feature_stratified_performance.return_value = None
+            reporter_cls.return_value.write_generalization_diagnostics.return_value = None
+
+            try:
+                OOS_Evaluator(test_csv_path=str(tmp_path / "unused.csv")).run()
+            finally:
+                self._restore_paths(m, orig_s, orig_r)
+
+        return reporter_cls.return_value.plot_equity_curve
+
+    def _setup_paths(self, m, tmp_path, directions=("long", "short")):
+        """Override module-level path dicts and return originals."""
+        orig_strategy = m._STRATEGY_PATHS.copy()
+        orig_report = m._REPORT_PATHS.copy()
+
+        for d in ("long", "short"):
+            m._STRATEGY_PATHS[d] = str(tmp_path / f"{d}.json")
+        m._REPORT_PATHS["long"] = str(
+            tmp_path / "reports" / "test_long_report.json")
+        m._REPORT_PATHS["short"] = str(
+            tmp_path / "reports" / "test_short_report.json")
+        m._REPORT_PATHS["per_symbol"] = str(
+            tmp_path / "reports" / "test_per_symbol_performance.csv"
+        )
+
+        for d in directions:
+            _write_rule_set(str(tmp_path / f"{d}.json"), d)
+
+        return orig_strategy, orig_report
+
+    def _restore_paths(self, m, orig_strategy, orig_report):
+        m._STRATEGY_PATHS.update(orig_strategy)
+        m._REPORT_PATHS.update(orig_report)
+
+    def test_plot_equity_called_for_train_validation_test(self, tmp_path):
+        """plot_equity_curve must be called with 'train', 'validation', and 'test'."""
+        trade_log = pd.DataFrame({
+            "Rule_Index": [1, 2],
+            "Net_PnL": [10.0, -5.0],
+            "Equity_After": [1010.0, 1005.0],
+        })
+        mock_plot = self._run_with_mocks(
+            tmp_path, trade_log, trade_log, trade_log)
+
+        called_splits = [call[0][1] for call in mock_plot.call_args_list]
+        assert "train" in called_splits, "Missing 'train' split"
+        assert "validation" in called_splits, "Missing 'validation' split"
+        assert "test" in called_splits, "Missing 'test' split"
+
+    def test_plot_equity_called_exactly_three_times(self, tmp_path):
+        """plot_equity_curve must be called exactly three times (one per split)."""
+        trade_log = pd.DataFrame({
+            "Rule_Index": [1, 2],
+            "Net_PnL": [10.0, -5.0],
+            "Equity_After": [1010.0, 1005.0],
+        })
+        mock_plot = self._run_with_mocks(
+            tmp_path, trade_log, trade_log, trade_log)
+        assert mock_plot.call_count == 3, \
+            f"Expected 3 calls, got {mock_plot.call_count}"
+
+    def test_empty_train_log_does_not_crash(self, tmp_path):
+        """Empty train trade log must not raise an exception."""
+        trade_log = pd.DataFrame({
+            "Rule_Index": [1, 2],
+            "Net_PnL": [10.0, -5.0],
+            "Equity_After": [1010.0, 1005.0],
+        })
+        empty = pd.DataFrame()
+        # This should not crash
+        mock_plot = self._run_with_mocks(tmp_path, empty, trade_log, trade_log)
+        # Even with empty train log, all three calls should still happen
+        assert mock_plot.call_count == 3
+
+    def test_empty_validation_log_does_not_crash(self, tmp_path):
+        """Empty validation trade log must not raise an exception."""
+        trade_log = pd.DataFrame({
+            "Rule_Index": [1, 2],
+            "Net_PnL": [10.0, -5.0],
+            "Equity_After": [1010.0, 1005.0],
+        })
+        empty = pd.DataFrame()
+        mock_plot = self._run_with_mocks(tmp_path, trade_log, empty, trade_log)
+        assert mock_plot.call_count == 3
+
+    def test_empty_test_log_does_not_crash(self, tmp_path):
+        """Empty test trade log must not raise an exception."""
+        trade_log = pd.DataFrame({
+            "Rule_Index": [1, 2],
+            "Net_PnL": [10.0, -5.0],
+            "Equity_After": [1010.0, 1005.0],
+        })
+        empty = pd.DataFrame()
+        mock_plot = self._run_with_mocks(tmp_path, trade_log, trade_log, empty)
+        assert mock_plot.call_count == 3
+
+    def test_all_empty_logs_does_not_crash(self, tmp_path):
+        """All three empty trade logs must not raise an exception."""
+        empty = pd.DataFrame()
+        mock_plot = self._run_with_mocks(tmp_path, empty, empty, empty)
+        assert mock_plot.call_count == 3
+
+    def test_none_logs_do_not_crash(self, tmp_path):
+        """None trade logs (from .get()) must not raise an exception."""
+        trade_log = pd.DataFrame({
+            "Rule_Index": [1, 2],
+            "Net_PnL": [10.0, -5.0],
+            "Equity_After": [1010.0, 1005.0],
+        })
+        # We use None to simulate missing keys; mock_evaluate returns None
+        mock_plot = self._run_with_mocks(tmp_path, None, trade_log, trade_log)
+        assert mock_plot.call_count == 3

@@ -216,6 +216,22 @@ class OOS_Evaluator:
                     direction, exc,
                 )
             try:
+                reporter.plot_equity_curve(
+                    trade_logs_by_split.get("train"), "train", direction)
+            except Exception as exc:
+                logger.warning(
+                    "Reporter.plot_equity_curve (train/%s) failed (non-fatal): %s",
+                    direction, exc,
+                )
+            try:
+                reporter.plot_equity_curve(
+                    trade_logs_by_split.get("validation"), "validation", direction)
+            except Exception as exc:
+                logger.warning(
+                    "Reporter.plot_equity_curve (validation/%s) failed (non-fatal): %s",
+                    direction, exc,
+                )
+            try:
                 reporter.write_per_symbol_csv(
                     test_metrics, "test", direction=direction)
             except Exception as exc:
