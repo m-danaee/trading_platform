@@ -115,14 +115,37 @@ def trade_support_penalty(
 def _pool_admission_floors(
     n_valid_rows: int | None = None,
 ) -> tuple[int, float, float, float, int]:
-    """Return (train_trade_floor, train_ret_min, val_ret_min, pf_floor, min_val_trades)."""
+    """Return (train_trade_floor, train_ret_min, val_ret_min, pf_floor, min_val_trades).
+
+    Uses ADMISSION PF 1.15 — this is the hard gate at pool entry.
+    """
     min_val = _cfg.effective_pool_min_val_trades(n_valid_rows)
     train_floor = _cfg.effective_min_trade_pool_floor(n_valid_rows)
     return (
         int(train_floor),
         float(_cfg.PHASE2_POOL_TRAIN_RETURN_MIN_PCT),
         float(_cfg.PHASE2_POOL_VAL_RETURN_MIN_PCT),
-        float(_cfg.PHASE2_PROFIT_FACTOR_FLOOR_ADMISSION),  # → fixes audit finding #9
+        float(_cfg.PHASE2_PROFIT_FACTOR_FLOOR_ADMISSION),  # hard gate: 1.15
+        int(min_val),
+    )
+
+
+def _evolution_feasibility_floors(
+    n_valid_rows: int | None = None,
+) -> tuple[int, float, float, float, int]:
+    """Return (train_trade_floor, train_ret_min, val_ret_min, pf_floor, min_val_trades).
+
+    Uses EVOLUTION PF 1.05 — softer penalty threshold during NSGA-III fitness
+    so the feasible set isn't artificially collapsed when val trade counts are thin.
+    Pool admission (hard gate) still uses ADMISSION PF 1.15.
+    """
+    min_val = _cfg.effective_pool_min_val_trades(n_valid_rows)
+    train_floor = _cfg.effective_min_trade_pool_floor(n_valid_rows)
+    return (
+        int(train_floor),
+        float(_cfg.PHASE2_POOL_TRAIN_RETURN_MIN_PCT),
+        float(_cfg.PHASE2_POOL_VAL_RETURN_MIN_PCT),
+        float(_cfg.PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION),  # soft penalty: 1.05
         int(min_val),
     )
 
@@ -241,14 +264,15 @@ def _feasibility_gate_failures(
     *,
     n_valid_rows: int | None = None,
 ) -> dict[str, int]:
-    """Return per-gate failure flags for the 11 pool-admission gates.
+    """Return per-gate failure flags for evolution-time feasibility diagnostics.
 
-    Each value is 1 if the rule FAILS that gate, 0 if it passes. A rule
-    that passes all gates returns all zeros. A rule that fails multiple
-    gates has multiple 1s (gates are AND-combined, but a rule can fail
-    several simultaneously).
+    Uses EVOLUTION PF 1.05 (softer threshold) so the collapse breakdown
+    reflects evolution feasibility, not the hard admission gate.
 
-    The 11 gates mirror ``_passes_pool_admission_impl`` exactly:
+    The gates mirror ``_passes_pool_admission_impl`` exactly except the PF
+    threshold comes from ``_evolution_feasibility_floors`` (1.05) instead of
+    ``_pool_admission_floors`` (1.15):
+
     - train_trade_floor    : train_trades < train_floor
     - train_return_floor   : train_ret <= train_ret_min
     - train_pf_floor       : train_pf < pf_floor
@@ -271,7 +295,7 @@ def _feasibility_gate_failures(
         Dict mapping gate name to 0 (passed) or 1 (failed).
     """
     train_floor, train_ret_min, val_ret_min, pf_floor, min_val_trades = (
-        _pool_admission_floors(n_valid_rows)
+        _evolution_feasibility_floors(n_valid_rows)
     )
     failures: dict[str, int] = {
         "train_trade_floor": 0,
@@ -477,12 +501,16 @@ def _raw_feasibility_violation_score(
     *,
     n_valid_rows: int | None = None,
 ) -> float:
-    """Compute violation score against pool admission floors (ignores stage soft mode)."""
+    """Compute violation score using evolution PF floors (1.05) during NSGA-III fitness.
+
+    Pool admission (hard gate) still uses ADMISSION PF 1.15 via
+    ``_pool_admission_floors`` / ``_passes_pool_admission_impl``.
+    """
     if not _cfg.PHASE2_POOL_REQUIRE_POSITIVE_SPLITS:
         return 0.0
 
     train_floor, train_ret_min, val_ret_min, pf_floor, min_val_trades = (
-        _pool_admission_floors(n_valid_rows)
+        _evolution_feasibility_floors(n_valid_rows)
     )
     score = 0.0
 

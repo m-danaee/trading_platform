@@ -290,6 +290,68 @@ class TestPoolAdmissionScaledFloors:
         )
 
 
+class TestEvolutionFeasibilityFloors:
+    """Tests for _evolution_feasibility_floors — EVOLUTION PF 1.05 vs ADMISSION PF 1.15."""
+
+    def test_evolution_feasibility_floors_uses_evolution_pf(self, monkeypatch) -> None:
+        """_evolution_feasibility_floors returns PF=1.05, not ADMISSION 1.15."""
+        from gpu_fuzzy_trader.phases.phase2_support import (
+            _evolution_feasibility_floors,
+            _pool_admission_floors,
+        )
+
+        _, _, _, evo_pf, _ = _evolution_feasibility_floors(None)
+        assert evo_pf == pytest.approx(1.05), (
+            f"_evolution_feasibility_floors returned pf_floor={evo_pf}, "
+            f"expected 1.05 (EVOLUTION floor)"
+        )
+
+        _, _, _, adm_pf, _ = _pool_admission_floors(None)
+        assert adm_pf == pytest.approx(1.15), (
+            f"_pool_admission_floors returned pf_floor={adm_pf}, "
+            f"expected 1.15 (ADMISSION floor)"
+        )
+
+    def test_raw_violation_score_uses_evolution_pf(self, monkeypatch) -> None:
+        """_raw_feasibility_violation_score uses EVOLUTION PF (1.05) so
+        a rule with PF between 1.05 and 1.15 has zero PF violation,
+        while pool admission would reject it."""
+        from gpu_fuzzy_trader.phases.phase2_support import (
+            _raw_feasibility_violation_score,
+        )
+
+        monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", True)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 1)
+        monkeypatch.setattr(_cfg, "PHASE2_RETURN_FLOOR_PCT", -100.0)
+        monkeypatch.setattr(_cfg, "PHASE2_VAL_RETURN_FLOOR_PCT", -100.0)
+        monkeypatch.setattr(_cfg, "PHASE2_MAX_TRAIN_VAL_GAP_PCT", 99.0)
+
+        # Rule with PF=1.10 — above EVOLUTION floor (1.05) but below ADMISSION (1.15)
+        train = {
+            "total_return_pct": 3.0,
+            "profit_factor": 1.10,
+            "executed_trades": 100,
+        }
+        val = {
+            "total_return_pct": 2.0,
+            "profit_factor": 1.10,
+            "executed_trades": 50,
+        }
+        score = _raw_feasibility_violation_score(train, val)
+        # The violation score should be 0 because PF 1.10 >= 1.05 (evolution floor)
+        assert score == 0.0, (
+            f"Expected score=0 for PF=1.10 >= evolution floor 1.05, got {score}"
+        )
+
+        # Pool admission still checks against ADMISSION floor 1.15
+        from gpu_fuzzy_trader.phases.phase2_support import (
+            passes_pool_admission_gate,
+        )
+        assert passes_pool_admission_gate(train, val) is False, (
+            "PF=1.10 should fail pool admission (requires 1.15)"
+        )
+
+
 class TestFeasibilityGateFailures:
     """Tests for _feasibility_gate_failures — per-gate breakdown."""
 
