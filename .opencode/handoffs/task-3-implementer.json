@@ -1,42 +1,20 @@
 {
   "task_id": "task-3",
   "status": "DONE",
-  "commit_hash": "fe6280a",
+  "commit_hash": "3ea7454",
   "files_changed": [
-    "gpu_fuzzy_trader/config.py",
-    "gpu_fuzzy_trader/phases/phase2_rule_pool.py",
-    "tests/unit/test_phase2_rule_pool.py",
-    "tests/unit/test_evox_runner.py"
+    "gpu_fuzzy_trader/phases/phase5_oos.py",
+    "tests/unit/test_phase5_oos.py"
   ],
-  "summary": "Decoupled Phase 2 objectives to eliminate Pareto collapse (objective_corr_f1_f3≈1.00) and made robust return the default f3 signal for OOS-focused mode.",
+  "summary": "Added train and validation equity curve plots in Phase 5 (phase5_oos.py) using the same non-fatal try/except pattern as the existing test plot. Added 7 unit tests verifying all three splits are plotted, empty trade logs (DataFrame() or None) do not crash, and exactly 3 calls per direction.",
   "changes": {
-    "config.py": "Changed PHASE2_USE_TOTAL_RETURN_OBJ default from False to True so f3 uses robust return (min train/val) instead of profit_factor. Updated comments.",
-    "phase2_rule_pool.py": "In compute_phase2_objectives_from_metrics: (1) Removed trade_penalty from f1 and f3 (kept on f2 only). (2) Removed overfit_gap_penalty from f1 (kept on f3 only). Updated module docstring. Previously all three objectives received identical trade_penalty and f1/f3 both received overfit_gap_penalty, causing Pareto collapse.",
-    "test_phase2_rule_pool.py": "Updated overfit_gap_penalty tests to assert on f3 instead of f1. Updated trade_penalty test to expect f3=0 (no trade_penalty). Added 4 new tests: test_penalties_not_identical_across_objectives, test_trade_penalty_only_on_f2, test_f3_uses_robust_return_by_default, test_pf_floor_still_penalizes_support.",
-    "test_evox_runner.py": "Updated test_low_trade_drawdown_penalty to reflect trade_penalty only on f2."
+    "phase5_oos.py": "Added reporter.plot_equity_curve calls for 'train' and 'validation' splits after the existing 'test' call, each wrapped in try/except with a warning log. Uses trade_logs_by_split.get() for safe access.",
+    "test_phase5_oos.py": "Added TestEquityCurvePlots class with 7 tests: test_plot_equity_called_for_train_validation_test, test_plot_equity_called_exactly_three_times, test_empty_train_log_does_not_crash, test_empty_validation_log_does_not_crash, test_empty_test_log_does_not_crash, test_all_empty_logs_does_not_crash, test_none_logs_do_not_crash."
   },
   "tests_run": [
-    "tests/unit/test_phase2_rule_pool.py: 138 passed",
-    "tests/unit/test_phase2_support.py: 41 passed",
-    "tests/unit/test_config_additions.py: 4 passed",
-    "tests/unit/test_phase2_stage.py: 19 passed",
-    "tests/unit/test_evox_runner.py: 41 passed",
-    "tests/unit/test_phase2_plateau_restart.py: 13 passed",
-    "tests/unit/test_config_trade_scaling.py: 2 passed"
-  ],
-  "total_tests_passed": 258,
-  "notes": [
-    "PF floor and feasibility gates remain intact (PHASE2_PROFIT_FACTOR_FLOOR still adds to support_penalty, which affects all objectives via weighted penalty terms).",
-    "Pool admission gates are unchanged.",
-    "Diversity penalty is retained on f1 and f3 (consistent with original design).",
-    "Support penalty weights (F1=0.4, F2=0.6, F3=0.6) differentiate the shared penalty across objectives.",
-    "The trade_penalty (PHASE2_INFEASIBLE_OBJECTIVE_PENALTY=50) now only affects f2 (drawdown objective), which naturally relates to trade count.",
-    "overfit_gap_penalty is now f3-only (robust-return objective), which aligns with the return-based nature of the penalty.",
-    "cond_penalty remains f3-only."
+    "tests/unit/test_phase5_oos.py: 58 passed (7 new + 51 existing)"
   ],
   "risks": [
-    "Changing PHASE2_USE_TOTAL_RETURN_OBJ default from False to True changes the f3 signal from profit_factor to robust return. Any code path that relied on the old default (f3=profit_factor) without explicitly setting the config will now see different f3 values.",
-    "Removing trade_penalty from f1 and f3 means low-trade-count rules will have much better f1 and f3 scores (though they still get dd_for_obj=100 on f2). This could increase feasible-looking-but-untradeable rules on the Pareto front.",
-    "The overfit_gap_penalty was on f1 for a reason (Sortino can also overfit). Moving it to f3-only means Sortino-based overfitting is no longer directly penalized."
+    "If plot_equity_curve itself crashes on an empty DataFrame, the non-fatal try/except will catch it and log a warning. From the reporter source, the method accesses columns and rows, so an empty DataFrame should raise and be caught safely."
   ]
 }

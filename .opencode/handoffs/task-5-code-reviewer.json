@@ -3,101 +3,57 @@
   "review_type": "code-review",
   "verdict": "APPROVED",
   "reviewer": "code-reviewer",
-  "commit_reviewed": "54a885a",
-  "branch": "feature/task-5-dead-f3-branch",
-  "spec_review_result": "APPROVED (1st round, no fixes needed)",
-
-  "correctness_review": {
-    "guard_placement": {
-      "status": "PASS",
-      "detail": "`if not _cfg.PHASE2_USE_TOTAL_RETURN_OBJ:` is placed at line 808, wrapping the entire f3_objective switch (cv_fold_min/profit_factor/win_rate). Placed BEFORE the switch, so legacy path only executes when USE_TOTAL_RETURN_OBJ=False. The robust_return block (line 840) is the `if _cfg.USE_TOTAL_RETURN_OBJ:` counterpart — complementary conditions guarantee f3_val is always set."
-    },
-    "indentation": {
-      "status": "PASS",
-      "detail": "All 20 lines of the legacy switch body are consistently indented one level under the new guard. The robust_return block at lines 840-846 is at the original indentation level. No inconsistent indentation or partial-execution risk."
-    },
-    "default_path_bit_identical": {
-      "status": "PASS",
-      "detail": "When USE_TOTAL_RETURN_OBJ=True (default): the guard skips the dead switch entirely. The robust_return_pct block (lines 840-846) is byte-for-byte unchanged from pre-task-5. Net effect: f3_val = robust_return_pct(...) — bit-identical. Verified via diff: only the guard and indentation changed in this region."
-    },
-    "legacy_opt_in_all_paths": {
-      "status": "PASS",
-      "detail": "All 3 F3_OBJECTIVE branches preserved inside the guard: (1) cv_fold_min with fallback to profit_factor when cv_folds empty (lines 811-817), (2) profit_factor with JOINT_TRAIN_VAL blending and val_trade_floor edge case (lines 818-824), (3) win_rate with JOINT_TRAIN_VAL blending (lines 825-831). All unchanged from pre-task-5 code."
-    },
-    "f3_val_initialization": {
-      "status": "PASS",
-      "detail": "The `if not _cfg.PHASE2_USE_TOTAL_RETURN_OBJ:` guard and `if _cfg.PHASE2_USE_TOTAL_RETURN_OBJ:` block are logical complements — exactly one always executes. f3_val is always set before being used at line 949 (`f3 = -f3_val + ...`). No uninitialized variable risk."
-    },
-    "audit_comment_greppable": {
-      "status": "PASS",
-      "detail": "'audit finding #5' is greppable at two locations: line 807 (above the guard) and line 839 (above the robust_return block). Both are discoverable via `grep -n 'audit finding #5'`."
-    }
-  },
-
-  "maintainability_review": {
-    "guard_comment_clarity": {
-      "status": "PASS",
-      "detail": "The guard comment at line 807 explains both the fix ('fixes audit finding #5') and the why ('USE_TOTAL_RETURN_OBJ takes precedence when True'). The robust_return comment at lines 835-839 provides operational guidance: 'Set USE_TOTAL_RETURN_OBJ=False to opt into the legacy profit_factor / cv_fold_min / win_rate path.' The 'H2: f3_val based on PHASE2_F3_OBJECTIVE' comment (line 805, pre-existing) is now accurate — it correctly describes the guarded legacy path."
-    },
-    "robust_return_comment_update": {
-      "status": "PASS",
-      "detail": "Updated from 'instead of the F3_OBJECTIVE-based value' to 'overrides the PHASE2_F3_OBJECTIVE setting' with explicit opt-in instructions. The comment now accurately reflects the two-path design."
-    },
-    "code_self_documenting": {
-      "status": "PASS",
-      "detail": "The guard makes the code path selection explicit: reading `if not USE_TOTAL_RETURN_OBJ:` followed by `if USE_TOTAL_RETURN_OBJ:` is self-documenting. The two comments complement each other. No magic or hidden logic."
-    }
-  },
-
-  "test_adequacy_review": {
-    "exercises_production_code": {
-      "status": "PASS",
-      "detail": "Test calls `compute_phase2_objectives_from_metrics` directly — the exact production function under test. Not a mock or a unit-test-only helper."
-    },
-    "assertion_correctness": {
-      "status": "PASS",
-      "detail": "All 6 expected values verified by tracing the production logic: (1-3) robust_return_pct with joint=True → min(10.0, 3.0)=3.0 → f3=-3.0; (4) profit_factor with joint → min(1.2, 1.1)=1.1 → f3=-1.1; (5) win_rate with joint → min(50.0, 55.0)=50.0 → f3=-50.0; (6) cv_fold_min → min([3.5,4.0,5.0])=3.5 → f3=-3.5. All penalties confirmed zero given monkeypatched floors (RETURN_FLOOR_PCT=-100, PROFIT_FACTOR_FLOOR=0, VAL_RETURN_FLOOR_PCT=-100) and config defaults (SYMBOL_MEDIAN_RETURN_FLOOR_PCT=-0.5, PHASE2_MIN_PROFITABLE_SYMBOLS=5 capped to 3)."
-    },
-    "cv_fold_min_coverage": {
-      "status": "PASS",
-      "detail": "Case 6 tests cv_fold_min with non-empty cv_fold_returns. The fallback path (empty cv_folds → profit_factor) is preserved in code (lines 815-817) but not explicitly tested. This is pre-existing code unchanged by the task; the spec's 4 required cases are fully covered. LOW severity observation, not blocking."
-    },
-    "win_rate_joint_coverage": {
-      "status": "PASS",
-      "detail": "Case 5 has JOINT_TRAIN_VAL=True, train_win_rate=50.0, val_win_rate=55.0, val_executed=50 >= val_trade_floor (10). Exercises the `min(win_rate, val_wr)` joint path. The val_trade_floor edge case (val_executed < floor → min(win_rate, 0.0)) is not tested separately but is pre-existing code, not part of this task."
-    },
-    "parametrization_completeness": {
-      "status": "PASS",
-      "detail": "6 cases (superset of required 4): 3 with USE_TOTAL_RETURN_OBJ=True (proving F3_OBJECTIVE ignored in default path) + 3 with USE_TOTAL_RETURN_OBJ=False (one per F3_OBJECTIVE). All 6 pass. test_phase2_rule_pool.py: 156/156 pass including the 6 new cases."
-    },
-    "test_isolation": {
-      "status": "PASS",
-      "detail": "Uses monkeypatch to set all f3-relevant config values (JOINT_TRAIN_VAL, USE_TOTAL_RETURN_OBJ, F3_OBJECTIVE, USE_ROBUST_RETURN_OBJ, etc.) and penalty floors. Does not mutate global state. Chromosome and dont_cares are valid (active=4, MAX_CONDITIONS=4, MIN_CONDITIONS=4 → no cond_penalty)."
-    }
-  },
-
-  "out_of_scope_verification": {
-    "config_py": "UNTOUCHED (empty diff)",
-    "phase2_support_py": "UNTOUCHED (empty diff)",
-    "evaluator_v5_ipynb": "UNTOUCHED (empty diff)",
-    "evolution_dir": "UNTOUCHED",
-    "other_phase_files": "UNTOUCHED",
-    "task_6_or_later": "NO PRE-IMPLEMENTATION"
-  },
-
-  "files_changed_in_branch": [
-    ".opencode/CONTEXT.md",
-    ".opencode/tasks/task-5.md",
-    "gpu_fuzzy_trader/phases/phase2_rule_pool.py",
-    "tests/unit/test_phase2_rule_pool.py"
+  "commit_reviewed": "81e606c567b28a9f048ecc93a07d9c085b5aa031",
+  "branch": "feature/task-5-pool-quality",
+  "base": "main",
+  "focus": "correct defaults, comments, test updates only",
+  "files_changed": [
+    "gpu_fuzzy_trader/config.py",
+    "tests/unit/test_anti_overfit_config.py",
+    "tests/unit/test_rb_compose_gates.py"
   ],
-
-  "notes": [
-    "No blocking or high-severity issues found. The implementation is minimal, correct, and well-tested.",
-    "The guard+switch design is self-documenting: `if not USE_TOTAL_RETURN_OBJ:` (legacy) then `if USE_TOTAL_RETURN_OBJ:` (default). Complementary conditions eliminate any uninitialized-variable risk.",
-    "The parametrized test covers all 6 meaningful combinations of (USE_TOTAL_RETURN_OBJ × F3_OBJECTIVE). Assertions verified against production logic.",
-    "The cv_fold_min fallback path (empty cv_folds → profit_factor without JOINT blending) is preserved code, unchanged by this task. Not tested separately — this is a pre-existing gap, not introduced here.",
-    "The win_rate val_trade_floor edge case (val_executed < floor → min(win_rate, 0.0)) is also preserved pre-existing code, not tested separately.",
-    "All 156 tests pass; diff is small (+31/-25 source, +76 test); no unintended side effects; evaluator_v5.ipynb untouched."
-  ]
+  "acceptance_criteria_check": {
+    "AC1_return_floor_default": {
+      "status": "PASS",
+      "evidence": "config.py:605 PHASE2_RETURN_FLOOR_PCT = 1.0 (was 0.0). Comment block (config.py:598-604) states it grows a robust Phase2 pool for RB and is NOT a TP/SL retune or OOS chase."
+    },
+    "AC2_monthly_ratio_default": {
+      "status": "PASS",
+      "evidence": "config.py:755 PHASE2_MONTHLY_ADMISSION_MIN_RATIO = 0.50 (was 0.55). Comment (config.py:748-754) documents the 0.667->0.55->0.50 history and the pool-quality intent; notes fail-closed gates (task-1) are on."
+    },
+    "AC3_min_months_unchanged": {
+      "status": "PASS",
+      "evidence": "config.py:764 PHASE2_MONTHLY_ADMISSION_MIN_MONTHS = 3 (unchanged, not in diff)."
+    },
+    "AC4_intent_documented": {
+      "status": "PASS",
+      "evidence": "Both changed knobs carry explicit comments framing them as pool quality/size knobs and explicitly NOT a TP/SL retune or OOS chase."
+    },
+    "AC5_tests_fixed": {
+      "status": "PASS",
+      "evidence": "test_anti_overfit_config.py:17 updated 0.55->0.50 to match new default. Repo-wide search found NO test asserting PHASE2_RETURN_FLOOR_PCT == 0.0 as a default and no remaining == 0.55 assertion; other RETURN_FLOOR references are monkeypatches for isolation (correctly untouched)."
+    },
+    "AC6_drive_by_overlap_fix": {
+      "status": "PASS",
+      "evidence": "test_rb_compose_gates.py: 5 RB_MAX_PAIR_OVERLAP references updated 0.35->0.25 (1 default assertion at :64 + 4 monkeypatches). Aligns with config.py:1825 default 0.25. Explicitly authorized by task-5.md item 6. overlap reject/allow tests still behave correctly under the stricter 0.25 threshold."
+    },
+    "AC7_out_of_scope_respected": {
+      "status": "PASS",
+      "evidence": "No algorithm changes. evaluator_v5.ipynb untouched. No TP/SL retune. Diff is config defaults + comments + test value updates only (+17/-10, 3 files)."
+    },
+    "AC8_tests_green": {
+      "status": "PASS",
+      "evidence": "Ran PYTEST_LOW_MEMORY=1 pytest -k 'return_floor or monthly or compose_gates or anti_overfit' -> 43 passed. test_rb_compose_gates.py -> 8/8 passed."
+    }
+  },
+  "correctness_and_edge_cases": "Defaults are intentional pool-quality knobs with fail-closed gates (task-1) still active, so easing admission does not remove hard-failure gating. Non-zero return floor (1.0) feeds feasibility penalty only; no behavioral cliff.",
+  "maintainability": "Comments are clear, history-aware, and self-documenting. Diff is minimal and focused.",
+  "security_and_reliability": "No risks: pure config default + comment + test-value changes; no new I/O, parsing, or control-flow.",
+  "test_quality_and_coverage": "Existing unit tests cover the changed defaults (test_anti_overfit_config bundle) and the RB overlap gate (test_rb_compose_gates). No new tests required for a default-value change; coverage adequate.",
+  "minor_observations_non_blocking": [
+    "The 4 patch.object(_cfg, 'RB_MAX_PAIR_OVERLAP', 0.25) calls now equal the config default, making them redundant no-ops. Harmless and within the drive-by intent; removing would widen the diff needlessly.",
+    "Implementer handoff reported 'test_rb_compose_gates.py: 9 passed' but the file has 8 test functions (all pass). Reporting nit in the handoff, not in code."
+  ],
+  "blocking_findings": [],
+  "notes": "Clean, minimal, in-scope change. Approved as-is."
 }

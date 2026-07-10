@@ -1,25 +1,24 @@
 {
   "task": "task-5",
   "status": "DONE",
-  "commit": "54a885a",
-  "summary": "Wrapped dead f3 profit_factor switch behind `if not _cfg.PHASE2_USE_TOTAL_RETURN_OBJ:` guard. Added audit finding #5 comment. Updated comment on USE_TOTAL_RETURN_OBJ block to clarify precedence. Added parametrized test covering all 4 cases (default robust return + 3 legacy paths).",
+  "commit": "81e606c",
+  "summary": "Phase2 pool quality knobs applied: PHASE2_RETURN_FLOOR_PCT=1.0 (was 0.0), PHASE2_MONTHLY_ADMISSION_MIN_RATIO=0.50 (was 0.55), MIN_MONTHS stays 3. Intent documented in config comments. Fixed hardcoded test values in test_anti_overfit_config.py (0.55→0.50) and test_rb_compose_gates.py RB_MAX_PAIR_OVERLAP (0.35→0.25).",
   "files_changed": [
-    "gpu_fuzzy_trader/phases/phase2_rule_pool.py",
-    "tests/unit/test_phase2_rule_pool.py"
+    "gpu_fuzzy_trader/config.py",
+    "tests/unit/test_anti_overfit_config.py",
+    "tests/unit/test_rb_compose_gates.py"
   ],
   "verification_results": {
-    "test_phase2_rule_pool.py": "156 passed",
-    "test_phase2_monthly_admission.py": "10 passed",
-    "test_phase2_window_rotation.py": "16 passed",
-    "test_phase2_island_scheduler.py": "34 skipped, 45 passed",
-    "test_evox_runner.py": "41 passed"
+    "test_anti_overfit_config.py": "1 passed",
+    "test_rb_compose_gates.py": "9 passed",
+    "tests/unit -k 'return_floor or monthly or compose_gates or anti_overfit'": "43 passed"
   },
   "notes_for_reviewer": [
-    "The dead f3_objective switch (lines 806-830) is now wrapped in `if not _cfg.PHASE2_USE_TOTAL_RETURN_OBJ:` — legacy path only fires when user explicitly opts in.",
-    "The robust_return override (lines 833-841) is unchanged; it remains the default path.",
-    "The `PHASE2_F3_OBJECTIVE` config flag is preserved for backward compat with the legacy opt-in path.",
-    "Parametrized test `TestF3PathResolution::test_f3_path_resolution` covers 6 cases (3 with USE_TOTAL_RETURN_OBJ=True default, 3 with False + each F3_OBJECTIVE).",
-    "No behavior change in default config (USE_TOTAL_RETURN_OBJ=True) — bit-identical to pre-task-5.",
-    "All 156 existing tests in test_phase2_rule_pool.py pass; all related module tests pass."
+    "PHASE2_RETURN_FLOOR_PCT changed from 0.0 to 1.0 with intent comment explaining it's a pool quality knob for RB, not TP/SL retune.",
+    "PHASE2_MONTHLY_ADMISSION_MIN_RATIO changed from 0.55 to 0.50 with updated comment documenting the easing to grow cross-symbol pool for RB.",
+    "PHASE2_MONTHLY_ADMISSION_MIN_MONTHS unchanged at 3.",
+    "test_anti_overfit_config.py assertion updated from 0.55 to 0.50.",
+    "test_rb_compose_gates.py: all 5 RB_MAX_PAIR_OVERLAP references changed from 0.35 to 0.25 (both the direct assert and 4 monkeypatched test values). This was a pre-existing mismatch with the config default (0.25) that had been carried since the config was tuned down.",
+    "All 43 related tests pass cleanly."
   ]
 }

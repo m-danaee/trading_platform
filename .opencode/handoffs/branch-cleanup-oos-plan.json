@@ -1,0 +1,14 @@
+{
+  "task": "branch-cleanup",
+  "base_branch": "main",
+  "deleted": [
+    "feature/task-1-fail-closed-fallback",
+    "feature/task-2-min-distinct-symbols",
+    "feature/task-3-phase5-equity",
+    "feature/task-4-config-anti-leak",
+    "feature/task-5-pool-quality"
+  ],
+  "skipped": [],
+  "failed": [],
+  "status": "DONE"
+}

@@ -1,55 +1,68 @@
 {
   "task": "task-5",
+  "title": "Phase2→RB pool quality knobs (P1)",
   "review_type": "spec-review",
   "verdict": "APPROVED",
   "reviewer": "spec-reviewer",
-  "commit_reviewed": "54a885a",
-  "branch": "feature/task-5-dead-f3-branch",
+  "branch": "feature/task-5-pool-quality",
+  "base": "main",
+  "diff_stat": "3 files changed, 17 insertions(+), 10 deletions(-)",
+
   "acceptance_criteria_check": {
-    "AC1_f3_switch_wrapped": {
+    "AC1_RETURN_FLOOR_1.0": {
       "status": "PASS",
-      "evidence": "phase2_rule_pool.py:808 — `if not _cfg.PHASE2_USE_TOTAL_RETURN_OBJ:` wraps the entire f3_objective switch (cv_fold_min / profit_factor / win_rate branches). Guard is placed BEFORE the switch, not after."
+      "evidence": "config.py:605 — `PHASE2_RETURN_FLOOR_PCT = 1.0` (was 0.0). Restores >0 floor as specified."
     },
-    "AC2_audit_finding_comment": {
+    "AC2_MONTHLY_MIN_RATIO_0.50": {
       "status": "PASS",
-      "evidence": "Two comment blocks reference 'audit finding #5': (1) above the wrapped branch: '# → fixes audit finding #5 (dead f3 profit_factor branch; USE_TOTAL_RETURN_OBJ takes precedence when True).' (2) above the USE_TOTAL_RETURN_OBJ block: '# (fixes audit finding #5)'."
+      "evidence": "config.py:755 — `PHASE2_MONTHLY_ADMISSION_MIN_RATIO = 0.50` (was 0.55). Slightly eased as specified."
     },
-    "AC3_parametrized_test": {
+    "AC3_MIN_MONTHS_3_unchanged": {
       "status": "PASS",
-      "evidence": "TestF3PathResolution::test_f3_path_resolution covers 6 cases (superset of required 4): 3 with USE_TOTAL_RETURN_OBJ=True (one per F3_OBJECTIVE value, all asserting robust return = -3.0) + 3 with USE_TOTAL_RETURN_OBJ=False (profit_factor=-1.1, win_rate=-50.0, cv_fold_min=-3.5). All 6 pass. Test calls the production function compute_phase2_objectives_from_metrics directly."
+      "evidence": "config.py:764 — `PHASE2_MONTHLY_ADMISSION_MIN_MONTHS = 3` untouched in diff."
     },
-    "AC4_default_bit_identical": {
+    "AC4_intent_documented": {
       "status": "PASS",
-      "evidence": "When USE_TOTAL_RETURN_OBJ=True (default): the new guard skips the dead switch entirely; the robust_return_pct block (unchanged) assigns f3_val. Net effect: f3_val = robust_return_pct(...) — identical to pre-task-5. No other code paths are affected. No changes to config.py, phase2_support.py, or any other file."
+      "evidence": "config.py comments above both knobs explicitly state: 'pool quality knob for RB composition', 'NOT a TP/SL retune or OOS chase', 'grow robust cross-symbol pool for RB'. Satisfies scope item 4."
     },
-    "AC5_legacy_opt_in": {
+    "AC5_tests_pinning_old_values_fixed": {
       "status": "PASS",
-      "evidence": "When USE_TOTAL_RETURN_OBJ=False: all 3 F3_OBJECTIVE values are exercised by the parametrized test and produce correct values. cv_fold_min fallback to profit_factor is preserved in code (line 815-817) though not explicitly tested as a separate case (acceptable — spec requires 4 cases, 6 are provided)."
+      "evidence": "test_anti_overfit_config.py:17 — assertion updated 0.55→0.50 (matches new default)."
     },
-    "AC6_existing_tests_pass": {
+    "AC6_drive_by_RB_OVERLAP_fix": {
       "status": "PASS",
-      "evidence": "test_phase2_rule_pool.py: 156 passed (includes 6 new). test_phase2_monthly_admission.py + test_phase2_window_rotation.py + test_phase2_island_scheduler.py: 71 passed. All verified by running with PYTEST_LOW_MEMORY=1."
+      "evidence": "test_rb_compose_gates.py — all 5 references to RB_MAX_PAIR_OVERLAP updated 0.35→0.25, matching the actual config default (config.py:1825 RB_MAX_PAIR_OVERLAP=0.25). Explicitly allowed by scope item 6 (optional one-line drive-by). Not out of scope."
+    },
+    "AC7_related_tests_green": {
+      "status": "PASS",
+      "evidence": "Verification command from task-5.md run: `PYTHONPATH=. PYTEST_LOW_MEMORY=1 python -m pytest tests/unit/ -k 'return_floor or monthly or compose_gates or anti_overfit' -q` → 43 passed."
+    },
+    "AC8_branch_isolation": {
+      "status": "PASS",
+      "evidence": "Diff main...feature/task-5-pool-quality touches only config.py + 2 test files. Commit on the dedicated feature branch only."
     }
   },
+
   "out_of_scope_check": {
-    "evaluator_v5.ipynb": "UNTOUCHED",
-    "config.py": "UNTOUCHED",
-    "phase2_support.py": "UNTOUCHED",
-    "evolution/": "UNTOUCHED",
-    "other_phase_files": "UNTOUCHED",
-    "task_6_or_later": "NO PRE-IMPLEMENTATION"
+    "algorithm_changes": "NONE — no .py logic touched outside config defaults.",
+    "evaluator_v5_ipynb": "UNTOUCHED",
+    "phase2_rule_pool_py": "UNTOUCHED",
+    "phase2_support_py": "UNTOUCHED",
+    "evolution_dir": "UNTOUCHED",
+    "TP_SL_retune": "NONE — comments explicitly disclaim this intent.",
+    "full_pipeline": "NONE"
   },
+
   "files_changed": [
-    ".opencode/CONTEXT.md",
-    ".opencode/tasks/task-5.md",
-    "gpu_fuzzy_trader/phases/phase2_rule_pool.py",
-    "tests/unit/test_phase2_rule_pool.py"
+    "gpu_fuzzy_trader/config.py",
+    "tests/unit/test_anti_overfit_config.py",
+    "tests/unit/test_rb_compose_gates.py"
   ],
+
   "notes": [
-    "The guard placement is correct: `if not _cfg.PHASE2_USE_TOTAL_RETURN_OBJ:` is BEFORE the switch, wrapping the entire switch body with proper indentation.",
-    "The f3_val variable is guaranteed to be set in all reachable paths: legacy switch covers all 3 branches (cv_fold_min with fallback, profit_factor, win_rate as else); robust return block covers the default path.",
-    "The parametrized test provides 6 cases (superset of the required 4), covering both default and legacy paths with concrete expected values.",
-    "The task-5.md was rewritten from a different task (sequential cluster warmup) to the correct task (dead f3 branch). This is a spec correction, not an out-of-scope change.",
-    "Minor observation (not blocking): the cv_fold_min fallback path (empty cv_folds → profit_factor) is not explicitly tested as a separate parametrized case. The fallback code is preserved and the spec's 4 required cases are all covered."
+    "Diff is minimal and matches task-5.md scope (config defaults only + test pin fixes). No missing acceptance criteria, no out-of-scope additions.",
+    "The drive-by RB_MAX_PAIR_OVERLAP test fix (0.35→0.25) is explicitly permitted by scope item 6 and aligns tests with the long-standing config default of 0.25 — not an undocumented change.",
+    "Stale task-5-*spec-reviewer.json / task-5-*code-reviewer.json handoffs (referencing the prior 'dead f3 branch' task-5 scope, branch feature/task-5-dead-f3-branch) were overwritten/should be ignored — they do not describe this branch's diff.",
+    "Pre-existing note: PHASE2_RETURN_FLOOR_PCT has no dedicated unit test asserting ==1.0; only the anti_overfit bundle test asserts MONTHLY_ADMISSION_MIN_RATIO. Not a spec gap (task only required fixing tests pinning OLD values, which is done)."
   ]
 }

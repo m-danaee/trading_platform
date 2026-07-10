@@ -1,31 +1,31 @@
 {
-  "task_id": 3,
+  "task_id": "task-3",
+  "phase": "Phase 5 train/val equity",
+  "branch": "feature/task-3-phase5-equity",
   "verdict": "APPROVED",
-  "items_reviewed": {
-    "item_8_overfit_penalty": "approved — subtraction-based (train_ret - val_ret), PHASE2_OVERFIT_GAP_PCT_THRESHOLD=8.0pp default, old ratio name fully purged (0 grep hits), config comment block updated, optuna_search.py has no references to old name (correctly not touched). Two new regression tests present and passing: monotonicity (val=-10% → higher f1 than val=1%) and blind-spot (penalty nonzero when val_ret<=0).",
-    "item_9_feasibility_gap": "approved — train-vs-val gap check added to _raw_feasibility_violation_score after val_pf check (line ~369), uses PHASE2_MAX_TRAIN_VAL_GAP_PCT (not hardcoded), weight=1.0 matches plan. New test test_feasibility_violation_catches_train_val_gap asserts both _raw_feasibility_violation_score>0.0 AND passes_evolution_deployability_preview is False for 80pp gap. Passes.",
-    "item_10_deferred": "approved (correctly not implemented) — no f3 asymmetry changes in diff, no min(train,val) logic added for f3. Correctly deferred per plan."
+  "reviewer": "spec-reviewer",
+  "commit": "3ea7454",
+  "files_changed": [
+    "gpu_fuzzy_trader/phases/phase5_oos.py",
+    "tests/unit/test_phase5_oos.py"
+  ],
+  "acceptance_criteria": {
+    "phase5_invokes_plot_for_train_validation_test": "PASS — reporter.plot_equity_curve called for test (pre-existing), train and validation (new), each wrapped in the same non-fatal try/except + logger.warning pattern and using trade_logs_by_split.get('train')/.get('validation') exactly as specified.",
+    "no_crash_on_empty_trade_logs": "PASS — .get() returns None for missing keys; try/except guards reporter failures on empty/None DataFrames. Tests cover empty train, empty validation, empty test, all-empty, and None logs (7 cases).",
+    "tests_pass_venv_lowmem_path": "PASS — 58 passed (51 existing + 7 new) under .venv + PYTEST_LOW_MEMORY=1 + PYTHONPATH=. (test_phase5_oos.py). New TestEquityCurvePlots class: 7 passed.",
+    "commit_on_feature_branch_only": "PASS — single commit 3ea7454 on feature/task-3-phase5-equity touching only the two intended files."
   },
-  "deviation_assessment": {
-    "replaced_if_val_positive_gate": "approved — the `if val_ret > 0.0` gate was replaced with `(_cfg.PHASE2_JOINT_TRAIN_VAL or getattr(_cfg, 'PHASE2_VAL_IN_FITNESS_PENALTY', False))`. This is acceptable because: (1) in default config (PHASE2_JOINT_TRAIN_VAL=True), the penalty fires for ANY sign of val_ret, so the bug is fully fixed in practice; (2) the replacement gate is a meta-gate controlling whether val-derived penalties enter fitness at all, which is semantically correct — it preserves the existing C6 test contract (test_val_penalties_gated_closed) that asserts val penalties must not leak when both gates are closed; (3) removing the gate entirely would break the C6 test, which would be a larger, unjustified deviation; (4) the implementer was transparent about this in the handoff notes.",
-    "rationale": "The plan's intent ('penalty well-defined for any sign of val_ret') is fully preserved in the default configuration. The replacement gate is not papering over the bug — it's a structurally correct meta-gate that was previously enforced implicitly by the buggy `if val_ret > 0.0` check (which happened to also block val=-15 from entering the penalty path, satisfying the C6 contract). The implementer made the implicit contract explicit. The worst-case overfit rule (train=99%, val=-10%) now correctly receives a large penalty when PHASE2_JOINT_TRAIN_VAL=True (the default), which is the production-relevant scenario."
+  "requirement_fidelity": {
+    "task_calls_plot_for_train_and_validation": "PASS — both added next to the existing test plot call.",
+    "same_non_fatal_pattern_as_test": "PASS — identical try/except + logger.warning structure.",
+    "uses_get_train_and_get_validation": "PASS — trade_logs_by_split.get('train') and .get('validation').",
+    "tests_mock_reporter_assert_three_splits": "PASS — Reporter mocked via patch; assertions verify train, validation, test all appear in plot_equity_curve call args and exactly 3 calls per direction.",
+    "empty_trade_log_no_crash_in_tests": "PASS — covered by 5 empty/None test variants."
   },
-  "out_of_scope_check": "approved — files touched: config.py, phase2_rule_pool.py, phase2_support.py, test_phase2_rule_pool.py, test_phase2_support.py, task-3.md. All are listed in task-3.md's 'Files to touch' (task-3.md was rewritten to correct stale content from a previous plan iteration). optuna_search.py correctly not touched (0 references to old name). test_config_additions.py correctly not touched (not needed). No push, no merge, no base branch modifications. Single consolidated commit on feature branch.",
-  "pre_existing_test_f3": "passes",
-  "test_verification": {
-    "new_tests_pass": true,
-    "pre_existing_f3_passes": true,
-    "all_253_tests_pass": true,
-    "suites_verified": [
-      "tests/unit/test_phase2_rule_pool.py",
-      "tests/unit/test_phase2_support.py",
-      "tests/unit/test_config_additions.py",
-      "tests/unit/test_phase2_island_scheduler.py",
-      "tests/unit/test_island_scheduler_migration.py",
-      "tests/unit/test_migration_safety.py",
-      "tests/unit/test_elite_preservation.py",
-      "tests/unit/test_evox_runner.py"
-    ]
-  },
-  "notes": "Task 3 is a clean, well-scoped implementation. The design deviation (replacement meta-gate) is justified, transparent, and preserves the plan's intent in the default config. All acceptance criteria met. 253/253 tests pass across all 8 specified suites."
+  "out_of_scope_additions": "NONE — no config changes, no evaluator_v5 edits, no outputs/ commits. Diff is strictly the 2 plot calls + tests.",
+  "missing_acceptance_criteria": "NONE — all task acceptance boxes are addressed; 'exactly 3 calls' test is a reasonable in-scope strengthening of the 'invokes plot for all three' requirement.",
+  "notes": [
+    "Plot call order in source is test -> train -> validation; task did not mandate a specific order, only that all three are invoked, so this is acceptable.",
+    "New tests reuse existing _make_rule_set / _make_df / _write_rule_set helpers and the already-imported patch; no new imports or duplication needed."
+  ]
 }

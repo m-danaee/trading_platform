@@ -1,25 +1,33 @@
 {
   "task_id": "task-4",
   "status": "DONE",
-  "commit": "4cc5818",
+  "commit_hash": "841bf80",
   "files_changed": [
-    "gpu_fuzzy_trader/phases/phase2_rule_pool.py",
-    "tests/unit/test_phase2_monthly_admission.py"
+    "gpu_fuzzy_trader/config.py",
+    "tests/unit/test_anti_overfit_config.py",
+    "scripts/validate_inflated_returns_fix.py"
   ],
-  "summary": "Changed monthly admission gate from using self._train_df to self._cached_slim_val (val split). Two call sites updated: line ~2836 (in run()) and line ~3316 (in finalize_island()). Added defensive guard: if _cached_slim_val is None, the gate logs a warning and skips. Updated comments to reflect val-split usage. Added audit-finding #4 linkage comments.",
+  "summary": "Set PHASE2_JOINT_TRAIN_VAL=False, RB_REQUIRE_SYMBOL_FILTERS=False. PHASE2_VAL_IN_FITNESS_PENALTY stays True. PHASE2_DIVERSITY_ON_F4 stays True. Updated comments with anti-overfit rationale. Fixed tests that pinned old True defaults.",
+  "changes": {
+    "config.py": "PHASE2_JOINT_TRAIN_VAL=False (was True) — train-only fitness + val-only pool-admission gates to avoid double-counting the val split. RB_REQUIRE_SYMBOL_FILTERS=False (was True) — single-symbol rules overfit; re-enable only after multi-symbol composition works. Comments updated with anti-overfit rationale.",
+    "test_anti_overfit_config.py": "assert cfg.PHASE2_JOINT_TRAIN_VAL is True → False",
+    "validate_inflated_returns_fix.py": "assert cfg.PHASE2_JOINT_TRAIN_VAL is True → False"
+  },
   "tests_run": [
-    "tests/unit/test_phase2_monthly_admission.py: 10 passed (including 3 new)",
-    "tests/unit/test_phase2_rule_pool.py: 150 passed",
-    "tests/unit/test_phase2_window_rotation.py: 16 passed",
-    "tests/unit/test_phase2_island_scheduler.py: 45 passed"
+    "tests/unit/test_anti_overfit_config.py: 2 passed",
+    "tests/unit/test_rb_min_symbols.py: 12 passed",
+    "tests/unit (k=config/joint/symbol_filter/RB_REQUIRE): 57 passed, 1 pre-existing failure (test_rb_compose_gates.py expects RB_MAX_PAIR_OVERLAP=0.35 but config=0.25, unrelated)"
   ],
   "acceptance_criteria": {
-    "1_call_sites_use_val_df": "Both call sites now pass self._cached_slim_val (val) to build_monthly_windows instead of self._train_df",
-    "2_test_confirms_val_df": "test_gate_uses_cached_slim_val monkeypatches build_monthly_windows and asserts the recorded DataFrame has datetime range matching val (2022+) and is NOT the train DataFrame",
-    "3_non_trivial_filtering": "test_non_trivial_filtering_on_val confirms 50% rejection (2/4 rules kept) on val-like data pattern",
-    "4_none_guard": "test_gate_skipped_when_cached_slim_val_none verifies warning logged and build_monthly_windows NOT called when _cached_slim_val is None",
-    "5_comment_accuracy": "Comments updated from 'train split' to 'val split (OOS stability check)' with audit-finding #4 linkage",
-    "6_all_existing_tests_pass": "All 4 test suites pass (221 tests total)"
+    "1_PHASE2_JOINT_TRAIN_VAL_False": "PHASE2_JOINT_TRAIN_VAL=False",
+    "2_PHASE2_VAL_IN_FITNESS_PENALTY_stays_True": "PHASE2_VAL_IN_FITNESS_PENALTY=True (no change)",
+    "3_RB_REQUIRE_SYMBOL_FILTERS_False": "RB_REQUIRE_SYMBOL_FILTERS=False",
+    "4_PHASE2_DIVERSITY_ON_F4_stays_True": "PHASE2_DIVERSITY_ON_F4=True (no change)",
+    "5_comments_updated": "Updated with anti-overfit rationale",
+    "6_tests_fixed": "test_anti_overfit_config.py, validate_inflated_returns_fix.py updated",
+    "7_config_asserts_hold": "config.py import-time assertions verified"
   },
-  "notes_for_reviewer": "Used self._cached_slim_val instead of self._scoped_val_df because self._scoped_val_df is set to None at the end of __init__ (line 2380) to free memory. self._cached_slim_val is preserved and has the needed label/meta columns (slim_backtest_df keeps META_COLUMNS and LABEL_COLUMNS). The plan (PLAN.md) also recommended self._cached_slim_val. Both call sites get identical treatment with the defensive guard."
+  "risks": [
+    "Code paths that use PHASE2_JOINT_TRAIN_VAL=True behavior (joint fitness) will now use train-only. PHASE2_VAL_IN_FITNESS_PENALTY=True still feeds val penalties into fitness, so val signal is not completely absent."
+  ]
 }

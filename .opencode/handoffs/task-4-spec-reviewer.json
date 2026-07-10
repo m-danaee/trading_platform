@@ -2,30 +2,28 @@
   "task_id": "task-4",
   "reviewer": "spec-reviewer",
   "verdict": "APPROVED",
-  "summary": "Implementation meets all 6 acceptance criteria. The deviation from self._scoped_val_df to self._cached_slim_val is correct and necessary (scoped_val_df is freed to None at line 2365 during __init__). slim_backtest_df preserves META_COLUMNS (datetime, symbol) and LABEL_COLUMNS, so build_monthly_windows and _evaluate_rule_on_window have all needed columns. Both call sites updated, defensive None guard present at both sites, audit-finding #4 linkage in comments, 3 new tests cover val-source assertion, None-skip guard, and non-trivial filtering. All 211 tests pass across 4 suites. Diff is minimal and surgical — no out-of-scope changes.",
+  "commit_hash": "841bf80",
+  "branch": "feature/task-4-config-anti-leak",
   "acceptance_criteria": {
-    "1_call_sites_use_val_df": "PASS — Both call sites (lines 2841, 3328) use self._cached_slim_val. Deviation from self._scoped_val_df is justified: scoped_val_df is None at call time (freed at line 2365). PLAN.md explicitly recommended _cached_slim_val.",
-    "2_test_confirms_val_df": "PASS — test_gate_uses_cached_slim_val monkeypatches build_monthly_windows, records the DataFrame, asserts it is NOT gen._train_df and has datetime >= 2022-01-01 (val range).",
-    "3_non_trivial_filtering": "PASS — test_non_trivial_filtering_on_val confirms 50% rejection (2/4 rules kept) with mixed-profitability rules across 6 months.",
-    "4_none_guard": "PASS — Both call sites guard on self._cached_slim_val is None with logger.warning. test_gate_skipped_when_cached_slim_val_none verifies warning logged and build_monthly_windows NOT called.",
-    "5_comment_accuracy": "PASS — Comments updated from 'train split' to 'val split (OOS stability check)' with '→ fixes audit finding #4' linkage at both sites.",
-    "6_all_existing_tests_pass": "PASS — 10/10 in test_phase2_monthly_admission.py, 211/211 across 4 suites (rule_pool, window_rotation, island_scheduler, monthly_admission)."
+    "PHASE2_JOINT_TRAIN_VAL_False": {"required": false, "actual": false, "pass": true, "loc": "config.py:783"},
+    "PHASE2_VAL_IN_FITNESS_PENALTY_True": {"required": true, "actual": true, "pass": true, "loc": "config.py:790"},
+    "RB_REQUIRE_SYMBOL_FILTERS_False": {"required": false, "actual": false, "pass": true, "loc": "config.py:1941"},
+    "PHASE2_DIVERSITY_ON_F4_True": {"required": true, "actual": true, "pass": true, "loc": "config.py:825"},
+    "config_bottom_asserts_hold": {"pass": true, "note": "import-time asserts pass; config imports cleanly"},
+    "tests_updated_and_green": {"pass": true, "note": "test_anti_overfit_config.py + validate_inflated_returns_fix.py updated; 57 passed. 1 failure (RB_MAX_PAIR_OVERLAP 0.25 vs 0.35) is PRE-EXISTING on main, out of task-4 scope."},
+    "commit_on_feature_branch_only": {"pass": true, "note": "single commit 841bf80 on feature/task-4-config-anti-leak"}
   },
-  "deviation_assessment": {
-    "scoped_val_df_vs_cached_slim_val": "JUSTIFIED — self._scoped_val_df is set to None at line 2365 during __init__ (before the gate call sites at 2841/3328). Using it would make the gate always skip. self._cached_slim_val is the slim_backtest_df output which preserves META_COLUMNS (datetime, symbol) and LABEL_COLUMNS — all columns needed by build_monthly_windows and _evaluate_rule_on_window. PLAN.md explicitly recommended this attribute.",
-    "column_availability": "VERIFIED — slim_backtest_df (backtest/df_slim.py) retains META_COLUMNS=['datetime','symbol'] + LABEL_COLUMNS + _symbol_bar_index + feature columns. build_monthly_windows requires 'datetime' (present). _evaluate_rule_on_window requires label/meta columns (present)."
+  "scope_check": {
+    "in_scope": ["config.py defaults + comments", "tests/unit/test_anti_overfit_config.py", "scripts/validate_inflated_returns_fix.py"],
+    "out_of_scope_additions": "none",
+    "algorithm_changes": "none",
+    "evaluator_v5_touched": "no",
+    "pool_knobs_touched": "no"
   },
-  "out_of_scope_check": {
-    "evaluator_v5_ipynb": "UNTOUCHED",
-    "validation_monthly_windows_py": "UNTOUCHED",
-    "rb_governor_py": "UNTOUCHED",
-    "other_phase_files": "UNTOUCHED",
-    "task_5_or_later_preview": "NONE — no dead f3 branch deletion or overfit ratio gate pre-implementation",
-    "context_and_task_md_changes": "ORCHESTRATOR WORKFLOW UPDATES — CONTEXT.md advances state from task-3 to task-4; task-4.md was rewritten by orchestrator to match PLAN.md task-4 spec (replaced placeholder from prior plan iteration). Not production code."
-  },
-  "notes_for_code_reviewer": [
-    "The defensive guard structure (if None → warn/skip, elif enabled → run) is duplicated at both call sites. Code reviewer may want to note this for potential extraction into a helper, but it's acceptable for a surgical 2-site fix.",
-    "test_gate_skipped_when_cached_slim_val_none uses object.__new__ + manual attribute setup to avoid __init__ side effects. This is fragile but functional — code reviewer should assess if a simpler construction path exists.",
-    "The test_gate_uses_cached_slim_val test asserts gen._scoped_val_df is None as a sanity check, which independently validates the deviation justification."
-  ]
+  "comments_updated": "JOINT_TRAIN_VAL and RB_REQUIRE_SYMBOL_FILTERS comments now explain anti-overfit rationale (double-counting val split; single-symbol overfit).",
+  "nits_non_blocking": [
+    "config.py:783 comment 'PHASE2_VAL_IN_FITNESS_PENALTY — when False (default)' is slightly stale since value is True, but final sentence ('When True, val penalties enter fitness even when PHASE2_JOINT_TRAIN_VAL=False') is accurate. Pre-existing; value unchanged by task-4, so not required to fix here."
+  ],
+  "tests_run": "tests/unit -k 'config or joint or symbol_filter or RB_REQUIRE' -> 57 passed, 1 pre-existing unrelated failure",
+  "summary": "All four target defaults correct; bottom asserts hold; tests fixed; no out-of-scope changes. Approved."
 }

@@ -1,40 +1,25 @@
 {
-  "status": "SUCCESS",
-  "commit_hash": "793f9cd",
-  "branch": "feature/task-2-return-concentration-objective",
-  "files_changed": [
-    "gpu_fuzzy_trader/config.py",
-    "gpu_fuzzy_trader/backtest/gpu_engine.py",
-    "gpu_fuzzy_trader/backtest/cpu_engine.py",
-    "gpu_fuzzy_trader/phases/phase2_rule_pool.py",
-    "gpu_fuzzy_trader/phases/phase2_support.py",
-    "gpu_fuzzy_trader/evolution/evox_runner.py",
-    "tests/unit/test_phase2_rule_pool.py",
-    "tests/unit/test_phase2_support.py",
-    "tests/unit/test_evox_runner.py",
-    "tests/property/test_cpu_engine_properties.py"
-  ],
-  "summary": "Added return-concentration as 4th NSGA-III objective (f4 = max_single_trade_pnl / max(sum_positive_trade_pnl, ε)). Both engines track max_single_trade_pnl, sum_positive_trade_pnl, sum_negative_trade_pnl in metrics. f4 gate rejects rules with f4 > 0.5 at pool admission. All 276 unit tests + 9 property tests + 61 GPU engine tests pass. N_OBJ is modular — PHASE2_F4_ENABLED=False reverts to 3-objective flow exactly.",
-  "tests_run": [
-    {"file": "tests/unit/test_phase2_rule_pool.py", "result": "149 passed (4 new f4 tests)"},
-    {"file": "tests/unit/test_phase2_window_rotation.py", "result": "16 passed"},
-    {"file": "tests/unit/test_phase2_island_scheduler.py", "result": "45 passed"},
-    {"file": "tests/unit/test_evox_runner.py", "result": "41 passed"},
-    {"file": "tests/unit/test_phase2_support.py", "result": "25 passed"},
-    {"file": "tests/unit/test_gpu_engine.py", "result": "61 passed"},
-    {"file": "tests/property/test_cpu_engine_properties.py", "result": "9 passed (2 new f4 property tests)"}
-  ],
-  "notes": [
-    "GPU engine output array extended from 10→13 elements (added gross_profit, gross_loss, max_single_trade_pnl).",
-    "f4 is computed in compute_phase2_objectives_from_metrics and uses min(train_f4, val_f4) when JOINT_TRAIN_VAL=True.",
-    "f4 = 0 when executed_trades < trade_floor (no concentration signal on thin data).",
-    "f4_concentration gate is the 10th gate in _feasibility_gate_failures and _passes_pool_admission_impl.",
-    "evox_runner.py N_OBJ = 4 when PHASE2_F4_ENABLED=True, else 3. All np.full and ref-vector calls use N_OBJ.",
-    "Tested regression: PHASE2_F4_ENABLED=False returns 3 objectives, no f4 in metrics.",
-    "Did NOT modify evaluator_v5.ipynb, the time-exit return branch, rb_governor.py, or other phase files."
-  ],
-  "risks": [
-    "4-objective Pareto fronts will look different from 3-objective fronts — expected, but downstream metrics (valid_rules count, diversity) may shift. Task-3 (RB Governor) is designed to validate OOS improvement.",
-    "GPU engine result array size changed (10→13); any external code consuming gpu_engine output directly (not through _batch_metrics_from_array) needs updating."
-  ]
+  "task": "task-2",
+  "status": "DONE",
+  "branch": "feature/task-2-min-distinct-symbols",
+  "commit": "3381927",
+  "summary": "Implemented hard-require min distinct symbols gate on final RB output",
+  "details": {
+    "files_changed": [
+      "gpu_fuzzy_trader/rb_governor.py (modified - added min-distinct-symbols gate after profit amplifier)",
+      "tests/unit/test_rb_min_symbols.py (new - 12 tests covering the gate)"
+    ],
+    "acceptance_criteria": {
+      "final_1_symbol_team_rejected": true,
+      "multi_symbol_team_meeting_min_passes": true,
+      "gate_skipped_when_filters_off": true,
+      "empty_strategy_loadable": true,
+      "all_tests_pass": true
+    },
+    "test_count": 12,
+    "existing_test_count": 55,
+    "all_pass": true,
+    "next_action": "Proceed to task-3 (Phase 5 train/val equity)",
+    "concerns": []
+  }
 }

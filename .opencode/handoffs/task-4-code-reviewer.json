@@ -1,50 +1,54 @@
 {
   "task_id": "task-4",
   "reviewer": "code-reviewer",
+  "branch": "feature/task-4-config-anti-leak",
+  "base": "main",
+  "commit": "841bf80",
   "verdict": "APPROVED",
-  "summary": "Implementation is correct and complete. Both call sites correctly use self._cached_slim_val (the preserved slimmed val df) instead of self._train_df. The defensive None guard is properly placed before the gate logic at both sites. The deviation from self._scoped_val_df to self._cached_slim_val is correct: _scoped_val_df is freed to None at line 2365 during __init__, while _cached_slim_val persists across park/unpark cycles. slim_backtest_df preserves all required columns (META_COLUMNS including datetime, LABEL_COLUMNS, _symbol_bar_index). All 3 new tests pass and exercise meaningful scenarios. All 221 tests across 4 suites pass.",
-  "findings": [
-    {
-      "severity": "MEDIUM",
-      "location": "gpu_fuzzy_trader/phases/phase2_rule_pool.py:~2834 and ~3321",
-      "title": "Missing code comment explaining _cached_slim_val deviation from _scoped_val_df",
-      "description": "The task spec originally called for using self._scoped_val_df, but the implementer (correctly) used self._cached_slim_val because _scoped_val_df is freed to None at line 2365. This rationale exists only in the implementer/spec-reviewer handoffs, not in the code. A future maintainer may not understand why _cached_slim_val is used instead of _scoped_val_df and could attempt to 'fix' it back.",
-      "recommendation": "Add a brief comment at one or both call sites, e.g.: '# Uses _cached_slim_val because _scoped_val_df is freed to None after __init__; _cached_slim_val is the preserved slimmed copy.'"
-    },
-    {
-      "severity": "MEDIUM",
-      "location": "tests/unit/test_phase2_monthly_admission.py:test_gate_skipped_when_cached_slim_val_none",
-      "title": "Fragile test construction via object.__new__",
-      "description": "Test builds Rule_Pool_Generator via object.__new__ + ~20 manual attribute assignments to bypass __init__ side effects. If __init__ adds or renames a required attribute, this test will break in confusing ways unrelated to the gate behavior.",
-      "recommendation": "Consider creating the generator via __init__ with val_df=None and using monkeypatch to skip _build_engines side effects, or simply patching _build_engines to a no-op before __init__ runs. This would make the test more resilient to future __init__ changes."
-    },
-    {
-      "severity": "LOW",
-      "location": "gpu_fuzzy_trader/phases/phase2_rule_pool.py:~3320",
-      "title": "Second call site comment is more terse than the first",
-      "description": "The first call site (~line 2830) has a detailed comment explaining the OOS stability check rationale and 'val split'. The second call site (~line 3320) only says 'Monthly-window gate for islands' followed by the audit fix comment. While this was pre-existing, making both comments consistently describe the val-split usage would improve maintainability.",
-      "recommendation": "Sync the second call site comment to mention 'val split (OOS stability check)' like the first."
-    }
+  "summary": "Clean, surgical config-defaults change. All 4 acceptance values match the task spec exactly; no algorithm/pipeline code touched; tests that pinned old True defaults were updated; bottom asserts hold; 57 passed with 1 pre-existing unrelated failure. One low-priority comment-wording nit noted below (non-blocking).",
+  "files_changed": [
+    "gpu_fuzzy_trader/config.py",
+    "tests/unit/test_anti_overfit_config.py",
+    "scripts/validate_inflated_returns_fix.py"
   ],
   "acceptance_criteria": {
-    "1_call_sites_use_val_df": "PASS — Both call sites use self._cached_slim_val (val) with correct defensive guard. Verified by tracing __init__ lifecycle: _cached_slim_val is set during _build_engines (l.2408) before _scoped_val_df is freed to None (l.2365). park_engines preserves _cached_slim_val.",
-    "2_test_confirms_val_df": "PASS — test_gate_uses_cached_slim_val records the df passed to build_monthly_windows, asserts it is not gen._train_df (identity check) and has datetime >= 2022-01-01 (val date range). Also sanity-checks gen._cached_slim_val is not None and gen._scoped_val_df is None.",
-    "3_non_trivial_filtering": "PASS — test_non_trivial_filtering_on_val simulates 4 rules across 6 months with mixed profitability, asserts 2/4 kept (50% rejection > the 0-8/75 no-op on train).",
-    "4_none_guard": "PASS — test_gate_skipped_when_cached_slim_val_none verifies the warning 'no val DataFrame available' is logged AND build_monthly_windows call_count remains 0. Both call sites have the guard.",
-    "5_comment_accuracy": "PASS — Comments updated from 'train split' to 'val split (OOS stability check)' at both sites. Audit finding #4 linkage present at both sites. Greppable via 'audit finding #4'.",
-    "6_all_existing_tests_pass": "PASS — 10/10 in test_phase2_monthly_admission.py, 211/211 in related suites (rule_pool, window_rotation, island_scheduler). Total 221 passing."
+    "1_PHASE2_JOINT_TRAIN_VAL_False": "PASS — PHASE2_JOINT_TRAIN_VAL=False (was True). Verified at runtime.",
+    "2_PHASE2_VAL_IN_FITNESS_PENALTY_stays_True": "PASS — stays True, untouched by diff.",
+    "3_RB_REQUIRE_SYMBOL_FILTERS_False": "PASS — RB_REQUIRE_SYMBOL_FILTERS=False (was True).",
+    "4_PHASE2_DIVERSITY_ON_F4_stays_True": "PASS — stays True, untouched by diff.",
+    "5_comments_updated": "PASS-with-nit — anti-overfit rationale added at both sites. RB_REQUIRE_SYMBOL_FILTERS comment starts with 'Kept False' which is factually wrong (value was changed True→False, see nit #1).",
+    "6_tests_fixed": "PASS — test_anti_overfit_config.py and validate_inflated_returns_fix.py both flipped is True→is False. test_rb_min_symbols.py monkeypatches the flag explicitly so it is robust to the default change (14 passed).",
+    "7_config_asserts_hold": "PASS — config imports cleanly; all bottom asserts evaluate without error."
   },
-  "correctness_verifications": {
-    "cached_slim_val_lifecycle": "VERIFIED — _cached_slim_val is set during _build_engines (l.2408) before _scoped_val_df is freed (l.2365). park_engines (l.2539) frees _val_engine and _train_df but preserves _cached_slim_val for rebuilds (l.2431). Both call sites (l.2834, l.3321) execute after __init__ with _cached_slim_val populated.",
-    "slim_val_columns": "VERIFIED — slim_backtest_df (df_slim.py) retains META_COLUMNS (datetime, symbol), LABEL_COLUMNS, _symbol_bar_index, and requested features. build_monthly_windows requires 'datetime' (present). _evaluate_rule_on_window → CPUBacktestEngine needs label/meta columns (all present).",
-    "defensive_guard_structure": "VERIFIED — Both call sites place the None check BEFORE the PHASE2_MONTHLY_ADMISSION_ENABLED check (if/elif pattern). Gate is correctly skipped with warning when val unavailable.",
-    "call_site_consistency": "VERIFIED — Both call sites have structurally identical guard+gate logic: None check → warning/skip, elif enabled → build windows → min_months check → apply gate.",
-    "audit_linkage_greppable": "VERIFIED — 'audit finding #4' appears at both call sites. Greppable."
+  "findings": [
+    {
+      "priority": "low",
+      "type": "comment-accuracy",
+      "file": "gpu_fuzzy_trader/config.py",
+      "location": "RB_REQUIRE_SYMBOL_FILTERS comment (~line 1937)",
+      "issue": "Comment reads 'Kept False (task-4): ...' but the diff changes the value from True to False (old line: 'RB_REQUIRE_SYMBOL_FILTERS: bool = True'). 'Kept' implies it was already False, contradicting the diff and the task spec ('Set RB_REQUIRE_SYMBOL_FILTERS = False'). The sibling PHASE2_JOINT_TRAIN_VAL comment correctly says 'Changed True→False (task-4)'.",
+      "impact": "Misleading to a future git-blame reader; minor inconsistency between the two comments in the same task.",
+      "suggested_fix": "Rewrite leading phrase to 'Changed True→False (task-4): ...' to match the JOINT_TRAIN_VAL comment and the actual diff direction. Rationale text below it is accurate and can stay.",
+      "blocking": false
+    }
+  ],
+  "test_verification": {
+    "command_run": "PYTHONPATH=. PYTEST_LOW_MEMORY=1 python -m pytest tests/unit/ -k 'config or joint or symbol_filter or RB_REQUIRE' -q",
+    "result": "57 passed, 1 failed",
+    "failure_analysis": "test_config_compose_defaults_match_expected_bundle in test_rb_compose_gates.py asserts RB_MAX_PAIR_OVERLAP==0.35 but config=0.25. Confirmed PRE-EXISTING on main (main config.py line 1815 also has 0.25). Unrelated to task-4 — config value and test are both untouched by this diff.",
+    "runtime_config_check": "Imported config: JOINT=False, PEN=True, FILT=False, DIV=True — matches spec exactly."
   },
   "out_of_scope_check": {
-    "evaluator_v5_ipynb": "UNTOUCHED",
-    "validation_monthly_windows_py": "UNTOUCHED",
-    "rb_governor_py": "UNTOUCHED",
-    "other_files": "CONTEXT.md and task-4.md updated (orchestrator workflow, not production code)"
-  }
+    "algorithm_changes": "NONE — no pipeline/evaluator/pool-knob code modified.",
+    "evaluator_v5_ipynb": "UNTOUCHED.",
+    "task_5_preview": "NONE — no pool knobs or overfit-ratio gate added prematurely."
+  },
+  "process_notes_for_orchestrator": [
+    "HANDOFF MISMATCH (non-blocking): .opencode/handoffs/task-4-spec-reviewer.json content does NOT match task-4. It describes _cached_slim_val / monthly admission gate call sites at lines 2841/3328 / audit finding #4 — a different change set entirely (looks like a val-source-leak task). The actual task-4 diff (config defaults) was not spec-reviewed against its own content, or the spec-review handoff was mislabeled. Recommend orchestrator verify the spec-review step for task-4. This does not affect the code verdict since the diff is self-evidently correct and minimal."
+  ],
+  "notes": [
+    "Diff is minimal and surgical (3 files, +13/-6).",
+    "test_rb_min_symbols.py is well-designed: it monkeypatches RB_REQUIRE_SYMBOL_FILTERS to both True and False across its cases, so it is immune to the default flip — good test hygiene.",
+    "test_holdout_mode_builds_val_engine_for_admission in test_phase2_rule_pool.py explicitly monkeypatches PHASE2_JOINT_TRAIN_VAL=False and asserts val engine still builds — confirms the new default doesn't break holdout-mode pool admission. Good regression coverage."
+  ]
 }
