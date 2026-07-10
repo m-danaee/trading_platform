@@ -1,42 +1,4 @@
 {
   "direction": "short",
-  "rules_set": [
-    {
-      "conditions": [
-        "[atr_pct_14] IS Very High",
-        "[dollar_vol_rel_20] IS Very High",
-        "[ema_gap_atr_20] IS Extreme Bullish",
-        "[ret_autocorr_1_30] IS Neutral Negative",
-        "symbol is 7"
-      ],
-      "tp": 1.5,
-      "sl": 1.2,
-      "capital_pct": 18.0
-    },
-    {
-      "conditions": [
-        "[dollar_vol_rel_20] IS High",
-        "[downside_semivol_20] IS Very Low",
-        "[rsi_centered_14] IS Extreme Bullish",
-        "[tr_to_atr_14] IS Medium",
-        "[log_range_over_vol_100] IS Very High",
-        "symbol is 8"
-      ],
-      "tp": 1.5,
-      "sl": 1.2,
-      "capital_pct": 18.0
-    },
-    {
-      "conditions": [
-        "[ema_gap_atr_20] IS Extreme Bullish",
-        "[ema_slope_atr_20_5] IS Extreme Bullish",
-        "[range_compression_20_100] IS Medium",
-        "[mom_stoch_rsi_14_14_3] IS Low",
-        "symbol is 10"
-      ],
-      "tp": 1.5,
-      "sl": 1.2,
-      "capital_pct": 18.0
-    }
-  ]
+  "rules_set": []
 }

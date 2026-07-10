@@ -1,34 +1,22 @@
 # Nexus Context
 
-Active objective: OOS failure diagnosis fixes — PLAN COMPLETE.
+Active objective: Phase 2 feasible-search fixes (items 1–4) — COMPLETE.
 
-## Status: PLAN COMPLETE — all 5 tasks merged to main
+## Status: MERGED to main
 
-### Workflow
-- base_branch: main
-- branch_policy: isolated
-- execution_mode: continuous (user override)
+### Changes (branch feature/phase2-feasible-search-1-4)
+| Item | Change |
+|------|--------|
+| 1 | Evolution feasibility PF = 1.05; admission stays 1.15 |
+| 2 | Island min_profitable = max(2, ceil-half) → 3-sym gets 2 |
+| 3 | Corr hybrid clustering ON (0.3 feat / 0.7 corr), weights preserved |
+| 4 | PHASE2_VAL_IN_FITNESS_PENALTY = False |
 
-### Merged tasks
-| Task | Summary | Feature commits |
-|------|---------|-----------------|
-| task-1 | Fail-closed RB fallback (`RB_ALLOW_FALLBACK=False`) | 8e49383, 615f265 |
-| task-2 | Hard-require min distinct symbols on final output | 3381927 |
-| task-3 | Phase 5 train/val equity curves | 3ea7454 |
-| task-4 | Config anti-leak: joint train/val off, symbol filters off | 841bf80 |
-| task-5 | Pool quality: return floor 1.0, monthly ratio 0.50 | 81e606c |
+### Commits
+- 9b35e41 feat: Phase 2 feasible-search fixes 1–4
+- 375b00c fix: enable corr clustering by default
+- 8c7a26e test: expect hybrid_corr_v1
+- 72d043a fix: preserve blend weights
 
-### Key defaults now on main
-- `RB_ALLOW_FALLBACK = False`
-- `PHASE2_JOINT_TRAIN_VAL = False` (val penalties still on)
-- `RB_REQUIRE_SYMBOL_FILTERS = False`
-- `PHASE2_RETURN_FLOOR_PCT = 1.0`
-- `PHASE2_MONTHLY_ADMISSION_MIN_RATIO = 0.50`
-- Min-symbols gate + fail-closed empty strategies loadable when `deployment_accepted=False`
-- Phase 5 plots train/validation/test equity
-
-### Next action
-User runs pipeline on Colab. Compare OOS vs prior 1-rule HHI=1.0 failure.
-Do not run full project locally (OOM per AGENTS.md).
-
-main is ahead of origin/main (local merges not pushed).
+### Next
+User re-runs Phase 2 on Colab. Expect: higher valid_rules, lower train_pf_floor counts in collapse log, method=hybrid_corr_v1 in symbol_clusters.json.

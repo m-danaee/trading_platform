@@ -1,0 +1,73 @@
+{
+  "phase": "spec-review",
+  "branch": "feature/phase2-feasible-search-1-4",
+  "reviewer": "spec-reviewer",
+  "verdict": "APPROVED",
+  "timestamp": "2026-07-10",
+  "base_branch": "main",
+  "files_changed": [
+    "gpu_fuzzy_trader/config.py",
+    "gpu_fuzzy_trader/features/symbol_cluster.py",
+    "gpu_fuzzy_trader/phases/phase2_support.py",
+    "tests/unit/test_anti_overfit_config.py",
+    "tests/unit/test_phase2_island_hyperparams.py",
+    "tests/unit/test_phase2_support.py",
+    "tests/unit/test_symbol_cluster.py"
+  ],
+  "acceptance_criteria": {
+    "1_evolution_pf_floors": {
+      "required": "Evolution PF floors use 1.05; admission stays 1.15",
+      "status": "PASS",
+      "evidence": [
+        "_evolution_feasibility_floors() returns PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION (1.05)",
+        "_pool_admission_floors() returns PHASE2_PROFIT_FACTOR_FLOOR_ADMISSION (1.15) unchanged",
+        "_raw_feasibility_violation_score now calls _evolution_feasibility_floors",
+        "_feasibility_gate_failures now calls _evolution_feasibility_floors",
+        "_passes_pool_admission_impl still calls _pool_admission_floors (1.15) — verified at line 163",
+        "Test: PF=1.10 rule → violation score 0.0 (>=1.05) AND fails pool admission (<1.15)"
+      ]
+    },
+    "2_island_min_profitable": {
+      "required": "3-symbol island min_profitable=2",
+      "status": "PASS",
+      "evidence": [
+        "config.py resolve_island_hyperparams cluster branch: scaled = max(2, (sym_n + 1) // 2)",
+        "3-sym → max(2, 2) = 2; 4-sym → 2; 5-sym → 3",
+        "orphan branch (sym_n < 3) unchanged: max(1, ...) → orphan still 1",
+        "Tests updated: n=3,4 expect 2; n=5,6 expect 3; n=7 expects 4"
+      ]
+    },
+    "3_corr_clustering_default_on": {
+      "required": "Corr clustering on by default (hybrid_corr_v1), balanced",
+      "status": "PASS",
+      "evidence": [
+        "PHASE2_CLUSTER_USE_RETURN_CORR = True (default)",
+        "method tag = 'hybrid_corr_v1' when corr on, 'hybrid_v1' when off",
+        "PHASE2_CLUSTER_FEATURE_WEIGHT=0.3 / PHASE2_CLUSTER_CORR_WEIGHT=0.7 with normalisation",
+        "Balanced KMeans path preserved (no 1-symbol clusters)",
+        "Test: K=3 on 9 symbols → all clusters >= 3; all symbols covered",
+        "Test: fallback when no price-like column still yields hybrid_corr_v1"
+      ]
+    },
+    "4_val_in_fitness_penalty_false": {
+      "required": "VAL_IN_FITNESS_PENALTY=False",
+      "status": "PASS",
+      "evidence": [
+        "config.py: PHASE2_VAL_IN_FITNESS_PENALTY = False with explanatory comment",
+        "test_anti_overfit_config.py updated: assert is False"
+      ]
+    }
+  },
+  "scope_check": {
+    "out_of_scope_additions": "none",
+    "notes": "Diff limited to listed targets. No evaluator_v5, full pipeline, outputs/, or PHASE1_DISABLED changes. No items 5/6 (return-floor retune, global mode A/B) touched."
+  },
+  "tests": {
+    "command": "PYTHONPATH=. PYTEST_LOW_MEMORY=1 python -m pytest tests/unit/test_phase2_island_hyperparams.py tests/unit/test_symbol_cluster.py tests/unit/test_anti_overfit_config.py tests/unit/test_phase2_support.py -q",
+    "result": "53 passed"
+  },
+  "minor_observations": [
+    "Docstring of _return_series_per_symbol says it 'prefers label_close_288' but _PRICE_LIKE_COLUMNS tuple orders 'close' first, so code actually prefers close (matches task-3 text 'prefer close'). Minor doc wording nit only — behavior is correct, non-blocking."
+  ],
+  "next_step": "Proceed to code-review phase, then merge to main."
+}

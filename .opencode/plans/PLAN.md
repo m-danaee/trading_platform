@@ -1,60 +1,70 @@
-# PLAN: OOS Failure Diagnosis Fixes
+# PLAN: Phase 2 Feasible-Search Fixes (suggestions 1–4)
 
 ## Goal
-Stop shipping overfit single-symbol RB strategies that fail OOS. Fix three
-code/design bugs (fail-open fallback, soft min-symbols, stale train/val
-equity) and tighten config against validation reuse + thin pools.
+Unblock Phase 2 evolution (non-empty feasible set) while keeping hard
+anti-overfit gates at pool admission. Implement diagnosis items 1–4:
+evolution PF vs admission PF, island min_profitable, corr clustering,
+soften val-in-fitness penalties.
 
-Source diagnosis: `~/.cursor/plans/oos_failure_diagnosis_c17359ce.plan.md`
-(verified against `rb_governor.py`, `phase5_oos.py`, `config.py` 2026-07-10).
-
-Do NOT touch `evaluator_v5.ipynb` (per AGENTS.md). Do not run the full
-pipeline locally (OOM). Validate with targeted unit tests only.
+Do NOT touch `evaluator_v5.ipynb`. Targeted tests only + `PYTEST_LOW_MEMORY=1`.
+Do not run full pipeline (OOM).
 
 ## Context
-- Active objective: fail closed on non-positive-good / single-symbol teams;
-  make Phase 5 reports match the evaluated strategy; reduce train/val reuse
-  and improve Phase2→RB pool quality.
 - base_branch: main
 - branch_policy: isolated
-- execution_mode: continuous (user override 2026-07-10: merge+continue all tasks)
+- execution_mode: continuous (user: implement 1,2,3,4 without asking)
 
-## Execution order
+## Tasks
 
-### task-1: Fail-closed RB fallback (P0) — DONE (merged)
-- `RB_ALLOW_FALLBACK=False`; empty positive-good → empty rules_set;
-  loadable when deployment_accepted=False.
+### task-1: Evolution feasibility uses EVOLUTION PF (not admission 1.15)
+- Add `_evolution_feasibility_floors()` using
+  `PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION` (1.05).
+- Use it in `_raw_feasibility_violation_score` and
+  `_feasibility_gate_failures` (evolution path / collapse log).
+- Keep `_pool_admission_floors` + `_passes_pool_admission_impl` on
+  **ADMISSION** PF 1.15 unchanged.
+- Targets: `phases/phase2_support.py`, tests.
+- Acceptance: evolution violation score uses 1.05; pool admission still 1.15.
 
-### task-2: Hard-require min distinct symbols on final output (P0)
-- After compose/risk, if `RB_REQUIRE_SYMBOL_FILTERS` and
-  `len(_symbols_in_rules(opt_rules)) < RB_MIN_DISTINCT_SYMBOLS`: fail closed
-  (empty rules_set, deployment_accepted=false, reason
-  `insufficient_distinct_symbols`). Skip gate when filters disabled.
-- Targets: `rb_governor.py`, tests.
-- Acceptance: 1-rule symbol team rejected when min=5; multi-symbol OK;
-  gate skipped when filters off.
+### task-2: Island min_profitable_symbols = ceil-half (3-sym → 2)
+- In `resolve_island_hyperparams` cluster branch: require
+  `max(2, (n_symbols+1)//2)` instead of `max(3, (n_symbols+1)//2)`.
+- Cap still by `PHASE2_MIN_PROFITABLE_SYMBOLS`.
+- Update `test_phase2_island_hyperparams.py` expectations (3→2 for n=3,4).
+- Targets: `config.py`, tests.
+- Acceptance: 3-symbol island min_profitable=2; orphan still 1.
 
-### task-3: Phase 5 train/val equity curves (P2)
-- In `phase5_oos.py`, plot train + validation equity (same pattern as test).
-- Targets: `phase5_oos.py`, `tests/unit/test_phase5_oos.py`.
-- Acceptance: plot_equity_curve called for train, validation, test.
+### task-3: Correlation-aware hybrid symbol clustering
+- Extend `build_hybrid_symbol_clusters` to blend feature means with
+  per-symbol return-correlation embedding (config-weighted).
+- Config: `PHASE2_CLUSTER_USE_RETURN_CORR=True`,
+  `PHASE2_CLUSTER_FEATURE_WEIGHT`, `PHASE2_CLUSTER_CORR_WEIGHT`.
+- Keep balanced assignment (no 1-symbol clusters).
+- method tag e.g. `hybrid_corr_v1` when corr enabled.
+- Targets: `features/symbol_cluster.py`, `config.py`,
+  `tests/unit/test_symbol_cluster.py`.
+- Acceptance: still covers all symbols; balance K=3 on 10 syms ≥3 each;
+  corr path exercised when flag True.
 
-### task-4: Config anti-leak (P0 design)
-- `PHASE2_JOINT_TRAIN_VAL=False` (keep `PHASE2_VAL_IN_FITNESS_PENALTY=True`).
-- `RB_REQUIRE_SYMBOL_FILTERS=False`.
-- Keep `PHASE2_DIVERSITY_ON_F4=True`.
-- Targets: `config.py`, tests that pin old defaults.
-
-### task-5: Phase2→RB pool quality knobs (P1)
-- `PHASE2_RETURN_FLOOR_PCT=1.0` (was 0.0).
-- `PHASE2_MONTHLY_ADMISSION_MIN_RATIO=0.50` (was 0.55).
-- Targets: `config.py`, tests that pin old values.
+### task-4: Soften val-in-fitness penalty stack
+- Set `PHASE2_VAL_IN_FITNESS_PENALTY = False` (val still used at admission).
+- Document: with JOINT=False, val penalties during evolution starved search;
+  hard gates remain at pool admission.
+- Fix any tests pinning True.
+- Targets: `config.py`, tests.
 
 ## Out of scope
-- Nested holdout, profit amplifier, full pipeline, evaluator_v5, TP/SL retune.
+- Global mode A/B (item 6)
+- Return floor retune (item 5) unless needed later
+- TP/SL retune, evaluator_v5, full pipeline
 
 ## Verification
 ```bash
 source .venv/bin/activate
-PYTEST_LOW_MEMORY=1 PYTHONPATH=. python -m pytest <related> -q
+PYTHONPATH=. PYTEST_LOW_MEMORY=1 python -m pytest \
+  tests/unit/test_phase2_island_hyperparams.py \
+  tests/unit/test_symbol_cluster.py \
+  tests/unit/test_anti_overfit_config.py \
+  -q
+# + new tests for evolution floors
 ```
