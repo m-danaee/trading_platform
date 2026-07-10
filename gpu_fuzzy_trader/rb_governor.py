@@ -1544,6 +1544,78 @@ def run_rb_governor_pipeline(
             min_valid_trades=int(getattr(_cfg, "RB_RULESET_MIN_VALID_TRADES", getattr(_cfg, "RB_MIN_VALID_TRADES", 15))),
         )
 
+        # ── Hard gate: minimum distinct symbols on final output ──────────────
+        if bool(getattr(_cfg, "RB_REQUIRE_SYMBOL_FILTERS", False)):
+            min_distinct = int(getattr(_cfg, "RB_MIN_DISTINCT_SYMBOLS", 0))
+            if min_distinct > 0:
+                n_symbols = len(_symbols_in_rules(opt_rules))
+                if n_symbols < min_distinct:
+                    logger.warning(
+                        "RB [%s]: insufficient distinct symbols in final ruleset "
+                        "(%d < %d required); failing closed.",
+                        direction, n_symbols, min_distinct,
+                    )
+                    opt_rules = []
+                    opt_train = {}
+                    opt_test = {}
+                    opt_score = 0.0
+                    strategy = _strategy(
+                        direction, [],
+                        risk_optimized=False,
+                        extra={
+                            "deployment_accepted": False,
+                            "reason": "insufficient_distinct_symbols",
+                            "n_symbols": n_symbols,
+                            "required": min_distinct,
+                        },
+                    )
+                    strategy_path = out_dir / f"{direction}.json"
+                    with strategy_path.open("w", encoding="utf-8") as fh:
+                        json.dump(strategy, fh, indent=2)
+                    _write_clean_evaluator(strategy, out_dir / "evaluator_clean" / f"{direction}_evaluator_clean.json")
+                    report = {
+                        "direction": direction,
+                        "rb_score": 0.0,
+                        "train_metrics": {},
+                        "valid_metrics": {},
+                        "train_minus_valid_return_pct": 0.0,
+                        "train_valid_ratio": 0.0,
+                        "n_positive_single_rules": len(candidates),
+                        "selected_rules": 0,
+                        "compose_history": compose_history,
+                        "risk_history": risk_history,
+                        "profit_amplifier": profit_meta,
+                        "top_single_rules": [
+                            {
+                                "rank": i + 1,
+                                "score": c.score,
+                                "train_return_pct": _f(c.train_metrics, "total_return_pct"),
+                                "valid_return_pct": _f(c.valid_metrics, "total_return_pct"),
+                                "train_pf": _f(c.train_metrics, "profit_factor"),
+                                "valid_pf": _f(c.valid_metrics, "profit_factor"),
+                                "valid_dd": _f(c.valid_metrics, "max_drawdown_pct"),
+                                "valid_trades": _i(c.valid_metrics, "executed_trades"),
+                                "conditions": list(c.rule.get("conditions", [])),
+                                "rule": _rule_to_engine(c.rule),
+                            }
+                            for i, c in enumerate(candidates[:25])
+                        ],
+                        "fail_closed": True,
+                        "fail_closed_reason": "insufficient_distinct_symbols",
+                        "n_symbols": n_symbols,
+                        "required_symbols": min_distinct,
+                    }
+                    with (reports_dir / f"rb_governor_{direction}_report.json").open("w", encoding="utf-8") as fh:
+                        json.dump(report, fh, indent=2, default=str)
+                    logger.info(
+                        "RB [%s]: fail-closed empty strategy written "
+                        "(insufficient_distinct_symbols: %d < %d).",
+                        direction, n_symbols, min_distinct,
+                    )
+                    results[direction] = strategy
+                    continue
+        # ── End hard gate ────────────────────────────────────────────────────
+
         val_ret = _f(opt_test, "total_return_pct")
         val_pf = _f(opt_test, "profit_factor")
         ret_gate = float(_cfg.PHASE5_VALIDATION_RETURN_GATE_PCT)
