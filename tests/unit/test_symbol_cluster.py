@@ -63,7 +63,8 @@ def test_balanced_10_symbols_k3_no_small_cluster():
         assert sum(sizes) == 10, f"seed={seed}: total symbols {sum(sizes)} != 10"
         # Payload shape unchanged
         assert set(payload.keys()) == {"clusters", "method", "n_clusters", "symbols"}
-        assert payload["method"] == "hybrid_v1"
+        # Default PHASE2_CLUSTER_USE_RETURN_CORR=True → hybrid_corr_v1
+        assert payload["method"] == "hybrid_corr_v1"
 
 
 def test_balanced_k_equals_n_symbols():
