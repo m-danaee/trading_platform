@@ -1205,13 +1205,13 @@ PHASE2_N_CLUSTERS = 3
 #   and blend with feature-means (weights below) for a hybrid clustering that
 #   groups symbols with similar return patterns.  Set False for legacy
 #   feature-mean-only clustering.
-#   → Phase 2 feasible-search item 3
-PHASE2_CLUSTER_USE_RETURN_CORR = False
+#   Default True (feasible-search item 3): islands should group co-movers.
+PHASE2_CLUSTER_USE_RETURN_CORR = True
 # PHASE2_CLUSTER_FEATURE_WEIGHT / CORR_WEIGHT — blend weights for the
 #   feature-mean block and the return-correlation embedding.  Normalised to
-#   sum=1 internally.
-PHASE2_CLUSTER_FEATURE_WEIGHT = 0.5
-PHASE2_CLUSTER_CORR_WEIGHT = 0.5
+#   sum=1 internally.  Corr-heavy so co-movement dominates; features break ties.
+PHASE2_CLUSTER_FEATURE_WEIGHT = 0.3
+PHASE2_CLUSTER_CORR_WEIGHT = 0.7
 # PHASE2_ISLAND_TOTAL_GENERATIONS — generation budget split across islands.
 PHASE2_ISLAND_TOTAL_GENERATIONS = PHASE2_GENERATIONS
 # PHASE2_ISLAND_EPOCH_GENERATIONS — generations per island epoch before migration.

@@ -23,7 +23,8 @@ SYMBOL_CLUSTERS_PATH = os.path.join(config.OUTPUTS_DIR, "symbol_clusters.json")
 
 
 # Price-like column candidates for return-series computation, in preference order.
-_PRICE_LIKE_COLUMNS = ("label_close_288", "label_open_next")
+# Prefer actual OHLC ``close`` when present; labels are fallbacks on slim frames.
+_PRICE_LIKE_COLUMNS = ("close", "label_close_288", "label_open_next")
 
 
 def _return_series_per_symbol(
