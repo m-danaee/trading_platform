@@ -225,6 +225,8 @@ def _validate_rule_set(rule_set: object) -> dict:
       - Validates direction
       - Truncates rules_set to PHASE3_GLOBAL_MAX_RULES if needed (log WARNING)
       - Validates PHASE3_GLOBAL_MIN_RULES–PHASE3_GLOBAL_MAX_RULES after truncation
+        (Exception: empty rules_set is allowed when ``deployment_accepted`` is
+        explicitly ``False`` — the fail-closed RB fallback path.)
       - Validates each rule object
 
     Returns a normalised dict ready for JSON serialisation.
@@ -268,10 +270,14 @@ def _validate_rule_set(rule_set: object) -> dict:
         rules_list = rules_list[:schema_max]
 
     # Requirement 12.8: must have at least min rules
+    # Exception: empty rules_set is allowed when deployment_accepted is False
+    # (fail-closed path: no positive-good candidates found, intentionally empty).
     if len(rules_list) < schema_min:
-        raise ValidationError(
-            f"'rules_set' must contain at least {schema_min} rules, got {len(rules_list)}."
-        )
+        is_fail_closed = len(rules_list) == 0 and rule_set.get("deployment_accepted") is False
+        if not is_fail_closed:
+            raise ValidationError(
+                f"'rules_set' must contain at least {schema_min} rules, got {len(rules_list)}."
+            )
 
     # Validate each rule
     validated_rules = []

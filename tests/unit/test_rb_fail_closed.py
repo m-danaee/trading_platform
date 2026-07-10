@@ -17,6 +17,7 @@ import pandas as pd
 import pytest
 
 from gpu_fuzzy_trader import config as _cfg
+from gpu_fuzzy_trader.output.writer import Output_Writer, _validate_rule_set, ValidationError
 from gpu_fuzzy_trader.rb_governor import (
     _filter_good_rules,
     _strategy,
@@ -228,6 +229,109 @@ class TestFailClosedDefault:
 
 
 # ---------------------------------------------------------------------------
+# Tests for P1-2: run_rb_governor_pipeline return value includes fail-closed direction
+# ---------------------------------------------------------------------------
+
+class TestFailClosedReturnValue:
+    """The pipeline return value must include the fail-closed direction."""
+
+    def test_fail_closed_return_value_contains_direction(self):
+        """run_rb_governor_pipeline returns {direction: strategy} even when
+        the direction is fail-closed (no positive-good candidates)."""
+        train_df = _dummy_df(100)
+        val_df = _dummy_df(100)
+        pools = {
+            "long": _pool_rules(3),
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch(
+                "gpu_fuzzy_trader.rb_governor._filter_good_rules",
+                return_value=[],
+            ), patch.object(_cfg, "RB_ALLOW_FALLBACK", False), patch(
+                "gpu_fuzzy_trader.rb_governor.CPUBacktestEngine",
+            ):
+                results = run_rb_governor_pipeline(
+                    train_df, val_df,
+                    pools,
+                    ("long",),
+                    output_dir=tmpdir,
+                )
+            assert "long" in results, "fail-closed direction must be in results"
+            strat = results["long"]
+            assert strat["direction"] == "long"
+            assert strat["rules_set"] == []
+            assert strat["deployment_accepted"] is False
+
+
+# ---------------------------------------------------------------------------
+# Tests for P1-1: _validate_rule_set accepts empty rules when deployment_accepted=False
+# ---------------------------------------------------------------------------
+
+class TestValidateRuleSetFailClosed:
+    """_validate_rule_set must allow empty rules_set when deployment_accepted is False."""
+
+    def test_accepts_empty_rules_when_deployment_accepted_false(self):
+        """Empty rules_set with deployment_accepted=False passes validation."""
+        data = {
+            "direction": "long",
+            "rules_set": [],
+            "deployment_accepted": False,
+            "reason": "no_positive_good_candidates",
+        }
+        result = _validate_rule_set(data)
+        assert result["direction"] == "long"
+        assert result["rules_set"] == []
+
+    def test_still_rejects_empty_rules_when_deployment_accepted_true(self):
+        """Empty rules_set with deployment_accepted=True still raises ValidationError."""
+        data = {
+            "direction": "long",
+            "rules_set": [],
+            "deployment_accepted": True,
+        }
+        with pytest.raises(ValidationError, match="must contain at least"):
+            _validate_rule_set(data)
+
+    def test_still_rejects_empty_rules_when_deployment_accepted_missing(self):
+        """Empty rules_set without deployment_accepted still raises ValidationError
+        (default path, not fail-closed)."""
+        data = {
+            "direction": "long",
+            "rules_set": [],
+        }
+        with pytest.raises(ValidationError, match="must contain at least"):
+            _validate_rule_set(data)
+
+    def test_fail_closed_strategy_passes_load_and_validate(self):
+        """The actual fail-closed strategy JSON file written by the pipeline
+        must be loadable via Output_Writer.load_and_validate."""
+        train_df = _dummy_df(100)
+        val_df = _dummy_df(100)
+        pools = {
+            "long": _pool_rules(3),
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch(
+                "gpu_fuzzy_trader.rb_governor._filter_good_rules",
+                return_value=[],
+            ), patch.object(_cfg, "RB_ALLOW_FALLBACK", False), patch(
+                "gpu_fuzzy_trader.rb_governor.CPUBacktestEngine",
+            ):
+                run_rb_governor_pipeline(
+                    train_df, val_df,
+                    pools,
+                    ("long",),
+                    output_dir=tmpdir,
+                )
+            strategy_path = Path(tmpdir) / "long.json"
+            assert strategy_path.exists()
+            writer = Output_Writer()
+            loaded = writer.load_and_validate(strategy_path)
+            assert loaded["direction"] == "long"
+            assert loaded["rules_set"] == []
+
+
+# ---------------------------------------------------------------------------
 # Tests for RB_ALLOW_FALLBACK=True (legacy fallback preserved)
 # ---------------------------------------------------------------------------
 
@@ -251,7 +355,7 @@ class TestAllowFallbackTrue:
             ), patch(
                 "gpu_fuzzy_trader.rb_governor._symbol_specialized_variants",
                 return_value=[{"conditions": ["feat_1 IS High"], "tp": 2.0, "sl": 1.2, "capital_pct": 18.0}],
-            ), patch(
+            ) as mock_variants, patch(
                 "gpu_fuzzy_trader.rb_governor.CPUBacktestEngine.simulate_rule_set",
                 return_value={
                     "total_return_pct": 2.0,
@@ -285,6 +389,8 @@ class TestAllowFallbackTrue:
                     ("long",),
                     output_dir=tmpdir,
                 )
+                # P2: assert legacy fallback was actually entered
+                mock_variants.assert_called()
 
 
 # ---------------------------------------------------------------------------

@@ -1481,6 +1481,7 @@ def run_rb_governor_pipeline(
                     "RB [%s]: fail-closed empty strategy written (deployment_accepted=false).",
                     direction,
                 )
+                results[direction] = strategy
                 continue
             logger.warning("RB [%s]: no single rules positive on both training and validation; falling back to best raw governor score.", direction)
             candidates = []
