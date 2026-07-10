@@ -775,9 +775,12 @@ SORTINO_SCALE = 10.0
 #   True  → slower (eval val every gen) but aligned with deployment; less overfit.
 #   False → train-only fitness; faster; holdout remains clean for model selection
 #           (Phase 3) & OOS (Phase 5). Robustness via purged 4-fold CV evaluator.
-# Changed False→True: anti-overfit via min(train,val) fitness; OOS generalization
-# was suffering because f3 used train-only profit_factor with no val signal.
-PHASE2_JOINT_TRAIN_VAL = True
+# Changed True→False (task-4): PHASE2_JOINT_TRAIN_VAL=True was double-counting
+# the val split — both joint fitness and pool-admission gates (monthly windows,
+# val return floors, overfit gaps) used the same val window, creating a leak.
+# Train-only fitness + val-only gates is the anti-overfit design (RB Governor
+# select-and-tune uses its own val split, not Phase 2's).
+PHASE2_JOINT_TRAIN_VAL = False
 
 # PHASE2_VAL_IN_FITNESS_PENALTY — when False (default), val-derived penalties
 #   (val_floor_penalty, val symbol_robustness, val trade-floor support cap) are
@@ -1931,7 +1934,11 @@ RB_MAX_SYMBOL_HHI: float = 0.55
 
 # RB_REQUIRE_SYMBOL_FILTERS — every final rule must include at least one
 #   ``symbol is X`` condition (required for per-symbol strategies).
-RB_REQUIRE_SYMBOL_FILTERS: bool = True
+# Kept False (task-4): re-enable only after multi-symbol specialised composition
+# works with task-2 gate + thick pool. Single-symbol rules overfit to symbol
+# noise and bleed OOS; multi-symbol teams (product composition or other) need
+# the specialised composition pipeline first.
+RB_REQUIRE_SYMBOL_FILTERS: bool = False
 
 # RB_MIN_DISTINCT_SYMBOLS — final ruleset must span at least this many symbols.
 RB_MIN_DISTINCT_SYMBOLS: int = 5
