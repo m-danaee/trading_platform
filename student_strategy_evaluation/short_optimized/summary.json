@@ -1,0 +1,68 @@
+{
+  "train": {
+    "final_equity": 1705.3418903726501,
+    "total_return_pct": 70.53418903726501,
+    "max_drawdown_pct": 3.467445393754153,
+    "profit_factor": 2.227655622486446,
+    "win_rate": 60.14234875444839,
+    "executed_trades": 562,
+    "account_ruined": false
+  },
+  "test": {
+    "final_equity": 1104.352834322328,
+    "total_return_pct": 10.43528343223279,
+    "max_drawdown_pct": 1.1874999999999885,
+    "profit_factor": 1.9529416940535134,
+    "win_rate": 58.87096774193549,
+    "executed_trades": 124,
+    "account_ruined": false
+  },
+  "n_rules": 14,
+  "comparison": {
+    "baseline_242": {
+      "label": "baseline",
+      "train_return_pct": 605.6905340332007,
+      "test_return_pct": 24.871485116264623,
+      "gap_pp": 580.8190489169361,
+      "gap_ratio": 24.352809299558533,
+      "train_per_1e6_rows": 329.638265213123,
+      "test_per_1e6_rows": 94.9003552971025,
+      "train_trades": 2203,
+      "test_trades": 362,
+      "train_mdd": 5.097387023912299,
+      "test_mdd": 3.533939553035595,
+      "train_pf": 2.250293496191688,
+      "test_pf": 1.76458653851524
+    },
+    "optimized_23": {
+      "label": "opt23",
+      "train_return_pct": 62.595933546247416,
+      "test_return_pct": 6.836543520774341,
+      "gap_pp": 55.759390025473074,
+      "gap_ratio": 9.156079143800651,
+      "train_per_1e6_rows": 34.066926564267355,
+      "test_per_1e6_rows": 26.085712457167052,
+      "train_trades": 1179,
+      "test_trades": 237,
+      "train_mdd": 4.955964560098523,
+      "test_mdd": 1.9411615939321276,
+      "train_pf": 1.4747422132856745,
+      "test_pf": 1.3045066418568136
+    },
+    "train_pruned_14": {
+      "label": "pruned14",
+      "train_return_pct": 70.53418903726501,
+      "test_return_pct": 10.43528343223279,
+      "gap_pp": 60.098905605032215,
+      "gap_ratio": 6.759202037521766,
+      "train_per_1e6_rows": 38.387206677369065,
+      "test_per_1e6_rows": 39.8171681632814,
+      "train_trades": 562,
+      "test_trades": 124,
+      "train_mdd": 3.467445393754153,
+      "test_mdd": 1.1874999999999885,
+      "train_pf": 2.227655622486446,
+      "test_pf": 1.9529416940535134
+    }
+  }
+}

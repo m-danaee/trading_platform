@@ -41,15 +41,19 @@ def compute_cluster_generation_budgets(
     total_gens: int,
     cluster_ids: list[str],
 ) -> dict[str, int]:
-    """Split *total_gens* across *cluster_ids* (base + remainder).
+    """Resolve per-island generation budgets.
 
-    Each cluster receives ``total_gens // len(cluster_ids)`` generations;
-    the first ``total_gens % len(cluster_ids)`` clusters get one extra.
+    Default: split *total_gens* across *cluster_ids* (base + remainder).
+
+    When ``PHASE2_ONE_SYMBOL_ISLANDS`` is True, each island gets the full
+    ``total_gens`` budget (wall-clock ≈ total_gens × n_symbols). Splitting
+    would starve one-symbol islands (e.g. 20 gens / 10 symbols → 2 gens).
 
     Parameters
     ----------
     total_gens : int
-        Total generation budget across all clusters.
+        Generation budget (global total when splitting; per-island when
+        one-symbol mode).
     cluster_ids : list[str]
         Sorted list of cluster identifiers.
 
@@ -59,8 +63,11 @@ def compute_cluster_generation_budgets(
         Mapping ``{cluster_id: generation_budget}``.
     """
     k = max(1, len(cluster_ids))
-    base = max(1, total_gens // k)
-    remainder = total_gens % k
+    per = max(1, int(total_gens))
+    if bool(getattr(_cfg, "PHASE2_ONE_SYMBOL_ISLANDS", False)):
+        return {cid: per for cid in cluster_ids}
+    base = max(1, per // k)
+    remainder = per % k
     return {
         cid: base + (1 if idx < remainder else 0)
         for idx, cid in enumerate(cluster_ids)
@@ -624,21 +631,43 @@ def run_cluster_phase2(
     if not feat_short:
         feat_short = feature_infos
 
-    cluster_payload = build_hybrid_symbol_clusters(
-        train_df,
-        feat_long,
-        feat_short,
-        n_clusters=int(_cfg.PHASE2_N_CLUSTERS),
-        random_state=seed,
-    )
+    symbols = sorted(
+        {str(s) for s in train_df["symbol"].dropna().unique().tolist()},
+    ) if "symbol" in train_df.columns else []
+    if bool(getattr(_cfg, "PHASE2_ONE_SYMBOL_ISLANDS", False)):
+        # One island per symbol — skip KMeans / corr clustering.
+        cluster_map = {str(i): [sym] for i, sym in enumerate(symbols)}
+        cluster_payload = {
+            "method": "one_symbol_v1",
+            "n_clusters": len(cluster_map),
+            "clusters": cluster_map,
+            "symbols": symbols,
+        }
+        logger.info(
+            "Phase 2 [%s]: one-symbol islands n=%d (clustering disabled)",
+            direction,
+            len(cluster_map),
+        )
+    else:
+        cluster_payload = build_hybrid_symbol_clusters(
+            train_df,
+            feat_long,
+            feat_short,
+            n_clusters=int(_cfg.PHASE2_N_CLUSTERS),
+            random_state=seed,
+        )
+        cluster_map = cluster_payload["clusters"]
     persist_symbol_clusters(SYMBOL_CLUSTERS_PATH, cluster_payload)
-    cluster_map: dict[str, list[str]] = cluster_payload["clusters"]
+    cluster_map = dict(cluster_payload["clusters"])
 
     logger.info(
-        "Phase 2 [%s]: cluster island mode K=%d reference_rows=%d",
+        "Phase 2 [%s]: cluster island mode K=%d reference_rows=%d "
+        "one_symbol=%s per_island_gens=%s",
         direction,
         len(cluster_map),
         reference_rows,
+        bool(getattr(_cfg, "PHASE2_ONE_SYMBOL_ISLANDS", False)),
+        int(_cfg.PHASE2_ISLAND_TOTAL_GENERATIONS),
     )
     migration_status = (
         "enabled sequential post-cluster chain"

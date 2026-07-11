@@ -1,0 +1,401 @@
+{
+  "input_rules": 242,
+  "candidates_before_budget": 23,
+  "kept_rules": 23,
+  "kept_per_cluster": {
+    "0": 12,
+    "1": 9,
+    "2": 2
+  },
+  "reject_counts": {
+    "min_test_trades": 63,
+    "test_weak": 12,
+    "min_train_trades": 114,
+    "train_not_positive": 5,
+    "no_train_trades": 23,
+    "train_test_gap": 2
+  },
+  "kept": [
+    {
+      "original_rule_index": 233,
+      "cluster": 0,
+      "cluster_symbols": [
+        "4",
+        "5",
+        "7",
+        "8"
+      ],
+      "score": 1.44794135997173,
+      "train_trades": 7,
+      "train_net_pnl": 28.316089487249933,
+      "test_trades": 4,
+      "test_net_pnl": 11.75049581051716,
+      "train_pf": 3.5303585419343326,
+      "test_pf": Infinity
+    },
+    {
+      "original_rule_index": 51,
+      "cluster": 0,
+      "cluster_symbols": [
+        "4",
+        "5",
+        "7",
+        "8"
+      ],
+      "score": 1.4324310506106828,
+      "train_trades": 12,
+      "train_net_pnl": 82.8127048459547,
+      "test_trades": 3,
+      "test_net_pnl": 10.033292493529347,
+      "train_pf": 9.627360454577182,
+      "test_pf": Infinity
+    },
+    {
+      "original_rule_index": 217,
+      "cluster": 0,
+      "cluster_symbols": [
+        "4",
+        "5",
+        "7",
+        "8"
+      ],
+      "score": 1.3142085379199786,
+      "train_trades": 7,
+      "train_net_pnl": 40.24164030815266,
+      "test_trades": 8,
+      "test_net_pnl": 11.065250853506576,
+      "train_pf": 9.401781135838078,
+      "test_pf": 2.9836329995062423
+    },
+    {
+      "original_rule_index": 205,
+      "cluster": 0,
+      "cluster_symbols": [
+        "4",
+        "5",
+        "7",
+        "8"
+      ],
+      "score": 1.2723108626307074,
+      "train_trades": 15,
+      "train_net_pnl": 69.91605702152998,
+      "test_trades": 7,
+      "test_net_pnl": 9.56838337185902,
+      "train_pf": 6.681481430071423,
+      "test_pf": 3.386437864623364
+    },
+    {
+      "original_rule_index": 65,
+      "cluster": 0,
+      "cluster_symbols": [
+        "4",
+        "5",
+        "7",
+        "8"
+      ],
+      "score": 1.2620895587817924,
+      "train_trades": 25,
+      "train_net_pnl": 45.72541957864257,
+      "test_trades": 8,
+      "test_net_pnl": 10.294589319929585,
+      "train_pf": 2.1445782333900847,
+      "test_pf": 3.1130858817487908
+    },
+    {
+      "original_rule_index": 28,
+      "cluster": 0,
+      "cluster_symbols": [
+        "4",
+        "5",
+        "7",
+        "8"
+      ],
+      "score": 0.5794525104782079,
+      "train_trades": 7,
+      "train_net_pnl": 2.82261576625681,
+      "test_trades": 6,
+      "test_net_pnl": 4.9405289266819254,
+      "train_pf": 1.1434197336900869,
+      "test_pf": 2.009821182577786
+    },
+    {
+      "original_rule_index": 220,
+      "cluster": 0,
+      "cluster_symbols": [
+        "4",
+        "5",
+        "7",
+        "8"
+      ],
+      "score": 0.521077674413643,
+      "train_trades": 29,
+      "train_net_pnl": 104.33882972356055,
+      "test_trades": 4,
+      "test_net_pnl": 1.6845607842487522,
+      "train_pf": 3.407683381942869,
+      "test_pf": 1.5292350747673469
+    },
+    {
+      "original_rule_index": 72,
+      "cluster": 0,
+      "cluster_symbols": [
+        "4",
+        "5",
+        "7",
+        "8"
+      ],
+      "score": 0.5130465004616025,
+      "train_trades": 7,
+      "train_net_pnl": 24.9123939940672,
+      "test_trades": 3,
+      "test_net_pnl": 3.4126715872397755,
+      "train_pf": 3.193864405768331,
+      "test_pf": 2.394365170362227
+    },
+    {
+      "original_rule_index": 219,
+      "cluster": 0,
+      "cluster_symbols": [
+        "4",
+        "5",
+        "7",
+        "8"
+      ],
+      "score": 0.4793327868741379,
+      "train_trades": 6,
+      "train_net_pnl": 22.04866642426019,
+      "test_trades": 5,
+      "test_net_pnl": 3.32381835613098,
+      "train_pf": 4.454268829809033,
+      "test_pf": 2.045460581665452
+    },
+    {
+      "original_rule_index": 15,
+      "cluster": 0,
+      "cluster_symbols": [
+        "4",
+        "5",
+        "7",
+        "8"
+      ],
+      "score": 0.34889446304584143,
+      "train_trades": 23,
+      "train_net_pnl": 24.73832424549229,
+      "test_trades": 2,
+      "test_net_pnl": 1.785583043398811,
+      "train_pf": 1.762055692062897,
+      "test_pf": 2.2249808817110215
+    },
+    {
+      "original_rule_index": 225,
+      "cluster": 0,
+      "cluster_symbols": [
+        "4",
+        "5",
+        "7",
+        "8"
+      ],
+      "score": 0.3293275502928943,
+      "train_trades": 5,
+      "train_net_pnl": 18.22383487449197,
+      "test_trades": 2,
+      "test_net_pnl": 1.8409005280800987,
+      "train_pf": 2.17177399172313,
+      "test_pf": 2.082648743037921
+    },
+    {
+      "original_rule_index": 222,
+      "cluster": 0,
+      "cluster_symbols": [
+        "4",
+        "5",
+        "7",
+        "8"
+      ],
+      "score": 0.3238202276397043,
+      "train_trades": 28,
+      "train_net_pnl": 22.472252076517208,
+      "test_trades": 6,
+      "test_net_pnl": 2.0300447719304895,
+      "train_pf": 1.2565392192024556,
+      "test_pf": 1.3804362482171217
+    },
+    {
+      "original_rule_index": 114,
+      "cluster": 1,
+      "cluster_symbols": [
+        "1",
+        "2",
+        "6"
+      ],
+      "score": 2.401139011700103,
+      "train_trades": 21,
+      "train_net_pnl": 110.29655085072974,
+      "test_trades": 3,
+      "test_net_pnl": 13.766724730037156,
+      "train_pf": 3.698385474627157,
+      "test_pf": Infinity
+    },
+    {
+      "original_rule_index": 207,
+      "cluster": 1,
+      "cluster_symbols": [
+        "1",
+        "2",
+        "6"
+      ],
+      "score": 2.163541275007492,
+      "train_trades": 11,
+      "train_net_pnl": 50.37332301670955,
+      "test_trades": 3,
+      "test_net_pnl": 13.608044978762926,
+      "train_pf": 3.3309381979997728,
+      "test_pf": Infinity
+    },
+    {
+      "original_rule_index": 62,
+      "cluster": 1,
+      "cluster_symbols": [
+        "1",
+        "2",
+        "6"
+      ],
+      "score": 2.0120512729951874,
+      "train_trades": 25,
+      "train_net_pnl": 7.344132011822673,
+      "test_trades": 4,
+      "test_net_pnl": 13.644448476422482,
+      "train_pf": 1.0771046418025543,
+      "test_pf": Infinity
+    },
+    {
+      "original_rule_index": 206,
+      "cluster": 1,
+      "cluster_symbols": [
+        "1",
+        "2",
+        "6"
+      ],
+      "score": 1.765419156220516,
+      "train_trades": 8,
+      "train_net_pnl": 18.32974668259189,
+      "test_trades": 3,
+      "test_net_pnl": 11.391945383236253,
+      "train_pf": 1.583866245491668,
+      "test_pf": Infinity
+    },
+    {
+      "original_rule_index": 159,
+      "cluster": 1,
+      "cluster_symbols": [
+        "1",
+        "2",
+        "6"
+      ],
+      "score": 1.7015864742192477,
+      "train_trades": 7,
+      "train_net_pnl": 63.38480609673887,
+      "test_trades": 4,
+      "test_net_pnl": 9.604797584304789,
+      "train_pf": Infinity,
+      "test_pf": Infinity
+    },
+    {
+      "original_rule_index": 230,
+      "cluster": 1,
+      "cluster_symbols": [
+        "1",
+        "2",
+        "6"
+      ],
+      "score": 1.468029212597957,
+      "train_trades": 10,
+      "train_net_pnl": 75.41590315265576,
+      "test_trades": 2,
+      "test_net_pnl": 7.425270126618681,
+      "train_pf": 14.270361037898686,
+      "test_pf": Infinity
+    },
+    {
+      "original_rule_index": 87,
+      "cluster": 1,
+      "cluster_symbols": [
+        "1",
+        "2",
+        "6"
+      ],
+      "score": 1.2217218882760505,
+      "train_trades": 10,
+      "train_net_pnl": 55.85070128905424,
+      "test_trades": 2,
+      "test_net_pnl": 6.046833002812988,
+      "train_pf": 6.830878649220169,
+      "test_pf": Infinity
+    },
+    {
+      "original_rule_index": 67,
+      "cluster": 1,
+      "cluster_symbols": [
+        "1",
+        "2",
+        "6"
+      ],
+      "score": 0.6748878566611375,
+      "train_trades": 17,
+      "train_net_pnl": 40.26632071911415,
+      "test_trades": 3,
+      "test_net_pnl": 3.0690089708157693,
+      "train_pf": 2.1675130289206495,
+      "test_pf": 2.769043156951821
+    },
+    {
+      "original_rule_index": 103,
+      "cluster": 1,
+      "cluster_symbols": [
+        "1",
+        "2",
+        "6"
+      ],
+      "score": 0.5404846445806801,
+      "train_trades": 5,
+      "train_net_pnl": 50.56513482161267,
+      "test_trades": 3,
+      "test_net_pnl": 2.1120145415310434,
+      "train_pf": 229.27764261063518,
+      "test_pf": 1.7680052878294703
+    },
+    {
+      "original_rule_index": 221,
+      "cluster": 2,
+      "cluster_symbols": [
+        "9",
+        "3",
+        "10"
+      ],
+      "score": 0.7020488473058185,
+      "train_trades": 14,
+      "train_net_pnl": 18.47359281132674,
+      "test_trades": 2,
+      "test_net_pnl": 3.0271992188658152,
+      "train_pf": 1.7939101269007245,
+      "test_pf": Infinity
+    },
+    {
+      "original_rule_index": 226,
+      "cluster": 2,
+      "cluster_symbols": [
+        "9",
+        "3",
+        "10"
+      ],
+      "score": 0.6012406182190326,
+      "train_trades": 27,
+      "train_net_pnl": 6.4385311290752405,
+      "test_trades": 2,
+      "test_net_pnl": 2.5779245398997905,
+      "train_pf": 1.104653319957794,
+      "test_pf": Infinity
+    }
+  ],
+  "output": "/home/danaee/trading_platform/short_optimized.json"
+}

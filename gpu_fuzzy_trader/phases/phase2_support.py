@@ -35,7 +35,31 @@ def resolve_evolution_floors(
     n_rows: int | None = None,
     island_hyperparams: _cfg.IslandHyperparams | None = None,
 ) -> EvolutionFloors:
-    """Return stage-aware fitness floors; defaults to global strict knobs."""
+    """Return stage-aware fitness floors; defaults to global strict knobs.
+
+    When both *stage_params* and *island_hyperparams* are set (cluster
+    two-stage), Stage A keeps soft exploration floors; Stage B uses
+    island-scaled support with strict feasibility.
+    """
+    if stage_params is not None:
+        min_support = int(stage_params.min_trade_support)
+        if island_hyperparams is not None:
+            island_support = int(island_hyperparams.min_trade_support)
+            if bool(stage_params.soft_feasibility) or stage_params.stage == "A":
+                # Soft Stage A: never stricter than the island-scaled target.
+                min_support = min(min_support, island_support)
+            else:
+                # Stage B refinement: island-scaled support floors.
+                min_support = island_support
+        return EvolutionFloors(
+            return_floor_pct=float(stage_params.return_floor_pct),
+            min_trade_support=min_support,
+            use_robust_return_obj=bool(stage_params.use_robust_return_obj),
+            soft_feasibility=bool(stage_params.soft_feasibility),
+            pool_require_positive_splits=bool(
+                stage_params.pool_require_positive_splits
+            ),
+        )
     if island_hyperparams is not None:
         return EvolutionFloors(
             return_floor_pct=float(_cfg.PHASE2_RETURN_FLOOR_PCT),
@@ -46,23 +70,13 @@ def resolve_evolution_floors(
                 _cfg.PHASE2_POOL_REQUIRE_POSITIVE_SPLITS
             ),
         )
-    if stage_params is None:
-        return EvolutionFloors(
-            return_floor_pct=float(_cfg.PHASE2_RETURN_FLOOR_PCT),
-            min_trade_support=int(_cfg.effective_min_trade_support(n_rows)),
-            use_robust_return_obj=bool(_cfg.PHASE2_USE_ROBUST_RETURN_OBJ),
-            soft_feasibility=False,
-            pool_require_positive_splits=bool(
-                _cfg.PHASE2_POOL_REQUIRE_POSITIVE_SPLITS
-            ),
-        )
     return EvolutionFloors(
-        return_floor_pct=float(stage_params.return_floor_pct),
-        min_trade_support=int(stage_params.min_trade_support),
-        use_robust_return_obj=bool(stage_params.use_robust_return_obj),
-        soft_feasibility=bool(stage_params.soft_feasibility),
+        return_floor_pct=float(_cfg.PHASE2_RETURN_FLOOR_PCT),
+        min_trade_support=int(_cfg.effective_min_trade_support(n_rows)),
+        use_robust_return_obj=bool(_cfg.PHASE2_USE_ROBUST_RETURN_OBJ),
+        soft_feasibility=False,
         pool_require_positive_splits=bool(
-            stage_params.pool_require_positive_splits
+            _cfg.PHASE2_POOL_REQUIRE_POSITIVE_SPLITS
         ),
     )
 
@@ -571,6 +585,7 @@ def feasibility_violation_score(
     *,
     stage_params: Phase2StageParams | None = None,
     n_valid_rows: int | None = None,
+    island_hyperparams: _cfg.IslandHyperparams | None = None,
 ) -> float:
     """
     Non-negative violation score; 0 means the rule meets deployability floors.
@@ -578,7 +593,11 @@ def feasibility_violation_score(
     Used to penalize infeasible chromosomes during evolution.
     When Stage A soft feasibility is active, returns 0 (penalties applied elsewhere).
     """
-    floors = resolve_evolution_floors(stage_params)
+    floors = resolve_evolution_floors(
+        stage_params,
+        n_rows=n_valid_rows,
+        island_hyperparams=island_hyperparams,
+    )
     if floors.soft_feasibility:
         return 0.0
     if not floors.pool_require_positive_splits:

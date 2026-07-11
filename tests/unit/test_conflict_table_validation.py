@@ -215,7 +215,8 @@ class TestConflict08EarlyStopArchiveSeed:
   def test_island_plateau_early_stop_enabled_by_default(self):
       assert _cfg.PHASE2_ISLAND_MODE == "cluster"
       assert _cfg.island_early_stop_enabled() is False
-      assert _cfg.island_plateau_early_stop_enabled() is True
+      # 2026-07-11b: short one-symbol budgets run full gens (no plateau stop).
+      assert _cfg.island_plateau_early_stop_enabled() is False
 
   def test_global_mode_enables_early_stop_when_not_cluster(self, monkeypatch):
       monkeypatch.setattr(_cfg, "PHASE2_ISLAND_MODE", "global")

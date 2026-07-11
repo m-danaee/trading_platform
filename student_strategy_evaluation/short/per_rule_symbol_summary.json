@@ -1,0 +1,584 @@
+{
+  "train": {
+    "n_rules_total": 242,
+    "n_rules_with_trades": 219,
+    "n_rules_zero_trades": 23,
+    "symbols": [
+      {
+        "split": "train",
+        "Symbol": 1,
+        "trades": 187,
+        "wins": 116,
+        "losses": 71,
+        "win_rate_pct": 62.03208556149733,
+        "net_pnl": 634.5729290774221,
+        "avg_pnl": 3.3934381234086746,
+        "profit_factor": 2.6373688160282835,
+        "tp_exits": 112,
+        "sl_exits": 69,
+        "time_exits": 6
+      },
+      {
+        "split": "train",
+        "Symbol": 2,
+        "trades": 400,
+        "wins": 250,
+        "losses": 150,
+        "win_rate_pct": 62.5,
+        "net_pnl": 1609.1523946509826,
+        "avg_pnl": 4.022880986627457,
+        "profit_factor": 2.709157815268777,
+        "tp_exits": 233,
+        "sl_exits": 148,
+        "time_exits": 19
+      },
+      {
+        "split": "train",
+        "Symbol": 3,
+        "trades": 140,
+        "wins": 72,
+        "losses": 68,
+        "win_rate_pct": 51.42857142857142,
+        "net_pnl": 146.47592794823527,
+        "avg_pnl": 1.0462566282016805,
+        "profit_factor": 1.379482032132528,
+        "tp_exits": 64,
+        "sl_exits": 63,
+        "time_exits": 13
+      },
+      {
+        "split": "train",
+        "Symbol": 4,
+        "trades": 189,
+        "wins": 111,
+        "losses": 78,
+        "win_rate_pct": 58.730158730158735,
+        "net_pnl": 340.8506990583487,
+        "avg_pnl": 1.8034428521605752,
+        "profit_factor": 1.9659692498192114,
+        "tp_exits": 80,
+        "sl_exits": 67,
+        "time_exits": 42
+      },
+      {
+        "split": "train",
+        "Symbol": 5,
+        "trades": 273,
+        "wins": 151,
+        "losses": 122,
+        "win_rate_pct": 55.311355311355314,
+        "net_pnl": 742.4369080805958,
+        "avg_pnl": 2.7195491138483363,
+        "profit_factor": 2.354425459811333,
+        "tp_exits": 147,
+        "sl_exits": 118,
+        "time_exits": 8
+      },
+      {
+        "split": "train",
+        "Symbol": 6,
+        "trades": 197,
+        "wins": 122,
+        "losses": 75,
+        "win_rate_pct": 61.92893401015228,
+        "net_pnl": 764.7956039914432,
+        "avg_pnl": 3.882211187773823,
+        "profit_factor": 2.9783980385679736,
+        "tp_exits": 118,
+        "sl_exits": 73,
+        "time_exits": 6
+      },
+      {
+        "split": "train",
+        "Symbol": 7,
+        "trades": 250,
+        "wins": 136,
+        "losses": 114,
+        "win_rate_pct": 54.400000000000006,
+        "net_pnl": 571.2324393370166,
+        "avg_pnl": 2.284929757348066,
+        "profit_factor": 1.9965888734638484,
+        "tp_exits": 123,
+        "sl_exits": 104,
+        "time_exits": 23
+      },
+      {
+        "split": "train",
+        "Symbol": 8,
+        "trades": 219,
+        "wins": 134,
+        "losses": 85,
+        "win_rate_pct": 61.18721461187214,
+        "net_pnl": 765.3660263502286,
+        "avg_pnl": 3.494822038128898,
+        "profit_factor": 2.5090527671648926,
+        "tp_exits": 127,
+        "sl_exits": 84,
+        "time_exits": 8
+      },
+      {
+        "split": "train",
+        "Symbol": 9,
+        "trades": 232,
+        "wins": 120,
+        "losses": 112,
+        "win_rate_pct": 51.724137931034484,
+        "net_pnl": 231.4258566386202,
+        "avg_pnl": 0.9975252441319836,
+        "profit_factor": 1.4438276680756859,
+        "tp_exits": 63,
+        "sl_exits": 67,
+        "time_exits": 102
+      },
+      {
+        "split": "train",
+        "Symbol": 10,
+        "trades": 116,
+        "wins": 65,
+        "losses": 51,
+        "win_rate_pct": 56.03448275862068,
+        "net_pnl": 250.59655519910578,
+        "avg_pnl": 2.160315131026774,
+        "profit_factor": 2.044317853017961,
+        "tp_exits": 56,
+        "sl_exits": 46,
+        "time_exits": 14
+      }
+    ],
+    "top10_rules_by_net_pnl": [
+      {
+        "Rule_Index": 53,
+        "trades": 37,
+        "win_rate_pct": 56.75675675675676,
+        "net_pnl": 229.14253522846468,
+        "profit_factor": 3.5726985707731473
+      },
+      {
+        "Rule_Index": 23,
+        "trades": 38,
+        "win_rate_pct": 71.05263157894737,
+        "net_pnl": 143.6515658102892,
+        "profit_factor": 3.2481339749483435
+      },
+      {
+        "Rule_Index": 2,
+        "trades": 17,
+        "win_rate_pct": 82.35294117647058,
+        "net_pnl": 143.410865335467,
+        "profit_factor": 4.547290775490405
+      },
+      {
+        "Rule_Index": 96,
+        "trades": 14,
+        "win_rate_pct": 85.71428571428571,
+        "net_pnl": 117.55475791165898,
+        "profit_factor": 54.43703727736293
+      },
+      {
+        "Rule_Index": 208,
+        "trades": 17,
+        "win_rate_pct": 82.35294117647058,
+        "net_pnl": 115.04909586789171,
+        "profit_factor": 6.501996304769311
+      },
+      {
+        "Rule_Index": 114,
+        "trades": 21,
+        "win_rate_pct": 85.71428571428571,
+        "net_pnl": 110.29655085072974,
+        "profit_factor": 3.698385474627157
+      },
+      {
+        "Rule_Index": 182,
+        "trades": 20,
+        "win_rate_pct": 55.00000000000001,
+        "net_pnl": 108.1312475538482,
+        "profit_factor": 3.516928939868483
+      },
+      {
+        "Rule_Index": 27,
+        "trades": 9,
+        "win_rate_pct": 77.77777777777779,
+        "net_pnl": 106.60585515425007,
+        "profit_factor": 20.28837592991466
+      },
+      {
+        "Rule_Index": 220,
+        "trades": 29,
+        "win_rate_pct": 51.724137931034484,
+        "net_pnl": 104.33882972356055,
+        "profit_factor": 3.407683381942869
+      },
+      {
+        "Rule_Index": 111,
+        "trades": 41,
+        "win_rate_pct": 48.78048780487805,
+        "net_pnl": 100.94208440247924,
+        "profit_factor": 1.776119194484721
+      }
+    ],
+    "bottom10_rules_by_net_pnl": [
+      {
+        "Rule_Index": 98,
+        "trades": 23,
+        "win_rate_pct": 34.78260869565217,
+        "net_pnl": -41.318982780186076,
+        "profit_factor": 0.49524110425234585
+      },
+      {
+        "Rule_Index": 9,
+        "trades": 8,
+        "win_rate_pct": 37.5,
+        "net_pnl": -26.52417031828248,
+        "profit_factor": 0.22522718836600106
+      },
+      {
+        "Rule_Index": 18,
+        "trades": 44,
+        "win_rate_pct": 34.090909090909086,
+        "net_pnl": -26.27271665905424,
+        "profit_factor": 0.7472746160220033
+      },
+      {
+        "Rule_Index": 69,
+        "trades": 24,
+        "win_rate_pct": 41.66666666666667,
+        "net_pnl": -24.96035684157954,
+        "profit_factor": 0.7307313093097683
+      },
+      {
+        "Rule_Index": 214,
+        "trades": 22,
+        "win_rate_pct": 45.45454545454545,
+        "net_pnl": -23.925513372946387,
+        "profit_factor": 0.8175472149116461
+      },
+      {
+        "Rule_Index": 55,
+        "trades": 11,
+        "win_rate_pct": 27.27272727272727,
+        "net_pnl": -20.841484346871383,
+        "profit_factor": 0.4620307584548427
+      },
+      {
+        "Rule_Index": 102,
+        "trades": 7,
+        "win_rate_pct": 14.285714285714285,
+        "net_pnl": -20.32525379727099,
+        "profit_factor": 0.15342545393141374
+      },
+      {
+        "Rule_Index": 209,
+        "trades": 10,
+        "win_rate_pct": 20.0,
+        "net_pnl": -18.9226819456158,
+        "profit_factor": 0.24911456772715881
+      },
+      {
+        "Rule_Index": 97,
+        "trades": 19,
+        "win_rate_pct": 36.84210526315789,
+        "net_pnl": -17.204776598027976,
+        "profit_factor": 0.7231107313714825
+      },
+      {
+        "Rule_Index": 215,
+        "trades": 5,
+        "win_rate_pct": 20.0,
+        "net_pnl": -13.100625457356173,
+        "profit_factor": 0.25690885148149933
+      }
+    ]
+  },
+  "test": {
+    "n_rules_total": 242,
+    "n_rules_with_trades": 133,
+    "n_rules_zero_trades": 109,
+    "symbols": [
+      {
+        "split": "test",
+        "Symbol": 1,
+        "trades": 25,
+        "wins": 15,
+        "losses": 10,
+        "win_rate_pct": 60.0,
+        "net_pnl": 26.723344372325258,
+        "avg_pnl": 1.0689337748930103,
+        "profit_factor": 2.1778175470735257,
+        "tp_exits": 15,
+        "sl_exits": 10,
+        "time_exits": 0
+      },
+      {
+        "split": "test",
+        "Symbol": 2,
+        "trades": 75,
+        "wins": 43,
+        "losses": 32,
+        "win_rate_pct": 57.333333333333336,
+        "net_pnl": 64.75901295643598,
+        "avg_pnl": 0.8634535060858131,
+        "profit_factor": 1.8999270952667109,
+        "tp_exits": 35,
+        "sl_exits": 32,
+        "time_exits": 8
+      },
+      {
+        "split": "test",
+        "Symbol": 3,
+        "trades": 23,
+        "wins": 10,
+        "losses": 13,
+        "win_rate_pct": 43.47826086956522,
+        "net_pnl": 1.7468388311933878,
+        "avg_pnl": 0.07594951439971251,
+        "profit_factor": 1.0689459429431563,
+        "tp_exits": 7,
+        "sl_exits": 12,
+        "time_exits": 4
+      },
+      {
+        "split": "test",
+        "Symbol": 4,
+        "trades": 24,
+        "wins": 13,
+        "losses": 11,
+        "win_rate_pct": 54.166666666666664,
+        "net_pnl": 16.3447930046737,
+        "avg_pnl": 0.6810330418614042,
+        "profit_factor": 1.8182035653187323,
+        "tp_exits": 12,
+        "sl_exits": 9,
+        "time_exits": 3
+      },
+      {
+        "split": "test",
+        "Symbol": 5,
+        "trades": 69,
+        "wins": 39,
+        "losses": 30,
+        "win_rate_pct": 56.52173913043478,
+        "net_pnl": 62.514947576133004,
+        "avg_pnl": 0.9060137329874348,
+        "profit_factor": 2.148376318925946,
+        "tp_exits": 39,
+        "sl_exits": 27,
+        "time_exits": 3
+      },
+      {
+        "split": "test",
+        "Symbol": 6,
+        "trades": 32,
+        "wins": 18,
+        "losses": 14,
+        "win_rate_pct": 56.25,
+        "net_pnl": 35.3538372252025,
+        "avg_pnl": 1.104807413287578,
+        "profit_factor": 2.3965184458557256,
+        "tp_exits": 18,
+        "sl_exits": 14,
+        "time_exits": 0
+      },
+      {
+        "split": "test",
+        "Symbol": 7,
+        "trades": 38,
+        "wins": 23,
+        "losses": 15,
+        "win_rate_pct": 60.526315789473685,
+        "net_pnl": 22.717436746738873,
+        "avg_pnl": 0.5978272828089177,
+        "profit_factor": 1.7182546263101781,
+        "tp_exits": 15,
+        "sl_exits": 15,
+        "time_exits": 8
+      },
+      {
+        "split": "test",
+        "Symbol": 8,
+        "trades": 39,
+        "wins": 14,
+        "losses": 25,
+        "win_rate_pct": 35.8974358974359,
+        "net_pnl": -10.051874696130565,
+        "avg_pnl": -0.25774037682386064,
+        "profit_factor": 0.7981422064843129,
+        "tp_exits": 11,
+        "sl_exits": 24,
+        "time_exits": 4
+      },
+      {
+        "split": "test",
+        "Symbol": 9,
+        "trades": 25,
+        "wins": 16,
+        "losses": 9,
+        "win_rate_pct": 64.0,
+        "net_pnl": 28.94842757528389,
+        "avg_pnl": 1.1579371030113557,
+        "profit_factor": 4.119012419993619,
+        "tp_exits": 5,
+        "sl_exits": 4,
+        "time_exits": 16
+      },
+      {
+        "split": "test",
+        "Symbol": 10,
+        "trades": 12,
+        "wins": 4,
+        "losses": 8,
+        "win_rate_pct": 33.33333333333333,
+        "net_pnl": -0.3419124292115243,
+        "avg_pnl": -0.028492702434293693,
+        "profit_factor": 0.9770083819080583,
+        "tp_exits": 4,
+        "sl_exits": 7,
+        "time_exits": 1
+      }
+    ],
+    "top10_rules_by_net_pnl": [
+      {
+        "Rule_Index": 51,
+        "trades": 6,
+        "win_rate_pct": 83.33333333333334,
+        "net_pnl": 14.040563973875047,
+        "profit_factor": 7.919474102588844
+      },
+      {
+        "Rule_Index": 114,
+        "trades": 3,
+        "win_rate_pct": 100.0,
+        "net_pnl": 13.766724730037156,
+        "profit_factor": Infinity
+      },
+      {
+        "Rule_Index": 62,
+        "trades": 4,
+        "win_rate_pct": 100.0,
+        "net_pnl": 13.644448476422482,
+        "profit_factor": Infinity
+      },
+      {
+        "Rule_Index": 112,
+        "trades": 7,
+        "win_rate_pct": 71.42857142857143,
+        "net_pnl": 12.893443457512117,
+        "profit_factor": 5.021342819499314
+      },
+      {
+        "Rule_Index": 207,
+        "trades": 5,
+        "win_rate_pct": 80.0,
+        "net_pnl": 12.396079763244199,
+        "profit_factor": 9.266952226823255
+      },
+      {
+        "Rule_Index": 197,
+        "trades": 3,
+        "win_rate_pct": 100.0,
+        "net_pnl": 11.624630554359863,
+        "profit_factor": Infinity
+      },
+      {
+        "Rule_Index": 206,
+        "trades": 3,
+        "win_rate_pct": 100.0,
+        "net_pnl": 11.391945383236253,
+        "profit_factor": Infinity
+      },
+      {
+        "Rule_Index": 217,
+        "trades": 8,
+        "win_rate_pct": 62.5,
+        "net_pnl": 11.065250853506576,
+        "profit_factor": 2.9836329995062423
+      },
+      {
+        "Rule_Index": 91,
+        "trades": 5,
+        "win_rate_pct": 60.0,
+        "net_pnl": 11.017035281088841,
+        "profit_factor": 3.854021603261437
+      },
+      {
+        "Rule_Index": 65,
+        "trades": 8,
+        "win_rate_pct": 62.5,
+        "net_pnl": 10.294589319929585,
+        "profit_factor": 3.1130858817487908
+      }
+    ],
+    "bottom10_rules_by_net_pnl": [
+      {
+        "Rule_Index": 31,
+        "trades": 6,
+        "win_rate_pct": 0.0,
+        "net_pnl": -11.506002732375629,
+        "profit_factor": 0.0
+      },
+      {
+        "Rule_Index": 231,
+        "trades": 3,
+        "win_rate_pct": 0.0,
+        "net_pnl": -9.849462800126574,
+        "profit_factor": 0.0
+      },
+      {
+        "Rule_Index": 41,
+        "trades": 5,
+        "win_rate_pct": 0.0,
+        "net_pnl": -8.80360480423176,
+        "profit_factor": 0.0
+      },
+      {
+        "Rule_Index": 236,
+        "trades": 3,
+        "win_rate_pct": 0.0,
+        "net_pnl": -8.363819911870152,
+        "profit_factor": 0.0
+      },
+      {
+        "Rule_Index": 98,
+        "trades": 4,
+        "win_rate_pct": 0.0,
+        "net_pnl": -6.67676264412401,
+        "profit_factor": 0.0
+      },
+      {
+        "Rule_Index": 68,
+        "trades": 7,
+        "win_rate_pct": 28.57142857142857,
+        "net_pnl": -6.542390556474652,
+        "profit_factor": 0.5369846493682013
+      },
+      {
+        "Rule_Index": 86,
+        "trades": 4,
+        "win_rate_pct": 0.0,
+        "net_pnl": -6.520981450643749,
+        "profit_factor": 0.0
+      },
+      {
+        "Rule_Index": 38,
+        "trades": 4,
+        "win_rate_pct": 25.0,
+        "net_pnl": -5.997778404323983,
+        "profit_factor": 0.21390845073524373
+      },
+      {
+        "Rule_Index": 58,
+        "trades": 2,
+        "win_rate_pct": 0.0,
+        "net_pnl": -5.6521439065417045,
+        "profit_factor": 0.0
+      },
+      {
+        "Rule_Index": 57,
+        "trades": 2,
+        "win_rate_pct": 0.0,
+        "net_pnl": -5.614791790782601,
+        "profit_factor": 0.0
+      }
+    ]
+  }
+}

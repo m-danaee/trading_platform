@@ -92,9 +92,118 @@ class TestStageObjectivePenalties:
             stage_params=stage_b,
         )
 
-        assert obj_a[0] > obj_b[0]
-        assert obj_a[1] == obj_b[1]
-        assert obj_a[2] > obj_b[2]
+        # Diversity is routed to f4 when PHASE2_DIVERSITY_ON_F4 (current default).
+        if bool(getattr(_cfg, "PHASE2_DIVERSITY_ON_F4", True)):
+            assert len(obj_a) >= 4 and len(obj_b) >= 4
+            assert obj_a[3] > obj_b[3]
+            assert obj_a[0] == obj_b[0]
+            assert obj_a[2] == obj_b[2]
+        else:
+            assert obj_a[0] > obj_b[0]
+            assert obj_a[1] == obj_b[1]
+            assert obj_a[2] > obj_b[2]
+
+    def test_stage_a_skips_feasibility_violation_penalty(self, monkeypatch):
+        monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", True)
+        monkeypatch.setattr(_cfg, "PHASE2_VAL_IN_FITNESS_PENALTY", True)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 1)
+        monkeypatch.setattr(_cfg, "PHASE2_RETURN_FLOOR_PCT", 0.25)
+        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION", 1.0)
+        monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
+
+        chrom = np.array([0, 1, 2, 3], dtype=np.int32)
+        dont_cares = np.full(4, 5, dtype=np.int32)
+        base_metrics = {
+            "executed_trades": 100,
+            "total_return_pct": 0.5,
+            "sortino_ratio": 1.0,
+            "max_drawdown_pct": 2.0,
+            "win_rate": 50.0,
+            "profit_factor": 0.9,
+        }
+        base_val = {
+            "executed_trades": 50,
+            "total_return_pct": -0.5,
+            "sortino_ratio": 0.5,
+            "max_drawdown_pct": 1.0,
+            "win_rate": 40.0,
+            "profit_factor": 0.8,
+        }
+        stage_a = resolve_phase2_stage_params("A")
+        stage_b = resolve_phase2_stage_params("B")
+        island = _cfg.IslandHyperparams(
+            profile="cluster",
+            min_trade_support=80,
+            min_trade_pool_floor=25,
+            sortino_min_trade_threshold=20,
+            val_trade_floor=10,
+            min_profitable_symbols=2,
+            monthly_admission_min_months=3,
+            monthly_admission_min_profitable_ratio=0.4,
+            skip_symbol_robustness_penalty=False,
+            n_rows=200_000,
+            n_symbols=3,
+        )
+        _, out_a = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, dict(base_metrics), [],
+            val_metrics=dict(base_val),
+            stage_params=stage_a,
+            island_hyperparams=island,
+        )
+        _, out_b = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, dict(base_metrics), [],
+            val_metrics=dict(base_val),
+            stage_params=stage_b,
+            island_hyperparams=island,
+        )
+        assert out_a.get("feasibility_violation", 0.0) == 0.0
+        assert out_b.get("feasibility_violation", 0.0) > 0.0
+
+    def test_stage_a_soft_skips_trade_floor_hard_kill(self, monkeypatch):
+        monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", False)
+        monkeypatch.setattr(_cfg, "PHASE2_INFEASIBLE_OBJECTIVE_PENALTY", 50.0)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 100)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 25)
+        monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
+
+        chrom = np.array([0, 1, 2, 3], dtype=np.int32)
+        dont_cares = np.full(4, 5, dtype=np.int32)
+        base_metrics = {
+            "executed_trades": 10,
+            "total_return_pct": 1.0,
+            "sortino_ratio": 0.5,
+            "max_drawdown_pct": 5.0,
+            "win_rate": 50.0,
+            "profit_factor": 1.2,
+        }
+        stage_a = resolve_phase2_stage_params("A")
+        island = _cfg.IslandHyperparams(
+            profile="cluster",
+            min_trade_support=80,
+            min_trade_pool_floor=25,
+            sortino_min_trade_threshold=20,
+            val_trade_floor=10,
+            min_profitable_symbols=2,
+            monthly_admission_min_months=3,
+            monthly_admission_min_profitable_ratio=0.4,
+            skip_symbol_robustness_penalty=False,
+            n_rows=200_000,
+            n_symbols=3,
+        )
+        obj_a, _ = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, dict(base_metrics), [],
+            stage_params=stage_a,
+            island_hyperparams=island,
+        )
+        obj_b, _ = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, dict(base_metrics), [],
+            stage_params=resolve_phase2_stage_params("B"),
+            island_hyperparams=island,
+        )
+        # Stage B hard-kills f2 with trade_penalty; Stage A keeps real DD.
+        assert obj_a[1] < 50.0
+        assert obj_b[1] >= 50.0
 
 
 class TestIslandStageBudgets:
@@ -137,6 +246,27 @@ class TestIslandStageBudgets:
         assert plan.stage is None
         assert plan.two_stage_active is False
         assert plan.remaining_in_stage == 43
+
+    def test_cluster_mode_enables_island_two_stage(self, monkeypatch):
+        monkeypatch.setattr(_cfg, "PHASE2_ISLAND_MODE", "cluster")
+        monkeypatch.setattr(_cfg, "PHASE2_TWO_STAGE_ENABLED", False)
+        monkeypatch.setattr(_cfg, "PHASE2_ISLAND_TWO_STAGE_ENABLED", True)
+        monkeypatch.setattr(_cfg, "PHASE2_STAGE_A_GENERATIONS", 60)
+        monkeypatch.setattr(_cfg, "PHASE2_STAGE_B_GENERATIONS", 36)
+
+        stage_a, stage_b = island_stage_budgets(32)
+        assert stage_a + stage_b == 32
+        assert stage_a > 0 and stage_b > 0
+
+        plan_a = resolve_island_stage(0, 32)
+        assert plan_a.stage == "A"
+        assert plan_a.two_stage_active is True
+        assert plan_a.remaining_in_stage == stage_a
+
+        plan_b = resolve_island_stage(stage_a, 32)
+        assert plan_b.stage == "B"
+        assert plan_b.entering_stage_b is True
+        assert plan_b.remaining_in_stage == stage_b
 
 
 class TestParetoCollapseDiversityRecovery:

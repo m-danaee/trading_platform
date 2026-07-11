@@ -1,0 +1,170 @@
+{
+  "strategy": {
+    "direction": "short",
+    "rules_set": [
+      {
+        "conditions": [
+          "[dmi_balance_14] IS Bearish",
+          "[rsi_centered_14] IS Extreme Bullish",
+          "[realized_vol_20] IS Very High",
+          "[downside_semivol_20] IS Very High",
+          "symbol is 4,5,7,8"
+        ],
+        "tp": 2.5,
+        "sl": 1.0,
+        "capital_pct": 12.5
+      },
+      {
+        "conditions": [
+          "[channel_pos_20] IS High",
+          "[rsi_centered_14] IS Extreme Bearish",
+          "[parkinson_vol_20] IS Low",
+          "[vol_ratio_20_100] IS Very High",
+          "symbol is 4,5,7,8"
+        ],
+        "tp": 2.5,
+        "sl": 1.25,
+        "capital_pct": 12.5
+      },
+      {
+        "conditions": [
+          "[band_bb_percB_20_2] IS Strong Bearish",
+          "[rsi_centered_14] IS Strong Bullish",
+          "[atr_pct_14] IS Low",
+          "[range_compression_20_100] IS Very Low",
+          "symbol is 4,5,7,8"
+        ],
+        "tp": 2.5,
+        "sl": 1.25,
+        "capital_pct": 12.5
+      },
+      {
+        "conditions": [
+          "[band_bb_percB_20_2] IS Bearish",
+          "[channel_pos_20] IS High",
+          "[rsi_centered_14] IS Strong Bearish",
+          "[percent_b_20] IS Bearish",
+          "symbol is 4,5,7,8"
+        ],
+        "tp": 2.5,
+        "sl": 1.25,
+        "capital_pct": 12.5
+      },
+      {
+        "conditions": [
+          "[rsi_centered_14] IS Strong Bearish",
+          "[ema_gap_atr_20] IS Neutral Negative",
+          "[upside_semivol_20] IS Very High",
+          "symbol is 4,5,7,8"
+        ],
+        "tp": 2.5,
+        "sl": 1.5,
+        "capital_pct": 12.5
+      },
+      {
+        "conditions": [
+          "[downside_semivol_20] IS Very High",
+          "[realized_vol_20] IS Very Low",
+          "[vol_ratio_20_100] IS Very High",
+          "symbol is 1,2,6"
+        ],
+        "tp": 3.5,
+        "sl": 2.0,
+        "capital_pct": 12.5
+      },
+      {
+        "conditions": [
+          "[roc_10] IS Extreme Bullish",
+          "[band_bb_percB_20_2] IS Extreme Bearish",
+          "[tr_to_atr_14] IS Very Low",
+          "[dmi_balance_14] IS Extreme Bearish",
+          "symbol is 1,2,6"
+        ],
+        "tp": 3.5,
+        "sl": 1.0,
+        "capital_pct": 12.5
+      },
+      {
+        "conditions": [
+          "[band_bb_percB_20_2] IS Neutral Positive",
+          "[ema_gap_atr_20] IS Extreme Bullish",
+          "[close_location_value] IS Very High",
+          "symbol is 1,2,6"
+        ],
+        "tp": 2.5,
+        "sl": 1.75,
+        "capital_pct": 12.5
+      },
+      {
+        "conditions": [
+          "[band_bb_percB_20_2] IS Strong Bearish",
+          "[rsi_centered_14] IS Strong Bullish",
+          "[efficiency_ratio_20] IS Very Low",
+          "[macd_hist_atr] IS Extreme Bearish",
+          "symbol is 1,2,6"
+        ],
+        "tp": 3.5,
+        "sl": 1.5,
+        "capital_pct": 12.5
+      },
+      {
+        "conditions": [
+          "[downside_semivol_20] IS High",
+          "[realized_vol_20] IS Very Low",
+          "[range_compression_20_100] IS Very Low",
+          "[close_location_value] IS Low",
+          "symbol is 1,2,6"
+        ],
+        "tp": 2.0,
+        "sl": 1.5,
+        "capital_pct": 12.5
+      },
+      {
+        "conditions": [
+          "[rsi_centered_14] IS Bearish",
+          "[band_bb_percB_20_2] IS Strong Bullish",
+          "[channel_pos_20] IS Very High",
+          "symbol is 1,2,6"
+        ],
+        "tp": 3.0,
+        "sl": 1.75,
+        "capital_pct": 12.5
+      },
+      {
+        "conditions": [
+          "[channel_pos_20] IS High",
+          "[band_bb_percB_20_2] IS Strong Bearish",
+          "[parkinson_vol_20] IS Very High",
+          "[percent_b_20] IS Strong Bearish",
+          "symbol is 1,2,6"
+        ],
+        "tp": 2.5,
+        "sl": 2.0,
+        "capital_pct": 12.5
+      },
+      {
+        "conditions": [
+          "[roc_10] IS Strong Bearish",
+          "[band_bb_percB_20_2] IS Extreme Bullish",
+          "[percent_b_20] IS Extreme Bullish",
+          "symbol is 1,2,6"
+        ],
+        "tp": 2.0,
+        "sl": 1.25,
+        "capital_pct": 12.5
+      },
+      {
+        "conditions": [
+          "[band_bb_percB_20_2] IS Bearish",
+          "[rsi_centered_14] IS Extreme Bullish",
+          "[ema_gap_atr_20] IS Bullish",
+          "[ret_autocorr_1_30] IS Extreme Bullish",
+          "symbol is 1,2,6"
+        ],
+        "tp": 2.5,
+        "sl": 2.0,
+        "capital_pct": 12.5
+      }
+    ]
+  }
+}

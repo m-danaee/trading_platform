@@ -16,6 +16,7 @@ from gpu_fuzzy_trader.phases.phase2_support import (
     passes_pool_admission_gate,
     passes_pool_entry_admission,
     passes_pool_trade_floor,
+    resolve_evolution_floors,
     robust_return_pct,
     trade_support_penalty,
 )
@@ -181,6 +182,59 @@ class TestDeployabilityHelpers:
             train, val, stage_params=stage_b,
         ) > 0.0
 
+
+class TestResolveEvolutionFloorsIslandTwoStage:
+    """Stage A soft floors must survive island_hyperparams (cluster two-stage)."""
+
+    @staticmethod
+    def _island_hp(*, support: int = 80, pool_floor: int = 25):
+        return _cfg.IslandHyperparams(
+            profile="cluster",
+            min_trade_support=support,
+            min_trade_pool_floor=pool_floor,
+            sortino_min_trade_threshold=20,
+            val_trade_floor=10,
+            min_profitable_symbols=2,
+            monthly_admission_min_months=3,
+            monthly_admission_min_profitable_ratio=0.4,
+            skip_symbol_robustness_penalty=False,
+            n_rows=200_000,
+            n_symbols=3,
+        )
+
+    def test_stage_a_soft_floors_with_island_hyperparams(self) -> None:
+        stage_a = resolve_phase2_stage_params("A")
+        island = self._island_hp(support=80)
+        floors = resolve_evolution_floors(
+            stage_a, island_hyperparams=island,
+        )
+        assert floors.soft_feasibility is True
+        assert floors.return_floor_pct == _cfg.PHASE2_STAGE_A_RETURN_FLOOR_PCT
+        assert floors.min_trade_support == min(
+            _cfg.PHASE2_STAGE_A_MIN_TRADE_SUPPORT, 80,
+        )
+        assert floors.pool_require_positive_splits is False
+
+    def test_stage_b_uses_island_scaled_support(self) -> None:
+        stage_b = resolve_phase2_stage_params("B")
+        island = self._island_hp(support=80)
+        floors = resolve_evolution_floors(
+            stage_b, island_hyperparams=island,
+        )
+        assert floors.soft_feasibility is False
+        assert floors.return_floor_pct == _cfg.PHASE2_RETURN_FLOOR_PCT
+        assert floors.min_trade_support == 80
+        assert floors.pool_require_positive_splits is True
+
+    def test_island_only_keeps_strict_floors(self) -> None:
+        island = self._island_hp(support=80)
+        floors = resolve_evolution_floors(None, island_hyperparams=island)
+        assert floors.soft_feasibility is False
+        assert floors.return_floor_pct == _cfg.PHASE2_RETURN_FLOOR_PCT
+        assert floors.min_trade_support == 80
+
+
+class TestDeployabilityHelpersTail:
     def test_deployability_preview_requires_trade_floor(self) -> None:
         train = {
             "total_return_pct": 5.0,

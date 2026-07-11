@@ -25,14 +25,16 @@ from gpu_fuzzy_trader.phases.phase2_island_scheduler import filter_migrants_for_
 
 
 class TestMigrationEnabledByDefault:
-    """Verify migration is enabled by default for island diversity exchange."""
+    """Verify migration default for one-symbol islands (disabled)."""
 
-    def test_config_default_is_true(self):
-        """Config ships with migration enabled."""
-        assert _cfg.PHASE2_MIGRATION_ENABLED is True
+    def test_config_default_is_false_for_one_symbol_package(self):
+        """One-symbol islands ship with migration disabled."""
+        assert _cfg.PHASE2_MIGRATION_ENABLED is False
+        assert _cfg.PHASE2_ONE_SYMBOL_ISLANDS is True
 
-    def test_guard_allows_migration_by_default(self, monkeypatch):
-        """The guard condition is True when epoch aligns and clusters > 1."""
+    def test_guard_allows_migration_when_enabled(self, monkeypatch):
+        """The guard condition is True when migration is re-enabled."""
+        monkeypatch.setattr(_cfg, "PHASE2_MIGRATION_ENABLED", True)
         enabled = _cfg.PHASE2_MIGRATION_ENABLED
         epoch_counter = 2
         interval = int(_cfg.PHASE2_MIGRATION_EPOCH_INTERVAL)

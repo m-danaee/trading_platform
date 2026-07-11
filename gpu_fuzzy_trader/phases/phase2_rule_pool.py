@@ -818,13 +818,19 @@ def compute_phase2_objectives_from_metrics(
     if profit_factor < _cfg.PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION:
         support_penalty += (_cfg.PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION - profit_factor) * 5.0
 
-    # C5: Symbol-spread penalty — penalize when few symbols are profitable
+    # C5: Symbol-spread penalty — penalize when few symbols are profitable.
+    # One-symbol islands must use island-scaled targets (else every rule is
+    # permanently penalised for failing a 3-symbol bar it can never clear).
     per_sym = metrics.get("per_symbol_metrics", {}) or {}
     n_profitable_symbols = sum(
         1 for v in per_sym.values()
         if isinstance(v, dict) and float(v.get("net_pnl", 0.0)) > 0.0
     )
-    min_symbols = int(getattr(_cfg, "PHASE2_MIN_PROFITABLE_SYMBOLS_PENALTY", 3))
+    if island_hyperparams is not None:
+        min_symbols = int(island_hyperparams.min_profitable_symbols)
+    else:
+        min_symbols = int(
+            getattr(_cfg, "PHASE2_MIN_PROFITABLE_SYMBOLS_PENALTY", 3))
     if n_profitable_symbols < min_symbols:
         support_penalty += float(min_symbols - n_profitable_symbols) * 2.0
 
@@ -928,11 +934,15 @@ def compute_phase2_objectives_from_metrics(
     from gpu_fuzzy_trader.phases.phase2_support import _val_terms_in_fitness
 
     include_val = _val_terms_in_fitness()
-    raw_violation = _raw_feasibility_violation_score(
-        metrics,
-        val_metrics,
-        include_val=include_val,
-    )
+    # Stage A soft_feasibility: skip heavy feasibility_violation weight;
+    # graduated return/support penalties still apply via floors above.
+    raw_violation = 0.0
+    if not floors.soft_feasibility:
+        raw_violation = _raw_feasibility_violation_score(
+            metrics,
+            val_metrics,
+            include_val=include_val,
+        )
     if raw_violation > 0.0:
         metrics["feasibility_violation"] = raw_violation
         support_penalty += (
@@ -944,7 +954,8 @@ def compute_phase2_objectives_from_metrics(
         trade_floor = int(island_hyperparams.min_trade_pool_floor)
     else:
         trade_floor = _cfg.effective_min_trade_pool_floor(n_valid_rows)
-    if executed < trade_floor:
+    # Soft Stage A: do not hard-kill low-trade rules (support penalty remains).
+    if executed < trade_floor and not floors.soft_feasibility:
         dd_for_obj = 100.0
         sortino_for_obj = 0.0
         f3_val = 0.0

@@ -797,10 +797,9 @@ def _resolve_plateau_patience(
 ) -> int:
     """Resolve the plateau patience value based on profile and stage.
 
-    Islands run single-stage (stage=None); the stage_params patience is
-    the GLOBAL default baked into the None profile, NOT the island knob.
-    Use the island-scoped config directly so
-    PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE actually takes effect.
+    Cluster/orphan islands always use PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE
+    even when two-stage Stage A/B params are active (stage budgets are short
+    relative to Stage A patience=28). Global two-stage uses stage_params.
     """
     if _cfg.scoped_island_profile(island_profile):
         return int(getattr(
@@ -810,6 +809,22 @@ def _resolve_plateau_patience(
     if stage_params is not None:
         return int(stage_params.plateau_early_stop_patience)
     return int(_cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE)
+
+
+def _resolve_plateau_min_generation(
+    stage_params: Phase2StageParams | None,
+    island_profile: str,
+) -> int:
+    """Earliest gen for plateau stop.
+
+    Island epochs (~20 gens) and scaled Stage A budgets (~20 gens) are shorter
+    than Stage A min_gen=30; using stage min_gen would disable island plateau.
+    """
+    if _cfg.scoped_island_profile(island_profile):
+        return int(_cfg.PHASE2_PLATEAU_EARLY_STOP_MIN_GENERATION)
+    if stage_params is not None:
+        return int(stage_params.plateau_early_stop_min_generation)
+    return int(_cfg.PHASE2_PLATEAU_EARLY_STOP_MIN_GENERATION)
 
 
 def _should_plateau_early_stop_phase2(
@@ -827,11 +842,7 @@ def _should_plateau_early_stop_phase2(
             return False
     elif not _cfg.PHASE2_PLATEAU_EARLY_STOP_ENABLED:
         return False
-    min_gen = (
-        int(stage_params.plateau_early_stop_min_generation)
-        if stage_params is not None
-        else int(_cfg.PHASE2_PLATEAU_EARLY_STOP_MIN_GENERATION)
-    )
+    min_gen = _resolve_plateau_min_generation(stage_params, island_profile)
     if gen + 1 < min_gen:
         return False
     if _cfg.scoped_island_profile(island_profile):

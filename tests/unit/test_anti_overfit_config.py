@@ -19,11 +19,12 @@ def test_anti_overfit_config_bundle():
     assert cfg.PHASE2_DIVERSITY_PENALTY == 3.0
     assert cfg.PHASE2_MUTATION_RATE == 0.32
     assert cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE == 7
-    assert cfg.PHASE2_PLATEAU_MAX_RESTARTS == 3
+    assert cfg.PHASE2_PLATEAU_MAX_RESTARTS == 1
     assert cfg.PHASE2_PROFIT_FACTOR_FLOOR_ADMISSION == 1.15
     assert cfg.PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION == 1.0
-    assert cfg.PHASE2_RETURN_FLOOR_PCT == 0.5
-    assert cfg.PHASE2_GENERATIONS == 96
+    assert cfg.PHASE2_RETURN_FLOOR_PCT == 0.25
+    assert cfg.PHASE2_GENERATIONS == 20
+    assert cfg.PHASE2_POPULATION_SIZE == 60
     assert cfg.PHASE2_TWO_STAGE_ENABLED is True
     assert cfg.PHASE2_SAMPLE_MAX_BARS_PER_SYMBOL == 60_000
     assert cfg.PHASE2_SAMPLE_ROTATION_FRACTION == 0.65
@@ -35,15 +36,34 @@ def test_anti_overfit_config_bundle():
     assert cfg.PHASE2_MIN_PROFITABLE_SYMBOLS == 3
     assert cfg.RB_TAIL_HOLDOUT_HARD_GATE is True
     assert cfg.RB_MAX_SYMBOL_SHARE_ABS_PNL == 0.50
-    assert cfg.RB_MAX_RULES == 10
+    assert cfg.RB_MAX_RULES == 20
+    assert cfg.RB_MAX_TOTAL_CAPITAL == 150.0
     assert cfg.RB_TRAIN_VALID_MAX_RATIO == 2.00
     assert cfg.RB_MIN_DISTINCT_SYMBOLS == 3
-    assert cfg.PHASE2_VAL_RETURN_FLOOR_PCT_SHORT == 1.0
-    assert cfg.effective_phase2_val_return_floor_pct("short") == 1.0
-    assert cfg.effective_phase2_val_return_floor_pct("long") == 1.0
+    assert cfg.PHASE2_VAL_RETURN_FLOOR_PCT == 0.25
+    assert cfg.PHASE2_VAL_RETURN_FLOOR_PCT_SHORT == 0.25
+    assert cfg.effective_phase2_val_return_floor_pct("short") == 0.25
+    assert cfg.effective_phase2_val_return_floor_pct("long") == 0.25
+    assert cfg.MIN_TRADE_SUPPORT == 60
+    assert cfg.MIN_TRADE_POOL_FLOOR == 15
+    assert cfg.PHASE2_SUPPORT_PENALTY_WEIGHT_F1 == 0.25
+    assert cfg.PHASE2_ISLAND_TWO_STAGE_ENABLED is True
+    assert cfg.PHASE2_ONE_SYMBOL_ISLANDS is True
+    assert cfg.PHASE2_MIGRATION_ENABLED is False
+    assert cfg.PHASE2_EARLY_STOP_ENABLED is False
+    assert cfg.PHASE2_PLATEAU_EARLY_STOP_ENABLED is False
+    assert cfg.PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED is False
+    assert cfg.PHASE2_STAGE_A_GENERATIONS == 12
+    assert cfg.PHASE2_STAGE_B_GENERATIONS == 8
+    assert cfg.PHASE2_STAGE_A_MUTATION_WEIGHTED_ACTIVATE_PROB == 0.70
+    assert cfg.PHASE3_GLOBAL_MAX_RULES == 25
+    assert cfg.PHASE3_PER_SYMBOL_MAX_RULES == 4
     assert cfg.RB_MIN_COMBINED_RETURN_IMPROVEMENT == 3.5
     assert cfg.RB_MAX_PAIR_OVERLAP == 0.25
-    assert cfg.RB_CAPITAL_GRID[-1] == 25.0
+    assert cfg.RB_CAPITAL_GRID[0] == 7.5
+    assert cfg.RB_CAPITAL_GRID[-1] == 18.0
+    assert cfg.RB_MAX_TOTAL_CAPITAL >= cfg.RB_MAX_RULES * \
+        cfg.RB_CAPITAL_GRID[0]
 
 
 def test_cluster_island_symbol_robustness_enabled():
@@ -52,3 +72,10 @@ def test_cluster_island_symbol_robustness_enabled():
     )
     assert hp.skip_symbol_robustness_penalty is False
     assert hp.min_profitable_symbols >= 2
+
+
+def test_one_symbol_island_hyperparams_target_one_profitable():
+    hp = cfg.resolve_island_hyperparams(
+        "cluster", n_rows=60_000, reference_rows=600_000, n_symbols=1,
+    )
+    assert hp.min_profitable_symbols == 1

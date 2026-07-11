@@ -14,7 +14,8 @@ from gpu_fuzzy_trader.phases.phase2_island_scheduler import (
 )
 
 
-def test_gens_per_cluster_split():
+def test_gens_per_cluster_split(monkeypatch):
+    monkeypatch.setattr(cfg, "PHASE2_ONE_SYMBOL_ISLANDS", False)
     total = int(cfg.PHASE2_ISLAND_TOTAL_GENERATIONS)
     k = int(cfg.PHASE2_N_CLUSTERS)
     cluster_ids = [str(i) for i in range(max(1, k))]
@@ -28,7 +29,17 @@ def test_gens_per_cluster_split():
     assert max(vals) - min(vals) <= 1
 
 
-def test_epoch_rounds_cover_budget():
+def test_one_symbol_islands_get_full_budget_each(monkeypatch):
+    monkeypatch.setattr(cfg, "PHASE2_ONE_SYMBOL_ISLANDS", True)
+    total = 20
+    cluster_ids = [str(i) for i in range(10)]
+    budgets = compute_cluster_generation_budgets(total, cluster_ids)
+    assert all(v == 20 for v in budgets.values())
+    assert sum(budgets.values()) == 200
+
+
+def test_epoch_rounds_cover_budget(monkeypatch):
+    monkeypatch.setattr(cfg, "PHASE2_ONE_SYMBOL_ISLANDS", False)
     total = int(cfg.PHASE2_ISLAND_TOTAL_GENERATIONS)
     k = int(cfg.PHASE2_N_CLUSTERS)
     epoch = int(cfg.PHASE2_ISLAND_EPOCH_GENERATIONS)
@@ -48,7 +59,8 @@ class TestMinEpochGuard:
     @pytest.mark.parametrize("remaining,expected", [
         (0, True),
         (1, True),
-        (4, True),
+        (3, True),
+        (4, False),
         (5, False),
         (6, False),
         (10, False),
