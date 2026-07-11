@@ -536,9 +536,10 @@ PHASE2_SUPPORT_PENALTY_WEIGHT_F3 = 0.6  # return / win-rate objective
 # of profit_factor or win rate.
 #   True  → f3 = -robust_return_pct (min of train/val return); aligns with OOS PnL.
 #   False → f3 uses PHASE2_F3_OBJECTIVE (profit_factor or win_rate).
-# Changed True as default: OOS-focused mode prefers robust return signal over
-# profit_factor to reduce Pareto collapse (see Task 3).
-PHASE2_USE_TOTAL_RETURN_OBJ = True
+# With PHASE2_JOINT_TRAIN_VAL=False, "robust" return collapses to train-only and
+# f1 (Sortino) ≈ f3 (return) → objective_corr_f1_f3≈1.0 (Pareto collapse in run.log).
+# Use profit_factor for f3 so the front stays multi-objective.
+PHASE2_USE_TOTAL_RETURN_OBJ = False
 
 # --- Task 2: Return-concentration 4th NSGA objective -------------------------
 # PHASE2_F4_ENABLED — adds f4 = max_single_trade_pnl / max(sum_positive_trade_pnl, ε)
@@ -572,14 +573,14 @@ PHASE2_F3_OBJECTIVE = "profit_factor"
 # PHASE2_MIN_PROFITABLE_SYMBOLS_PENALTY — min profitable symbols before penalty.
 #   Softer evolution nudge (default 3): adds to support_penalty when
 #   n_profitable_symbols < this during fitness.  Stricter pool gate
-#   PHASE2_MIN_PROFITABLE_SYMBOLS (default 5) is enforced separately at
+#   PHASE2_MIN_PROFITABLE_SYMBOLS (default 3) is enforced separately at
 #   admission via _symbol_robustness_penalty.
 PHASE2_MIN_PROFITABLE_SYMBOLS_PENALTY = 3
 
 # PHASE2_SYMBOL_GENE_DONT_CARE_PROB — probability of forcing a symbol gene to
 #   dont_care during mutation. Higher → more cross-symbol rules; prevents
 #   symbol-locked evolution.
-PHASE2_SYMBOL_GENE_DONT_CARE_PROB = 0.6
+PHASE2_SYMBOL_GENE_DONT_CARE_PROB = 0.75
 
 # PHASE2_USE_ROBUST_RETURN_OBJ — store min(train_return, val_return) as
 #   robust_return_pct on metrics when PHASE2_JOINT_TRAIN_VAL=True.
@@ -598,20 +599,18 @@ PHASE2_SORTINO_MIN_TRADE_THRESHOLD = 50
 # PHASE2_RETURN_FLOOR_PCT — min train return % to avoid feasibility penalty.
 #   Higher → only profitable-on-train rules stay feasible; emptier search.
 #   Lower  → more exploration; weak rules linger until other gates remove them.
-#   Set to 0.0 during exploration so island/cluster search is not starved before
-#   pool admission (which still requires strictly positive train/val returns via
-#   PHASE2_POOL_*_RETURN_MIN_PCT).  Raise only after deployable pool is healthy.
-PHASE2_RETURN_FLOOR_PCT = 0.0
+# Mild train-return floor so evolution prefers edge over noise, without
+# starving island search (admission still requires positive train/val splits).
+PHASE2_RETURN_FLOOR_PCT = 0.5
 
 # PHASE2_VAL_RETURN_FLOOR_PCT — min validation return % for feasibility.
 #   Higher → stricter OOS alignment during evolution.
 #   Lower  → allow negative val return during search (gates may still catch later).
 PHASE2_VAL_RETURN_FLOOR_PCT = 1.0
 
-# PHASE2_VAL_RETURN_FLOOR_PCT_SHORT — stricter val floor for short evolution.
-#   Short still showed val→test collapse after the label fix; raise the bar so
-#   val-lucky rules are penalized earlier during search.
-PHASE2_VAL_RETURN_FLOOR_PCT_SHORT = 2.0
+# Aligned with long: 2.0% was starving short islands (feasibility collapse
+# dominated by val_return_floor / val_pf_floor in run.log).
+PHASE2_VAL_RETURN_FLOOR_PCT_SHORT = 1.0
 
 # PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION — soft penalty threshold during NSGA-III fitness.
 #   Lower than the admission floor so the feasible set isn't artificially collapsed
@@ -639,9 +638,9 @@ PHASE2_SYMBOL_MEDIAN_RETURN_FLOOR_PCT = 0.0
 # PHASE2_MIN_PROFITABLE_SYMBOLS — min count of symbols with positive PnL.
 #   Higher → demand broad cross-symbol edge; stricter for 10-symbol universe.
 #   Lower  → allow niche symbol specialists.
-# Increased 4→5: broader cross-symbol edge requirement; reduces symbol-locked
-# rules that only work on a minority of symbols.
-PHASE2_MIN_PROFITABLE_SYMBOLS = 5
+# Island clusters are 3–4 symbols with min_profitable≈2; a global floor of 5
+# is unreachable for island-evolved rules and starves the merged pool.
+PHASE2_MIN_PROFITABLE_SYMBOLS = 3
 
 # PHASE2_MAX_DRAWDOWN_GATE — soft DD % cap; excess DD adds penalty on f2 only.
 #   Lower  → Pareto front pushed toward low-drawdown rules; may cut high return.
@@ -689,8 +688,8 @@ PHASE2_OVERFIT_GAP_PCT_THRESHOLD = 8.0
 #   Higher → more lenient; only extreme ratio mismatches rejected.
 #   Lower  → stricter; smaller ratios also trigger.
 #   0.0 or float('inf') → disables the ratio gate (regression guard).
-# → fixes audit finding #7 (absolute-pp gate missed high-ratio cases)
-PHASE2_OVERFIT_RATIO_FLOOR = 2.5
+# Slightly eased 2.5→3.0: island windows inflate train/val ratio noise.
+PHASE2_OVERFIT_RATIO_FLOOR = 3.0
 
 # PHASE2_OBJECTIVE_CORR_WARN_THRESHOLD — log a debug warning when Pareto-front
 #   objective pairwise correlation exceeds this (Pareto collapse risk).
@@ -736,22 +735,19 @@ PHASE2_MONTHLY_ADMISSION_ENABLED = True
 
 # PHASE2_MONTHLY_GOOD_RETURN_MIN_PCT — minimum total_return_pct (%) for a monthly
 # window to count as "good" in the pool-admission gate.
-#   0.0  → strict profit only (return must be > 0; flat months do not count).
+#   0.0  → non-loss months count (flat range months OK — desired equity shape).
 #   2.0  → month must earn at least +2% to count as good.
 #   -1.0 → month counts if return >= -1% (more lenient non-loss bar).
-PHASE2_MONTHLY_GOOD_RETURN_MIN_PCT = 0.5
+PHASE2_MONTHLY_GOOD_RETURN_MIN_PCT = 0.0
 
 # PHASE2_MONTHLY_ADMISSION_MIN_RATIO — fraction of monthly windows that must
 # be profitable for a rule to be admitted (non-island path; island uses
 # island_hyperparams.monthly_admission_min_profitable_ratio from this value).
-#   0.500 → rule must be profitable in half the windows.
+#   0.400 → allow some flat/weak months; thicker pool for RB multi-symbol teams.
 #   0.667 → rule must be profitable in two-thirds of windows; tighter stability.
-# Lowered 0.667→0.55 earlier, now to 0.50 to slightly ease admission so RB
-# gets a larger, more diverse cross-symbol pool to compose from.  This is a
-# pool quality/size knob, NOT a TP/SL retune or OOS chase.  The fail-closed
-# gates (task-1) are already on, so a slightly lower ratio still gates hard
-# failures while letting borderline-useful rules survive for RB to combine.
-PHASE2_MONTHLY_ADMISSION_MIN_RATIO = 0.50
+# run.log: monthly gate emptied clusters (1→0, 2→0) then graceful-degraded to
+# weak originals — ease slightly so stable non-loss rules survive.
+PHASE2_MONTHLY_ADMISSION_MIN_RATIO = 0.40
 
 # PHASE2_MONTHLY_ADMISSION_MIN_MONTHS — minimum number of monthly windows
 # required before the gate is applied. validation_fitness is ~110 calendar days
@@ -1528,9 +1524,9 @@ SYMBOL_SPECIALIZATION_USE_COMBINATIONS = True
 # SYMBOL_SPECIALIZATION_MAX_SYMBOLS_PER_RULE — maximum number of symbols in a
 #   single rule's ``symbol is X`` conditions (1 = single only, 2 = 1+2 combos,
 #   3 = 1+2+3 combos).
-#   Higher → more symbols per rule, potential overfitting to specific baskets.
-#   Lower  → simpler rules, easier to interpret.
-SYMBOL_SPECIALIZATION_MAX_SYMBOLS_PER_RULE = 1
+#   Must be >= 2 when USE_COMBINATIONS=True or combinations are a no-op.
+#   Legacy Phase 3 only (inactive while RB_GOVERNOR_ENABLED=True).
+SYMBOL_SPECIALIZATION_MAX_SYMBOLS_PER_RULE = 3
 
 # SYMBOL_SPECIALIZATION_MAX_VARIANTS_PER_RULE — maximum number of scored variants
 #   returned per pool rule, sorted by score descending.  Only the best variant
@@ -1800,8 +1796,8 @@ RB_MIN_VALID_RETURN: float = 0.5
 
 # RB_MIN_TRAIN_PF / RB_MIN_VALID_PF — minimum profit factor for each split.
 #   1.0 = break-even before fees.
-RB_MIN_TRAIN_PF: float = 1.05
-RB_MIN_VALID_PF: float = 1.05
+RB_MIN_TRAIN_PF: float = 1.02
+RB_MIN_VALID_PF: float = 1.02
 
 # RB_MIN_TRAIN_TRADES / RB_MIN_VALID_TRADES — per-rule trade-count floors
 #   used by ``gate_positive_good`` and ``_score_metrics`` for single rules.
@@ -1888,17 +1884,18 @@ RB_MIN_COMBINED_RETURN_IMPROVEMENT: float = 3.5
 
 # --- Train-valid shape prior (anti-overfit) ---
 
-# RB_REQUIRE_TRAIN_SLIGHTLY_ABOVE_VALID — when True, apply a shape
-#   bonus/penalty so that train return is slightly above val return (a
-#   healthy sign) but not wildly above (overfit sign).
+# RB_REQUIRE_TRAIN_SLIGHTLY_ABOVE_VALID — soft shape preference in scoring only
+#   (bonus/penalty). Hard reject was removed from ``_is_positive_good`` because
+#   the old narrow band (ratio 1.03–1.15 + min abs gap 0.20) rejected every
+#   healthy Phase 2 pool rule (run.log: 0 positive-good → fail-closed empty).
 RB_REQUIRE_TRAIN_SLIGHTLY_ABOVE_VALID: bool = True
-RB_TRAIN_VALID_MIN_RATIO: float = 1.03
-RB_TRAIN_VALID_MAX_RATIO: float = 1.15
-RB_TRAIN_VALID_MIN_ABS_GAP: float = 0.20
+RB_TRAIN_VALID_MIN_RATIO: float = 0.90
+RB_TRAIN_VALID_MAX_RATIO: float = 2.00
+RB_TRAIN_VALID_MIN_ABS_GAP: float = 0.0
 RB_TRAIN_VALID_MAX_ABS_GAP: float = 12.0
-RB_TRAIN_BELOW_VALID_PENALTY: float = 900.0
-RB_TRAIN_TOO_HIGH_PENALTY: float = 220.0
-RB_TRAIN_VALID_SHAPE_BONUS: float = 160.0
+RB_TRAIN_BELOW_VALID_PENALTY: float = 120.0
+RB_TRAIN_TOO_HIGH_PENALTY: float = 180.0
+RB_TRAIN_VALID_SHAPE_BONUS: float = 80.0
 
 
 # --- Default risk parameters (initial TP/SL/capital_pct embedded in rules
@@ -1956,29 +1953,42 @@ RB_MAX_SYMBOL_SHARE_ABS_PNL: float = 0.50
 RB_MAX_SYMBOL_HHI: float = 0.55
 
 
-# --- Symbol specialization (per-rule ``symbol is X`` conditions) ---
+# --- Symbol strategy: two modes (do not mix) ---------------------------------
+#
+# Mode A — multi-symbol TEAM (recommended / current):
+#   RB_REQUIRE_SYMBOL_FILTERS=False
+#   Phase 2 islands learn fuzzy rules on 3–4 symbol clusters (no ``symbol is X``).
+#   RB composes several generalist rules; diversity = traded symbols in metrics
+#   + concentration gate (HHI / top-share). Stable equity across symbols.
+#
+# Mode B — per-symbol SPECIALISTS (friend_project path; avoid unless intentional):
+#   RB_REQUIRE_SYMBOL_FILTERS=True
+#   Each rule locks to ``symbol is X``; compose many specialists for coverage.
+#   Tends to jagged single-symbol equity; needs thick per-symbol pools.
+#
+# Mixing A+B (filters off but compose counting only ``symbol is X``) blocks
+# team growth — that was a real bug with MIN_DISTINCT>0.
 
-# RB_REQUIRE_SYMBOL_FILTERS — every final rule must include at least one
-#   ``symbol is X`` condition (required for per-symbol strategies).
-# Kept False (task-4): re-enable only after multi-symbol specialised composition
-# works with task-2 gate + thick pool. Single-symbol rules overfit to symbol
-# noise and bleed OOS; multi-symbol teams (product composition or other) need
-# the specialised composition pipeline first.
+# RB_REQUIRE_SYMBOL_FILTERS — Mode B when True; Mode A when False.
 RB_REQUIRE_SYMBOL_FILTERS: bool = False
 
-# RB_MIN_DISTINCT_SYMBOLS — final ruleset must span at least this many symbols.
-RB_MIN_DISTINCT_SYMBOLS: int = 5
+# RB_MIN_DISTINCT_SYMBOLS — target symbol coverage while composing.
+#   Mode A: traded symbols from per_symbol_metrics must expand toward this.
+#   Mode B: distinct ``symbol is X`` filters on final rules (hard gate).
+RB_MIN_DISTINCT_SYMBOLS: int = 3
 
-# RB_SYMBOL_USE_COMBINATIONS — when True, generate 1-/2-/3-symbol variants
-#   of each pool rule.  Set False to restrict to single-symbol variants only.
-RB_SYMBOL_USE_COMBINATIONS: bool = False  # pool is already symbol-specialized
+# Soft score bonus per extra traded symbol beyond the first (Mode A ranking).
+RB_MULTI_SYMBOL_COVERAGE_BONUS: float = 8.0
 
-# RB_SYMBOL_MAX_SYMBOLS_PER_RULE — max ``symbol is X`` conditions per rule.
+# RB_SYMBOL_USE_COMBINATIONS — Mode B only: also try 2-/3-symbol filter combos.
+RB_SYMBOL_USE_COMBINATIONS: bool = False
+
+# RB_SYMBOL_MAX_SYMBOLS_PER_RULE — Mode B only: max ``symbol is X`` per rule.
 RB_SYMBOL_MAX_SYMBOLS_PER_RULE: int = 1
 
 RB_SYMBOL_MAX_VARIANTS_PER_RULE: int = 10
 RB_SYMBOL_MIN_TRAIN_TRADES: int = 10
-RB_SYMBOL_MIN_VALID_TRADES: int = 4  # per-symbol val slices are thin
+RB_SYMBOL_MIN_VALID_TRADES: int = 4
 RB_SYMBOL_STRICT_OUTPUT_CHECK: bool = True
 
 

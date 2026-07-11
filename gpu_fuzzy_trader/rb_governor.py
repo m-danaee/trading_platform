@@ -374,6 +374,29 @@ def _symbols_in_rules(rules: list[dict]) -> set[str]:
     return symbols
 
 
+def _traded_symbols_from_metrics(metrics: dict | None) -> set[str]:
+    """Symbols with executed trades in backtest ``per_symbol_metrics``."""
+    per_sym = (metrics or {}).get("per_symbol_metrics", {}) or {}
+    out: set[str] = set()
+    for sym, payload in per_sym.items():
+        if not isinstance(payload, dict):
+            continue
+        trades = int(payload.get("trade_count", 0) or 0)
+        if trades > 0:
+            out.add(str(sym).strip().lower())
+    return out
+
+
+def _candidate_coverage_symbols(rec: CandidateRecord) -> set[str]:
+    """Symbol coverage for compose diversity (filters or traded metrics)."""
+    explicit = _symbols_in_rules([rec.rule])
+    if explicit:
+        return {s.lower() for s in explicit}
+    return _traded_symbols_from_metrics(rec.train_metrics) | _traded_symbols_from_metrics(
+        rec.valid_metrics
+    )
+
+
 def _rule_key(rule: dict) -> tuple[str, ...]:
     return tuple(sorted(str(c) for c in rule.get("conditions", [])))
 
@@ -428,7 +451,7 @@ def _ensure_symbol_filtered_rule(rule: dict, symbols: list[str]) -> dict:
     out = dict(rule)
     conditions = list(out.get("conditions", []))
     if not bool(getattr(_cfg, "RB_REQUIRE_SYMBOL_FILTERS", False)):
-        out["conditions"] = conditions
+        out["conditions"] = _strip_symbol_conditions(conditions)
         return out
     if any(_is_symbol_condition(str(c)) for c in conditions):
         out["conditions"] = conditions
@@ -449,10 +472,18 @@ def _symbol_specialized_variants(
 
     Important: this runs *before* candidate scoring, so the reported metrics are
     for the exact JSON that later goes into evaluator_v5.
+
+    Multi-symbol team mode (``RB_REQUIRE_SYMBOL_FILTERS=False``): keep the pool
+    rule as a cross-symbol generalist and strip leftover ``symbol is X`` filters
+    (orphan / friend per-symbol path). Locking each rule to one symbol produces
+    jagged single-symbol equity and fights team composition.
     """
     base = _rule_to_engine(rule)
     if not bool(getattr(_cfg, "RB_REQUIRE_SYMBOL_FILTERS", False)):
-        return [base]
+        out = dict(base)
+        out["conditions"] = _strip_symbol_conditions(
+            list(out.get("conditions", [])))
+        return [out]
     if _has_symbol_condition(base):
         return [base]
     if not symbols:
@@ -515,9 +546,10 @@ def _is_positive_good(train_m: dict, valid_m: dict, *, min_train_trades: int | N
     min_valid_trades = int(min_valid_trades if min_valid_trades is not None else getattr(_cfg, "RB_MIN_VALID_TRADES", 15))
     train_ret = _f(train_m, "total_return_pct")
     valid_ret = _f(valid_m, "total_return_pct")
-    shape_ok, _, _ = _train_valid_shape(train_ret, valid_ret)
-    if bool(getattr(_cfg, "RB_REQUIRE_TRAIN_SLIGHTLY_ABOVE_VALID", False)) and not shape_ok:
-        return False
+    # Train/val shape is a soft preference in ``_score_metrics`` only.
+    # Using it as a hard gate (narrow ratio band ~1.03–1.15) emptied the
+    # RB candidate set even when Phase 2 pool rules were healthy on both
+    # splits (see run.log: kept 0/6 and 0/13 → fail-closed empty strategies).
 
     def execution_ok(m: dict) -> bool:
         raw = max(0, _i(m, "raw_signal_count", 0))
@@ -667,6 +699,16 @@ def _filter_good_rules(
             # Evaluate on CV folds if available (C4)
             cv_fold_returns = _eval_cv_fold_returns(rule, fold_engines)
             score = _score_metrics(train_m, valid_m, cv_fold_returns=cv_fold_returns)
+            # Prefer cross-symbol coverage when building multi-symbol teams
+            # (generalist mode). Explicit single-symbol filters get no bonus.
+            if not bool(getattr(_cfg, "RB_REQUIRE_SYMBOL_FILTERS", False)):
+                n_cov = len(
+                    _traded_symbols_from_metrics(train_m)
+                    | _traded_symbols_from_metrics(valid_m)
+                )
+                score += float(getattr(_cfg, "RB_MULTI_SYMBOL_COVERAGE_BONUS", 8.0)) * max(
+                    0, n_cov - 1
+                )
             rec = CandidateRecord(rule=rule, train_metrics=train_m, valid_metrics=valid_m, score=score)
             rec.mask = _mask_for(rule, train_like_df, valid_df)
             records.append(rec)
@@ -727,8 +769,18 @@ def _compose_ruleset(
             trial_recs = selected + [cand]
             trial_rules = [r.rule for r in trial_recs]
             if min_distinct_symbols > 0:
-                selected_syms = _symbols_in_rules([r.rule for r in selected])
-                cand_syms = _symbols_in_rules([cand.rule])
+                # Specialist mode: count explicit ``symbol is X`` filters.
+                # Generalist mode: count traded symbols from backtest metrics
+                # (pool rules have no filters; filter-only logic blocked all adds).
+                if bool(getattr(_cfg, "RB_REQUIRE_SYMBOL_FILTERS", False)):
+                    selected_syms = _symbols_in_rules(
+                        [r.rule for r in selected])
+                    cand_syms = _symbols_in_rules([cand.rule])
+                else:
+                    selected_syms = set()
+                    for rec in selected:
+                        selected_syms |= _candidate_coverage_symbols(rec)
+                    cand_syms = _candidate_coverage_symbols(cand)
                 if len(selected_syms) < min_distinct_symbols and not (cand_syms - selected_syms):
                     continue
             train_m, valid_m, score = _evaluate_ruleset(train_engine, valid_engine, trial_rules)

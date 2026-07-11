@@ -1,8 +1,50 @@
 {
   "direction": "long",
-  "rules_set": [],
+  "rules_set": [
+    {
+      "conditions": [
+        "[mom_stoch_rsi_14_14_3] IS Very Low",
+        "[channel_pos_20] IS Very High",
+        "[vol_ratio_20_100] IS Medium",
+        "[log_range_over_vol_100] IS Very High",
+        "symbol is 8"
+      ],
+      "tp": 2.0,
+      "sl": 1.2,
+      "capital_pct": 18.0
+    }
+  ],
   "risk_optimized": false,
   "deployment_accepted": false,
-  "no_positive_good_candidates": true,
-  "reason": "no_positive_good_candidates"
+  "validation_gate": {
+    "return_pct": 6.47357702255249,
+    "profit_factor": 2.8110547065734863,
+    "required_return_pct": 2.0,
+    "required_profit_factor": 1.05
+  },
+  "symbol_concentration_gate": {
+    "hhi_abs_pnl": 1.0,
+    "top_symbol_share_abs_pnl": 1.0,
+    "top_symbol": "8",
+    "max_share": 0.5,
+    "max_hhi": 0.55,
+    "passed": false
+  },
+  "tail_holdout_gate": {
+    "enabled": true,
+    "available": true,
+    "tail_return_pct": 1.1167049407958984,
+    "min_return_pct": 0.0,
+    "passed": true
+  },
+  "rb_score": -573.4121333929577,
+  "rb_train_return_pct": -5.637645721435547,
+  "rb_valid_return_pct": 6.47357702255249,
+  "rb_valid_profit_factor": 2.8110547065734863,
+  "rb_valid_max_drawdown_pct": 1.2561938762664795,
+  "rb_valid_executed_trades": 45,
+  "rb_train_minus_valid_return_pct": -12.111222743988037,
+  "rb_train_valid_ratio": -0.8708702625758917,
+  "rb_profit_amp_objective": 2.695442489147186,
+  "rb_profit_amp_accepted": false
 }

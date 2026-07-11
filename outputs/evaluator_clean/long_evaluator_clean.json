@@ -1,4 +1,17 @@
 {
   "direction": "long",
-  "rules_set": []
+  "rules_set": [
+    {
+      "conditions": [
+        "[mom_stoch_rsi_14_14_3] IS Very Low",
+        "[channel_pos_20] IS Very High",
+        "[vol_ratio_20_100] IS Medium",
+        "[log_range_over_vol_100] IS Very High",
+        "symbol is 8"
+      ],
+      "tp": 2.0,
+      "sl": 1.2,
+      "capital_pct": 18.0
+    }
+  ]
 }

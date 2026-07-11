@@ -1,1 +1,124 @@
 feature,fuzzy_value,split,num_trades,total_return_pct,win_rate,sharpe_ratio
+range_compression_20_100,Very Low,test,9,-0.8043854236602783,0.2222222222222222,-0.37373085752060775
+range_compression_20_100,Very High,test,6,0.5953574180603027,0.5,0.38389378584320955
+range_compression_20_100,Low,test,0,0.0,0.0,0.0
+range_compression_20_100,Medium,test,1,-0.03216584771871567,0.0,0.0
+range_compression_20_100,High,test,3,-0.6187389492988586,0.0,-2.541982638272592
+dmi_balance_14,Neutral Negative,test,0,0.0,0.0,0.0
+dmi_balance_14,Weak Bullish,test,0,0.0,0.0,0.0
+dmi_balance_14,Extreme Bullish,test,0,0.0,0.0,0.0
+dmi_balance_14,Neutral Positive,test,0,0.0,0.0,0.0
+dmi_balance_14,Strong Bearish,test,0,0.0,0.0,0.0
+dmi_balance_14,Extreme Bearish,test,19,-0.8599329590797424,0.2631578947368421,-0.18904158847081287
+dmi_balance_14,Strong Bullish,test,0,0.0,0.0,0.0
+dmi_balance_14,Bullish,test,0,0.0,0.0,0.0
+dmi_balance_14,Bearish,test,0,0.0,0.0,0.0
+dmi_balance_14,Weak Bearish,test,0,0.0,0.0,0.0
+up_close_ratio_5,Very Low,test,10,-1.194858193397522,0.1,-0.6597063612438637
+up_close_ratio_5,Medium,test,0,0.0,0.0,0.0
+up_close_ratio_5,Very High,test,9,0.33492517471313477,0.4444444444444444,0.13608600155820408
+roc_10,Neutral Negative,test,1,-0.2540906071662903,0.0,0.0
+roc_10,Extreme Bearish,test,6,0.37724539637565613,0.5,0.21851240621638846
+roc_10,Weak Bearish,test,4,-0.6497039198875427,0.0,-1.4887411349903132
+roc_10,Neutral Positive,test,2,-0.26796334981918335,0.0,-0.802682181313722
+roc_10,Strong Bearish,test,2,-0.45437365770339966,0.0,-6.253110663602073
+roc_10,Bearish,test,0,0.0,0.0,0.0
+roc_10,Bullish,test,1,-0.14647649228572845,0.0,0.0
+roc_10,Weak Bullish,test,1,-0.11072957515716553,0.0,0.0
+roc_10,Extreme Bullish,test,1,0.32307958602905273,1.0,0.0
+roc_10,Strong Bullish,test,1,0.32307958602905273,1.0,0.0
+efficiency_ratio_20,Very Low,test,4,0.280830055475235,0.5,0.2384390240584045
+efficiency_ratio_20,Low,test,4,-0.5010929703712463,0.0,-1.0535778798021085
+efficiency_ratio_20,Medium,test,3,-0.617029070854187,0.0,-2.504932766925961
+efficiency_ratio_20,High,test,3,-0.6537961363792419,0.0,-3.554198676635853
+efficiency_ratio_20,Very High,test,5,0.631155252456665,0.6,0.4635518840893477
+mom_stoch_rsi_14_14_3,Very Low,test,3,-0.3967914581298828,0.0,-1.1869762218230362
+mom_stoch_rsi_14_14_3,High,test,3,0.5379778146743774,0.6666666666666666,0.71453543846024
+mom_stoch_rsi_14_14_3,Low,test,1,-0.2540906071662903,0.0,0.0
+mom_stoch_rsi_14_14_3,Very High,test,10,-0.5300205945968628,0.3,-0.1998509781679752
+mom_stoch_rsi_14_14_3,Medium,test,2,-0.21700817346572876,0.0,-0.8291569242748684
+close_location_value,Very Low,test,6,0.01728978008031845,0.3333333333333333,0.009969642006707066
+close_location_value,Very High,test,6,0.43222829699516296,0.5,0.2532615615063968
+close_location_value,Low,test,3,-0.4383085370063782,0.0,-4.342364677448687
+close_location_value,High,test,2,-0.5075004696846008,0.0,-23833608.097185794
+close_location_value,Medium,test,2,-0.36364203691482544,0.0,-1.8095667685211732
+channel_pos_20,Very Low,test,0,0.0,0.0,0.0
+channel_pos_20,High,test,0,0.0,0.0,0.0
+channel_pos_20,Very High,test,0,0.0,0.0,0.0
+channel_pos_20,Low,test,0,0.0,0.0,0.0
+channel_pos_20,Medium,test,19,-0.8599329590797424,0.2631578947368421,-0.18904158847081287
+log_range_over_vol_100,Very Low,test,4,-0.4913995862007141,0.0,-1.2605991390612605
+log_range_over_vol_100,Low,test,2,-0.2855756878852844,0.0,-0.9140326495149111
+log_range_over_vol_100,Medium,test,1,-0.2529124617576599,0.0,0.0
+log_range_over_vol_100,High,test,1,0.3243536949157715,1.0,0.0
+log_range_over_vol_100,Very High,test,11,-0.15439899265766144,0.36363636363636365,-0.05052224102295304
+vol_over_median20,Very Low,test,3,-0.1298031508922577,0.3333333333333333,-0.13466786219972407
+vol_over_median20,Medium,test,1,-0.016044368967413902,0.0,0.0
+vol_over_median20,Low,test,6,-0.5533654689788818,0.16666666666666666,-0.42839493533544476
+vol_over_median20,High,test,1,-0.2540906071662903,0.0,0.0
+vol_over_median20,Very High,test,8,0.09337063133716583,0.375,0.04343073078851876
+tr_to_atr_14,Very Low,test,8,-0.471324622631073,0.25,-0.2348026909751341
+tr_to_atr_14,Low,test,6,0.4629475176334381,0.5,0.28145030988315245
+tr_to_atr_14,High,test,2,-0.233129620552063,0.0,-0.9768629141212999
+tr_to_atr_14,Very High,test,3,-0.6184262037277222,0.0,-2.541982611982022
+tr_to_atr_14,Medium,test,0,0.0,0.0,0.0
+macd_hist_atr,Neutral Negative,test,4,-0.0562380775809288,0.25,-0.05710068449315288
+macd_hist_atr,Extreme Bearish,test,2,0.648707389831543,1.0,0.0
+macd_hist_atr,Strong Bearish,test,0,0.0,0.0,0.0
+macd_hist_atr,Weak Bearish,test,0,0.0,0.0,0.0
+macd_hist_atr,Bearish,test,2,-0.28437477350234985,0.0,-0.9140326421778194
+macd_hist_atr,Neutral Positive,test,1,-0.11072957515716553,0.0,0.0
+macd_hist_atr,Weak Bullish,test,0,0.0,0.0,0.0
+macd_hist_atr,Strong Bullish,test,3,-0.6864184141159058,0.0,-5.423711824256384
+macd_hist_atr,Extreme Bullish,test,7,-0.37087953090667725,0.2857142857142857,-0.201368094194482
+macd_hist_atr,Bullish,test,0,0.0,0.0,0.0
+vol_ratio_20_100,Very Low,test,2,-0.3133804500102997,0.0,-2.493508980764103
+vol_ratio_20_100,Very High,test,13,0.137918621301651,0.38461538461538464,0.04129200086848101
+vol_ratio_20_100,Low,test,0,0.0,0.0,0.0
+vol_ratio_20_100,Medium,test,2,-0.40038633346557617,0.0,-2.6662889303453343
+vol_ratio_20_100,High,test,2,-0.2840847969055176,0.0,-0.9140326465941254
+band_bb_percB_20_2,Neutral Negative,test,0,0.0,0.0,0.0
+band_bb_percB_20_2,Weak Bullish,test,0,0.0,0.0,0.0
+band_bb_percB_20_2,Extreme Bullish,test,0,0.0,0.0,0.0
+band_bb_percB_20_2,Strong Bullish,test,0,0.0,0.0,0.0
+band_bb_percB_20_2,Extreme Bearish,test,3,0.5362907648086548,0.6666666666666666,0.7095525942874645
+band_bb_percB_20_2,Weak Bearish,test,4,-0.9063957929611206,0.0,-4.2707015760985065
+band_bb_percB_20_2,Strong Bearish,test,2,-0.04821021482348442,0.0,-2.0985787349130374
+band_bb_percB_20_2,Bullish,test,0,0.0,0.0,0.0
+band_bb_percB_20_2,Bearish,test,8,-1.087776780128479,0.125,-0.7051662552115293
+band_bb_percB_20_2,Neutral Positive,test,2,0.6461591720581055,1.0,0.0
+ema_slope_atr_20_5,Neutral Negative,test,1,-0.2519189715385437,0.0,0.0
+ema_slope_atr_20_5,Extreme Bullish,test,0,0.0,0.0,0.0
+ema_slope_atr_20_5,Strong Bullish,test,0,0.0,0.0,0.0
+ema_slope_atr_20_5,Weak Bearish,test,2,-0.12677393853664398,0.0,-0.9459942105828445
+ema_slope_atr_20_5,Bullish,test,0,0.0,0.0,0.0
+ema_slope_atr_20_5,Neutral Positive,test,0,0.0,0.0,0.0
+ema_slope_atr_20_5,Weak Bullish,test,0,0.0,0.0,0.0
+ema_slope_atr_20_5,Bearish,test,2,-0.3993889391422272,0.0,-2.66628844719319
+ema_slope_atr_20_5,Strong Bearish,test,1,-0.11241667717695236,0.0,0.0
+ema_slope_atr_20_5,Extreme Bearish,test,13,0.030565597116947174,0.38461538461538464,0.01027018945835562
+return_skew_30,Neutral Negative,test,1,-0.11072957515716553,0.0,0.0
+return_skew_30,Strong Bullish,test,1,-0.2539098262786865,0.0,0.0
+return_skew_30,Weak Bearish,test,2,-0.36650726199150085,0.0,-1.8398178031026653
+return_skew_30,Extreme Bullish,test,0,0.0,0.0,0.0
+return_skew_30,Bullish,test,0,0.0,0.0,0.0
+return_skew_30,Weak Bullish,test,0,0.0,0.0,0.0
+return_skew_30,Strong Bearish,test,0,0.0,0.0,0.0
+return_skew_30,Neutral Positive,test,0,0.0,0.0,0.0
+return_skew_30,Bearish,test,0,0.0,0.0,0.0
+return_skew_30,Extreme Bearish,test,15,-0.12878626585006714,0.3333333333333333,-0.03317931392086169
+rsi_centered_14,Neutral Negative,test,0,0.0,0.0,0.0
+rsi_centered_14,Extreme Bearish,test,19,-0.8599329590797424,0.2631578947368421,-0.18904158847081287
+rsi_centered_14,Extreme Bullish,test,0,0.0,0.0,0.0
+rsi_centered_14,Strong Bearish,test,0,0.0,0.0,0.0
+rsi_centered_14,Bearish,test,0,0.0,0.0,0.0
+rsi_centered_14,Neutral Positive,test,0,0.0,0.0,0.0
+rsi_centered_14,Bullish,test,0,0.0,0.0,0.0
+rsi_centered_14,Weak Bearish,test,0,0.0,0.0,0.0
+rsi_centered_14,Strong Bullish,test,0,0.0,0.0,0.0
+rsi_centered_14,Weak Bullish,test,0,0.0,0.0,0.0
+dollar_vol_rel_20,Very Low,test,0,0.0,0.0,0.0
+dollar_vol_rel_20,Low,test,19,-0.8599329590797424,0.2631578947368421,-0.18904158847081287
+dollar_vol_rel_20,Medium,test,0,0.0,0.0,0.0
+dollar_vol_rel_20,High,test,0,0.0,0.0,0.0
+dollar_vol_rel_20,Very High,test,0,0.0,0.0,0.0
