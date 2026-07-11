@@ -442,6 +442,28 @@ def _available_symbols(*dfs: pd.DataFrame) -> list[str]:
     return sorted(vals, key=key)
 
 
+def _source_symbols_from_rule(rule: dict) -> list[str]:
+    """Island/cluster symbols carried on Phase 2 pool entries."""
+    raw = rule.get("source_symbols") or rule.get("island_symbols") or []
+    out: list[str] = []
+    seen: set[str] = set()
+    for sym in raw:
+        text = str(sym).strip()
+        if not text or text.lower() in seen:
+            continue
+        seen.add(text.lower())
+        out.append(text)
+    return out
+
+
+def _attach_source_symbol_filters(conditions: list[str], source_symbols: list[str]) -> list[str]:
+    """Feature ANDs + island symbol ORs (engine ORs multiple ``symbol is X``)."""
+    feats = _strip_symbol_conditions(list(conditions))
+    if not source_symbols:
+        return feats
+    return feats + [_symbol_condition(s) for s in source_symbols]
+
+
 def _ensure_symbol_filtered_rule(rule: dict, symbols: list[str]) -> dict:
     """Return rule with an explicit symbol filter when required.
 
@@ -451,7 +473,9 @@ def _ensure_symbol_filtered_rule(rule: dict, symbols: list[str]) -> dict:
     out = dict(rule)
     conditions = list(out.get("conditions", []))
     if not bool(getattr(_cfg, "RB_REQUIRE_SYMBOL_FILTERS", False)):
-        out["conditions"] = _strip_symbol_conditions(conditions)
+        # Mode A: keep Phase-2 island scope when present; otherwise generalist.
+        src = _source_symbols_from_rule(rule)
+        out["conditions"] = _attach_source_symbol_filters(conditions, src)
         return out
     if any(_is_symbol_condition(str(c)) for c in conditions):
         out["conditions"] = conditions
@@ -473,16 +497,23 @@ def _symbol_specialized_variants(
     Important: this runs *before* candidate scoring, so the reported metrics are
     for the exact JSON that later goes into evaluator_v5.
 
-    Multi-symbol team mode (``RB_REQUIRE_SYMBOL_FILTERS=False``): keep the pool
-    rule as a cross-symbol generalist and strip leftover ``symbol is X`` filters
-    (orphan / friend per-symbol path). Locking each rule to one symbol produces
-    jagged single-symbol equity and fights team composition.
+    Multi-symbol team mode (``RB_REQUIRE_SYMBOL_FILTERS=False``):
+    - If the pool rule has ``source_symbols`` (Phase 2 island/cluster), attach
+      those as OR filters so the rule only fires on the universe it was trained
+      on. Bare generalists (no symbol scope) were deeply negative on full
+      train+val_selection even when Phase 2 pool metrics looked healthy.
+    - If no ``source_symbols``, strip orphan single-symbol filters and keep a
+      true cross-symbol generalist.
     """
     base = _rule_to_engine(rule)
     if not bool(getattr(_cfg, "RB_REQUIRE_SYMBOL_FILTERS", False)):
+        src = _source_symbols_from_rule(rule)
         out = dict(base)
-        out["conditions"] = _strip_symbol_conditions(
-            list(out.get("conditions", [])))
+        out["conditions"] = _attach_source_symbol_filters(
+            list(out.get("conditions", [])), src
+        )
+        if src:
+            out["source_symbols"] = list(src)
         return [out]
     if _has_symbol_condition(base):
         return [base]
@@ -561,6 +592,11 @@ def _is_positive_good(train_m: dict, valid_m: dict, *, min_train_trades: int | N
         min_exec = float(getattr(_cfg, "RB_MIN_EXECUTED_RAW_RATIO", 0.60))
         return (skipped / raw) <= max_skip and (executed / raw) >= min_exec
 
+    # Execution health stays a soft score penalty by default. Hard-gating it on
+    # singles rejected profitable island rules with elevated min-notional skips
+    # (e.g. +18% train / +0.5% val killed solely by skip_ratio≈0.40).
+    require_exec = bool(
+        getattr(_cfg, "RB_REQUIRE_EXECUTION_HEALTH_ON_SINGLES", False))
     return (
         train_ret > float(getattr(_cfg, "RB_MIN_TRAIN_RETURN", 0.0))
         and valid_ret > float(getattr(_cfg, "RB_MIN_VALID_RETURN", 0.0))
@@ -568,9 +604,53 @@ def _is_positive_good(train_m: dict, valid_m: dict, *, min_train_trades: int | N
         and _f(valid_m, "profit_factor") >= float(getattr(_cfg, "RB_MIN_VALID_PF", 1.0))
         and _i(train_m, "executed_trades") >= min_train_trades
         and _i(valid_m, "executed_trades") >= min_valid_trades
-        and execution_ok(train_m)
-        and execution_ok(valid_m)
+        and (not require_exec or (execution_ok(train_m) and execution_ok(valid_m)))
     )
+
+
+def _positive_good_reject_reasons(
+    train_m: dict,
+    valid_m: dict,
+    *,
+    min_train_trades: int | None = None,
+    min_valid_trades: int | None = None,
+) -> list[str]:
+    """Human-readable reasons why ``_is_positive_good`` failed (diagnostics)."""
+    min_train_trades = int(min_train_trades if min_train_trades is not None else getattr(
+        _cfg, "RB_MIN_TRAIN_TRADES", 25))
+    min_valid_trades = int(min_valid_trades if min_valid_trades is not None else getattr(
+        _cfg, "RB_MIN_VALID_TRADES", 15))
+    reasons: list[str] = []
+    train_ret = _f(train_m, "total_return_pct")
+    valid_ret = _f(valid_m, "total_return_pct")
+    if not (train_ret > float(getattr(_cfg, "RB_MIN_TRAIN_RETURN", 0.0))):
+        reasons.append(f"train_ret={train_ret:.2f}")
+    if not (valid_ret > float(getattr(_cfg, "RB_MIN_VALID_RETURN", 0.0))):
+        reasons.append(f"valid_ret={valid_ret:.2f}")
+    if not (_f(train_m, "profit_factor") >= float(getattr(_cfg, "RB_MIN_TRAIN_PF", 1.0))):
+        reasons.append(f"train_pf={_f(train_m, 'profit_factor'):.3f}")
+    if not (_f(valid_m, "profit_factor") >= float(getattr(_cfg, "RB_MIN_VALID_PF", 1.0))):
+        reasons.append(f"valid_pf={_f(valid_m, 'profit_factor'):.3f}")
+    if not (_i(train_m, "executed_trades") >= min_train_trades):
+        reasons.append(f"train_trades={_i(train_m, 'executed_trades')}")
+    if not (_i(valid_m, "executed_trades") >= min_valid_trades):
+        reasons.append(f"valid_trades={_i(valid_m, 'executed_trades')}")
+    if bool(getattr(_cfg, "RB_REQUIRE_EXECUTION_HEALTH_ON_SINGLES", False)):
+        for tag, m in (("train", train_m), ("valid", valid_m)):
+            raw = max(0, _i(m, "raw_signal_count", 0))
+            if raw <= 0:
+                reasons.append(f"{tag}_no_raw")
+                continue
+            skipped = max(0, _i(m, "skipped_min_notional_count", 0))
+            executed = max(0, _i(m, "executed_trades", 0))
+            max_skip = float(
+                getattr(_cfg, "RB_MAX_SKIPPED_SIGNAL_RATIO", 0.20))
+            min_exec = float(getattr(_cfg, "RB_MIN_EXECUTED_RAW_RATIO", 0.60))
+            if (skipped / raw) > max_skip:
+                reasons.append(f"{tag}_skip={skipped / raw:.2f}")
+            if (executed / raw) < min_exec:
+                reasons.append(f"{tag}_exec={executed / raw:.2f}")
+    return reasons
 
 
 def _prepare_scoring_frame(df: pd.DataFrame) -> pd.DataFrame:
@@ -679,11 +759,13 @@ def _filter_good_rules(
     valid_engine = CPUBacktestEngine(valid_df, {}, direction)
     records: list[CandidateRecord] = []
     seen: set[tuple[str, ...]] = set()
+    reject_counts: dict[str, int] = {}
     limit = int(getattr(_cfg, "RB_MAX_POOL_RULES_TO_EVALUATE", 700))
     symbols = _available_symbols(train_like_df, valid_df)
 
     for raw in pool[:limit]:
         for rule in _symbol_specialized_variants(raw, train_engine, valid_engine, symbols):
+            # Variants already include island ``symbol is X`` OR filters in Mode A.
             rule = _rule_to_engine(rule)
             key = tuple(sorted(str(c) for c in rule.get("conditions", [])))
             if key in seen:
@@ -693,8 +775,14 @@ def _filter_good_rules(
                 train_m = train_engine.simulate_rule_set([rule])
                 valid_m = valid_engine.simulate_rule_set([rule])
             except Exception:
+                reject_counts["simulate_error"] = reject_counts.get(
+                    "simulate_error", 0) + 1
                 continue
             if not _is_positive_good(train_m, valid_m):
+                for reason in _positive_good_reject_reasons(train_m, valid_m) or ["unknown"]:
+                    # Bucket by primary token (before '=')
+                    bucket = reason.split("=", 1)[0]
+                    reject_counts[bucket] = reject_counts.get(bucket, 0) + 1
                 continue
             # Evaluate on CV folds if available (C4)
             cv_fold_returns = _eval_cv_fold_returns(rule, fold_engines)
@@ -719,6 +807,15 @@ def _filter_good_rules(
         "RB [%s]: kept %d/%d single rules positive on training and validation.",
         direction, min(len(records), keep), len(seen),
     )
+    if not records and reject_counts:
+        top = sorted(reject_counts.items(),
+                     key=lambda kv: kv[1], reverse=True)[:8]
+        logger.warning(
+            "RB [%s]: positive-good reject breakdown (unique rules=%d): %s",
+            direction,
+            len(seen),
+            {k: v for k, v in top},
+        )
     return records[:keep]
 
 

@@ -1,17 +1,11 @@
 {
   "direction": "short",
-  "total_return_pct": "-0.8599341",
-  "max_drawdown_pct": "1.6756256",
-  "win_rate": 26.31578947368421,
-  "profit_factor": "0.65331334",
-  "executed_trades": 19,
+  "total_return_pct": 0.0,
+  "max_drawdown_pct": 0.0,
+  "win_rate": 0.0,
+  "profit_factor": 0.0,
+  "executed_trades": 0,
   "account_status": "survived",
-  "final_equity": "991.40063",
-  "per_symbol_metrics": {
-    "4": {
-      "trade_count": 19,
-      "win_rate": 26.31578947368421,
-      "net_pnl": -8.599329948425293
-    }
-  }
+  "final_equity": 1000.0,
+  "per_symbol_metrics": {}
 }

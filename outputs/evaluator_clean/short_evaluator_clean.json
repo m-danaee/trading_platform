@@ -1,17 +1,4 @@
 {
   "direction": "short",
-  "rules_set": [
-    {
-      "conditions": [
-        "[dmi_balance_14] IS Extreme Bearish",
-        "[channel_pos_20] IS Medium",
-        "[rsi_centered_14] IS Extreme Bearish",
-        "[dollar_vol_rel_20] IS Low",
-        "symbol is 4"
-      ],
-      "tp": 2.0,
-      "sl": 1.2,
-      "capital_pct": 18.0
-    }
-  ]
+  "rules_set": []
 }

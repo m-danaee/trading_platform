@@ -1957,9 +1957,12 @@ RB_MAX_SYMBOL_HHI: float = 0.55
 #
 # Mode A — multi-symbol TEAM (recommended / current):
 #   RB_REQUIRE_SYMBOL_FILTERS=False
-#   Phase 2 islands learn fuzzy rules on 3–4 symbol clusters (no ``symbol is X``).
-#   RB composes several generalist rules; diversity = traded symbols in metrics
-#   + concentration gate (HHI / top-share). Stable equity across symbols.
+#   Phase 2 islands learn fuzzy rules on 3–4 symbol clusters.
+#   RB attaches each rule's ``source_symbols`` as OR filters (cluster scope),
+#   then composes rules from different islands into a team covering the book.
+#   Diversity = explicit island filters and/or traded symbols in metrics.
+#   Bare "fire on all 10 symbols" generalists destroy island rules on
+#   full train + val_selection (run.log: kept 0/15, 0/12 → empty strategies).
 #
 # Mode B — per-symbol SPECIALISTS (friend_project path; avoid unless intentional):
 #   RB_REQUIRE_SYMBOL_FILTERS=True
@@ -1973,7 +1976,7 @@ RB_MAX_SYMBOL_HHI: float = 0.55
 RB_REQUIRE_SYMBOL_FILTERS: bool = False
 
 # RB_MIN_DISTINCT_SYMBOLS — target symbol coverage while composing.
-#   Mode A: traded symbols from per_symbol_metrics must expand toward this.
+#   Mode A: traded symbols / island OR filters must expand toward this.
 #   Mode B: distinct ``symbol is X`` filters on final rules (hard gate).
 RB_MIN_DISTINCT_SYMBOLS: int = 3
 
@@ -1996,6 +1999,11 @@ RB_SYMBOL_STRICT_OUTPUT_CHECK: bool = True
 
 RB_MAX_SKIPPED_SIGNAL_RATIO: float = 0.20
 RB_MIN_EXECUTED_RAW_RATIO: float = 0.60
+# RB_REQUIRE_EXECUTION_HEALTH_ON_SINGLES — hard-gate singles on skip/exec ratios.
+#   False (default): health stays a soft score penalty only; hard skip gates
+#   emptied otherwise-profitable island rules (skip≈0.40 with +return).
+#   True: restore legacy hard gate inside ``_is_positive_good``.
+RB_REQUIRE_EXECUTION_HEALTH_ON_SINGLES: bool = False
 RB_SKIPPED_RATIO_PENALTY: float = 3500.0
 RB_EXECUTED_RATIO_PENALTY: float = 2500.0
 RB_MAX_SIMULTANEOUS_POSITIONS: int = 10

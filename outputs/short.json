@@ -1,50 +1,8 @@
 {
   "direction": "short",
-  "rules_set": [
-    {
-      "conditions": [
-        "[dmi_balance_14] IS Extreme Bearish",
-        "[channel_pos_20] IS Medium",
-        "[rsi_centered_14] IS Extreme Bearish",
-        "[dollar_vol_rel_20] IS Low",
-        "symbol is 4"
-      ],
-      "tp": 2.0,
-      "sl": 1.2,
-      "capital_pct": 18.0
-    }
-  ],
+  "rules_set": [],
   "risk_optimized": false,
   "deployment_accepted": false,
-  "validation_gate": {
-    "return_pct": 0.5475640296936035,
-    "profit_factor": 1.3032482862472534,
-    "required_return_pct": 2.0,
-    "required_profit_factor": 1.05
-  },
-  "symbol_concentration_gate": {
-    "hhi_abs_pnl": 1.0,
-    "top_symbol_share_abs_pnl": 1.0,
-    "top_symbol": "4",
-    "max_share": 0.5,
-    "max_hhi": 0.55,
-    "passed": false
-  },
-  "tail_holdout_gate": {
-    "enabled": true,
-    "available": true,
-    "tail_return_pct": 0.04391670227050781,
-    "min_return_pct": 0.0,
-    "passed": true
-  },
-  "rb_score": 223.02648306299426,
-  "rb_train_return_pct": 0.9560108184814453,
-  "rb_valid_return_pct": 0.5475640296936035,
-  "rb_valid_profit_factor": 1.3032482862472534,
-  "rb_valid_max_drawdown_pct": 0.9924743175506592,
-  "rb_valid_executed_trades": 18,
-  "rb_train_minus_valid_return_pct": 0.4084467887878418,
-  "rb_train_valid_ratio": 1.7459342956044674,
-  "rb_profit_amp_objective": 1.8542220339775086,
-  "rb_profit_amp_accepted": false
+  "no_positive_good_candidates": true,
+  "reason": "no_positive_good_candidates"
 }
