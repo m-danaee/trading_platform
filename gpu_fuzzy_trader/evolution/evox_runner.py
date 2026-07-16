@@ -987,6 +987,20 @@ def _inject_diversity_recovery(
                     feature_probs=None,
                 )
             )
+        # Archive may be smaller than n_mutate (_select_diverse_subset returns
+        # at most len(archive)). Pad with fresh init so seeds[idx] never OOB.
+        if len(seeds) < n_inject:
+            deficit = n_inject - len(seeds)
+            seeds.extend(
+                _init_population(
+                    deficit,
+                    feature_infos,
+                    rng,
+                    init_strategy=_cfg.PHASE2_INIT_STRATEGY,
+                    stratum_fractions=_cfg.PHASE2_INIT_STRATUM_FRACTIONS,
+                    feature_probs=None,
+                )
+            )
     else:
         seeds = list(
             _init_population(
@@ -997,6 +1011,13 @@ def _inject_diversity_recovery(
                 stratum_fractions=_cfg.PHASE2_INIT_STRATUM_FRACTIONS,
                 feature_probs=None,
             )
+        )
+
+    if len(seeds) < n_inject:
+        # Defensive: _init_population should always return the requested count.
+        raise RuntimeError(
+            f"diversity recovery produced {len(seeds)} seeds for "
+            f"{n_inject} injection slots"
         )
 
     injected: list[int] = []

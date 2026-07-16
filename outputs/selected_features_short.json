@@ -1,0 +1,106 @@
+{
+  "direction": "short",
+  "features": [
+    {
+      "name": "range_compression_20_100",
+      "mode": "positive",
+      "score": 0.11853263782062698
+    },
+    {
+      "name": "downside_semivol_20",
+      "mode": "positive",
+      "score": 0.08447891745552402
+    },
+    {
+      "name": "upside_semivol_20",
+      "mode": "positive",
+      "score": 0.07873016814730073
+    },
+    {
+      "name": "dmi_balance_14",
+      "mode": "signed",
+      "score": 0.03517418316006073
+    },
+    {
+      "name": "drawdown_from_peak_60",
+      "mode": "positive",
+      "score": 0.027820851212157667
+    },
+    {
+      "name": "roc_10",
+      "mode": "signed",
+      "score": 0.00940123884846383
+    },
+    {
+      "name": "log_range_over_vol_100",
+      "mode": "positive",
+      "score": 0.00934118890504792
+    },
+    {
+      "name": "channel_pos_20",
+      "mode": "positive",
+      "score": 0.0026575088604211127
+    },
+    {
+      "name": "upper_wick_to_tr",
+      "mode": "positive",
+      "score": 0.002232134720684728
+    },
+    {
+      "name": "rsi_centered_14",
+      "mode": "signed",
+      "score": 0.0019701057960888266
+    },
+    {
+      "name": "up_close_ratio_5",
+      "mode": "sparse_positive",
+      "score": 0.0014884836733313977
+    },
+    {
+      "name": "vol_regime_pct_120",
+      "mode": "positive",
+      "score": 0.001480807611854492
+    },
+    {
+      "name": "body_to_tr",
+      "mode": "positive",
+      "score": 0.0013226960465624325
+    },
+    {
+      "name": "cand_up_down_vol_ratio_20",
+      "mode": "positive",
+      "score": 0.001107868362995181
+    },
+    {
+      "name": "lower_wick_to_tr",
+      "mode": "positive",
+      "score": 0.0010884261050328932
+    },
+    {
+      "name": "efficiency_ratio_20",
+      "mode": "positive",
+      "score": 0.000888593309076384
+    },
+    {
+      "name": "atr_ratio_14_63",
+      "mode": "positive",
+      "score": 0.0007059507364610974
+    },
+    {
+      "name": "percent_b_20",
+      "mode": "signed",
+      "score": 0.0005924203959218822
+    },
+    {
+      "name": "inside_bar_compression",
+      "mode": "sparse_positive",
+      "score": 0.00037041388908690636
+    },
+    {
+      "name": "rsi_div_persistence",
+      "mode": "sparse_positive",
+      "score": 0.00031804041365638086
+    }
+  ],
+  "phase1_disabled": false
+}

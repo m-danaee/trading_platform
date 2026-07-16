@@ -1225,8 +1225,9 @@ PHASE2_SEED: int = get_seed()
 #   "cluster" → K symbol clusters evolved as separate islands with migration.
 PHASE2_ISLAND_MODE = "cluster"  # "global" | "cluster"
 # PHASE2_ONE_SYMBOL_ISLANDS — when True, skip KMeans/corr clustering and give
-#   each symbol its own island. Generation budget is NOT split: each island
-#   receives PHASE2_ISLAND_TOTAL_GENERATIONS (= PHASE2_GENERATIONS).
+#   each symbol its own island. Generation budget is per-island full
+#   PHASE2_ISLAND_TOTAL_GENERATIONS for both one-symbol and multi-symbol
+#   cluster modes (splitting a short budget across K clusters starves Stage B).
 # 2026-07-16 (plan 004): False — one-symbol specialists conflict with RB
 #   concentration gates; restore hybrid multi-symbol clusters (N_CLUSTERS=3).
 PHASE2_ONE_SYMBOL_ISLANDS = False

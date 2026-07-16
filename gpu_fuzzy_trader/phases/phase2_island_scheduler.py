@@ -1,7 +1,7 @@
 """
 phase2_island_scheduler.py — Cluster-island Phase 2 orchestration.
 
-Runs hybrid K-means symbol clusters with fixed total generation budget,
+Runs hybrid K-means symbol clusters with a full per-island generation budget,
 guarded inter-cluster migration, and orphan-symbol mini-runs.
 """
 
@@ -43,17 +43,16 @@ def compute_cluster_generation_budgets(
 ) -> dict[str, int]:
     """Resolve per-island generation budgets.
 
-    Default: split *total_gens* across *cluster_ids* (base + remainder).
-
-    When ``PHASE2_ONE_SYMBOL_ISLANDS`` is True, each island gets the full
-    ``total_gens`` budget (wall-clock ≈ total_gens × n_symbols). Splitting
-    would starve one-symbol islands (e.g. 20 gens / 10 symbols → 2 gens).
+    Each island receives the full ``total_gens`` budget (wall-clock scales
+    with the number of islands). Splitting a short global budget across
+    clusters (e.g. 20 gens / K=3 → ~7 gens) starves Stage B: after Stage A
+    the remainder falls below ``PHASE2_ISLAND_MIN_EPOCH_GENERATIONS`` and is
+    skipped, leaving only a few exploration gens and near-empty pools.
 
     Parameters
     ----------
     total_gens : int
-        Generation budget (global total when splitting; per-island when
-        one-symbol mode).
+        Per-island generation budget (``PHASE2_ISLAND_TOTAL_GENERATIONS``).
     cluster_ids : list[str]
         Sorted list of cluster identifiers.
 
@@ -62,16 +61,8 @@ def compute_cluster_generation_budgets(
     dict[str, int]
         Mapping ``{cluster_id: generation_budget}``.
     """
-    k = max(1, len(cluster_ids))
     per = max(1, int(total_gens))
-    if bool(getattr(_cfg, "PHASE2_ONE_SYMBOL_ISLANDS", False)):
-        return {cid: per for cid in cluster_ids}
-    base = max(1, per // k)
-    remainder = per % k
-    return {
-        cid: base + (1 if idx < remainder else 0)
-        for idx, cid in enumerate(cluster_ids)
-    }
+    return {cid: per for cid in cluster_ids}
 
 
 def _derive_island_seed(base_seed: int | None, island_id: str) -> int | None:

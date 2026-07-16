@@ -1,0 +1,14 @@
+{
+  "strategy": "/home/danaee/trading_platform/optimized_short/short_top100.json",
+  "dataset": "/home/danaee/trading_platform/data/train_2.csv",
+  "n_rules": 100,
+  "final_equity": 4401.593082138776,
+  "total_return_pct": 340.1593082138776,
+  "max_drawdown_pct": 5.544647976490971,
+  "profit_factor": 1.6651190065475416,
+  "win_rate": 50.94880057286072,
+  "executed_trades": 2793,
+  "raw_signal_count": 4523,
+  "account_ruined": false,
+  "status": "SURVIVED"
+}

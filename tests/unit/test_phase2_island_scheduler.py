@@ -14,19 +14,15 @@ from gpu_fuzzy_trader.phases.phase2_island_scheduler import (
 )
 
 
-def test_gens_per_cluster_split(monkeypatch):
+def test_gens_per_cluster_full_budget_each(monkeypatch):
+    """Multi-symbol clusters each get the full island budget (not split)."""
     monkeypatch.setattr(cfg, "PHASE2_ONE_SYMBOL_ISLANDS", False)
     total = int(cfg.PHASE2_ISLAND_TOTAL_GENERATIONS)
     k = int(cfg.PHASE2_N_CLUSTERS)
     cluster_ids = [str(i) for i in range(max(1, k))]
     budgets = compute_cluster_generation_budgets(total, cluster_ids)
-    # Total budget must be preserved
-    assert sum(budgets.values()) == total
-    # Each cluster has at least 1 gen
-    assert all(v >= 1 for v in budgets.values())
-    # Spread is at most 1 apart (even distribution)
-    vals = list(budgets.values())
-    assert max(vals) - min(vals) <= 1
+    assert all(v == total for v in budgets.values())
+    assert sum(budgets.values()) == total * len(cluster_ids)
 
 
 def test_one_symbol_islands_get_full_budget_each(monkeypatch):
@@ -51,6 +47,14 @@ def test_epoch_rounds_cover_budget(monkeypatch):
             f"Cluster {cid}: {rounds} rounds of {epoch} gens "
             f"does not cover budget {gens}"
         )
+    # With full per-cluster budget, Stage B remainder must not be
+    # discarded by PHASE2_ISLAND_MIN_EPOCH_GENERATIONS after Stage A.
+    from gpu_fuzzy_trader.phases.phase2_stage import island_stage_budgets
+    stage_a, stage_b = island_stage_budgets(total)
+    assert stage_b >= int(cfg.PHASE2_ISLAND_MIN_EPOCH_GENERATIONS), (
+        f"Stage B budget {stage_b} would be skipped by min-epoch guard "
+        f"({cfg.PHASE2_ISLAND_MIN_EPOCH_GENERATIONS})"
+    )
 
 
 class TestMinEpochGuard:

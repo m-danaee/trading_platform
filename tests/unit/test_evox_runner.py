@@ -501,6 +501,49 @@ class TestPopulationDiversityMetrics:
         )
         assert _population_unique_chromosome_ratio(pop) == 0.75
 
+    def test_diversity_recovery_pads_when_archive_smaller_than_inject(
+        self, monkeypatch,
+    ):
+        """Tiny deployable archive must not IndexError on viability recovery."""
+        from gpu_fuzzy_trader.evolution.evox_runner import _inject_diversity_recovery
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import _init_population
+        from gpu_fuzzy_trader.phases.phase2_stage import resolve_phase2_stage_params
+
+        monkeypatch.setattr(
+            _cfg, "PHASE2_VIABILITY_RECOVERY_DEPLOYABLE_MUTATE_FRACTION", 0.8,
+        )
+        pop_size = 60
+        feature_infos = [
+            {"name": f"f{i}", "n_terms": 3, "mode": "ternary"} for i in range(8)
+        ]
+        rng = np.random.default_rng(0)
+        population = _init_population(pop_size, feature_infos, rng)
+        objectives = np.ones((pop_size, 4))
+        metrics_cache = [{} for _ in range(pop_size)]
+        dont_cares = np.full(8, 3, dtype=np.int32)
+        archive = {
+            "k1": {"chromosome": population[0].copy(), "rank_score": 1.0},
+        }
+        stage = resolve_phase2_stage_params("A")
+        injected = _inject_diversity_recovery(
+            population,
+            objectives,
+            metrics_cache,
+            feature_infos,
+            dont_cares,
+            rng,
+            stage_params=stage,
+            deployable_archive=archive,
+            viability_recovery=True,
+        )
+        n_inject = max(
+            1,
+            int(round(pop_size * float(stage.diversity_recovery_inject_fraction))),
+        )
+        assert len(injected) == n_inject
+        for i in injected:
+            assert np.all(np.isinf(objectives[i]))
+
     def test_diversity_recovery_uses_population_not_pareto(self, monkeypatch):
         monkeypatch.setattr(_cfg, "PHASE2_DIVERSITY_RECOVERY_ENABLED", True)
         monkeypatch.setattr(

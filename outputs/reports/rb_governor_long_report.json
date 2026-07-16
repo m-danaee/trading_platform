@@ -1,0 +1,207 @@
+{
+  "direction": "long",
+  "rb_score": 0.0,
+  "train_metrics": {},
+  "valid_metrics": {},
+  "train_minus_valid_return_pct": 0.0,
+  "train_valid_ratio": 0.0,
+  "n_positive_single_rules": 1,
+  "selected_rules": 0,
+  "compose_history": [
+    {
+      "step": 1,
+      "action": "seed",
+      "score": 172.7771818492808,
+      "train_return_pct": 2.207767963409424,
+      "valid_return_pct": 1.962578296661377,
+      "rules": 1
+    }
+  ],
+  "risk_history": [
+    {
+      "pass": 0,
+      "rule_index": -1,
+      "score": -1423.6621426363135,
+      "train_return_pct": 2.207767963409424,
+      "valid_return_pct": 1.962578296661377,
+      "train_pf": 1.1968519687652588,
+      "valid_pf": 1.314365029335022,
+      "fold_scores": [
+        -1423.6621426363135,
+        271.87759008877515,
+        -293.2621387856434
+      ],
+      "min_fold_score": -1423.6621426363135,
+      "risk_tail_holdout_return_pct": 1.140141487121582,
+      "risk_tail_holdout_pf": 1.5548219680786133,
+      "risk_tail_holdout_dd": 1.3689119815826416
+    }
+  ],
+  "profit_amplifier": {
+    "enabled": false,
+    "accepted": false,
+    "baseline_profit_amp_objective": 5.707703617334365,
+    "baseline_certificate": {
+      "passed": true,
+      "reasons": [],
+      "train_return_pct": 2.207767963409424,
+      "valid_return_pct": 1.962578296661377,
+      "train_profit_factor": 1.1968519687652588,
+      "valid_profit_factor": 1.314365029335022,
+      "train_drawdown_pct": 3.649029493331909,
+      "valid_drawdown_pct": 1.537072777748108,
+      "train_trades": 90,
+      "valid_trades": 62,
+      "monthly": {
+        "windows": 2,
+        "profitable_windows": 2,
+        "profitable_ratio": 1.0,
+        "mean_return_pct": 0.9769856929779053,
+        "median_return_pct": 0.9769856929779053,
+        "worst_return_pct": 0.6686806678771973,
+        "latest_return_pct": 1.2852907180786133,
+        "recency_weighted_return_pct": 1.0926000773906708,
+        "mean_profit_factor": 1.3421010971069336,
+        "worst_profit_factor": 1.1825025081634521,
+        "worst_drawdown_pct": 1.537072777748108,
+        "min_trades": 24,
+        "mean_trades": 31.0,
+        "equity_slope": 1.2938852086364123,
+        "max_equity_dip_pct": 0.0,
+        "score": 14.407888591989709
+      }
+    },
+    "baseline_monthly_metrics": [
+      {
+        "direction": "long",
+        "total_return_pct": "0.66868067",
+        "sortino_ratio": 0.11812223525545634,
+        "max_drawdown_pct": "1.5370728",
+        "win_rate": 55.26315789473685,
+        "account_ruined": false,
+        "loss_count": 17,
+        "time_closed_count": 0,
+        "raw_signal_count": 39,
+        "executed_trades": 38,
+        "final_equity": "1006.6868",
+        "profit_factor": "1.1825025",
+        "avg_position_notional": "174.89287",
+        "skipped_min_notional_count": 1,
+        "max_simultaneous_positions": 6,
+        "max_total_open_exposure": "1001.7495",
+        "per_symbol_metrics": {
+          "9": {
+            "trade_count": 32,
+            "win_rate": 59.375,
+            "net_pnl": "10.297917"
+          },
+          "3": {
+            "trade_count": 5,
+            "win_rate": 40.0,
+            "net_pnl": "-1.1217625"
+          },
+          "10": {
+            "trade_count": 1,
+            "win_rate": 0.0,
+            "net_pnl": "-2.4893255"
+          }
+        },
+        "sum_positive_trade_pnl": 43.32646560668945,
+        "sum_negative_trade_pnl": 36.63964080810547,
+        "max_single_trade_pnl": 3.2422590255737305
+      },
+      {
+        "direction": "long",
+        "total_return_pct": "1.2852907",
+        "sortino_ratio": 0.33244249610125226,
+        "max_drawdown_pct": "1.3689173",
+        "win_rate": 58.333333333333336,
+        "account_ruined": false,
+        "loss_count": 10,
+        "time_closed_count": 0,
+        "raw_signal_count": 26,
+        "executed_trades": 24,
+        "final_equity": "1012.85297",
+        "profit_factor": "1.5016997",
+        "avg_position_notional": "171.37895",
+        "skipped_min_notional_count": 2,
+        "max_simultaneous_positions": 7,
+        "max_total_open_exposure": "1014.456",
+        "per_symbol_metrics": {
+          "9": {
+            "trade_count": 21,
+            "win_rate": 66.66666666666666,
+            "net_pnl": "20.467793"
+          },
+          "3": {
+            "trade_count": 3,
+            "win_rate": 0.0,
+            "net_pnl": "-7.614793"
+          }
+        },
+        "sum_positive_trade_pnl": 38.471927642822266,
+        "sum_negative_trade_pnl": 25.61892318725586,
+        "max_single_trade_pnl": 3.310447931289673
+      }
+    ],
+    "reason": "disabled"
+  },
+  "top_single_rules": [
+    {
+      "rank": 1,
+      "score": 188.7771818492808,
+      "train_return_pct": 2.207767963409424,
+      "valid_return_pct": 1.962578296661377,
+      "train_pf": 1.1968519687652588,
+      "valid_pf": 1.314365029335022,
+      "valid_dd": 1.537072777748108,
+      "valid_trades": 62,
+      "conditions": [
+        "[downside_semivol_20] IS Very High",
+        "[lower_wick_to_tr] IS Very High",
+        "[percent_b_20] IS Bullish",
+        "[sign_flip_rate_20] IS Very Low",
+        "symbol is 10",
+        "symbol is 3",
+        "symbol is 9"
+      ],
+      "rule": {
+        "conditions": [
+          "[downside_semivol_20] IS Very High",
+          "[lower_wick_to_tr] IS Very High",
+          "[percent_b_20] IS Bullish",
+          "[sign_flip_rate_20] IS Very Low",
+          "symbol is 10",
+          "symbol is 3",
+          "symbol is 9"
+        ],
+        "tp": 2.0,
+        "sl": 1.2,
+        "capital_pct": 18.0
+      }
+    }
+  ],
+  "fail_closed": true,
+  "fail_closed_reason": "symbol_concentration",
+  "symbol_concentration_gate": {
+    "hhi_abs_pnl": 0.5836579267919422,
+    "top_symbol_share_abs_pnl": 0.7326466023416147,
+    "top_symbol": "9",
+    "max_share": 0.5,
+    "max_hhi": 0.55,
+    "passed": false
+  },
+  "tail_holdout_gate": {
+    "enabled": true,
+    "available": true,
+    "tail_return_pct": 1.140141487121582,
+    "min_return_pct": 0.0,
+    "passed": true
+  },
+  "validation_gate": {
+    "return_pct": 1.962578296661377,
+    "profit_factor": 1.314365029335022,
+    "required_return_pct": 2.0,
+    "required_profit_factor": 1.05
+  }
+}

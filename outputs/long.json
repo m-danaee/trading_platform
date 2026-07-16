@@ -1,0 +1,31 @@
+{
+  "direction": "long",
+  "rules_set": [],
+  "risk_optimized": false,
+  "deployment_accepted": false,
+  "reason": "symbol_concentration",
+  "validation_gate": {
+    "return_pct": 1.962578296661377,
+    "profit_factor": 1.314365029335022,
+    "required_return_pct": 2.0,
+    "required_profit_factor": 1.05
+  },
+  "symbol_concentration_gate": {
+    "hhi_abs_pnl": 0.5836579267919422,
+    "top_symbol_share_abs_pnl": 0.7326466023416147,
+    "top_symbol": "9",
+    "max_share": 0.5,
+    "max_hhi": 0.55,
+    "passed": false
+  },
+  "tail_holdout_gate": {
+    "enabled": true,
+    "available": true,
+    "tail_return_pct": 1.140141487121582,
+    "min_return_pct": 0.0,
+    "passed": true
+  },
+  "rb_score": 0.0,
+  "rb_profit_amp_objective": 5.707703617334365,
+  "rb_profit_amp_accepted": false
+}
