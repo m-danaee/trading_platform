@@ -1,8 +1,0 @@
-{
-  "direction": "short",
-  "rules_set": [],
-  "risk_optimized": false,
-  "deployment_accepted": false,
-  "no_positive_good_candidates": true,
-  "reason": "no_positive_good_candidates"
-}

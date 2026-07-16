@@ -957,7 +957,7 @@ class TestPhase5CachedSplitFreshness:
         from gpu_fuzzy_trader.data.splitter import Data_Splitter
         from tests.unit.test_data_splitter import _patch_split_paths
 
-        train_csv = tmp_path / "train_2.csv"
+        train_csv = tmp_path / "train.csv"
         loader = Data_Loader()
         source_df = loader.load_dataset(
             _write_synthetic_test_csv(tmp_path, n_rows=3000)
@@ -996,7 +996,7 @@ class TestPhase5CachedSplitFreshness:
         from gpu_fuzzy_trader.data.splitter import Data_Splitter, load_cached_split_if_fresh
         from tests.unit.test_data_splitter import _patch_split_paths
 
-        train_csv = tmp_path / "train_2.csv"
+        train_csv = tmp_path / "train.csv"
         loader = Data_Loader()
         source_df = loader.load_dataset(_write_synthetic_test_csv(tmp_path))
         source_df.to_csv(train_csv, index=False)

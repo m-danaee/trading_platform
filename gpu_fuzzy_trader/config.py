@@ -108,14 +108,14 @@ DATA_ROOT = os.environ.get("DATA_ROOT", "").strip()
 TRAIN_CSV_PATH = _env_str(
     "TRAIN_CSV_PATH",
     os.path.join(
-        DATA_ROOT, "train_2.csv") if DATA_ROOT else "data/train_2.csv",
+        DATA_ROOT, "train.csv") if DATA_ROOT else "data/train.csv",
 )
 TEST_CSV_PATH = _env_str(
     "TEST_CSV_PATH",
-    os.path.join(DATA_ROOT, "test_2.csv") if DATA_ROOT else "data/test_2.csv",
+    os.path.join(DATA_ROOT, "test.csv") if DATA_ROOT else "data/test.csv",
 )
 
-# Cached splits from train_2.csv (Phases 2–5). Rebuilt when train_2.csv is newer.
+# Cached splits from train.csv (Phases 2–5). Rebuilt when train.csv is newer.
 TRAIN_70_PATH = "data/train_70.parquet"
 VALIDATION_30_PATH = "data/validation_30.parquet"
 VALIDATION_FITNESS_PATH = "data/validation_fitness.parquet"
@@ -172,7 +172,7 @@ TAIL_DROP_ROWS = 288
 # =============================================================================
 # Phases 4–5 always use persisted train_70 + validation_30 (see splitter.py).
 
-# SPLIT_MODE — how train_2.csv is divided before Phase 2.
+# SPLIT_MODE — how train.csv is divided before Phase 2.
 #   holdout             → single per-symbol chronological split with embargo
 #                         (288 bars dropped between train and val).
 #                         The actual train/val fraction is set by
@@ -319,8 +319,9 @@ PHASE1_TOP_K_FEATURES = 20
 # dispersion filter (PHASE1_DISPERSION_THRESHOLD) for both directions, with modes
 # detected by Feature_Detector. Phase 2 then evolves over the full feature set.
 #   True  → larger GA search space, more GPU RAM per chromosome, no MI prefilter.
-#   False → normal top-K MI-ranked selection.
-PHASE1_DISABLED: bool = True
+#   False → normal top-K MI-ranked selection (PHASE1_TOP_K_FEATURES=20).
+# 2026-07-16 (plan 004): False — full feature set under-searches with pop=60/gens=20.
+PHASE1_DISABLED: bool = False
 
 # PHASE1_MAX_FEATURE_OVERLAP — max shared feature names between long & short lists.
 #   Enforced as int(TOP_K × overlap) shared names (e.g. 25 × 0.8 → 20 shared).
@@ -798,16 +799,17 @@ SORTINO_SCALE = 10.0
 # select-and-tune uses its own val split, not Phase 2's).
 PHASE2_JOINT_TRAIN_VAL = False
 
-# PHASE2_VAL_IN_FITNESS_PENALTY — when False (default), val-derived penalties
-#   (val_floor_penalty, val symbol_robustness, val trade-floor support cap, and
-#   val terms inside _raw_feasibility_violation_score) are excluded from fitness.
-#   Val metrics are still stored on the metrics dict for reporting, deployability
-#   preview, and pool admission. When True, val penalties enter fitness even when
-#   PHASE2_JOINT_TRAIN_VAL=False.
-#   With JOINT=False (current default), val penalties during evolution starved
-#   the feasible set; hard gates remain at pool admission.
-#   → Phase 2 feasible-search item 4
-PHASE2_VAL_IN_FITNESS_PENALTY = False
+# PHASE2_VAL_IN_FITNESS_PENALTY — when True, val-derived penalties
+#   (val_floor_penalty, val symbol_robustness, val trade-floor support cap,
+#   overfit_gap_penalty, and val terms inside _raw_feasibility_violation_score)
+#   enter fitness even when PHASE2_JOINT_TRAIN_VAL=False.
+#   Val metrics are always stored for reporting, deployability preview, and
+#   pool admission. Joint stays False to avoid double-counting the same holdout
+#   in joint Sortino/return *and* admission gates (anti-leak).
+#   If the feasible set starves under these penalties, retune floors/weights —
+#   do not flip JOINT_TRAIN_VAL=True without a separate holdout design.
+#   → Phase 2 feasible-search item 4 / OOS plan 003
+PHASE2_VAL_IN_FITNESS_PENALTY = True
 
 # PHASE2_VAL_SIM_INTERVAL — run val backtest every N generations during
 # evolution (default 3, was 1 before task-11).  With per-epoch window
@@ -1225,8 +1227,9 @@ PHASE2_ISLAND_MODE = "cluster"  # "global" | "cluster"
 # PHASE2_ONE_SYMBOL_ISLANDS — when True, skip KMeans/corr clustering and give
 #   each symbol its own island. Generation budget is NOT split: each island
 #   receives PHASE2_ISLAND_TOTAL_GENERATIONS (= PHASE2_GENERATIONS).
-# 2026-07-11b: True — user found multi-symbol clustering harmful.
-PHASE2_ONE_SYMBOL_ISLANDS = True
+# 2026-07-16 (plan 004): False — one-symbol specialists conflict with RB
+#   concentration gates; restore hybrid multi-symbol clusters (N_CLUSTERS=3).
+PHASE2_ONE_SYMBOL_ISLANDS = False
 # PHASE2_N_CLUSTERS — number of hybrid symbol clusters when island mode is active
 #   and PHASE2_ONE_SYMBOL_ISLANDS is False (legacy clustering path).
 PHASE2_N_CLUSTERS = 3
@@ -1266,8 +1269,8 @@ PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN = 8
 PHASE2_ISLAND_MONTHLY_MIN_MONTHS = 3
 # Migration — exchange top elites between islands every N epochs.
 # PHASE2_MIGRATION_ENABLED — master switch for inter-island elite exchange.
-# 2026-07-11b: False — one-symbol islands should not import other symbols' elites.
-PHASE2_MIGRATION_ENABLED: bool = False
+# 2026-07-16 (plan 004): True — multi-symbol clusters share elites across islands.
+PHASE2_MIGRATION_ENABLED: bool = True
 # PHASE2_MIGRATION_EPOCH_INTERVAL — DEPRECATED.  This is a no-op in
 # the current code path.  Migration fires once after each cluster
 # finishes (sequential post-cluster chain, see _run_cluster_islands).
@@ -1957,14 +1960,17 @@ RB_RISK_GRID_WF_SPLITS: int = 3
 RB_RISK_GRID_USE_TAIL_HOLDOUT: bool = True
 
 # RB_TAIL_HOLDOUT_HARD_GATE — when True, strategies whose tail-holdout return
-#   is below RB_TAIL_HOLDOUT_MIN_RETURN_PCT are marked deployment_accepted=False.
+#   is below RB_TAIL_HOLDOUT_MIN_RETURN_PCT fail closed: empty ruleset written
+#   with deployment_accepted=False (not a soft flag with rules retained).
 RB_TAIL_HOLDOUT_HARD_GATE: bool = True
 RB_TAIL_HOLDOUT_MIN_RETURN_PCT: float = 0.0
 
 # RB_MAX_SYMBOL_SHARE_ABS_PNL — max fraction of abs PnL from a single symbol on
-#   the RB validation frame; above this → deployment_accepted=False.
+#   the RB validation frame; above this → fail-closed empty strategy
+#   (deployment_accepted=False, rules_set cleared).
 RB_MAX_SYMBOL_SHARE_ABS_PNL: float = 0.50
-# RB_MAX_SYMBOL_HHI — max Herfindahl index of abs PnL across symbols on valid.
+# RB_MAX_SYMBOL_HHI — max Herfindahl index of abs PnL across symbols on valid;
+#   above this → same fail-closed empty strategy as share gate.
 RB_MAX_SYMBOL_HHI: float = 0.55
 
 

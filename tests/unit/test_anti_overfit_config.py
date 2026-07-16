@@ -8,7 +8,7 @@ from gpu_fuzzy_trader import config as cfg
 def test_anti_overfit_config_bundle():
     assert cfg.PHASE2_JOINT_TRAIN_VAL is False
     assert cfg.PHASE2_VAL_SIM_INTERVAL == 2
-    assert cfg.PHASE2_VAL_IN_FITNESS_PENALTY is False
+    assert cfg.PHASE2_VAL_IN_FITNESS_PENALTY is True
     assert cfg.PHASE2_CAPITAL_PCT == 18.0
     assert cfg.PHASE2_MAX_TRAIN_VAL_GAP_PCT == 10.0
     assert cfg.PHASE2_OVERFIT_RATIO_FLOOR == 3.0
@@ -30,7 +30,7 @@ def test_anti_overfit_config_bundle():
     assert cfg.PHASE2_SAMPLE_ROTATION_FRACTION == 0.65
     assert cfg.PHASE2_TP == 2.0
     assert cfg.PHASE2_MONTHLY_ADMISSION_MIN_MONTHS == 3
-    assert cfg.PHASE1_DISABLED is True
+    assert cfg.PHASE1_DISABLED is False
     assert cfg.PHASE2_DIVERSITY_ON_F4 is True
     assert cfg.PHASE2_USE_TOTAL_RETURN_OBJ is False
     assert cfg.PHASE2_MIN_PROFITABLE_SYMBOLS == 3
@@ -48,8 +48,8 @@ def test_anti_overfit_config_bundle():
     assert cfg.MIN_TRADE_POOL_FLOOR == 15
     assert cfg.PHASE2_SUPPORT_PENALTY_WEIGHT_F1 == 0.25
     assert cfg.PHASE2_ISLAND_TWO_STAGE_ENABLED is True
-    assert cfg.PHASE2_ONE_SYMBOL_ISLANDS is True
-    assert cfg.PHASE2_MIGRATION_ENABLED is False
+    assert cfg.PHASE2_ONE_SYMBOL_ISLANDS is False
+    assert cfg.PHASE2_MIGRATION_ENABLED is True
     assert cfg.PHASE2_EARLY_STOP_ENABLED is False
     assert cfg.PHASE2_PLATEAU_EARLY_STOP_ENABLED is False
     assert cfg.PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED is False

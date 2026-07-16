@@ -5,7 +5,7 @@ End-to-end map of the GPU-Fuzzy Trading Pipeline: every major toggle, both enabl
 **Source of truth:** [`gpu_fuzzy_trader/config.py`](../gpu_fuzzy_trader/config.py)  
 **Orchestration:** [`gpu_fuzzy_trader/run_pipeline.py`](../gpu_fuzzy_trader/run_pipeline.py)
 
-**Hard invariant:** `test_2.csv` is used only in Phase 5. Phases 1–4 tune exclusively on `train_2.csv` → persisted parquets.
+**Hard invariant:** `test.csv` is used only in Phase 5. Phases 1–4 tune exclusively on `train.csv` → persisted parquets.
 
 ---
 
@@ -52,7 +52,7 @@ flowchart TD
     RB -->|True default| Gov[RB Governor:\nfilter + compose + risk grid + profit amp]
     RB -->|False| Legacy[Phase 3 greedy + Phase 4 WF grid]
 
-    Gov --> P5[Phase 5: test_2.csv OOS]
+    Gov --> P5[Phase 5: test.csv OOS]
     Legacy --> P5
 ```
 
@@ -71,7 +71,7 @@ flowchart TD
 ```mermaid
 flowchart TD
     subgraph phase0 [Phase0_Data]
-        Load[Data_Loader train_2.csv]
+        Load[Data_Loader train.csv]
         Split[Data_Splitter SPLIT_MODE]
         Parquet[train_70.parquet + validation_30.parquet]
         Load --> Split --> Parquet
@@ -110,7 +110,7 @@ flowchart TD
     end
 
     subgraph phase5 [Phase5_OOS]
-        OOS[OOS_Evaluator on test_2.csv only]
+        OOS[OOS_Evaluator on test.csv only]
         Gov --> OOS
         P4 --> OOS
         Skip34 --> OOS
@@ -119,11 +119,11 @@ flowchart TD
 
 **Execution order** (`Pipeline_Orchestrator.run`):
 
-1. Load `train_2.csv` → split → cache parquets (+ CV manifest if purged)
+1. Load `train.csv` → split → cache parquets (+ CV manifest if purged)
 2. Phase 1 on train; prune feature columns from train/val/CV folds
 3. Phase 2 long + short pools (global or cluster islands)
 4. If pool empty → skip 3+4; else RB Governor **or** legacy Phase 3 → Phase 4
-5. Phase 5 on `test_2.csv` (always)
+5. Phase 5 on `test.csv` (always)
 
 ---
 
@@ -735,7 +735,7 @@ Skips legacy Phase 3 and Phase 4; runs `rb_governor.py`:
 
 ## 8. Phase 5 — Out-of-sample
 
-Always runs on `test_2.csv` only.
+Always runs on `test.csv` only.
 
 | Parameter | Default | Effect |
 |-----------|---------|--------|
@@ -844,7 +844,7 @@ Eight canonical configuration paths:
 
 ### Per-variant data flow summary
 
-**Variant 1 (holdout global):** 70% train → evolve with joint val on 30% holdout → RB governor on same splits → test_2.csv OOS.
+**Variant 1 (holdout global):** 70% train → evolve with joint val on 30% holdout → RB governor on same splits → test.csv OOS.
 
 **Variant 2 (purged global):** ~70–75% prefix → K CV folds for fitness (worst aggregate) → 25–30% tail holdout for pool gate only → RB → OOS.
 

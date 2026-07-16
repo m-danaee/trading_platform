@@ -467,7 +467,7 @@ class TestLoadCachedSplitIfFresh:
     def _write_holdout_cache(self, tmp_path, monkeypatch, *, split_mode="holdout"):
         import gpu_fuzzy_trader.config as config_mod
 
-        csv_path = tmp_path / "train_2.csv"
+        csv_path = tmp_path / "train.csv"
         csv_path.write_text("x\n1\n", encoding="utf-8")
 
         n = 2000  # large enough to have non-empty validation after embargo
@@ -534,7 +534,7 @@ class TestLoadCachedSplitIfFresh:
 
         import gpu_fuzzy_trader.config as config_mod
 
-        csv_path = tmp_path / "train_2.csv"
+        csv_path = tmp_path / "train.csv"
         csv_path.write_text("x\n1\n", encoding="utf-8")
         df = _make_df({1: 6000, 2: 6000})
 
@@ -575,7 +575,7 @@ class TestLoadCachedSplitIfFresh:
     ):
         import gpu_fuzzy_trader.config as config_mod
 
-        csv_path = tmp_path / "train_2.csv"
+        csv_path = tmp_path / "train.csv"
         csv_path.write_text("x\n1\n", encoding="utf-8")
         df = _make_df({1: 6000, 2: 6000})
 

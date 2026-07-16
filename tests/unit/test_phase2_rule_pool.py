@@ -1620,14 +1620,18 @@ class TestEvaluateChromosome:
         orig_val = getattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ", False)
         orig_floor = _cfg.MIN_TRADE_SUPPORT
         orig_f3_obj = str(getattr(_cfg, "PHASE2_F3_OBJECTIVE", "profit_factor"))
-        
+        orig_val_pen = bool(
+            getattr(_cfg, "PHASE2_VAL_IN_FITNESS_PENALTY", False))
+
         try:
             _cfg.PHASE2_USE_TOTAL_RETURN_OBJ = True
             _cfg.MIN_TRADE_SUPPORT = 5
-            
+            # Train-only arithmetic: no val_metrics in this test.
+            _cfg.PHASE2_VAL_IN_FITNESS_PENALTY = False
+
             chromosome = _chromosome_with_min_active()
             dont_cares = np.ones(10, dtype=np.int32) * 5
-            
+
             class MockEngine:
                 def simulate_rule_batch(self, chromosomes, **kwargs):
                     return [{
@@ -1643,15 +1647,15 @@ class TestEvaluateChromosome:
                             "SYM3": {"net_pnl": 300.0},
                         },
                     }]
-            
+
             engine = MockEngine()
             objectives, metrics = _evaluate_chromosome(
                 chromosome, dont_cares, engine, []
             )
-            
+
             # With total return obj enabled: f3 = -total_return_pct = -15.0 (plus penalties)
             assert np.isclose(objectives[2], -15.0)
-            
+
             # Disable it -> should use PHASE2_F3_OBJECTIVE (profit_factor = 5.0)
             _cfg.PHASE2_USE_TOTAL_RETURN_OBJ = False
             _cfg.PHASE2_F3_OBJECTIVE = "profit_factor"
@@ -1667,9 +1671,10 @@ class TestEvaluateChromosome:
                 chromosome, dont_cares, engine, []
             )
             assert np.isclose(objectives[2], -50.0)
-            
+
         finally:
             _cfg.MIN_TRADE_SUPPORT = orig_floor
+            _cfg.PHASE2_VAL_IN_FITNESS_PENALTY = orig_val_pen
             if has_orig:
                 _cfg.PHASE2_USE_TOTAL_RETURN_OBJ = orig_val
             else:
@@ -1724,6 +1729,7 @@ class TestEvaluateChromosome:
                 def __init__(self, pf=2.0, trades=50):
                     self.pf = pf
                     self.trades = trades
+
                 def simulate_rule_batch(self, chromosomes, **kwargs):
                     return [{
                         "executed_trades": self.trades,
@@ -1783,18 +1789,21 @@ class TestEvaluateChromosome:
 
     def test_evaluate_chromosome_diversity_penalty_avoids_self_penalization(self):
         from gpu_fuzzy_trader.phases.phase2_rule_pool import _evaluate_chromosome
-        
+
         orig_penalty = _cfg.PHASE2_DIVERSITY_PENALTY
         orig_hamming = _cfg.PHASE2_DIVERSITY_HAMMING_THRESHOLD
         orig_floor = _cfg.MIN_TRADE_SUPPORT
         has_ret_obj = hasattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ")
         orig_ret_obj = getattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ", False)
+        orig_val_pen = bool(
+            getattr(_cfg, "PHASE2_VAL_IN_FITNESS_PENALTY", False))
         
         try:
             _cfg.PHASE2_DIVERSITY_PENALTY = 10.0
             _cfg.PHASE2_DIVERSITY_HAMMING_THRESHOLD = 4
             _cfg.MIN_TRADE_SUPPORT = 5
             _cfg.PHASE2_USE_TOTAL_RETURN_OBJ = True
+            _cfg.PHASE2_VAL_IN_FITNESS_PENALTY = False
             
             chromosome = np.array([1, 2, 3, 4, 5, 6], dtype=np.int32)
             dont_cares = np.ones(6, dtype=np.int32) * 7
@@ -1846,6 +1855,7 @@ class TestEvaluateChromosome:
             _cfg.PHASE2_DIVERSITY_PENALTY = orig_penalty
             _cfg.PHASE2_DIVERSITY_HAMMING_THRESHOLD = orig_hamming
             _cfg.MIN_TRADE_SUPPORT = orig_floor
+            _cfg.PHASE2_VAL_IN_FITNESS_PENALTY = orig_val_pen
             if has_ret_obj:
                 _cfg.PHASE2_USE_TOTAL_RETURN_OBJ = orig_ret_obj
 
@@ -2139,15 +2149,13 @@ class TestDecoupledObjectives:
         )
 
     def test_f3_uses_robust_return_by_default(self, monkeypatch):
-        """Without any monkeypatching of PHASE2_USE_TOTAL_RETURN_OBJ, the new
-        default True means f3 should use robust_return_pct."""
+        """With USE_TOTAL_RETURN_OBJ + JOINT_TRAIN_VAL, f3 uses robust_return_pct."""
         from gpu_fuzzy_trader.phases.phase2_rule_pool import (
             compute_phase2_objectives_from_metrics,
         )
 
         monkeypatch.setattr(_cfg, "PHASE2_JOINT_TRAIN_VAL", True)
-        # NOTE: PHASE2_USE_TOTAL_RETURN_OBJ is NOT set here → uses the new
-        # default True from config.
+        monkeypatch.setattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ", True)
         monkeypatch.setattr(_cfg, "PHASE2_USE_ROBUST_RETURN_OBJ", True)
         monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", False)
         monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
@@ -2339,6 +2347,7 @@ class TestPhenotypeDiversityPenalty:
         monkeypatch.setattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ", False)
         monkeypatch.setattr(_cfg, "PHASE2_F3_OBJECTIVE", "win_rate")
         monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
+        monkeypatch.setattr(_cfg, "PHASE2_VAL_IN_FITNESS_PENALTY", False)
 
         dont_cares = np.full(5, 5, dtype=np.int32)
         chrom = np.array([1, 2, 3, 4, 5], dtype=np.int32)
@@ -2372,8 +2381,16 @@ class TestPhenotypeDiversityPenalty:
             [ref_chrom],
             diversity_metrics_by_key={chromosome_key(ref_chrom): ref_metrics},
         )
-        assert obj_pen[0] > obj_no_pen[0]
-        assert obj_pen[2] > obj_no_pen[2]
+        # Diversity is routed to f4 when PHASE2_DIVERSITY_ON_F4 (current default).
+        if bool(getattr(_cfg, "PHASE2_DIVERSITY_ON_F4", True)) and bool(
+            getattr(_cfg, "PHASE2_F4_ENABLED", False)
+        ):
+            assert obj_pen[3] > obj_no_pen[3]
+            assert obj_pen[0] == obj_no_pen[0]
+            assert obj_pen[2] == obj_no_pen[2]
+        else:
+            assert obj_pen[0] > obj_no_pen[0]
+            assert obj_pen[2] > obj_no_pen[2]
 
 
 class TestInfeasiblePenaltyRemoved:
@@ -3700,7 +3717,7 @@ class TestPoolAdmissionOverfitRatioGate:
     def test_admits_moderate_ratio(
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """train=20%/val=8% (2.5× ratio) is ADMITTED (under 3.0 default)."""
+        """train/val ≈2.5× is ADMITTED when under OVERFIT_RATIO_FLOOR and gap gate."""
         from gpu_fuzzy_trader.phases.phase2_support import (
             passes_pool_admission_gate,
         )
@@ -3708,19 +3725,20 @@ class TestPoolAdmissionOverfitRatioGate:
         monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", True)
         monkeypatch.setattr(_cfg, "PHASE2_STRICT_POSITIVE_GOOD", False)
         monkeypatch.setattr(_cfg, "PHASE2_OVERFIT_RATIO_FLOOR", 3.0)
-
+        # Keep absolute gap within PHASE2_MAX_TRAIN_VAL_GAP_PCT (10.0):
+        # train=16.5 / val=6.6 = 2.5× with gap = 9.9.
         train = {
             "executed_trades": 100,
-            "total_return_pct": 20.0,
+            "total_return_pct": 16.5,
             "profit_factor": 2.0,
         }
         val = {
             "executed_trades": 50,
-            "total_return_pct": 8.0,
+            "total_return_pct": 6.6,
             "profit_factor": 1.5,
         }
         assert passes_pool_admission_gate(train, val) is True, (
-            "Expected train=20%/val=8% (2.5×) to be ADMITTED"
+            "Expected ~2.5× train/val ratio within gap gate to be ADMITTED"
         )
 
     def test_floor_zero_preserves_pre_task6_behavior(

@@ -59,7 +59,10 @@ class TestResolvePhase2StageParams:
 
 
 class TestStageObjectivePenalties:
-    def test_stage_a_applies_stronger_diversity_penalty(self):
+    def test_stage_a_applies_stronger_diversity_penalty(self, monkeypatch):
+        # Avoid missing-val feasibility (+5) on Stage B when no val_metrics;
+        # this test isolates diversity routing across stages.
+        monkeypatch.setattr(_cfg, "PHASE2_VAL_IN_FITNESS_PENALTY", False)
         chromosome = np.array([0, 1, 2], dtype=np.int32)
         dont_cares = np.array([3, 3, 3], dtype=np.int32)
         # Near-duplicate reference (Hamming=1); identical refs are excluded from crowding penalty.

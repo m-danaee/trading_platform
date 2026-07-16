@@ -9,8 +9,8 @@ Quick reference for setup, running the GPU-Fuzzy trading pipeline, tests, and ev
 - **Python 3.10+** (3.12 tested)
 - **Repository root as working directory** — all paths in `gpu_fuzzy_trader/config.py` are relative to the project root
 - **Data files** (included in this repo):
-  - `data/train_2.csv` — training data (Phases 1–4)
-  - `data/test_2.csv` — held-out test data (Phase 5 only)
+  - `data/train.csv` — training data (Phases 1–4)
+  - `data/test.csv` — held-out test data (Phase 5 only)
 
 ---
 
@@ -160,12 +160,12 @@ python -m gpu_fuzzy_trader.run_pipeline --phase 5
 
 Runs all five phases in order:
 
-1. **Data prep** — load `data/train_2.csv`, per-symbol 70/30 chronological split (or purged walk-forward) → `data/train_70.parquet`, `data/validation_30.parquet`, `data/validation_fitness.parquet`, `data/validation_selection.parquet`
+1. **Data prep** — load `data/train.csv`, per-symbol 70/30 chronological split (or purged walk-forward) → `data/train_70.parquet`, `data/validation_30.parquet`, `data/validation_fitness.parquet`, `data/validation_selection.parquet`
 2. **Phase 1** — direction-specific feature selection
 3. **Phase 2** — rule pool generation via **NSGA-III** (`evolution/evox_runner.py` + EvoX; long + short)
 4. **Phase 3** — **greedy** rule-set construction + short Pareto refinement → `outputs/long.json`, `outputs/short.json`
 5. **Phase 4** — RL risk optimization (TP / SL / capital per rule)
-6. **Phase 5** — out-of-sample evaluation on `data/test_2.csv` (always runs)
+6. **Phase 5** — out-of-sample evaluation on `data/test.csv` (always runs)
 
 On success, a short summary is printed to stdout. Structured timing is appended to `outputs/pipeline.log`.
 
@@ -282,8 +282,8 @@ Edit `gpu_fuzzy_trader/config.py` before running. Common settings:
 
 | Setting                        | Default                | Purpose                                                   |
 | ------------------------------ | ---------------------- | --------------------------------------------------------- |
-| `TRAIN_CSV_PATH`               | `data/train_2.csv`     | Training CSV                                              |
-| `TEST_CSV_PATH`                | `data/test_2.csv`      | Test CSV                                                  |
+| `TRAIN_CSV_PATH`               | `data/train.csv`     | Training CSV                                              |
+| `TEST_CSV_PATH`                | `data/test.csv`      | Test CSV                                                  |
 | `PHASE1_TOP_K_FEATURES`        | `30`                   | Features per direction                                    |
 | `PHASE2_ALGORITHM`             | `"NSGA3"`              | Fixed; NSGA-III when EvoX is installed                    |
 | `PHASE2_POPULATION_SIZE`       | `200`                  | Phase 2 population                                        |
@@ -324,7 +324,7 @@ Strategy files `outputs/long.json` and `outputs/short.json` are compatible with 
 
 1. Run the pipeline (or copy existing `outputs/long.json` and `outputs/short.json`).
 2. Open `evaluator_v5.ipynb` in Jupyter.
-3. Point the notebook at the generated strategy JSON and `data/test_2.csv` (or `data/train_2.csv` for in-sample checks).
+3. Point the notebook at the generated strategy JSON and `data/test.csv` (or `data/train.csv` for in-sample checks).
 
 ```bash
 jupyter notebook evaluator_v5.ipynb
@@ -439,8 +439,8 @@ Run individual phases — see [README.md § Running Individual Phases](README.md
 | Issue                                                       | What to do                                                                                                                                             |
 | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `ModuleNotFoundError: No module named 'pandas'` (or others) | Activate venv and install dependencies (see Setup)                                                                                                     |
-| Split change or loader preprocessing has no effect            | Stale parquet cache — delete `data/train_70.parquet`, `validation_30.parquet`, `validation_fitness.parquet`, `validation_selection.parquet`, and `data/cv_folds_manifest.json`, then re-run. Changing `TAIL_DROP_ROWS` without touching `train_2.csv` mtime is caught automatically via row-count reconciliation; in-place CSV edits that preserve mtime and row count still need a manual cache delete. |
-| `FileNotFoundError` for `data/train_2.csv`                    | Run from project root; ensure data files exist                                                                                                         |
+| Split change or loader preprocessing has no effect            | Stale parquet cache — delete `data/train_70.parquet`, `validation_30.parquet`, `validation_fitness.parquet`, `validation_selection.parquet`, and `data/cv_folds_manifest.json`, then re-run. Changing `TAIL_DROP_ROWS` without touching `train.csv` mtime is caught automatically via row-count reconciliation; in-place CSV edits that preserve mtime and row count still need a manual cache delete. |
+| `FileNotFoundError` for `data/train.csv`                    | Run from project root; ensure data files exist                                                                                                         |
 | Phase 2 very slow on CPU                                    | Install `jax` + `jaxlib` and `evox` + `torch`; optional GPU/CUDA build for faster backtests                                                            |
 | Phase 2 uses NSGA-II instead of NSGA-III                    | Install `evox` and `torch`; check `phase2_*_history.json` — `"NSGA-II (fallback)"` means EvoX was unavailable                                          |
 | Stale Phase 2 pools after code changes                      | `rm pools/phase2_{long,short}_{pool,history}.json` and re-run                                                                                          |

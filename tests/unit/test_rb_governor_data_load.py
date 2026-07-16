@@ -17,7 +17,7 @@ class TestRbGovernorDataLoad:
     def test_load_internal_split_frames_uses_train_70_cache(
         self, tmp_path, monkeypatch,
     ):
-        csv_path = tmp_path / "train_2.csv"
+        csv_path = tmp_path / "train.csv"
         csv_path.write_text("x\n1\n", encoding="utf-8")
 
         with _patch_split_paths(str(tmp_path))() as paths:

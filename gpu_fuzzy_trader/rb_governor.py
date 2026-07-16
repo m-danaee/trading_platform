@@ -1795,6 +1795,94 @@ def run_rb_governor_pipeline(
                 float(tail_gate.get("min_return_pct", 0.0)),
             )
 
+        # Hard fail-closed: concentration / tail reject clears ruleset (do not
+        # persist rejected teams for Phase 5). Return/PF-only soft path below
+        # still saves rules with deployment_accepted=False.
+        if not sym_ok or not tail_ok:
+            reasons: list[str] = []
+            if not sym_ok:
+                reasons.append("symbol_concentration")
+            if not tail_ok:
+                reasons.append("tail_holdout")
+            fail_reason = "+".join(reasons)
+            strategy = _strategy(
+                direction,
+                [],
+                risk_optimized=False,
+                extra={
+                    "deployment_accepted": False,
+                    "reason": fail_reason,
+                    "validation_gate": {
+                        "return_pct": val_ret,
+                        "profit_factor": val_pf,
+                        "required_return_pct": ret_gate,
+                        "required_profit_factor": pf_gate,
+                    },
+                    "symbol_concentration_gate": sym_gate,
+                    "tail_holdout_gate": tail_gate,
+                    "rb_score": 0.0,
+                    "rb_profit_amp_objective": profit_objective,
+                    "rb_profit_amp_accepted": bool(profit_meta.get("accepted", False)),
+                },
+            )
+            strategy_path = out_dir / f"{direction}.json"
+            with strategy_path.open("w", encoding="utf-8") as fh:
+                json.dump(strategy, fh, indent=2)
+            _write_clean_evaluator(
+                strategy,
+                out_dir / "evaluator_clean" /
+                f"{direction}_evaluator_clean.json",
+            )
+            report = {
+                "direction": direction,
+                "rb_score": 0.0,
+                "train_metrics": {},
+                "valid_metrics": {},
+                "train_minus_valid_return_pct": 0.0,
+                "train_valid_ratio": 0.0,
+                "n_positive_single_rules": len(candidates),
+                "selected_rules": 0,
+                "compose_history": compose_history,
+                "risk_history": risk_history,
+                "profit_amplifier": profit_meta,
+                "top_single_rules": [
+                    {
+                        "rank": i + 1,
+                        "score": c.score,
+                        "train_return_pct": _f(c.train_metrics, "total_return_pct"),
+                        "valid_return_pct": _f(c.valid_metrics, "total_return_pct"),
+                        "train_pf": _f(c.train_metrics, "profit_factor"),
+                        "valid_pf": _f(c.valid_metrics, "profit_factor"),
+                        "valid_dd": _f(c.valid_metrics, "max_drawdown_pct"),
+                        "valid_trades": _i(c.valid_metrics, "executed_trades"),
+                        "conditions": list(c.rule.get("conditions", [])),
+                        "rule": _rule_to_engine(c.rule),
+                    }
+                    for i, c in enumerate(candidates[:25])
+                ],
+                "fail_closed": True,
+                "fail_closed_reason": fail_reason,
+                "symbol_concentration_gate": sym_gate,
+                "tail_holdout_gate": tail_gate,
+                "validation_gate": {
+                    "return_pct": val_ret,
+                    "profit_factor": val_pf,
+                    "required_return_pct": ret_gate,
+                    "required_profit_factor": pf_gate,
+                },
+            }
+            with (reports_dir / f"rb_governor_{direction}_report.json").open(
+                "w", encoding="utf-8",
+            ) as fh:
+                json.dump(report, fh, indent=2, default=str)
+            logger.info(
+                "RB [%s]: fail-closed empty strategy written (%s).",
+                direction,
+                fail_reason,
+            )
+            results[direction] = strategy
+            continue
+
         strategy = _strategy(
             direction,
             opt_rules,
