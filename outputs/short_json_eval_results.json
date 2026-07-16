@@ -1,0 +1,50 @@
+[
+  {
+    "dataset": "test_2.csv",
+    "path": "/home/danaee/trading_platform/data/test_2.csv",
+    "rows": 262080,
+    "total_return_pct": 24.871485116264623,
+    "max_drawdown_pct": 3.533939553035595,
+    "profit_factor": 1.76458653851524,
+    "win_rate": 53.86740331491713,
+    "executed_trades": 362,
+    "account_ruined": false,
+    "final_equity": 1248.7148511626463
+  },
+  {
+    "dataset": "test.csv",
+    "path": "/home/danaee/trading_platform/data/test.csv",
+    "rows": 437760,
+    "total_return_pct": 69.87478383099503,
+    "max_drawdown_pct": 1.7726580668386918,
+    "profit_factor": 2.6312886444931745,
+    "win_rate": 62.5,
+    "executed_trades": 512,
+    "account_ruined": false,
+    "final_equity": 1698.7478383099503
+  },
+  {
+    "dataset": "train.csv",
+    "path": "/home/danaee/trading_platform/data/train.csv",
+    "rows": 701520,
+    "total_return_pct": 101.87018868643207,
+    "max_drawdown_pct": 5.097387023912249,
+    "profit_factor": 2.1297754141859384,
+    "win_rate": 54.79910714285714,
+    "executed_trades": 896,
+    "account_ruined": false,
+    "final_equity": 2018.7018868643206
+  },
+  {
+    "dataset": "train_2.csv",
+    "path": "/home/danaee/trading_platform/data/train_2.csv",
+    "rows": 1837440,
+    "total_return_pct": 605.6905340332007,
+    "max_drawdown_pct": 5.097387023912299,
+    "profit_factor": 2.250293496191688,
+    "win_rate": 57.96640944167045,
+    "executed_trades": 2203,
+    "account_ruined": false,
+    "final_equity": 7056.905340332008
+  }
+]

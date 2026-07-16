@@ -1,6 +1,0 @@
-{
-  "type": "audit",
-  "objective": "Find silent OOS-degrading flaws in gpu_fuzzy_trader across split, Phase 1, Phase 2, RB Governor/monthly validation, and Phase 5.",
-  "status": "planned",
-  "notes": "Read-only static audit; no implementation dispatch requested."
-}

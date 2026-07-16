@@ -1,0 +1,30 @@
+[
+  {
+    "dataset": "train.csv",
+    "path": "data/train.csv",
+    "rows": 701520,
+    "total_return_pct": 84.22795956351037,
+    "max_drawdown_pct": 5.484545014871817,
+    "profit_factor": 1.9879575856125564,
+    "win_rate": 53.58974358974359,
+    "executed_trades": 390,
+    "raw_signal_count": 524,
+    "final_equity": 1842.2795956351038,
+    "account_ruined": false,
+    "elapsed_sec": 5.383707284927368
+  },
+  {
+    "dataset": "test.csv",
+    "path": "data/test.csv",
+    "rows": 437760,
+    "total_return_pct": 71.4990584320395,
+    "max_drawdown_pct": 3.522263882662599,
+    "profit_factor": 2.616800633695768,
+    "win_rate": 60.38647342995169,
+    "executed_trades": 207,
+    "raw_signal_count": 289,
+    "final_equity": 1714.9905843203949,
+    "account_ruined": false,
+    "elapsed_sec": 3.1868362426757812
+  }
+]

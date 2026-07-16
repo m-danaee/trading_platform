@@ -1,9 +1,0 @@
-{
-  "plan_id": "ram-optimization",
-  "branches_deleted": [
-    "fix/ram-quick-wins",
-    "fix/ram-sequential-clusters"
-  ],
-  "method": "git branch -d (safe, fast-forwarded branches)",
-  "timestamp": "2026-07-06T08:11:02Z"
-}
