@@ -78,7 +78,7 @@ def valid_multi_symbol_dataframe(draw: st.DrawFn) -> tuple[pd.DataFrame, dict[st
 
         # Offset timestamps per symbol so they are disjoint across symbols
         sym_offset = SYMBOL_POOL.index(sym) * 100_000  # minutes
-        base_ts = pd.Timestamp("2020-01-01 00:00:00") + pd.Timedelta(minutes=sym_offset)
+        base_ts = pd.Timestamp("2024-01-01 00:00:00") + pd.Timedelta(minutes=sym_offset)
         timestamps = _make_timestamps(n_rows, base_ts)
 
         for i, ts in enumerate(timestamps):

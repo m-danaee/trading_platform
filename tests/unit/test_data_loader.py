@@ -24,7 +24,7 @@ from gpu_fuzzy_trader.data.loader import Data_Loader, load_dataset
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_timestamps(n: int, start: str = "2020-01-01 00:00:00", freq_minutes: int = 5) -> list[str]:
+def _make_timestamps(n: int, start: str = "2024-01-01 00:00:00", freq_minutes: int = 5) -> list[str]:
     """Generate n evenly-spaced ISO datetime strings."""
     base = pd.Timestamp(start)
     return [
@@ -53,7 +53,7 @@ def _make_rows(
     n: int,
     label_val: float = 1.0,
     feat_val: float = 1.0,
-    start: str = "2020-01-01 00:00:00",
+    start: str = "2024-01-01 00:00:00",
 ) -> list[dict]:
     """Generate n rows for a given symbol with valid timestamps."""
     timestamps = _make_timestamps(n, start=start)
@@ -90,8 +90,8 @@ class TestDatetimeParsing:
     def test_datetime_values_are_correct(self):
         rows = _make_rows(1, TAIL_DROP_ROWS + 2)
         df = _loader_from_rows(rows)
-        # First row should be 2020-01-01 00:00:00
-        assert df["datetime"].iloc[0] == pd.Timestamp("2020-01-01 00:00:00")
+        # First row should be 2024-01-01 00:00:00
+        assert df["datetime"].iloc[0] == pd.Timestamp("2024-01-01 00:00:00")
 
 
 # ---------------------------------------------------------------------------
@@ -101,11 +101,11 @@ class TestDatetimeParsing:
 class TestSort:
     def test_rows_sorted_by_datetime_then_symbol(self):
         # Same timestamp, symbols out of order
-        ts = "2020-01-01 00:00:00"
+        ts = "2024-01-01 00:00:00"
         rows = [
             _base_row(2, ts),
             _base_row(1, ts),
-            *_make_rows(1, TAIL_DROP_ROWS, start="2020-01-01 00:05:00"),
+            *_make_rows(1, TAIL_DROP_ROWS, start="2024-01-01 00:05:00"),
         ]
         df = _loader_from_rows(rows)
         same_ts = df[df["datetime"] == pd.Timestamp(ts)]

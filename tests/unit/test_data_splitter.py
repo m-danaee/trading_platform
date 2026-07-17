@@ -41,7 +41,7 @@ from gpu_fuzzy_trader.data.splitter import (
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_timestamps(n: int, start: str = "2020-01-01 00:00:00", freq_minutes: int = 5) -> list[str]:
+def _make_timestamps(n: int, start: str = "2024-01-01 00:00:00", freq_minutes: int = 5) -> list[str]:
     """Generate n evenly-spaced ISO datetime strings."""
     base = pd.Timestamp(start)
     return [

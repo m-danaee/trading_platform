@@ -9,8 +9,8 @@ Quick reference for setup, running the GPU-Fuzzy trading pipeline, tests, and ev
 - **Python 3.10+** (3.12 tested)
 - **Repository root as working directory** — all paths in `gpu_fuzzy_trader/config.py` are relative to the project root
 - **Data files** (included in this repo):
-  - `data/train.csv` — training data (Phases 1–4)
-  - `data/test.csv` — held-out test data (Phase 5 only)
+  - `data/train.csv` — training data (Phases 1–4); bars **2024-01-01 → 2024-08-31**
+  - `data/test.csv` — held-out test data (Phase 5 only); bars **2024-09-01 → 2025-01-31**
 
 ---
 
@@ -125,6 +125,8 @@ Phase 2 evolution still runs via **Numba CPU**; only GPU-accelerated backtests a
 ## Run the full pipeline
 
 For hyperparameter tuning guidance (defaults, performance effects, failure modes), see **[docs/hyperparameters/](docs/hyperparameters/README.md)**.
+
+**Notebook (local Jupyter / WSL):** open [`run.ipynb`](run.ipynb) with the project `.venv` kernel and run all cells. Same orchestrator as the CLI below. A full run can OOM on WSL — prefer Colab GPU for long Phase 2 runs.
 
 From the project root:
 

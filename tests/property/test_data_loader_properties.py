@@ -74,7 +74,7 @@ def valid_multi_symbol_dataframe(draw: st.DrawFn) -> pd.DataFrame:
         # Use a fixed base timestamp per symbol (offset by symbol index to avoid
         # any accidental cross-symbol datetime collisions)
         sym_offset = SYMBOL_POOL.index(sym) * 10_000  # minutes
-        base_ts = pd.Timestamp("2020-01-01 00:00:00") + pd.Timedelta(minutes=sym_offset)
+        base_ts = pd.Timestamp("2024-01-01 00:00:00") + pd.Timedelta(minutes=sym_offset)
         timestamps = _make_datetime_series(n_rows, base_ts)
 
         for ts in timestamps:
@@ -188,7 +188,7 @@ def valid_multi_symbol_dataframe_with_counts(draw: st.DrawFn):
         original_counts[sym] = n_rows
 
         sym_offset = SYMBOL_POOL.index(sym) * 10_000  # minutes — keeps timestamps disjoint
-        base_ts = pd.Timestamp("2021-01-01 00:00:00") + pd.Timedelta(minutes=sym_offset)
+        base_ts = pd.Timestamp("2024-03-01 00:00:00") + pd.Timedelta(minutes=sym_offset)
         timestamps = _make_datetime_series(n_rows, base_ts)
 
         for ts in timestamps:
@@ -318,7 +318,7 @@ def dataframe_with_nan_labels(draw: st.DrawFn) -> pd.DataFrame:
         )
 
         sym_offset = SYMBOL_POOL.index(sym) * 10_000
-        base_ts = pd.Timestamp("2022-01-01 00:00:00") + pd.Timedelta(minutes=sym_offset)
+        base_ts = pd.Timestamp("2024-06-01 00:00:00") + pd.Timedelta(minutes=sym_offset)
         timestamps = _make_datetime_series(n_rows, base_ts)
 
         # Decide which rows (by position within this symbol) will have NaN
@@ -457,7 +457,7 @@ def dataframe_with_nan_features(draw: st.DrawFn) -> pd.DataFrame:
         )
 
         sym_offset = SYMBOL_POOL.index(sym) * 10_000
-        base_ts = pd.Timestamp("2023-01-01 00:00:00") + pd.Timedelta(minutes=sym_offset)
+        base_ts = pd.Timestamp("2024-07-01 00:00:00") + pd.Timedelta(minutes=sym_offset)
         timestamps = _make_datetime_series(n_rows, base_ts)
 
         # Decide which (row_index, feature_col) pairs will be NaN.

@@ -23,8 +23,8 @@ def test_anti_overfit_config_bundle():
     assert cfg.PHASE2_PROFIT_FACTOR_FLOOR_ADMISSION == 1.15
     assert cfg.PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION == 1.0
     assert cfg.PHASE2_RETURN_FLOOR_PCT == 0.25
-    assert cfg.PHASE2_GENERATIONS == 20
-    assert cfg.PHASE2_POPULATION_SIZE == 60
+    assert cfg.PHASE2_GENERATIONS == 40
+    assert cfg.PHASE2_POPULATION_SIZE == 200
     assert cfg.PHASE2_TWO_STAGE_ENABLED is True
     assert cfg.PHASE2_SAMPLE_MAX_BARS_PER_SYMBOL == 60_000
     assert cfg.PHASE2_SAMPLE_ROTATION_FRACTION == 0.65
@@ -60,8 +60,8 @@ def test_anti_overfit_config_bundle():
     assert cfg.PHASE2_EARLY_STOP_ENABLED is False
     assert cfg.PHASE2_PLATEAU_EARLY_STOP_ENABLED is False
     assert cfg.PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED is False
-    assert cfg.PHASE2_STAGE_A_GENERATIONS == 12
-    assert cfg.PHASE2_STAGE_B_GENERATIONS == 8
+    assert cfg.PHASE2_STAGE_A_GENERATIONS == 20
+    assert cfg.PHASE2_STAGE_B_GENERATIONS == 20
     assert cfg.PHASE2_STAGE_A_MUTATION_WEIGHTED_ACTIVATE_PROB == 0.70
     assert cfg.PHASE3_GLOBAL_MAX_RULES == 25
     assert cfg.PHASE3_PER_SYMBOL_MAX_RULES == 4

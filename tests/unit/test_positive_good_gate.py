@@ -48,7 +48,7 @@ def _make_big_df(n_rows: int = 3000) -> "pd.DataFrame":
     rows: list[dict] = []
     for sym in symbols:
         for i in range(n_rows // n_sym):
-            dt = pd.Timestamp("2020-01-01") + pd.Timedelta(minutes=5 * i)
+            dt = pd.Timestamp("2024-01-01") + pd.Timedelta(minutes=5 * i)
             rows.append({
                 "datetime": dt,
                 "symbol": sym,

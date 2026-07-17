@@ -23,7 +23,7 @@ def _make_df(n_rows: int = 400, n_feats: int = 6) -> pd.DataFrame:
     open_next = rng.uniform(100, 200, size=n_rows)
     data = {
         "symbol": sym,
-        "datetime": pd.date_range("2020-01-01", periods=n_rows, freq="5min"),
+        "datetime": pd.date_range("2024-01-01", periods=n_rows, freq="5min"),
         "_symbol_bar_index": np.arange(n_rows),
         "label_open_next": open_next,
         "label_close_288": open_next * 1.02,

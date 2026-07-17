@@ -15,7 +15,7 @@ from gpu_fuzzy_trader import config as _cfg
 def _mini_df(n: int = 80) -> pd.DataFrame:
     rng = np.random.default_rng(1)
     return pd.DataFrame({
-        "datetime": pd.date_range("2020-01-01", periods=n, freq="5min"),
+        "datetime": pd.date_range("2024-01-01", periods=n, freq="5min"),
         "symbol": ["A"] * (n // 2) + ["B"] * (n - n // 2),
         "label_open_next": rng.uniform(100, 200, n).astype("float32"),
         "label_close_288": rng.uniform(100, 200, n).astype("float32"),

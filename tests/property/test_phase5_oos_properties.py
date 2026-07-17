@@ -80,7 +80,7 @@ def valid_test_csv_dataframe(draw: st.DrawFn) -> pd.DataFrame:
 
         # Offset timestamps per symbol to avoid cross-symbol collisions
         sym_offset = SYMBOL_POOL.index(sym) * 10_000  # minutes
-        base_ts = pd.Timestamp("2020-01-01 00:00:00") + pd.Timedelta(minutes=sym_offset)
+        base_ts = pd.Timestamp("2024-01-01 00:00:00") + pd.Timedelta(minutes=sym_offset)
         timestamps = _make_timestamps(n_rows, base_ts)
 
         # Decide which rows in the *kept* portion (before tail drop) will have

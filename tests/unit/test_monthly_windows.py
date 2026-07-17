@@ -129,7 +129,7 @@ class TestBuildMonthlyWindows:
         """
         np.random.seed(42)
         n_rows = 5000
-        start = pd.Timestamp("2020-01-01")
+        start = pd.Timestamp("2024-01-01")
         df = pd.DataFrame(
             {
                 "datetime": [
@@ -163,7 +163,7 @@ class TestBuildMonthlyWindows:
     def test_build_monthly_windows_are_sequential_non_overlapping(self) -> None:
         """Each window starts where the previous one ended (no overlap)."""
         n_rows = 10_000
-        start = pd.Timestamp("2020-01-01")
+        start = pd.Timestamp("2024-01-01")
         df = pd.DataFrame(
             {
                 "datetime": [

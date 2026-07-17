@@ -105,7 +105,7 @@ def _make_train_df(
         max_before_min = rng.integers(0, 2, size=n)
 
         data = {
-            "datetime": pd.date_range("2020-01-01", periods=n, freq="5min"),
+            "datetime": pd.date_range("2024-01-01", periods=n, freq="5min"),
             "symbol": sym,
             "label_open_next": open_next,
             "label_close_288": close_288,
@@ -3517,10 +3517,14 @@ class TestRulePoolGeneratorRng:
     def _make_generator(self, seed: int = 42) -> Rule_Pool_Generator:
         fi = _make_feature_infos(["positive", "positive", "positive"])
         df = _make_train_df(n_rows=100, n_features=3, symbols=["A"])
+        # n_generations must leave Stage A room for two non-final epoch gens
+        # after the first run_epoch(2). With A:B = 20:20, stage_a = total/2,
+        # so total>=8 → stage_a>=4 → remaining after first epoch >=2.
+        # (A single last-gen epoch skips offspring and does not draw from rng.)
         gen = Rule_Pool_Generator(
             df, fi, "long",
             pop_size=8,
-            n_generations=6,
+            n_generations=8,
             seed=seed,
         )
         return gen

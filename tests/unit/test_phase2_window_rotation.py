@@ -33,7 +33,7 @@ def _make_multi_sym_df(
         sym = f"SYM_{sym_idx}"
         data = {
             "datetime": pd.date_range(
-                "2020-01-01", periods=n_rows_per_sym, freq="5min",
+                "2024-01-01", periods=n_rows_per_sym, freq="5min",
             ),
             "symbol": sym,
             "label_open_next": rng.uniform(100, 200, size=n_rows_per_sym),

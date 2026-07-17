@@ -14,7 +14,7 @@ from gpu_fuzzy_trader.phases.phase2_rule_pool import Rule_Pool_Generator
 
 def _minimal_backtest_df(n: int = 50) -> pd.DataFrame:
     return pd.DataFrame({
-        "datetime": pd.date_range("2020-01-01", periods=n, freq="h"),
+        "datetime": pd.date_range("2024-01-01", periods=n, freq="h"),
         "symbol": ["A"] * n,
         "label_open_next": [100.0] * n,
         "label_max_288": [105.0] * n,

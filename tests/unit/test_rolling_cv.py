@@ -21,7 +21,7 @@ from gpu_fuzzy_trader.validation.rolling_cv import (
 
 
 def _make_symbol_df(symbol: str, n: int, *, start_index: int = 0) -> pd.DataFrame:
-    base = pd.Timestamp("2020-01-01")
+    base = pd.Timestamp("2024-01-01")
     rows = []
     for i in range(n):
         rows.append(

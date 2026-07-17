@@ -120,7 +120,7 @@ class TestPruneSplitsAfterPhase1:
         rng = np.random.default_rng(0)
         n = 20
         cols = {
-            "datetime": pd.date_range("2020-01-01", periods=n, freq="5min"),
+            "datetime": pd.date_range("2024-01-01", periods=n, freq="5min"),
             "symbol": ["A"] * n,
             "label_open_next": rng.uniform(100, 200, n),
             "label_close_288": rng.uniform(100, 200, n),

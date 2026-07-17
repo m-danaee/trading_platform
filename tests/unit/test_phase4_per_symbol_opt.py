@@ -30,7 +30,7 @@ def _make_df(
         parts.append(pd.DataFrame({
             "symbol": sym,
             "datetime": pd.date_range(
-                "2020-01-01", periods=n_rows, freq="5min"),
+                "2024-01-01", periods=n_rows, freq="5min"),
             "_symbol_bar_index": np.arange(n_rows),
             "label_open_next": open_next,
             "label_close_288": open_next * 1.02,

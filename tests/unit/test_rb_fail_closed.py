@@ -46,7 +46,7 @@ def _dummy_df(size: int = 100) -> pd.DataFrame:
     symbols = [f"sym_{i}" for i in range(5)]
     entry = np.random.uniform(1.0, 2.0, size=size)  # positive entry prices
     df = pd.DataFrame({
-        "datetime": pd.date_range("2020-01-01", periods=size, freq="5min"),
+        "datetime": pd.date_range("2024-01-01", periods=size, freq="5min"),
         "symbol": np.random.choice(symbols, size=size),
         "label_open_next": entry,
         "label_close_288": entry * np.random.uniform(0.9, 1.1, size=size),

@@ -75,7 +75,7 @@ def _make_train_df_crash(n_rows: int = 200, n_features: int = 4) -> pd.DataFrame
         n = rows_per_sym
         open_next = rng.uniform(100, 200, size=n)
         data = {
-            "datetime": pd.date_range("2020-01-01", periods=n, freq="5min"),
+            "datetime": pd.date_range("2024-01-01", periods=n, freq="5min"),
             "symbol": sym,
             "label_open_next": open_next,
             "label_close_288": open_next * rng.uniform(0.95, 1.05, size=n),

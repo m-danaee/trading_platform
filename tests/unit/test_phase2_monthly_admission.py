@@ -260,7 +260,7 @@ class TestMonthlyGateDataSource:
         """Create a minimal training DataFrame similar to test_phase2_rule_pool."""
         rng = np.random.default_rng(42)
         data = {
-            "datetime": pd.date_range("2020-01-01", periods=n_rows, freq="D"),
+            "datetime": pd.date_range("2024-01-01", periods=n_rows, freq="D"),
             "symbol": "A",
             "label_open_next": 100.0 + np.arange(n_rows, dtype=float),
             "label_close_288": 100.0 + np.arange(n_rows, dtype=float),
@@ -287,10 +287,11 @@ class TestMonthlyGateDataSource:
         """
         # Create train and val data with distinct datetime ranges
         train_df = self._make_train_df(n_rows=200)
-        train_df["datetime"] = pd.date_range("2020-01-01", periods=200, freq="D")
+        train_df["datetime"] = pd.date_range(
+            "2024-01-01", periods=200, freq="D")
 
         val_df = self._make_train_df(n_rows=200)
-        val_df["datetime"] = pd.date_range("2022-01-01", periods=200, freq="D")
+        val_df["datetime"] = pd.date_range("2024-06-01", periods=200, freq="D")
 
         fi = self._make_feature_infos(["positive"])
 
@@ -378,10 +379,10 @@ class TestMonthlyGateDataSource:
         assert used_df is gen._cached_monthly_val, (
             "build_monthly_windows should receive _cached_monthly_val"
         )
-        # Verify the datetime range matches the slimmed val (year 2022+)
+        # Verify the datetime range matches the slimmed val (after train window).
         dt_min = used_df["datetime"].min()
-        assert dt_min >= pd.Timestamp("2022-01-01"), (
-            f"Expected val datetime >= 2022-01-01, got {dt_min}"
+        assert dt_min >= pd.Timestamp("2024-06-01"), (
+            f"Expected val datetime >= 2024-06-01, got {dt_min}"
         )
 
     # ------------------------------------------------------------------

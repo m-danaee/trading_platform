@@ -77,7 +77,7 @@ def _make_train_df(
         max_before_min = rng.integers(0, 2, size=n).astype(float)
 
         data: dict = {
-            "datetime": pd.date_range("2020-01-01", periods=n, freq="5min"),
+            "datetime": pd.date_range("2024-01-01", periods=n, freq="5min"),
             "symbol": sym,
             "label_open_next": open_next,
             "label_close_288": close_288,

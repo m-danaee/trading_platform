@@ -100,7 +100,7 @@ def dataset_with_label_and_meta_columns(draw: st.DrawFn) -> pd.DataFrame:
         label_block = _make_label_block(n, rng)
 
         data: dict = {
-            "datetime": pd.date_range("2020-01-01", periods=n, freq="5min"),
+            "datetime": pd.date_range("2024-01-01", periods=n, freq="5min"),
             "symbol": sym,
         }
         data.update(label_block)
@@ -244,7 +244,7 @@ def dataset_with_high_dispersion_feature(draw: st.DrawFn) -> tuple[pd.DataFrame,
     # Build the DataFrame
     label_block = _make_label_block(n, rng)
     data: dict = {
-        "datetime": pd.date_range("2020-01-01", periods=n, freq="5min"),
+        "datetime": pd.date_range("2024-01-01", periods=n, freq="5min"),
         "symbol": "SYM_A",
     }
     data.update(label_block)
@@ -309,7 +309,7 @@ def dataset_with_sufficient_dispersion_feature(draw: st.DrawFn) -> tuple[pd.Data
     # Build the DataFrame
     label_block = _make_label_block(n, rng)
     data: dict = {
-        "datetime": pd.date_range("2020-01-01", periods=n, freq="5min"),
+        "datetime": pd.date_range("2024-01-01", periods=n, freq="5min"),
         "symbol": "SYM_A",
     }
     data.update(label_block)

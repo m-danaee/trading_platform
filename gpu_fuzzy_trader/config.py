@@ -105,6 +105,9 @@ def _env_str(name: str, default: str) -> str:
 # run_pipeline.py may rewrite OUTPUTS_DIR and Phase 2 pool paths per --output.
 
 DATA_ROOT = os.environ.get("DATA_ROOT", "").strip()
+# Market data files (only these CSVs):
+#   train.csv — 2024-01-01 → 2024-08-31 (Phases 1–4)
+#   test.csv  — 2024-09-01 → 2025-01-31 (Phase 5 OOS only)
 TRAIN_CSV_PATH = _env_str(
     "TRAIN_CSV_PATH",
     os.path.join(
@@ -320,7 +323,7 @@ PHASE1_TOP_K_FEATURES = 20
 # detected by Feature_Detector. Phase 2 then evolves over the full feature set.
 #   True  → larger GA search space, more GPU RAM per chromosome, no MI prefilter.
 #   False → normal top-K MI-ranked selection (PHASE1_TOP_K_FEATURES=20).
-# 2026-07-16 (plan 004): False — full feature set under-searches with pop=60/gens=20.
+# (plan 004): False — full feature set under-searches with pop=60/gens=20.
 PHASE1_DISABLED: bool = False
 
 # PHASE1_MAX_FEATURE_OVERLAP — max shared feature names between long & short lists.
@@ -376,7 +379,7 @@ PHASE1_STATIONARITY_RANK_DRIFT_MAX = 8
 # Peak GPU RAM scales ~linearly with this value (largest VRAM lever).
 #   Higher → more statistical power, slower, OOM risk on small GPUs.
 #   Lower  → faster, less RAM; trade/support floors may need proportional cut.
-PHASE1_SAMPLING_TOTAL = 1_500_000
+PHASE1_SAMPLING_TOTAL = 701_000
 
 # PHASE2_PER_EPOCH_WINDOW_ROTATION — rotate train-window start per epoch
 #   True  → each epoch samples a different contiguous sub-window from the
@@ -438,9 +441,9 @@ PHASE2_EVAL_GLOBAL_CACHE = True
 #   Higher → more cache hits; less RAM.
 #   Lower  → less RAM; more re-evaluations.
 # Halved twice (1200 → 600 → 200) to reduce Colab RAM footprint (~0.4 GB per cut).
-# Rationale: cache hit rate was observed at 0-4% in the 2026-07-05 22:09 log,
+# Rationale: cache hit rate was observed at 0-4% in a prior Colab log,
 # so successive cuts are near-free — the working set is ~1 gen at 200 pop.
-PHASE2_EVAL_GLOBAL_CACHE_MAX_SIZE = 200
+PHASE2_EVAL_GLOBAL_CACHE_MAX_SIZE = 600
 
 # PHASE2_SKIP_ZERO_SIGNAL_SCAN — skip equity scan when rule matches 0 bars.
 #   True  → faster; infeasible rules get penalty without full scan.
@@ -509,9 +512,9 @@ PHASE2_ENCODING = "sparse_slots"
 # MIN_TRADE_SUPPORT — target executed trades before support penalty vanishes.
 #   Higher → penalize low-frequency rules harder; pool favors robust sample size.
 #   Lower  → allow rare-pattern rules; noisier Sortino/return estimates.
-# 2026-07-11: 200→120 — island runs (180k–240k rows) were failing train_trade_floor
+# 200→120 — island runs (180k–240k rows) were failing train_trade_floor
 # for ~70%+ of the pop; softer support target lifts viable / trading rules.
-# 2026-07-11b: 120→60 — prefer many moderate-support rules over few fat specialists
+# 120→60 — prefer many moderate-support rules over few fat specialists
 # (portfolio support via larger rule sets; one-symbol islands scale further down).
 MIN_TRADE_SUPPORT = 60
 
@@ -528,16 +531,16 @@ TRADE_SUPPORT_PENALTY_EXPONENT = 3.0
 # MIN_TRADE_POOL_FLOOR — hard reject below this executed trade count.
 #   Higher → archive/pool never keeps very rare rules.
 #   Lower  → extremely sparse rules can survive if other metrics excel.
-# 2026-07-11: 35→25 — fewer hard kills of thin-but-real island rules.
-# 2026-07-11b: 25→15 — one-symbol islands + many-moderate-rules package.
+# 35→25 — fewer hard kills of thin-but-real island rules.
+# 25→15 — one-symbol islands + many-moderate-rules package.
 MIN_TRADE_POOL_FLOOR = 15
 
 # PHASE2_SUPPORT_PENALTY_WEIGHT_F1/F2/F3 — per-objective support penalty scale.
 #   Higher → that objective punishes low support more (steer Sortino vs DD vs return).
 #   Lower  → support matters less for that objective.
-# 2026-07-11: F1 0.1→0.45 — zero-trade rules were barely punished on Sortino and
+# F1 0.1→0.45 — zero-trade rules were barely punished on Sortino and
 # cluttered the Pareto front (median_return=0.00% in run.log).
-# 2026-07-11b: F1 0.45→0.25 — do not obsess over fat singles; keep some pressure
+# F1 0.45→0.25 — do not obsess over fat singles; keep some pressure
 # so zero-trade junk still loses on Sortino.
 PHASE2_SUPPORT_PENALTY_WEIGHT_F1 = 0.25  # Sortino objective
 PHASE2_SUPPORT_PENALTY_WEIGHT_F2 = 0.6  # drawdown objective
@@ -592,7 +595,7 @@ PHASE2_MIN_PROFITABLE_SYMBOLS_PENALTY = 1
 # PHASE2_SYMBOL_GENE_DONT_CARE_PROB — probability of forcing a symbol gene to
 #   dont_care during mutation. Higher → more cross-symbol rules; prevents
 #   symbol-locked evolution.
-# 2026-07-11b: 0.75→0.15 — one-symbol islands should stay symbol-anchored;
+# 0.75→0.15 — one-symbol islands should stay symbol-anchored;
 # source_symbols OR-filters still attach at pool export.
 PHASE2_SYMBOL_GENE_DONT_CARE_PROB = 0.15
 
@@ -606,7 +609,7 @@ PHASE2_USE_ROBUST_RETURN_OBJ = True
 
 # PHASE2_SORTINO_MIN_TRADE_THRESHOLD — trade count below which Sortino is scaled down.
 #   Used in Approach 2 to penalize low-trade-count rules.
-# 2026-07-11b: 50→20 — one-symbol windows + moderate-support package.
+# 50→20 — one-symbol windows + moderate-support package.
 PHASE2_SORTINO_MIN_TRADE_THRESHOLD = 20
 
 # --- Return / quality floors (evolution + pool filtering) ---
@@ -614,13 +617,13 @@ PHASE2_SORTINO_MIN_TRADE_THRESHOLD = 20
 # PHASE2_RETURN_FLOOR_PCT — min train return % to avoid feasibility penalty.
 #   Higher → only profitable-on-train rules stay feasible; emptier search.
 #   Lower  → more exploration; weak rules linger until other gates remove them.
-# 2026-07-11: 0.5→0.25 — ease early feasibility collapse (train_return_floor ~90%).
+# 0.5→0.25 — ease early feasibility collapse (train_return_floor ~90%).
 PHASE2_RETURN_FLOOR_PCT = 0.25
 
 # PHASE2_VAL_RETURN_FLOOR_PCT — min validation return % for feasibility.
 #   Higher → stricter OOS alignment during evolution.
 #   Lower  → allow negative val return during search (gates may still catch later).
-# 2026-07-11: 1.0→0.25 — val_return_floor was failing ~95–98% of the pop early.
+# 1.0→0.25 — val_return_floor was failing ~95–98% of the pop early.
 PHASE2_VAL_RETURN_FLOOR_PCT = 0.25
 
 # Aligned with long. Was 2.0 then 1.0; still starved short islands early.
@@ -721,7 +724,7 @@ PHASE2_OBJECTIVE_CORR_MIN_PARETO_SIZE = 5
 #   Higher → larger pool for Phase 3 greedy selection.
 #   Lower  → smaller pool; faster Phase 3, fewer combinations.
 # widened for RB Governor candidate pool (was 80 for legacy Phase 3)
-# 2026-07-11b: 80→150 — one-symbol islands → many moderate specialists.
+# 80→150 — one-symbol islands → many moderate specialists.
 PHASE2_KEEP_TOP_RULES = 150
 
 # PHASE2_REQUIRE_LAST_FOLD_POSITIVE — in the holdout pool-admission path,
@@ -733,7 +736,7 @@ PHASE2_KEEP_TOP_RULES = 150
 PHASE2_REQUIRE_LAST_FOLD_POSITIVE: bool = False
 
 # =============================================================================
-# Phase 2 — Monthly-window shadow test for pool admission (Task 13, 2026-06-17)
+# Phase 2 — Monthly-window shadow test for pool admission (Task 13)
 # =============================================================================
 # These flags add a hard pool-admission gate after Phase 2 evolution: each
 # candidate rule must be profitable on at least 50% of monthly rolling windows
@@ -769,7 +772,7 @@ PHASE2_MONTHLY_ADMISSION_MIN_RATIO = 0.40
 # (~3×30d windows), so 4 was structurally incompatible and silently skipped.
 # When fewer windows exist but at least one is available, the gate still runs
 # (degraded) instead of being skipped.
-# 2026-07-17: 3→2 — Colab holdout val (~2 months) always logged
+# 3→2 — Colab holdout val (~2 months) always logged
 # "only 2 monthly windows (< MIN_MONTHS=3); degraded mode". Align floor with
 # actual window count so the gate is non-degraded when 2 windows exist.
 #   Higher → skip/degrade more often on short data.
@@ -874,7 +877,7 @@ PHASE2_PHENOTYPE_F3_STEP = 2.0
 # PHASE2_EARLY_STOP_ENABLED — stop evolution on poor mean/median return trend.
 #   True  → save generations when search is clearly failing.
 #   False → always run full PHASE2_GENERATIONS budget.
-# 2026-07-11b: False — short 20-gen one-symbol runs must use the full budget.
+# False — short 20-gen one-symbol runs must use the full budget.
 PHASE2_EARLY_STOP_ENABLED = False
 
 # PHASE2_EARLY_STOP_MIN_GENERATION — earliest gen for return-based early stop.
@@ -899,7 +902,7 @@ PHASE2_EARLY_STOP_MIN_VALID_RULES = 3
 
 # --- Plateau early stop (no improvement in best return) ---
 
-# 2026-07-11b: False — no early/plateau stop on short one-symbol budgets.
+# False — no early/plateau stop on short one-symbol budgets.
 PHASE2_PLATEAU_EARLY_STOP_ENABLED = False
 
 # PHASE2_PLATEAU_EARLY_STOP_MIN_GENERATION — earliest gen for plateau stop.
@@ -961,7 +964,7 @@ PHASE2_PLATEAU_POST_RESTART_BOOST_GENS = 4
 #   are very unlikely to help.  Cuts only provably-unproductive generations.
 #   True  → stop after a failed restart (default; safe runtime win).
 #   False → always run the full epoch budget after a restart (original behaviour).
-# 2026-07-11b: False — user requested full 20-gen budget, no early stop.
+# False — user requested full 20-gen budget, no early stop.
 PHASE2_PLATEAU_POST_RESTART_STOP_ENABLED = False
 
 # PHASE2_PLATEAU_POST_RESTART_STOP_PATIENCE — gens of no improvement after a
@@ -981,7 +984,7 @@ PHASE2_ISLAND_PLATEAU_POST_RESTART_STOP_PATIENCE = 8
 # PHASE2_PLATEAU_MAX_RESTARTS — restarts per epoch before final break.
 #   3       → up to 3 diversity restarts, then break on the next plateau.
 #   0       → immediately break (disables restart regardless of ENABLED flag).
-# 2026-07-11b: 3→1 — 20-gen one-symbol islands cannot afford triple restarts.
+# 3→1 — 20-gen one-symbol islands cannot afford triple restarts.
 PHASE2_PLATEAU_MAX_RESTARTS = 1
 
 # PHASE2_VIABILITY_COLLAPSE_THRESHOLD — pop_viable fraction below which viability
@@ -1057,19 +1060,19 @@ PHASE2_TWO_STAGE_ENABLED = True
 # PHASE2_STAGE_A_GENERATIONS — Stage A (exploration) generation budget.
 #   Higher → more diverse initial Pareto before val-focused Stage B.
 #   Lower  → quicker handoff; Stage B may miss good regions.
-# 2026-07-11b: 60→12 — scaled to PHASE2_GENERATIONS=20 (A:B ≈ 12:8).
-PHASE2_STAGE_A_GENERATIONS = 12
+# Scaled to PHASE2_GENERATIONS=40 (A:B = 20:20).
+PHASE2_STAGE_A_GENERATIONS = 20
 
 # PHASE2_STAGE_B_GENERATIONS — Stage B (refinement) generation budget.
 #   Higher → more val-robust polishing; total time = A + B gens.
 #   Lower  → less refinement after exploration.
-# 2026-07-11b: 36→8 — matches 20-gen one-symbol island budget.
-PHASE2_STAGE_B_GENERATIONS = 8
+# Matched to 40-gen island budget (A:B = 20:20).
+PHASE2_STAGE_B_GENERATIONS = 20
 
 # PHASE2_STAGE_B_SEED_TOP_K — elites from Stage A seeded into Stage B.
 #   Higher → broader refinement starting set; slower Stage B per gen.
 #   Lower  → refine only top performers; risk missing dark horses.
-# 2026-07-11b: 50→20 — pop=60 short Stage B.
+# 50→20 — pop=60 short Stage B.
 PHASE2_STAGE_B_SEED_TOP_K = 20
 
 # PHASE2_STAGE_B_SEED_FRACTION — fraction of Stage B pop seeded from Stage A elites.
@@ -1081,11 +1084,11 @@ PHASE2_STAGE_B_SEED_FRACTION = 0.35
 
 # PHASE2_STAGE_A_MUTATION_RATE — per-gene mutation in Stage A.
 #   Higher → more genetic exploration before Stage B refinement.
-# 2026-07-11b: 0.25→0.35 — short Stage A needs aggressive exploration.
+# 0.25→0.35 — short Stage A needs aggressive exploration.
 PHASE2_STAGE_A_MUTATION_RATE = 0.35
 
 # PHASE2_STAGE_A_MUTATION_WEIGHTED_ACTIVATE_PROB — bias toward activating genes in A.
-# 2026-07-11: 0.50→0.65 — more active conditions → more trades on island windows.
+# 0.50→0.65 — more active conditions → more trades on island windows.
 PHASE2_STAGE_A_MUTATION_WEIGHTED_ACTIVATE_PROB = 0.70
 
 # PHASE2_STAGE_A_DIVERSITY_PENALTY — crowding penalty on objectives in Stage A.
@@ -1122,7 +1125,7 @@ PHASE2_STAGE_A_ARCHIVE_SEED_FRACTION = 0.25
 PHASE2_STAGE_A_RETURN_FLOOR_PCT = 0.0
 
 # PHASE2_STAGE_A_MIN_TRADE_SUPPORT — trade-count target before support penalty vanishes in Stage A.
-# 2026-07-11b: 30→15 — one-symbol moderate-support exploration.
+# 30→15 — one-symbol moderate-support exploration.
 PHASE2_STAGE_A_MIN_TRADE_SUPPORT = 15
 
 # PHASE2_STAGE_A_USE_ROBUST_RETURN_OBJ — Stage A f3 uses train return instead of min(train,val).
@@ -1191,22 +1194,22 @@ PHASE2_ENRICH_SYMBOL_METRICS_EVERY_N_GENS = 5
 # PHASE2_POPULATION_SIZE — individuals per generation.
 #   Higher → better Pareto coverage, ~linear GPU cost per generation.
 #   Lower  → faster gens, risk of premature convergence.
-# 2026-07-11b: 100→60 — one-symbol × many islands; keep GPU time manageable.
-PHASE2_POPULATION_SIZE = 60
+# Larger pop for broader Pareto coverage on multi-symbol clusters.
+PHASE2_POPULATION_SIZE = 200
 
 # PHASE2_GENERATIONS — per-island generation budget when ONE_SYMBOL_ISLANDS
 #   (each symbol runs this many gens; wall-clock ≈ gens × n_symbols).
 #   When clustering (legacy), this total is split across K clusters.
-# 2026-07-11b: 96→20 — short full-budget runs (early stop disabled).
-PHASE2_GENERATIONS = 20
+# 20→40 — more search budget with early stop disabled.
+PHASE2_GENERATIONS = 40
 
 PHASE2_ALGORITHM = "NSGA3"
 
 # PHASE2_ARCHIVE_MAX_SIZE — max stored non-dominated solutions across gens.
 #   Higher → richer elite memory; more memory, slower non-dominated sorting.
 #   Lower  → leaner archive; may lose good rules found early.
-# 2026-07-11b: 300→120 — pop=60 / short gens.
-PHASE2_ARCHIVE_MAX_SIZE = 120
+# 120→300 — scaled with pop=200.
+PHASE2_ARCHIVE_MAX_SIZE = 300
 
 # PHASE2_ARCHIVE_SEED_FRACTION — fraction of initial pop from cross-run archive.
 #   Higher → more warm-start from past runs; less fresh random exploration.
@@ -1231,7 +1234,7 @@ PHASE2_ISLAND_MODE = "cluster"  # "global" | "cluster"
 #   each symbol its own island. Generation budget is per-island full
 #   PHASE2_ISLAND_TOTAL_GENERATIONS for both one-symbol and multi-symbol
 #   cluster modes (splitting a short budget across K clusters starves Stage B).
-# 2026-07-16 (plan 004): False — one-symbol specialists conflict with RB
+# (plan 004): False — one-symbol specialists conflict with RB
 #   concentration gates; restore hybrid multi-symbol clusters (N_CLUSTERS=3).
 PHASE2_ONE_SYMBOL_ISLANDS = False
 # PHASE2_N_CLUSTERS — number of hybrid symbol clusters when island mode is active
@@ -1252,7 +1255,7 @@ PHASE2_CLUSTER_CORR_WEIGHT = 0.7
 # PHASE2_ISLAND_TOTAL_GENERATIONS — per-island gens when ONE_SYMBOL; else split.
 PHASE2_ISLAND_TOTAL_GENERATIONS = PHASE2_GENERATIONS
 # PHASE2_ISLAND_EPOCH_GENERATIONS — generations per island epoch before migration.
-# 2026-07-11b: 20→10 — two epochs fit Stage A(12)+B(8) handoff cleanly.
+# 20→10 — two epochs fit Stage A(12)+B(8) handoff cleanly.
 PHASE2_ISLAND_EPOCH_GENERATIONS = 10
 # PHASE2_ISLAND_MIN_EPOCH_GENERATIONS — skip epochs with fewer remaining gens
 # than this threshold (engine rebuild ~30s with negligible benefit for <5 gens).
@@ -1262,18 +1265,18 @@ PHASE2_ISLAND_MIN_EPOCH_GENERATIONS = 4
 # when PHASE2_ISLAND_TWO_STAGE_ENABLED=True; Stage B uses global floors.
 PHASE2_ISLAND_TWO_STAGE_ENABLED = True
 PHASE2_ISLAND_EARLY_STOP_ENABLED = False
-# 2026-07-11b: False — full 20-gen budget, no plateau early stop.
+# False — full 20-gen budget, no plateau early stop.
 PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED = False
 PHASE2_ISLAND_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO: bool = True
 PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE: int = 10
 # PHASE2_ISLAND_SCALE_TRADE_FLOORS — scale support floors to island row count.
 PHASE2_ISLAND_SCALE_TRADE_FLOORS = True
-# 2026-07-11b: 10→8 — one-symbol absolute floor for moderate-support rules.
+# 10→8 — one-symbol absolute floor for moderate-support rules.
 PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN = 8
 PHASE2_ISLAND_MONTHLY_MIN_MONTHS = 3
 # Migration — exchange top elites between islands every N epochs.
 # PHASE2_MIGRATION_ENABLED — master switch for inter-island elite exchange.
-# 2026-07-16 (plan 004): True — multi-symbol clusters share elites across islands.
+# (plan 004): True — multi-symbol clusters share elites across islands.
 PHASE2_MIGRATION_ENABLED: bool = True
 # PHASE2_MIGRATION_EPOCH_INTERVAL — DEPRECATED.  This is a no-op in
 # the current code path.  Migration fires once after each cluster
@@ -1360,14 +1363,14 @@ PHASE2_MUTATION_WEIGHTED_ACTIVATE_PROB = 0.4
 # --- Team shape ---
 
 # PHASE3_PER_SYMBOL_MAX_RULES — maximum rules selected per symbol.
-# 2026-07-11b: 2→4 — many-moderate-rules package.
+# 2→4 — many-moderate-rules package.
 PHASE3_PER_SYMBOL_MAX_RULES = 4
 
 # PHASE3_GLOBAL_MIN_RULES / MAX_RULES — total rules in the output JSON.
 #   Higher MIN → require at least this many rules across all symbols.
 #   MAX caps the final strategy size written by Phase 3 / validated on load.
 PHASE3_GLOBAL_MIN_RULES = 1
-# 2026-07-11b: 20→25 — allow larger composed teams (aligned with RB_MAX_RULES).
+# 20→25 — allow larger composed teams (aligned with RB_MAX_RULES).
 PHASE3_GLOBAL_MAX_RULES = 25
 
 # PHASE3_PER_SYMBOL_GREEDY_TOP_K — top-K pool rules tested per greedy round.
@@ -1379,11 +1382,11 @@ PHASE3_PER_SYMBOL_GREEDY_TOP_K = 25
 #   Higher → reject rules with thin evidence on that symbol.
 #   Lower  → allow sparse rules through.
 #   Debug scope scales via effective_phase3_per_symbol_min_trades().
-#   Lowered from 50→15 on 2026-06-16 because the current 4-9 rule pool
+#   Lowered from 50→15 because the current 4-9 rule pool
 #   cannot reach 50 trades per symbol (∼6 val trades/symbol on average).
 #   15 aligns with SYMBOL_SPECIALIZATION_MIN_VAL_TRADES=6 (Task 6) while
 #   still requiring more-than-minimal evidence on each symbol.
-#   Lowered from 15→8 on 2026-06-17 (Task 12) because 6/10 symbols still
+#   Lowered from 15→8 (Task 12) because 6/10 symbols still
 #   have no rules on test; 8 trades on a ~7k-row per-symbol validation
 #   window (≈0.1% of bars) is still a reasonable evidence minimum.
 PHASE3_PER_SYMBOL_MIN_TRADES = 8
@@ -1392,11 +1395,11 @@ PHASE3_PER_SYMBOL_MIN_TRADES = 8
 #   Higher → only profitable-on-symbol rules considered.
 #   Lower  → allow marginal rules through.
 #   Debug scope relaxes via effective_phase3_per_symbol_min_return().
-#   Lowered from 3.0→1.5 on 2026-06-16 because the 4-9 rule pool has
+#   Lowered from 3.0→1.5 because the 4-9 rule pool has
 #   only ∼2-4% max returns per symbol; 3.0 was rejecting everything.
 #   1.5 still requires modest profitability while allowing Phase 4 risk
 #   optimization to improve the final team's return.
-#   Lowered from 1.5→0.5 on 2026-06-17 (Task 12) — many rules have
+#   Lowered from 1.5→0.5 (Task 12) — many rules have
 #   positive but small per-symbol returns (<1%) due to the thin
 #   per-symbol validation window (~7k rows).  0.5% is still a positive
 #   return that Phase 4 risk optimization can amplify.
@@ -1809,7 +1812,7 @@ RB_ALLOW_FALLBACK: bool = False
 
 # RB_MIN_TRAIN_RETURN / RB_MIN_VALID_RETURN — return-% floors below which a
 #   single rule fails ``_is_positive_good`` (dual positivity on train+val).
-# 2026-07-17: 0.5→0.25 — match PHASE2_* return floors so island rules that
+# 0.5→0.25 — match PHASE2_* return floors so island rules that
 #   clear Phase 2 admission are not wiped on RB val_selection resim
 #   (Colab: kept 1/15 long, 4/23 short → tiny teams → concentration fail-closed).
 #   Correlated with RB_MAX_PAIR_OVERLAP / score-improvement easing below:
@@ -1855,12 +1858,12 @@ RB_KEEP_TOP_RULES: int = 150
 # RB_MAX_RULES — maximum rules in the composed team (hard cap; keep aligned
 #   with PHASE3_GLOBAL_MAX_RULES).  To reach RB_MAX_RULES with the default
 #   RB_CAPITAL_GRID min (15%), lower grid min or raise RB_MAX_TOTAL_CAPITAL.
-# 2026-07-11b: 10→20 — many-moderate-rules package.
+# 10→20 — many-moderate-rules package.
 RB_MAX_RULES: int = 20
 
 # RB_MAX_PAIR_OVERLAP — max Hamming-style overlap between any two rules in
 #   the team. Lower = more diverse team, harder to grow.
-# 2026-07-17: 0.25→0.35 — with traded-symbol coverage (not island OR filters),
+# 0.25→0.35 — with traded-symbol coverage (not island OR filters),
 #   compose must pull rules from other islands; mild condition overlap is OK
 #   if traded symbols differ. Correlated with MIN_DISTINCT + coverage fix.
 RB_MAX_PAIR_OVERLAP: float = 0.35
@@ -1871,13 +1874,13 @@ RB_RULESET_MUST_BEAT_SUBSETS: bool = False
 
 # RB_MIN_SCORE_IMPROVEMENT — minimum delta in the governor score to add a
 #   new rule in ``_compose_ruleset``.
-# 2026-07-17: 0.03→0.01 — ease team growth once more singles survive; still
+# 0.03→0.01 — ease team growth once more singles survive; still
 #   require positive score delta (not zero).
 RB_MIN_SCORE_IMPROVEMENT: float = 0.01
 
 # RB_MIN_TRAIN_RETURN_IMPROVEMENT / RB_MIN_VALID_RETURN_IMPROVEMENT — min
 #   return-% uplift required from adding a candidate rule.
-# 2026-07-17: 0.005→0.002 — correlated with score-improvement ease so adding
+# 0.005→0.002 — correlated with score-improvement ease so adding
 #   a diversifying island rule is not blocked by tiny combined-return noise.
 RB_MIN_TRAIN_RETURN_IMPROVEMENT: float = 0.002
 RB_MIN_VALID_RETURN_IMPROVEMENT: float = 0.002
@@ -1943,7 +1946,7 @@ RB_MIN_SL: float = 1.0
 # RB_TP_GRID / RB_SL_GRID / RB_CAPITAL_GRID — values enumerated per rule in
 #   the round-robin grid search.  Coarser than the friend's full grid to
 #   keep runtime reasonable on a ~10-symbol universe.
-# 2026-07-11b: grid min 15→7.5 so RB_MAX_RULES=20 fits under TOTAL=150
+# grid min 15→7.5 so RB_MAX_RULES=20 fits under TOTAL=150
 # (20 × 7.5 = 150). Without this, large teams starve for capital.
 RB_TP_GRID: tuple[float, ...] = (1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0)
 RB_SL_GRID: tuple[float, ...] = (1.0, 1.2, 1.5, 2.0, 2.5)
@@ -1956,7 +1959,7 @@ RB_RISK_OPT_PASSES: int = 1
 RB_RISK_MIN_IMPROVEMENT: float = 0.02
 
 # RB_MAX_TOTAL_CAPITAL — hard cap on sum(capital_pct) across all rules.
-# 2026-07-11b: 100→150 — with capital grid min 7.5%, funds up to RB_MAX_RULES=20.
+# 100→150 — with capital grid min 7.5%, funds up to RB_MAX_RULES=20.
 RB_MAX_TOTAL_CAPITAL: float = 150.0
 
 # RB_RISK_GRID_WF_SPLITS — walk-forward folds for risk grid (1 = legacy single-fold).
@@ -1980,13 +1983,13 @@ RB_TAIL_HOLDOUT_MIN_RETURN_PCT: float = 0.0
 # RB_MAX_SYMBOL_SHARE_ABS_PNL — max fraction of abs PnL from a single symbol on
 #   the RB validation frame; above this → fail-closed empty strategy
 #   (deployment_accepted=False, rules_set cleared).
-# 2026-07-17: 0.50→0.55 — Colab fail-closed at top_share=0.556 / 0.615 on
+# 0.50→0.55 — Colab fail-closed at top_share=0.556 / 0.615 on
 #   1–2 rule teams. Slight ease only; real fix is multi-island compose
 #   (traded coverage + looser overlap/return floors). Do not raise alone.
 RB_MAX_SYMBOL_SHARE_ABS_PNL: float = 0.55
 # RB_MAX_SYMBOL_HHI — max Herfindahl index of abs PnL across symbols on valid;
 #   above this → same fail-closed empty strategy as share gate.
-# 2026-07-17: 0.55→0.60 — correlated with share ease (Colab HHI~0.46–0.46
+# 0.55→0.60 — correlated with share ease (Colab HHI~0.46–0.46
 #   passed HHI but failed share; headroom for slightly larger teams).
 RB_MAX_SYMBOL_HHI: float = 0.60
 
@@ -2020,7 +2023,7 @@ RB_REQUIRE_SYMBOL_FILTERS: bool = False
 RB_MIN_DISTINCT_SYMBOLS: int = 3
 
 # Soft score bonus per extra traded symbol beyond the first (Mode A ranking).
-# 2026-07-17: 8→15 — stronger preference for multi-symbol traded coverage
+# 8→15 — stronger preference for multi-symbol traded coverage
 #   when ranking singles into the compose pool (correlated with coverage fix).
 RB_MULTI_SYMBOL_COVERAGE_BONUS: float = 15.0
 

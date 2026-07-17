@@ -37,7 +37,7 @@ from gpu_fuzzy_trader.validation.monthly_windows import (
 
 def _synthetic_df(n_rows: int = 6000) -> pd.DataFrame:
     """Create a small synthetic DataFrame with features and labels."""
-    start = pd.Timestamp("2020-01-01")
+    start = pd.Timestamp("2024-01-01")
     n_sym = 2
     symbols = [str(i) for i in range(n_sym)]
 
@@ -214,9 +214,9 @@ class TestMonthlyPenaltyInPhase4Scoring:
 
         monthly_ctx = _Phase4MonthlyContext(
             combined_df=pd.DataFrame(
-                {"datetime": [pd.Timestamp("2020-01-01")]}),
+                {"datetime": [pd.Timestamp("2024-01-01")]}),
             monthly_windows=[pd.DataFrame(
-                {"datetime": [pd.Timestamp("2020-01-01")]})],
+                {"datetime": [pd.Timestamp("2024-01-01")]})],
             feature_names=[],
             direction="long",
         )
@@ -264,7 +264,7 @@ def _tiny_pool() -> list[dict]:
 
 def _synthetic_df_monthly(n_rows: int = 30000) -> pd.DataFrame:
     """Create a larger synthetic DataFrame (enough for ~2 monthly windows)."""
-    start = pd.Timestamp("2020-01-01")
+    start = pd.Timestamp("2024-01-01")
     n_sym = 2
     symbols = [str(i) for i in range(n_sym)]
     rows: list[dict] = []
