@@ -17,7 +17,7 @@ A finding is only a finding with evidence. `orders/api.ts:142 issues one query p
 - Type escape hatches: `any`, `cast`, `# type: ignore` clusters.
 - Resource leaks: unclosed handles, connections, subscriptions.
 
-**Trading-platform specifics:** phase boundary violations (e.g. `test_2.csv` used before Phase 5), train/val leakage across `SPLIT_MODE`, inconsistent fitness vs admission metrics, GPU/CPU path divergence in `gpu_fuzzy_trader/`.
+**Trading-platform specifics:** phase boundary violations (e.g. `test.csv` used before Phase 5), train/val leakage across `SPLIT_MODE`, inconsistent fitness vs admission metrics, GPU/CPU path divergence in `gpu_fuzzy_trader/`.
 
 ## 2. Security
 

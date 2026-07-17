@@ -19,8 +19,6 @@ SKIP_DIRS = {
     "node_modules",
     ".mypy_cache",
     "outputs",
-    "long_2",
-    "optimized_long",
 }
 
 

@@ -1,4 +1,4 @@
 split,win_rate,mdd_pct,total_return_pct,num_rules,num_conditions,sortino_ratio,profit_factor,sharpe_ratio
-train,0.0,0.0,0.0,0,0,0.0,0.0,0.0
-validation,0.0,0.0,0.0,0,0,0.0,0.0,0.0
-test,0.0,0.0,0.0,0,0,0.0,0.0,0.0
+train,0.0,0.0,0.0,2,2,0.0,0.0,0.0
+validation,0.0,0.0,0.0,2,2,0.0,0.0,0.0
+test,75.0,0.25200194120407104,0.7200002670288086,2,2,0.2857142421575343,3.857142686843872,0.6249999689559126

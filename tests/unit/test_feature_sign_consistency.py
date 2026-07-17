@@ -18,8 +18,8 @@ def test_check_spearman_sign_consistency():
     assert "feature_b" not in stable
 
 
-def test_check_spearman_sign_consistency_ignores_validation():
-    """Holdout validation is not used for sign-consistency (avoids val leakage)."""
+def test_check_spearman_sign_consistency_drops_val_flip():
+    """When val_df is provided, a train-stable feature that flips on val is dropped."""
     n = 100
     train_df = pd.DataFrame({
         "symbol": ["A"] * n,
@@ -31,12 +31,12 @@ def test_check_spearman_sign_consistency_ignores_validation():
         "feature_c": np.linspace(10, 1, n),
         "label_close_288": np.linspace(1, 10, n)
     })
-    
-    # feature_c is consistent in train folds; val flip must not affect selection
+
+    # feature_c is consistent in train folds; opposite val sign must blacklist
     stable = _check_spearman_sign_consistency(
         train_df, ["feature_c"], n_folds=2, min_folds=1, val_df=val_df, min_abs_corr=0.0,
     )
-    assert "feature_c" in stable
+    assert "feature_c" not in stable
 
 
 def test_sign_consistency_ignores_noise_level_flip():

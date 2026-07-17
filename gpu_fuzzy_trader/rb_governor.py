@@ -388,13 +388,22 @@ def _traded_symbols_from_metrics(metrics: dict | None) -> set[str]:
 
 
 def _candidate_coverage_symbols(rec: CandidateRecord) -> set[str]:
-    """Symbol coverage for compose diversity (filters or traded metrics)."""
-    explicit = _symbols_in_rules([rec.rule])
-    if explicit:
-        return {s.lower() for s in explicit}
-    return _traded_symbols_from_metrics(rec.train_metrics) | _traded_symbols_from_metrics(
+    """Symbol coverage for compose diversity.
+
+    Prefer **traded** symbols from backtest metrics. Island Mode A attaches
+    ``source_symbols`` OR-filters (often 3–4 symbols) which previously made a
+    single specialist look fully diversified for ``RB_MIN_DISTINCT_SYMBOLS``
+    even when abs-PnL was concentrated on one name — then concentration
+    fail-closed emptied the strategy. Fall back to explicit filters only when
+    no trades were recorded.
+    """
+    traded = _traded_symbols_from_metrics(rec.train_metrics) | _traded_symbols_from_metrics(
         rec.valid_metrics
     )
+    if traded:
+        return traded
+    explicit = _symbols_in_rules([rec.rule])
+    return {s.lower() for s in explicit}
 
 
 def _rule_key(rule: dict) -> tuple[str, ...]:

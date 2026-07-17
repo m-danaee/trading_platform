@@ -227,16 +227,24 @@ def test_phase2_use_total_return_obj():
     has_orig = hasattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ")
     orig_val = getattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ", False)
     orig_floor = _cfg.MIN_TRADE_SUPPORT
-    
+    orig_val_penalty = bool(
+        getattr(_cfg, "PHASE2_VAL_IN_FITNESS_PENALTY", False))
+    orig_pool_pos = bool(
+        getattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", True))
+
     try:
         _cfg.PHASE2_USE_TOTAL_RETURN_OBJ = True
         _cfg.MIN_TRADE_SUPPORT = 5
-        
+        # Isolate f3 identity: missing val_metrics otherwise adds a fixed
+        # feasibility penalty when VAL_IN_FITNESS_PENALTY is on.
+        _cfg.PHASE2_VAL_IN_FITNESS_PENALTY = False
+        _cfg.PHASE2_POOL_REQUIRE_POSITIVE_SPLITS = False
+
         pop = _chromosome_with_min_active()[np.newaxis, :]
         dont_cares = np.ones(10, dtype=np.int32) * 5
         objectives = np.full((1, 4), np.inf)
         metrics_cache = [{}]
-        
+
         class MockEngine:
             def simulate_rule_batch(self, chromosomes, **kwargs):
                 return [{
@@ -252,17 +260,17 @@ def test_phase2_use_total_return_obj():
                         "SYM3": {"net_pnl": 300.0},
                     },
                 }]
-                
+
         engine = MockEngine()
         _evaluate_population_indices(
             pop, [0], dont_cares, engine, [], objectives, metrics_cache
         )
-        
+
         # With total return obj enabled: f3 = -total_return_pct = -15.0 (plus penalties)
         # Objectives are: [-sortino + pen, dd + pen, -total_return + pen]
         # Sortino obj should be -0.5 + pen, DD should be 2.0 + pen, F3 should be -15.0 + pen
         assert np.isclose(objectives[0, 2], -15.0)
-        
+
         # Disable it -> should use PHASE2_F3_OBJECTIVE (profit_factor = 5.0)
         _cfg.PHASE2_USE_TOTAL_RETURN_OBJ = False
         _cfg.PHASE2_F3_OBJECTIVE = "profit_factor"
@@ -283,6 +291,8 @@ def test_phase2_use_total_return_obj():
 
     finally:
         _cfg.MIN_TRADE_SUPPORT = orig_floor
+        _cfg.PHASE2_VAL_IN_FITNESS_PENALTY = orig_val_penalty
+        _cfg.PHASE2_POOL_REQUIRE_POSITIVE_SPLITS = orig_pool_pos
         if has_orig:
             _cfg.PHASE2_USE_TOTAL_RETURN_OBJ = orig_val
         else:
@@ -431,7 +441,9 @@ class TestEvalOptimizations:
         obj_with_archive = objectives[0]
 
         assert call_count == 1
-        assert obj_with_archive[0] > obj_no_archive[0]
+        # Diversity lands on f4 when PHASE2_DIVERSITY_ON_F4 (default); f1 unchanged.
+        assert obj_with_archive[3] > obj_no_archive[3]
+        assert np.isclose(obj_with_archive[0], obj_no_archive[0])
 
 
 class TestPlateauEarlyStop:

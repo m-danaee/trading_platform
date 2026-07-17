@@ -1,4 +1,4 @@
-"""Unit tests for forward-window label semantics in build_train2_test2."""
+"""Unit tests for forward-window label semantics (``gpu_fuzzy_trader.data.labels``)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from build_train2_test2 import TAIL_DROP_ROWS, compute_labels
+from gpu_fuzzy_trader.config import TAIL_DROP_ROWS
+from gpu_fuzzy_trader.data.labels import compute_labels
 
 
 def _raw_from_ohlc(

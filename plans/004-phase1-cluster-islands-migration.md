@@ -80,7 +80,7 @@ Related tests (monkeypatch both modes — update only **default** assertions):
 - Changing `PHASE2_N_CLUSTERS` away from 3
 - Re-tuning RB concentration thresholds
 - JOINT_TRAIN_VAL
-- Dataset rename / RB fail-closed (001/002)
+- RB fail-closed (plan 002)
 - Implementing new clustering algorithms
 - `evaluator_v5.ipynb`
 

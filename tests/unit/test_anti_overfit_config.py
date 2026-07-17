@@ -29,13 +29,20 @@ def test_anti_overfit_config_bundle():
     assert cfg.PHASE2_SAMPLE_MAX_BARS_PER_SYMBOL == 60_000
     assert cfg.PHASE2_SAMPLE_ROTATION_FRACTION == 0.65
     assert cfg.PHASE2_TP == 2.0
-    assert cfg.PHASE2_MONTHLY_ADMISSION_MIN_MONTHS == 3
+    assert cfg.PHASE2_MONTHLY_ADMISSION_MIN_MONTHS == 2
     assert cfg.PHASE1_DISABLED is False
     assert cfg.PHASE2_DIVERSITY_ON_F4 is True
     assert cfg.PHASE2_USE_TOTAL_RETURN_OBJ is False
     assert cfg.PHASE2_MIN_PROFITABLE_SYMBOLS == 3
     assert cfg.RB_TAIL_HOLDOUT_HARD_GATE is True
-    assert cfg.RB_MAX_SYMBOL_SHARE_ABS_PNL == 0.50
+    assert cfg.RB_MAX_SYMBOL_SHARE_ABS_PNL == 0.55
+    assert cfg.RB_MAX_SYMBOL_HHI == 0.60
+    assert cfg.RB_MIN_TRAIN_RETURN == 0.25
+    assert cfg.RB_MIN_VALID_RETURN == 0.25
+    assert cfg.RB_MIN_SCORE_IMPROVEMENT == 0.01
+    assert cfg.RB_MIN_TRAIN_RETURN_IMPROVEMENT == 0.002
+    assert cfg.RB_MIN_VALID_RETURN_IMPROVEMENT == 0.002
+    assert cfg.RB_MULTI_SYMBOL_COVERAGE_BONUS == 15.0
     assert cfg.RB_MAX_RULES == 20
     assert cfg.RB_MAX_TOTAL_CAPITAL == 150.0
     assert cfg.RB_TRAIN_VALID_MAX_RATIO == 2.00
@@ -59,7 +66,7 @@ def test_anti_overfit_config_bundle():
     assert cfg.PHASE3_GLOBAL_MAX_RULES == 25
     assert cfg.PHASE3_PER_SYMBOL_MAX_RULES == 4
     assert cfg.RB_MIN_COMBINED_RETURN_IMPROVEMENT == 3.5
-    assert cfg.RB_MAX_PAIR_OVERLAP == 0.25
+    assert cfg.RB_MAX_PAIR_OVERLAP == 0.35
     assert cfg.RB_CAPITAL_GRID[0] == 7.5
     assert cfg.RB_CAPITAL_GRID[-1] == 18.0
     assert cfg.RB_MAX_TOTAL_CAPITAL >= cfg.RB_MAX_RULES * \

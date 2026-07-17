@@ -61,8 +61,8 @@ def test_config_compose_defaults_match_expected_bundle():
     assert _cfg.RB_RULE_ADD_BY_RETURN_ONLY is False
     assert _cfg.RB_RULESET_MUST_BEAT_SUBSETS is False
     assert _cfg.RB_RULE_ADD_IGNORE_OVERLAP is False
-    assert _cfg.RB_MAX_PAIR_OVERLAP == 0.25
-    assert _cfg.RB_MIN_SCORE_IMPROVEMENT == 0.03
+    assert _cfg.RB_MAX_PAIR_OVERLAP == 0.35
+    assert _cfg.RB_MIN_SCORE_IMPROVEMENT == 0.01
 
 
 def test_strict_mode_uses_score_improvement_not_return_only(engines):
@@ -262,6 +262,62 @@ def _generalist_cand(
         score=100.0,
         mask=mask,
     )
+
+
+def test_coverage_prefers_traded_over_island_or_filters():
+    """Island OR filters must not inflate coverage when trades are concentrated."""
+    from gpu_fuzzy_trader.rb_governor import _candidate_coverage_symbols
+
+    mask = np.array([True, False], dtype=bool)
+    train_m = _train_metrics(5.0)
+    valid_m = _valid_metrics(4.0)
+    # Only symbol 9 actually traded; filters claim 3/4/7/8 (Mode A island scope).
+    train_m["per_symbol_metrics"] = {
+        "9": {"trade_count": 12, "net_pnl": 5.0, "win_rate": 55.0},
+        "3": {"trade_count": 0, "net_pnl": 0.0, "win_rate": 0.0},
+    }
+    valid_m["per_symbol_metrics"] = {
+        "9": {"trade_count": 8, "net_pnl": 2.0, "win_rate": 50.0},
+    }
+    rec = CandidateRecord(
+        rule={
+            "conditions": [
+                "[feat] IS High",
+                "symbol is 3",
+                "symbol is 4",
+                "symbol is 7",
+                "symbol is 8",
+            ],
+            "tp": 2.0,
+            "sl": 1.0,
+            "capital_pct": 18.0,
+            "source_symbols": ["3", "4", "7", "8"],
+        },
+        train_metrics=train_m,
+        valid_metrics=valid_m,
+        score=100.0,
+        mask=mask,
+    )
+    assert _candidate_coverage_symbols(rec) == {"9"}
+
+
+def test_coverage_falls_back_to_filters_when_no_trades():
+    from gpu_fuzzy_trader.rb_governor import _candidate_coverage_symbols
+
+    mask = np.array([True], dtype=bool)
+    rec = CandidateRecord(
+        rule={
+            "conditions": ["[feat] IS High", "symbol is 1", "symbol is 6"],
+            "tp": 2.0,
+            "sl": 1.0,
+            "capital_pct": 18.0,
+        },
+        train_metrics=_train_metrics(1.0),
+        valid_metrics=_valid_metrics(1.0),
+        score=50.0,
+        mask=mask,
+    )
+    assert _candidate_coverage_symbols(rec) == {"1", "6"}
 
 
 def test_generalist_mode_compose_uses_traded_symbol_coverage(engines):

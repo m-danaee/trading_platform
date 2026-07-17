@@ -10,7 +10,7 @@
 - **Priority**: P1
 - **Effort**: M
 - **Risk**: MED
-- **Depends on**: none (can run parallel with 001)
+- **Depends on**: none
 - **Category**: bug
 - **Planned at**: commit `425f469`, 2026-07-16
 
@@ -90,7 +90,6 @@ Existing tests to mirror:
 - Loosening `RB_MAX_SYMBOL_SHARE_ABS_PNL` / HHI / tail min return
 - Phase 2 fitness / islands (plans 003–004)
 - `evaluator_v5.ipynb`
-- Dataset rename (001)
 
 ## Git workflow
 

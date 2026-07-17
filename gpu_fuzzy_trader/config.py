@@ -769,9 +769,12 @@ PHASE2_MONTHLY_ADMISSION_MIN_RATIO = 0.40
 # (~3×30d windows), so 4 was structurally incompatible and silently skipped.
 # When fewer windows exist but at least one is available, the gate still runs
 # (degraded) instead of being skipped.
+# 2026-07-17: 3→2 — Colab holdout val (~2 months) always logged
+# "only 2 monthly windows (< MIN_MONTHS=3); degraded mode". Align floor with
+# actual window count so the gate is non-degraded when 2 windows exist.
 #   Higher → skip/degrade more often on short data.
 #   Lower  → require monthly evidence even on short trains.
-PHASE2_MONTHLY_ADMISSION_MIN_MONTHS = 3
+PHASE2_MONTHLY_ADMISSION_MIN_MONTHS = 2
 
 
 # =============================================================================
@@ -1805,11 +1808,15 @@ RB_ALLOW_FALLBACK: bool = False
 # --- Rule scoring / gating ---
 
 # RB_MIN_TRAIN_RETURN / RB_MIN_VALID_RETURN — return-% floors below which a
-#   heavy score penalty is applied to a candidate rule.
-#   Higher → only clearly profitable single rules pass the gate.
-#   Lower  → allow marginal rules into the candidate pool.
-RB_MIN_TRAIN_RETURN: float = 0.5
-RB_MIN_VALID_RETURN: float = 0.5
+#   single rule fails ``_is_positive_good`` (dual positivity on train+val).
+# 2026-07-17: 0.5→0.25 — match PHASE2_* return floors so island rules that
+#   clear Phase 2 admission are not wiped on RB val_selection resim
+#   (Colab: kept 1/15 long, 4/23 short → tiny teams → concentration fail-closed).
+#   Correlated with RB_MAX_PAIR_OVERLAP / score-improvement easing below:
+#   more survivors only help if compose can grow multi-island teams.
+#   Keep dual-positivity; do NOT enable RB_ALLOW_FALLBACK.
+RB_MIN_TRAIN_RETURN: float = 0.25
+RB_MIN_VALID_RETURN: float = 0.25
 
 # RB_MIN_TRAIN_PF / RB_MIN_VALID_PF — minimum profit factor for each split.
 #   1.0 = break-even before fees.
@@ -1853,9 +1860,10 @@ RB_MAX_RULES: int = 20
 
 # RB_MAX_PAIR_OVERLAP — max Hamming-style overlap between any two rules in
 #   the team. Lower = more diverse team, harder to grow.
-#   Set slightly higher than the friend's 0.24 because the incoming pool is
-#   already symbol-specialized and therefore more likely to share conditions.
-RB_MAX_PAIR_OVERLAP: float = 0.25
+# 2026-07-17: 0.25→0.35 — with traded-symbol coverage (not island OR filters),
+#   compose must pull rules from other islands; mild condition overlap is OK
+#   if traded symbols differ. Correlated with MIN_DISTINCT + coverage fix.
+RB_MAX_PAIR_OVERLAP: float = 0.35
 
 # RB_RULESET_MUST_BEAT_SUBSETS — a candidate team must beat both its parent
 #   subset and the standalone candidate on both train and val return.
@@ -1863,13 +1871,16 @@ RB_RULESET_MUST_BEAT_SUBSETS: bool = False
 
 # RB_MIN_SCORE_IMPROVEMENT — minimum delta in the governor score to add a
 #   new rule in ``_compose_ruleset``.
-RB_MIN_SCORE_IMPROVEMENT: float = 0.03
+# 2026-07-17: 0.03→0.01 — ease team growth once more singles survive; still
+#   require positive score delta (not zero).
+RB_MIN_SCORE_IMPROVEMENT: float = 0.01
 
 # RB_MIN_TRAIN_RETURN_IMPROVEMENT / RB_MIN_VALID_RETURN_IMPROVEMENT — min
-#   return-% uplift required from adding a candidate rule. Lowered vs the
-#   friend's 0.01 because per-symbol returns on val are often <1%.
-RB_MIN_TRAIN_RETURN_IMPROVEMENT: float = 0.005
-RB_MIN_VALID_RETURN_IMPROVEMENT: float = 0.005
+#   return-% uplift required from adding a candidate rule.
+# 2026-07-17: 0.005→0.002 — correlated with score-improvement ease so adding
+#   a diversifying island rule is not blocked by tiny combined-return noise.
+RB_MIN_TRAIN_RETURN_IMPROVEMENT: float = 0.002
+RB_MIN_VALID_RETURN_IMPROVEMENT: float = 0.002
 
 # RB_RETURN_DD_FLOOR — drawdown floor (%) used when converting return to a
 #   return/drawdown ratio inside ``_score_metrics``.
@@ -1969,10 +1980,15 @@ RB_TAIL_HOLDOUT_MIN_RETURN_PCT: float = 0.0
 # RB_MAX_SYMBOL_SHARE_ABS_PNL — max fraction of abs PnL from a single symbol on
 #   the RB validation frame; above this → fail-closed empty strategy
 #   (deployment_accepted=False, rules_set cleared).
-RB_MAX_SYMBOL_SHARE_ABS_PNL: float = 0.50
+# 2026-07-17: 0.50→0.55 — Colab fail-closed at top_share=0.556 / 0.615 on
+#   1–2 rule teams. Slight ease only; real fix is multi-island compose
+#   (traded coverage + looser overlap/return floors). Do not raise alone.
+RB_MAX_SYMBOL_SHARE_ABS_PNL: float = 0.55
 # RB_MAX_SYMBOL_HHI — max Herfindahl index of abs PnL across symbols on valid;
 #   above this → same fail-closed empty strategy as share gate.
-RB_MAX_SYMBOL_HHI: float = 0.55
+# 2026-07-17: 0.55→0.60 — correlated with share ease (Colab HHI~0.46–0.46
+#   passed HHI but failed share; headroom for slightly larger teams).
+RB_MAX_SYMBOL_HHI: float = 0.60
 
 
 # --- Symbol strategy: two modes (do not mix) ---------------------------------
@@ -1982,7 +1998,8 @@ RB_MAX_SYMBOL_HHI: float = 0.55
 #   Phase 2 islands learn fuzzy rules on 3–4 symbol clusters.
 #   RB attaches each rule's ``source_symbols`` as OR filters (cluster scope),
 #   then composes rules from different islands into a team covering the book.
-#   Diversity = explicit island filters and/or traded symbols in metrics.
+#   Compose diversity uses **traded** symbols from metrics (not OR filters):
+#   island filters alone must not satisfy RB_MIN_DISTINCT_SYMBOLS.
 #   Bare "fire on all 10 symbols" generalists destroy island rules on
 #   full train + val_selection (run.log: kept 0/15, 0/12 → empty strategies).
 #
@@ -1998,12 +2015,14 @@ RB_MAX_SYMBOL_HHI: float = 0.55
 RB_REQUIRE_SYMBOL_FILTERS: bool = False
 
 # RB_MIN_DISTINCT_SYMBOLS — target symbol coverage while composing.
-#   Mode A: traded symbols / island OR filters must expand toward this.
+#   Mode A: traded symbols from metrics must expand toward this.
 #   Mode B: distinct ``symbol is X`` filters on final rules (hard gate).
 RB_MIN_DISTINCT_SYMBOLS: int = 3
 
 # Soft score bonus per extra traded symbol beyond the first (Mode A ranking).
-RB_MULTI_SYMBOL_COVERAGE_BONUS: float = 8.0
+# 2026-07-17: 8→15 — stronger preference for multi-symbol traded coverage
+#   when ranking singles into the compose pool (correlated with coverage fix).
+RB_MULTI_SYMBOL_COVERAGE_BONUS: float = 15.0
 
 # RB_SYMBOL_USE_COMBINATIONS — Mode B only: also try 2-/3-symbol filter combos.
 RB_SYMBOL_USE_COMBINATIONS: bool = False

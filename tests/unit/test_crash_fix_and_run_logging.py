@@ -371,10 +371,18 @@ class TestRunLogHandlerLifecycle:
         """Patch every phase method on Pipeline_Orchestrator to be a no-op."""
         from gpu_fuzzy_trader.run_pipeline import Pipeline_Orchestrator
 
+        # Empty frames must still expose meta columns used by val fitness/selection split.
+        empty = pd.DataFrame(
+            {
+                "symbol": pd.Series(dtype=str),
+                "datetime": pd.to_datetime(pd.Series(dtype="datetime64[ns]")),
+            }
+        )
+
         monkeypatch.setattr(
             Pipeline_Orchestrator,
             "_load_and_split_data",
-            lambda self: (pd.DataFrame(), pd.DataFrame()),
+            lambda self: (empty.copy(), empty.copy()),
         )
         monkeypatch.setattr(
             Pipeline_Orchestrator,

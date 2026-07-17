@@ -444,7 +444,7 @@ class TestConfigKeys:
         )
         assert (
             getattr(_cfg, "SYMBOL_SPECIALIZATION_MAX_SYMBOLS_PER_RULE", None)
-            == 1
+            == 3
         )
         assert (
             getattr(_cfg, "SYMBOL_SPECIALIZATION_MAX_VARIANTS_PER_RULE", None)

@@ -14,8 +14,6 @@ SKIP_PREFIXES = (
     "venv/",
     "__pycache__/",
     "outputs/",
-    "long_2/",
-    "optimized_long/",
 )
 
 

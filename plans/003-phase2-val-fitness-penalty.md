@@ -10,7 +10,7 @@
 - **Priority**: P1
 - **Effort**: M
 - **Risk**: MED
-- **Depends on**: none (prefer after 001 to avoid comment churn; independent of 002)
+- **Depends on**: none (independent of 002)
 - **Category**: perf (search quality / anti-overfit)
 - **Planned at**: commit `425f469`, 2026-07-16
 
@@ -83,7 +83,6 @@ Existing coverage for gap-with-penalty-on: `tests/unit/test_phase2_rule_pool.py`
 - Setting `PHASE2_JOINT_TRAIN_VAL=True`
 - Changing pop/gens, island mode, Phase1 (plan 004)
 - RB governor (plan 002)
-- Dataset rename (001)
 - Large objective redesign (moving support penalty off f1) — deferred unless STOP shows `objective_corr_f1_f3` still ~1.0 with PF f3 + gap on f3 only after this change lands in a Colab run
 - `evaluator_v5.ipynb`
 

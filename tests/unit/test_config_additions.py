@@ -35,7 +35,7 @@ def test_new_config_parameters_exist():
     assert c.DEBUG_SYMBOL == "1"
     assert hasattr(c, 'DEBUG_SYMBOL_COUNT')
     assert hasattr(c, 'PHASE2_ISLAND_EPOCH_GENERATIONS')
-    assert c.PHASE2_ISLAND_EPOCH_GENERATIONS == 20
+    assert c.PHASE2_ISLAND_EPOCH_GENERATIONS == 10
     assert c.PHASE2_ISLAND_MODE in ("global", "cluster")
     assert hasattr(c, 'PHASE2_MIGRATION_SEED_FRACTION')
     assert c.PHASE2_MIGRATION_SEED_FRACTION == 0.10

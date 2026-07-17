@@ -1153,9 +1153,11 @@ def _plateau_diversity_restart(
             stratum_fractions=stratum_fractions,
             feature_probs=None,
         )
+        n_obj = int(objectives.shape[1]
+                    ) if objectives.ndim == 2 else int(N_OBJ)
         for idx, pos in enumerate(chosen):
             population[pos] = seeds[idx]
-            objectives[pos] = np.full(N_OBJ, np.inf)
+            objectives[pos] = np.full(n_obj, np.inf)
             metrics_cache[pos] = {}
 
     return n_elite
@@ -2648,7 +2650,7 @@ def _run_nsga3(
             )
             for i in range(migrant_slots):
                 population[i] = np.asarray(seed_chromosomes[i], dtype=np.int32).copy()
-                objectives[i] = np.full(N_OBJ, np.inf)
+                objectives[i] = np.full(objectives.shape[1], np.inf)
                 metrics_cache[i] = {}
 
         # --- Task 2: Refresh objectives when resuming with potentially stale context ---
