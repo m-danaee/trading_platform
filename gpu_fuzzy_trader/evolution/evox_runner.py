@@ -19,6 +19,7 @@ from gpu_fuzzy_trader.evolution.numba_ops import (
     crowding_distance,
     non_dominated_sort,
 )
+from gpu_fuzzy_trader.evolution.constraints import constrained_non_dominated_sort
 
 import logging
 import time
@@ -115,17 +116,42 @@ def _should_run_val_this_gen(gen: int, is_last_gen: bool) -> bool:
     """Shared val-cadence check for both NSGA-II fallback and NSGA-III loops.
 
     Val simulation always runs on the last generation (pool admission needs
-    fresh metrics).  Otherwise, throttle via ``PHASE2_VAL_SIM_INTERVAL``.
-
-    ``PHASE2_JOINT_TRAIN_VAL`` does NOT affect cadence — it controls whether
-    val metrics *feed fitness*, not how often val is computed.  This was the
-    root cause of the 2x blowup: the old ``or bool(_cfg.PHASE2_JOINT_TRAIN_VAL)``
-    short-circuited the throttle whenever joint training was enabled.
+    fresh metrics). When validation contributes to fitness, it also runs on
+    every generation so a newly evaluated chromosome never changes objective
+    semantics merely because of the generation number. Otherwise, throttle via
+    ``PHASE2_VAL_SIM_INTERVAL``.
     """
     if is_last_gen:
         return True
+    if bool(_cfg.PHASE2_JOINT_TRAIN_VAL) or bool(
+        getattr(_cfg, "PHASE2_VAL_IN_FITNESS_PENALTY", False)
+    ):
+        return True
     interval = max(1, int(_cfg.PHASE2_VAL_SIM_INTERVAL))
     return gen % interval == 0
+
+
+def _constraint_violations(metrics: list[dict]) -> np.ndarray:
+    """Return non-negative constraint violations for a metrics population."""
+    values: list[float] = []
+    for entry in metrics:
+        try:
+            value = float(entry.get("constraint_violation", 0.0))
+        except (TypeError, ValueError):
+            value = np.inf
+        values.append(max(0.0, value) if np.isfinite(value) else np.inf)
+    return np.asarray(values, dtype=np.float64)
+
+
+def _population_fronts(
+    objectives: np.ndarray,
+    metrics: list[dict],
+) -> list[list[int]]:
+    """Use constrained fronts only when the population has violations."""
+    violations = _constraint_violations(metrics)
+    if np.any(violations > 1e-12):
+        return constrained_non_dominated_sort(objectives, violations)
+    return non_dominated_sort(objectives)
 
 
 def _build_rank_and_crowding(
@@ -168,9 +194,17 @@ def environmental_selection_nsga2(
     merge_pop: np.ndarray,
     merge_fit: np.ndarray,
     pop_size: int,
+    constraint_violations: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, list[int]]:
     """Canonical NSGA-II truncation on a 2N merged population."""
-    fronts = non_dominated_sort(merge_fit)
+    if constraint_violations is not None and np.any(
+        np.asarray(constraint_violations) > 1e-12
+    ):
+        fronts = constrained_non_dominated_sort(
+            merge_fit, np.asarray(constraint_violations),
+        )
+    else:
+        fronts = non_dominated_sort(merge_fit)
     selected: list[int] = []
     for front in fronts:
         if not front:
@@ -1875,9 +1909,33 @@ def _nsga3_environmental_selection(
     pop_size: int,
     feature_infos: list[dict],
     dont_cares: np.ndarray,
+    constraint_violations: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """NSGA-III environmental selection (rank + niche on last front)."""
     _warn_evox_unavailable()
+    if constraint_violations is not None and np.any(
+        np.asarray(constraint_violations) > 1e-12
+    ):
+        # EvoX's rank operator is objective-only. Use the constrained
+        # NSGA-II truncation for generations containing infeasible candidates
+        # so feasibility is decided before objective diversity.
+        pop, fit, selected = environmental_selection_nsga2(
+            merge_pop,
+            merge_fit,
+            pop_size,
+            constraint_violations=constraint_violations,
+        )
+        idx = _deduplicate_selection_indices(
+            np.asarray(selected, dtype=np.intp),
+            merge_pop,
+            merge_fit,
+            pop_size,
+        )
+        return (
+            _repair_population(merge_pop[idx], feature_infos, dont_cares),
+            merge_fit[idx],
+            idx,
+        )
     if not _EVOX_AVAILABLE or non_dominate_rank is None:
         pop, fit, selected = environmental_selection_nsga2(
             merge_pop, merge_fit, pop_size)
@@ -2116,7 +2174,7 @@ def _run_nsga2_fallback(
                 is_last_gen=is_last_gen,
             )
 
-        fronts = non_dominated_sort(objectives)
+        fronts = _population_fronts(objectives, metrics_cache)
         pareto_indices = fronts[0]
         pareto_archive = [population[i].copy() for i in pareto_indices]
         _update_hall_of_fame(hall_of_fame, population, pareto_indices)
@@ -2511,7 +2569,10 @@ def _run_nsga2_fallback(
         merge_metrics = metrics_cache + off_metrics
 
         population, objectives, sel_idx = environmental_selection_nsga2(
-            merge_pop, merge_fit, pop_size,
+            merge_pop,
+            merge_fit,
+            pop_size,
+            constraint_violations=_constraint_violations(merge_metrics),
         )
         metrics_cache = [merge_metrics[i] for i in sel_idx]
 
@@ -2742,7 +2803,7 @@ def _run_nsga3(
             )
 
         # Compute fronts once — reused for logging, offspring, and archive.
-        fronts = non_dominated_sort(objectives)
+        fronts = _population_fronts(objectives, metrics_cache)
         pareto_indices = fronts[0]
         pareto_archive = [population[i].copy() for i in pareto_indices]
         _update_hall_of_fame(hall_of_fame, population, pareto_indices)
@@ -3199,7 +3260,13 @@ def _run_nsga3(
         merge_metrics = metrics_cache + off_metrics
 
         population, objectives, sel_idx = _nsga3_environmental_selection(
-            merge_pop, merge_fit, ref_vec, pop_size, feature_infos, dont_cares,
+            merge_pop,
+            merge_fit,
+            ref_vec,
+            pop_size,
+            feature_infos,
+            dont_cares,
+            constraint_violations=_constraint_violations(merge_metrics),
         )
 
         n_alive = len(population)

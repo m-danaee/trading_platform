@@ -620,7 +620,7 @@ class TestSimulateRuleBatch:
         With PHASE2_ENRICH_SYMBOL_METRICS_EVERY_N_GENS=5, enrichment should:
         - Run on gen 0, 5, 10, ... (multiples of 5)
         - Run on last gen (is_last_gen=True) regardless of interval
-        - Provide neutral per_symbol_metrics when skipped
+        - Mark per-symbol metrics unavailable when skipped
         """
         from gpu_fuzzy_trader import config as cfg
 
@@ -663,19 +663,13 @@ class TestSimulateRuleBatch:
         )
         assert fake_cpu.calls == 1
 
-        # Gen 3 (not multiple of 5, not last gen) → enrichment skipped, neutral metrics
+        # Gen 3 (not multiple of 5, not last gen) → enrichment skipped.
         results = eng.simulate_rule_batch(
             chrom, tp=4.0, sl=2.0, capital_pct=50.0,
             generation=3, is_last_gen=False,
         )
-        neutral = results[0].get("per_symbol_metrics", {})
-        assert isinstance(neutral, dict), "Neutral per_symbol_metrics must be a dict"
-        # Neutral values should have positive net_pnl so C5 penalty doesn't fire
-        for sym_entry in neutral.values():
-            assert isinstance(sym_entry, dict)
-            assert float(sym_entry.get("net_pnl", 0.0)) > 0.0, (
-                "Neutral per_symbol_metrics must have net_pnl > 0.0"
-            )
+        assert "per_symbol_metrics" not in results[0]
+        assert results[0]["per_symbol_metrics_available"] is False
         assert fake_cpu.calls == 1, "CPU enrichment should NOT have been called for gen 3"
 
         # Last gen (is_last_gen=True) → enrichment should run regardless of gen number

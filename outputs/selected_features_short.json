@@ -2,104 +2,99 @@
   "direction": "short",
   "features": [
     {
-      "name": "range_compression_20_100",
+      "name": "high",
       "mode": "positive",
-      "score": 0.11853263782062698
+      "score": 0.0534309544843663
     },
     {
-      "name": "downside_semivol_20",
-      "mode": "positive",
-      "score": 0.08447891745552402
-    },
-    {
-      "name": "upside_semivol_20",
-      "mode": "positive",
-      "score": 0.07873016814730073
-    },
-    {
-      "name": "dmi_balance_14",
+      "name": "ff_support_distance_20",
       "mode": "signed",
-      "score": 0.03517418316006073
+      "score": 0.004908325871700647
     },
     {
-      "name": "drawdown_from_peak_60",
-      "mode": "positive",
-      "score": 0.027820851212157667
-    },
-    {
-      "name": "roc_10",
+      "name": "ff_ema_spread_21_55",
       "mode": "signed",
-      "score": 0.00940123884846383
+      "score": 0.004383407883369328
     },
     {
-      "name": "log_range_over_vol_100",
+      "name": "volume",
       "mode": "positive",
-      "score": 0.00934118890504792
+      "score": 0.0036042003569394243
     },
     {
-      "name": "channel_pos_20",
+      "name": "ff_range_expansion_ratio",
       "mode": "positive",
-      "score": 0.0026575088604211127
+      "score": 0.003335181444553026
     },
     {
-      "name": "upper_wick_to_tr",
-      "mode": "positive",
-      "score": 0.002232134720684728
-    },
-    {
-      "name": "rsi_centered_14",
+      "name": "ff_channel_midpoint_bias_20",
       "mode": "signed",
-      "score": 0.0019701057960888266
+      "score": 0.002747757188678035
     },
     {
-      "name": "up_close_ratio_5",
-      "mode": "sparse_positive",
-      "score": 0.0014884836733313977
-    },
-    {
-      "name": "vol_regime_pct_120",
-      "mode": "positive",
-      "score": 0.001480807611854492
-    },
-    {
-      "name": "body_to_tr",
-      "mode": "positive",
-      "score": 0.0013226960465624325
-    },
-    {
-      "name": "cand_up_down_vol_ratio_20",
-      "mode": "positive",
-      "score": 0.001107868362995181
-    },
-    {
-      "name": "lower_wick_to_tr",
-      "mode": "positive",
-      "score": 0.0010884261050328932
-    },
-    {
-      "name": "efficiency_ratio_20",
-      "mode": "positive",
-      "score": 0.000888593309076384
-    },
-    {
-      "name": "atr_ratio_14_63",
-      "mode": "positive",
-      "score": 0.0007059507364610974
-    },
-    {
-      "name": "percent_b_20",
+      "name": "ff_di_spread_14",
       "mode": "signed",
-      "score": 0.0005924203959218822
+      "score": 0.001877398336426639
     },
     {
-      "name": "inside_bar_compression",
-      "mode": "sparse_positive",
-      "score": 0.00037041388908690636
+      "name": "ff_rsi_14_distance_midline",
+      "mode": "signed",
+      "score": 0.001671780781323795
     },
     {
-      "name": "rsi_div_persistence",
-      "mode": "sparse_positive",
-      "score": 0.00031804041365638086
+      "name": "ff_roc_16",
+      "mode": "signed",
+      "score": 0.0012273122296750927
+    },
+    {
+      "name": "ff_roc_8",
+      "mode": "signed",
+      "score": 0.0010457428500885155
+    },
+    {
+      "name": "ff_ppo_sign",
+      "mode": "ternary",
+      "score": 0.000966673424090389
+    },
+    {
+      "name": "ff_price_vs_ema_20",
+      "mode": "ternary",
+      "score": 0.00032765977513051197
+    },
+    {
+      "name": "ff_ema_stack_8_21_55",
+      "mode": "ternary",
+      "score": 0.0002650955851936747
+    },
+    {
+      "name": "ff_rsi_7_level",
+      "mode": "ternary",
+      "score": 0.000256856274110049
+    },
+    {
+      "name": "ff_price_vs_ema_50",
+      "mode": "ternary",
+      "score": 0.00024608519537139533
+    },
+    {
+      "name": "ff_relative_volume_20",
+      "mode": "positive",
+      "score": 0.0001453722775281996
+    },
+    {
+      "name": "ff_volume_regime_20",
+      "mode": "ternary",
+      "score": 6.257253389467964e-05
+    },
+    {
+      "name": "ff_rsi_14_midline_cross",
+      "mode": "binary",
+      "score": 3.047867127256923e-05
+    },
+    {
+      "name": "ff_kama_slope_10_3",
+      "mode": "signed",
+      "score": 0.0
     }
   ],
   "phase1_disabled": false

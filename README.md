@@ -101,6 +101,14 @@ the capital grid at 5%, so the maximum rule count remains feasible before
 normalization. Phase 2 uses `PHASE2_USE_TOTAL_RETURN_OBJ=False`; its comments
 and descriptions document that active behavior.
 
+The runtime also enforces a few data-dependent safety contracts before the
+search starts: the active universe must satisfy the configured profitable-
+symbol floor, cluster count, and RB distinct-symbol requirement. Validation is
+throttled by `PHASE2_VAL_SIM_INTERVAL` only when validation is report-only; if
+validation contributes to fitness, it is evaluated every generation. The
+monthly admission gate fails closed when no rule passes, and Phase 5 reports
+the locked strategy without pruning or rewriting it from test-set PnL.
+
 ## Outputs
 
 - `selected_features_{long,short}.json`: Phase 1 features.
@@ -113,6 +121,23 @@ and descriptions document that active behavior.
 
 Rejected directions overwrite any stale strategy file with an empty
 fail-closed result, so old artifacts cannot be reused accidentally.
+
+## Dashboard
+
+The dependency-free dashboard reads existing artifacts only; it does not load
+market data or execute the pipeline. Point it at the same explicit output
+directory used for a run:
+
+```bash
+.venv/bin/python -m gpu_fuzzy_trader.dashboard --output outputs/run_a
+.venv/bin/python -m gpu_fuzzy_trader.dashboard --output outputs/run_a --serve
+```
+
+Open `outputs/run_a/dashboard.html`, or use the local URL printed by
+`--serve`. It shows direction status, train/validation/test metrics, RB
+fail-closed reasons, Phase 2 history when available, and generated report
+images. Missing artifacts are shown as unavailable rather than treated as
+successful results.
 
 ## Hyperparameter search
 

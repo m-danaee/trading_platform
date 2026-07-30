@@ -677,28 +677,13 @@ def _batch_metrics_from_array(
             "sum_positive_trade_pnl": float(base["sum_positive_trade_pnl"][b]),
             "sum_negative_trade_pnl": float(base["sum_negative_trade_pnl"][b]),
             "max_single_trade_pnl": float(base["max_single_trade_pnl"][b]),
+            # Per-symbol metrics are optional CPU enrichment. Explicitly
+            # record their absence so fitness code cannot mistake missing
+            # evidence for a favorable synthetic result.
+            "per_symbol_metrics_available": False,
         }
         out.append(entry)
     return out
-
-
-def _neutral_per_symbol_metrics(engine: object) -> dict[str, dict]:
-    """Build a neutral per_symbol_metrics dict when CPU enrichment is skipped.
-
-    Returns a dict mapping each symbol known to *engine* to a neutral entry
-    with a small positive net_pnl so the C5 symbol-spread penalty in
-    ``phase2_rule_pool.py:574-582`` doesn't fire spuriously (the check uses
-    ``net_pnl > 0`` strictly, so zero would still trigger the penalty).
-    """
-    try:
-        # Extract unique symbols from the engine's dataframe.
-        symbols = engine.df["symbol"].unique()
-    except Exception:
-        return {}
-    return {
-        str(sym): {"trade_count": 0, "win_rate": 0.0, "net_pnl": 1.0}
-        for sym in symbols
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -1000,7 +985,6 @@ class GPUBacktestEngine:
                 signals_batch = jnp.zeros(
                     (end - start, N), dtype=jnp.bool_)
 
-            chunk_b = end - start
             use_fast_skip = (
                 _cfg.PHASE2_SKIP_ZERO_SIGNAL_SCAN
                 or bool(getattr(_cfg, "PHASE2_SKIP_INFEASIBLE_SIGNAL_SCAN", True))
@@ -1010,26 +994,32 @@ class GPUBacktestEngine:
                     signals_batch.astype(jnp.int32), axis=1)
                 counts_np = np.asarray(signal_counts, dtype=np.int64)
                 min_scan = _min_raw_signals_for_full_scan()
-                scan_idx = np.flatnonzero(counts_np >= min_scan)
-                skip_idx = np.flatnonzero(counts_np < min_scan)
-
-                results_jax = jnp.zeros((chunk_b, 13), dtype=_JXF)
-                if skip_idx.size:
-                    skip_rows = _fast_reject_result_rows(
-                        counts_np[skip_idx], self.initial_capital)
-                    results_jax = results_jax.at[skip_idx].set(
-                        jnp.asarray(skip_rows, dtype=_JXF))
-
-                if scan_idx.size:
-                    sub_signals = signals_batch[scan_idx]
-                    sub_results = self._simulate_signals_batch(
-                        sub_signals,
-                        price_returns_all,
-                        capital_rate,
-                        max_exposure_rate,
-                        N,
-                    )
-                    results_jax = results_jax.at[scan_idx].set(sub_results)
+                # Keep the simulator input shape fixed at (chunk_size, N).
+                # Selecting ``signals_batch[scan_idx]`` made the JAX scan
+                # signature depend on the number of viable rules in each
+                # chunk, causing repeated compilations during evolution.
+                active_mask = counts_np >= min_scan
+                masked_signals = jnp.where(
+                    jnp.asarray(active_mask, dtype=jnp.bool_)[:, None],
+                    signals_batch,
+                    False,
+                )
+                scanned_results = self._simulate_signals_batch(
+                    masked_signals,
+                    price_returns_all,
+                    capital_rate,
+                    max_exposure_rate,
+                    N,
+                )
+                fast_rows = jnp.asarray(
+                    _fast_reject_result_rows(counts_np, self.initial_capital),
+                    dtype=_JXF,
+                )
+                results_jax = jnp.where(
+                    jnp.asarray(active_mask, dtype=jnp.bool_)[:, None],
+                    scanned_results,
+                    fast_rows,
+                )
             else:
                 results_jax = self._simulate_signals_batch(
                     signals_batch,
@@ -1062,17 +1052,11 @@ class GPUBacktestEngine:
                         cm, dict) else None
                     if per_sym:
                         metrics_list[i]["per_symbol_metrics"] = per_sym
+                        metrics_list[i]["per_symbol_metrics_available"] = True
             except Exception as exc:
                 logger.debug(
                     "GPU per-symbol metrics enrichment skipped: %s", exc,
                 )
-        else:
-            # When enrichment is skipped, inject neutral per_symbol_metrics so
-            # downstream code (phase2_rule_pool.py:574-582) doesn't break.
-            _neutral_per_sym = _neutral_per_symbol_metrics(self)
-            for m in metrics_list:
-                if "per_symbol_metrics" not in m:
-                    m["per_symbol_metrics"] = _neutral_per_sym
         return metrics_list
 
 

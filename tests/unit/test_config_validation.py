@@ -22,10 +22,23 @@ def test_default_config_snapshot_is_valid_and_reports_effective_budgets() -> Non
     assert snapshot["gates"]["rb_min_valid_trades"] <= snapshot["gates"]["rb_ruleset_min_valid_trades"]
 
 
-def test_debug_universe_uses_scaled_profitable_symbol_floor() -> None:
-    cfg.validate_config(n_rows=1000, n_symbols=2)
-    snapshot = cfg.effective_config_snapshot(n_rows=1000, n_symbols=2)
-    assert snapshot["phase2"]["effective_min_profitable_symbols"] == 2
+def test_data_dependent_symbol_requirements_fail_fast() -> None:
+    with pytest.raises(cfg.ConfigError, match="PHASE2_MIN_PROFITABLE_SYMBOLS"):
+        cfg.validate_config(n_rows=1000, n_symbols=2)
+
+
+def test_cluster_and_rb_symbol_requirements_are_validated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(cfg, "PHASE2_MIN_PROFITABLE_SYMBOLS", 2)
+    monkeypatch.setattr(cfg, "PHASE2_N_CLUSTERS", 3)
+    with pytest.raises(cfg.ConfigError, match="PHASE2_N_CLUSTERS"):
+        cfg.validate_config(n_rows=1000, n_symbols=2)
+
+    monkeypatch.setattr(cfg, "PHASE2_N_CLUSTERS", 2)
+    monkeypatch.setattr(cfg, "RB_MIN_DISTINCT_SYMBOLS", 3)
+    with pytest.raises(cfg.ConfigError, match="RB_MIN_DISTINCT_SYMBOLS"):
+        cfg.validate_config(n_rows=1000, n_symbols=2)
 
 
 def test_evaluator_constants_match_read_only_notebook() -> None:

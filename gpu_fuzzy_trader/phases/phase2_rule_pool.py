@@ -279,6 +279,12 @@ def _pareto_sortino_stats(
 
 def _symbol_robustness_penalty(metrics: dict) -> float:
     """Penalty for weak cross-symbol robustness on one split."""
+    if not bool(metrics.get(
+        "per_symbol_metrics_available",
+        "per_symbol_metrics" in metrics,
+    )):
+        # Missing enrichment is unknown evidence, not an all-symbol win.
+        return 0.0
     per_sym = metrics.get("per_symbol_metrics", {}) or {}
     if not per_sym:
         return 0.0
@@ -821,18 +827,22 @@ def compute_phase2_objectives_from_metrics(
     # C5: Symbol-spread penalty — penalize when few symbols are profitable.
     # One-symbol islands must use island-scaled targets (else every rule is
     # permanently penalised for failing a 3-symbol bar it can never clear).
-    per_sym = metrics.get("per_symbol_metrics", {}) or {}
-    n_profitable_symbols = sum(
-        1 for v in per_sym.values()
-        if isinstance(v, dict) and float(v.get("net_pnl", 0.0)) > 0.0
-    )
-    if island_hyperparams is not None:
-        min_symbols = int(island_hyperparams.min_profitable_symbols)
-    else:
-        min_symbols = int(
-            getattr(_cfg, "PHASE2_MIN_PROFITABLE_SYMBOLS_PENALTY", 3))
-    if n_profitable_symbols < min_symbols:
-        support_penalty += float(min_symbols - n_profitable_symbols) * 2.0
+    if bool(metrics.get(
+        "per_symbol_metrics_available",
+        "per_symbol_metrics" in metrics,
+    )):
+        per_sym = metrics.get("per_symbol_metrics", {}) or {}
+        n_profitable_symbols = sum(
+            1 for v in per_sym.values()
+            if isinstance(v, dict) and float(v.get("net_pnl", 0.0)) > 0.0
+        )
+        if island_hyperparams is not None:
+            min_symbols = int(island_hyperparams.min_profitable_symbols)
+        else:
+            min_symbols = int(
+                getattr(_cfg, "PHASE2_MIN_PROFITABLE_SYMBOLS_PENALTY", 3))
+        if n_profitable_symbols < min_symbols:
+            support_penalty += float(min_symbols - n_profitable_symbols) * 2.0
 
     if not (island_hyperparams is not None and island_hyperparams.skip_symbol_robustness_penalty):
         support_penalty += _symbol_robustness_penalty(metrics)
@@ -944,6 +954,9 @@ def compute_phase2_objectives_from_metrics(
             include_val=include_val,
             island_hyperparams=island_hyperparams,
         )
+    # Keep a stable scalar for constrained selection even when the soft stage
+    # intentionally disables the hard feasibility penalty.
+    metrics["constraint_violation"] = float(raw_violation)
     if raw_violation > 0.0:
         metrics["feasibility_violation"] = raw_violation
         support_penalty += (
@@ -2230,8 +2243,9 @@ def _apply_monthly_admission_gate(
     ``PHASE2_MONTHLY_ADMISSION_MIN_RATIO`` (or the island-specific
     threshold when ``island_hyperparams`` is provided) are kept.
 
-    Graceful degradation: if the gate would empty the pool, the **original**
-    pool is returned and a warning is logged.
+    By default the gate is fail-closed: if every rule fails, an empty pool is
+    returned. The legacy keep-original behavior is available only through
+    ``PHASE2_MONTHLY_ADMISSION_FAIL_CLOSED=False``.
 
     Parameters
     ----------
@@ -2248,8 +2262,8 @@ def _apply_monthly_admission_gate(
 
     Returns
     -------
-    list[dict]
-        Filtered pool (or original pool if graceful-degradation path is hit).
+        list[dict]
+        Filtered pool, possibly empty when no rule passes.
     """
     if island_hyperparams is not None:
         min_profitable_ratio = float(
@@ -2286,9 +2300,17 @@ def _apply_monthly_admission_gate(
         p10_ratio = 0.0
 
     if post_filter_count == 0:
+        if bool(getattr(_cfg, "PHASE2_MONTHLY_ADMISSION_FAIL_CLOSED", True)):
+            logger.error(
+                "Phase 2 [%s]: monthly-admission gate emptied the pool "
+                "(%d → 0); failing closed",
+                direction,
+                pre_filter_count,
+            )
+            return []
         logger.warning(
             "Phase 2 [%s]: monthly-admission gate emptied the pool "
-            "(%d → 0); keeping original pool (graceful degradation)",
+            "(%d → 0); retaining the legacy compatibility fallback",
             direction,
             pre_filter_count,
         )

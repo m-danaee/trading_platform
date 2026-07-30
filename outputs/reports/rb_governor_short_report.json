@@ -3,8 +3,6 @@
   "rb_score": 0.0,
   "train_metrics": {},
   "valid_metrics": {},
-  "train_minus_valid_return_pct": 0.0,
-  "train_valid_ratio": 0.0,
   "n_positive_single_rules": 0,
   "selected_rules": 0,
   "compose_history": [],
@@ -15,5 +13,6 @@
   },
   "top_single_rules": [],
   "fail_closed": true,
-  "reason": "no_positive_good_candidates"
+  "reason": "no_positive_good_candidates",
+  "phase2_status": {}
 }

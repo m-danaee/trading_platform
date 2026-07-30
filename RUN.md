@@ -41,6 +41,13 @@ fresh empty strategy with `deployment_accepted: false` and a machine-readable
 reason. Phase 5 receives only non-empty strategies from the current run, so
 stale files are not evaluated.
 
+Configuration preflight rejects an active symbol universe that cannot satisfy
+the configured Phase 2 profitable-symbol floor, cluster count, or RB distinct-
+symbol requirement. Validation cadence is throttled only when validation does
+not affect fitness; otherwise it runs every generation. The monthly admission
+gate is fail-closed when every rule fails, and Phase 5 is report-only: it never
+prunes or rewrites strategies using held-out test performance.
+
 ## Data and evaluator
 
 - `data/train_new.csv` feeds Phase 1 and Phase 2. Its OHLCV columns are used
@@ -53,6 +60,19 @@ stale files are not evaluated.
 The evaluator-facing strategy files are `outputs/long.json` and
 `outputs/short.json`; clean copies are written below
 `outputs/evaluator_clean/`.
+
+## Dashboard
+
+Render a read-only dashboard from an existing run directory:
+
+```bash
+.venv/bin/python -m gpu_fuzzy_trader.dashboard --output outputs/run_a
+.venv/bin/python -m gpu_fuzzy_trader.dashboard --output outputs/run_a --serve
+```
+
+The first command writes `dashboard.html`; the second also serves the output
+directory locally. The dashboard consumes only JSON/CSV/PNG artifacts and
+gracefully displays missing or fail-closed directions.
 
 ## Validation-only Optuna
 

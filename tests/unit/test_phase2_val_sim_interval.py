@@ -38,6 +38,7 @@ def test_val_skipped_on_non_interval_gens(monkeypatch):
 
     monkeypatch.setattr(cfg, "PHASE2_VAL_SIM_INTERVAL", 2)
     monkeypatch.setattr(cfg, "PHASE2_JOINT_TRAIN_VAL", False)
+    monkeypatch.setattr(cfg, "PHASE2_VAL_IN_FITNESS_PENALTY", False)
     monkeypatch.setattr(cfg, "PHASE2_EARLY_STOP_ENABLED", False)
     monkeypatch.setattr(cfg, "PHASE2_EARLY_STOP_MIN_GENERATION", 999)
     monkeypatch.setattr(cfg, "PHASE2_PLATEAU_EARLY_STOP_ENABLED", False)
@@ -77,14 +78,8 @@ def test_val_skipped_on_non_interval_gens(monkeypatch):
     )
 
 
-def test_val_respects_interval_even_when_joint_train_val_true(monkeypatch):
-    """PHASE2_JOINT_TRAIN_VAL=True no longer forces val every gen.
-
-    JOINT_TRAIN_VAL controls whether val metrics *feed fitness*, not how
-    often val is computed.  Val cadence is governed solely by
-    ``PHASE2_VAL_SIM_INTERVAL`` (+ always on last gen).  This separation
-    was restored to fix the per-generation runtime blowup.
-    """
+def test_val_runs_every_gen_when_joint_train_val_true(monkeypatch):
+    """Validation-dependent fitness is evaluated consistently every gen."""
     train_engine = CountingEngine()
     val_engine = CountingEngine()
 
@@ -111,15 +106,9 @@ def test_val_respects_interval_even_when_joint_train_val_true(monkeypatch):
             rng=rng,
         )
 
-    # With interval=5 and n_generations=3, val runs on gen 0 (0%5==0) and
-    # last gen (gen 2), but NOT on gen 1.
+    # JOINT_TRAIN_VAL feeds fitness, so interval throttling is not safe.
     val_gens = set(g for g in val_engine.call_gens if g is not None)
-    assert val_gens == {0, 2}, (
-        f"Val should run on gen 0 (interval) and gen 2 (last gen); got {val_gens}"
-    )
-    assert 1 not in val_gens, (
-        "JOINT=True should NOT force val on gen 1 when interval=5"
-    )
+    assert val_gens == {0, 1, 2}
 
 
 def test_val_runs_every_gen_when_interval_1(monkeypatch):
@@ -171,6 +160,7 @@ def test_should_run_val_this_gen_interval_3():
 
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr(cfg, "PHASE2_VAL_SIM_INTERVAL", 3)
+    monkeypatch.setattr(cfg, "PHASE2_VAL_IN_FITNESS_PENALTY", False)
     try:
         # Non-last gens: only multiples of 3
         assert _should_run_val_this_gen(0, is_last_gen=False) is True   # 0 % 3 == 0
@@ -201,6 +191,7 @@ def test_val_interval_3_with_13_gen_epoch(monkeypatch):
 
     monkeypatch.setattr(cfg, "PHASE2_VAL_SIM_INTERVAL", 3)
     monkeypatch.setattr(cfg, "PHASE2_JOINT_TRAIN_VAL", False)
+    monkeypatch.setattr(cfg, "PHASE2_VAL_IN_FITNESS_PENALTY", False)
     monkeypatch.setattr(cfg, "PHASE2_EARLY_STOP_ENABLED", False)
     monkeypatch.setattr(cfg, "PHASE2_EARLY_STOP_MIN_GENERATION", 999)
     monkeypatch.setattr(cfg, "PHASE2_PLATEAU_EARLY_STOP_ENABLED", False)
@@ -256,6 +247,7 @@ def test_val_metrics_deterministic_across_cached_gens(monkeypatch):
 
     monkeypatch.setattr(cfg, "PHASE2_VAL_SIM_INTERVAL", 3)
     monkeypatch.setattr(cfg, "PHASE2_JOINT_TRAIN_VAL", False)
+    monkeypatch.setattr(cfg, "PHASE2_VAL_IN_FITNESS_PENALTY", False)
     monkeypatch.setattr(cfg, "PHASE2_EARLY_STOP_ENABLED", False)
     monkeypatch.setattr(cfg, "PHASE2_EARLY_STOP_MIN_GENERATION", 999)
     monkeypatch.setattr(cfg, "PHASE2_PLATEAU_EARLY_STOP_ENABLED", False)

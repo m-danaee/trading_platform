@@ -122,12 +122,11 @@ class TestMonthlyAdmissionGate:
 
     # ------------------------------------------------------------------
     # Test 2: all rules just below threshold are rejected,
-    #         triggering graceful degradation
+    #         triggering fail-closed behavior
     # ------------------------------------------------------------------
 
-    def test_rejects_below_threshold_graceful_degradation(self, monkeypatch):
-        """All rules have ratio < 0.5 → gate empties pool → graceful
-        degradation keeps original pool."""
+    def test_rejects_below_threshold_fail_closed(self, monkeypatch):
+        """All rules have ratio < 0.5 → gate returns an empty pool."""
         returns = [
             [-1.0, -0.5, -2.0, -1.5, -0.8, -1.2],  # rule 0: 0/6 = 0.0
             [-1.0, -0.5, -2.0, -1.0, -0.5, -0.3],  # rule 1: 0/6 = 0.0
@@ -139,9 +138,7 @@ class TestMonthlyAdmissionGate:
         )
 
         result = _apply_monthly_admission_gate(POOL_THREE, list(range(6)), "long")
-        # Graceful degradation: original pool returned (3 rules)
-        assert len(result) == 3
-        assert result == POOL_THREE
+        assert result == []
 
     # ------------------------------------------------------------------
     # Test 3: boundary — ratio exactly at 0.5 threshold
@@ -202,8 +199,7 @@ class TestMonthlyAdmissionGate:
 
         result = _apply_monthly_admission_gate(
             POOL_THREE, list(range(6)), "long")
-        assert len(result) == 3
-        assert result == POOL_THREE
+        assert result == []
 
     def test_positive_threshold_requires_min_return(self, monkeypatch) -> None:
         """With PHASE2_MONTHLY_GOOD_RETURN_MIN_PCT=2, months need return >= 2%.

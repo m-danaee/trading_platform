@@ -747,6 +747,12 @@ PHASE2_REQUIRE_LAST_FOLD_POSITIVE: bool = False
 #   False → skip the gate (zero behaviour change vs. pre-Task-13 code).
 PHASE2_MONTHLY_ADMISSION_ENABLED = True
 
+# PHASE2_MONTHLY_ADMISSION_FAIL_CLOSED — behavior when every candidate fails
+# the monthly validation gate.
+#   True  → return an empty pool and let downstream deployment fail closed.
+#   False → retain the legacy compatibility fallback (not recommended).
+PHASE2_MONTHLY_ADMISSION_FAIL_CLOSED = True
+
 # PHASE2_MONTHLY_GOOD_RETURN_MIN_PCT — minimum total_return_pct (%) for a monthly
 # window to count as "good" in the pool-admission gate.
 #   0.0  → non-loss months count (flat range months OK — desired equity shape).
@@ -1388,10 +1394,8 @@ PHASE5_VALIDATION_RETURN_GATE_PCT = 2.0
 #   Lower  → strategies with thin edge pass deployment check.
 PHASE5_VALIDATION_PROFIT_FACTOR_GATE = 1.05
 
-# PHASE5_REMOVE_NEGATIVE_PNL_RULES — remove rules with negative PnL on test.
-#   True  → clean up losing rules after OOS evaluation.
-#   False → keep all rules regardless of test performance.
-PHASE5_REMOVE_NEGATIVE_PNL_RULES = False
+# Phase 5 is report-only: it never mutates a strategy using held-out test
+# performance. Test-set pruning would turn the OOS report into a tuning step.
 
 
 # =============================================================================
@@ -2130,6 +2134,8 @@ def validate_config(
                   f"Unsupported PHASE2_ISLAND_MODE={PHASE2_ISLAND_MODE!r}")
     _config_check(int(PHASE2_N_CLUSTERS) >= 1,
                   "PHASE2_N_CLUSTERS must be positive")
+    _config_check(int(PHASE2_MIN_PROFITABLE_SYMBOLS) >= 1,
+                  "PHASE2_MIN_PROFITABLE_SYMBOLS must be positive")
     _config_check(0.0 < float(HOLDOUT_TRAIN_FRACTION) < 1.0,
                   "HOLDOUT_TRAIN_FRACTION must be between 0 and 1")
     _config_check(int(TAIL_DROP_ROWS) == int(MAX_HOLD_CANDLES),
@@ -2398,14 +2404,22 @@ def validate_config(
     if n_symbols is not None:
         _config_check(int(n_symbols) >= 1, "n_symbols must be positive")
         _config_check(
+            int(PHASE2_MIN_PROFITABLE_SYMBOLS) <= int(n_symbols),
+            "PHASE2_MIN_PROFITABLE_SYMBOLS exceeds the active universe",
+        )
+        if str(PHASE2_ISLAND_MODE).lower() == "cluster":
+            _config_check(
+                int(PHASE2_N_CLUSTERS) <= int(n_symbols),
+                "PHASE2_N_CLUSTERS exceeds the active symbol universe",
+            )
+        _config_check(
             effective_min_profitable_symbols(int(n_symbols)) <= int(n_symbols),
             "effective Phase 2 profitable-symbol floor exceeds the active universe",
         )
-        if bool(RB_REQUIRE_SYMBOL_FILTERS):
-            _config_check(
-                int(RB_MIN_DISTINCT_SYMBOLS) <= int(n_symbols),
-                "RB_MIN_DISTINCT_SYMBOLS exceeds the active universe when symbol filters are required",
-            )
+        _config_check(
+            int(RB_MIN_DISTINCT_SYMBOLS) <= int(n_symbols),
+            "RB_MIN_DISTINCT_SYMBOLS exceeds the active symbol universe",
+        )
 
     if n_rows is not None:
         _config_check(int(n_rows) > 0, "n_rows must be positive")
@@ -2465,6 +2479,7 @@ def effective_config_snapshot(
             "min_trade_support": int(MIN_TRADE_SUPPORT),
             "min_trade_pool_floor": int(MIN_TRADE_POOL_FLOOR),
             "effective_min_profitable_symbols": effective_min_profitable_symbols(n_symbols),
+            "min_profitable_symbols_required": int(PHASE2_MIN_PROFITABLE_SYMBOLS),
             "island_monthly_min_months": int(PHASE2_ISLAND_MONTHLY_MIN_MONTHS),
             "sample_max_bars_per_symbol": int(PHASE2_SAMPLE_MAX_BARS_PER_SYMBOL),
             "admission_min_val_trades": int(effective_pool_min_val_trades(n_rows)),
@@ -2496,6 +2511,7 @@ def effective_config_snapshot(
             "phase2_max_train_valid_gap_pct": float(PHASE2_MAX_TRAIN_VAL_GAP_PCT),
             "phase2_monthly_min_months": int(PHASE2_MONTHLY_ADMISSION_MIN_MONTHS),
             "phase2_monthly_min_profitable_ratio": float(PHASE2_MONTHLY_ADMISSION_MIN_RATIO),
+            "phase2_monthly_fail_closed": bool(PHASE2_MONTHLY_ADMISSION_FAIL_CLOSED),
             "rb_min_train_return": float(RB_MIN_TRAIN_RETURN),
             "rb_min_valid_return": float(RB_MIN_VALID_RETURN),
             "rb_min_train_pf": float(RB_MIN_TRAIN_PF),

@@ -808,8 +808,8 @@ class TestOOSEvaluatorRun:
         for col in ("direction", "symbol", "trade_count", "win_rate", "net_pnl"):
             assert col in df.columns, f"Missing column: {col}"
 
-    def test_returned_results_match_post_cleanup_report_metrics(self, tmp_path):
-        """Returned Phase 5 metrics must match saved report after rule pruning."""
+    def test_oos_reports_do_not_mutate_strategy_from_test_metrics(self, tmp_path):
+        """Returned and saved OOS metrics come from the locked strategy."""
         import gpu_fuzzy_trader.phases.phase5_oos as m
 
         orig_s, orig_r = self._setup_paths(m, tmp_path, directions=("short",))
@@ -825,37 +825,17 @@ class TestOOSEvaluatorRun:
             "final_equity": 964.1,
             "per_symbol_metrics": {},
         }
-        post_test_metrics = {
-            "direction": "short",
-            "total_return_pct": 0.2,
-            "max_drawdown_pct": 5.31,
-            "win_rate": 39.9,
-            "profit_factor": 1.0,
-            "executed_trades": 750,
-            "account_ruined": False,
-            "final_equity": 1002.0,
-            "per_symbol_metrics": {},
-        }
         split_metrics = {
             "train": {"total_return_pct": 1.0, "executed_trades": 100},
             "validation": {"total_return_pct": 0.5, "executed_trades": 80},
             "test": pre_test_metrics,
         }
-        test_trade_log = pd.DataFrame(
-            {
-                "Rule_Index": [1, 2, 3],
-                "Net_PnL": [10.0, -20.0, -5.0],
-                "Equity_After": [1010.0, 990.0, 985.0],
-            }
-        )
         evaluate_calls = {"count": 0}
 
         def mock_evaluate(_self, _df, _strategy, direction):
             evaluate_calls["count"] += 1
             if evaluate_calls["count"] == 3:
-                return pre_test_metrics, [], test_trade_log
-            if evaluate_calls["count"] == 4:
-                return post_test_metrics, [], test_trade_log.iloc[:1]
+                return pre_test_metrics, [], pd.DataFrame()
             split = ("train", "validation")[evaluate_calls["count"] - 1]
             return split_metrics[split], [], pd.DataFrame()
 
@@ -873,10 +853,6 @@ class TestOOSEvaluatorRun:
             OOS_Evaluator,
             "_evaluate_strategy",
             mock_evaluate,
-        ), patch.object(
-            OOS_Evaluator,
-            "_remove_negative_pnl_rules",
-            return_value=(strategy, True),
         ), patch.object(
             OOS_Evaluator,
             "_load_selected_features",
