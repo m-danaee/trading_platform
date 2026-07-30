@@ -60,6 +60,28 @@ def _make_rows(
     return [_base_row(symbol, ts, label_val=label_val, feat_val=feat_val) for ts in timestamps]
 
 
+def _make_ohlcv_rows(
+    symbol: str,
+    n: int,
+    start: str = "2024-01-01 00:00:00",
+) -> list[dict]:
+    """Generate raw OHLCV rows without precomputed forward labels."""
+    timestamps = _make_timestamps(n, start=start)
+    return [
+        {
+            "datetime": ts,
+            "symbol": symbol,
+            "open": 100.0 + i,
+            "high": 101.0 + i,
+            "low": 99.0 + i,
+            "close": 100.5 + i,
+            "volume": 10.0 + i,
+            "feature_a": float(i),
+        }
+        for i, ts in enumerate(timestamps)
+    ]
+
+
 def _make_csv(rows: list[dict]) -> str:
     """Build a CSV string from a list of row dicts."""
     return pd.DataFrame(rows).to_csv(index=False)
@@ -118,6 +140,32 @@ class TestSort:
         df = _loader_from_rows(rows)
         for sym, grp in df.groupby("symbol"):
             assert grp["datetime"].is_monotonic_increasing
+
+
+# ---------------------------------------------------------------------------
+# Tests: raw OHLCV label generation
+# ---------------------------------------------------------------------------
+
+class TestOHLCVLabelGeneration:
+    def test_labels_are_derived_when_csv_has_raw_ohlcv(self):
+        rows = _make_ohlcv_rows("BTCUSDT", TAIL_DROP_ROWS + 5)
+        df = _loader_from_rows(rows)
+
+        assert len(df) == 5
+        assert df["open"].iloc[0] == 100.0
+        assert df["label_open_next"].iloc[0] == 101.0
+        assert df["label_close_288"].iloc[0] == 388.5
+        assert df["label_min_288"].iloc[0] == 100.0
+        assert df["label_max_288"].iloc[0] == 389.0
+        assert df["label_max_before_min"].iloc[0] == 0.0
+
+    def test_partial_labels_are_rejected(self):
+        rows = _make_rows(1, TAIL_DROP_ROWS + 1)
+        for row in rows:
+            row.pop("label_close_288")
+
+        with pytest.raises(ValueError, match="only some required label columns"):
+            _loader_from_rows(rows)
 
 
 # ---------------------------------------------------------------------------

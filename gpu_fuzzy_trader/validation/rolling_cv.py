@@ -1,5 +1,5 @@
 """
-Purged expanding walk-forward folds for train.csv.
+Purged expanding walk-forward folds for train_new.csv.
 
 Per-symbol chronological folds with an embargo (purge) gap between train and
 validation blocks so label look-ahead (MAX_HOLD_CANDLES) does not leak.
@@ -238,7 +238,7 @@ def build_purged_walk_forward_folds(
     min_valid_rows: int | None = None,
 ) -> list[PurgedFold]:
     """
-    Build purged expanding walk-forward folds on ``train.csv``.
+    Build purged expanding walk-forward folds on ``train_new.csv``.
 
     Returns ``n_splits`` CV folds plus one primary holdout fold (last).
     """

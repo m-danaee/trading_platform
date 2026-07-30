@@ -43,9 +43,11 @@ stale files are not evaluated.
 
 ## Data and evaluator
 
-- `data/train.csv` feeds Phase 1 and Phase 2.
+- `data/train_new.csv` feeds Phase 1 and Phase 2. Its OHLCV columns are used
+  to derive the forward labels required by the backtest.
 - Validation fitness and selection windows feed Phase 2 and RB only.
-- `data/test.csv` is reserved for Phase 5.
+- `data/test_new.csv` is reserved for Phase 5 and uses the same OHLCV/features
+  schema.
 - `evaluator_v5.ipynb` is read-only and is the final evaluation authority.
 
 The evaluator-facing strategy files are `outputs/long.json` and

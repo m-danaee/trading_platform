@@ -21,11 +21,11 @@ requirements-gpu.txt GPU JAX plugin dependencies
 
 ## Pipeline
 
-1. Data preparation loads `train.csv` and builds cached train/validation splits.
+1. Data preparation loads `train_new.csv` and builds cached train/validation splits.
 2. Phase 1 selects direction-specific features.
 3. Phase 2 generates and admits rule pools using island-resolved floors.
 4. RB Governor is the single production selection and risk path.
-5. Phase 5 evaluates the current RB outputs out of sample on `test.csv`.
+5. Phase 5 evaluates the current RB outputs out of sample on `test_new.csv`.
 
 Existing callers using `--phase 3` or `--phase 4` remain compatible: both
 normalize to the RB Governor and return the historical result keys alongside
@@ -76,9 +76,11 @@ thresholds.
 
 ## Data and evaluator
 
-- `data/train.csv` feeds Phase 1 and Phase 2.
+- `data/train_new.csv` feeds Phase 1 and Phase 2. Its OHLCV columns are used
+  to derive the forward labels required by the backtest.
 - Validation fitness and selection windows feed Phase 2 and RB only.
-- `data/test.csv` is reserved for Phase 5.
+- `data/test_new.csv` is reserved for Phase 5 and uses the same OHLCV/features
+  schema.
 - `evaluator_v5.ipynb` is read-only and is the final evaluation authority.
 
 Override paths with `DATA_ROOT`, `TRAIN_CSV_PATH`, or `TEST_CSV_PATH` when

@@ -11,17 +11,17 @@ File layout
   4. Phase 2 — rule evolution (NSGA-III): risk, genome, gates, islands
   5. RB Governor — unified rule selection + risk tuning
   6. Monthly windows — shared validation penalties
-  7. Phase 5 — out-of-sample evaluation (test.csv only)
+  7. Phase 5 — out-of-sample evaluation (test_new.csv only)
   8. Helpers — path resolvers, trade-floor scaling, island hyperparams
   9. Configuration validation + Colab runtime defaults
 
 Pipeline phases
 ---------------
   Phase 0  Paths, schema, train/val split (holdout+embargo), backtest constants
-  Phase 1  Feature selection (train.csv only)
+  Phase 1  Feature selection (train_new.csv only)
   Phase 2  NSGA-III rule-pool evolution (GPU backtests)
   RB       Rule-team selection + walk-forward TP/SL/capital optimization
-  Phase 5  Out-of-sample evaluation (test.csv only)
+  Phase 5  Out-of-sample evaluation (test_new.csv only)
 
 Detailed behaviour and formulas: docs/phase0_shared.md … docs/phase5_oos.md
 
@@ -103,19 +103,19 @@ def _env_str(name: str, default: str) -> str:
 
 DATA_ROOT = os.environ.get("DATA_ROOT", "").strip()
 # Market data files (only these CSVs):
-#   train.csv — 2024-01-01 → 2024-08-31 (Phase 1, Phase 2, RB Governor)
-#   test.csv  — 2024-09-01 → 2025-01-31 (Phase 5 OOS only)
+#   train_new.csv — OHLCV + ff_* features (Phase 1, Phase 2, RB Governor)
+#   test_new.csv  — matching held-out OHLCV + ff_* features (Phase 5 OOS only)
 TRAIN_CSV_PATH = _env_str(
     "TRAIN_CSV_PATH",
     os.path.join(
-        DATA_ROOT, "train.csv") if DATA_ROOT else "data/train.csv",
+        DATA_ROOT, "train_new.csv") if DATA_ROOT else "data/train_new.csv",
 )
 TEST_CSV_PATH = _env_str(
     "TEST_CSV_PATH",
-    os.path.join(DATA_ROOT, "test.csv") if DATA_ROOT else "data/test.csv",
+    os.path.join(DATA_ROOT, "test_new.csv") if DATA_ROOT else "data/test_new.csv",
 )
 
-# Cached splits from train.csv (Phases 2–5). Rebuilt when train.csv is newer.
+# Cached splits from train_new.csv (Phases 2–5). Rebuilt when train_new.csv is newer.
 TRAIN_70_PATH = "data/train_70.parquet"
 VALIDATION_30_PATH = "data/validation_30.parquet"
 VALIDATION_FITNESS_PATH = "data/validation_fitness.parquet"
@@ -172,7 +172,7 @@ TAIL_DROP_ROWS = 288
 # =============================================================================
 # Phases 4–5 always use persisted train_70 + validation_30 (see splitter.py).
 
-# SPLIT_MODE — how train.csv is divided before Phase 2.
+# SPLIT_MODE — how train_new.csv is divided before Phase 2.
 #   holdout             → single per-symbol chronological split with embargo
 #                         (288 bars dropped between train and val).
 #                         The actual train/val fraction is set by
@@ -299,7 +299,7 @@ LOG_GENERATION_INTERVAL = 0
 
 
 # =============================================================================
-# Phase 1 — Feature selection (train.csv only)
+# Phase 1 — Feature selection (train_new.csv only)
 # =============================================================================
 
 # --- Ranking & shortlist ---
@@ -1375,7 +1375,7 @@ MONTHLY_PROFITABLE_RATIO_WEIGHT = 15.0
 MONTHLY_TREND_WEIGHT = 2.0
 MONTHLY_LATEST_WEIGHT = 0.6
 
-# Phase 5 — Out-of-sample evaluation (test.csv only; never used before Phase 5)
+# Phase 5 — Out-of-sample evaluation (test_new.csv only; never used before Phase 5)
 # =============================================================================
 
 # PHASE5_VALIDATION_RETURN_GATE_PCT — min val return % for deployment flag.
@@ -1834,7 +1834,7 @@ def split_mode_is_purged_walk_forward() -> bool:
 
 
 def set_purged_wf_reference_rows(n_rows: int) -> None:
-    """Store full train.csv row count after loader prep (split time)."""
+    """Store full train_new.csv row count after loader prep (split time)."""
     global _PURGED_WF_REFERENCE_ROWS
     _PURGED_WF_REFERENCE_ROWS = max(0, int(n_rows))
 

@@ -1,7 +1,7 @@
 """
 phase5_oos.py — OOS_Evaluator (Phase 5)
 
-Final out-of-sample evaluation on the held-out test.csv.
+Final out-of-sample evaluation on the held-out test_new.csv.
 
 Workflow:
   1. Load outputs/long.json and outputs/short.json via Output_Writer.load_and_validate()
