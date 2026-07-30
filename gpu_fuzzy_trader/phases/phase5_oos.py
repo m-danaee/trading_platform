@@ -106,7 +106,7 @@ class OOS_Evaluator:
         ----------
         allowed_directions : frozenset[str] | None
             When set (full pipeline run), only these directions are loaded from
-            disk. Use an empty frozenset to skip all directions (e.g. Phase 3
+            disk. Use an empty frozenset to skip all directions (e.g. RB
             produced no rule sets this run). ``None`` loads every valid strategy
             file (standalone Phase 5).
 
@@ -134,7 +134,7 @@ class OOS_Evaluator:
             else:
                 logger.warning(
                     "No strategy files found in %s. "
-                    "Run Phase 3 (and optionally Phase 4) first.",
+                    "Run Phase 2 and RB Governor first.",
                     _cfg.OUTPUTS_DIR,
                 )
             return {}
@@ -548,7 +548,7 @@ class OOS_Evaluator:
             if total_pnl > 0:
                 kept.append(rule)
 
-        global_min = int(_cfg.PHASE3_GLOBAL_MIN_RULES)
+        global_min = int(_cfg.RB_MIN_RULES)
         if len(kept) < global_min:
             logger.warning(
                 "Phase 5 [%s]: cannot remove negative-PnL rules: "

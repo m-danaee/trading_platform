@@ -5,7 +5,6 @@ import json
 import logging
 import math
 import os
-import shutil
 from itertools import combinations
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -20,8 +19,12 @@ from gpu_fuzzy_trader.backtest.cpu_engine import (
     _build_rule_signal_mask,
 )
 from gpu_fuzzy_trader.backtest.df_slim import downcast_numeric_df
-from gpu_fuzzy_trader.data.loader import Data_Loader
 from gpu_fuzzy_trader.scoring import return_to_drawdown, profit_factor_term
+from gpu_fuzzy_trader.scoring.gates import (
+    PositiveGoodThresholds,
+    gate_positive_good,
+    positive_good_reject_reasons,
+)
 from gpu_fuzzy_trader.validation.monthly_windows import (
     build_monthly_windows,
     summarize_monthly_metrics,
@@ -357,8 +360,6 @@ def _combined_return_score(train_m: dict, valid_m: dict, *, prev_pf: float | Non
 
 
 def _positive_returns(train_m: dict, valid_m: dict) -> bool:
-    if not bool(getattr(_cfg, "RB_GLOBAL_REQUIRE_POSITIVE_TRAIN_VALID", True)):
-        return True
     return _f(train_m, "total_return_pct") > 0.0 and _f(valid_m, "total_return_pct") > 0.0
 
 
@@ -582,39 +583,26 @@ def _symbol_specialized_variants(
     return [v for _score, v in scored_variants[:max_variants]] or [_ensure_symbol_filtered_rule(base, symbols)]
 
 def _is_positive_good(train_m: dict, valid_m: dict, *, min_train_trades: int | None = None, min_valid_trades: int | None = None) -> bool:
-    min_train_trades = int(min_train_trades if min_train_trades is not None else getattr(_cfg, "RB_MIN_TRAIN_TRADES", 25))
-    min_valid_trades = int(min_valid_trades if min_valid_trades is not None else getattr(_cfg, "RB_MIN_VALID_TRADES", 15))
-    train_ret = _f(train_m, "total_return_pct")
-    valid_ret = _f(valid_m, "total_return_pct")
-    # Train/val shape is a soft preference in ``_score_metrics`` only.
-    # Using it as a hard gate (narrow ratio band ~1.03–1.15) emptied the
-    # RB candidate set even when Phase 2 pool rules were healthy on both
-    # splits (see run.log: kept 0/6 and 0/13 → fail-closed empty strategies).
-
-    def execution_ok(m: dict) -> bool:
-        raw = max(0, _i(m, "raw_signal_count", 0))
-        if raw <= 0:
-            return False
-        skipped = max(0, _i(m, "skipped_min_notional_count", 0))
-        executed = max(0, _i(m, "executed_trades", 0))
-        max_skip = float(getattr(_cfg, "RB_MAX_SKIPPED_SIGNAL_RATIO", 0.20))
-        min_exec = float(getattr(_cfg, "RB_MIN_EXECUTED_RAW_RATIO", 0.60))
-        return (skipped / raw) <= max_skip and (executed / raw) >= min_exec
-
-    # Execution health stays a soft score penalty by default. Hard-gating it on
-    # singles rejected profitable island rules with elevated min-notional skips
-    # (e.g. +18% train / +0.5% val killed solely by skip_ratio≈0.40).
-    require_exec = bool(
-        getattr(_cfg, "RB_REQUIRE_EXECUTION_HEALTH_ON_SINGLES", False))
-    return (
-        train_ret > float(getattr(_cfg, "RB_MIN_TRAIN_RETURN", 0.0))
-        and valid_ret > float(getattr(_cfg, "RB_MIN_VALID_RETURN", 0.0))
-        and _f(train_m, "profit_factor") >= float(getattr(_cfg, "RB_MIN_TRAIN_PF", 1.0))
-        and _f(valid_m, "profit_factor") >= float(getattr(_cfg, "RB_MIN_VALID_PF", 1.0))
-        and _i(train_m, "executed_trades") >= min_train_trades
-        and _i(valid_m, "executed_trades") >= min_valid_trades
-        and (not require_exec or (execution_ok(train_m) and execution_ok(valid_m)))
+    thresholds = PositiveGoodThresholds(
+        min_train_return=float(getattr(_cfg, "RB_MIN_TRAIN_RETURN", 0.0)),
+        min_valid_return=float(getattr(_cfg, "RB_MIN_VALID_RETURN", 0.0)),
+        min_train_profit_factor=float(getattr(_cfg, "RB_MIN_TRAIN_PF", 1.0)),
+        min_valid_profit_factor=float(getattr(_cfg, "RB_MIN_VALID_PF", 1.0)),
+        min_train_trades=int(
+            min_train_trades
+            if min_train_trades is not None
+            else getattr(_cfg, "RB_MIN_TRAIN_TRADES", 25)
+        ),
+        min_valid_trades=int(
+            min_valid_trades
+            if min_valid_trades is not None
+            else getattr(_cfg, "RB_MIN_VALID_TRADES", 15)
+        ),
+        require_execution_health=bool(
+            getattr(_cfg, "RB_REQUIRE_EXECUTION_HEALTH_ON_SINGLES", False)
+        ),
     )
+    return gate_positive_good(train_m, valid_m, thresholds)
 
 
 def _positive_good_reject_reasons(
@@ -625,41 +613,26 @@ def _positive_good_reject_reasons(
     min_valid_trades: int | None = None,
 ) -> list[str]:
     """Human-readable reasons why ``_is_positive_good`` failed (diagnostics)."""
-    min_train_trades = int(min_train_trades if min_train_trades is not None else getattr(
-        _cfg, "RB_MIN_TRAIN_TRADES", 25))
-    min_valid_trades = int(min_valid_trades if min_valid_trades is not None else getattr(
-        _cfg, "RB_MIN_VALID_TRADES", 15))
-    reasons: list[str] = []
-    train_ret = _f(train_m, "total_return_pct")
-    valid_ret = _f(valid_m, "total_return_pct")
-    if not (train_ret > float(getattr(_cfg, "RB_MIN_TRAIN_RETURN", 0.0))):
-        reasons.append(f"train_ret={train_ret:.2f}")
-    if not (valid_ret > float(getattr(_cfg, "RB_MIN_VALID_RETURN", 0.0))):
-        reasons.append(f"valid_ret={valid_ret:.2f}")
-    if not (_f(train_m, "profit_factor") >= float(getattr(_cfg, "RB_MIN_TRAIN_PF", 1.0))):
-        reasons.append(f"train_pf={_f(train_m, 'profit_factor'):.3f}")
-    if not (_f(valid_m, "profit_factor") >= float(getattr(_cfg, "RB_MIN_VALID_PF", 1.0))):
-        reasons.append(f"valid_pf={_f(valid_m, 'profit_factor'):.3f}")
-    if not (_i(train_m, "executed_trades") >= min_train_trades):
-        reasons.append(f"train_trades={_i(train_m, 'executed_trades')}")
-    if not (_i(valid_m, "executed_trades") >= min_valid_trades):
-        reasons.append(f"valid_trades={_i(valid_m, 'executed_trades')}")
-    if bool(getattr(_cfg, "RB_REQUIRE_EXECUTION_HEALTH_ON_SINGLES", False)):
-        for tag, m in (("train", train_m), ("valid", valid_m)):
-            raw = max(0, _i(m, "raw_signal_count", 0))
-            if raw <= 0:
-                reasons.append(f"{tag}_no_raw")
-                continue
-            skipped = max(0, _i(m, "skipped_min_notional_count", 0))
-            executed = max(0, _i(m, "executed_trades", 0))
-            max_skip = float(
-                getattr(_cfg, "RB_MAX_SKIPPED_SIGNAL_RATIO", 0.20))
-            min_exec = float(getattr(_cfg, "RB_MIN_EXECUTED_RAW_RATIO", 0.60))
-            if (skipped / raw) > max_skip:
-                reasons.append(f"{tag}_skip={skipped / raw:.2f}")
-            if (executed / raw) < min_exec:
-                reasons.append(f"{tag}_exec={executed / raw:.2f}")
-    return reasons
+    thresholds = PositiveGoodThresholds(
+        min_train_return=float(getattr(_cfg, "RB_MIN_TRAIN_RETURN", 0.0)),
+        min_valid_return=float(getattr(_cfg, "RB_MIN_VALID_RETURN", 0.0)),
+        min_train_profit_factor=float(getattr(_cfg, "RB_MIN_TRAIN_PF", 1.0)),
+        min_valid_profit_factor=float(getattr(_cfg, "RB_MIN_VALID_PF", 1.0)),
+        min_train_trades=int(
+            min_train_trades
+            if min_train_trades is not None
+            else getattr(_cfg, "RB_MIN_TRAIN_TRADES", 25)
+        ),
+        min_valid_trades=int(
+            min_valid_trades
+            if min_valid_trades is not None
+            else getattr(_cfg, "RB_MIN_VALID_TRADES", 15)
+        ),
+        require_execution_health=bool(
+            getattr(_cfg, "RB_REQUIRE_EXECUTION_HEALTH_ON_SINGLES", False)
+        ),
+    )
+    return positive_good_reject_reasons(train_m, valid_m, thresholds)
 
 
 def _prepare_scoring_frame(df: pd.DataFrame) -> pd.DataFrame:
@@ -961,7 +934,7 @@ def _make_walk_forward_fold_engines(
     direction: str,
 ) -> tuple[list[CPUBacktestEngine], CPUBacktestEngine | None]:
     # → fixes audit finding #3 (RB Governor risk-grid overfits val_selection)
-    # → fixes audit finding #12 (PHASE4_TAIL_HOLDOUT_FRACTION orphan, now wired)
+    # The risk grid uses the active RB tail-holdout contract.
     """Split val_selection into n_splits chronological folds + optional tail holdout.
 
     Per-symbol chronological split (matches data/splitter.py convention).
@@ -1075,11 +1048,11 @@ def _optimize_risk(
         cur_score = min(init_fold_scores)
         hist[0]["score"] = cur_score
 
-    tp_grid = tuple(float(x) for x in getattr(_cfg, "RB_TP_GRID", getattr(_cfg, "PHASE4_TP_GRID", (1.5, 2.0, 2.5, 3.0))))
-    sl_grid = tuple(float(x) for x in getattr(_cfg, "RB_SL_GRID", getattr(_cfg, "PHASE4_SL_GRID", (0.8, 1.0, 1.2, 1.5))))
-    cap_grid = tuple(float(x) for x in getattr(_cfg, "RB_CAPITAL_GRID", getattr(_cfg, "PHASE4_CAPITAL_GRID", (5.0, 7.5, 10.0, 12.5))))
-    max_total_cap = float(getattr(_cfg, "RB_MAX_TOTAL_CAPITAL", 65.0))
-    passes = int(getattr(_cfg, "RB_RISK_OPT_PASSES", 2))
+    tp_grid = tuple(float(x) for x in _cfg.RB_TP_GRID)
+    sl_grid = tuple(float(x) for x in _cfg.RB_SL_GRID)
+    cap_grid = tuple(float(x) for x in _cfg.RB_CAPITAL_GRID)
+    max_total_cap = float(_cfg.RB_MAX_TOTAL_CAPITAL)
+    passes = int(_cfg.RB_RISK_OPT_PASSES)
     min_improve = float(getattr(_cfg, "RB_RISK_MIN_IMPROVEMENT", 0.02))
     min_train_trades = int(getattr(_cfg, "RB_RULESET_MIN_TRAIN_TRADES", getattr(_cfg, "RB_MIN_TRAIN_TRADES", 25)))
     min_valid_trades = int(getattr(_cfg, "RB_RULESET_MIN_VALID_TRADES", getattr(_cfg, "RB_MIN_VALID_TRADES", 15)))
@@ -1424,7 +1397,7 @@ def _profit_amp_reallocate_capital(
     }]
     if not cur_cert[0]:
         return best_rules, cur_train, cur_valid, cur_objective, cur_cert, history, cur_monthly_rows
-    cap_grid = tuple(float(x) for x in getattr(_cfg, "RB_PROFIT_AMP_CAPITAL_GRID", getattr(_cfg, "RB_CAPITAL_GRID", (5.0, 12.5, 25.0))))
+    cap_grid = tuple(float(x) for x in _cfg.RB_CAPITAL_GRID)
     max_total_cap = float(getattr(_cfg, "RB_MAX_TOTAL_CAPITAL", 95.0))
     passes = int(getattr(_cfg, "RB_PROFIT_AMP_CAPITAL_PASSES", 2))
     min_improve = float(getattr(_cfg, "RB_PROFIT_AMP_MIN_OBJECTIVE_IMPROVEMENT", 0.10))
@@ -1555,6 +1528,63 @@ def _write_clean_evaluator(strategy: dict, output_path: Path) -> None:
         json.dump(clean, fh, indent=2)
 
 
+def _write_fail_closed_strategy(
+    out_dir: Path,
+    reports_dir: Path,
+    direction: str,
+    reason: str,
+    *,
+    phase2_status: dict | None = None,
+) -> dict:
+    """Persist an explicit empty strategy and diagnostic report."""
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    strategy = _strategy(
+        direction,
+        [],
+        risk_optimized=False,
+        extra={
+            "deployment_accepted": False,
+            "fail_closed": True,
+            "reason": reason,
+            "phase2_status": phase2_status or {},
+        },
+    )
+    strategy_path = out_dir / f"{direction}.json"
+    with strategy_path.open("w", encoding="utf-8") as fh:
+        json.dump(strategy, fh, indent=2)
+    _write_clean_evaluator(
+        strategy,
+        out_dir / "evaluator_clean" / f"{direction}_evaluator_clean.json",
+    )
+    report = {
+        "direction": direction,
+        "rb_score": 0.0,
+        "train_metrics": {},
+        "valid_metrics": {},
+        "n_positive_single_rules": 0,
+        "selected_rules": 0,
+        "compose_history": [],
+        "risk_history": [],
+        "profit_amplifier": {"accepted": False, "reason": reason},
+        "top_single_rules": [],
+        "fail_closed": True,
+        "reason": reason,
+        "phase2_status": phase2_status or {},
+    }
+    with (reports_dir / f"rb_governor_{direction}_report.json").open(
+        "w", encoding="utf-8"
+    ) as fh:
+        json.dump(report, fh, indent=2, default=str)
+    logger.info(
+        "RB [%s]: fail-closed empty strategy written (reason=%s).",
+        direction,
+        reason,
+    )
+    return strategy
+
+
 def run_rb_governor_pipeline(
     train_df: pd.DataFrame,
     val_df: pd.DataFrame,
@@ -1564,6 +1594,7 @@ def run_rb_governor_pipeline(
     output_dir: str | os.PathLike[str] | None = None,
     cv_folds: list | None = None,
     val_selection_df: pd.DataFrame | None = None,
+    failure_reasons: dict[str, str] | None = None,
 ) -> dict[str, dict]:
     """Build and optimize rb strategies for each direction and write outputs."""
     out_dir = Path(output_dir or _cfg.OUTPUTS_DIR)
@@ -1578,7 +1609,15 @@ def run_rb_governor_pipeline(
     for direction in directions:
         pool = pools.get(direction, [])
         if not pool:
-            logger.warning("RB [%s]: empty Phase 2 pool; skipping.", direction)
+            reason = (failure_reasons or {}).get(direction, "empty_phase2_pool")
+            logger.warning("RB [%s]: empty Phase 2 pool; fail closed (%s).", direction, reason)
+            results[direction] = _write_fail_closed_strategy(
+                out_dir,
+                reports_dir,
+                direction,
+                reason,
+                phase2_status={"reason": reason},
+            )
             continue
         train_engine = CPUBacktestEngine(train_like, {}, direction)
         valid_engine = CPUBacktestEngine(valid_df, {}, direction)
@@ -1598,78 +1637,26 @@ def run_rb_governor_pipeline(
 
         candidates = _filter_good_rules(pool, train_like, valid_df, direction, fold_engines=fold_engines)
         if not candidates:
-            allow_fallback = bool(getattr(_cfg, "RB_ALLOW_FALLBACK", False))
-            if not allow_fallback:
-                logger.warning(
-                    "RB [%s]: no positive-good single rules; fail closed (RB_ALLOW_FALLBACK=False).",
-                    direction,
-                )
-                strategy = _strategy(
-                    direction, [],
-                    risk_optimized=False,
-                    extra={
-                        "deployment_accepted": False,
-                        "no_positive_good_candidates": True,
-                        "reason": "no_positive_good_candidates",
-                    },
-                )
-                strategy_path = out_dir / f"{direction}.json"
-                with strategy_path.open("w", encoding="utf-8") as fh:
-                    json.dump(strategy, fh, indent=2)
-                _write_clean_evaluator(strategy, out_dir / "evaluator_clean" / f"{direction}_evaluator_clean.json")
-                report = {
-                    "direction": direction,
-                    "rb_score": 0.0,
-                    "train_metrics": {},
-                    "valid_metrics": {},
-                    "train_minus_valid_return_pct": 0.0,
-                    "train_valid_ratio": 0.0,
-                    "n_positive_single_rules": 0,
-                    "selected_rules": 0,
-                    "compose_history": [],
-                    "risk_history": [],
-                    "profit_amplifier": {"accepted": False, "reason": "no_positive_good_candidates"},
-                    "top_single_rules": [],
-                    "fail_closed": True,
-                    "reason": "no_positive_good_candidates",
-                }
-                with (reports_dir / f"rb_governor_{direction}_report.json").open("w", encoding="utf-8") as fh:
-                    json.dump(report, fh, indent=2, default=str)
-                logger.info(
-                    "RB [%s]: fail-closed empty strategy written (deployment_accepted=false).",
-                    direction,
-                )
-                results[direction] = strategy
-                continue
-            logger.warning("RB [%s]: no single rules positive on both training and validation; falling back to best raw governor score.", direction)
-            candidates = []
-            symbols = _available_symbols(train_like, valid_df)
-            for raw in pool[: int(getattr(_cfg, "RB_MAX_POOL_RULES_TO_EVALUATE", 700))]:
-                for rule in _symbol_specialized_variants(raw, train_engine, valid_engine, symbols):
-                    rule = _rule_to_engine(rule)
-                    try:
-                        tr = train_engine.simulate_rule_set([rule])
-                        te = valid_engine.simulate_rule_set([rule])
-                    except Exception:
-                        continue
-                    # Evaluate on CV folds if available (C4)
-                    cv_fold_returns = _eval_cv_fold_returns(rule, fold_engines)
-                    rec = CandidateRecord(rule=rule, train_metrics=tr, valid_metrics=te, score=_score_metrics(tr, te, cv_fold_returns=cv_fold_returns))
-                    rec.mask = _mask_for(rule, train_like, valid_df)
-                    candidates.append(rec)
-            candidates.sort(key=lambda r: r.score, reverse=True)
-            candidates = candidates[: int(getattr(_cfg, "RB_KEEP_TOP_RULES", 120))]
-            if not candidates:
-                continue
+            logger.warning(
+                "RB [%s]: no positive-good single rules; fail closed.",
+                direction,
+            )
+            results[direction] = _write_fail_closed_strategy(
+                out_dir,
+                reports_dir,
+                direction,
+                "no_positive_good_candidates",
+            )
+            continue
 
         selected, sel_train, sel_test, sel_score, compose_history = _compose_ruleset(candidates, train_engine, valid_engine, direction)
 
         # Build walk-forward fold engines for risk grid (task-3: 2-fold)
         # → fixes audit finding #3 (RB Governor risk-grid overfits val_selection)
-        # → fixes audit finding #12 (PHASE4_TAIL_HOLDOUT_FRACTION orphan, now wired)
+        # Reserve the final validation tail for an untouched robustness check.
         wf_splits = int(getattr(_cfg, "RB_RISK_GRID_WF_SPLITS", 1))
         use_tail = bool(getattr(_cfg, "RB_RISK_GRID_USE_TAIL_HOLDOUT", False))
-        tail_frac = float(getattr(_cfg, "PHASE4_TAIL_HOLDOUT_FRACTION", 0.0))
+        tail_frac = float(_cfg.RB_TAIL_HOLDOUT_FRACTION)
         wf_fold_engines: list[CPUBacktestEngine] | None = None
         wf_tail_engine: CPUBacktestEngine | None = None
         if wf_splits > 1 or use_tail:
@@ -1722,6 +1709,7 @@ def run_rb_governor_pipeline(
                         risk_optimized=False,
                         extra={
                             "deployment_accepted": False,
+                            "fail_closed": True,
                             "reason": "insufficient_distinct_symbols",
                             "n_symbols": n_symbols,
                             "required": min_distinct,
@@ -1820,6 +1808,7 @@ def run_rb_governor_pipeline(
                 risk_optimized=False,
                 extra={
                     "deployment_accepted": False,
+                    "fail_closed": True,
                     "reason": fail_reason,
                     "validation_gate": {
                         "return_pct": val_ret,
@@ -1898,6 +1887,7 @@ def run_rb_governor_pipeline(
             risk_optimized=bool(deployable),
             extra={
                 "deployment_accepted": bool(deployable),
+                "deployment_reason": None if deployable else "validation_gate",
                 "validation_gate": {
                     "return_pct": val_ret,
                     "profit_factor": val_pf,
@@ -1926,6 +1916,7 @@ def run_rb_governor_pipeline(
 
         report = {
             "direction": direction,
+            "deployment_accepted": bool(deployable),
             "rb_score": opt_score,
             "train_metrics": opt_train,
             "valid_metrics": opt_test,
@@ -1992,430 +1983,3 @@ def evaluate_strategy_file_governor(train_df: pd.DataFrame, val_df: pd.DataFrame
     with Path(strategy_path).open("r", encoding="utf-8") as fh:
         strategy = json.load(fh)
     return evaluate_strategy_governor(train_df, val_df, strategy, strategy.get("direction"))
-
-
-def _load_bank(bank_path: Path) -> list[dict]:
-    if not bank_path.exists():
-        return []
-    try:
-        data = json.load(open(bank_path, "r", encoding="utf-8"))
-        return list(data.get("rules", data if isinstance(data, list) else []))
-    except Exception:
-        return []
-
-
-def _save_bank(bank_path: Path, direction: str, rows: list[dict]) -> None:
-    bank_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "direction": direction,
-        "rules": rows,
-        "count": len(rows),
-        "note": "RB global rule bank built from all previous auto-search runs.",
-    }
-    with bank_path.open("w", encoding="utf-8") as fh:
-        json.dump(payload, fh, indent=2, default=str)
-
-
-def _bank_candidate_rows_from_run(out_dir: Path, direction: str, run_no: int | None) -> list[dict]:
-    rows: list[dict] = []
-    strategy_path = out_dir / f"{direction}.json"
-    if strategy_path.exists():
-        try:
-            strategy = json.load(open(strategy_path, "r", encoding="utf-8"))
-            for idx, r in enumerate(strategy.get("rules_set", [])):
-                rows.append({"rule": _rule_to_engine(r), "source": "final_strategy", "run_no": run_no, "rank": idx + 1})
-        except Exception:
-            pass
-
-    report_path = out_dir / "reports" / f"rb_governor_{direction}_report.json"
-    limit = int(getattr(_cfg, "RB_GLOBAL_BANK_IMPORT_TOP_SINGLE_RULES", 80))
-    if report_path.exists():
-        try:
-            report = json.load(open(report_path, "r", encoding="utf-8"))
-            for i, item in enumerate(report.get("top_single_rules", [])[:limit]):
-                rule = item.get("rule") or {"conditions": item.get("conditions", [])}
-                rows.append({"rule": _rule_to_engine(rule), "source": "top_single_rule", "run_no": run_no, "rank": i + 1})
-        except Exception:
-            pass
-    return rows
-
-
-def _evaluate_bank_rule(rule: dict, train_engine: CPUBacktestEngine, valid_engine: CPUBacktestEngine) -> tuple[dict, dict, float, float]:
-    train_m = train_engine.simulate_rule_set([_rule_to_engine(rule)])
-    valid_m = valid_engine.simulate_rule_set([_rule_to_engine(rule)])
-    return train_m, valid_m, _score_metrics(train_m, valid_m), _combined_return_score(train_m, valid_m)
-
-
-def _refresh_bank(
-    root: Path,
-    out_dir: Path,
-    direction: str,
-    train_like: pd.DataFrame,
-    valid_df: pd.DataFrame,
-    run_no: int | None,
-) -> list[dict]:
-    bank_dir = root / str(getattr(_cfg, "RB_GLOBAL_BANK_DIRNAME", "rb_bank"))
-    bank_path = bank_dir / f"{direction}_rules_bank.json"
-    existing = _load_bank(bank_path)
-    incoming = _bank_candidate_rows_from_run(out_dir, direction, run_no)
-
-    train_engine = CPUBacktestEngine(train_like, {}, direction)
-    valid_engine = CPUBacktestEngine(valid_df, {}, direction)
-    symbols = _available_symbols(train_like, valid_df)
-
-    by_key: dict[tuple[str, ...], dict] = {}
-    for row in existing + incoming:
-        raw_rule = row.get("rule", {})
-        for rule in _symbol_specialized_variants(raw_rule, train_engine, valid_engine, symbols):
-            rule = _rule_to_engine(rule)
-            if not rule.get("conditions"):
-                continue
-            key = _rule_key(rule)
-            try:
-                tr, te, rb_score, ret_score = _evaluate_bank_rule(rule, train_engine, valid_engine)
-            except Exception:
-                continue
-            if bool(getattr(_cfg, "RB_GLOBAL_REQUIRE_POSITIVE_TRAIN_VALID", True)) and not _positive_returns(tr, te):
-                continue
-            item = {
-                "direction": direction,
-                "rule": rule,
-                "key": list(key),
-                "rb_score": rb_score,
-                "combined_return_score": ret_score,
-                "train_return_pct": _f(tr, "total_return_pct"),
-                "valid_return_pct": _f(te, "total_return_pct"),
-                "train_pf": _f(tr, "profit_factor"),
-                "valid_pf": _f(te, "profit_factor"),
-                "train_dd": _f(tr, "max_drawdown_pct"),
-                "valid_dd": _f(te, "max_drawdown_pct"),
-                "train_trades": _i(tr, "executed_trades"),
-                "valid_trades": _i(te, "executed_trades"),
-                "sources": sorted(set((row.get("sources") or []) + [str(row.get("source", "unknown"))])),
-                "run_nos": sorted(set((row.get("run_nos") or []) + ([int(run_no)] if run_no is not None else []))),
-            }
-            old = by_key.get(key)
-            if old is None or ret_score > float(old.get("combined_return_score", -1e18)):
-                by_key[key] = item
-
-    rows = sorted(by_key.values(), key=lambda x: float(x.get("combined_return_score", -1e18)), reverse=True)
-    rows = rows[: int(getattr(_cfg, "RB_GLOBAL_BANK_MAX_RULES_PER_DIRECTION", 700))]
-    _save_bank(bank_path, direction, rows)
-    logger.info("RB global bank [%s]: %d symbol-filtered rules saved to %s", direction, len(rows), bank_path)
-    return rows
-
-def _candidate_records_from_bank(rows: list[dict], train_like: pd.DataFrame, valid_df: pd.DataFrame) -> list[CandidateRecord]:
-    records: list[CandidateRecord] = []
-    for row in rows:
-        rule = _rule_to_engine(row.get("rule", {}))
-        tr = {
-            "total_return_pct": row.get("train_return_pct", 0.0),
-            "profit_factor": row.get("train_pf", 0.0),
-            "max_drawdown_pct": row.get("train_dd", 0.0),
-            "executed_trades": row.get("train_trades", 0),
-        }
-        te = {
-            "total_return_pct": row.get("valid_return_pct", 0.0),
-            "profit_factor": row.get("valid_pf", 0.0),
-            "max_drawdown_pct": row.get("valid_dd", 0.0),
-            "executed_trades": row.get("valid_trades", 0),
-        }
-        rec = CandidateRecord(rule=rule, train_metrics=tr, valid_metrics=te, score=float(row.get("rb_score", 0.0)))
-        rec.mask = _mask_for(rule, train_like, valid_df)
-        records.append(rec)
-    records.sort(key=lambda r: _combined_return_score(r.train_metrics, r.valid_metrics), reverse=True)
-    return records
-
-
-def _compose_ruleset_return_only(
-    candidates: list[CandidateRecord],
-    train_engine: CPUBacktestEngine,
-    valid_engine: CPUBacktestEngine,
-    direction: str,
-    *,
-    max_rules: int,
-    min_improve: float,
-) -> tuple[list[CandidateRecord], dict, dict, float, list[dict]]:
-    if not candidates:
-        raise ValueError("No bank candidates available")
-    selected = [candidates[0]]
-    cur_train, cur_valid, _ = _evaluate_ruleset(train_engine, valid_engine, [selected[0].rule])
-    cur_score = _combined_return_score(cur_train, cur_valid, prev_pf=None, prev_dd=None)
-    used = {_rule_key(selected[0].rule)}
-    history = [{
-        "step": 1,
-        "action": "seed",
-        "combined_return_score": cur_score,
-        "train_return_pct": _f(cur_train, "total_return_pct"),
-        "valid_return_pct": _f(cur_valid, "total_return_pct"),
-        "rules": 1,
-    }]
-    while len(selected) < max_rules:
-        best: tuple[float, CandidateRecord, dict, dict] | None = None
-        for cand in candidates:
-            key = _rule_key(cand.rule)
-            if key in used:
-                continue
-            rules = [r.rule for r in selected] + [cand.rule]
-            train_m, valid_m, _ = _evaluate_ruleset(train_engine, valid_engine, rules)
-            if not _positive_returns(train_m, valid_m):
-                continue
-            prev_pf = _f(cur_valid, "profit_factor", 0.0)
-            prev_dd = _f(cur_valid, "max_drawdown_pct", 0.0)
-            ret_score = _combined_return_score(train_m, valid_m, prev_pf=prev_pf, prev_dd=prev_dd)
-            if ret_score <= cur_score + min_improve:
-                continue
-            if best is None or ret_score > best[0]:
-                best = (ret_score, cand, train_m, valid_m)
-        if best is None:
-            logger.info("RB global [%s]: no further profit-improving rule found at %d rules.", direction, len(selected))
-            break
-        cur_score, cand, cur_train, cur_valid = best
-        selected.append(cand)
-        used.add(_rule_key(cand.rule))
-        history.append({
-            "step": len(selected),
-            "action": "add_rule_by_profit",
-            "combined_return_score": cur_score,
-            "rb_score": _score_metrics(cur_train, cur_valid),
-            "train_return_pct": _f(cur_train, "total_return_pct"),
-            "valid_return_pct": _f(cur_valid, "total_return_pct"),
-            "train_pf": _f(cur_train, "profit_factor"),
-            "valid_pf": _f(cur_valid, "profit_factor"),
-            "train_dd": _f(cur_train, "max_drawdown_pct"),
-            "valid_dd": _f(cur_valid, "max_drawdown_pct"),
-            "rules": len(selected),
-        })
-        logger.info("RB global [%s]: grew to %d rules by profit | train=%.2f%% valid=%.2f%% combined=%.2f",
-                    direction, len(selected), _f(cur_train, "total_return_pct"), _f(cur_valid, "total_return_pct"), cur_score)
-    return selected, cur_train, cur_valid, cur_score, history
-
-
-def _optimize_risk_return_only(
-    rules: list[dict],
-    train_engine: CPUBacktestEngine,
-    valid_engine: CPUBacktestEngine,
-    direction: str,
-) -> tuple[list[dict], dict, dict, float, list[dict]]:
-    best_rules = [_rule_to_engine(r) for r in rules]
-    cur_train, cur_valid, _ = _evaluate_ruleset(train_engine, valid_engine, best_rules)
-    cur_score = _combined_return_score(cur_train, cur_valid, prev_pf=None, prev_dd=None)
-    hist = [{
-        "pass": 0,
-        "rule_index": -1,
-        "combined_return_score": cur_score,
-        "train_return_pct": _f(cur_train, "total_return_pct"),
-        "valid_return_pct": _f(cur_valid, "total_return_pct"),
-    }]
-    tp_grid = tuple(float(x) for x in getattr(_cfg, "RB_GLOBAL_TP_GRID", getattr(_cfg, "RB_TP_GRID", (2.0,))))
-    sl_grid = tuple(float(x) for x in getattr(_cfg, "RB_GLOBAL_SL_GRID", getattr(_cfg, "RB_SL_GRID", (1.0,))))
-    cap_grid = tuple(float(x) for x in getattr(_cfg, "RB_GLOBAL_CAPITAL_GRID", getattr(_cfg, "RB_CAPITAL_GRID", (12.5,))))
-    max_total_cap = float(getattr(_cfg, "RB_GLOBAL_MAX_TOTAL_CAPITAL", getattr(_cfg, "RB_MAX_TOTAL_CAPITAL", 100.0)))
-    passes = int(getattr(_cfg, "RB_GLOBAL_RISK_OPT_PASSES", 1))
-    min_improve = float(getattr(_cfg, "RB_GLOBAL_MIN_COMBINED_RETURN_IMPROVEMENT", 0.05))
-    for pno in range(1, passes + 1):
-        improved = False
-        for idx in range(len(best_rules)):
-            local: tuple[float, list[dict], dict, dict] | None = None
-            for tp in tp_grid:
-                for sl in sl_grid:
-                    for cap in cap_grid:
-                        trial = [dict(r) for r in best_rules]
-                        trial[idx]["tp"] = tp
-                        trial[idx]["sl"] = sl
-                        trial[idx]["capital_pct"] = cap
-                        if sum(float(r.get("capital_pct", 0.0)) for r in trial) > max_total_cap:
-                            continue
-                        train_m, valid_m, _ = _evaluate_ruleset(train_engine, valid_engine, trial)
-                        if not _positive_returns(train_m, valid_m):
-                            continue
-                        prev_pf = _f(cur_valid, "profit_factor", 0.0)
-                        prev_dd = _f(cur_valid, "max_drawdown_pct", 0.0)
-                        ret_score = _combined_return_score(train_m, valid_m, prev_pf=prev_pf, prev_dd=prev_dd)
-                        if local is None or ret_score > local[0]:
-                            local = (ret_score, trial, train_m, valid_m)
-            if local is not None and local[0] > cur_score + min_improve:
-                cur_score, best_rules, cur_train, cur_valid = local
-                improved = True
-                hist.append({
-                    "pass": pno,
-                    "rule_index": idx + 1,
-                    "combined_return_score": cur_score,
-                    "train_return_pct": _f(cur_train, "total_return_pct"),
-                    "valid_return_pct": _f(cur_valid, "total_return_pct"),
-                    "train_pf": _f(cur_train, "profit_factor"),
-                    "valid_pf": _f(cur_valid, "profit_factor"),
-                    "train_dd": _f(cur_train, "max_drawdown_pct"),
-                    "valid_dd": _f(cur_valid, "max_drawdown_pct"),
-                    "tp": best_rules[idx]["tp"],
-                    "sl": best_rules[idx]["sl"],
-                    "capital_pct": best_rules[idx]["capital_pct"],
-                })
-        if not improved:
-            break
-    return best_rules, cur_train, cur_valid, cur_score, hist
-
-
-def _load_internal_split_frames_for_rb() -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Load the internal train and validation split without reading the final test file."""
-    from gpu_fuzzy_trader.data.splitter import Data_Splitter, load_cached_split_if_fresh
-
-    cached = load_cached_split_if_fresh()
-    if cached is not None:
-        train_df, val_df, _, _, _ = cached
-        return train_df, val_df
-
-    full = Data_Loader().load_dataset(_cfg.TRAIN_CSV_PATH)
-    train_df, valid_df, _ = Data_Splitter().split_and_persist(full)
-    return train_df, valid_df
-
-
-def update_global_bank_and_compose(
-    root: Path,
-    out_dir: Path,
-    direction: str,
-    run_no: int | None = None,
-    train_df: pd.DataFrame | None = None,
-    val_df: pd.DataFrame | None = None,
-) -> None:
-    """Update RB rule bank from the current run and compose best_global.
-
-    Unlike best/ (which stores the best single run), best_global/ is built from
-    the accumulated bank of rules across all completed runs.  New rules are
-    added mainly when the combined training and validation return improves.
-    """
-    if not bool(getattr(_cfg, "RB_GLOBAL_BANK_ENABLED", True)):
-        return
-    if train_df is None or val_df is None:
-        train_df, val_df = _load_internal_split_frames_for_rb()
-    train_like, valid_df = _load_scoring_frames(train_df, val_df)
-
-    rows = _refresh_bank(root, out_dir, direction, train_like, valid_df, run_no)
-    candidates = _candidate_records_from_bank(rows, train_like, valid_df)
-    if not candidates:
-        return
-    train_engine = CPUBacktestEngine(train_like, {}, direction)
-    valid_engine = CPUBacktestEngine(valid_df, {}, direction)
-    selected, train_m, valid_m, profit_score, compose_hist = _compose_ruleset_return_only(
-        candidates,
-        train_engine,
-        valid_engine,
-        direction,
-        max_rules=int(getattr(_cfg, "RB_GLOBAL_MAX_RULES", 12)),
-        min_improve=float(getattr(_cfg, "RB_GLOBAL_MIN_COMBINED_RETURN_IMPROVEMENT", 0.05)),
-    )
-    rules = [_rule_to_engine(r.rule) for r in selected]
-    rules, train_m, valid_m, profit_score, risk_hist = _optimize_risk_return_only(rules, train_engine, valid_engine, direction)
-    profit_rules, profit_train, profit_valid, amp_objective, amp_meta = _run_profit_amplifier(
-        rules,
-        train_m,
-        valid_m,
-        candidates,
-        train_engine,
-        valid_engine,
-        train_like,
-        valid_df,
-        direction,
-    )
-    rules = profit_rules
-    train_m = profit_train
-    valid_m = profit_valid
-    profit_score = _combined_return_score(train_m, valid_m)
-    rb_score = _score_metrics(train_m, valid_m)
-
-    best_dir = root / str(getattr(_cfg, "RB_GLOBAL_BEST_DIRNAME", "best_global"))
-    best_dir.mkdir(parents=True, exist_ok=True)
-    meta_path = best_dir / f"best_global_{direction}_meta.json"
-    old_profit = -1e18
-    if meta_path.exists():
-        try:
-            old_profit = float(json.load(open(meta_path, "r", encoding="utf-8")).get("combined_return_score", -1e18))
-        except Exception:
-            old_profit = -1e18
-    if profit_score <= old_profit:
-        logger.info("RB global [%s]: composed score %.2f did not beat best %.2f", direction, profit_score, old_profit)
-        return
-
-    strategy = _strategy(
-        direction,
-        rules,
-        risk_optimized=True,
-        extra={
-            "rb_global_bank": True,
-            "rb_global_rules": len(rules),
-            "rb_score": rb_score,
-            "combined_return_score": profit_score,
-            "rb_train_return_pct": _f(train_m, "total_return_pct"),
-            "rb_valid_return_pct": _f(valid_m, "total_return_pct"),
-            "rb_train_minus_valid_return_pct": _f(train_m, "total_return_pct") - _f(valid_m, "total_return_pct"),
-            "rb_profit_amp_objective": amp_objective,
-            "rb_profit_amp_accepted": bool(amp_meta.get("accepted", False)),
-        },
-    )
-    strategy_path = best_dir / f"best_global_{direction}.json"
-    with strategy_path.open("w", encoding="utf-8") as fh:
-        json.dump(strategy, fh, indent=2, default=str)
-    _write_clean_evaluator(strategy, best_dir / f"best_global_{direction}_evaluator_clean.json")
-    meta = {
-        "run_no": run_no,
-        "direction": direction,
-        "rules": len(rules),
-        "combined_return_score": profit_score,
-        "rb_score": rb_score,
-        "train_return_pct": _f(train_m, "total_return_pct"),
-        "valid_return_pct": _f(valid_m, "total_return_pct"),
-        "train_minus_valid_return_pct": _f(train_m, "total_return_pct") - _f(valid_m, "total_return_pct"),
-        "valid_profit_factor": _f(valid_m, "profit_factor"),
-        "valid_max_drawdown_pct": _f(valid_m, "max_drawdown_pct"),
-        "valid_executed_trades": _i(valid_m, "executed_trades"),
-        "bank_rules": len(rows),
-        "compose_history": compose_hist,
-        "risk_history": risk_hist,
-        "profit_amplifier": amp_meta,
-        "note": "Global RB rule-set composed from all previous run rules. Rule addition objective is combined training and validation return.",
-    }
-    with meta_path.open("w", encoding="utf-8") as fh:
-        json.dump(meta, fh, indent=2, default=str)
-    logger.info("RB global [%s]: new best_global %d rules combined=%.2f train=%.2f%% valid=%.2f%% -> %s",
-                direction, len(rules), profit_score, _f(train_m, "total_return_pct"), _f(valid_m, "total_return_pct"), strategy_path)
-
-def update_global_best(root: Path, out_dir: Path, direction: str, score_payload: dict[str, Any], run_no: int | None = None) -> None:
-    """Copy best-so-far strategy per direction into root/best/ when score improves."""
-    try:
-        score = float(score_payload.get("internal_score", -1e18))
-    except Exception:
-        return
-    best_dir = root / "best"
-    best_dir.mkdir(parents=True, exist_ok=True)
-    meta_path = best_dir / f"best_{direction}_meta.json"
-    old_score = -1e18
-    if meta_path.exists():
-        try:
-            old_score = float(json.load(open(meta_path)).get("internal_score", -1e18))
-        except Exception:
-            old_score = -1e18
-    if score <= old_score:
-        return
-    src = out_dir / f"{direction}.json"
-    if not src.exists():
-        return
-    dst = best_dir / f"best_{direction}.json"
-    shutil.copy2(src, dst)
-    clean_src = out_dir / "evaluator_clean" / f"{direction}_evaluator_clean.json"
-    if clean_src.exists():
-        shutil.copy2(clean_src, best_dir / f"best_{direction}_evaluator_clean.json")
-    meta = {
-        "run_no": run_no,
-        "direction": direction,
-        "internal_score": score,
-        "output_dir": str(out_dir),
-        "train_return_pct": (score_payload.get("train_metrics") or {}).get("total_return_pct"),
-        "valid_return_pct": (score_payload.get("valid_metrics") or {}).get("total_return_pct"),
-        "valid_profit_factor": (score_payload.get("valid_metrics") or {}).get("profit_factor"),
-        "valid_max_drawdown_pct": (score_payload.get("valid_metrics") or {}).get("max_drawdown_pct"),
-        "train_minus_valid_return_pct": float((score_payload.get("train_metrics") or {}).get("total_return_pct", 0.0)) - float((score_payload.get("valid_metrics") or {}).get("total_return_pct", 0.0)),
-        "updated_note": "Best-so-far under rb governor scoring; uses validation frame; prefers training return slightly above validation return.",
-    }
-    with meta_path.open("w", encoding="utf-8") as fh:
-        json.dump(meta, fh, indent=2)
-    logger.info("RB auto-search: new best %s score=%.2f copied to %s", direction, score, dst)

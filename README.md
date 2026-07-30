@@ -1,18 +1,12 @@
-# Trading Platform (GPU-Fuzzy Trading Pipeline)
+# GPU Fuzzy Trader
 
-A research-focused algorithmic trading pipeline that builds and evaluates long/short rule sets using feature selection, evolutionary search, and out-of-sample validation.
+This project evolves fuzzy trading rules in Phase 2, selects and risk-tunes
+teams with the RB Governor, and evaluates only evaluator-compatible strategy
+JSON with the read-only `evaluator_v5.ipynb` contract.
 
-## What this project does
-
-The pipeline runs in five stages:
-
-1. **Data prep** — load and split market data.
-2. **Phase 1** — feature selection.
-3. **Phase 2** — rule pool generation (NSGA search, GPU-accelerated when available).
-4. **Phase 3–4** — rule-set composition and risk tuning (or RB Governor path).
-5. **Phase 5** — out-of-sample evaluation on held-out data.
-
-Primary implementation lives in `gpu_fuzzy_trader/`, orchestrated by `gpu_fuzzy_trader/run_pipeline.py`.
+Long Phase 2 and RB runs are intended for Colab or another GPU host. Do not
+run the full pipeline on a memory-constrained WSL machine. See [RUN.md](RUN.md)
+for extended setup and command reference.
 
 ## Repository layout
 
@@ -25,81 +19,126 @@ requirements.txt    Base dependencies
 requirements-gpu.txt GPU JAX plugin dependencies
 ```
 
-## Requirements
+## Pipeline
 
-- Python **3.10+** (3.12 tested)
-- A virtual environment (`.venv`) is recommended
-- Input data CSVs:
-  - `data/train.csv` (training/validation source)
-  - `data/test.csv` (held-out OOS evaluation for Phase 5)
+1. Data preparation loads `train.csv` and builds cached train/validation splits.
+2. Phase 1 selects direction-specific features.
+3. Phase 2 generates and admits rule pools using island-resolved floors.
+4. RB Governor is the single production selection and risk path.
+5. Phase 5 evaluates the current RB outputs out of sample on `test.csv`.
+
+Existing callers using `--phase 3` or `--phase 4` remain compatible: both
+normalize to the RB Governor and return the historical result keys alongside
+`rb_governor`. They are compatibility inputs, not production pipeline stages.
+There is no fallback strategy: a missing or rejected direction writes an
+explicit empty, `deployment_accepted: false` strategy with a reason.
 
 ## Setup
 
 ```bash
 python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python -c "from gpu_fuzzy_trader.run_pipeline import Pipeline_Orchestrator; print('OK')"
 ```
 
-Optional NVIDIA GPU setup (after `requirements.txt`):
+Install the matching JAX GPU stack separately on CUDA hosts:
 
 ```bash
-pip install -r requirements-gpu.txt
+# Colab T4 / CUDA 12
+.venv/bin/pip install -U "jax[cuda12]==0.10.1"
+
+# Local WSL/Linux with CUDA 13 (e.g. RTX 4050)
+.venv/bin/pip install -r requirements-gpu.txt
 ```
 
-For Colab CUDA 12:
+## Run
+
+Use the repository virtual environment for every command.
 
 ```bash
-pip install -U "jax[cuda12]==0.10.1"
+.venv/bin/python -m gpu_fuzzy_trader.run_pipeline
+.venv/bin/python -m gpu_fuzzy_trader.run_pipeline --output outputs/run_a
+.venv/bin/python -m gpu_fuzzy_trader.run_pipeline --resume
+.venv/bin/python -m gpu_fuzzy_trader.run_pipeline --phase 1
+.venv/bin/python -m gpu_fuzzy_trader.run_pipeline --phase 2
+.venv/bin/python -m gpu_fuzzy_trader.run_pipeline --from-phase 2
+.venv/bin/python -m gpu_fuzzy_trader.run_pipeline --phase 5
 ```
 
-## Run the pipeline
+By default the orchestrator re-runs Phase 1, Phase 2, and RB. Pass
+`--resume` to reuse valid on-disk Phase 1/2 artifacts. Use `--from-phase 2`
+when Phase 1 outputs already exist under `--output`.
 
-From repository root:
+Before expensive work, the orchestrator writes
+`outputs/reports/config_audit.json`. It contains the evaluator contract,
+resolved Phase 2 budgets and floors, RB capital feasibility, and active gate
+thresholds.
 
-```bash
-source .venv/bin/activate
-python -m gpu_fuzzy_trader.run_pipeline
-```
+## Data and evaluator
 
-Useful options:
+- `data/train.csv` feeds Phase 1 and Phase 2.
+- Validation fitness and selection windows feed Phase 2 and RB only.
+- `data/test.csv` is reserved for Phase 5.
+- `evaluator_v5.ipynb` is read-only and is the final evaluation authority.
 
-- `--output <dir>`: write outputs to a custom directory
-- `--resume`: skip completed valid phases when possible
-- `--phase {1..5}`: run only one phase (requires prior artifacts)
-- `--from-phase 2`: start from phase 2 (requires phase 1 outputs)
+Override paths with `DATA_ROOT`, `TRAIN_CSV_PATH`, or `TEST_CSV_PATH` when
+needed. The evaluator-facing strategy files are `outputs/long.json` and
+`outputs/short.json`; clean copies are written under
+`outputs/evaluator_clean/`.
 
-You can also use:
+## Configuration contract
 
-```bash
-python -m gpu_fuzzy_trader
-```
+`gpu_fuzzy_trader.config.validate_config()` checks the relationships that
+matter for results: evaluator fees/capital/leverage/exposure/notional, label
+horizon and embargo geometry, stage budgets, population/archive limits,
+mutation and support floors, monthly windows, RB risk grids, rule-capital
+feasibility, threshold ordering, and risk-tail geometry.
 
-## Running tests
-
-Use low-memory mode locally/WSL to reduce OOM risk:
-
-```bash
-source .venv/bin/activate
-PYTEST_LOW_MEMORY=1 PYTHONPATH=. pytest tests/unit/ --hypothesis-seed=42
-```
-
-Run all tests (high-memory environments):
-
-```bash
-PYTEST_LOW_MEMORY=1 PYTHONPATH=. pytest tests/ --hypothesis-seed=42
-```
+The canonical exposure contract is 100%. RB permits up to 20 rules and starts
+the capital grid at 5%, so the maximum rule count remains feasible before
+normalization. Phase 2 uses `PHASE2_USE_TOTAL_RETURN_OBJ=False`; its comments
+and descriptions document that active behavior.
 
 ## Outputs
 
-By default, results are written to `outputs/`, including:
+- `selected_features_{long,short}.json`: Phase 1 features.
+- `phase2_{long,short}_pool.json`: Phase 2 pools.
+- `{long,short}.json`: evaluator-facing RB strategies.
+- `evaluator_clean/{direction}_evaluator_clean.json`: minimal evaluator JSON.
+- `reports/rb_governor_{direction}_report.json`: gate, risk, tail, and
+  fail-closed diagnostics.
+- `reports/config_audit.json`: effective configuration snapshot.
 
-- phase artifacts (selected features, evolved pools, strategies)
-- reports in `outputs/reports/`
-- structured timing logs in `outputs/pipeline.log`
+Rejected directions overwrite any stale strategy file with an empty
+fail-closed result, so old artifacts cannot be reused accidentally.
 
-## Important notes
+## Hyperparameter search
 
-- Full runs can be memory intensive; prefer Colab GPU or high-memory machines.
-- Keep evaluation aligned with `evaluator_v5.ipynb`.
-- If you need full operational details and troubleshooting, use `RUN.md`.
+```bash
+.venv/bin/python -m gpu_fuzzy_trader.optuna_search --n-trials 50 --fast
+```
+
+Optuna tunes only active Phase 2/RB settings. It derives the stage budgets,
+validates every patched trial before execution, scores validation and RB tail
+metrics only, and records effective values and rejection details. It never
+optimizes against Phase 5 or test metrics. Completed trials can be inspected
+through `outputs/reports/hyperparameter_correlation.json`.
+
+## Tests
+
+On local or WSL hosts, always set `PYTEST_LOW_MEMORY=1`. It scales down
+Hypothesis example counts, clears JAX caches between tests, and closes
+matplotlib figures to reduce peak memory. Benchmark tests stay skipped unless
+you also set `RUN_BENCHMARKS=1`.
+
+Do not run the full GPU project locally without low-memory mode. Prefer
+targeted runs while iterating on a change:
+
+```bash
+PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q tests/unit/test_config_validation.py
+PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q tests/unit/test_rb_fail_closed.py
+PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q tests/unit/test_optuna_search.py
+```
+
+The full suite is available with `PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q`
+but can still take a long time on memory-constrained machines.

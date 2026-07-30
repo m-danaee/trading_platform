@@ -11,6 +11,10 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from gpu_fuzzy_trader import config as _cfg
+from gpu_fuzzy_trader.scoring.gates import (
+    PositiveGoodThresholds,
+    gate_positive_good,
+)
 
 if TYPE_CHECKING:
     from gpu_fuzzy_trader.phases.phase2_stage import Phase2StageParams
@@ -128,13 +132,22 @@ def trade_support_penalty(
 
 def _pool_admission_floors(
     n_valid_rows: int | None = None,
+    island_hyperparams: _cfg.IslandHyperparams | None = None,
 ) -> tuple[int, float, float, float, int]:
     """Return (train_trade_floor, train_ret_min, val_ret_min, pf_floor, min_val_trades).
 
     Uses ADMISSION PF 1.15 — this is the hard gate at pool entry.
     """
-    min_val = _cfg.effective_pool_min_val_trades(n_valid_rows)
-    train_floor = _cfg.effective_min_trade_pool_floor(n_valid_rows)
+    min_val = (
+        int(island_hyperparams.val_trade_floor)
+        if island_hyperparams is not None
+        else _cfg.effective_pool_min_val_trades(n_valid_rows)
+    )
+    train_floor = (
+        int(island_hyperparams.min_trade_pool_floor)
+        if island_hyperparams is not None
+        else _cfg.effective_min_trade_pool_floor(n_valid_rows)
+    )
     return (
         int(train_floor),
         float(_cfg.PHASE2_POOL_TRAIN_RETURN_MIN_PCT),
@@ -146,6 +159,7 @@ def _pool_admission_floors(
 
 def _evolution_feasibility_floors(
     n_valid_rows: int | None = None,
+    island_hyperparams: _cfg.IslandHyperparams | None = None,
 ) -> tuple[int, float, float, float, int]:
     """Return (train_trade_floor, train_ret_min, val_ret_min, pf_floor, min_val_trades).
 
@@ -153,8 +167,16 @@ def _evolution_feasibility_floors(
     so the feasible set isn't artificially collapsed when val trade counts are thin.
     Pool admission (hard gate) still uses ADMISSION PF 1.15.
     """
-    min_val = _cfg.effective_pool_min_val_trades(n_valid_rows)
-    train_floor = _cfg.effective_min_trade_pool_floor(n_valid_rows)
+    min_val = (
+        int(island_hyperparams.val_trade_floor)
+        if island_hyperparams is not None
+        else _cfg.effective_pool_min_val_trades(n_valid_rows)
+    )
+    train_floor = (
+        int(island_hyperparams.min_trade_pool_floor)
+        if island_hyperparams is not None
+        else _cfg.effective_min_trade_pool_floor(n_valid_rows)
+    )
     return (
         int(train_floor),
         float(_cfg.PHASE2_POOL_TRAIN_RETURN_MIN_PCT),
@@ -169,28 +191,35 @@ def _passes_pool_admission_impl(
     val_metrics: dict | None,
     *,
     n_valid_rows: int | None = None,
+    island_hyperparams: _cfg.IslandHyperparams | None = None,
 ) -> bool:
     if not _cfg.PHASE2_POOL_REQUIRE_POSITIVE_SPLITS:
         return True
 
     train_floor, train_ret_min, val_ret_min, pf_floor, min_val_trades = (
-        _pool_admission_floors(n_valid_rows)
+        _pool_admission_floors(n_valid_rows, island_hyperparams)
     )
-
-    train_trades = int(train_metrics.get("executed_trades", 0))
-    if train_trades < train_floor:
-        return False
-
-    train_ret = float(train_metrics.get("total_return_pct", 0.0))
-    train_pf = float(train_metrics.get("profit_factor", 0.0))
-    if train_ret <= train_ret_min:
-        return False
-    if train_pf < pf_floor:
-        return False
 
     # Pool admission always requires validation metrics when positive splits
     # are enforced — independent of PHASE2_JOINT_TRAIN_VAL (evolution-only flag).
     if val_metrics is None:
+        return False
+
+    # This is the single Phase 2 positive-good gate.  The floors come from the
+    # active island/data slice, so a small cluster is not silently evaluated
+    # against unrelated downstream RB thresholds.
+    if not gate_positive_good(
+        train_metrics,
+        val_metrics,
+        PositiveGoodThresholds(
+            min_train_return=train_ret_min,
+            min_valid_return=val_ret_min,
+            min_train_profit_factor=pf_floor,
+            min_valid_profit_factor=pf_floor,
+            min_train_trades=train_floor,
+            min_valid_trades=min_val_trades,
+        ),
+    ):
         return False
 
     # Holdout-path gate: in single-fold (holdout) mode, optionally require the
@@ -202,16 +231,8 @@ def _passes_pool_admission_impl(
         if float(val_metrics.get("total_return_pct", 0.0)) <= 0.0:
             return False
 
-    val_trades = int(val_metrics.get("executed_trades", 0))
-    if val_trades < min_val_trades:
-        return False
-
+    train_ret = float(train_metrics.get("total_return_pct", 0.0))
     val_ret = float(val_metrics.get("total_return_pct", 0.0))
-    val_pf = float(val_metrics.get("profit_factor", 0.0))
-    if val_ret <= val_ret_min:
-        return False
-    if val_pf < pf_floor:
-        return False
 
     max_gap = float(getattr(_cfg, "PHASE2_MAX_TRAIN_VAL_GAP_PCT", 20.0))
     if train_ret - val_ret > max_gap:
@@ -245,30 +266,6 @@ def _passes_pool_admission_impl(
         if train_ret / val_ret_safe > max_ratio:
             return False
 
-    # Optional stricter positive-good gate (default OFF; enabled in Task 5).
-    if bool(getattr(_cfg, "PHASE2_STRICT_POSITIVE_GOOD", False)):
-        # Lazy import to avoid circular dependency (phase3_rule_set is a sibling).
-        from gpu_fuzzy_trader.phases.phase3_rule_set import (
-            gate_positive_good as _gate_positive_good,
-        )
-        if not _gate_positive_good(
-            train_metrics,
-            val_metrics,
-            min_train_return=float(
-                getattr(_cfg, "PHASE3_MIN_TRAIN_RETURN", 0.0)),
-            min_val_return=float(
-                getattr(_cfg, "PHASE3_MIN_VAL_RETURN", 0.0)),
-            min_train_pf=float(
-                getattr(_cfg, "PHASE3_MIN_TRAIN_PF", 1.0)),
-            min_val_pf=float(
-                getattr(_cfg, "PHASE3_MIN_VAL_PF", 1.0)),
-            min_train_trades=int(
-                getattr(_cfg, "PHASE3_MIN_TRAIN_TRADES", 25)),
-            min_val_trades=int(
-                getattr(_cfg, "PHASE3_MIN_VAL_TRADES", 15)),
-        ):
-            return False
-
     return True
 
 
@@ -277,6 +274,7 @@ def _feasibility_gate_failures(
     val_metrics: dict | None,
     *,
     n_valid_rows: int | None = None,
+    island_hyperparams: _cfg.IslandHyperparams | None = None,
 ) -> dict[str, int]:
     """Return per-gate failure flags for evolution-time feasibility diagnostics.
 
@@ -309,7 +307,7 @@ def _feasibility_gate_failures(
         Dict mapping gate name to 0 (passed) or 1 (failed).
     """
     train_floor, train_ret_min, val_ret_min, pf_floor, min_val_trades = (
-        _evolution_feasibility_floors(n_valid_rows)
+        _evolution_feasibility_floors(n_valid_rows, island_hyperparams)
     )
     failures: dict[str, int] = {
         "train_trade_floor": 0,
@@ -395,6 +393,7 @@ def passes_pool_admission_gate(
     val_metrics: dict | None = None,
     *,
     n_valid_rows: int | None = None,
+    island_hyperparams: _cfg.IslandHyperparams | None = None,
 ) -> bool:
     """
     Hard gate for Phase 2 pool/archive on merged holdout metrics.
@@ -402,11 +401,18 @@ def passes_pool_admission_gate(
     When ``PHASE2_POOL_REQUIRE_POSITIVE_SPLITS`` is False, always returns True.
     """
     return _passes_pool_admission_impl(
-        train_metrics, val_metrics, n_valid_rows=n_valid_rows,
+        train_metrics,
+        val_metrics,
+        n_valid_rows=n_valid_rows,
+        island_hyperparams=island_hyperparams,
     )
 
 
-def passes_pool_entry_admission(entry: dict) -> bool:
+def passes_pool_entry_admission(
+    entry: dict,
+    *,
+    island_hyperparams: _cfg.IslandHyperparams | None = None,
+) -> bool:
     """
     Post-merge filter for persisted Phase 2 pool JSON entries.
     """
@@ -427,7 +433,11 @@ def passes_pool_entry_admission(entry: dict) -> bool:
         "profit_factor": float(val_obj.get("profit_factor", 1.0)),
         "executed_trades": int(entry.get("val_executed_trades", 0)),
     }
-    return passes_pool_admission_gate(train_metrics, val_metrics)
+    return passes_pool_admission_gate(
+        train_metrics,
+        val_metrics,
+        island_hyperparams=island_hyperparams,
+    )
 
 
 def passes_pool_trade_floor(
@@ -522,6 +532,7 @@ def _raw_feasibility_violation_score(
     *,
     n_valid_rows: int | None = None,
     include_val: bool = True,
+    island_hyperparams: _cfg.IslandHyperparams | None = None,
 ) -> float:
     """Compute violation score using evolution PF floors (1.05) during NSGA-III fitness.
 
@@ -536,7 +547,7 @@ def _raw_feasibility_violation_score(
         return 0.0
 
     train_floor, train_ret_min, val_ret_min, pf_floor, min_val_trades = (
-        _evolution_feasibility_floors(n_valid_rows)
+        _evolution_feasibility_floors(n_valid_rows, island_hyperparams)
     )
     score = 0.0
 
@@ -603,7 +614,10 @@ def feasibility_violation_score(
     if not floors.pool_require_positive_splits:
         return 0.0
     return _raw_feasibility_violation_score(
-        train_metrics, val_metrics, n_valid_rows=n_valid_rows,
+        train_metrics,
+        val_metrics,
+        n_valid_rows=n_valid_rows,
+        island_hyperparams=island_hyperparams,
     )
 
 
@@ -626,7 +640,9 @@ def passes_evolution_deployability_preview(
     ):
         return False
     return feasibility_violation_score(
-        train_metrics, val_metrics,
+        train_metrics,
+        val_metrics,
+        island_hyperparams=island_hyperparams,
     ) <= 0.0
 
 

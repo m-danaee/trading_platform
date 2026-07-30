@@ -1217,6 +1217,7 @@ def _should_inject_diversity_recovery(
 def _count_pop_viable(
     pop_size: int,
     metrics_cache: list[dict],
+    island_hyperparams: _cfg.IslandHyperparams | None = None,
 ) -> int:
     """Population-wide count passing the pool trade floor."""
     from gpu_fuzzy_trader.phases.phase2_support import passes_pool_trade_floor
@@ -1228,6 +1229,7 @@ def _count_pop_viable(
         and passes_pool_trade_floor(
             int(metrics_cache[i].get("executed_trades", 0)),
             metrics_cache[i],
+            island_hyperparams=island_hyperparams,
         )
     )
 
@@ -1490,6 +1492,11 @@ def _assign_eval_result(
 
     direction = getattr(engine, "trade_direction",
                         None) if engine is not None else None
+    island_hyperparams = (
+        getattr(engine, "_island_hyperparams", None)
+        if engine is not None
+        else None
+    )
     obj, processed = compute_phase2_objectives_from_metrics(
         chromosome,
         dont_cares,
@@ -1501,6 +1508,7 @@ def _assign_eval_result(
         stage_params=stage_params,
         n_valid_rows=n_valid_rows,
         direction=direction,
+        island_hyperparams=island_hyperparams,
     )
     objectives[i] = obj
     metrics_cache[i] = processed
@@ -1625,12 +1633,12 @@ def _evaluate_population_indices(
                     pareto_archive,
                     objectives,
                     metrics_cache,
-                    diversity_reference=diversity_reference,
-                    diversity_metrics_by_key=diversity_metrics_by_key,
-                    stage_params=stage_params,
-                    engine=engine,
-                    n_valid_rows=n_valid_rows,
-                )
+                        diversity_reference=diversity_reference,
+                        diversity_metrics_by_key=diversity_metrics_by_key,
+                        stage_params=stage_params,
+                        engine=engine,
+                        n_valid_rows=n_valid_rows,
+                    )
                 cache_hits += 1
             else:
                 gpu_pending.append(i)
@@ -2184,11 +2192,13 @@ def _run_nsga2_fallback(
             if passes_pool_trade_floor(
                 int(metrics_cache[i].get("executed_trades", 0)),
                 metrics_cache[i],
+                island_hyperparams=island_hyperparams,
             )
         )
         pop_viable_count = _count_pop_viable(
             pop_size,
             metrics_cache,
+            island_hyperparams=island_hyperparams,
         )
         # --- viability-collapse trigger: forced restart when viable pop is
         #     persistently below threshold ---
@@ -2283,7 +2293,11 @@ def _run_nsga2_fallback(
             for i in range(len(metrics_cache)):
                 train_m = metrics_cache[i]
                 val_m = _val_metrics_from_cache(train_m)
-                gate_fails = _feasibility_gate_failures(train_m, val_m)
+                gate_fails = _feasibility_gate_failures(
+                    train_m,
+                    val_m,
+                    island_hyperparams=island_hyperparams,
+                )
                 for k in breakdown:
                     breakdown[k] += gate_fails[k]
             logger.warning(
@@ -2523,6 +2537,7 @@ def _run_nsga2_fallback(
         cv_fold_evaluator=cv_fold_evaluator,
         holdout_n_valid_rows=holdout_n_valid_rows,
         train_n_rows=train_n_rows,
+        island_hyperparams=island_hyperparams,
         direction=log_tag or "",
     )
     return pareto_pool, history
@@ -2827,11 +2842,13 @@ def _run_nsga3(
             if passes_pool_trade_floor(
                 int(metrics_cache[i].get("executed_trades", 0)),
                 metrics_cache[i],
+                island_hyperparams=island_hyperparams,
             )
         )
         pop_viable_count = _count_pop_viable(
             pop_size,
             metrics_cache,
+            island_hyperparams=island_hyperparams,
         )
 
         # --- viability-collapse trigger: forced restart when viable pop is
@@ -3043,7 +3060,11 @@ def _run_nsga3(
             for i in range(len(metrics_cache)):
                 train_m = metrics_cache[i]
                 val_m = _val_metrics_from_cache(train_m)
-                gate_fails = _feasibility_gate_failures(train_m, val_m)
+                gate_fails = _feasibility_gate_failures(
+                    train_m,
+                    val_m,
+                    island_hyperparams=island_hyperparams,
+                )
                 for k in breakdown:
                     breakdown[k] += gate_fails[k]
             logger.warning(
@@ -3230,6 +3251,7 @@ def _run_nsga3(
         cv_fold_evaluator=cv_fold_evaluator,
         holdout_n_valid_rows=holdout_n_valid_rows,
         train_n_rows=train_n_rows,
+        island_hyperparams=island_hyperparams,
         direction=log_tag or "",
     )
     if return_state:

@@ -942,6 +942,7 @@ def compute_phase2_objectives_from_metrics(
             metrics,
             val_metrics,
             include_val=include_val,
+            island_hyperparams=island_hyperparams,
         )
     if raw_violation > 0.0:
         metrics["feasibility_violation"] = raw_violation
@@ -1651,6 +1652,7 @@ def _build_pool_from_archive(
     cv_fold_evaluator: CvFoldValEvaluator | None = None,
     holdout_n_valid_rows: int | None = None,
     train_n_rows: int | None = None,
+    island_hyperparams: _cfg.IslandHyperparams | None = None,
     direction: str = "",
 ) -> list[dict]:
     """
@@ -1708,6 +1710,7 @@ def _build_pool_from_archive(
             metrics,
             val_metrics,
             n_valid_rows=holdout_n_valid_rows,
+            island_hyperparams=island_hyperparams,
         ):
             continue
 
@@ -1729,6 +1732,7 @@ def _build_pool_from_archive(
                 metrics,
                 cv_summary,
                 n_valid_rows=cv_fold_evaluator.n_valid_rows,
+                island_hyperparams=island_hyperparams,
             ):
                 continue
 
@@ -1737,6 +1741,7 @@ def _build_pool_from_archive(
             executed,
             metrics,
             n_rows=train_n_rows,
+            island_hyperparams=island_hyperparams,
         ):
             continue
 
@@ -1884,17 +1889,34 @@ def _is_better_archive_entry(candidate: dict, incumbent: dict) -> bool:
     return tuple(candidate_vec.tolist()) < tuple(incumbent_vec.tolist())
 
 
-def _pool_entry_passes_admission(entry: dict) -> bool:
+def _pool_entry_passes_admission(
+    entry: dict,
+    *,
+    island_hyperparams: _cfg.IslandHyperparams | None = None,
+) -> bool:
     """Check stored train/val metrics on a pool JSON entry."""
     from gpu_fuzzy_trader.phases.phase2_support import passes_pool_entry_admission
 
-    return passes_pool_entry_admission(entry)
+    return passes_pool_entry_admission(
+        entry,
+        island_hyperparams=island_hyperparams,
+    )
 
 
-def _filter_pool_by_admission(pool: list[dict]) -> list[dict]:
+def _filter_pool_by_admission(
+    pool: list[dict],
+    *,
+    island_hyperparams: _cfg.IslandHyperparams | None = None,
+) -> list[dict]:
     if not _cfg.PHASE2_POOL_REQUIRE_POSITIVE_SPLITS:
         return pool
-    return [e for e in pool if _pool_entry_passes_admission(e)]
+    return [
+        e for e in pool
+        if _pool_entry_passes_admission(
+            e,
+            island_hyperparams=island_hyperparams,
+        )
+    ]
 
 
 def _merge_archive_entries(
@@ -2936,7 +2958,10 @@ class Rule_Pool_Generator:
 
         pool = _merge_archive_entries(previous_pool + list(new_pool))
         pool_before_admission = len(pool)
-        pool = _filter_pool_by_admission(pool)
+        pool = _filter_pool_by_admission(
+            pool,
+            island_hyperparams=self.island_hyperparams,
+        )
         if pool_before_admission != len(pool):
             logger.info(
                 "Phase 2 [%s]: pool admission filter %d → %d rules "
@@ -2960,7 +2985,10 @@ class Rule_Pool_Generator:
         pool = _run_monthly_admission_on_pool(pool, self)
 
         if self.island_id is not None:
-            pool = _filter_pool_by_admission(list(pool))
+            pool = _filter_pool_by_admission(
+                list(pool),
+                island_hyperparams=self.island_hyperparams,
+            )
             pool = Rule_Pool_Generator._annotate_archive_entries(
                 pool,
                 source_symbols=self.source_symbols or None,
@@ -3421,7 +3449,10 @@ class Rule_Pool_Generator:
         )
         new_pool = result[0] if isinstance(result, tuple) else []
         if self.island_id is not None:
-            pool = _filter_pool_by_admission(list(new_pool))
+            pool = _filter_pool_by_admission(
+                list(new_pool),
+                island_hyperparams=self.island_hyperparams,
+            )
 
             # --- Monthly-window gate for islands ---
             pool = _run_monthly_admission_on_pool(pool, self)
@@ -3437,7 +3468,10 @@ class Rule_Pool_Generator:
             self.direction,
         ) or []
         pool = _merge_archive_entries(previous_pool + list(new_pool))
-        pool = _filter_pool_by_admission(pool)
+        pool = _filter_pool_by_admission(
+            pool,
+            island_hyperparams=self.island_hyperparams,
+        )
         pool = Rule_Pool_Generator._annotate_archive_entries(
             pool,
         )

@@ -6,7 +6,7 @@ Tests cover:
   - plot_phase2_pnl: normal case, empty history, single entry
   - plot_equity_curve: normal case, empty trade_log, missing column, None trade_log
   - write_per_symbol_csv: normal case, empty metrics, missing key
-  - plot_rl_curve: normal case, empty validation_returns, elbow_idx clamping
+  - validation and evaluator-compatible reporting helpers
   - plot_per_rule_breakdown: file creation, path, direction validation, empty/None logs
 """
 
@@ -384,92 +384,6 @@ class TestWritePerSymbolCsv:
             tmp_path / "train_long_per_symbol_performance.csv")
         assert os.path.exists(
             tmp_path / "train_short_per_symbol_performance.csv")
-
-
-# ---------------------------------------------------------------------------
-# Tests: plot_rl_curve
-# ---------------------------------------------------------------------------
-
-class TestPlotRlCurve:
-    def test_creates_long_png(self, tmp_path):
-        reporter = Reporter()
-        returns = [1.0, 2.0, 3.5, 3.6, 3.7, 3.8]
-        reporter.plot_rl_curve(returns, elbow_idx=2,
-                               direction="long", output_dir=str(tmp_path))
-        assert os.path.exists(tmp_path / "phase4_long_rl_curve.png")
-
-    def test_creates_short_png(self, tmp_path):
-        reporter = Reporter()
-        returns = [0.5, 1.0, 1.5, 2.0]
-        reporter.plot_rl_curve(returns, elbow_idx=1,
-                               direction="short", output_dir=str(tmp_path))
-        assert os.path.exists(tmp_path / "phase4_short_rl_curve.png")
-
-    def test_returns_correct_path(self, tmp_path):
-        reporter = Reporter()
-        returns = [1.0, 2.0, 3.0]
-        result = reporter.plot_rl_curve(
-            returns, elbow_idx=1, direction="long", output_dir=str(tmp_path))
-        expected = os.path.join(str(tmp_path), "phase4_long_rl_curve.png")
-        assert result == expected
-
-    def test_empty_validation_returns_creates_file(self, tmp_path):
-        reporter = Reporter()
-        reporter.plot_rl_curve(
-            [], elbow_idx=0, direction="long", output_dir=str(tmp_path))
-        assert os.path.exists(tmp_path / "phase4_long_rl_curve.png")
-
-    def test_file_is_nonzero_size(self, tmp_path):
-        reporter = Reporter()
-        returns = list(range(20))
-        reporter.plot_rl_curve(returns, elbow_idx=5,
-                               direction="long", output_dir=str(tmp_path))
-        size = os.path.getsize(tmp_path / "phase4_long_rl_curve.png")
-        assert size > 0
-
-    def test_elbow_idx_clamped_when_too_large(self, tmp_path):
-        """elbow_idx beyond list length should not raise."""
-        reporter = Reporter()
-        returns = [1.0, 2.0, 3.0]
-        reporter.plot_rl_curve(returns, elbow_idx=999,
-                               direction="long", output_dir=str(tmp_path))
-        assert os.path.exists(tmp_path / "phase4_long_rl_curve.png")
-
-    def test_elbow_idx_clamped_when_negative(self, tmp_path):
-        """Negative elbow_idx should not raise."""
-        reporter = Reporter()
-        returns = [1.0, 2.0, 3.0]
-        reporter.plot_rl_curve(returns, elbow_idx=-5,
-                               direction="long", output_dir=str(tmp_path))
-        assert os.path.exists(tmp_path / "phase4_long_rl_curve.png")
-
-    def test_single_return_value(self, tmp_path):
-        reporter = Reporter()
-        reporter.plot_rl_curve(
-            [5.0], elbow_idx=0, direction="long", output_dir=str(tmp_path))
-        assert os.path.exists(tmp_path / "phase4_long_rl_curve.png")
-
-    def test_creates_parent_dirs(self, tmp_path):
-        reporter = Reporter()
-        nested_dir = str(tmp_path / "r" / "s" / "t")
-        reporter.plot_rl_curve([1.0, 2.0], elbow_idx=0,
-                               direction="short", output_dir=nested_dir)
-        assert os.path.exists(os.path.join(
-            nested_dir, "phase4_short_rl_curve.png"))
-
-    def test_elbow_idx_zero(self, tmp_path):
-        reporter = Reporter()
-        returns = [3.0, 3.1, 3.2, 3.3]
-        reporter.plot_rl_curve(returns, elbow_idx=0,
-                               direction="long", output_dir=str(tmp_path))
-        assert os.path.exists(tmp_path / "phase4_long_rl_curve.png")
-
-    def test_elbow_idx_last(self, tmp_path):
-        reporter = Reporter()
-        returns = [1.0, 2.0, 3.0, 4.0]
-        reporter.plot_rl_curve(returns, elbow_idx=3,
-                               direction="long", output_dir=str(tmp_path))
-        assert os.path.exists(tmp_path / "phase4_long_rl_curve.png")
 
 
 # ---------------------------------------------------------------------------

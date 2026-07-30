@@ -386,6 +386,11 @@ class TestRunLogHandlerLifecycle:
         )
         monkeypatch.setattr(
             Pipeline_Orchestrator,
+            "_validate_active_configuration",
+            lambda self, train_df: None,
+        )
+        monkeypatch.setattr(
+            Pipeline_Orchestrator,
             "_run_phase1",
             lambda self, train_df, **_kw: {"long": [], "short": []},
         )
@@ -402,13 +407,11 @@ class TestRunLogHandlerLifecycle:
         )
         monkeypatch.setattr(
             Pipeline_Orchestrator,
-            "_run_phase3",
-            lambda self, train_df, val_df, phase2_result, **_kw: {},
-        )
-        monkeypatch.setattr(
-            Pipeline_Orchestrator,
-            "_run_phase4",
-            lambda self, train_df, val_df, phase3_result, **_kw: {},
+            "_run_rb_governor",
+            lambda self, train_df, val_df, phase2_result, **_kw: {
+                "long": {"rules_set": []},
+                "short": {"rules_set": []},
+            },
         )
         monkeypatch.setattr(
             Pipeline_Orchestrator,

@@ -199,13 +199,12 @@ class TestWriteEvaluatorCleanWired:
 
 
 # ---------------------------------------------------------------------------
-# Test: _maybe_write_evaluator_clean (the phase‑file wire‑in helper)
+# Test: _maybe_write_evaluator_clean (the pipeline wire-in helper)
 # ---------------------------------------------------------------------------
 
 
 class TestMaybeWriteEvaluatorClean:
-    """Tests for ``_maybe_write_evaluator_clean`` — the helper wired into
-    ``phase3_rule_set``, ``phase4_wf_optimizer``, and ``phase5_oos``."""
+    """Tests for the evaluator-compatible clean-output helper."""
 
     def test_writes_clean_file(
         self, tmp_path: Path, strategy_with_extras: dict,

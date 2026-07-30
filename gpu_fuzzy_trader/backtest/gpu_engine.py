@@ -7,7 +7,7 @@ Primary use: evaluate batches of chromosome-encoded rules during evolutionary
 search (``simulate_rule_batch``). This path uses a simplified sequential
 equity model (vmap + ``lax.scan``) optimized for GPU throughput. It is an
 **approximate ranking model** for evolution — final strategies are validated
-on ``CPUBacktestEngine`` / ``evaluator_v3.ipynb``.
+on ``CPUBacktestEngine`` / ``evaluator_v5.ipynb``.
 
 Compatibility interface (``simulate_rule_set``) delegates to CPUBacktestEngine.
 
@@ -833,7 +833,7 @@ class GPUBacktestEngine:
 
     @property
     def _lazy_cpu_engine(self) -> CPUBacktestEngine:
-        """CPU engine for rule-set simulation (Phase 3+)."""
+        """CPU engine for rule-set simulation used by Phase 2/RB."""
         if self._cpu_engine_ref is None:
             self._cpu_engine_ref = CPUBacktestEngine(
                 self.df,
@@ -1077,7 +1077,7 @@ class GPUBacktestEngine:
 
 
     # ------------------------------------------------------------------
-    # Batched rule-set evaluation (Phase 3)
+    # Batched rule-set evaluation for Phase 2/RB
     # ------------------------------------------------------------------
 
     def simulate_rule_set_from_cache(
@@ -1087,7 +1087,7 @@ class GPUBacktestEngine:
         split: str,
         return_logs: bool = False,
     ) -> "dict | tuple[dict, pd.DataFrame]":
-        """Rule-set sim using Phase3EvalCache (delegates to CPU engine)."""
+        """Rule-set sim using a mask cache (delegates to the CPU engine)."""
         return self._lazy_cpu_engine.simulate_rule_set_from_cache(
             rule_set, cache, split, return_logs=return_logs)
 
@@ -1113,7 +1113,7 @@ class GPUBacktestEngine:
         split: str = "val",
     ) -> list[dict]:
         """
-        Phase 3 JAX path: cached mask entry build + parallel CPU equity.
+        RB JAX path: cached mask entry build + parallel CPU equity.
 
         Equity results match CPUBacktestEngine within standard parity tolerance.
         """

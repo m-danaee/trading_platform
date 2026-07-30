@@ -2,7 +2,7 @@
 condition_cache.py — Cached boolean masks for textual rule conditions.
 
 Avoids re-parsing ``[feature] IS value`` strings on every backtest when the
-same condition set is evaluated repeatedly (Phase 3/4).
+same condition set is evaluated repeatedly during RB scoring.
 """
 
 from __future__ import annotations

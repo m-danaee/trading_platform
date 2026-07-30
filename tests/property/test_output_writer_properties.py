@@ -13,8 +13,8 @@ Property 23: JSON Output Schema Validity
     5. Each condition matches `[feature_name] IS Fuzzy Value Name` pattern
     6. The file can be loaded back with load_and_validate() without errors
 
-  For any rule set with > PHASE3_GLOBAL_MAX_RULES rules, the output must be
-  truncated to PHASE3_GLOBAL_MAX_RULES rules.
+  For any rule set with > RB_MAX_RULES rules, the output must be truncated to
+  RB_MAX_RULES rules.
 
   For any rule set with all-zero tp/sl/capital_pct in any rule, write() must raise
   ValidationError.
@@ -133,10 +133,10 @@ def valid_rule_set_st(draw: st.DrawFn, min_rules: int = 2, max_rules: int = 5) -
 @st.composite
 def oversized_rule_set_st(draw: st.DrawFn) -> dict:
     """
-    Generate a rule_set with more than PHASE3_GLOBAL_MAX_RULES rules.
+    Generate a rule_set with more than RB_MAX_RULES rules.
     Used to test truncation behaviour.
     """
-    schema_max = int(_cfg.PHASE3_GLOBAL_MAX_RULES)
+    schema_max = int(_cfg.RB_MAX_RULES)
     direction = draw(st.sampled_from(["long", "short"]))
     n_rules = draw(st.integers(min_value=schema_max +
                    1, max_value=schema_max + 5))
@@ -293,7 +293,7 @@ def test_property_23a_valid_rule_set_schema(rule_set: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Property 23b: Oversized rule sets are truncated to PHASE3_GLOBAL_MAX_RULES
+# Property 23b: Oversized rule sets are truncated to RB_MAX_RULES
 # Validates: Requirement 12.8
 # ---------------------------------------------------------------------------
 
@@ -307,10 +307,10 @@ def test_property_23b_oversized_rule_set_truncated_to_global_max(rule_set: dict)
     **Property 23: JSON Output Schema Validity**
     **Validates: Requirements 12.8**
 
-    For any rule set with > PHASE3_GLOBAL_MAX_RULES rules, Output_Writer.write()
-    must truncate the output to exactly PHASE3_GLOBAL_MAX_RULES rules (first in order).
+    For any rule set with > RB_MAX_RULES rules, Output_Writer.write()
+    must truncate the output to exactly RB_MAX_RULES rules (first in order).
     """
-    schema_max = int(_cfg.PHASE3_GLOBAL_MAX_RULES)
+    schema_max = int(_cfg.RB_MAX_RULES)
     writer = Output_Writer()
     original_rules = rule_set["rules_set"]
     assert len(original_rules) > schema_max, (

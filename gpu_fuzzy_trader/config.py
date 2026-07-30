@@ -9,36 +9,32 @@ File layout
   2. Phase 0 — paths, schema, train/val split (holdout+embargo), backtest, logging
   3. Phase 1 — feature selection + GPU row budget (Phase 1→2 bridge)
   4. Phase 2 — rule evolution (NSGA-III): risk, genome, gates, islands
-  5. Phase 3 — rule-team selection (legacy greedy path)
-  6. Phase 4 — walk-forward / grid risk tuning (legacy Optuna path)
-  7. Monthly windows — shared Phase 3/4 penalty knobs
-  8. Phase 5 — out-of-sample evaluation (test.csv only)
-  9. RB Governor — unified rule selection + risk tuning (replaces Phase 3+4)
- 10. Helpers — path resolvers, trade-floor scaling, island hyperparams
- 11. Import-time assertions + Colab runtime defaults
+  5. RB Governor — unified rule selection + risk tuning
+  6. Monthly windows — shared validation penalties
+  7. Phase 5 — out-of-sample evaluation (test.csv only)
+  8. Helpers — path resolvers, trade-floor scaling, island hyperparams
+  9. Configuration validation + Colab runtime defaults
 
 Pipeline phases
 ---------------
   Phase 0  Paths, schema, train/val split (holdout+embargo), backtest constants
   Phase 1  Feature selection (train.csv only)
   Phase 2  NSGA-III rule-pool evolution (GPU backtests)
-  Phase 3  Greedy + NSGA-II rule-team selection  *(skipped when RB Governor on)*
-  Phase 4  Walk-forward TP/SL/capital optimization  *(skipped when RB Governor on)*
+  RB       Rule-team selection + walk-forward TP/SL/capital optimization
   Phase 5  Out-of-sample evaluation (test.csv only)
 
 Detailed behaviour and formulas: docs/phase0_shared.md … docs/phase5_oos.md
 
 Tuning cheat-sheet (symptom → knob)
 -----------------------------------
-  Short OOS / overfitting          PHASE3_* gates, PHASE2_JOINT_TRAIN_VAL
+  Short OOS / overfitting          RB_* gates, PHASE2_JOINT_TRAIN_VAL
   GPU OOM                          PHASE1_SAMPLING_TOTAL ↓, PHASE2_GPU_BATCH_SIZE ↓,
                                    PHASE2_SCAN_UNROLL ↓
   Phase 2 too slow                 PHASE2_GENERATIONS ↓, PHASE2_USE_GPU
   Empty Phase 2 pool               MIN_TRADE_SUPPORT ↓, PHASE2_*_FLOOR ↓
   Too many weak / noisy rules      MIN_TRADE_SUPPORT ↑, MIN_CONDITIONS ↑,
                                    PHASE2_*_FLOOR ↑, PHASE2_MAX_DRAWDOWN_GATE ↓
-  Phase 3 finds no teams           PHASE3_*_FLOOR ↓, PHASE3_MIN_RULES ↓
-  Phase 4 rejects all trials       PHASE4_MIN_WORST_* ↓, PHASE4_WF_SPLITS ↓
+  RB finds no teams                RB_MIN_* ↓, RB_KEEP_TOP_RULES ↑
   Fees / horizon mismatch          FEE_PCT, TAIL_DROP_ROWS, MAX_HOLD_CANDLES,
                                    HOLDOUT_EMBARGO_CANDLES
                                    (must match evaluator_v5.ipynb)
@@ -52,6 +48,7 @@ Environment overrides: DATA_ROOT, TRAIN_CSV_PATH, TEST_CSV_PATH,
 from __future__ import annotations
 
 import logging
+import json
 import os
 from dataclasses import dataclass
 from typing import Literal
@@ -106,7 +103,7 @@ def _env_str(name: str, default: str) -> str:
 
 DATA_ROOT = os.environ.get("DATA_ROOT", "").strip()
 # Market data files (only these CSVs):
-#   train.csv — 2024-01-01 → 2024-08-31 (Phases 1–4)
+#   train.csv — 2024-01-01 → 2024-08-31 (Phase 1, Phase 2, RB Governor)
 #   test.csv  — 2024-09-01 → 2025-01-31 (Phase 5 OOS only)
 TRAIN_CSV_PATH = _env_str(
     "TRAIN_CSV_PATH",
@@ -171,7 +168,7 @@ TAIL_DROP_ROWS = 288
 
 
 # =============================================================================
-# Phase 0 — Train / validation split (Phases 2–3)
+# Phase 0 — Train / validation split (Phase 2 and RB)
 # =============================================================================
 # Phases 4–5 always use persisted train_70 + validation_30 (see splitter.py).
 
@@ -279,16 +276,16 @@ FEE_PCT = 0.20
 MAX_HOLD_CANDLES = 288
 
 # MAX_TOTAL_EXPOSURE_PCT — cap on sum of concurrent rule capital allocations.
-#   Higher → more overlapping exposure, higher drawdown potential.
-#   Lower  → forces capital to be spread thinner across simultaneous signals.
-#   150% chosen because rules have distinct conditions + symbol filters and
-#   rarely all fire simultaneously; normalization still bounds worst-case exposure.
+# Must remain aligned with evaluator_v5.ipynb and RB_MAX_TOTAL_CAPITAL.
 MAX_TOTAL_EXPOSURE_PCT = 100.0
 
 # MIN_POSITION_NOTIONAL — skip trades below this dollar size.
 #   Higher → filters dust trades; may reduce trade count on small capital.
 #   Lower  → more micro-trades counted toward support metrics.
 MIN_POSITION_NOTIONAL = 1.0
+
+# Shared CPU worker cap for batched rule-set simulations used by RB and tests.
+BACKTEST_BATCH_WORKERS = min(32, os.cpu_count() or 4)
 
 
 # =============================================================================
@@ -467,7 +464,7 @@ PHASE2_GPU_DATA_INT8 = True
 
 
 # =============================================================================
-# Phase 2 — Fixed risk during rule search (Phase 4 tunes TP/SL/capital later)
+# Phase 2 — Fixed risk during rule search (RB tunes TP/SL/capital later)
 # =============================================================================
 
 # PHASE2_TP — take-profit % used when scoring rules in Phase 2 (and Phase 1 targets).
@@ -482,7 +479,7 @@ PHASE2_SL = 1.2
 
 # PHASE2_CAPITAL_PCT — % of equity allocated per rule signal in Phase 2.
 #   Higher → larger simulated positions; drawdown and return scale up.
-#   Lower  → conservative sizing; may understate overlap effects until Phase 4.
+#   Lower  → conservative sizing; may understate overlap effects until RB risk tuning.
 PHASE2_CAPITAL_PCT = 18.0
 
 
@@ -499,9 +496,9 @@ MIN_CONDITIONS = 4
 MAX_CONDITIONS = 5
 
 # PHASE2_ENCODING — chromosome memory layout during evolution.
-#   "dense"        — length-K vector with per-feature dont_care (legacy).
+#   "dense"        — length-K vector with per-feature dont_care.
 #   "sparse_slots" — fixed slots (MAX_CONDITIONS, 2); dynamic active count.
-# Pool JSON / archives remain dense K-vectors for Phase 3 compatibility.
+# Pool JSON / archives remain dense K-vectors for RB compatibility.
 PHASE2_ENCODING = "sparse_slots"
 
 
@@ -577,9 +574,9 @@ PHASE2_N_OBJECTIVES = 4
 #   cv_fold_min  → f3 = -min(CV fold returns); requires CvFoldValEvaluator
 #                  which is too expensive for NSGA-III inner loop — disabled.
 #   win_rate     → f3 = -win_rate (degenerate, not recommended).
-# NOTE: PHASE2_USE_TOTAL_RETURN_OBJ=True (now default) takes precedence, so f3
-# uses robust_return_pct instead of PHASE2_F3_OBJECTIVE.  The legacy F3_OBJECTIVE
-# setting only takes effect when USE_TOTAL_RETURN_OBJ is False.
+# NOTE: PHASE2_USE_TOTAL_RETURN_OBJ=False by default, so f3 uses
+# PHASE2_F3_OBJECTIVE.  If explicitly enabled, robust_return_pct takes
+# precedence over PHASE2_F3_OBJECTIVE.
 # CV-fold robustness is enforced at the pool-admission gate and RB Governor
 # scoring stages instead.
 PHASE2_F3_OBJECTIVE = "profit_factor"
@@ -601,8 +598,8 @@ PHASE2_SYMBOL_GENE_DONT_CARE_PROB = 0.15
 
 # PHASE2_USE_ROBUST_RETURN_OBJ — store min(train_return, val_return) as
 #   robust_return_pct on metrics when PHASE2_JOINT_TRAIN_VAL=True.
-#   When PHASE2_USE_TOTAL_RETURN_OBJ=True (now default), this controls whether
-#   the joint return uses min(train, val) or just train-only.
+#   When PHASE2_USE_TOTAL_RETURN_OBJ=True, this controls whether the joint
+#   return uses min(train, val) or just train-only.
 #   True  → robust_return_pct = min(train_return, val_return).
 #   False → robust_return_pct = train_return (equivalent to no robustness).
 PHASE2_USE_ROBUST_RETURN_OBJ = True
@@ -721,9 +718,8 @@ PHASE2_OBJECTIVE_CORR_MIN_PARETO_SIZE = 5
 
 # PHASE2_KEEP_TOP_RULES — max rules kept in the final Phase 2 pool after
 # admission filtering, sorted by deployability_rank_score descending.
-#   Higher → larger pool for Phase 3 greedy selection.
-#   Lower  → smaller pool; faster Phase 3, fewer combinations.
-# widened for RB Governor candidate pool (was 80 for legacy Phase 3)
+#   Higher → larger pool for RB candidate selection.
+#   Lower  → smaller pool; faster RB selection, fewer combinations.
 # 80→150 — one-symbol islands → many moderate specialists.
 PHASE2_KEEP_TOP_RULES = 150
 
@@ -741,7 +737,7 @@ PHASE2_REQUIRE_LAST_FOLD_POSITIVE: bool = False
 # These flags add a hard pool-admission gate after Phase 2 evolution: each
 # candidate rule must be profitable on at least 50% of monthly rolling windows
 # in the train split.  This addresses the regime-shift problem identified in
-# Task 12's diagnostic CSV: per-symbol rules that pass Phase 3 on val bleed on
+# Task 12's diagnostic CSV: per-symbol rules that pass validation can bleed on
 # test because they are not stable across time.  The gate is additive — when
 # PHASE2_MONTHLY_ADMISSION_ENABLED is False, the existing pool path is
 # unchanged.
@@ -797,7 +793,7 @@ SORTINO_SCALE = 10.0
 # PHASE2_JOINT_TRAIN_VAL — fitness uses min(train, val) Sortino/return where applicable.
 #   True  → slower (eval val every gen) but aligned with deployment; less overfit.
 #   False → train-only fitness; faster; holdout remains clean for model selection
-#           (Phase 3) & OOS (Phase 5). Robustness via purged 4-fold CV evaluator.
+#           (RB Governor) & OOS (Phase 5). Robustness via the active CV evaluator.
 # Changed True→False (task-4): PHASE2_JOINT_TRAIN_VAL=True was double-counting
 # the val split — both joint fitness and pool-admission gates (monthly windows,
 # val return floors, overfit gaps) used the same val window, creating a leak.
@@ -1273,7 +1269,8 @@ PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE: int = 10
 PHASE2_ISLAND_SCALE_TRADE_FLOORS = True
 # 10→8 — one-symbol absolute floor for moderate-support rules.
 PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN = 8
-PHASE2_ISLAND_MONTHLY_MIN_MONTHS = 3
+# The two-window holdout geometry is the minimum evidence available by default.
+PHASE2_ISLAND_MONTHLY_MIN_MONTHS = 2
 # Migration — exchange top elites between islands every N epochs.
 # PHASE2_MIGRATION_ENABLED — master switch for inter-island elite exchange.
 # (plan 004): True — multi-symbol clusters share elites across islands.
@@ -1357,337 +1354,17 @@ PHASE2_MUTATION_WEIGHTED_ACTIVATE_PROB = 0.4
 
 
 # =============================================================================
-# Phase 3 — Rule set selection (greedy + NSGA-II)
+# Shared monthly validation
 # =============================================================================
 
-# --- Team shape ---
-
-# PHASE3_PER_SYMBOL_MAX_RULES — maximum rules selected per symbol.
-# 2→4 — many-moderate-rules package.
-PHASE3_PER_SYMBOL_MAX_RULES = 4
-
-# PHASE3_GLOBAL_MIN_RULES / MAX_RULES — total rules in the output JSON.
-#   Higher MIN → require at least this many rules across all symbols.
-#   MAX caps the final strategy size written by Phase 3 / validated on load.
-PHASE3_GLOBAL_MIN_RULES = 1
-# 20→25 — allow larger composed teams (aligned with RB_MAX_RULES).
-PHASE3_GLOBAL_MAX_RULES = 25
-
-# PHASE3_PER_SYMBOL_GREEDY_TOP_K — top-K pool rules tested per greedy round.
-#   Higher → more thorough search per symbol, slower.
-#   Lower  → faster, may miss good combinations.
-PHASE3_PER_SYMBOL_GREEDY_TOP_K = 25
-
-# PHASE3_PER_SYMBOL_MIN_TRADES — min trades on symbol's val data for rule.
-#   Higher → reject rules with thin evidence on that symbol.
-#   Lower  → allow sparse rules through.
-#   Debug scope scales via effective_phase3_per_symbol_min_trades().
-#   Lowered from 50→15 because the current 4-9 rule pool
-#   cannot reach 50 trades per symbol (∼6 val trades/symbol on average).
-#   15 aligns with SYMBOL_SPECIALIZATION_MIN_VAL_TRADES=6 (Task 6) while
-#   still requiring more-than-minimal evidence on each symbol.
-#   Lowered from 15→8 (Task 12) because 6/10 symbols still
-#   have no rules on test; 8 trades on a ~7k-row per-symbol validation
-#   window (≈0.1% of bars) is still a reasonable evidence minimum.
-PHASE3_PER_SYMBOL_MIN_TRADES = 8
-
-# PHASE3_PER_SYMBOL_MIN_RETURN — min val return % on symbol for rule.
-#   Higher → only profitable-on-symbol rules considered.
-#   Lower  → allow marginal rules through.
-#   Debug scope relaxes via effective_phase3_per_symbol_min_return().
-#   Lowered from 3.0→1.5 because the 4-9 rule pool has
-#   only ∼2-4% max returns per symbol; 3.0 was rejecting everything.
-#   1.5 still requires modest profitability while allowing Phase 4 risk
-#   optimization to improve the final team's return.
-#   Lowered from 1.5→0.5 (Task 12) — many rules have
-#   positive but small per-symbol returns (<1%) due to the thin
-#   per-symbol validation window (~7k rows).  0.5% is still a positive
-#   return that Phase 4 risk optimization can amplify.
-PHASE3_PER_SYMBOL_MIN_RETURN = 0.5
-
-# PHASE3_DIAGNOSTIC_REPORT_ENABLED — write per-symbol diagnostic CSV.
-#   When True, ``Rule_Set_Selector.run()`` writes
-#   ``outputs/reports/gen_diag_iter12.csv`` with columns:
-#   direction, symbol, val_trades, val_return_pct, train_val_gap_pct,
-#   n_rules_selected, top_rule_condition_signature.
-#   The CSV has one row per (direction, symbol) pair that had at least
-#   1 rule selected.  This is a diagnostic artifact for the user to see
-#   which symbols are still being dropped and why.
-PHASE3_DIAGNOSTIC_REPORT_ENABLED = True
-
-# PHASE3_MAX_CAPITAL_PCT_PER_RULE — cap per rule before normalization.
-#   Higher → each rule can use more notional; higher overlap drawdown risk.
-#   Lower  → thinner per-rule sizing; may under-use signals.
-PHASE3_MAX_CAPITAL_PCT_PER_RULE = 50.0
-
-# PHASE3_MAX_TRAIN_VAL_GAP_PCT — max allowed gap between train return and val
-# return for a rule to pass Phase 3 per-symbol scoring.
-#   If train_return - val_return > this threshold the rule is hard-rejected
-#   as an overfit signal (scored -999 so it never enters the greedy team).
-#   Higher → more lenient; only extreme gaps rejected.
-#   Lower  → stricter; tighter alignment between train and val required.
-#   Set to a large number (e.g. 999) to disable the gap gate entirely.
-PHASE3_MAX_TRAIN_VAL_GAP_PCT = 12.0
-
-# --- Engines ---
-
-PHASE3_USE_GPU = False  # overridden to True on Colab GPU via _apply_colab_gpu_defaults()
-
-# PHASE3_BATCH_WORKERS — parallel workers for team evaluation.
-#   Higher → faster Phase 3 on many-core CPU; diminishing returns past ~32.
-#   Lower  → less CPU contention.
-PHASE3_BATCH_WORKERS = min(32, os.cpu_count() or 4)
-
-# Return / PF floors for Phase 3 team admission (must align with Phase 2 quality).
-# Higher floors → fewer teams pass; lower → more teams, weaker OOS risk.
-# 8% blocked long fallback when Phase 2 max return was ~8.3%; 5% is better aligned.
-# Debug scope relaxes via effective_phase3_val_return_floor_pct().
-PHASE3_VAL_RETURN_FLOOR_PCT = 5.0
-
-# --- Positive-good gate (is_positive_good style) ---------------------------------
-
-# PHASE3_REQUIRE_POSITIVE_GOOD — require rule to be positive on both train and val
-# with PF >= 1.0, min trades, and returns above the configured floors.
-# When True, ``gate_positive_good()`` is called in per-symbol greedy scoring;
-# rules that fail are hard-rejected (return -999).  The existing
-# ``PHASE3_MAX_TRAIN_VAL_GAP_PCT`` gate runs in addition, not instead.
-#   True  → reject rules that are not profitable on both splits (default).
-#   False → skip this gate (legacy behaviour).
-PHASE3_REQUIRE_POSITIVE_GOOD = True
-
-# PHASE3_MIN_TRAIN_RETURN — minimum train return % for ``gate_positive_good``.
-#   Higher → only strongly profitable-on-train rules pass the gate.
-#   Lower  → any positive return counts (0.0 = strictly > 0).
-PHASE3_MIN_TRAIN_RETURN = 0.0
-
-# PHASE3_MIN_VAL_RETURN — minimum validation return % for ``gate_positive_good``.
-#   Higher → only strongly profitable-on-val rules pass.
-#   Lower  → any positive return counts (0.0 = strictly > 0).
-PHASE3_MIN_VAL_RETURN = 0.0
-
-# PHASE3_MIN_TRAIN_PF — minimum train profit factor for ``gate_positive_good``.
-#   Higher → require strong gross-win / gross-loss ratio on train.
-#   Lower  → allow marginal train PF (1.0 = break-even before fees).
-PHASE3_MIN_TRAIN_PF = 1.0
-
-# PHASE3_MIN_VAL_PF — minimum validation profit factor for ``gate_positive_good``.
-#   Higher → require strong gross-win / gross-loss ratio on val.
-#   Lower  → allow marginal val PF (1.0 = break-even before fees).
-PHASE3_MIN_VAL_PF = 1.0
-
-# PHASE3_MIN_TRAIN_TRADES — minimum executed trades on train for gate.
-#   Higher → reject thin train-sample rules.
-#   Lower  → allow sparse train evidence (must still pass pool floors).
-PHASE3_MIN_TRAIN_TRADES = 25
-
-# PHASE3_MIN_VAL_TRADES — minimum executed trades on validation for gate.
-#   Higher → reject thin val-sample rules.
-#   Lower  → allow sparse val evidence.
-PHASE3_MIN_VAL_TRADES = 15
-
-# PHASE2_STRICT_POSITIVE_GOOD — when True, applies ``gate_positive_good`` in
-# Phase 2 pool admission (``_passes_pool_admission_impl``).  Default OFF to
-# avoid breaking the existing pool; turned ON in Task 5.
-#   True  → pool entries must also pass the positive-good gate.
-#   False → pool admission uses its own floors (legacy, unchanged).
-PHASE2_STRICT_POSITIVE_GOOD = True
-
-
-# --- Evaluator health penalty (Task 4) ---------------------------------------
-
-# EVAL_HEALTH_MAX_SKIPPED_RATIO — max (skipped / raw) before skip penalty kicks in.
-#   Higher → tolerate more evaluator-filtered signals.
-#   Lower  → penalise strategies whose signals are mostly below MIN_POSITION_NOTIONAL.
-EVAL_HEALTH_MAX_SKIPPED_RATIO = 0.20
-
-# EVAL_HEALTH_MIN_EXECUTED_RATIO — min (executed / raw) to avoid exec penalty.
-#   Higher → require most raw signals to actually open as trades.
-#   Lower  → tolerate moderate skip rates without penalty.
-EVAL_HEALTH_MIN_EXECUTED_RATIO = 0.60
-
-# EVAL_HEALTH_SKIPPED_WEIGHT — penalty multiplier for exceeding max skip ratio.
-#   Higher → larger penalty per % of excess skipped signals.
-EVAL_HEALTH_SKIPPED_WEIGHT = 3500.0
-
-# EVAL_HEALTH_EXECUTED_WEIGHT — penalty multiplier for falling below min exec ratio.
-#   Higher → larger penalty per % of missing executed trades.
-EVAL_HEALTH_EXECUTED_WEIGHT = 2500.0
-
-# EVAL_HEALTH_MAX_SIMULTANEOUS_POSITIONS — max concurrent positions before penalty.
-EVAL_HEALTH_MAX_SIMULTANEOUS_POSITIONS = 10
-
-# EVAL_HEALTH_MAX_POSITIONS_WEIGHT — penalty multiplier per excess concurrent position.
-EVAL_HEALTH_MAX_POSITIONS_WEIGHT = 120.0
-
-# PHASE3_EVAL_HEALTH_WEIGHT — multiplier on evaluator_health_penalty in Phase 3 scoring.
-#   1.0 → full penalty applied; 0.0 → no penalty (legacy).
-PHASE3_EVAL_HEALTH_WEIGHT = 1.0
-
-# PHASE3_GATE_EXECUTION_HEALTH — when True, ``gate_positive_good`` also requires
-# that both train and val pass ``execution_ok()``.
-#   True  → reject rule sets with excessive skip rates at the gate level.
-#   False → skip this extra gate (legacy behaviour).
-PHASE3_GATE_EXECUTION_HEALTH = True
-
-
-# --- Multi-symbol combinations in Phase 3 symbol specialization (Task 6) -----
-# These control how ``_build_symbol_specialized_variants`` generates 1-, 2-,
-# and 3-symbol variants of each pool-chosen rule.  When ``USE_COMBINATIONS``
-# is True, rules may contain multiple ``symbol is X`` conditions (e.g.
-# ``symbol is 1, symbol is 5``), expanding the search to cross-symbol
-# diversification.  The friend's defaults are used (from rb_governor.py).
-
-# SYMBOL_SPECIALIZATION_USE_COMBINATIONS — when True, also try 2- and 3-symbol
-#   combinations of every single-symbol variant that passes trade floors.
-#   When False, only single-symbol variants are produced (legacy behaviour).
-#   Higher → richer symbol combinations, broader search, slower evaluation.
-#   Lower  → only single-symbol specialisation (original Phase 3 behaviour).
-SYMBOL_SPECIALIZATION_USE_COMBINATIONS = True
-
-# SYMBOL_SPECIALIZATION_MAX_SYMBOLS_PER_RULE — maximum number of symbols in a
-#   single rule's ``symbol is X`` conditions (1 = single only, 2 = 1+2 combos,
-#   3 = 1+2+3 combos).
-#   Must be >= 2 when USE_COMBINATIONS=True or combinations are a no-op.
-#   Legacy Phase 3 only (inactive while RB_GOVERNOR_ENABLED=True).
-SYMBOL_SPECIALIZATION_MAX_SYMBOLS_PER_RULE = 3
-
-# SYMBOL_SPECIALIZATION_MAX_VARIANTS_PER_RULE — maximum number of scored variants
-#   returned per pool rule, sorted by score descending.  Only the best variant
-#   is used in the final rule set.
-#   Higher → more candidates retained (only the best is used, but more combos
-#   are scored for tie-breaking).
-SYMBOL_SPECIALIZATION_MAX_VARIANTS_PER_RULE = 10
-
-# SYMBOL_SPECIALIZATION_MIN_TRAIN_TRADES — minimum executed trades on the train
-#   split for a variant to be considered (passed to ``gate_positive_good``).
-#   Note: the friend uses 10 (lower than the Phase 3 default of 25) to avoid
-#   filtering out valid multi-symbol rules too aggressively.
-#   Higher → stricter train-trade filter, fewer variants.
-#   Lower  → more variants survive the gating step.
-SYMBOL_SPECIALIZATION_MIN_TRAIN_TRADES = 10
-
-# SYMBOL_SPECIALIZATION_MIN_VAL_TRADES — minimum executed trades on the validation
-#   split for a variant to be considered (passed to ``gate_positive_good``).
-#   Note: the friend uses 6 (lower than the Phase 3 default of 15).
-#   Higher → stricter val-trade filter.
-#   Lower  → more variants survive the gating step.
-SYMBOL_SPECIALIZATION_MIN_VAL_TRADES = 6
-
-
-# =============================================================================
-# Phase 4 — Walk-forward risk optimization (TP / SL / capital)
-# =============================================================================
-# Rule conditions are frozen; only risk params are optimized via Optuna.
-
-# --- Search space bounds ---
-
-# PHASE4_TP_MIN/MAX — take-profit search range (%).
-#   Wider MAX → allow larger targets; fewer hits, bigger winners per trade.
-#   Narrower → optimizer stuck with modest TP; may miss trend captures.
-PHASE4_TP_MIN = 2.0
-PHASE4_TP_MAX = 5.0
-
-# PHASE4_SL_MIN/MAX — stop-loss search range (%).
-#   Wider MAX → wider stops, lower stop-out rate, larger loss per loser.
-#   Narrower → tighter risk control; more stop-outs.
-PHASE4_SL_MIN = 1.0
-PHASE4_SL_MAX = 2.0
-
-# PHASE4_MIN_TP_SL_RATIO — enforce TP > SL × ratio (trend-following RR discipline).
-#   Higher → demand more reward per unit risk; fewer feasible trials.
-#   Lower  → allow near 1:1 or inverted effective RR combinations.
-PHASE4_MIN_TP_SL_RATIO = 1.2
-
-# PHASE4_CAPITAL_PCT_MIN/MAX — per-rule capital allocation search range.
-#   Higher MAX → optimizer can concentrate more capital per signal.
-#   Lower MAX → forced diversification across rules.
-#   Setting MIN == MAX locks capital to a fixed value (old behaviour was 30/30).
-#   Widening the range lets Optuna discover the best allocation; the
-#   PHASE4_HARD_CAP_NORMALIZE step then scales the total to ≤150%.
-PHASE4_CAPITAL_PCT_MIN = 10.0
-PHASE4_CAPITAL_PCT_MAX = 30.0
-
-# --- Optuna budget ---
-
-
-# PHASE4_HARD_CAP_NORMALIZE — scale capital so sum ≤ MAX_TOTAL_EXPOSURE_PCT.
-#   True  → realistic portfolio cap; required for live-like exposure.
-#   False  → raw trial capital may exceed 100% total exposure.
-PHASE4_HARD_CAP_NORMALIZE = True
-
-# --- Walk-forward windows on validation data ---
-
-# PHASE4_WF_SPLITS — number of walk-forward windows on validation split.
-#   Higher → stricter temporal robustness; each window smaller (trade starvation).
-#   Lower  → larger windows, more trades per fold, less temporal coverage.
-PHASE4_WF_SPLITS = 2
-# PHASE4_INCLUDE_TAIL_HOLDOUT — reserve a final tail window on validation data.
-PHASE4_INCLUDE_TAIL_HOLDOUT = True
-
-# PHASE4_TAIL_HOLDOUT_FRACTION — fraction of val reserved as final holdout window.
-#   Used by RB Governor risk grid when RB_RISK_GRID_USE_TAIL_HOLDOUT=True
-#   (the final tie-break holdout reported but not searched).
-#   Higher → more recent data held out; fewer trades in WF folds.
-#   Lower  → more data in WF folds; less independent tail check.
-PHASE4_TAIL_HOLDOUT_FRACTION = 0.25
-
-# --- Feasibility filters (trial rejected if any fail) ---
-# Legacy Phase 4 WF gates; inactive when RB_GOVERNOR_ENABLED=True.
-# Retained for the legacy Optuna/grid path when RB Governor is off.
-
-# PHASE4_MAX_WORST_DRAWDOWN_PCT — max allowed worst-window drawdown %.
-#   Lower → only low-DD risk params feasible; may reject all trials.
-#   Higher → allow volatile params through.
-PHASE4_MAX_WORST_DRAWDOWN_PCT = 15.0
-
-# PHASE4_MIN_WORST_TRADES — min trades in worst WF window.
-#   Higher → demand statistical significance in every window; very strict.
-#   Lower  → thin windows can still produce feasible trials.
-#   With per-symbol rules, each rule fires on fewer rows, so lower is needed.
-PHASE4_MIN_WORST_TRADES = 20
-
-# PHASE4_MIN_WORST_FOLD_RETURN_PCT — min return % in worst WF window.
-#   Higher → only consistently profitable windows pass; may zero feasible set.
-#   Lower (more negative) → allow losing worst windows; more trials pass.
-PHASE4_MIN_WORST_FOLD_RETURN_PCT = -2.0
-
-# PHASE4_MIN_WORST_FOLD_PF — min profit factor in worst WF window.
-#   Higher → stricter per-window profitability.
-#   Lower → marginal worst-window PF allowed.
-PHASE4_MIN_WORST_FOLD_PF = 1.0
-
-
-# =============================================================================
-# Monthly windows validation (Phase 3 / 4 scoring)
-# =============================================================================
-
-# MONTHLY_VALIDATION_ENABLED — toggle monthly rolling-window validation.
-#   True  → rule sets are penalised if they fail monthly windows gates.
-#   False → monthly penalty is skipped (legacy behaviour).
 MONTHLY_VALIDATION_ENABLED = True
-
 MONTHLY_WINDOW_DAYS = 30
-# MONTHLY_WINDOW_MIN_ROWS — minimum rows per rolling window before it is skipped.
 MONTHLY_WINDOW_MIN_ROWS = 2500
-# MONTHLY_WINDOW_MAX_WINDOWS — cap on windows evaluated per backtest slice.
 MONTHLY_WINDOW_MAX_WINDOWS = 24
-# MONTHLY_RECENCY_WEIGHT — up-weight recent windows in summarize_monthly_metrics
-# recency_weighted_return (not used directly inside monthly_penalty()).
 MONTHLY_RECENCY_WEIGHT = 2.2
-# MONTHLY_MIN_TRADES — minimum executed trades per window (scaled in purged WF).
 MONTHLY_MIN_TRADES = 20
-
-# MONTHLY_GOOD_RETURN_MIN_PCT — minimum total_return_pct (%) for a monthly window
-# to count toward profitable_ratio in summarize_monthly_metrics / monthly_penalty.
-#   0.0  → non-losing months count (return >= 0; flat months are OK).
-#   2.0  → month must earn at least +2% to count as good.
-#   -1.0 → month counts if return >= -1%.
 MONTHLY_GOOD_RETURN_MIN_PCT = 0.5
-
-# MONTHLY_MIN_PROFITABLE_RATIO — target fraction of "good" months per
-# MONTHLY_GOOD_RETURN_MIN_PCT; monthly_penalty rises when ratio falls below this.
 MONTHLY_MIN_PROFITABLE_RATIO = 0.60
-# MONTHLY_WORST_* / MONTHLY_*_WEIGHT — penalty terms in monthly_penalty().
 MONTHLY_WORST_RETURN_FLOOR = -1.5
 MONTHLY_WORST_PF_FLOOR = 1.0
 MONTHLY_MAX_DD = 8.0
@@ -1698,75 +1375,7 @@ MONTHLY_PROFITABLE_RATIO_WEIGHT = 15.0
 MONTHLY_TREND_WEIGHT = 2.0
 MONTHLY_LATEST_WEIGHT = 0.6
 
-# PHASE3_MONTHLY_PENALTY_WEIGHT — multiplier on monthly_penalty() in Phase 3 scoring.
-PHASE3_MONTHLY_PENALTY_WEIGHT = 1.0
-# PHASE3_MONTHLY_PENALTY_SCALE — divides the weighted monthly penalty before it is
-# subtracted from min(train, val) return (%).  Converts abstract penalty points
-# into a return-comparable drag: effective_drag = penalty * WEIGHT / SCALE.
-#   Higher → weaker monthly influence (e.g. 10.0 turns a 20-pt penalty into −2%).
-#   Lower  → stronger monthly influence; must be > 0.
-PHASE3_MONTHLY_PENALTY_SCALE = 7.0
-# PHASE3_MONTHLY_FALLBACK_PENALTY — fallback penalty when monthly windows == 0.
-PHASE3_MONTHLY_FALLBACK_PENALTY = 5.0
-# PHASE4_MONTHLY_SCORE_WEIGHT — multiplier on monthly_penalty() in Phase 4 grid scoring.
-PHASE4_MONTHLY_SCORE_WEIGHT = 0.70
-# PHASE4_MONTHLY_PENALTY_SCALE — divides the weighted monthly penalty before it is
-# subtracted from the grid composite score (_score_metrics output).
-#   Higher → weaker monthly influence during TP/SL/capital search.
-#   Lower  → stronger monthly influence; must be > 0.
-PHASE4_MONTHLY_PENALTY_SCALE = 10.0
-# PHASE4_MONTHLY_FALLBACK_PENALTY — fallback raw penalty when monthly windows == 0.
-PHASE4_MONTHLY_FALLBACK_PENALTY = 5.0
-# PHASE4_MONTHLY_EVAL_EVERY_TRIAL — when True, evaluate monthly_penalty on every
-# grid trial using cached train+val monthly windows.
-PHASE4_MONTHLY_EVAL_EVERY_TRIAL = True
-
-
-# =============================================================================
-# Phase 4 — Deterministic risk grid search (Task 7)
-# =============================================================================
-
-
-# PHASE4_GRID_TP_VALUES — TP values (%) to enumerate (5 values).
-PHASE4_GRID_TP_VALUES = (2.0, 2.5, 3.0, 4.0, 5.0)
-
-# PHASE4_GRID_SL_VALUES — SL values (%) to enumerate (4 values).
-PHASE4_GRID_SL_VALUES = (1.0, 1.5, 2.0, 2.5)
-
-# PHASE4_GRID_CAPITAL_VALUES — capital_pct values (%) to enumerate (5 values).
-PHASE4_GRID_CAPITAL_VALUES = (10.0, 15.0, 20.0, 25.0, 30.0)
-
-# PHASE4_MAX_VAL_TRAIN_GAP_PCT — reject grid trials when val return exceeds
-# train return by more than this (validation overfit during risk tuning).
-PHASE4_MAX_VAL_TRAIN_GAP_PCT = 12.0
-
-# PHASE4_USE_ROBUST_SCORE — score grid trials on min(train, val) return (like Phase 3).
-PHASE4_USE_ROBUST_SCORE = True
-
-# PHASE4_GRID_MAX_TOTAL_CAPITAL — hard cap on sum(capital_pct) across all rules.
-#   Portfolio-level grid trials skip combos above this cap. Per-rule symbol
-#   trials score one rule in isolation, so this cap is enforced only when
-#   writing the final ruleset (see PHASE4_HARD_CAP_NORMALIZE).
-PHASE4_GRID_MAX_TOTAL_CAPITAL = 95.0
-
-# PHASE4_GRID_PASSES — number of round-robin passes through all rules.
-PHASE4_GRID_PASSES = 2
-
-# PHASE4_GRID_MIN_IMPROVEMENT — minimum score improvement to accept a new combo.
-PHASE4_GRID_MIN_IMPROVEMENT = 0.005
-
-# PHASE4_GRID_ENABLED — when False, Phase 4 grid search is skipped (RB Governor replaces Ph 3+4).
-PHASE4_GRID_ENABLED: bool = False
-
-# PHASE4_OPTIMIZE_PER_RULE_SYMBOL — tune each rule on its assigned symbol(s) only.
-#   True  → grid trials for a rule are scored on train/val rows for that rule's
-#           "symbol is X" filters (matches Phase 3 per-symbol selection).
-#   False → legacy portfolio-level scoring on the full universe.
-PHASE4_OPTIMIZE_PER_RULE_SYMBOL = True
-
-
-# =============================================================================
-# Phase 5 — Out-of-sample evaluation (test.csv only; never used in Phases 1–4)
+# Phase 5 — Out-of-sample evaluation (test.csv only; never used before Phase 5)
 # =============================================================================
 
 # PHASE5_VALIDATION_RETURN_GATE_PCT — min val return % for deployment flag.
@@ -1786,27 +1395,11 @@ PHASE5_REMOVE_NEGATIVE_PNL_RULES = False
 
 
 # =============================================================================
-# RB Governor — replaces Phase 3 (rule-set selection) + Phase 4 (risk tuning)
+# RB Governor — rule selection and risk tuning
 # =============================================================================
-# When RB_GOVERNOR_ENABLED is True, ``run_pipeline.py`` bypasses the legacy
-# Phase 3 (Rule_Set_Selector) and Phase 4 (WalkForwardRiskOptimizer) modules
-# and calls ``run_rb_governor_pipeline`` from ``rb_governor.py``. The output
-# strategy JSONs keep the same ``{direction: {rules_set: [...]}}`` shape so
-# Phase 5 (OOS evaluation) and evaluator_v5.ipynb are unaffected.
-
-# RB_GOVERNOR_ENABLED — master switch.
-#   True  → use RB Governor for rule selection + TP/SL/capital optimization.
-#   False → legacy Phase 3 + Phase 4 modules (backwards compatible).
-RB_GOVERNOR_ENABLED: bool = True
-
-# RB_ALLOW_FALLBACK — when no positive-good single rules exist, fall back to
-#   the best raw-score candidates (legacy behaviour).
-#   False → fail closed: write an empty strategy with deployment_accepted=false
-#           and reason "no_positive_good_candidates".  Skip compose/risk/amp.
-#   True  → preserve legacy raw-score fallback path (rebuild candidates from
-#           all specialized variants ranked by raw score).
-RB_ALLOW_FALLBACK: bool = False
-
+# RB is the only production selection/risk path. There is intentionally no
+# enable/disable switch: two competing implementations caused configuration
+# drift and made the evaluator contract ambiguous.
 
 # --- Rule scoring / gating ---
 
@@ -1817,7 +1410,7 @@ RB_ALLOW_FALLBACK: bool = False
 #   (Colab: kept 1/15 long, 4/23 short → tiny teams → concentration fail-closed).
 #   Correlated with RB_MAX_PAIR_OVERLAP / score-improvement easing below:
 #   more survivors only help if compose can grow multi-island teams.
-#   Keep dual-positivity; do NOT enable RB_ALLOW_FALLBACK.
+#   Keep dual-positivity; RB has no fallback path and fails closed on rejection.
 RB_MIN_TRAIN_RETURN: float = 0.25
 RB_MIN_VALID_RETURN: float = 0.25
 
@@ -1855,9 +1448,10 @@ RB_KEEP_TOP_RULES: int = 150
 
 # --- Team composition ---
 
-# RB_MAX_RULES — maximum rules in the composed team (hard cap; keep aligned
-#   with PHASE3_GLOBAL_MAX_RULES).  To reach RB_MAX_RULES with the default
-#   RB_CAPITAL_GRID min (15%), lower grid min or raise RB_MAX_TOTAL_CAPITAL.
+# RB_MIN_RULES / RB_MAX_RULES — output bounds for accepted strategies.
+RB_MIN_RULES: int = 1
+# To reach RB_MAX_RULES with the default 5% capital-grid minimum, the
+# evaluator-compatible 100% total-capital cap remains feasible.
 # 10→20 — many-moderate-rules package.
 RB_MAX_RULES: int = 20
 
@@ -1941,16 +1535,16 @@ RB_MIN_TP: float = 1.0
 RB_MIN_SL: float = 1.0
 
 
-# --- Risk grid search (replaces Phase 4 Walk-Forward optimizer) ---
+# --- RB risk-grid search -----------------------------------------------------
 
 # RB_TP_GRID / RB_SL_GRID / RB_CAPITAL_GRID — values enumerated per rule in
 #   the round-robin grid search.  Coarser than the friend's full grid to
 #   keep runtime reasonable on a ~10-symbol universe.
-# grid min 15→7.5 so RB_MAX_RULES=20 fits under TOTAL=150
-# (20 × 7.5 = 150). Without this, large teams starve for capital.
+# The minimum is 5% so the maximum 20-rule team fits under the evaluator's
+# 100% exposure contract before normalization.
 RB_TP_GRID: tuple[float, ...] = (1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0)
 RB_SL_GRID: tuple[float, ...] = (1.0, 1.2, 1.5, 2.0, 2.5)
-RB_CAPITAL_GRID: tuple[float, ...] = (7.5, 10.0, 12.0, 15.0, 18.0)
+RB_CAPITAL_GRID: tuple[float, ...] = (5.0, 7.5, 10.0, 12.0, 15.0, 18.0)
 
 # RB_RISK_OPT_PASSES — round-robin passes through all rules.
 RB_RISK_OPT_PASSES: int = 1
@@ -1959,8 +1553,8 @@ RB_RISK_OPT_PASSES: int = 1
 RB_RISK_MIN_IMPROVEMENT: float = 0.02
 
 # RB_MAX_TOTAL_CAPITAL — hard cap on sum(capital_pct) across all rules.
-# 100→150 — with capital grid min 7.5%, funds up to RB_MAX_RULES=20.
-RB_MAX_TOTAL_CAPITAL: float = 150.0
+# This must match MAX_TOTAL_EXPOSURE_PCT and evaluator_v5.ipynb.
+RB_MAX_TOTAL_CAPITAL: float = 100.0
 
 # RB_RISK_GRID_WF_SPLITS — walk-forward folds for risk grid (1 = legacy single-fold).
 #   Score every TP/SL/capital combo on N chronological folds of val_selection,
@@ -1968,10 +1562,15 @@ RB_MAX_TOTAL_CAPITAL: float = 150.0
 #   → fixes audit finding #3 (RB Governor risk-grid overfits val_selection)
 RB_RISK_GRID_WF_SPLITS: int = 3
 
-# RB_RISK_GRID_USE_TAIL_HOLDOUT — reserve final PHASE4_TAIL_HOLDOUT_FRACTION
+# Final fraction of validation-selection data reserved for the untouched RB
+# tail check. This is separate from Phase 2 fitness data and is never used for
+# Optuna parameter selection.
+RB_TAIL_HOLDOUT_FRACTION: float = 0.25
+
+# RB_RISK_GRID_USE_TAIL_HOLDOUT — reserve final RB_TAIL_HOLDOUT_FRACTION
 #   of val_selection as an untouched tie-break holdout (reported but NOT used
 #   during search).  Set False to use the full val_selection for folds.
-#   → fixes audit finding #12 (PHASE4_TAIL_HOLDOUT_FRACTION orphan)
+#   → keeps tail-holdout policy on the active RB path
 RB_RISK_GRID_USE_TAIL_HOLDOUT: bool = True
 
 # RB_TAIL_HOLDOUT_HARD_GATE — when True, strategies whose tail-holdout return
@@ -2085,25 +1684,7 @@ RB_PROFIT_AMP_WORST_MONTHLY_PF_FLOOR: float = 0.75
 RB_PROFIT_AMP_MAX_MONTHLY_DD: float = 15.0
 RB_PROFIT_AMP_CAPITAL_REALLOCATION_ENABLED: bool = True
 RB_PROFIT_AMP_CAPITAL_PASSES: int = 1
-RB_PROFIT_AMP_CAPITAL_GRID: tuple[float, ...] = RB_CAPITAL_GRID
 RB_PROFIT_AMP_KEEP_BASELINE_UNLESS_BETTER: bool = True
-
-
-# --- Cross-run global bank (disabled by default to keep runs isolated) ---
-
-RB_GLOBAL_BANK_ENABLED: bool = False
-RB_GLOBAL_BANK_DIRNAME: str = "rb_bank"
-RB_GLOBAL_BANK_MAX_RULES_PER_DIRECTION: int = 700
-RB_GLOBAL_BANK_IMPORT_TOP_SINGLE_RULES: int = 80
-RB_GLOBAL_MAX_RULES: int = 12
-RB_GLOBAL_MIN_COMBINED_RETURN_IMPROVEMENT: float = 0.05
-RB_GLOBAL_REQUIRE_POSITIVE_TRAIN_VALID: bool = True
-RB_GLOBAL_RISK_OPT_PASSES: int = 1
-RB_GLOBAL_BEST_DIRNAME: str = "best_global"
-RB_GLOBAL_TP_GRID: tuple[float, ...] = (1.5, 2.0, 3.0, 5.0, 8.0)
-RB_GLOBAL_SL_GRID: tuple[float, ...] = (1.2, 1.5, 2.0, 2.5)
-RB_GLOBAL_CAPITAL_GRID: tuple[float, ...] = (5.0, 12.5, 25.0, 50.0)
-RB_GLOBAL_MAX_TOTAL_CAPITAL: float = 100.0
 
 
 # =============================================================================
@@ -2182,33 +1763,6 @@ def effective_min_profitable_symbols(symbol_count: int | None = None) -> int:
     return min(target, max(1, int(universe)))
 
 
-def effective_phase3_per_symbol_min_trades() -> int:
-    """Per-symbol trade floor; scaled down for thin debug universes."""
-    base = int(PHASE3_PER_SYMBOL_MIN_TRADES)
-    universe = _debug_symbol_universe_size()
-    if universe is None:
-        return base
-    # Full run assumes ~10 symbols; scale floor with active symbol count.
-    scaled = int(round(base * universe / 10.0))
-    return max(15, scaled)
-
-
-def effective_phase3_per_symbol_min_return() -> float:
-    """Per-symbol return floor; relaxed in debug scope for sparse val slices."""
-    base = float(PHASE3_PER_SYMBOL_MIN_RETURN)
-    if _debug_symbol_universe_size() is None:
-        return base
-    return min(base, 2.5)
-
-
-def effective_phase3_val_return_floor_pct() -> float:
-    """Team fallback return floor; must sit below typical Phase 2 pool returns."""
-    base = float(PHASE3_VAL_RETURN_FLOOR_PCT)
-    if _debug_symbol_universe_size() is None:
-        return base
-    return min(base, 4.0)
-
-
 def effective_phase2_val_return_floor_pct(direction: str | None = None) -> float:
     """Direction-aware Phase 2 validation return floor for fitness penalties."""
     if direction == "short":
@@ -2271,14 +1825,6 @@ def phase2_cluster_archive_path(direction: str, cluster_id: str) -> str:
 def phase2_shared_archive_path(direction: str) -> str:
     """Cross-cluster shared archive for migration warm-start."""
     return os.path.join(PHASE2_ARCHIVE_DIR, direction, "shared_archive.json")
-
-
-def effective_phase4_wf_splits() -> int:
-    """Inner validation WF windows; single window when purged CV already ran."""
-    if split_mode_is_purged_walk_forward():
-        return 1
-    return int(PHASE4_WF_SPLITS)
-
 
 
 def split_mode_is_purged_walk_forward() -> bool:
@@ -2357,23 +1903,6 @@ def effective_val_trade_floor_for_objectives(n_rows: int | None = None) -> int:
 
 def effective_pool_min_val_trades(n_rows: int | None = None) -> int:
     base = max(int(MIN_TRADE_POOL_FLOOR) // 4, 10)
-    if n_rows is None:
-        return base
-    return scale_trade_floor(base, n_rows)
-
-
-
-def effective_phase3_min_val_trades(n_rows: int | None = None) -> int:
-    base = int(PHASE3_MIN_VAL_TRADES)
-    if n_rows is None:
-        return base
-    return scale_trade_floor(base, n_rows)
-
-
-
-def effective_phase4_min_worst_trades(n_rows: int | None = None) -> int:
-    """Legacy Phase 4 WF gate floor; unwired when RB_GOVERNOR_ENABLED=True."""
-    base = int(PHASE4_MIN_WORST_TRADES)
     if n_rows is None:
         return base
     return scale_trade_floor(base, n_rows)
@@ -2504,7 +2033,7 @@ def island_plateau_early_stop_enabled() -> bool:
 
 
 def scoped_island_profile(island_profile: str) -> bool:
-    """True for cluster/orphan scoped runs (not the legacy global Phase 2 path)."""
+    """True for cluster/orphan scoped runs rather than the global path."""
     return str(island_profile) != "global"
 
 
@@ -2516,66 +2045,9 @@ def island_two_stage_enabled() -> bool:
 
 
 # =============================================================================
-# Cross-parameter sanity (import-time)
-# =============================================================================
-
-assert PHASE2_STAGE_A_GENERATIONS + PHASE2_STAGE_B_GENERATIONS == PHASE2_GENERATIONS, (
-    "Stage A+B budgets must equal PHASE2_GENERATIONS for two-stage handoff"
-)
-assert PHASE2_PLATEAU_EARLY_STOP_MIN_GENERATION <= PHASE2_STAGE_A_GENERATIONS, (
-    "plateau min gen should not exceed Stage A budget"
-)
-assert PHASE2_STAGE_A_PLATEAU_EARLY_STOP_MIN_GENERATION <= PHASE2_STAGE_A_GENERATIONS, (
-    "Stage A plateau min gen should not exceed Stage A budget"
-)
-assert PHASE2_STAGE_B_PLATEAU_EARLY_STOP_MIN_GENERATION <= PHASE2_STAGE_B_GENERATIONS, (
-    "Stage B plateau min gen should not exceed Stage B budget"
-)
-assert PHASE2_STAGE_A_EARLY_STOP_MIN_GENERATION <= PHASE2_STAGE_A_GENERATIONS, (
-    "Stage A early-stop min gen should not exceed Stage A budget"
-)
-assert PHASE2_STAGE_B_EARLY_STOP_MIN_GENERATION <= PHASE2_STAGE_B_GENERATIONS, (
-    "Stage B early-stop min gen should not exceed Stage B budget"
-)
-assert 0.0 < PHASE2_STAGE_A_MUTATION_RATE <= 0.5
-assert 0.0 < PHASE2_STAGE_B_MUTATION_RATE <= 0.5
-assert PHASE2_STAGE_A_MUTATION_RATE >= PHASE2_STAGE_B_MUTATION_RATE, (
-    "Stage A should be at least as explorative as Stage B on mutation rate"
-)
-assert float(PHASE3_MONTHLY_PENALTY_SCALE) > 0.0, (
-    "PHASE3_MONTHLY_PENALTY_SCALE must be > 0"
-)
-assert float(PHASE4_MONTHLY_PENALTY_SCALE) > 0.0, (
-    "PHASE4_MONTHLY_PENALTY_SCALE must be > 0"
-)
-assert int(RB_MAX_RULES) <= int(PHASE3_GLOBAL_MAX_RULES), (
-    "RB_MAX_RULES must not exceed Phase 3 output cap"
-)
-assert int(PHASE2_ORPHAN_MIN_TRADE_SUPPORT) <= int(MIN_TRADE_SUPPORT), (
-    "orphan min trade support should not exceed global"
-)
-assert int(PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN) >= 5, (
-    "island trade floor absolute min too low"
-)
-assert PHASE1_SIGN_CONSISTENCY_MIN_FOLDS <= PHASE1_STATIONARITY_FOLDS, (
-    "sign-consistency cannot require more folds than stationarity uses"
-)
-assert float(PURGED_WF_HOLDOUT_FRACTION) + float(PURGED_WF_MIN_TRAIN_FRACTION) <= 1.0, (
-    "holdout + min train prefix must fit within each symbol timeline"
-)
-assert int(TAIL_DROP_ROWS) == int(MAX_HOLD_CANDLES), (
-    "TAIL_DROP_ROWS must equal MAX_HOLD_CANDLES (label horizon)"
-)
-assert int(HOLDOUT_EMBARGO_CANDLES) == int(MAX_HOLD_CANDLES), (
-    "HOLDOUT_EMBARGO_CANDLES must equal MAX_HOLD_CANDLES (label horizon)"
-)
-# =============================================================================
-assert MIN_CONDITIONS <= MAX_CONDITIONS, (
-    f"MIN_CONDITIONS ({MIN_CONDITIONS}) must be <= MAX_CONDITIONS ({MAX_CONDITIONS})"
-)
-assert 0.0 <= PHASE2_VIABILITY_RECOVERY_DEPLOYABLE_MUTATE_FRACTION <= 1.0
-
-# =============================================================================
+# Cross-parameter sanity is implemented by validate_config() below. It is
+# callable after runtime/Optuna overrides and raises ConfigError with the
+# violated relationship instead of relying on opaque import-time assertions.
 # Runtime — Colab GPU defaults
 # =============================================================================
 
@@ -2590,17 +2062,474 @@ def is_colab_runtime() -> bool:
 
 def _apply_colab_gpu_defaults() -> None:
     """
-    Colab T4 optimizations for main.ipynb runs.
-
-    - Phase 3 uses GPUBacktestEngine (mask cache + batch eval path).
-    - VRAM auto batch sizing uses the T4-friendly 128 cap when enabled.
+    Colab T4 optimization for Phase 2 runs.
     """
-    global PHASE3_USE_GPU, PHASE2_GPU_BATCH_SIZE_AUTO
+    global PHASE2_GPU_BATCH_SIZE_AUTO
     if not is_colab_runtime():
         return
-    PHASE3_USE_GPU = True
     PHASE2_GPU_BATCH_SIZE_AUTO = True
 
 
 _apply_colab_gpu_defaults()
 
+
+# =============================================================================
+# Configuration validation and audit snapshots
+# =============================================================================
+
+
+class ConfigError(ValueError):
+    """Raised when a configuration violates a cross-parameter contract."""
+
+
+def _config_check(condition: bool, message: str) -> None:
+    if not condition:
+        raise ConfigError(message)
+
+
+def _finite_config_number(name: str, value: object) -> float:
+    try:
+        result = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"{name} must be numeric, got {value!r}") from exc
+    if not pd.notna(result) or result in (float("inf"), float("-inf")):
+        raise ConfigError(f"{name} must be finite, got {value!r}")
+    return result
+
+
+def _validate_config_grid(name: str, values: object, *, minimum: float = 0.0) -> tuple[float, ...]:
+    if not isinstance(values, (tuple, list)) or not values:
+        raise ConfigError(f"{name} must be a non-empty tuple/list")
+    parsed = tuple(_finite_config_number(name, value) for value in values)
+    _config_check(
+        all(value >= minimum for value in parsed),
+        f"{name} values must be >= {minimum}, got {parsed!r}",
+    )
+    _config_check(
+        tuple(sorted(set(parsed))) == parsed,
+        f"{name} must be sorted and duplicate-free, got {parsed!r}",
+    )
+    return parsed
+
+
+def validate_config(
+    *,
+    n_rows: int | None = None,
+    n_symbols: int | None = None,
+) -> None:
+    """Validate all high-impact hyperparameter relationships.
+
+    The function is intentionally callable after Optuna temporarily patches
+    module globals.  It performs no data loading and raises ``ConfigError``
+    before a long evolution/backtest can start with an incoherent contract.
+    """
+
+    _config_check(str(SPLIT_MODE).lower() in {"holdout", "purged_walk_forward"},
+                  f"Unsupported SPLIT_MODE={SPLIT_MODE!r}")
+    _config_check(str(PHASE2_ISLAND_MODE).lower() in {"global", "cluster"},
+                  f"Unsupported PHASE2_ISLAND_MODE={PHASE2_ISLAND_MODE!r}")
+    _config_check(int(PHASE2_N_CLUSTERS) >= 1,
+                  "PHASE2_N_CLUSTERS must be positive")
+    _config_check(0.0 < float(HOLDOUT_TRAIN_FRACTION) < 1.0,
+                  "HOLDOUT_TRAIN_FRACTION must be between 0 and 1")
+    _config_check(int(TAIL_DROP_ROWS) == int(MAX_HOLD_CANDLES),
+                  "TAIL_DROP_ROWS must equal MAX_HOLD_CANDLES")
+    _config_check(int(HOLDOUT_EMBARGO_CANDLES) == int(MAX_HOLD_CANDLES),
+                  "HOLDOUT_EMBARGO_CANDLES must equal MAX_HOLD_CANDLES")
+    fee_pct = _finite_config_number("FEE_PCT", FEE_PCT)
+    initial_capital = _finite_config_number("INITIAL_CAPITAL", INITIAL_CAPITAL)
+    leverage = _finite_config_number("LEVERAGE", LEVERAGE)
+    max_exposure = _finite_config_number(
+        "MAX_TOTAL_EXPOSURE_PCT", MAX_TOTAL_EXPOSURE_PCT
+    )
+    min_notional = _finite_config_number(
+        "MIN_POSITION_NOTIONAL", MIN_POSITION_NOTIONAL
+    )
+    _config_check(fee_pct >= 0.0, "FEE_PCT must be non-negative")
+    _config_check(initial_capital > 0.0, "INITIAL_CAPITAL must be positive")
+    _config_check(leverage > 0.0, "LEVERAGE must be positive")
+    _config_check(max_exposure > 0.0,
+                  "MAX_TOTAL_EXPOSURE_PCT must be positive")
+    _config_check(min_notional > 0.0,
+                  "MIN_POSITION_NOTIONAL must be positive")
+
+    _config_check(int(PHASE1_TOP_K_FEATURES) >= int(MAX_CONDITIONS),
+                  "PHASE1_TOP_K_FEATURES must cover MAX_CONDITIONS")
+    _config_check(0.0 < float(PHASE1_MAX_FEATURE_OVERLAP) <= 1.0,
+                  "PHASE1_MAX_FEATURE_OVERLAP must be in (0, 1]")
+    _config_check(1 <= int(PHASE1_SIGN_CONSISTENCY_MIN_FOLDS)
+                  <= int(PHASE1_STATIONARITY_FOLDS),
+                  "Phase 1 sign-consistency folds must fit stationarity folds")
+    _config_check(int(PHASE1_SAMPLING_TOTAL) > 0,
+                  "PHASE1_SAMPLING_TOTAL must be positive")
+
+    _config_check(int(MIN_CONDITIONS) <= int(MAX_CONDITIONS),
+                  "MIN_CONDITIONS must be <= MAX_CONDITIONS")
+    _config_check(int(PHASE2_POPULATION_SIZE) >= 2,
+                  "PHASE2_POPULATION_SIZE must be at least 2")
+    _config_check(int(PHASE2_GENERATIONS) >= 2,
+                  "PHASE2_GENERATIONS must be at least 2")
+    _config_check(int(PHASE2_ARCHIVE_MAX_SIZE) >= int(PHASE2_POPULATION_SIZE),
+                  "PHASE2_ARCHIVE_MAX_SIZE must be >= PHASE2_POPULATION_SIZE")
+    _config_check(
+        int(PHASE2_ISLAND_TOTAL_GENERATIONS) == int(PHASE2_GENERATIONS),
+        "PHASE2_ISLAND_TOTAL_GENERATIONS must equal PHASE2_GENERATIONS",
+    )
+    _config_check(
+        1 <= int(PHASE2_ISLAND_EPOCH_GENERATIONS)
+        <= int(PHASE2_ISLAND_TOTAL_GENERATIONS),
+        "PHASE2_ISLAND_EPOCH_GENERATIONS must fit the island generation budget",
+    )
+    _config_check(int(PHASE2_STAGE_A_GENERATIONS) > 0
+                  and int(PHASE2_STAGE_B_GENERATIONS) > 0,
+                  "Phase 2 stage generation budgets must be positive")
+    _config_check(
+        int(PHASE2_STAGE_A_GENERATIONS) + int(PHASE2_STAGE_B_GENERATIONS)
+        == int(PHASE2_GENERATIONS),
+        "PHASE2_STAGE_A_GENERATIONS + PHASE2_STAGE_B_GENERATIONS must equal PHASE2_GENERATIONS",
+    )
+    _config_check(
+        float(PHASE2_STAGE_A_MUTATION_RATE) > 0.0
+        and float(PHASE2_STAGE_B_MUTATION_RATE) > 0.0,
+        "Phase 2 mutation rates must be positive",
+    )
+    _config_check(
+        0.0 < float(PHASE2_STAGE_A_MUTATION_RATE) <= 0.5
+        and 0.0 < float(PHASE2_STAGE_B_MUTATION_RATE) <= 0.5,
+        "Phase 2 mutation rates must be in (0, 0.5]",
+    )
+    _config_check(
+        float(PHASE2_STAGE_A_MUTATION_RATE)
+        >= float(PHASE2_STAGE_B_MUTATION_RATE),
+        "Stage A mutation must be >= Stage B mutation",
+    )
+    _config_check(
+        0.0 < float(PHASE2_MUTATION_RATE) <= 0.5,
+        "PHASE2_MUTATION_RATE must be in (0, 0.5]",
+    )
+    _config_check(
+        0 <= int(PHASE2_STAGE_B_SEED_TOP_K) <= int(PHASE2_POPULATION_SIZE),
+        "PHASE2_STAGE_B_SEED_TOP_K must fit the population size",
+    )
+    _config_check(
+        0.0 <= float(PHASE2_STAGE_B_SEED_FRACTION) <= 1.0,
+        "PHASE2_STAGE_B_SEED_FRACTION must be in [0, 1]",
+    )
+    _config_check(
+        0.0 <= float(PHASE2_ARCHIVE_SEED_FRACTION) <= 1.0
+        and 0.0 <= float(PHASE2_STAGE_A_ARCHIVE_SEED_FRACTION) <= 1.0
+        and 0.0 <= float(PHASE2_MIGRATION_SEED_FRACTION) <= 1.0,
+        "Phase 2 archive and migration seed fractions must be in [0, 1]",
+    )
+    _config_check(
+        len(PHASE2_INIT_STRATUM_FRACTIONS) == 2
+        and all(0.0 <= float(value) <= 1.0 for value in PHASE2_INIT_STRATUM_FRACTIONS)
+        and abs(sum(float(value) for value in PHASE2_INIT_STRATUM_FRACTIONS) - 1.0) <= 1e-9,
+        "PHASE2_INIT_STRATUM_FRACTIONS must contain two values summing to 1",
+    )
+    _config_check(
+        1 <= int(PHASE2_ISLAND_MIN_EPOCH_GENERATIONS)
+        <= int(PHASE2_ISLAND_EPOCH_GENERATIONS),
+        "PHASE2_ISLAND_MIN_EPOCH_GENERATIONS must fit the island epoch",
+    )
+    for name, value, budget in (
+        ("PHASE2_STAGE_A_PLATEAU_EARLY_STOP_MIN_GENERATION",
+         PHASE2_STAGE_A_PLATEAU_EARLY_STOP_MIN_GENERATION,
+         PHASE2_STAGE_A_GENERATIONS),
+        ("PHASE2_STAGE_A_EARLY_STOP_MIN_GENERATION",
+         PHASE2_STAGE_A_EARLY_STOP_MIN_GENERATION,
+         PHASE2_STAGE_A_GENERATIONS),
+        ("PHASE2_STAGE_B_PLATEAU_EARLY_STOP_MIN_GENERATION",
+         PHASE2_STAGE_B_PLATEAU_EARLY_STOP_MIN_GENERATION,
+         PHASE2_STAGE_B_GENERATIONS),
+        ("PHASE2_STAGE_B_EARLY_STOP_MIN_GENERATION",
+         PHASE2_STAGE_B_EARLY_STOP_MIN_GENERATION,
+         PHASE2_STAGE_B_GENERATIONS),
+    ):
+        _config_check(0 <= int(value) <= int(budget),
+                      f"{name} must fit its stage budget")
+    _config_check(0.0 < float(PHASE2_SAMPLE_ROTATION_FRACTION) <= 1.0,
+                  "PHASE2_SAMPLE_ROTATION_FRACTION must be in (0, 1]")
+    _config_check(int(PHASE2_SAMPLE_MAX_BARS_PER_SYMBOL) > 0,
+                  "PHASE2_SAMPLE_MAX_BARS_PER_SYMBOL must be positive")
+    _config_check(
+        int(PHASE2_N_OBJECTIVES) == (4 if bool(PHASE2_F4_ENABLED) else 3),
+        "PHASE2_N_OBJECTIVES must match PHASE2_F4_ENABLED",
+    )
+    _config_check(
+        str(PHASE2_F3_OBJECTIVE) in {"profit_factor", "cv_fold_min", "win_rate"},
+        "PHASE2_F3_OBJECTIVE must be profit_factor, cv_fold_min, or win_rate",
+    )
+    _config_check(
+        0.0 <= float(PHASE2_F4_CONCENTRATION_FLOOR) <= 1.0,
+        "PHASE2_F4_CONCENTRATION_FLOOR must be in [0, 1]",
+    )
+    _config_check(float(PHASE2_F4_EPSILON) > 0.0,
+                  "PHASE2_F4_EPSILON must be positive")
+    _config_check(int(MIN_TRADE_POOL_FLOOR) <= int(MIN_TRADE_SUPPORT),
+                  "MIN_TRADE_POOL_FLOOR must be <= MIN_TRADE_SUPPORT")
+    _config_check(int(MIN_TRADE_SUPPORT) > 0,
+                  "MIN_TRADE_SUPPORT must be positive")
+    _config_check(int(PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN) >= 1,
+                  "PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN must be positive")
+    _config_check(
+        int(PHASE2_MONTHLY_ADMISSION_MIN_MONTHS) >= 2,
+        "PHASE2_MONTHLY_ADMISSION_MIN_MONTHS must support the two-window holdout",
+    )
+    _config_check(
+        int(PHASE2_ISLAND_MONTHLY_MIN_MONTHS) >= 2,
+        "PHASE2_ISLAND_MONTHLY_MIN_MONTHS must support the two-window holdout",
+    )
+    _config_check(
+        int(PHASE2_ISLAND_MONTHLY_MIN_MONTHS)
+        <= int(MONTHLY_WINDOW_MAX_WINDOWS),
+        "PHASE2_ISLAND_MONTHLY_MIN_MONTHS must fit MONTHLY_WINDOW_MAX_WINDOWS",
+    )
+    _config_check(int(MONTHLY_WINDOW_MIN_ROWS) > 0,
+                  "MONTHLY_WINDOW_MIN_ROWS must be positive")
+    _config_check(int(MONTHLY_WINDOW_MAX_WINDOWS) >= 2,
+                  "MONTHLY_WINDOW_MAX_WINDOWS must support two windows")
+    _config_check(0.0 <= float(PHASE2_MONTHLY_ADMISSION_MIN_RATIO) <= 1.0,
+                  "PHASE2_MONTHLY_ADMISSION_MIN_RATIO must be in [0, 1]")
+    _config_check(
+        float(PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION) >= 1.0
+        and float(PHASE2_PROFIT_FACTOR_FLOOR_ADMISSION) >= 1.0
+        and float(PHASE2_PROFIT_FACTOR_FLOOR_ADMISSION)
+        >= float(PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION),
+        "Phase 2 profit-factor floors must be ordered at or above 1.0",
+    )
+    _config_check(
+        float(PHASE2_RETURN_FLOOR_PCT) >= 0.0
+        and float(PHASE2_VAL_RETURN_FLOOR_PCT) >= 0.0
+        and float(PHASE2_VAL_RETURN_FLOOR_PCT_SHORT) >= 0.0,
+        "Phase 2 return floors must be non-negative",
+    )
+    _config_check(float(PHASE2_MAX_DRAWDOWN_GATE) > 0.0,
+                  "PHASE2_MAX_DRAWDOWN_GATE must be positive")
+    _config_check(float(PHASE2_MAX_TRAIN_VAL_GAP_PCT) >= 0.0,
+                  "PHASE2_MAX_TRAIN_VAL_GAP_PCT must be non-negative")
+
+    tp_grid = _validate_config_grid("RB_TP_GRID", RB_TP_GRID, minimum=0.0)
+    sl_grid = _validate_config_grid("RB_SL_GRID", RB_SL_GRID, minimum=0.0)
+    capital_grid = _validate_config_grid("RB_CAPITAL_GRID", RB_CAPITAL_GRID, minimum=0.0)
+    _config_check(min(capital_grid) > 0.0,
+                  "RB_CAPITAL_GRID must contain only positive capital values")
+    _config_check(int(RB_MAX_RULES) >= 1,
+                  "RB_MAX_RULES must be positive")
+    _config_check(int(RB_MIN_RULES) >= 0,
+                  "RB_MIN_RULES must be non-negative")
+    _config_check(int(RB_MIN_RULES) <= int(RB_MAX_RULES),
+                  "RB_MIN_RULES must be <= RB_MAX_RULES")
+    _config_check(int(RB_KEEP_TOP_RULES) >= 1,
+                  "RB_KEEP_TOP_RULES must be positive")
+    _config_check(int(RB_MAX_POOL_RULES_TO_EVALUATE) >= 1,
+                  "RB_MAX_POOL_RULES_TO_EVALUATE must be positive")
+    _config_check(int(RB_MAX_POOL_RULES_TO_EVALUATE) >= int(RB_KEEP_TOP_RULES),
+                  "RB_MAX_POOL_RULES_TO_EVALUATE must be >= RB_KEEP_TOP_RULES")
+    _config_check(int(RB_MIN_TRAIN_TRADES) <= int(RB_RULESET_MIN_TRAIN_TRADES),
+                  "RB per-rule train floor must be <= team train floor")
+    _config_check(int(RB_MIN_VALID_TRADES) <= int(RB_RULESET_MIN_VALID_TRADES),
+                  "RB per-rule validation floor must be <= team validation floor")
+    _config_check(
+        float(RB_MIN_TRAIN_RETURN) >= 0.0
+        and float(RB_MIN_VALID_RETURN) >= 0.0,
+        "RB per-rule return floors must be non-negative",
+    )
+    _config_check(
+        float(RB_MIN_TRAIN_PF) >= 1.0
+        and float(RB_MIN_VALID_PF) >= 1.0,
+        "RB per-rule profit-factor floors must be >= 1.0",
+    )
+    _config_check(
+        int(RB_MIN_TRAIN_TRADES) >= 0
+        and int(RB_MIN_VALID_TRADES) >= 0
+        and int(RB_RULESET_MIN_TRAIN_TRADES) >= 0
+        and int(RB_RULESET_MIN_VALID_TRADES) >= 0,
+        "RB trade floors must be non-negative",
+    )
+    _config_check(float(RB_MAX_TOTAL_CAPITAL) == float(MAX_TOTAL_EXPOSURE_PCT),
+                  "RB_MAX_TOTAL_CAPITAL must equal MAX_TOTAL_EXPOSURE_PCT")
+    _config_check(
+        max(capital_grid) <= float(RB_MAX_TOTAL_CAPITAL) + 1e-9,
+        "RB_CAPITAL_GRID values must fit RB_MAX_TOTAL_CAPITAL",
+    )
+    _config_check(
+        int(RB_MAX_RULES) * float(min(capital_grid))
+        <= float(RB_MAX_TOTAL_CAPITAL) + 1e-9,
+        "RB_MAX_RULES multiplied by minimum RB capital must fit RB_MAX_TOTAL_CAPITAL",
+    )
+    _config_check(float(RB_DEFAULT_TP) in tp_grid,
+                  "RB_DEFAULT_TP must be present in RB_TP_GRID")
+    _config_check(float(RB_DEFAULT_SL) in sl_grid,
+                  "RB_DEFAULT_SL must be present in RB_SL_GRID")
+    _config_check(float(RB_DEFAULT_CAPITAL_PCT) in capital_grid,
+                  "RB_DEFAULT_CAPITAL_PCT must be present in RB_CAPITAL_GRID")
+    _config_check(float(RB_MIN_TP) >= 0.0 and float(RB_MIN_TP) <= min(tp_grid),
+                  "RB_MIN_TP must not exceed the smallest TP grid value")
+    _config_check(float(RB_MIN_SL) >= 0.0 and float(RB_MIN_SL) <= min(sl_grid),
+                  "RB_MIN_SL must not exceed the smallest SL grid value")
+    _config_check(int(RB_RISK_OPT_PASSES) >= 1,
+                  "RB_RISK_OPT_PASSES must be positive")
+    _config_check(float(RB_RISK_MIN_IMPROVEMENT) >= 0.0,
+                  "RB_RISK_MIN_IMPROVEMENT must be non-negative")
+    _config_check(int(RB_RISK_GRID_WF_SPLITS) >= 1,
+                  "RB_RISK_GRID_WF_SPLITS must be >= 1")
+    _config_check(0.0 < float(RB_TAIL_HOLDOUT_FRACTION) < 1.0,
+                  "RB_TAIL_HOLDOUT_FRACTION must be in (0, 1)")
+    _config_check(float(RB_TAIL_HOLDOUT_MIN_RETURN_PCT) >= 0.0,
+                  "RB_TAIL_HOLDOUT_MIN_RETURN_PCT must be non-negative")
+    _config_check(0.0 <= float(RB_MAX_PAIR_OVERLAP) <= 1.0,
+                  "RB_MAX_PAIR_OVERLAP must be in [0, 1]")
+    _config_check(0.0 <= float(RB_MAX_SYMBOL_SHARE_ABS_PNL) <= 1.0,
+                  "RB_MAX_SYMBOL_SHARE_ABS_PNL must be in [0, 1]")
+    _config_check(0.0 <= float(RB_MAX_SYMBOL_HHI) <= 1.0,
+                  "RB_MAX_SYMBOL_HHI must be in [0, 1]")
+    _config_check(int(RB_MIN_DISTINCT_SYMBOLS) >= 1,
+                  "RB_MIN_DISTINCT_SYMBOLS must be at least 1")
+    _config_check(int(RB_PROFIT_AMP_MAX_RULES) <= int(RB_MAX_RULES),
+                  "RB_PROFIT_AMP_MAX_RULES must be <= RB_MAX_RULES")
+    _config_check(int(RB_PROFIT_AMP_CAPITAL_PASSES) >= 1,
+                  "RB_PROFIT_AMP_CAPITAL_PASSES must be positive")
+    _config_check(
+        0.0 <= float(PHASE5_VALIDATION_RETURN_GATE_PCT)
+        and float(PHASE5_VALIDATION_PROFIT_FACTOR_GATE) >= 1.0,
+        "Phase 5 deployment gates must be non-negative and PF >= 1.0",
+    )
+    if n_symbols is not None:
+        _config_check(int(n_symbols) >= 1, "n_symbols must be positive")
+        _config_check(
+            effective_min_profitable_symbols(int(n_symbols)) <= int(n_symbols),
+            "effective Phase 2 profitable-symbol floor exceeds the active universe",
+        )
+        if bool(RB_REQUIRE_SYMBOL_FILTERS):
+            _config_check(
+                int(RB_MIN_DISTINCT_SYMBOLS) <= int(n_symbols),
+                "RB_MIN_DISTINCT_SYMBOLS exceeds the active universe when symbol filters are required",
+            )
+
+    if n_rows is not None:
+        _config_check(int(n_rows) > 0, "n_rows must be positive")
+    estimated_rows = int(PHASE1_SAMPLING_TOTAL)
+    if n_rows is not None:
+        estimated_rows = min(estimated_rows, int(n_rows))
+    if n_symbols is not None:
+        estimated_rows = min(
+            estimated_rows,
+            int(PHASE2_SAMPLE_MAX_BARS_PER_SYMBOL) * int(n_symbols),
+        )
+    _config_check(int(MIN_TRADE_POOL_FLOOR) <= estimated_rows,
+                  "MIN_TRADE_POOL_FLOOR exceeds the effective sample-row budget")
+    _config_check(int(MIN_TRADE_SUPPORT) <= estimated_rows,
+                  "MIN_TRADE_SUPPORT exceeds the effective sample-row budget")
+
+
+def effective_config_snapshot(
+    *,
+    n_rows: int | None = None,
+    n_symbols: int | None = None,
+) -> dict[str, object]:
+    """Return resolved values and derived constraints for audit/reporting."""
+
+    validate_config(n_rows=n_rows, n_symbols=n_symbols)
+    estimated_rows = int(PHASE1_SAMPLING_TOTAL)
+    if n_rows is not None:
+        estimated_rows = min(estimated_rows, int(n_rows))
+    if n_symbols is not None:
+        estimated_rows = min(
+            estimated_rows,
+            int(PHASE2_SAMPLE_MAX_BARS_PER_SYMBOL) * int(n_symbols),
+        )
+    min_capital = min(float(value) for value in RB_CAPITAL_GRID)
+    return {
+        "evaluator_contract": {
+            "fee_pct": float(FEE_PCT),
+            "max_hold_candles": int(MAX_HOLD_CANDLES),
+            "initial_capital": float(INITIAL_CAPITAL),
+            "leverage": float(LEVERAGE),
+            "max_total_exposure_pct": float(MAX_TOTAL_EXPOSURE_PCT),
+            "min_position_notional": float(MIN_POSITION_NOTIONAL),
+        },
+        "split": {
+            "mode": str(SPLIT_MODE),
+            "holdout_train_fraction": float(HOLDOUT_TRAIN_FRACTION),
+            "embargo_candles": int(HOLDOUT_EMBARGO_CANDLES),
+            "tail_drop_rows": int(TAIL_DROP_ROWS),
+        },
+        "phase2": {
+            "population_size": int(PHASE2_POPULATION_SIZE),
+            "generations": int(PHASE2_GENERATIONS),
+            "stage_a_generations": int(PHASE2_STAGE_A_GENERATIONS),
+            "stage_b_generations": int(PHASE2_STAGE_B_GENERATIONS),
+            "sampling_total": int(PHASE1_SAMPLING_TOTAL),
+            "estimated_effective_rows": estimated_rows,
+            "min_trade_support": int(MIN_TRADE_SUPPORT),
+            "min_trade_pool_floor": int(MIN_TRADE_POOL_FLOOR),
+            "effective_min_profitable_symbols": effective_min_profitable_symbols(n_symbols),
+            "island_monthly_min_months": int(PHASE2_ISLAND_MONTHLY_MIN_MONTHS),
+            "sample_max_bars_per_symbol": int(PHASE2_SAMPLE_MAX_BARS_PER_SYMBOL),
+            "admission_min_val_trades": int(effective_pool_min_val_trades(n_rows)),
+        },
+        "rb": {
+            "min_rules": int(RB_MIN_RULES),
+            "max_rules": int(RB_MAX_RULES),
+            "max_total_capital": float(RB_MAX_TOTAL_CAPITAL),
+            "capital_grid": [float(value) for value in RB_CAPITAL_GRID],
+            "max_feasible_rules_at_min_capital": int(
+                float(RB_MAX_TOTAL_CAPITAL) // min_capital
+            ),
+            "risk_grid_wf_splits": int(RB_RISK_GRID_WF_SPLITS),
+            "tail_holdout_fraction": float(RB_TAIL_HOLDOUT_FRACTION),
+            "min_distinct_symbols": int(RB_MIN_DISTINCT_SYMBOLS),
+            "risk_min_improvement": float(RB_RISK_MIN_IMPROVEMENT),
+            "tail_min_return_pct": float(RB_TAIL_HOLDOUT_MIN_RETURN_PCT),
+            "max_pair_overlap": float(RB_MAX_PAIR_OVERLAP),
+            "max_symbol_share_abs_pnl": float(RB_MAX_SYMBOL_SHARE_ABS_PNL),
+            "max_symbol_hhi": float(RB_MAX_SYMBOL_HHI),
+        },
+        "gates": {
+            "phase2_train_return_min": float(PHASE2_POOL_TRAIN_RETURN_MIN_PCT),
+            "phase2_valid_return_min": float(PHASE2_POOL_VAL_RETURN_MIN_PCT),
+            "phase2_valid_return_min_short": float(PHASE2_VAL_RETURN_FLOOR_PCT_SHORT),
+            "phase2_evolution_pf_floor": float(PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION),
+            "phase2_admission_pf_floor": float(PHASE2_PROFIT_FACTOR_FLOOR_ADMISSION),
+            "phase2_max_drawdown_pct": float(PHASE2_MAX_DRAWDOWN_GATE),
+            "phase2_max_train_valid_gap_pct": float(PHASE2_MAX_TRAIN_VAL_GAP_PCT),
+            "phase2_monthly_min_months": int(PHASE2_MONTHLY_ADMISSION_MIN_MONTHS),
+            "phase2_monthly_min_profitable_ratio": float(PHASE2_MONTHLY_ADMISSION_MIN_RATIO),
+            "rb_min_train_return": float(RB_MIN_TRAIN_RETURN),
+            "rb_min_valid_return": float(RB_MIN_VALID_RETURN),
+            "rb_min_train_pf": float(RB_MIN_TRAIN_PF),
+            "rb_min_valid_pf": float(RB_MIN_VALID_PF),
+            "rb_min_train_trades": int(RB_MIN_TRAIN_TRADES),
+            "rb_min_valid_trades": int(RB_MIN_VALID_TRADES),
+            "rb_ruleset_min_train_trades": int(RB_RULESET_MIN_TRAIN_TRADES),
+            "rb_ruleset_min_valid_trades": int(RB_RULESET_MIN_VALID_TRADES),
+            "phase5_validation_return_gate": float(PHASE5_VALIDATION_RETURN_GATE_PCT),
+            "phase5_validation_pf_gate": float(PHASE5_VALIDATION_PROFIT_FACTOR_GATE),
+        },
+    }
+
+
+def write_config_audit_report(
+    output_dir: str | None = None,
+    *,
+    n_rows: int | None = None,
+    n_symbols: int | None = None,
+) -> str:
+    """Write the effective configuration snapshot and return its path."""
+
+    root = output_dir or OUTPUTS_DIR
+    reports_dir = os.path.join(root, "reports")
+    os.makedirs(reports_dir, exist_ok=True)
+    path = os.path.join(reports_dir, "config_audit.json")
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(
+            effective_config_snapshot(n_rows=n_rows, n_symbols=n_symbols),
+            handle,
+            indent=2,
+            sort_keys=True,
+        )
+    return path
+
+
+validate_config()

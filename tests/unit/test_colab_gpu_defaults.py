@@ -16,12 +16,10 @@ def test_phase2_should_enrich_without_symbol_scope() -> None:
 def test_colab_defaults_apply_when_content_exists(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(cfg, "PHASE3_USE_GPU", False)
     monkeypatch.setattr(cfg, "PHASE2_GPU_BATCH_SIZE_AUTO", False)
     monkeypatch.setattr(cfg.os.path, "isdir", lambda path: path == "/content")
     monkeypatch.delenv("COLAB_RELEASE_TAG", raising=False)
 
     cfg._apply_colab_gpu_defaults()
 
-    assert cfg.PHASE3_USE_GPU is True
     assert cfg.PHASE2_GPU_BATCH_SIZE_AUTO is True

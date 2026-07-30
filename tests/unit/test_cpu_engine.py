@@ -1,7 +1,7 @@
 """
 Unit tests for CPUBacktestEngine.
 
-Tests verify exact evaluator_v3.ipynb semantics:
+Tests verify exact evaluator_v5.ipynb semantics:
   - apply_dynamic_rule threshold logic
   - Priority-based rule assignment
   - Trade outcome logic (long/short, TP/SL/time-exit, max_before_min)
@@ -1076,4 +1076,3 @@ class TestTradeSupportPenalty:
         executed = (_cfg.MIN_TRADE_POOL_FLOOR + _cfg.MIN_TRADE_SUPPORT) // 2
         pen = trade_support_penalty(executed)
         assert 0.0 <= pen <= _cfg.SUPPORT_PENALTY_MAX
-

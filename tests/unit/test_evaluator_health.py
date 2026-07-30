@@ -6,7 +6,7 @@ Tests cover:
   - Role multiplier (train / valid / test).
   - Max simultaneous positions penalty.
   - ``execution_ok`` boundary cases (missing raw, zero raw, good ratios).
-  - Wire-in: evaluator health penalty subtracted from Phase 3 combo score.
+  - Wire-in: evaluator health penalty subtracted from RB combo score.
   - Wire-in: ``gate_positive_good`` with ``require_execution_health=True``.
 """
 
@@ -230,11 +230,11 @@ class TestExecutionOk:
 
 
 # ===================================================================
-# Wire-in: evaluator_health_penalty in Phase 3 combo scoring
+# Wire-in: evaluator_health_penalty in RB scoring
 # ===================================================================
 
 
-class TestHealthPenaltyWiredIntoPhase3:
+class TestHealthPenaltyWiredIntoRB:
     """Verify that evaluator health penalty is subtracted from combo score."""
 
     def test_penalty_subtracted_from_combo_return(self) -> None:
@@ -254,8 +254,8 @@ class TestHealthPenaltyWiredIntoPhase3:
         )
         assert penalty > 0.0, "Penalty should be positive for bad metrics"
 
-        # With PHASE3_EVAL_HEALTH_WEIGHT = 1.0, the score should be reduced.
-        weight = float(getattr(_cfg, "PHASE3_EVAL_HEALTH_WEIGHT", 1.0))
+        # With the default evaluator-health weight, the score should be reduced.
+        weight = float(getattr(_cfg, "RB_EVAL_HEALTH_WEIGHT", 1.0))
         score_reduction = penalty * weight
         assert score_reduction > 0.0, "Score reduction should be positive"
 
@@ -273,7 +273,7 @@ class TestHealthPenaltyWiredIntoPhase3:
 
 
 # ===================================================================
-# Wire-in: execution_ok in gate_positive_good
+# Wire-in: execution_ok in the shared positive-good gate
 # ===================================================================
 
 
@@ -282,7 +282,7 @@ class TestExecutionHealthInGate:
 
     def test_gate_rejects_when_execution_not_ok_and_required(self) -> None:
         """When require_execution_health=True and execution_ok fails, gate returns False."""
-        from gpu_fuzzy_trader.phases.phase3_rule_set import gate_positive_good
+        from gpu_fuzzy_trader.scoring.gates import gate_positive_good
 
         # Metrics with good return/PF/trades but bad execution health.
         train = {
@@ -311,7 +311,7 @@ class TestExecutionHealthInGate:
 
     def test_gate_passes_when_execution_ok_and_required(self) -> None:
         """When require_execution_health=True and execution_ok passes, gate still returns True."""
-        from gpu_fuzzy_trader.phases.phase3_rule_set import gate_positive_good
+        from gpu_fuzzy_trader.scoring.gates import gate_positive_good
 
         train = {
             "total_return_pct": 5.0,
@@ -339,7 +339,7 @@ class TestExecutionHealthInGate:
 
     def test_gate_not_affected_without_flag(self) -> None:
         """When require_execution_health=False, gate ignores raw_signal_count."""
-        from gpu_fuzzy_trader.phases.phase3_rule_set import gate_positive_good
+        from gpu_fuzzy_trader.scoring.gates import gate_positive_good
 
         # Metrics with no raw_signal_count key (like existing tests).
         train = {"total_return_pct": 5.0, "profit_factor": 1.5, "executed_trades": 50}

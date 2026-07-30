@@ -12,7 +12,7 @@ summarize_monthly_metrics
 evaluate_rule_set_monthly
     Convenience: build windows, run CPUBacktestEngine, return summary + raw.
 monthly_penalty
-    Non-negative penalty for Phase 3/4 objective functions.
+    Non-negative penalty for Phase 2 admission and RB objective functions.
 """
 
 from __future__ import annotations
@@ -320,7 +320,7 @@ def evaluate_rule_set_monthly(
         Full DataFrame (train + validation, or just the combined set).  Must
         contain ``datetime`` and label columns.
     rule_set:
-        List of rule dicts as produced by Phase 3 (keys ``conditions``,
+        List of rule dicts as produced by Phase 2/RB (keys ``conditions``,
         ``tp``, ``sl``, ``capital_pct``).
     direction:
         ``"long"`` or ``"short"``.
@@ -368,7 +368,7 @@ def monthly_penalty(
     *,
     n_rows: int | None = None,
 ) -> float:
-    """Compute a non-negative penalty for Phase 3/4 objective functions.
+    """Compute a non-negative penalty for Phase 2/RB objective functions.
 
     Lower is better.  Returns ``100.0`` when *summary* has zero windows.
 

@@ -4,7 +4,7 @@ writer.py — Output_Writer
 Serializes RuleSet dicts to JSON with exact schema validation and
 loads/validates existing JSON files.
 
-Schema (must match evaluator_v3.ipynb exactly):
+Schema (must match evaluator_v5.ipynb exactly):
 {
   "direction": "long" | "short",
   "rules_set": [
@@ -24,9 +24,9 @@ Schema (must match evaluator_v3.ipynb exactly):
 
 Constraints (Requirements 12.1–12.9):
   - direction must be "long" or "short"
-  - rules_set must contain PHASE3_GLOBAL_MIN_RULES–PHASE3_GLOBAL_MAX_RULES rules
-      - Truncates rules_set to PHASE3_GLOBAL_MAX_RULES if needed (log WARNING).
-      - Rules must already be score-ranked (Phase 3 sorts before write).
+  - rules_set must contain RB_MIN_RULES–RB_MAX_RULES rules
+      - Truncates rules_set to RB_MAX_RULES if needed (log WARNING).
+      - Rules must already be score-ranked (RB Governor sorts before write).
   - Each rule must have exactly: tp, sl, capital_pct, conditions
   - tp, sl, capital_pct must be floats
   - If all three of tp/sl/capital_pct are zero → reject rule (log ERROR, raise ValidationError)
@@ -223,8 +223,8 @@ def _validate_rule_set(rule_set: object) -> dict:
     Applies all schema constraints (Requirements 12.1–12.9):
       - Checks top-level keys
       - Validates direction
-      - Truncates rules_set to PHASE3_GLOBAL_MAX_RULES if needed (log WARNING)
-      - Validates PHASE3_GLOBAL_MIN_RULES–PHASE3_GLOBAL_MAX_RULES after truncation
+      - Truncates rules_set to RB_MAX_RULES if needed (log WARNING)
+      - Validates RB_MIN_RULES–RB_MAX_RULES after truncation
         (Exception: empty rules_set is allowed when ``deployment_accepted`` is
         explicitly ``False`` — the fail-closed RB fallback path.)
       - Validates each rule object
@@ -258,9 +258,9 @@ def _validate_rule_set(rule_set: object) -> dict:
             f"'rules_set' must be a list, got {type(rules_list).__name__!r}."
         )
 
-    # Requirement 12.8: truncate to Phase 3 output cap (list must be score-ranked)
-    schema_max = int(_cfg.PHASE3_GLOBAL_MAX_RULES)
-    schema_min = int(_cfg.PHASE3_GLOBAL_MIN_RULES)
+    # Output bounds belong to the active RB Governor path.
+    schema_max = int(_cfg.RB_MAX_RULES)
+    schema_min = int(_cfg.RB_MIN_RULES)
     if len(rules_list) > schema_max:
         logger.warning(
             "rules_set contains %d rules (max %d); truncating to top %d "

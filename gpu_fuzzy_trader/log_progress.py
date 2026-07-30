@@ -145,38 +145,6 @@ def log_generation(
             )
 
 
-def log_phase3_generation(
-    logger: logging.Logger,
-    tag: str,
-    gen: int,
-    n_generations: int,
-    pareto_size: int,
-    mean_train_return_pct: float,
-    mean_val_return_pct: float,
-    *,
-    max_val_return_pct: float | None = None,
-    elapsed_s: float | None = None,
-) -> None:
-    """Phase 3 refine progress (actual train/val returns, not objective f1)."""
-    msg = (
-        "%s gen %d/%d: pareto=%d mean_train_return=%.2f%% "
-        "mean_val_return=%.2f%%"
-        % (
-            tag,
-            gen + 1,
-            n_generations,
-            pareto_size,
-            mean_train_return_pct,
-            mean_val_return_pct,
-        )
-    )
-    if max_val_return_pct is not None:
-        msg += " max_val_return=%.2f%%" % max_val_return_pct
-    if elapsed_s is not None:
-        msg += " elapsed=%.1fs" % elapsed_s
-    logger.info(msg)
-
-
 def maybe_log_generation(
     logger: logging.Logger,
     tag: str,
@@ -245,41 +213,5 @@ def maybe_log_generation(
         pop_viable_count=pop_viable_count,
         plateau_streak=plateau_streak,
         restarts=restarts,
-        elapsed_s=elapsed,
-    )
-
-
-def maybe_log_phase3_generation(
-    logger: logging.Logger,
-    tag: str,
-    gen: int,
-    n_generations: int,
-    pareto_size: int,
-    mean_train_return_pct: float,
-    mean_val_return_pct: float,
-    *,
-    max_val_return_pct: float | None = None,
-    loop_start: float | None = None,
-    interval: int | None = None,
-) -> None:
-    """Throttled Phase 3 refine logging with real split returns."""
-    import time
-
-    iv = interval if interval is not None else generation_log_interval(
-        n_generations)
-    if not should_log_step(gen, n_generations, iv):
-        return
-    elapsed = None
-    if loop_start is not None:
-        elapsed = time.monotonic() - loop_start
-    log_phase3_generation(
-        logger,
-        tag,
-        gen,
-        n_generations,
-        pareto_size,
-        mean_train_return_pct,
-        mean_val_return_pct,
-        max_val_return_pct=max_val_return_pct,
         elapsed_s=elapsed,
     )

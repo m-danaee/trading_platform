@@ -44,7 +44,7 @@ def test_anti_overfit_config_bundle():
     assert cfg.RB_MIN_VALID_RETURN_IMPROVEMENT == 0.002
     assert cfg.RB_MULTI_SYMBOL_COVERAGE_BONUS == 15.0
     assert cfg.RB_MAX_RULES == 20
-    assert cfg.RB_MAX_TOTAL_CAPITAL == 150.0
+    assert cfg.RB_MAX_TOTAL_CAPITAL == 100.0
     assert cfg.RB_TRAIN_VALID_MAX_RATIO == 2.00
     assert cfg.RB_MIN_DISTINCT_SYMBOLS == 3
     assert cfg.PHASE2_VAL_RETURN_FLOOR_PCT == 0.25
@@ -63,14 +63,14 @@ def test_anti_overfit_config_bundle():
     assert cfg.PHASE2_STAGE_A_GENERATIONS == 20
     assert cfg.PHASE2_STAGE_B_GENERATIONS == 20
     assert cfg.PHASE2_STAGE_A_MUTATION_WEIGHTED_ACTIVATE_PROB == 0.70
-    assert cfg.PHASE3_GLOBAL_MAX_RULES == 25
-    assert cfg.PHASE3_PER_SYMBOL_MAX_RULES == 4
+    assert cfg.RB_MIN_RULES == 1
+    assert cfg.RB_MAX_RULES == 20
     assert cfg.RB_MIN_COMBINED_RETURN_IMPROVEMENT == 3.5
     assert cfg.RB_MAX_PAIR_OVERLAP == 0.35
-    assert cfg.RB_CAPITAL_GRID[0] == 7.5
+    assert cfg.RB_CAPITAL_GRID[0] == 5.0
     assert cfg.RB_CAPITAL_GRID[-1] == 18.0
-    assert cfg.RB_MAX_TOTAL_CAPITAL >= cfg.RB_MAX_RULES * \
-        cfg.RB_CAPITAL_GRID[0]
+    assert cfg.RB_MAX_TOTAL_CAPITAL == cfg.MAX_TOTAL_EXPOSURE_PCT
+    assert cfg.RB_MAX_TOTAL_CAPITAL >= cfg.RB_MAX_RULES * cfg.RB_CAPITAL_GRID[0]
 
 
 def test_cluster_island_symbol_robustness_enabled():

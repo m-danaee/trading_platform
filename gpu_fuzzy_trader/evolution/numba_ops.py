@@ -25,8 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 def numba_enabled() -> bool:
-    phase3 = getattr(_cfg, "PHASE3_NUMBA_ENABLED", False)
-    return _NUMBA_AVAILABLE and (_cfg.PHASE2_NUMBA_ENABLED or phase3)
+    return _NUMBA_AVAILABLE and bool(_cfg.PHASE2_NUMBA_ENABLED)
 
 
 def _dominates_py(a: np.ndarray, b: np.ndarray) -> bool:

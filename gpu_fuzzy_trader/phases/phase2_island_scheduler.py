@@ -248,7 +248,11 @@ def filter_migrants_for_cluster(
                 )
                 continue
 
-        if not passes_pool_admission_gate(train_m, val_m):
+        if not passes_pool_admission_gate(
+            train_m,
+            val_m,
+            island_hyperparams=hp,
+        ):
             logger.debug(
                 "migration_rejected source=%s target=%s reason=admission",
                 source_cluster_id,

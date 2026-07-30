@@ -1,7 +1,7 @@
 """
 cpu_engine.py — CPUBacktestEngine
 
-Exact Python/NumPy replication of evaluator_v3.ipynb's
+Exact Python/NumPy replication of evaluator_v5.ipynb's
 CapitalManagedTradeSimulator semantics.
 
 Rule matching uses apply_dynamic_rule threshold logic (mode-independent),
@@ -35,7 +35,7 @@ def _batch_eval_rule_set_pickled(
 
 
 # ---------------------------------------------------------------------------
-# Helpers — mirrors evaluator_v3.ipynb utilities
+# Helpers — mirrors evaluator_v5.ipynb utilities
 # ---------------------------------------------------------------------------
 
 def _normalize_direction(direction: str) -> str:
@@ -146,7 +146,7 @@ def _apply_dynamic_rule(df: pd.DataFrame, condition: str) -> np.ndarray:
     """
     Apply one exported text condition using the original threshold logic.
 
-    Exactly mirrors evaluator_v3.ipynb's apply_dynamic_rule — mode-independent.
+    Exactly mirrors evaluator_v5.ipynb's apply_dynamic_rule — mode-independent.
     Returns a boolean NumPy array of length len(df).
     """
     feature_name, value_name = _parse_condition(condition)
@@ -440,7 +440,7 @@ def _rules_need_normalized_symbols(rule_set: list[dict]) -> bool:
 
 class CPUBacktestEngine:
     """
-    CPU backtest engine that exactly mirrors evaluator_v3.ipynb's
+    CPU backtest engine that exactly mirrors evaluator_v5.ipynb's
     CapitalManagedTradeSimulator semantics.
 
     Parameters
@@ -552,7 +552,7 @@ class CPUBacktestEngine:
         """
         Compute (price_return_pct, exit_reason) for a single trade.
 
-        Mirrors evaluator_v3.ipynb's _build_trade_outcome_single exactly.
+        Mirrors evaluator_v5.ipynb's _build_trade_outcome_single exactly.
         """
         s_max = float(self.max_ret[idx])
         s_min = float(self.min_ret[idx])
@@ -612,7 +612,7 @@ class CPUBacktestEngine:
         """
         Compute position notional and sizing info.
 
-        Mirrors evaluator_v3.ipynb's _calculate_position_notional exactly.
+        Mirrors evaluator_v5.ipynb's _calculate_position_notional exactly.
         """
         capital_rate = float(capital_pct) / 100.0
         target = equity * capital_rate * self.leverage
@@ -647,7 +647,7 @@ class CPUBacktestEngine:
         """
         Release all positions whose release_index <= current_index.
 
-        Mirrors evaluator_v3.ipynb's _release_due_positions exactly.
+        Mirrors evaluator_v5.ipynb's _release_due_positions exactly.
         """
         still_open = []
 
@@ -751,7 +751,7 @@ class CPUBacktestEngine:
         """
         Simulate a rule set on rows [row_start, row_end) without copying the df.
 
-        Used by Phase 4 RL env to avoid per-step DataFrame/engine allocation.
+        Used by RB scoring to avoid repeated DataFrame/engine allocation.
         """
         normalized_symbols = None
         if _rules_need_normalized_symbols(rule_set):
@@ -823,7 +823,7 @@ class CPUBacktestEngine:
         split: str,
         return_logs: bool = False,
     ) -> "dict | tuple[dict, pd.DataFrame]":
-        """Simulate using precomputed signal masks from Phase3EvalCache."""
+        """Simulate using a precomputed rule-evaluation mask cache."""
         entries = cache.build_entries(rule_set, split)
         return self._simulate_rule_set_entries(
             entries, return_logs=return_logs, initial_capital=self.initial_capital
@@ -847,7 +847,7 @@ class CPUBacktestEngine:
 
         workers = max_workers
         if workers is None:
-            workers = int(_cfg.PHASE3_BATCH_WORKERS)
+            workers = int(_cfg.BACKTEST_BATCH_WORKERS)
 
         if cache is not None and split is not None:
             def _eval_one(rs: list[dict]) -> dict:

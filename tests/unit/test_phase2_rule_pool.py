@@ -3674,7 +3674,6 @@ class TestPoolAdmissionOverfitRatioGate:
         )
 
         monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", True)
-        monkeypatch.setattr(_cfg, "PHASE2_STRICT_POSITIVE_GOOD", False)
         monkeypatch.setattr(_cfg, "PHASE2_MAX_TRAIN_VAL_GAP_PCT", 16.0)
         monkeypatch.setattr(_cfg, "PHASE2_OVERFIT_RATIO_FLOOR", 3.0)
 
@@ -3701,7 +3700,6 @@ class TestPoolAdmissionOverfitRatioGate:
         )
 
         monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", True)
-        monkeypatch.setattr(_cfg, "PHASE2_STRICT_POSITIVE_GOOD", False)
         monkeypatch.setattr(_cfg, "PHASE2_OVERFIT_RATIO_FLOOR", 3.0)
 
         train = {
@@ -3727,7 +3725,6 @@ class TestPoolAdmissionOverfitRatioGate:
         )
 
         monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", True)
-        monkeypatch.setattr(_cfg, "PHASE2_STRICT_POSITIVE_GOOD", False)
         monkeypatch.setattr(_cfg, "PHASE2_OVERFIT_RATIO_FLOOR", 3.0)
         # Keep absolute gap within PHASE2_MAX_TRAIN_VAL_GAP_PCT (10.0):
         # train=16.5 / val=6.6 = 2.5× with gap = 9.9.
@@ -3756,7 +3753,6 @@ class TestPoolAdmissionOverfitRatioGate:
         )
 
         monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", True)
-        monkeypatch.setattr(_cfg, "PHASE2_STRICT_POSITIVE_GOOD", False)
         monkeypatch.setattr(_cfg, "PHASE2_MAX_TRAIN_VAL_GAP_PCT", 16.0)
         monkeypatch.setattr(_cfg, "PHASE2_OVERFIT_RATIO_FLOOR", 0.0)
 

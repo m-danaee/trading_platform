@@ -5,7 +5,7 @@ Maps gene integer values to fuzzy value names, formats condition strings,
 and defines don't-care sentinels for each feature mode.
 
 Fuzzy value name mappings and don't-care sentinels exactly mirror
-evaluator_v3.ipynb's decode_gene_value and apply_dynamic_rule functions.
+evaluator_v5.ipynb's decode_gene_value and apply_dynamic_rule functions.
 """
 
 import numpy as np

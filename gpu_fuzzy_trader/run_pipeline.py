@@ -8,12 +8,11 @@ Execution order:
   2. Load and prepare data (Data_Loader + Data_Splitter)
   3. Phase 1: Feature_Selector
   4. Phase 2: Rule_Pool_Generator for both directions
-  5. Phase 3: Rule_Set_Selector (legacy — skipped when RB Governor active)
-  6. Phase 4: WalkForwardRiskOptimizer (legacy — skipped when RB Governor active)
-  7. RB Governor: unified selection + risk tuning (replaces Phase 3+4)
-  8. Phase 5: OOS_Evaluator (always runs)
+  5. RB Governor: unified selection + risk tuning
+  6. Phase 5: OOS_Evaluator (always runs)
 
-Default CLI (``python -m gpu_fuzzy_trader.run_pipeline``) always re-runs Phases 1–4.
+Default CLI (``python -m gpu_fuzzy_trader.run_pipeline``) always re-runs Phase 1,
+Phase 2, and the RB Governor.
 Pass ``--resume`` to skip phases whose on-disk outputs are already valid.
 
 Logging:
@@ -29,8 +28,6 @@ Requirements: 13.1, 13.2, 13.3, 13.4, 13.5
 from __future__ import annotations
 from gpu_fuzzy_trader.reporting import reporter as _reporter_module
 from gpu_fuzzy_trader.phases import phase5_oos as _phase5_module
-from gpu_fuzzy_trader.phases import phase4_wf_optimizer as _phase4_module
-from gpu_fuzzy_trader.phases import phase3_rule_set as _phase3_module
 from gpu_fuzzy_trader.phases import phase2_rule_pool as _phase2_module
 from gpu_fuzzy_trader import rb_governor as _rb_governor_module
 from gpu_fuzzy_trader.features import selector as _selector_module
@@ -46,8 +43,6 @@ from gpu_fuzzy_trader.phases.phase2_rule_pool import Rule_Pool_Generator
 from gpu_fuzzy_trader.phases.phase2_island_scheduler import (
     compute_cluster_generation_budgets,
 )
-from gpu_fuzzy_trader.phases.phase3_rule_set import Rule_Set_Selector
-from gpu_fuzzy_trader.phases.phase4_wf_optimizer import WalkForwardRiskOptimizer
 from gpu_fuzzy_trader.phases.phase5_oos import OOS_Evaluator
 
 import argparse
@@ -60,8 +55,8 @@ import sys
 import os
 import logging
 import json
-import gc
 import numpy as np
+from pathlib import Path
 
 from gpu_fuzzy_trader._jax_env import configure_jax_env
 
@@ -97,11 +92,6 @@ def _resolve_output_root(output_dir: str | None) -> str:
     return os.path.abspath(os.path.expanduser(output_dir))
 
 
-def _phase2_result_has_rules(phase2_result: dict) -> bool:
-    """True when Phase 2 produced at least one rule."""
-    return bool(phase2_result.get("long")) or bool(phase2_result.get("short"))
-
-
 @contextmanager
 def _temporary_output_paths(output_dir: str | None):
     """Temporarily rebind all cached output paths for one pipeline run."""
@@ -122,8 +112,6 @@ def _temporary_output_paths(output_dir: str | None):
         "selector_paths": _selector_module._DIRECTION_PATHS,
         "phase2_pool_paths": _phase2_module._POOL_PATHS.copy(),
         "phase2_history_paths": _phase2_module._HISTORY_PATHS.copy(),
-        "phase3_output_paths": _phase3_module._OUTPUT_PATHS,
-        "phase4_output_paths": _phase4_module._OUTPUT_PATHS,
         "phase5_strategy_paths": _phase5_module._STRATEGY_PATHS,
         "phase5_feature_paths": _phase5_module._FEATURE_PATHS,
         "phase5_report_paths": _phase5_module._REPORT_PATHS,
@@ -161,16 +149,6 @@ def _temporary_output_paths(output_dir: str | None):
         _phase2_module._POOL_PATHS = _cfg.PHASE2_POOL_PATHS.copy()
         _phase2_module._HISTORY_PATHS = _cfg.PHASE2_HISTORY_PATHS.copy()
 
-        _phase3_module._OUTPUT_PATHS = {
-            "long": os.path.join(output_root, "long.json"),
-            "short": os.path.join(output_root, "short.json"),
-        }
-
-        _phase4_module._OUTPUT_PATHS = {
-            "long": os.path.join(output_root, "long.json"),
-            "short": os.path.join(output_root, "short.json"),
-        }
-
         _phase5_module._STRATEGY_PATHS = {
             "long": os.path.join(output_root, "long.json"),
             "short": os.path.join(output_root, "short.json"),
@@ -202,8 +180,6 @@ def _temporary_output_paths(output_dir: str | None):
         _selector_module._DIRECTION_PATHS = previous_state["selector_paths"]
         _phase2_module._POOL_PATHS = previous_state["phase2_pool_paths"]
         _phase2_module._HISTORY_PATHS = previous_state["phase2_history_paths"]
-        _phase3_module._OUTPUT_PATHS = previous_state["phase3_output_paths"]
-        _phase4_module._OUTPUT_PATHS = previous_state["phase4_output_paths"]
         _phase5_module._STRATEGY_PATHS = previous_state["phase5_strategy_paths"]
         _phase5_module._FEATURE_PATHS = previous_state["phase5_feature_paths"]
         _phase5_module._REPORT_PATHS = previous_state["phase5_report_paths"]
@@ -254,20 +230,12 @@ def _log_pipeline_config() -> None:
             _cfg.PHASE2_GENERATIONS,
             _cfg.PHASE2_JOINT_TRAIN_VAL,
         )
-    if bool(getattr(_cfg, "RB_GOVERNOR_ENABLED", False)):
-        phase34_fmt = "RB_GOVERNOR enabled"
-    else:
-        phase34_fmt = (
-            "PHASE3 per-symbol greedy | PHASE4 grid_search=%s"
-            % getattr(_cfg, "PHASE4_GRID_ENABLED", False)
-        )
     logger.info(
         "Pipeline config: PHASE1 top_k=%d | "
         + phase2_fmt
-        + " | %s | %s",
+        + " | RB Governor=canonical | %s",
         _cfg.PHASE1_TOP_K_FEATURES,
         *phase2_args,
-        phase34_fmt,
         debug_suffix,
     )
 
@@ -393,33 +361,13 @@ def _print_run_summary(results: dict[str, Any], phase: int | None, log_path: str
         )
         return
 
-    if phase == 3:
-        if _cfg.RB_GOVERNOR_ENABLED:
-            print("  Phase 3: SKIPPED (RB Governor replaces Phase 3+4)")
-            return
-        phase_result = results.get("phase3", {})
+    if phase in {3, 4}:
+        phase_result = results.get("rb_governor", {})
         if not phase_result:
-            print("  No Phase 3 rule sets were produced")
+            print("  RB Governor produced no rule sets")
             return
         print(
-            "  Phase 3 rule sets: "
-            + ", ".join(
-                f"{direction}={len(rule_set.get('rules_set', []))} rules"
-                for direction, rule_set in phase_result.items()
-            )
-        )
-        return
-
-    if phase == 4:
-        if _cfg.RB_GOVERNOR_ENABLED:
-            print("  Phase 4: SKIPPED (RB Governor replaces Phase 3+4)")
-            return
-        phase_result = results.get("phase4", {})
-        if not phase_result:
-            print("  No Phase 4 optimized strategies were produced")
-            return
-        print(
-            "  Phase 4 optimized strategies: "
+            "  RB Governor compatibility run rule sets: "
             + ", ".join(
                 f"{direction}={len(rule_set.get('rules_set', []))} rules"
                 for direction, rule_set in phase_result.items()
@@ -471,6 +419,7 @@ class Pipeline_Orchestrator:
         self._cv_folds: list | None = None
         self._val_fitness_df: pd.DataFrame | None = None
         self._val_selection_df: pd.DataFrame | None = None
+        self._phase2_status: dict[str, dict[str, Any]] = {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -517,6 +466,7 @@ class Pipeline_Orchestrator:
                 # Step 1: Load and prepare data
                 # ------------------------------------------------------------------
                 train_df, val_df = self._load_and_split_data()
+                self._validate_active_configuration(train_df)
                 val_fitness_df, val_selection_df = self._validation_scoring_frames(val_df)
                 results["data"] = {
                     "train_rows": len(train_df),
@@ -547,49 +497,29 @@ class Pipeline_Orchestrator:
                     train_df, phase1_result, force=force, val_df=val_fitness_df)
                 results["phase2"] = phase2_result
 
-                # Check if Phase 2 produced any rules; if not, skip Phases 3 and 4
-                pool_empty = not _phase2_result_has_rules(phase2_result)
-
-                if pool_empty:
-                    logger.warning(
-                        "Phase 2 produced no rules for any island. "
-                        "Skipping Phases 3 and 4."
-                    )
-                    results["phase3"] = {}
-                    results["phase4"] = {}
-                    phase5_directions: frozenset[str] = frozenset()
-                elif bool(getattr(_cfg, "RB_GOVERNOR_ENABLED", False)):
-                    self._release_between_phases("RB Governor")
-
-                    rb_result = self._run_rb_governor(
-                        train_df,
-                        val_df,
-                        phase2_result,
-                        cv_folds=self._cv_folds,
-                        val_selection_df=val_selection_df,
-                    )
-                    results["phase3"] = rb_result
-                    results["phase4"] = rb_result
-                    phase5_directions = frozenset(rb_result.keys())
-                else:
-                    # ------------------------------------------------------------------
-                    # Phase 3: Rule Set Selection
-                    # ------------------------------------------------------------------
-                    self._release_between_phases("Phase 3")
-
-                    phase3_result = self._run_phase3(
-                        train_df, val_df, phase2_result, force=force)
-                    results["phase3"] = phase3_result
-
-                    # ------------------------------------------------------------------
-                    # Phase 4: RL Risk Optimization
-                    # ------------------------------------------------------------------
-                    self._release_between_phases("Phase 4")
-
-                    phase4_result = self._run_phase4(
-                        train_df, val_df, phase3_result, force=force)
-                    results["phase4"] = phase4_result
-                    phase5_directions = frozenset(phase3_result.keys())
+                self._release_between_phases("RB Governor")
+                rb_result = self._run_rb_governor(
+                    train_df,
+                    val_df,
+                    phase2_result,
+                    cv_folds=self._cv_folds,
+                    val_selection_df=val_selection_df,
+                )
+                results["rb_governor"] = rb_result
+                # Compatibility aliases: phase 3 and phase 4 now mean the
+                # same canonical RB result and never dispatch legacy code.
+                results["phase3"] = rb_result
+                results["phase4"] = rb_result
+                results["phase_status"] = {
+                    "phase2": self._phase2_status,
+                    "rb_governor": self._rb_status_summary(rb_result),
+                }
+                phase5_directions = frozenset(
+                    direction
+                    for direction, strategy in rb_result.items()
+                    if strategy.get("rules_set")
+                    and strategy.get("deployment_accepted") is True
+                )
 
                 # ------------------------------------------------------------------
                 # Phase 5: Out-of-Sample Evaluation (always runs)
@@ -620,7 +550,8 @@ class Pipeline_Orchestrator:
 
     def run_from_phase2(self, force: bool = True) -> dict:
         """
-        Run Phases 2–5 using Phase 1 artifacts already on disk.
+        Run Phase 2, the RB Governor, and Phase 5 using Phase 1 artifacts
+        already on disk.
 
         Expects ``selected_features_{long,short}.json`` under this run's output
         directory (copy from a baseline run before calling). Does not re-run
@@ -629,7 +560,7 @@ class Pipeline_Orchestrator:
         Parameters
         ----------
         force : bool
-            When True, always rebuild Phases 2–4 outputs.
+            When True, always rebuild Phase 2 and RB outputs.
 
         Returns
         -------
@@ -638,7 +569,7 @@ class Pipeline_Orchestrator:
         """
         with _temporary_output_paths(self._output_dir):
             logger.info("=" * 60)
-            logger.info("GPU-Fuzzy Trading Pipeline — Phases 2–5")
+            logger.info("GPU-Fuzzy Trading Pipeline — Phase 2, RB Governor, Phase 5")
             logger.info("=" * 60)
             _log_pipeline_config()
 
@@ -656,6 +587,7 @@ class Pipeline_Orchestrator:
 
             try:
                 train_df, val_df = self._load_and_split_data()
+                self._validate_active_configuration(train_df)
                 val_fitness_df, val_selection_df = self._validation_scoring_frames(val_df)
                 results["data"] = {
                     "train_rows": len(train_df),
@@ -675,42 +607,27 @@ class Pipeline_Orchestrator:
                     train_df, phase1_result, force=force, val_df=val_fitness_df)
                 results["phase2"] = phase2_result
 
-                pool_empty = not _phase2_result_has_rules(phase2_result)
-
-                if pool_empty:
-                    logger.warning(
-                        "Phase 2 produced no rules for any island. "
-                        "Skipping Phases 3 and 4."
-                    )
-                    results["phase3"] = {}
-                    results["phase4"] = {}
-                    phase5_directions: frozenset[str] = frozenset()
-                elif bool(getattr(_cfg, "RB_GOVERNOR_ENABLED", False)):
-                    self._release_between_phases("RB Governor")
-
-                    rb_result = self._run_rb_governor(
-                        train_df,
-                        val_df,
-                        phase2_result,
-                        cv_folds=self._cv_folds,
-                        val_selection_df=val_selection_df,
-                    )
-                    results["phase3"] = rb_result
-                    results["phase4"] = rb_result
-                    phase5_directions = frozenset(rb_result.keys())
-                else:
-                    self._release_between_phases("Phase 3")
-
-                    phase3_result = self._run_phase3(
-                        train_df, val_df, phase2_result, force=force)
-                    results["phase3"] = phase3_result
-
-                    self._release_between_phases("Phase 4")
-
-                    phase4_result = self._run_phase4(
-                        train_df, val_df, phase3_result, force=force)
-                    results["phase4"] = phase4_result
-                    phase5_directions = frozenset(phase3_result.keys())
+                self._release_between_phases("RB Governor")
+                rb_result = self._run_rb_governor(
+                    train_df,
+                    val_df,
+                    phase2_result,
+                    cv_folds=self._cv_folds,
+                    val_selection_df=val_selection_df,
+                )
+                results["rb_governor"] = rb_result
+                results["phase3"] = rb_result
+                results["phase4"] = rb_result
+                results["phase_status"] = {
+                    "phase2": self._phase2_status,
+                    "rb_governor": self._rb_status_summary(rb_result),
+                }
+                phase5_directions = frozenset(
+                    direction
+                    for direction, strategy in rb_result.items()
+                    if strategy.get("rules_set")
+                    and strategy.get("deployment_accepted") is True
+                )
 
                 self._release_between_phases("Phase 5")
                 phase5_result = self._run_phase5(
@@ -720,7 +637,9 @@ class Pipeline_Orchestrator:
                 total_elapsed = time.monotonic() - pipeline_start
                 logger.info("=" * 60)
                 logger.info(
-                    "Pipeline (phases 2–5) complete in %.2fs", total_elapsed)
+                    "Pipeline (Phase 2, RB Governor, Phase 5) complete in %.2fs",
+                    total_elapsed,
+                )
                 logger.info("=" * 60)
 
                 return results
@@ -741,7 +660,10 @@ class Pipeline_Orchestrator:
         exist. Earlier phases are not auto-run.
         """
         if phase not in {1, 2, 3, 4, 5}:
-            raise ValueError(f"phase must be between 1 and 5, got {phase!r}")
+            raise ValueError(
+                "phase must be one of 1, 2, 3, 4, or 5; "
+                f"got {phase!r}"
+            )
 
         with _temporary_output_paths(self._output_dir):
             logger.info("=" * 60)
@@ -756,6 +678,7 @@ class Pipeline_Orchestrator:
 
             if phase == 1:
                 train_df, val_df = self._load_and_split_data()
+                self._validate_active_configuration(train_df)
                 results["data"] = {
                     "train_rows": len(train_df),
                     "val_rows": len(val_df),
@@ -767,6 +690,7 @@ class Pipeline_Orchestrator:
 
             elif phase == 2:
                 train_df, val_df = self._load_and_split_data()
+                self._validate_active_configuration(train_df)
                 val_fitness_df, val_selection_df = self._validation_scoring_frames(val_df)
                 results["data"] = {
                     "train_rows": len(train_df),
@@ -782,52 +706,37 @@ class Pipeline_Orchestrator:
                 results["phase2"] = self._run_phase2(
                     train_df, phase1_result, force=True, val_df=val_fitness_df)
 
-            elif phase == 3:
+            elif phase in {3, 4}:
                 train_df, val_df = self._load_and_split_data()
+                self._validate_active_configuration(train_df)
                 _, val_selection_df = self._validation_scoring_frames(val_df)
                 results["data"] = {
                     "train_rows": len(train_df),
                     "val_rows": len(val_df),
                 }
                 phase2_result = self._load_phase2_outputs()
-                if bool(getattr(_cfg, "RB_GOVERNOR_ENABLED", False)):
-                    self._release_between_phases("RB Governor")
-
-                    rb_result = self._run_rb_governor(
-                        train_df,
-                        val_df,
-                        phase2_result,
-                        cv_folds=self._cv_folds,
-                        val_selection_df=val_selection_df,
-                    )
-                    results["phase3"] = rb_result
-                    results["phase4"] = rb_result
-                else:
-                    self._release_between_phases("Phase 3")
-
-                    results["phase3"] = self._run_phase3(
-                        train_df, val_df, phase2_result, force=True)
-
-            elif phase == 4:
-                train_df, val_df = self._load_and_split_data()
-                results["data"] = {
-                    "train_rows": len(train_df),
-                    "val_rows": len(val_df),
+                self._release_between_phases("RB Governor")
+                rb_result = self._run_rb_governor(
+                    train_df,
+                    val_df,
+                    phase2_result,
+                    cv_folds=self._cv_folds,
+                    val_selection_df=val_selection_df,
+                )
+                results["rb_governor"] = rb_result
+                results["phase3"] = rb_result
+                results["phase4"] = rb_result
+                results["phase_status"] = {
+                    "phase2": self._phase2_status,
+                    "rb_governor": self._rb_status_summary(rb_result),
                 }
-                # Standalone Phase 4 always uses the legacy walk-forward grid
-                # optimizer on existing outputs/{long,short}.json rule
-                # conditions (TP/SL/capital only). RB Governor is not used
-                # here — it would re-select rules from the Phase 2 pool.
-                self._release_between_phases("Phase 4")
-
-                phase3_result = self._load_phase3_outputs()
-                results["phase4"] = self._run_phase4(
-                    train_df, val_df, phase3_result, force=True)
 
             else:
                 self._ensure_phase5_inputs()
                 self._release_between_phases("Phase 5")
-                results["phase5"] = self._run_phase5()
+                results["phase5"] = self._run_phase5(
+                    allowed_directions=self._accepted_strategy_directions()
+                )
 
             total_elapsed = time.monotonic() - pipeline_start
             logger.info("=" * 60)
@@ -881,6 +790,41 @@ class Pipeline_Orchestrator:
             _cfg.REPORTS_DIR,
         )
 
+    @staticmethod
+    def _validate_active_configuration(train_df: pd.DataFrame) -> None:
+        """Validate data-dependent configuration before any expensive phase."""
+        n_symbols = (
+            int(train_df["symbol"].astype(str).nunique())
+            if "symbol" in train_df.columns
+            else None
+        )
+        _cfg.validate_config(n_rows=len(train_df), n_symbols=n_symbols)
+        _cfg.write_config_audit_report(
+            _cfg.OUTPUTS_DIR,
+            n_rows=len(train_df),
+            n_symbols=n_symbols,
+        )
+
+    @staticmethod
+    def _rb_status_summary(rb_result: dict[str, dict]) -> dict[str, dict[str, str]]:
+        """Return explicit per-direction RB deployment status and reason."""
+        summary: dict[str, dict[str, str]] = {}
+        for direction, strategy in rb_result.items():
+            accepted = bool(strategy.get("deployment_accepted")) and bool(
+                strategy.get("rules_set")
+            )
+            summary[direction] = {
+                "status": "accepted" if accepted else "fail_closed",
+                "reason": (
+                    str(strategy.get("reason"))
+                    if strategy.get("reason")
+                    else str(
+                        strategy.get("deployment_reason", "accepted" if accepted else "no_strategy")
+                    )
+                ),
+            }
+        return summary
+
     def _load_phase1_outputs(self) -> dict[str, list[dict]]:
         """Load Phase 1 feature selection outputs for both directions."""
         result: dict[str, list[dict]] = {}
@@ -904,12 +848,15 @@ class Pipeline_Orchestrator:
         """Load Phase 2 pools for both directions from the persistent cache."""
         result: dict[str, list[dict]] = {}
         missing: list[str] = []
+        self._phase2_status = {}
 
         for direction in ("long", "short"):
             try:
                 pool = Rule_Pool_Generator.load_pool(direction)
-            except ValueError as exc:
-                missing.append(f"{direction}: {exc}")
+            except Exception as exc:
+                missing.append(
+                    f"{direction}: {type(exc).__name__}: {exc}"
+                )
                 continue
 
             if pool is None:
@@ -918,44 +865,31 @@ class Pipeline_Orchestrator:
                 continue
 
             result[direction] = pool
+            self._phase2_status[direction] = {
+                "status": "ok" if pool else "empty",
+                "reason": "loaded_pool" if pool else "empty_pool",
+                "pool_size": len(pool),
+            }
 
         if missing:
-            raise FileNotFoundError(
-                "Phase 3 requires Phase 2 pool outputs for both directions. "
-                f"Missing or invalid: {', '.join(missing)}"
+            logger.warning(
+                "RB Governor will fail closed for unavailable Phase 2 pools: %s",
+                "; ".join(missing),
             )
-
-        return result
-
-    def _load_phase3_outputs(self) -> dict[str, dict]:
-        """Load Phase 3 rule sets for both directions."""
-        result: dict[str, dict] = {}
-        missing: list[str] = []
-
-        for direction in ("long", "short"):
-            try:
-                rule_set = Rule_Set_Selector.load_rule_set(direction)
-            except ValueError as exc:
-                missing.append(f"{direction}: {exc}")
-                continue
-
-            if rule_set is None:
-                missing.append(
-                    f"{direction}: {_phase3_module._OUTPUT_PATHS[direction]}")
-                continue
-
-            result[direction] = rule_set
-
-        if missing:
-            raise FileNotFoundError(
-                "Phase 4 requires Phase 3 rule-set outputs for both directions. "
-                f"Missing or invalid: {', '.join(missing)}"
-            )
+            for entry in missing:
+                direction = entry.split(":", 1)[0]
+                result.setdefault(direction, [])
+                self._phase2_status[direction] = {
+                    "status": "error",
+                    "reason": "missing_phase2_output",
+                    "detail": entry,
+                    "pool_size": 0,
+                }
 
         return result
 
     def _ensure_phase5_inputs(self) -> None:
-        """Ensure Phase 4 outputs exist before running Phase 5 alone."""
+        """Ensure RB strategy outputs exist before running Phase 5 alone."""
         evaluator = OOS_Evaluator()
         strategies = evaluator.load_strategies()
         missing = [
@@ -964,16 +898,26 @@ class Pipeline_Orchestrator:
         ]
         if missing:
             raise FileNotFoundError(
-                "Phase 5 requires Phase 4 optimized strategies for both directions. "
+                "Phase 5 requires RB strategy outputs for both directions. "
                 f"Missing or invalid: {', '.join(missing)}"
             )
+
+    def _accepted_strategy_directions(self) -> frozenset[str]:
+        """Return only non-empty RB strategies accepted for deployment."""
+        strategies = OOS_Evaluator.load_strategies()
+        return frozenset(
+            direction
+            for direction, strategy in strategies.items()
+            if strategy.get("rules_set")
+            and strategy.get("deployment_accepted") is True
+        )
 
     def _load_and_split_data(self) -> tuple[pd.DataFrame, pd.DataFrame]:
         """
         Load train.csv and split into train/validation DataFrames.
 
         When ``SPLIT_MODE`` is ``purged_walk_forward``, also rebuilds CV folds
-        (stored on ``self._cv_folds``) for Phases 2–3.
+        (stored on ``self._cv_folds``) for Phase 2 and RB.
         """
         cached_split = load_cached_split_if_fresh()
         if cached_split is not None:
@@ -1306,6 +1250,7 @@ class Pipeline_Orchestrator:
         t0 = time.monotonic()
 
         pools: dict[str, list[dict]] = {}
+        self._phase2_status = {}
 
         for direction in ("long", "short"):
             dir_phase_name = f"{phase_name} [{direction}]"
@@ -1327,6 +1272,11 @@ class Pipeline_Orchestrator:
                         result_summary={"pool_size": len(existing_pool)},
                     )
                     pools[direction] = existing_pool
+                    self._phase2_status[direction] = {
+                        "status": "ok" if existing_pool else "empty",
+                        "reason": "resumed_pool" if existing_pool else "empty_pool",
+                        "pool_size": len(existing_pool),
+                    }
                     continue
 
             # Get feature infos for this direction
@@ -1337,6 +1287,11 @@ class Pipeline_Orchestrator:
                     direction,
                 )
                 pools[direction] = []
+                self._phase2_status[direction] = {
+                    "status": "empty",
+                    "reason": "no_phase1_features",
+                    "pool_size": 0,
+                }
                 continue
 
             # Run Phase 2 for this direction
@@ -1372,12 +1327,25 @@ class Pipeline_Orchestrator:
                     "Phase 2 [%s] failed: %s", direction, exc, exc_info=True
                 )
                 pool = []
+                self._phase2_status[direction] = {
+                    "status": "error",
+                    "reason": "phase2_error",
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                    "pool_size": 0,
+                }
+            else:
+                self._phase2_status[direction] = {
+                    "status": "ok" if pool else "empty",
+                    "reason": "generated" if pool else "empty_pool",
+                    "pool_size": len(pool),
+                }
 
             dir_elapsed = time.monotonic() - dir_t0
             _log_phase_entry(
                 self._log_path, dir_phase_name, dir_start_ts, _now_iso(),
                 dir_elapsed, skipped=False,
-                result_summary={"pool_size": len(pool)},
+                result_summary=self._phase2_status[direction],
             )
             pools[direction] = pool
 
@@ -1399,239 +1367,7 @@ class Pipeline_Orchestrator:
         return pools
 
     # ------------------------------------------------------------------
-    # Phase 3
-    # ------------------------------------------------------------------
-
-    def _run_phase3(
-        self,
-        train_df: pd.DataFrame,
-        val_df: pd.DataFrame,
-        phase2_result: dict[str, list[dict]],
-        force: bool = False,
-    ) -> dict[str, dict]:
-        phase_name = "Phase 3: Rule Set Selection"
-        start_ts = _now_iso()
-        t0 = time.monotonic()
-
-        if not force:
-            existing = Rule_Set_Selector.skip_if_valid()
-            if existing is not None:
-                long_path = os.path.join(_cfg.OUTPUTS_DIR, "long.json")
-                short_path = os.path.join(_cfg.OUTPUTS_DIR, "short.json")
-                logger.info(
-                    "Skipping %s: valid rule sets at %s and %s (%s)",
-                    phase_name, long_path, short_path,
-                    ", ".join(
-                        "%s=%d rules" % (d, len(rs.get("rules_set", [])))
-                        for d, rs in existing.items()
-                    ),
-                )
-                elapsed = time.monotonic() - t0
-                _log_phase_entry(
-                    self._log_path, phase_name, start_ts, _now_iso(),
-                    elapsed, skipped=True,
-                    result_summary={
-                        d: len(rs.get("rules_set", []))
-                        for d, rs in existing.items()
-                    },
-                )
-                return existing
-
-        # Run Phase 3 per direction
-        rule_sets: dict[str, dict] = {}
-
-        for direction in ("long", "short"):
-            dir_phase_name = f"{phase_name} [{direction}]"
-            dir_start_ts = _now_iso()
-            dir_t0 = time.monotonic()
-
-            pool = phase2_result.get(direction, [])
-            if not pool:
-                logger.warning(
-                    "Phase 3 [%s]: empty pool from Phase 2; skipping direction.",
-                    direction,
-                )
-                continue
-
-            # Add Phase 2 static TP/SL/capital_pct to pool entries if missing
-            enriched_pool = [
-                {
-                    **entry,
-                    "tp": float(entry.get("tp", _cfg.PHASE2_TP)),
-                    "sl": float(entry.get("sl", _cfg.PHASE2_SL)),
-                    "capital_pct": float(entry.get("capital_pct", _cfg.PHASE2_CAPITAL_PCT)),
-                }
-                for entry in pool
-            ]
-
-            logger.info(
-                "Running %s … (pool_size=%d from Phase 2)",
-                dir_phase_name, len(enriched_pool),
-            )
-            try:
-                selector = Rule_Set_Selector(
-                    train_df=train_df,
-                    val_df=val_df,
-                    pool=enriched_pool,
-                    direction=direction,
-                    cv_folds=self._cv_folds,
-                )
-                rule_set = selector.run()
-            except Exception as exc:
-                logger.error(
-                    "Phase 3 [%s] failed: %s", direction, exc, exc_info=True
-                )
-                rule_set = None
-
-            dir_elapsed = time.monotonic() - dir_t0
-            if rule_set is not None:
-                rule_sets[direction] = rule_set
-                _log_phase_entry(
-                    self._log_path, dir_phase_name, dir_start_ts, _now_iso(),
-                    dir_elapsed, skipped=False,
-                    result_summary={"rules": len(
-                        rule_set.get("rules_set", []))},
-                )
-            else:
-                _log_phase_entry(
-                    self._log_path, dir_phase_name, dir_start_ts, _now_iso(),
-                    dir_elapsed, skipped=False,
-                    result_summary={"error": "phase failed"},
-                )
-
-        elapsed = time.monotonic() - t0
-        _log_phase_entry(
-            self._log_path, phase_name, start_ts, _now_iso(),
-            elapsed, skipped=False,
-            result_summary={
-                d: len(rs.get("rules_set", []))
-                for d, rs in rule_sets.items()
-            },
-        )
-        return rule_sets
-
-    # ------------------------------------------------------------------
-    # Phase 4
-    # ------------------------------------------------------------------
-
-    def _run_phase4(
-        self,
-        train_df: pd.DataFrame,
-        val_df: pd.DataFrame,
-        phase3_result: dict[str, dict],
-        force: bool = False,
-    ) -> dict[str, dict]:
-        """
-        Run Phase 4 (Walk-Forward Risk Optimization) or skip if valid outputs exist.
-
-        Returns
-        -------
-        dict[str, dict]
-            {"long": optimized_rule_set, "short": optimized_rule_set}
-        """
-        phase_name = "Phase 4: Walk-Forward Risk Optimization"
-        start_ts = _now_iso()
-        t0 = time.monotonic()
-
-        optimized: dict[str, dict] = {}
-
-        for direction in ("long", "short"):
-            dir_phase_name = f"{phase_name} [{direction}]"
-            dir_start_ts = _now_iso()
-            dir_t0 = time.monotonic()
-
-            if not force:
-                existing = WalkForwardRiskOptimizer.skip_if_valid(direction)
-                if existing is not None:
-                    out_path = os.path.join(
-                        _cfg.OUTPUTS_DIR, "%s.json" % direction)
-                    logger.info(
-                        "Skipping %s: risk-optimized rules at %s (%d rules)",
-                        dir_phase_name, out_path,
-                        len(existing.get("rules_set", [])),
-                    )
-                    dir_elapsed = time.monotonic() - dir_t0
-                    _log_phase_entry(
-                        self._log_path, dir_phase_name, dir_start_ts, _now_iso(),
-                        dir_elapsed, skipped=True,
-                        result_summary={"rules": len(
-                            existing.get("rules_set", []))},
-                    )
-                    optimized[direction] = existing
-                    continue
-
-            # Get Phase 3 rule set for this direction
-            rule_set = phase3_result.get(direction)
-            if rule_set is None:
-                logger.warning(
-                    "Phase 4 [%s]: no rule set from Phase 3; skipping direction.",
-                    direction,
-                )
-                continue
-
-            n_rules = len(rule_set.get("rules_set", []))
-            if n_rules == 0:
-                logger.warning(
-                    "Phase 4 [%s]: Phase 3 produced 0 rules; skipping direction.",
-                    direction,
-                )
-                _log_phase_entry(
-                    self._log_path, dir_phase_name, dir_start_ts, _now_iso(),
-                    time.monotonic() - dir_t0, skipped=True,
-                    result_summary={"rules": 0,
-                                    "reason": "empty_phase3_rules"},
-                )
-                continue
-
-            use_grid = bool(getattr(_cfg, "PHASE4_GRID_ENABLED", True))
-            logger.info(
-                "Running %s … (%d rules from Phase 3, method=%s)",
-                dir_phase_name, n_rules,
-                "grid",
-            )
-            try:
-                optimizer = WalkForwardRiskOptimizer(
-                    val_df=val_df,
-                    train_df=train_df,
-                    rule_set=rule_set,
-                    direction=direction,
-                    
-                )
-                result = optimizer.train()
-            except Exception as exc:
-                logger.error(
-                    "Phase 4 [%s] failed: %s", direction, exc, exc_info=True
-                )
-                result = None
-
-            dir_elapsed = time.monotonic() - dir_t0
-            if result is not None:
-                optimized[direction] = result
-                _log_phase_entry(
-                    self._log_path, dir_phase_name, dir_start_ts, _now_iso(),
-                    dir_elapsed, skipped=False,
-                    result_summary={"rules": len(result.get("rules_set", []))},
-                )
-            else:
-                _log_phase_entry(
-                    self._log_path, dir_phase_name, dir_start_ts, _now_iso(),
-                    dir_elapsed, skipped=False,
-                    result_summary={"error": "phase failed"},
-                )
-
-        elapsed = time.monotonic() - t0
-        _log_phase_entry(
-            self._log_path, phase_name, start_ts, _now_iso(),
-            elapsed, skipped=False,
-            result_summary={
-                d: len(rs.get("rules_set", []))
-                for d, rs in optimized.items()
-            },
-        )
-        return optimized
-
-    # ------------------------------------------------------------------
-    # RB Governor (replaces Phase 3 + Phase 4)
+    # RB Governor
     # ------------------------------------------------------------------
 
     def _run_rb_governor(
@@ -1643,20 +1379,18 @@ class Pipeline_Orchestrator:
         cv_folds: list | None = None,
         val_selection_df: pd.DataFrame | None = None,
     ) -> dict[str, dict]:
-        """Run the RB Governor pipeline (Phase 3 + Phase 4 replacement).
+        """Run the canonical RB Governor pipeline.
 
         Returns a dict keyed by direction, each value being the strategy dict
         written to disk (containing ``direction`` and ``rules_set``).  The
-        shape matches the legacy Phase 4 output so Phase 5 can load the
-        generated ``{direction}.json`` files unchanged.
+        shape matches the evaluator-facing strategy output so Phase 5 can load
+        the generated ``{direction}.json`` files unchanged.
         """
-        phase_name = "RB Governor (Phase 3+4 replacement)"
+        phase_name = "RB Governor"
         start_ts = _now_iso()
         t0 = time.monotonic()
 
-        directions = tuple(
-            d for d in ("long", "short") if phase2_result.get(d)
-        )
+        directions = ("long", "short")
         logger.info(
             "Running %s … (directions=%s, pools=%s)",
             phase_name,
@@ -1664,6 +1398,16 @@ class Pipeline_Orchestrator:
             {d: len(phase2_result.get(d, [])) for d in directions},
         )
 
+        n_symbols = (
+            int(train_df["symbol"].astype(str).nunique())
+            if "symbol" in train_df.columns
+            else None
+        )
+        _cfg.write_config_audit_report(
+            _cfg.OUTPUTS_DIR,
+            n_rows=len(train_df),
+            n_symbols=n_symbols,
+        )
         try:
             strategies = _rb_governor_module.run_rb_governor_pipeline(
                 train_df=train_df,
@@ -1673,10 +1417,27 @@ class Pipeline_Orchestrator:
                 output_dir=_cfg.OUTPUTS_DIR,
                 cv_folds=cv_folds,
                 val_selection_df=val_selection_df,
+                failure_reasons={
+                    direction: status.get("reason", "phase2_empty_pool")
+                    for direction, status in self._phase2_status.items()
+                    if status.get("status") != "ok"
+                },
             )
         except Exception as exc:
             logger.error("RB Governor failed: %s", exc, exc_info=True)
-            strategies = {}
+            strategies = {
+                direction: _rb_governor_module._write_fail_closed_strategy(
+                    Path(_cfg.OUTPUTS_DIR),
+                    Path(_cfg.REPORTS_DIR),
+                    direction,
+                    "rb_governor_error",
+                    phase2_status={
+                        "error_type": type(exc).__name__,
+                        "error": str(exc),
+                    },
+                )
+                for direction in ("long", "short")
+            }
 
         elapsed = time.monotonic() - t0
         _log_phase_entry(
@@ -1703,7 +1464,7 @@ class Pipeline_Orchestrator:
         Parameters
         ----------
         allowed_directions : frozenset[str] | None
-            Directions produced in the current run's Phase 3. An empty frozenset
+            Directions produced in the current run's RB stage. An empty frozenset
             skips all OOS evaluation so stale on-disk strategies are not scored.
             ``None`` evaluates every valid strategy file (standalone Phase 5).
 
@@ -1768,12 +1529,15 @@ def main(argv: list[str] | None = None) -> None:
         type=int,
         choices=(1, 2, 3, 4, 5),
         default=None,
-        help="Run only one phase instead of the full pipeline.",
+        help=(
+            "Run one phase instead of the full pipeline. "
+            "3 and 4 are RB Governor compatibility aliases."
+        ),
     )
     parser.add_argument(
         "--resume",
         action="store_true",
-        help="Skip phases 1–4 when valid outputs already exist (default: full rerun).",
+        help="Reuse valid Phase 1/2 artifacts when available (default: full rerun).",
     )
     parser.add_argument(
         "--from-phase",

@@ -14,7 +14,7 @@ Property 16: GPU-CPU Directional Agreement
   the CPU engine's overlapping-position queue when max_hold_candles causes positions
   to overlap. The simplification is acceptable for Phase 2's evolutionary fitness
   evaluation where relative ranking matters more than absolute values. Final
-  evaluation in Phase 3/5 uses the CPU engine for exact results.
+  evaluation in RB/Phase 5 uses the CPU engine for exact results.
 """
 
 from __future__ import annotations
@@ -385,4 +385,3 @@ def test_property_16_zero_trades_parity(scenario: dict) -> None:
     assert cpu_result["total_return_pct"] == pytest.approx(0.0, abs=1e-9), (
         f"CPU total_return_pct should be 0 with no trades. {context}"
     )
-

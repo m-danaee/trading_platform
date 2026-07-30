@@ -35,7 +35,6 @@ class TestPoolAdmissionGate:
         assert passes_pool_admission_gate(train, val) is False
 
     def test_accepts_positive_train_and_val(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(_cfg, "PHASE2_STRICT_POSITIVE_GOOD", False)
         train = {
             "total_return_pct": 3.0,
             "profit_factor": 1.2,
@@ -72,7 +71,6 @@ class TestPoolAdmissionGate:
     def test_rejects_excessive_train_val_gap(
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.setattr(_cfg, "PHASE2_STRICT_POSITIVE_GOOD", False)
         monkeypatch.setattr(_cfg, "PHASE2_MAX_TRAIN_VAL_GAP_PCT", 20.0)
         train = {
             "total_return_pct": 25.0,
@@ -89,7 +87,6 @@ class TestPoolAdmissionGate:
     def test_accepts_within_train_val_gap(
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.setattr(_cfg, "PHASE2_STRICT_POSITIVE_GOOD", False)
         monkeypatch.setattr(_cfg, "PHASE2_MAX_TRAIN_VAL_GAP_PCT", 20.0)
         train = {
             "total_return_pct": 10.0,
@@ -320,6 +317,28 @@ class TestDeployabilityHelpersTail:
 
 
 class TestPoolAdmissionScaledFloors:
+    def test_island_resolved_trade_floors_override_global_floors(self) -> None:
+        island = TestResolveEvolutionFloorsIslandTwoStage._island_hp(
+            support=12,
+            pool_floor=8,
+        )
+        train = {
+            "total_return_pct": 3.0,
+            "profit_factor": 1.2,
+            "executed_trades": 8,
+        }
+        val = {
+            "total_return_pct": 2.0,
+            "profit_factor": 1.2,
+            "executed_trades": 10,
+        }
+        assert passes_pool_admission_gate(train, val) is False
+        assert passes_pool_admission_gate(
+            train,
+            val,
+            island_hyperparams=island,
+        ) is True
+
     def test_scaled_min_val_trades_on_small_slice(self, monkeypatch) -> None:
         from gpu_fuzzy_trader.phases.phase2_support import _pool_admission_floors
 

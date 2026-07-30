@@ -1,394 +1,95 @@
-"""
-Unit tests for ``gate_positive_good`` (Task 3 — positive-good gate).
-
-Tests cover:
-  - Pure-function behaviour: return / PF / trades thresholds on train+val.
-  - Missing-key handling (``total_return_pct``, ``profit_factor``, etc.).
-  - Config-driven defaults via ``getattr(_cfg, ...)``.
-  - Integration: gate wired into ``_score_pool_rule_on_symbol`` rejects bad rules.
-  - Integration: ``PHASE3_REQUIRE_POSITIVE_GOOD=False`` skips the gate.
-  - Integration: ``_per_symbol_greedy`` with good/bad mixed pool on a mock engine.
-"""
+"""Focused tests for the shared positive-good admission contract."""
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from gpu_fuzzy_trader.scoring.gates import (
+    PositiveGoodThresholds,
+    gate_positive_good,
+    positive_good_reject_reasons,
+)
 
-import pytest
 
-from gpu_fuzzy_trader import config as _cfg
-from gpu_fuzzy_trader.phases.phase3_rule_set import gate_positive_good
-
-
-# ---------------------------------------------------------------------------
-# Helper — synthetic metric dicts
-# ---------------------------------------------------------------------------
-
-def _m(
-    return_pct: float = 5.0,
-    pf: float = 1.5,
-    trades: int = 50,
-) -> dict:
-    """Build a minimal metrics dict with the keys ``gate_positive_good`` reads."""
+def _metrics(*, ret: float = 2.0, pf: float = 1.2, trades: int = 20) -> dict:
     return {
-        "total_return_pct": return_pct,
+        "total_return_pct": ret,
         "profit_factor": pf,
         "executed_trades": trades,
+        "raw_signal_count": trades,
+        "skipped_min_notional_count": 0,
     }
 
 
-def _make_big_df(n_rows: int = 3000) -> "pd.DataFrame":
-    """Create a synthetic DataFrame with features for engine-based tests."""
-    import numpy as np
-    import pandas as pd
-
-    rng = np.random.default_rng(42)
-    n_sym = 2
-    symbols = ["1", "2"]
-    rows: list[dict] = []
-    for sym in symbols:
-        for i in range(n_rows // n_sym):
-            dt = pd.Timestamp("2024-01-01") + pd.Timedelta(minutes=5 * i)
-            rows.append({
-                "datetime": dt,
-                "symbol": sym,
-                "label_open_next": float(np.abs(rng.normal(1.0, 0.3))),
-                "label_close_288": float(rng.normal(2.0, 1.0)),
-                "label_min_288": float(rng.normal(-0.5, 1.0)),
-                "label_max_288": float(rng.normal(2.5, 1.0)),
-                "label_max_before_min": float(rng.normal(0.5, 0.3)),
-                "feature_ma": float(rng.uniform(0, 1)),
-            })
-    df = pd.DataFrame(rows)
-    return df
-
-
-# ===================================================================
-# Pure-function unit tests  (≥ 6 cases)
-# ===================================================================
-
-
-class TestGatePositiveGoodPure:
-    """Pure-function tests for ``gate_positive_good`` — no engine needed."""
-
-    # --- Default thresholds: ret > 0, PF >= 1.0, trades >= 25/15 ---
-
-    def test_both_sides_good_passes(self) -> None:
-        """All thresholds satisfied → True."""
-        train = _m(return_pct=5.0, pf=1.5, trades=50)
-        val = _m(return_pct=3.0, pf=1.2, trades=20)
-        assert gate_positive_good(train, val) is True
-
-    def test_train_return_non_positive_fails(self) -> None:
-        """Train return ≤ 0 → False."""
-        train = _m(return_pct=-1.0, pf=1.5, trades=50)
-        val = _m(return_pct=3.0, pf=1.2, trades=20)
-        assert gate_positive_good(train, val) is False
-
-    def test_val_return_non_positive_fails(self) -> None:
-        """Val return ≤ 0 → False."""
-        train = _m(return_pct=5.0, pf=1.5, trades=50)
-        val = _m(return_pct=-2.0, pf=1.2, trades=20)
-        assert gate_positive_good(train, val) is False
-
-    def test_train_pf_below_minimum_fails(self) -> None:
-        """Train PF < 1.0 → False."""
-        train = _m(return_pct=5.0, pf=0.8, trades=50)
-        val = _m(return_pct=3.0, pf=1.2, trades=20)
-        assert gate_positive_good(train, val) is False
-
-    def test_val_pf_below_minimum_fails(self) -> None:
-        """Val PF < 1.0 → False."""
-        train = _m(return_pct=5.0, pf=1.5, trades=50)
-        val = _m(return_pct=3.0, pf=0.9, trades=20)
-        assert gate_positive_good(train, val) is False
-
-    def test_train_trades_below_minimum_fails(self) -> None:
-        """Train trades < 25 → False."""
-        train = _m(return_pct=5.0, pf=1.5, trades=10)
-        val = _m(return_pct=3.0, pf=1.2, trades=20)
-        assert gate_positive_good(train, val) is False
-
-    def test_val_trades_below_minimum_fails(self) -> None:
-        """Val trades < 15 → False."""
-        train = _m(return_pct=5.0, pf=1.5, trades=50)
-        val = _m(return_pct=3.0, pf=1.2, trades=5)
-        assert gate_positive_good(train, val) is False
-
-    # --- Missing / absent keys ---
-
-    def test_missing_train_return_fails(self) -> None:
-        """Missing ``total_return_pct`` in train → False (treated as 0)."""
-        train = _m(return_pct=5.0, pf=1.5, trades=50)
-        del train["total_return_pct"]
-        val = _m(return_pct=3.0, pf=1.2, trades=20)
-        assert gate_positive_good(train, val) is False
-
-    def test_missing_val_profit_factor_fails(self) -> None:
-        """Missing ``profit_factor`` in val → False (treated as 0.0 < 1.0)."""
-        train = _m(return_pct=5.0, pf=1.5, trades=50)
-        val = _m(return_pct=3.0, pf=1.2, trades=20)
-        del val["profit_factor"]
-        assert gate_positive_good(train, val) is False
-
-    def test_missing_executed_trades_fails(self) -> None:
-        """Missing ``executed_trades`` → False (treated as 0)."""
-        train = _m(return_pct=5.0, pf=1.5, trades=50)
-        val = _m(return_pct=3.0, pf=1.2, trades=20)
-        del val["executed_trades"]
-        assert gate_positive_good(train, val) is False
-
-    # --- Keyword overrides ---
-
-    def test_custom_min_train_return(self) -> None:
-        """Override ``min_train_return=2.0``; train_ret=1.5 → False."""
-        train = _m(return_pct=1.5, pf=1.5, trades=50)
-        val = _m(return_pct=3.0, pf=1.2, trades=20)
-        assert (
-            gate_positive_good(train, val, min_train_return=2.0)
-            is False
-        )
-
-    def test_custom_min_val_pf(self) -> None:
-        """Override ``min_val_pf=1.5``; val_pf=1.2 → False."""
-        train = _m(return_pct=5.0, pf=1.5, trades=50)
-        val = _m(return_pct=3.0, pf=1.2, trades=20)
-        assert (
-            gate_positive_good(train, val, min_val_pf=1.5)
-            is False
-        )
-
-    def test_edge_zero_return(self) -> None:
-        """Return exactly 0.0 → False (not > 0)."""
-        train = _m(return_pct=0.0, pf=1.5, trades=50)
-        val = _m(return_pct=3.0, pf=1.2, trades=20)
-        assert gate_positive_good(train, val) is False
-
-    def test_edge_pf_exactly_one(self) -> None:
-        """PF exactly 1.0 passes (>= 1.0)."""
-        train = _m(return_pct=5.0, pf=1.0, trades=50)
-        val = _m(return_pct=3.0, pf=1.0, trades=20)
-        assert gate_positive_good(train, val) is True
-
-    def test_empty_dicts_return_false(self) -> None:
-        """Both dicts empty → False (defaults below thresholds)."""
-        assert gate_positive_good({}, {}) is False
-
-    def test_nan_metrics_return_false(self) -> None:
-        """NaN metrics on either side → False."""
-        nan_metrics = {
-            "total_return_pct": float("nan"),
-            "profit_factor": 1.5,
-            "executed_trades": 30,
-        }
-        finite_metrics = {
-            "total_return_pct": 5.0,
-            "profit_factor": 1.5,
-            "executed_trades": 30,
-        }
-        assert gate_positive_good(nan_metrics, finite_metrics) is False
-        assert gate_positive_good(finite_metrics, nan_metrics) is False
-
-    def test_inf_metrics_return_false(self) -> None:
-        """Inf metrics on either side → False."""
-        inf_metrics = {
-            "total_return_pct": float("inf"),
-            "profit_factor": 1.5,
-            "executed_trades": 30,
-        }
-        finite_metrics = {
-            "total_return_pct": 5.0,
-            "profit_factor": 1.5,
-            "executed_trades": 30,
-        }
-        assert gate_positive_good(inf_metrics, finite_metrics) is False
-        assert gate_positive_good(finite_metrics, inf_metrics) is False
-
-
-# ===================================================================
-# Integration — gate wired into _score_pool_rule_on_symbol
-# ===================================================================
-
-
-class TestGateWiredIntoScorePoolRule:
-    """Verify the gate is called in ``_score_pool_rule_on_symbol``."""
-
-    def test_gate_called_and_accepts_good_rule(self) -> None:
-        """When the gate returns True, the rule score is not -999."""
-        from gpu_fuzzy_trader.phases.phase3_rule_set import _score_pool_rule_on_symbol
-
-        df = _make_big_df(3000)
-        sym_df = df[df["symbol"] == "1"].reset_index(drop=True)
-        rule = {"conditions": ["[feature_ma] IS Very High"]}
-
-        # Patch gate_positive_good to always return True (rule is "good").
-        with patch(
-            "gpu_fuzzy_trader.phases.phase3_rule_set.gate_positive_good",
-            return_value=True,
-        ):
-            result = _score_pool_rule_on_symbol(
-                rule, sym_df, "long",
-                train_symbol_df=sym_df,
-            )
-            # The gap gate may still reject, but we verify the positive-good
-            # gate accepted the rule and the function produced a valid dict.
-            assert isinstance(result, dict)
-            assert "return_pct" in result
-            assert "trades" in result
-
-    def test_bad_rule_rejected_by_gate(self) -> None:
-        """When the gate returns False, the rule score is -999."""
-        from gpu_fuzzy_trader.phases.phase3_rule_set import _score_pool_rule_on_symbol
-
-        with patch(
-            "gpu_fuzzy_trader.phases.phase3_rule_set.gate_positive_good",
-            return_value=False,
-        ):
-            df = _make_big_df(3000)
-            sym_df = df[df["symbol"] == "1"].reset_index(drop=True)
-            rule = {"conditions": ["[feature_ma] IS Very High"]}
-
-            result = _score_pool_rule_on_symbol(
-                rule, sym_df, "long",
-                train_symbol_df=sym_df,
-            )
-            assert result["return_pct"] == -999.0, (
-                f"Bad rule expected -999, got {result}"
-            )
-
-    def test_gate_not_called_without_train_data(self) -> None:
-        """When ``train_symbol_df`` is None, gate is not called (no train metrics)."""
-        from gpu_fuzzy_trader.phases.phase3_rule_set import _score_pool_rule_on_symbol
-
-        with patch(
-            "gpu_fuzzy_trader.phases.phase3_rule_set.gate_positive_good",
-            return_value=True,
-        ) as mock_gate:
-            df = _make_big_df(3000)
-            sym_df = df[df["symbol"] == "1"].reset_index(drop=True)
-            rule = {"conditions": ["[feature_ma] IS Very High"]}
-
-            _score_pool_rule_on_symbol(
-                rule, sym_df, "long",
-                train_symbol_df=None,  # no train data
-            )
-            mock_gate.assert_not_called()
-
-
-# ===================================================================
-# Integration — gate skippable via PHASE3_REQUIRE_POSITIVE_GOOD=False
-# ===================================================================
-
-
-class TestGateSkippable:
-    """When ``PHASE3_REQUIRE_POSITIVE_GOOD=False`` the gate is bypassed."""
-
-    def test_gate_skipped_when_disabled(self) -> None:
-        """Even a rule with bad metrics passes when the gate is disabled."""
-        with patch.object(_cfg, "PHASE3_REQUIRE_POSITIVE_GOOD", False):
-            from gpu_fuzzy_trader.phases.phase3_rule_set import _score_pool_rule_on_symbol
-
-            df = _make_big_df(3000)
-            sym_df = df[df["symbol"] == "1"].reset_index(drop=True)
-            rule = {"conditions": ["[feature_ma] IS Very High"]}
-
-            result = _score_pool_rule_on_symbol(
-                rule, sym_df, "long",
-                train_symbol_df=sym_df,
-            )
-            assert isinstance(result, dict)
-            assert "return_pct" in result
-
-
-# ===================================================================
-# Integration — gate_positive_good importable from phase3_rule_set
-# ===================================================================
-
-
-class TestImportable:
-    """``gate_positive_good`` is importable from ``phase3_rule_set``."""
-
-    def test_importable(self) -> None:
-        """Confirm import works (already imported at module top)."""
-        from gpu_fuzzy_trader.phases.phase3_rule_set import gate_positive_good as g2
-        assert g2 is gate_positive_good
-
-
-# ===================================================================
-# Integration — PHASE3_MAX_TRAIN_VAL_GAP_PCT still in place
-# ===================================================================
-
-
-class TestExistingGatePreserved:
-    """The train-val gap gate rejects classic overfit (train >> val)."""
-
-    def test_gap_gate_rejects_overfit_train_much_higher_than_val(self) -> None:
-        """train=30%, val=5% with gap=20% → rejected (-999)."""
-        from gpu_fuzzy_trader.phases.phase3_rule_set import _score_pool_rule_on_symbol
-
-        train_engine = MagicMock()
-        val_engine = MagicMock()
-        train_engine.simulate_rule_set.return_value = _m(30.0)
-        val_engine.simulate_rule_set.return_value = _m(5.0)
-
-        df = _make_big_df(3000)
-        sym_df = df[df["symbol"] == "1"].reset_index(drop=True)
-        rule = {"conditions": ["[feature_ma] IS Very High"]}
-
-        with patch.object(_cfg, "PHASE3_MAX_TRAIN_VAL_GAP_PCT", 20.0):
-            with patch(
-                "gpu_fuzzy_trader.phases.phase3_rule_set.gate_positive_good",
-                return_value=True,
-            ):
-                result = _score_pool_rule_on_symbol(
-                    rule, sym_df, "long",
-                    train_symbol_df=sym_df,
-                    train_engine=train_engine,
-                    val_engine=val_engine,
-                )
-        assert result["return_pct"] == -999.0
-
-    def test_gap_gate_accepts_aligned_train_val(self) -> None:
-        """train=8%, val=6% with gap=20% → min(train,val)=6%."""
-        from gpu_fuzzy_trader.phases.phase3_rule_set import _score_pool_rule_on_symbol
-
-        train_engine = MagicMock()
-        val_engine = MagicMock()
-        train_engine.simulate_rule_set.return_value = _m(8.0)
-        val_engine.simulate_rule_set.return_value = _m(6.0)
-
-        df = _make_big_df(3000)
-        sym_df = df[df["symbol"] == "1"].reset_index(drop=True)
-        rule = {"conditions": ["[feature_ma] IS Very High"]}
-
-        with patch.object(_cfg, "PHASE3_MAX_TRAIN_VAL_GAP_PCT", 20.0):
-            with patch(
-                "gpu_fuzzy_trader.phases.phase3_rule_set.gate_positive_good",
-                return_value=True,
-            ):
-                result = _score_pool_rule_on_symbol(
-                    rule, sym_df, "long",
-                    train_symbol_df=sym_df,
-                    train_engine=train_engine,
-                    val_engine=val_engine,
-                )
-        assert result["return_pct"] == 6.0
-
-    def test_score_merged_rule_rejects_overfit_gap(self) -> None:
-        """``_score_merged_rule_on_splits`` rejects train>>val overfit."""
-        from gpu_fuzzy_trader.phases.phase3_rule_set import _score_merged_rule_on_splits
-
-        train_engine = MagicMock()
-        val_engine = MagicMock()
-        train_engine.simulate_rule_set.return_value = _m(30.0)
-        val_engine.simulate_rule_set.return_value = _m(5.0)
-
-        with patch.object(_cfg, "PHASE3_MAX_TRAIN_VAL_GAP_PCT", 20.0):
-            with patch(
-                "gpu_fuzzy_trader.phases.phase3_rule_set.gate_positive_good",
-                return_value=True,
-            ):
-                score = _score_merged_rule_on_splits(
-                    {"conditions": []}, train_engine, val_engine,
-                )
-        assert score == -999.0
+def test_shared_gate_accepts_metrics_that_meet_both_split_floors() -> None:
+    thresholds = PositiveGoodThresholds(
+        min_train_return=1.0,
+        min_valid_return=0.5,
+        min_train_profit_factor=1.1,
+        min_valid_profit_factor=1.05,
+        min_train_trades=15,
+        min_valid_trades=10,
+    )
+    assert gate_positive_good(_metrics(), _metrics(ret=1.0), thresholds) is True
+
+
+def test_shared_gate_reports_each_failed_threshold() -> None:
+    thresholds = PositiveGoodThresholds(
+        min_train_return=3.0,
+        min_valid_return=3.0,
+        min_train_profit_factor=1.5,
+        min_valid_profit_factor=1.5,
+        min_train_trades=30,
+        min_valid_trades=30,
+    )
+    reasons = positive_good_reject_reasons(
+        _metrics(ret=1.0, pf=1.1, trades=5),
+        _metrics(ret=-1.0, pf=0.8, trades=4),
+        thresholds,
+    )
+    assert reasons == [
+        "train_return_floor",
+        "valid_return_floor",
+        "train_profit_factor_floor",
+        "valid_profit_factor_floor",
+        "train_trade_floor",
+        "valid_trade_floor",
+    ]
+    assert gate_positive_good(
+        _metrics(ret=1.0, pf=1.1, trades=5),
+        _metrics(ret=-1.0, pf=0.8, trades=4),
+        thresholds,
+    ) is False
+
+
+def test_missing_validation_metrics_fail_closed() -> None:
+    thresholds = PositiveGoodThresholds(min_valid_return=0.1, min_valid_trades=1)
+    assert gate_positive_good(_metrics(), None, thresholds) is False
+    assert "valid_return_floor" in positive_good_reject_reasons(
+        _metrics(), None, thresholds
+    )
+
+
+def test_execution_health_is_an_explicit_optional_gate() -> None:
+    thresholds = PositiveGoodThresholds(
+        min_train_trades=1,
+        min_valid_trades=1,
+        require_execution_health=True,
+    )
+    bad = _metrics(trades=50)
+    bad.update(raw_signal_count=100, skipped_min_notional_count=80)
+    assert gate_positive_good(bad, bad, thresholds) is False
+    reasons = positive_good_reject_reasons(bad, bad, thresholds)
+    assert "train_execution_health" in reasons
+    assert "valid_execution_health" in reasons
+
+
+def test_legacy_keyword_aliases_preserve_metric_semantics() -> None:
+    assert gate_positive_good(
+        _metrics(),
+        _metrics(ret=1.0),
+        min_train_return=1.0,
+        min_val_return=0.5,
+        min_train_pf=1.1,
+        min_val_pf=1.1,
+        min_train_trades=20,
+        min_val_trades=20,
+    ) is True

@@ -24,7 +24,7 @@ jaxlib>=0.4.20
 evox>=1.0.0,<2
 torch>=2.0
 
-# --- Phase 4: walk-forward risk optimization (required) ---
+# --- RB validation-only hyperparameter search (required) ---
 optuna>=3.5.0
 
 # --- Development / testing ---

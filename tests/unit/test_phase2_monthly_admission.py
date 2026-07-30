@@ -350,7 +350,7 @@ class TestMonthlyGateDataSource:
         )
         monkeypatch.setattr(
             "gpu_fuzzy_trader.phases.phase2_rule_pool._filter_pool_by_admission",
-            lambda pool: pool,
+            lambda pool, **kw: pool,
         )
         monkeypatch.setattr(
             "gpu_fuzzy_trader.phases.phase2_rule_pool.Rule_Pool_Generator._annotate_archive_entries",  # noqa: E501
@@ -460,7 +460,7 @@ class TestMonthlyGateDataSource:
         )
         monkeypatch.setattr(
             "gpu_fuzzy_trader.phases.phase2_rule_pool._filter_pool_by_admission",
-            lambda pool: pool,
+            lambda pool, **kw: pool,
         )
         monkeypatch.setattr(
             "gpu_fuzzy_trader.phases.phase2_rule_pool.Rule_Pool_Generator._annotate_archive_entries",  # noqa: E501

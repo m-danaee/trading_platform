@@ -4,7 +4,7 @@ detector.py — Feature_Detector
 Classifies each feature column into exactly one of six modes:
   binary, ternary, positive, sparse_positive, sparse_signed, signed
 
-The detection logic exactly mirrors evaluator_v3.ipynb's detect_feature_mode.
+The detection logic exactly mirrors evaluator_v5.ipynb's detect_feature_mode.
 Mode detection MUST run on the training split only.
 """
 
@@ -22,7 +22,7 @@ class Feature_Detector:
         """
         Classify a single feature series into one of six modes.
 
-        Detection order (matches evaluator_v3.ipynb exactly):
+        Detection order (matches evaluator_v5.ipynb exactly):
           1. binary        — unique non-NaN values ⊆ {0, 1}, count ≤ 2
           2. ternary       — unique non-NaN values ⊆ {-1, 0, 1}, count ≤ 3
           3. sparse_signed — min < 0 AND zero_ratio > 0.3
@@ -32,7 +32,7 @@ class Feature_Detector:
 
         Notes:
           - zero_ratio is computed on the FULL series including zeros
-            (not just non-NaN values), matching evaluator_v3.ipynb behaviour.
+            (not just non-NaN values), matching evaluator_v5.ipynb behaviour.
           - NaN values are excluded only for the unique-value checks in
             the binary/ternary branches.
 

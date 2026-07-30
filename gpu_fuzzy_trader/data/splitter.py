@@ -1,7 +1,7 @@
 """
 data/splitter.py — Data_Splitter
 
-Per-symbol chronological split for Phases 2–4:
+Per-symbol chronological split for Phase 2, RB, and Phase 5 preparation:
 
 - ``holdout``: single holdout split + 288-bar embargo gap (active).
   Train/val fraction determined by ``HOLDOUT_TRAIN_FRACTION`` (default 65/35).

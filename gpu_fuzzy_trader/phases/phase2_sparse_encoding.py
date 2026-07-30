@@ -7,7 +7,7 @@ Internal evolution representation: (MAX_CONDITIONS, 2) int32 arrays
 
 Active count is dynamic in [MIN_CONDITIONS, MAX_CONDITIONS]; unused slots
 are padded with feat_idx=-1. Pool JSON and archives still use dense K-vectors
-(expanded via sparse_to_dense) for Phase 3 compatibility.
+(expanded via sparse_to_dense) for the RB Governor compatibility boundary.
 """
 
 from __future__ import annotations
