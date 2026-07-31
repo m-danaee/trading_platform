@@ -33,7 +33,7 @@ def test_anti_overfit_config_bundle():
     assert cfg.PHASE1_DISABLED is False
     assert cfg.PHASE2_DIVERSITY_ON_F4 is True
     assert cfg.PHASE2_USE_TOTAL_RETURN_OBJ is False
-    assert cfg.PHASE2_MIN_PROFITABLE_SYMBOLS == 3
+    assert cfg.PHASE2_MIN_PROFITABLE_SYMBOLS == 2
     assert cfg.RB_TAIL_HOLDOUT_HARD_GATE is True
     assert cfg.RB_MAX_SYMBOL_SHARE_ABS_PNL == 0.55
     assert cfg.RB_MAX_SYMBOL_HHI == 0.60
@@ -46,7 +46,7 @@ def test_anti_overfit_config_bundle():
     assert cfg.RB_MAX_RULES == 20
     assert cfg.RB_MAX_TOTAL_CAPITAL == 100.0
     assert cfg.RB_TRAIN_VALID_MAX_RATIO == 2.00
-    assert cfg.RB_MIN_DISTINCT_SYMBOLS == 3
+    assert cfg.RB_MIN_DISTINCT_SYMBOLS == 2
     assert cfg.PHASE2_VAL_RETURN_FLOOR_PCT == 0.25
     assert cfg.PHASE2_VAL_RETURN_FLOOR_PCT_SHORT == 0.25
     assert cfg.effective_phase2_val_return_floor_pct("short") == 0.25

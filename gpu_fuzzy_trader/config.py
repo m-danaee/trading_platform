@@ -23,7 +23,8 @@ Pipeline phases
   RB       Rule-team selection + walk-forward TP/SL/capital optimization
   Phase 5  Out-of-sample evaluation (test_new.csv only)
 
-Detailed behaviour and formulas: docs/phase0_shared.md … docs/phase5_oos.md
+Detailed behaviour and formulas: README.md and RUN.md; evaluator parity is
+defined by the read-only evaluator_v5.ipynb notebook.
 
 Tuning cheat-sheet (symptom → knob)
 -----------------------------------
@@ -123,7 +124,7 @@ VALIDATION_SELECTION_PATH = "data/validation_selection.parquet"
 
 OUTPUTS_DIR = "outputs"
 RUN_LOG_PATH = os.path.join(OUTPUTS_DIR, "run.log")
-REPORTS_DIR = "outputs/reports"
+REPORTS_DIR = os.path.join(OUTPUTS_DIR, "reports")
 
 PHASE2_POOL_PATHS = {
     "long": os.path.join(OUTPUTS_DIR, "phase2_long_pool.json"),
@@ -143,8 +144,8 @@ PHASE2_ARCHIVE_PATHS = {
 
 # Debug: scope pipeline to N symbols starting at DEBUG_SYMBOL (sorted universe).
 DEBUG_SYMBOL_SCOPE_ENABLED = False
-DEBUG_SYMBOL = "1"
-DEBUG_SYMBOL_COUNT = 4
+DEBUG_SYMBOL = "BTCUSDT"
+DEBUG_SYMBOL_COUNT = 1
 # =============================================================================
 # Phase 0 — Schema & labels
 # =============================================================================
@@ -320,7 +321,8 @@ PHASE1_TOP_K_FEATURES = 20
 # detected by Feature_Detector. Phase 2 then evolves over the full feature set.
 #   True  → larger GA search space, more GPU RAM per chromosome, no MI prefilter.
 #   False → normal top-K MI-ranked selection (PHASE1_TOP_K_FEATURES=20).
-# (plan 004): False — full feature set under-searches with pop=60/gens=20.
+# Current default: keep the Phase 1 shortlist so the configured Phase 2 budget
+# is spent on a tractable feature genome.
 PHASE1_DISABLED: bool = False
 
 # PHASE1_MAX_FEATURE_OVERLAP — max shared feature names between long & short lists.
@@ -582,19 +584,17 @@ PHASE2_N_OBJECTIVES = 4
 PHASE2_F3_OBJECTIVE = "profit_factor"
 
 # PHASE2_MIN_PROFITABLE_SYMBOLS_PENALTY — min profitable symbols before penalty.
-#   Softer evolution nudge (default 3): adds to support_penalty when
-#   n_profitable_symbols < this during fitness.  Stricter pool gate
-#   PHASE2_MIN_PROFITABLE_SYMBOLS (default 3) is enforced separately at
-#   admission via _symbol_robustness_penalty.
-#   One-symbol islands override this via island_hyperparams.min_profitable_symbols.
+#   Soft evolution nudge: adds to support_penalty when
+#   n_profitable_symbols < this during fitness. The target is capped by the
+#   measured symbol universe; cluster/orphan islands use their own scaled
+#   island_hyperparams target.
 PHASE2_MIN_PROFITABLE_SYMBOLS_PENALTY = 1
 
 # PHASE2_SYMBOL_GENE_DONT_CARE_PROB — probability of forcing a symbol gene to
 #   dont_care during mutation. Higher → more cross-symbol rules; prevents
-#   symbol-locked evolution.
-# 0.75→0.15 — one-symbol islands should stay symbol-anchored;
-# source_symbols OR-filters still attach at pool export.
-PHASE2_SYMBOL_GENE_DONT_CARE_PROB = 0.15
+#   symbol-locked evolution. The current two-symbol default uses global Phase 2
+#   evolution, so prefer generalists; cluster users can lower this explicitly.
+PHASE2_SYMBOL_GENE_DONT_CARE_PROB = 0.75
 
 # PHASE2_USE_ROBUST_RETURN_OBJ — store min(train_return, val_return) as
 #   robust_return_pct on metrics when PHASE2_JOINT_TRAIN_VAL=True.
@@ -649,12 +649,12 @@ PHASE2_PROFIT_FACTOR_FLOOR = PHASE2_PROFIT_FACTOR_FLOOR_ADMISSION
 #   Lower  → single-symbol heroes can survive longer.
 PHASE2_SYMBOL_MEDIAN_RETURN_FLOOR_PCT = 0.0
 
-# PHASE2_MIN_PROFITABLE_SYMBOLS — min count of symbols with positive PnL.
-#   Higher → demand broad cross-symbol edge; stricter for 10-symbol universe.
-#   Lower  → allow niche symbol specialists.
-# Island clusters are 3–4 symbols with min_profitable≈2; a global floor of 5
-# is unreachable for island-evolved rules and starves the merged pool.
-PHASE2_MIN_PROFITABLE_SYMBOLS = 3
+# PHASE2_MIN_PROFITABLE_SYMBOLS — target count of symbols with positive PnL for
+# the cross-symbol robustness penalty. The active two-symbol train_new.csv
+# universe makes 2 the strongest achievable generalist target. Runtime
+# validation rejects this value when a full (non-debug) universe is smaller;
+# debug scopes cap the effective target to their scoped universe.
+PHASE2_MIN_PROFITABLE_SYMBOLS = 2
 
 # PHASE2_MAX_DRAWDOWN_GATE — soft DD % cap; excess DD adds penalty on f2 only.
 #   Lower  → Pareto front pushed toward low-drawdown rules; may cut high return.
@@ -819,19 +819,17 @@ PHASE2_JOINT_TRAIN_VAL = False
 #   → Phase 2 feasible-search item 4 / OOS plan 003
 PHASE2_VAL_IN_FITNESS_PENALTY = True
 
-# PHASE2_VAL_SIM_INTERVAL — run val backtest every N generations during
-# evolution (default 3, was 1 before task-11).  With per-epoch window
-# rotation (PHASE2_PER_EPOCH_WINDOW_ROTATION, post task-1), the val
-# window is fixed across epochs, so val metrics for a given chromosome
-# are deterministic and safe to cache.  Skipping val on gens 2/3 cuts
-# GPU work ~33% with zero metric drift.
+# PHASE2_VAL_SIM_INTERVAL — fallback validation cadence when validation is
+# report-only. If PHASE2_JOINT_TRAIN_VAL or PHASE2_VAL_IN_FITNESS_PENALTY is
+# enabled, the evolution loop evaluates validation every generation so newly
+# evaluated chromosomes have stable objective semantics. Otherwise, with
+# per-epoch window rotation, validation is deterministic and can be throttled.
 # Val ALWAYS runs on the epoch's last gen (pool-admission freshness).
 #   1 → val every gen (legacy, expensive).
-#   3 → val every 3rd gen (default post task-11; ~33% GPU savings).
+#   2 → val every other gen (current fallback; ~50% maximum val-call savings).
 # → fixes audit finding #10 (val every gen is wasteful when
 # window is fixed; cache is safe)
 PHASE2_VAL_SIM_INTERVAL = 2
-assert PHASE2_VAL_SIM_INTERVAL >= 1, "PHASE2_VAL_SIM_INTERVAL must be >= 1"
 
 # PHASE2_DIVERSITY_HAMMING_THRESHOLD — min Hamming distance for "unique" rule.
 #   Higher → demand more genetic distance; wider Pareto spread, slower convergence.
@@ -1022,9 +1020,9 @@ PHASE2_INFEASIBLE_OBJECTIVE_PENALTY = 50.0
 # PHASE2_DEPLOYABLE_ARCHIVE_MAX_SIZE — cap on stored deployable-elite archive.
 #   Higher → more warm-start diversity across runs; more disk/RAM.
 #   Lower  → smaller cross-run memory.
-# History: 200 → 100 (Colab RAM) → 75 (debug-scope economy). With ~9 symbols
-# and 2 directions, 75 deployable elites provide enough warm-start diversity
-# while saving ~25% RAM on the 12.7 GiB Colab host.
+# History: 200 → 100 (Colab RAM) → 75 (debug-scope economy). For the current
+# two-symbol profile and two directions, 75 deployable elites provide enough
+# warm-start diversity while limiting cross-run memory.
 PHASE2_DEPLOYABLE_ARCHIVE_MAX_SIZE = 75
 
 # --- elite-preservation guard (prevents mid-epoch erosion) ---
@@ -1199,9 +1197,9 @@ PHASE2_ENRICH_SYMBOL_METRICS_EVERY_N_GENS = 5
 # Larger pop for broader Pareto coverage on multi-symbol clusters.
 PHASE2_POPULATION_SIZE = 200
 
-# PHASE2_GENERATIONS — per-island generation budget when ONE_SYMBOL_ISLANDS
-#   (each symbol runs this many gens; wall-clock ≈ gens × n_symbols).
-#   When clustering (legacy), this total is split across K clusters.
+# PHASE2_GENERATIONS — generation budget for the global run and each active
+# cluster island. Cluster islands are processed sequentially, so wall-clock
+# scales with the number of active islands.
 # 20→40 — more search budget with early stop disabled.
 PHASE2_GENERATIONS = 40
 
@@ -1224,24 +1222,29 @@ PHASE2_SEED: int = get_seed()
 # =============================================================================
 # Phase 2 — Island / cluster mode (scoped evolution)
 # =============================================================================
-# When PHASE2_ISLAND_MODE == "cluster", Phase 2 runs K hybrid clusters with a
-# fixed total generation budget split across islands. Global knobs below stay
-# as universe bases; runtime scaling via resolve_island_hyperparams().
+# When PHASE2_ISLAND_MODE == "cluster", Phase 2 runs K hybrid clusters. Each
+# cluster receives the configured island generation budget and is processed
+# sequentially to keep GPU memory bounded. Global knobs below stay as universe
+# bases; runtime scaling uses resolve_island_hyperparams().
 
 # PHASE2_ISLAND_MODE — scoped evolution layout.
-#   "global"  → single universe-wide NSGA-III run (default).
+#   "global"  → single universe-wide NSGA-III run (current default for the
+#                checked-in two-symbol train_new.csv/test_new.csv profile).
 #   "cluster" → K symbol clusters evolved as separate islands with migration.
-PHASE2_ISLAND_MODE = "cluster"  # "global" | "cluster"
+PHASE2_ISLAND_MODE = "global"  # "global" | "cluster"
 # PHASE2_ONE_SYMBOL_ISLANDS — when True, skip KMeans/corr clustering and give
 #   each symbol its own island. Generation budget is per-island full
 #   PHASE2_ISLAND_TOTAL_GENERATIONS for both one-symbol and multi-symbol
-#   cluster modes (splitting a short budget across K clusters starves Stage B).
-# (plan 004): False — one-symbol specialists conflict with RB
-#   concentration gates; restore hybrid multi-symbol clusters (N_CLUSTERS=3).
+#   cluster modes; each additional island increases total runtime.
+# For the current two-symbol dataset, cluster mode with K>1 creates singleton
+# islands and is therefore not the default. Keep this switch available for
+# larger universes where per-symbol exploration is intentional.
 PHASE2_ONE_SYMBOL_ISLANDS = False
 # PHASE2_N_CLUSTERS — number of hybrid symbol clusters when island mode is active
-#   and PHASE2_ONE_SYMBOL_ISLANDS is False (legacy clustering path).
-PHASE2_N_CLUSTERS = 3
+#   and PHASE2_ONE_SYMBOL_ISLANDS is False. One cluster is the only useful
+#   cluster-mode default for the current two-symbol universe; increase it only
+#   after the active dataset has enough symbols for multi-symbol clusters.
+PHASE2_N_CLUSTERS = 1
 # PHASE2_CLUSTER_USE_RETURN_CORR — when True, build return-correlation embedding
 #   and blend with feature-means (weights below) for a hybrid clustering that
 #   groups symbols with similar return patterns.  Set False for legacy
@@ -1254,10 +1257,12 @@ PHASE2_CLUSTER_USE_RETURN_CORR = True
 #   sum=1 internally.  Corr-heavy so co-movement dominates; features break ties.
 PHASE2_CLUSTER_FEATURE_WEIGHT = 0.3
 PHASE2_CLUSTER_CORR_WEIGHT = 0.7
-# PHASE2_ISLAND_TOTAL_GENERATIONS — per-island gens when ONE_SYMBOL; else split.
+# PHASE2_ISLAND_TOTAL_GENERATIONS — full generation budget for each active
+#   cluster island. The scheduler processes islands sequentially; it does not
+#   divide this budget across clusters.
 PHASE2_ISLAND_TOTAL_GENERATIONS = PHASE2_GENERATIONS
-# PHASE2_ISLAND_EPOCH_GENERATIONS — generations per island epoch before migration.
-# 20→10 — two epochs fit Stage A(12)+B(8) handoff cleanly.
+# PHASE2_ISLAND_EPOCH_GENERATIONS — generations per island engine epoch/window.
+#   Migration occurs after a completed cluster, not at this epoch boundary.
 PHASE2_ISLAND_EPOCH_GENERATIONS = 10
 # PHASE2_ISLAND_MIN_EPOCH_GENERATIONS — skip epochs with fewer remaining gens
 # than this threshold (engine rebuild ~30s with negligible benefit for <5 gens).
@@ -1267,7 +1272,7 @@ PHASE2_ISLAND_MIN_EPOCH_GENERATIONS = 4
 # when PHASE2_ISLAND_TWO_STAGE_ENABLED=True; Stage B uses global floors.
 PHASE2_ISLAND_TWO_STAGE_ENABLED = True
 PHASE2_ISLAND_EARLY_STOP_ENABLED = False
-# False — full 20-gen budget, no plateau early stop.
+# False — full configured island budget, no plateau early stop.
 PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED = False
 PHASE2_ISLAND_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO: bool = True
 PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE: int = 10
@@ -1277,24 +1282,17 @@ PHASE2_ISLAND_SCALE_TRADE_FLOORS = True
 PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN = 8
 # The two-window holdout geometry is the minimum evidence available by default.
 PHASE2_ISLAND_MONTHLY_MIN_MONTHS = 2
-# Migration — exchange top elites between islands every N epochs.
+# Migration — exchange top elites between sequential cluster islands.
 # PHASE2_MIGRATION_ENABLED — master switch for inter-island elite exchange.
-# (plan 004): True — multi-symbol clusters share elites across islands.
 PHASE2_MIGRATION_ENABLED: bool = True
-# PHASE2_MIGRATION_EPOCH_INTERVAL — DEPRECATED.  This is a no-op in
-# the current code path.  Migration fires once after each cluster
-# finishes (sequential post-cluster chain, see _run_cluster_islands).
-# Retained for backward compat only; do not use in new code.
-# → fixes audit finding #6 (dead migration helper was misleading
-# future maintainers about how migration actually works)
-PHASE2_MIGRATION_EPOCH_INTERVAL = 1
 PHASE2_MIGRATION_TOP_K = 5
 PHASE2_MIGRATION_REQUIRE_DEPLOYABILITY = True
 PHASE2_MIGRATION_MIN_VAL_RETURN_PCT = 1.0
 PHASE2_MIGRATION_MIN_VAL_TRADES = None          # None = use island trade floor
 
 # PHASE2_MIGRATION_SEED_FRACTION — fraction of the live population overwritten by
-# migrants at epoch boundaries. Decoupled from PHASE2_ARCHIVE_SEED_FRACTION (which
+# migrants at a sequential cluster handoff. Decoupled from
+# PHASE2_ARCHIVE_SEED_FRACTION (which
 # governs cross-run warm-start and stays 0.25). 0.10 = 20 of 200 slots, so
 # migrants displace ≤10% of converged locals.
 PHASE2_MIGRATION_SEED_FRACTION: float = 0.10
@@ -1363,7 +1361,6 @@ PHASE2_MUTATION_WEIGHTED_ACTIVATE_PROB = 0.4
 # Shared monthly validation
 # =============================================================================
 
-MONTHLY_VALIDATION_ENABLED = True
 MONTHLY_WINDOW_DAYS = 30
 MONTHLY_WINDOW_MIN_ROWS = 2500
 MONTHLY_WINDOW_MAX_WINDOWS = 24
@@ -1425,8 +1422,8 @@ RB_MIN_VALID_PF: float = 1.02
 
 # RB_MIN_TRAIN_TRADES / RB_MIN_VALID_TRADES — per-rule trade-count floors
 #   used by ``gate_positive_good`` and ``_score_metrics`` for single rules.
-#   Lowered vs. the friend's defaults because per-symbol specialized rules
-#   typically see thin validation slices (~7k rows / symbol).
+#   Kept moderate because optional cluster/specialist paths can see thin
+#   validation slices even when the default global path uses both symbols.
 RB_MIN_TRAIN_TRADES: int = 10
 RB_MIN_VALID_TRADES: int = 6
 
@@ -1497,7 +1494,7 @@ RB_TRAIN_VALID_RATIO_GAP_WEIGHT: float = 30.0
 RB_TRAIN_VALID_RETURN_GAP_WEIGHT: float = 4.0
 
 
-# --- Lenient-add mode (friend's recommended path) ---
+# --- Lenient-add compatibility mode -----------------------------------------
 # RB_RULE_ADD_IGNORE_SUBSET_BEAT and RB_MIN_COMBINED_RETURN_IMPROVEMENT are
 # active only when RB_RULE_ADD_BY_RETURN_ONLY=True.
 
@@ -1542,8 +1539,8 @@ RB_MIN_SL: float = 1.0
 # --- RB risk-grid search -----------------------------------------------------
 
 # RB_TP_GRID / RB_SL_GRID / RB_CAPITAL_GRID — values enumerated per rule in
-#   the round-robin grid search.  Coarser than the friend's full grid to
-#   keep runtime reasonable on a ~10-symbol universe.
+#   the round-robin grid search. Coarse grids keep runtime reasonable on the
+#   current dataset and remain practical for larger universes.
 # The minimum is 5% so the maximum 20-rule team fits under the evaluator's
 # 100% exposure contract before normalization.
 RB_TP_GRID: tuple[float, ...] = (1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0)
@@ -1601,15 +1598,16 @@ RB_MAX_SYMBOL_HHI: float = 0.60
 #
 # Mode A — multi-symbol TEAM (recommended / current):
 #   RB_REQUIRE_SYMBOL_FILTERS=False
-#   Phase 2 islands learn fuzzy rules on 3–4 symbol clusters.
-#   RB attaches each rule's ``source_symbols`` as OR filters (cluster scope),
-#   then composes rules from different islands into a team covering the book.
+#   The checked-in two-symbol profile uses global Phase 2 rules. When cluster
+#   mode is explicitly enabled for a larger universe, RB attaches each rule's
+#   ``source_symbols`` as OR filters (cluster scope), then composes rules from
+#   different islands into a team covering the book.
 #   Compose diversity uses **traded** symbols from metrics (not OR filters):
 #   island filters alone must not satisfy RB_MIN_DISTINCT_SYMBOLS.
-#   Bare "fire on all 10 symbols" generalists destroy island rules on
-#   full train + val_selection (run.log: kept 0/15, 0/12 → empty strategies).
+#   Bare generalists can destroy island rules on full train + val_selection;
+#   the traded-symbol coverage and concentration gates remain active.
 #
-# Mode B — per-symbol SPECIALISTS (friend_project path; avoid unless intentional):
+# Mode B — per-symbol SPECIALISTS (compatibility path; avoid unless intentional):
 #   RB_REQUIRE_SYMBOL_FILTERS=True
 #   Each rule locks to ``symbol is X``; compose many specialists for coverage.
 #   Tends to jagged single-symbol equity; needs thick per-symbol pools.
@@ -1623,7 +1621,7 @@ RB_REQUIRE_SYMBOL_FILTERS: bool = False
 # RB_MIN_DISTINCT_SYMBOLS — target symbol coverage while composing.
 #   Mode A: traded symbols from metrics must expand toward this.
 #   Mode B: distinct ``symbol is X`` filters on final rules (hard gate).
-RB_MIN_DISTINCT_SYMBOLS: int = 3
+RB_MIN_DISTINCT_SYMBOLS: int = 2
 
 # Soft score bonus per extra traded symbol beyond the first (Mode A ranking).
 # 8→15 — stronger preference for multi-symbol traded coverage
@@ -1666,7 +1664,6 @@ RB_MAX_POSITIONS_PENALTY: float = 120.0
 RB_PROFIT_AMPLIFIER_ENABLED: bool = False
 
 RB_PROFIT_AMP_MAX_CANDIDATES: int = 50
-RB_PROFIT_AMP_MAX_RULES: int = 8
 # RB_PROFIT_AMP_MIN_OBJECTIVE_IMPROVEMENT — minimum objective delta to
 #   accept a profit-amplifier candidate.  Tuned for thin per-symbol returns.
 RB_PROFIT_AMP_MIN_OBJECTIVE_IMPROVEMENT: float = 0.02
@@ -1761,6 +1758,23 @@ def effective_min_profitable_symbols(symbol_count: int | None = None) -> int:
     always pays a shortfall penalty (impossible target) and long pools collapse.
     """
     target = int(PHASE2_MIN_PROFITABLE_SYMBOLS)
+    universe = symbol_count if symbol_count is not None else _debug_symbol_universe_size()
+    if universe is None:
+        return target
+    return min(target, max(1, int(universe)))
+
+
+def effective_rb_min_distinct_symbols(symbol_count: int | None = None) -> int:
+    """Return the RB coverage target for the active debug universe.
+
+    Full runs keep ``RB_MIN_DISTINCT_SYMBOLS`` unchanged. An explicit debug
+    scope may contain fewer symbols, so RB composition and its specialist
+    output gate use the achievable scoped target instead of failing before a
+    diagnostic result can be produced.
+    """
+    target = int(RB_MIN_DISTINCT_SYMBOLS)
+    if not DEBUG_SYMBOL_SCOPE_ENABLED:
+        return target
     universe = symbol_count if symbol_count is not None else _debug_symbol_universe_size()
     if universe is None:
         return target
@@ -2136,6 +2150,10 @@ def validate_config(
                   "PHASE2_N_CLUSTERS must be positive")
     _config_check(int(PHASE2_MIN_PROFITABLE_SYMBOLS) >= 1,
                   "PHASE2_MIN_PROFITABLE_SYMBOLS must be positive")
+    _config_check(int(DEBUG_SYMBOL_COUNT) >= 1,
+                  "DEBUG_SYMBOL_COUNT must be positive")
+    _config_check(bool(str(DEBUG_SYMBOL).strip()),
+                  "DEBUG_SYMBOL must not be empty")
     _config_check(0.0 < float(HOLDOUT_TRAIN_FRACTION) < 1.0,
                   "HOLDOUT_TRAIN_FRACTION must be between 0 and 1")
     _config_check(int(TAIL_DROP_ROWS) == int(MAX_HOLD_CANDLES),
@@ -2168,6 +2186,8 @@ def validate_config(
                   "Phase 1 sign-consistency folds must fit stationarity folds")
     _config_check(int(PHASE1_SAMPLING_TOTAL) > 0,
                   "PHASE1_SAMPLING_TOTAL must be positive")
+    _config_check(int(PHASE2_VAL_SIM_INTERVAL) >= 1,
+                  "PHASE2_VAL_SIM_INTERVAL must be positive")
 
     _config_check(int(MIN_CONDITIONS) <= int(MAX_CONDITIONS),
                   "MIN_CONDITIONS must be <= MAX_CONDITIONS")
@@ -2256,6 +2276,10 @@ def validate_config(
                       f"{name} must fit its stage budget")
     _config_check(0.0 < float(PHASE2_SAMPLE_ROTATION_FRACTION) <= 1.0,
                   "PHASE2_SAMPLE_ROTATION_FRACTION must be in (0, 1]")
+    _config_check(
+        0.0 <= float(PHASE2_SYMBOL_GENE_DONT_CARE_PROB) <= 1.0,
+        "PHASE2_SYMBOL_GENE_DONT_CARE_PROB must be in [0, 1]",
+    )
     _config_check(int(PHASE2_SAMPLE_MAX_BARS_PER_SYMBOL) > 0,
                   "PHASE2_SAMPLE_MAX_BARS_PER_SYMBOL must be positive")
     _config_check(
@@ -2392,8 +2416,6 @@ def validate_config(
                   "RB_MAX_SYMBOL_HHI must be in [0, 1]")
     _config_check(int(RB_MIN_DISTINCT_SYMBOLS) >= 1,
                   "RB_MIN_DISTINCT_SYMBOLS must be at least 1")
-    _config_check(int(RB_PROFIT_AMP_MAX_RULES) <= int(RB_MAX_RULES),
-                  "RB_PROFIT_AMP_MAX_RULES must be <= RB_MAX_RULES")
     _config_check(int(RB_PROFIT_AMP_CAPITAL_PASSES) >= 1,
                   "RB_PROFIT_AMP_CAPITAL_PASSES must be positive")
     _config_check(
@@ -2402,23 +2424,41 @@ def validate_config(
         "Phase 5 deployment gates must be non-negative and PF >= 1.0",
     )
     if n_symbols is not None:
-        _config_check(int(n_symbols) >= 1, "n_symbols must be positive")
+        active_symbols = int(n_symbols)
+        _config_check(active_symbols >= 1, "n_symbols must be positive")
+        debug_scope = bool(DEBUG_SYMBOL_SCOPE_ENABLED)
+        if debug_scope:
+            # A debug run deliberately narrows the data after splitting. Its
+            # cross-symbol floors remain the full-run contract, but the active
+            # values must be capped so diagnostics can run on one symbol.
+            effective_symbol_floor = effective_min_profitable_symbols(active_symbols)
+            effective_cluster_count = min(int(PHASE2_N_CLUSTERS), active_symbols)
+            effective_rb_symbol_floor = effective_rb_min_distinct_symbols(active_symbols)
+        else:
+            _config_check(
+                int(PHASE2_MIN_PROFITABLE_SYMBOLS) <= active_symbols,
+                "PHASE2_MIN_PROFITABLE_SYMBOLS exceeds the active universe",
+            )
+            effective_symbol_floor = int(PHASE2_MIN_PROFITABLE_SYMBOLS)
+            effective_cluster_count = int(PHASE2_N_CLUSTERS)
+            effective_rb_symbol_floor = int(RB_MIN_DISTINCT_SYMBOLS)
+            if str(PHASE2_ISLAND_MODE).lower() == "cluster":
+                _config_check(
+                    int(PHASE2_N_CLUSTERS) <= active_symbols,
+                    "PHASE2_N_CLUSTERS exceeds the active symbol universe",
+                )
         _config_check(
-            int(PHASE2_MIN_PROFITABLE_SYMBOLS) <= int(n_symbols),
-            "PHASE2_MIN_PROFITABLE_SYMBOLS exceeds the active universe",
+            effective_symbol_floor <= active_symbols,
+            "effective Phase 2 profitable-symbol floor exceeds the active universe",
         )
         if str(PHASE2_ISLAND_MODE).lower() == "cluster":
             _config_check(
-                int(PHASE2_N_CLUSTERS) <= int(n_symbols),
-                "PHASE2_N_CLUSTERS exceeds the active symbol universe",
+                effective_cluster_count <= active_symbols,
+                "effective PHASE2_N_CLUSTERS exceeds the active universe",
             )
         _config_check(
-            effective_min_profitable_symbols(int(n_symbols)) <= int(n_symbols),
-            "effective Phase 2 profitable-symbol floor exceeds the active universe",
-        )
-        _config_check(
-            int(RB_MIN_DISTINCT_SYMBOLS) <= int(n_symbols),
-            "RB_MIN_DISTINCT_SYMBOLS exceeds the active symbol universe",
+            effective_rb_symbol_floor <= active_symbols,
+            "effective RB_MIN_DISTINCT_SYMBOLS exceeds the active universe",
         )
 
     if n_rows is not None:
@@ -2453,8 +2493,25 @@ def effective_config_snapshot(
             estimated_rows,
             int(PHASE2_SAMPLE_MAX_BARS_PER_SYMBOL) * int(n_symbols),
         )
+    active_symbol_count = int(n_symbols) if n_symbols is not None else None
+    configured_cluster_count = int(PHASE2_N_CLUSTERS)
+    effective_cluster_count = (
+        1
+        if str(PHASE2_ISLAND_MODE).lower() == "global"
+        else configured_cluster_count
+    )
+    if active_symbol_count is not None and bool(DEBUG_SYMBOL_SCOPE_ENABLED):
+        effective_cluster_count = min(effective_cluster_count, active_symbol_count)
+    effective_rb_symbol_floor = effective_rb_min_distinct_symbols(active_symbol_count)
     min_capital = min(float(value) for value in RB_CAPITAL_GRID)
     return {
+        "active_universe": {
+            "n_rows": int(n_rows) if n_rows is not None else None,
+            "n_symbols": active_symbol_count,
+            "debug_scope_enabled": bool(DEBUG_SYMBOL_SCOPE_ENABLED),
+            "debug_symbol": str(DEBUG_SYMBOL),
+            "debug_symbol_count": int(DEBUG_SYMBOL_COUNT),
+        },
         "evaluator_contract": {
             "fee_pct": float(FEE_PCT),
             "max_hold_candles": int(MAX_HOLD_CANDLES),
@@ -2478,8 +2535,12 @@ def effective_config_snapshot(
             "estimated_effective_rows": estimated_rows,
             "min_trade_support": int(MIN_TRADE_SUPPORT),
             "min_trade_pool_floor": int(MIN_TRADE_POOL_FLOOR),
+            "island_mode": str(PHASE2_ISLAND_MODE),
+            "configured_n_clusters": configured_cluster_count,
+            "effective_n_clusters": effective_cluster_count,
             "effective_min_profitable_symbols": effective_min_profitable_symbols(n_symbols),
             "min_profitable_symbols_required": int(PHASE2_MIN_PROFITABLE_SYMBOLS),
+            "symbol_gene_dont_care_prob": float(PHASE2_SYMBOL_GENE_DONT_CARE_PROB),
             "island_monthly_min_months": int(PHASE2_ISLAND_MONTHLY_MIN_MONTHS),
             "sample_max_bars_per_symbol": int(PHASE2_SAMPLE_MAX_BARS_PER_SYMBOL),
             "admission_min_val_trades": int(effective_pool_min_val_trades(n_rows)),
@@ -2495,6 +2556,7 @@ def effective_config_snapshot(
             "risk_grid_wf_splits": int(RB_RISK_GRID_WF_SPLITS),
             "tail_holdout_fraction": float(RB_TAIL_HOLDOUT_FRACTION),
             "min_distinct_symbols": int(RB_MIN_DISTINCT_SYMBOLS),
+            "effective_min_distinct_symbols": effective_rb_symbol_floor,
             "risk_min_improvement": float(RB_RISK_MIN_IMPROVEMENT),
             "tail_min_return_pct": float(RB_TAIL_HOLDOUT_MIN_RETURN_PCT),
             "max_pair_overlap": float(RB_MAX_PAIR_OVERLAP),

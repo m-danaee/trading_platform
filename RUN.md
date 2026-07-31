@@ -41,12 +41,14 @@ fresh empty strategy with `deployment_accepted: false` and a machine-readable
 reason. Phase 5 receives only non-empty strategies from the current run, so
 stale files are not evaluated.
 
-Configuration preflight rejects an active symbol universe that cannot satisfy
+Configuration preflight rejects a full-run symbol universe that cannot satisfy
 the configured Phase 2 profitable-symbol floor, cluster count, or RB distinct-
-symbol requirement. Validation cadence is throttled only when validation does
-not affect fitness; otherwise it runs every generation. The monthly admission
-gate is fail-closed when every rule fails, and Phase 5 is report-only: it never
-prunes or rewrites strategies using held-out test performance.
+symbol requirement. An explicit debug scope may cap those effective values to
+its smaller diagnostic universe. Validation cadence is throttled only when
+validation does not affect fitness; otherwise it runs every generation. The
+monthly admission gate is fail-closed when every rule fails, and Phase 5 is
+report-only: it never prunes or rewrites strategies using held-out test
+performance.
 
 ## Data and evaluator
 
@@ -56,6 +58,11 @@ prunes or rewrites strategies using held-out test performance.
 - `data/test_new.csv` is reserved for Phase 5 and uses the same OHLCV/features
   schema.
 - `evaluator_v5.ipynb` is read-only and is the final evaluation authority.
+
+The checked-in `train_new.csv` and `test_new.csv` profile contains the balanced
+`BTCUSDT`/`ETHUSDT` universe. The default Phase 2 path is one global search with
+a two-symbol robustness target. Cluster mode remains available for larger
+universes; its active cluster count must fit the data preflight.
 
 The evaluator-facing strategy files are `outputs/long.json` and
 `outputs/short.json`; clean copies are written below
@@ -80,11 +87,12 @@ gracefully displays missing or fail-closed directions.
 .venv/bin/python optuna_search.py --n-trials 50 --fast
 ```
 
-Optuna tunes active Phase 2/RB keys, derives dependent stage budgets, validates
-each trial, and scores RB validation plus tail metrics only. It never uses
-Phase 5/test metrics. Trial parameters, derived effective configuration, and
-rejection/error details are stored as trial attributes; the correlation report
-is `outputs/reports/hyperparameter_correlation.json`.
+Optuna tunes active Phase 2/RB keys; the data-dependent symbol floor remains a
+validated dataset contract rather than a trial parameter. It derives dependent
+stage budgets, validates each trial, and scores RB validation plus tail metrics
+only. It never uses Phase 5/test metrics. Trial parameters, derived effective
+configuration, and rejection/error details are stored as trial attributes; the
+correlation report is `outputs/reports/hyperparameter_correlation.json`.
 
 ## Tests
 

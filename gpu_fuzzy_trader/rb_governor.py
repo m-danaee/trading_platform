@@ -822,7 +822,18 @@ def _compose_ruleset(
     }]
 
     max_rules = int(_cfg.RB_MAX_RULES)
-    min_distinct_symbols = int(getattr(_cfg, "RB_MIN_DISTINCT_SYMBOLS", 0))
+    if bool(getattr(_cfg, "DEBUG_SYMBOL_SCOPE_ENABLED", False)):
+        active_symbol_count = len(
+            _available_symbols(
+                getattr(train_engine, "df", None),
+                getattr(valid_engine, "df", None),
+            )
+        )
+        min_distinct_symbols = int(
+            _cfg.effective_rb_min_distinct_symbols(active_symbol_count)
+        )
+    else:
+        min_distinct_symbols = int(getattr(_cfg, "RB_MIN_DISTINCT_SYMBOLS", 0))
     max_overlap = float(getattr(_cfg, "RB_MAX_PAIR_OVERLAP", 0.22))
     min_score_improve = float(getattr(_cfg, "RB_MIN_SCORE_IMPROVEMENT", 0.05))
     min_train_ret_improve = float(getattr(_cfg, "RB_MIN_TRAIN_RETURN_IMPROVEMENT", 0.01))
@@ -1691,7 +1702,13 @@ def run_rb_governor_pipeline(
 
         # ── Hard gate: minimum distinct symbols on final output ──────────────
         if bool(getattr(_cfg, "RB_REQUIRE_SYMBOL_FILTERS", False)):
-            min_distinct = int(getattr(_cfg, "RB_MIN_DISTINCT_SYMBOLS", 0))
+            active_symbol_count = len(_available_symbols(train_like, valid_df))
+            if bool(getattr(_cfg, "DEBUG_SYMBOL_SCOPE_ENABLED", False)):
+                min_distinct = int(
+                    _cfg.effective_rb_min_distinct_symbols(active_symbol_count)
+                )
+            else:
+                min_distinct = int(getattr(_cfg, "RB_MIN_DISTINCT_SYMBOLS", 0))
             if min_distinct > 0:
                 n_symbols = len(_symbols_in_rules(opt_rules))
                 if n_symbols < min_distinct:

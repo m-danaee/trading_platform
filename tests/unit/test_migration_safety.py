@@ -1,9 +1,7 @@
-"""Unit tests for migration safety — config guard, migrant gate, seed fraction.
+"""Unit tests for migration safety — migrant gate and seed fraction.
 
 Acceptance criteria covered:
-  AC-T1.1: PHASE2_MIGRATION_ENABLED=False -> no migration log lines, set_pending_migrant_seeds
-           never called.
-  AC-T1.2: PHASE2_MIGRATION_ENABLED=True  -> 0.5% val_return rejected; 2.5% + >=15 trades
+  AC-T1.2: PHASE2_MIGRATION_ENABLED=True -> 0.5% val_return rejected; 2.5% + >=15 trades
            accepted (via filter_migrants_for_cluster with synthetic metrics).
   AC-T1.3: Migrant injection uses <= PHASE2_MIGRATION_SEED_FRACTION * pop_size slots.
 """
@@ -20,7 +18,7 @@ from gpu_fuzzy_trader.phases.phase2_island_scheduler import filter_migrants_for_
 
 
 # ============================================================================
-# AC-T1.1 — PHASE2_MIGRATION_ENABLED=False prevents all migration activity
+# Migration defaults
 # ============================================================================
 
 
@@ -31,61 +29,6 @@ class TestMigrationEnabledByDefault:
         """Multi-symbol clusters ship with migration enabled."""
         assert _cfg.PHASE2_MIGRATION_ENABLED is True
         assert _cfg.PHASE2_ONE_SYMBOL_ISLANDS is False
-
-    def test_guard_allows_migration_when_enabled(self, monkeypatch):
-        """The guard condition is True when migration is enabled."""
-        monkeypatch.setattr(_cfg, "PHASE2_MIGRATION_ENABLED", True)
-        enabled = _cfg.PHASE2_MIGRATION_ENABLED
-        epoch_counter = 2
-        interval = int(_cfg.PHASE2_MIGRATION_EPOCH_INTERVAL)
-        n_clusters = 3
-        guard = (
-            enabled
-            and epoch_counter % interval == 0
-            and n_clusters > 1
-        )
-        assert guard is True
-
-    def test_guard_prevents_migration_when_disabled(self, monkeypatch):
-        """With PHASE2_MIGRATION_ENABLED=False, guard is False even when epoch aligns."""
-        monkeypatch.setattr(_cfg, "PHASE2_MIGRATION_ENABLED", False)
-
-        enabled = _cfg.PHASE2_MIGRATION_ENABLED
-        epoch_counter = 2
-        interval = int(_cfg.PHASE2_MIGRATION_EPOCH_INTERVAL)
-        n_clusters = 3
-        guard = (
-            enabled
-            and epoch_counter % interval == 0
-            and n_clusters > 1
-        )
-        assert guard is False
-
-    def test_set_pending_migrant_seeds_not_called_when_disabled(self, monkeypatch):
-        """set_pending_migrant_seeds should never be called when migration is off."""
-        monkeypatch.setattr(_cfg, "PHASE2_MIGRATION_ENABLED", False)
-        monkeypatch.setattr(_cfg, "PHASE2_MIGRATION_EPOCH_INTERVAL", 1)
-        monkeypatch.setattr(_cfg, "PHASE2_N_CLUSTERS", 3)
-
-        # Create a mock Rule_Pool_Generator
-        mock_gen = MagicMock()
-        mock_gen._island_generations_done = 50
-        mock_gen._evolution_state = MagicMock()
-
-        # Simulate the migration guard logic from _run_cluster_islands
-        n_clusters = int(_cfg.PHASE2_N_CLUSTERS)
-        epoch_counter = 2  # divisible by interval (1)
-
-        if (
-            _cfg.PHASE2_MIGRATION_ENABLED
-            and epoch_counter % int(_cfg.PHASE2_MIGRATION_EPOCH_INTERVAL) == 0
-            and n_clusters > 1
-        ):
-            # This block should NOT be reached
-            mock_gen.set_pending_migrant_seeds(["dummy"])
-
-        mock_gen.set_pending_migrant_seeds.assert_not_called()
-
 
 # ============================================================================
 # AC-T1.2 — filter_migrants_for_cluster gate with synthetic metrics

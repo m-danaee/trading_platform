@@ -11,11 +11,12 @@ def test_effective_min_profitable_symbols_caps_debug_universe(monkeypatch):
 
 def test_new_config_parameters_exist():
     assert hasattr(c, 'DEBUG_SYMBOL_SCOPE_ENABLED')
-    assert c.DEBUG_SYMBOL == "1"
+    assert c.DEBUG_SYMBOL == "BTCUSDT"
     assert hasattr(c, 'DEBUG_SYMBOL_COUNT')
     assert hasattr(c, 'PHASE2_ISLAND_EPOCH_GENERATIONS')
     assert c.PHASE2_ISLAND_EPOCH_GENERATIONS == 10
-    assert c.PHASE2_ISLAND_MODE in ("global", "cluster")
+    assert c.PHASE2_ISLAND_MODE == "global"
+    assert c.PHASE2_N_CLUSTERS == 1
     assert hasattr(c, 'PHASE2_MIGRATION_SEED_FRACTION')
     assert c.PHASE2_MIGRATION_SEED_FRACTION == 0.10
     assert hasattr(c, 'PHASE2_SHARED_ARCHIVE_MIN_SYMBOLS') is False or 'PHASE2_SHARED_ARCHIVE_MIN_SYMBOLS' not in dir(c)
@@ -27,3 +28,6 @@ def test_new_config_parameters_exist():
     assert c.RB_MAX_RULES == 20
     assert c.RB_MAX_TOTAL_CAPITAL == 100.0
     assert c.RB_CAPITAL_GRID[0] == 5.0
+    assert not hasattr(c, "PHASE2_MIGRATION_EPOCH_INTERVAL")
+    assert not hasattr(c, "MONTHLY_VALIDATION_ENABLED")
+    assert not hasattr(c, "RB_PROFIT_AMP_MAX_RULES")

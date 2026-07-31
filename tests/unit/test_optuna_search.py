@@ -13,6 +13,7 @@ from gpu_fuzzy_trader import optuna_search as search
 
 def test_search_space_contains_only_live_active_config_keys() -> None:
     assert search.SEARCH_SPACE
+    assert "PHASE2_MIN_PROFITABLE_SYMBOLS" not in search.SEARCH_SPACE
     for key in search.SEARCH_SPACE:
         assert hasattr(cfg, key), key
         assert not key.startswith(("PHASE3_", "PHASE4_"))

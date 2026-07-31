@@ -41,7 +41,6 @@ SEARCH_SPACE: dict[str, list[Any]] = {
     "PHASE2_VAL_RETURN_FLOOR_PCT": [0.0, 0.25, 0.5, 1.0, 2.0],
     "PHASE2_PROFIT_FACTOR_FLOOR_ADMISSION": [1.05, 1.10, 1.15, 1.20],
     "PHASE2_MONTHLY_ADMISSION_MIN_RATIO": [0.3, 0.4, 0.5, 0.6],
-    "PHASE2_MIN_PROFITABLE_SYMBOLS": [2, 3, 4, 5],
     "RB_MIN_TRAIN_RETURN": [0.25, 0.5, 1.0, 2.0],
     "RB_MIN_VALID_RETURN": [0.25, 0.5, 1.0, 2.0],
     "RB_MIN_TRAIN_PF": [1.0, 1.02, 1.05, 1.10],
@@ -232,7 +231,6 @@ def run_pipeline_for_trial(
     os.makedirs(output_dir, exist_ok=True)
     if debug_mode:
         _cfg.DEBUG_SYMBOL_SCOPE_ENABLED = True
-        _cfg.DEBUG_SYMBOL_COUNT = 4
     if fast_mode:
         _copy_phase1_2_outputs(baseline_outputs_dir, output_dir)
 

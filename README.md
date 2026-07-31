@@ -83,6 +83,11 @@ thresholds.
   schema.
 - `evaluator_v5.ipynb` is read-only and is the final evaluation authority.
 
+The checked-in `train_new.csv` and `test_new.csv` profile contains the balanced
+`BTCUSDT`/`ETHUSDT` universe. The default Phase 2 path is therefore one global
+search with a two-symbol robustness target. Cluster mode remains available for
+larger universes; its active cluster count must fit the data preflight.
+
 Override paths with `DATA_ROOT`, `TRAIN_CSV_PATH`, or `TEST_CSV_PATH` when
 needed. The evaluator-facing strategy files are `outputs/long.json` and
 `outputs/short.json`; clean copies are written under
@@ -102,8 +107,9 @@ normalization. Phase 2 uses `PHASE2_USE_TOTAL_RETURN_OBJ=False`; its comments
 and descriptions document that active behavior.
 
 The runtime also enforces a few data-dependent safety contracts before the
-search starts: the active universe must satisfy the configured profitable-
-symbol floor, cluster count, and RB distinct-symbol requirement. Validation is
+search starts: a full run must satisfy the configured profitable-symbol floor,
+cluster count, and RB distinct-symbol requirement. An explicit debug scope may
+cap those effective values to its smaller diagnostic universe. Validation is
 throttled by `PHASE2_VAL_SIM_INTERVAL` only when validation is report-only; if
 validation contributes to fitness, it is evaluated every generation. The
 monthly admission gate fails closed when no rule passes, and Phase 5 reports
@@ -145,7 +151,9 @@ successful results.
 .venv/bin/python -m gpu_fuzzy_trader.optuna_search --n-trials 50 --fast
 ```
 
-Optuna tunes only active Phase 2/RB settings. It derives the stage budgets,
+Optuna tunes only active Phase 2/RB settings; the data-dependent symbol floor
+is kept as a validated dataset contract rather than sampled per trial. It
+derives the stage budgets,
 validates every patched trial before execution, scores validation and RB tail
 metrics only, and records effective values and rejection details. It never
 optimizes against Phase 5 or test metrics. Completed trials can be inspected
