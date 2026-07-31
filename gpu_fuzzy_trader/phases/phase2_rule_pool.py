@@ -36,7 +36,7 @@ import json
 import logging
 import os
 import time
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
@@ -1655,6 +1655,212 @@ def _simulate_val_metrics_for_chrom(
         return None
 
 
+def _archive_direction(direction: str, *engines: object) -> str:
+    """Resolve a plain long/short direction from an evolution log tag."""
+    for value in (direction, *(getattr(e, "trade_direction", None) for e in engines)):
+        text = str(value or "").strip().lower()
+        if text in {"long", "short"}:
+            return text
+        if "short" in text:
+            return "short"
+        if "long" in text:
+            return "long"
+    return "long"
+
+
+def _build_cpu_archive_engine(source_engine: object | None, direction: str):
+    """Build the mandatory CPU evaluator from a Phase 2 engine.
+
+    GPU batch metrics are useful for evolutionary search, but they are not a
+    sufficient admission certificate because symbol-level metrics are
+    optional on that path.  The final archive pass therefore uses the exact
+    sampled frame owned by the Phase 2 engine and always constructs a CPU
+    engine when possible.
+    """
+    if source_engine is None:
+        return None
+    if isinstance(source_engine, CPUBacktestEngine):
+        return source_engine
+    frame = getattr(source_engine, "df", None)
+    feature_modes = getattr(source_engine, "feature_modes", None)
+    if not isinstance(frame, pd.DataFrame) or not isinstance(feature_modes, dict):
+        return None
+    try:
+        return CPUBacktestEngine(
+            frame,
+            dict(feature_modes),
+            _archive_direction(direction, source_engine),
+            fee_pct=float(getattr(source_engine, "fee_pct", _cfg.FEE_PCT)),
+        )
+    except Exception as exc:
+        logger.warning("Phase 2 CPU archive evaluator unavailable: %s", exc)
+        return None
+
+
+def _snapshot_per_symbol_metrics(metrics: dict | None) -> dict[str, dict[str, float | int]]:
+    """Return a JSON-safe, stable snapshot of CPU per-symbol metrics."""
+    raw = (metrics or {}).get("per_symbol_metrics", {}) or {}
+    if not isinstance(raw, dict):
+        return {}
+    snapshot: dict[str, dict[str, float | int]] = {}
+    for symbol, values in raw.items():
+        if not isinstance(values, dict):
+            continue
+        try:
+            snapshot[str(symbol)] = {
+                "trade_count": int(values.get("trade_count", 0)),
+                "win_rate": float(values.get("win_rate", 0.0)),
+                "net_pnl": float(values.get("net_pnl", 0.0)),
+            }
+        except (TypeError, ValueError):
+            continue
+    return snapshot
+
+
+def _positive_contributor_symbols(
+    metrics: dict | None,
+    *,
+    min_trades: int | None = None,
+) -> set[str]:
+    """Return symbols with positive PnL and enough validation support."""
+    trade_floor = int(
+        min_trades
+        if min_trades is not None
+        else getattr(_cfg, "RB_MIN_VALID_TRADES", 6)
+    )
+    per_symbol = _snapshot_per_symbol_metrics(metrics)
+    return {
+        symbol
+        for symbol, values in per_symbol.items()
+        if float(values.get("net_pnl", 0.0)) > 0.0
+        and int(values.get("trade_count", 0)) >= trade_floor
+    }
+
+
+def _entry_validation_per_symbol_metrics(entry: dict) -> dict:
+    """Read validation per-symbol metrics across pool schema revisions."""
+    for key in (
+        "valid_per_symbol_metrics",
+        "val_per_symbol_metrics",
+        "validation_per_symbol_metrics",
+    ):
+        value = entry.get(key)
+        if isinstance(value, dict):
+            return value
+    return {}
+
+
+def _pool_entry_rank(entry: dict) -> float:
+    """Compute the existing deployability rank from a pool entry."""
+    from gpu_fuzzy_trader.phases.phase2_support import deployability_rank_score
+
+    objectives = entry.get("objectives", {}) or {}
+    train_metrics = {
+        "total_return_pct": float(objectives.get("total_return_pct", 0.0)),
+        "profit_factor": float(objectives.get("profit_factor", 1.0)),
+        "executed_trades": int(entry.get("executed_trades", 0)),
+        "sortino_ratio": float(objectives.get("sortino_ratio", 0.0)),
+        "max_drawdown_pct": float(objectives.get("max_drawdown_pct", 0.0)),
+    }
+    val_obj = entry.get("val_objectives")
+    val_metrics = None
+    if isinstance(val_obj, dict):
+        val_metrics = {
+            "total_return_pct": float(val_obj.get("total_return_pct", 0.0)),
+            "profit_factor": float(val_obj.get("profit_factor", 1.0)),
+            "executed_trades": int(entry.get("val_executed_trades", 0)),
+            "sortino_ratio": float(val_obj.get("sortino_ratio", 0.0)),
+            "max_drawdown_pct": float(val_obj.get("max_drawdown_pct", 0.0)),
+        }
+    return float(deployability_rank_score(train_metrics, val_metrics))
+
+
+def _reserve_symbol_pool_candidates(
+    pool: list[dict],
+    *,
+    keep_top: int,
+    coverage_report: dict[str, Any] | None = None,
+) -> list[dict]:
+    """Cap a pool while reserving admitted candidates for positive symbols.
+
+    The reservation pass runs only on candidates that already passed every
+    admission gate.  A rule can satisfy more than one symbol, but is retained
+    only once.  The remaining capacity is filled by the established global
+    deployability rank.
+    """
+    if keep_top <= 0 or len(pool) <= keep_top:
+        if coverage_report is not None:
+            coverage_report["reservations"] = {}
+            coverage_report["reservation_counts"] = {}
+            coverage_report["pool_before_reservation"] = len(pool)
+            coverage_report["pool_after_reservation"] = len(pool)
+        return list(pool)
+
+    admitted_pool = [
+        entry for entry in pool
+        if entry.get("admission_passed", True)
+        and entry.get("pool_admission_passed", True)
+    ]
+    ranked = sorted(
+        admitted_pool,
+        key=lambda entry: (
+            _pool_entry_rank(entry),
+            tuple(int(v) for v in entry.get("chromosome", [])),
+        ),
+        reverse=True,
+    )
+    min_trades = int(getattr(_cfg, "RB_MIN_VALID_TRADES", 6))
+    by_symbol: dict[str, list[dict]] = {}
+    for entry in ranked:
+        for symbol in _positive_contributor_symbols(
+            {"per_symbol_metrics": _entry_validation_per_symbol_metrics(
+                entry)},
+            min_trades=min_trades,
+        ):
+            by_symbol.setdefault(symbol, []).append(entry)
+
+    max_per_symbol = int(
+        getattr(_cfg, "PHASE2_MAX_RESERVED_RULES_PER_SYMBOL", 10)
+    )
+    reserved: list[dict] = []
+    reserved_keys: set[tuple[int, ...]] = set()
+    reservation_details: dict[str, list[list[int]]] = {}
+    # Scarcer contributors get first access to the bounded capacity.
+    symbols = sorted(by_symbol, key=lambda sym: (len(by_symbol[sym]), sym))
+    for symbol in symbols:
+        selected_for_symbol: list[list[int]] = []
+        for entry in by_symbol[symbol][:max_per_symbol]:
+            key = tuple(int(v) for v in entry.get("chromosome", []))
+            if key in reserved_keys:
+                selected_for_symbol.append(list(key))
+                continue
+            if len(reserved) >= keep_top:
+                continue
+            reserved.append(entry)
+            reserved_keys.add(key)
+            selected_for_symbol.append(list(key))
+        if selected_for_symbol:
+            reservation_details[symbol] = selected_for_symbol
+
+    for entry in ranked:
+        if len(reserved) >= keep_top:
+            break
+        key = tuple(int(v) for v in entry.get("chromosome", []))
+        if key not in reserved_keys:
+            reserved.append(entry)
+            reserved_keys.add(key)
+
+    if coverage_report is not None:
+        coverage_report["reservations"] = reservation_details
+        coverage_report["reservation_counts"] = {
+            symbol: len(chromosomes)
+            for symbol, chromosomes in reservation_details.items()
+        }
+        coverage_report["pool_before_reservation"] = len(pool)
+        coverage_report["pool_after_reservation"] = len(reserved)
+    return reserved
+
+
 def _build_pool_from_archive(
     archive: list[np.ndarray],
     feature_infos: list[dict],
@@ -1662,11 +1868,14 @@ def _build_pool_from_archive(
     engine,
     metrics_by_chrom: dict[tuple, dict] | None = None,
     val_engine=None,
+    cpu_engine=None,
+    cpu_val_engine=None,
     cv_fold_evaluator: CvFoldValEvaluator | None = None,
     holdout_n_valid_rows: int | None = None,
     train_n_rows: int | None = None,
     island_hyperparams: _cfg.IslandHyperparams | None = None,
     direction: str = "",
+    coverage_report: dict[str, Any] | None = None,
 ) -> list[dict]:
     """
     Convert a list of Pareto-front chromosomes into pool JSON entries.
@@ -1678,7 +1887,50 @@ def _build_pool_from_archive(
         "objectives": {"sortino_ratio": ..., "max_drawdown_pct": ..., "win_rate": ...},
         "executed_trades": ...
     }
+
+    ``metrics_by_chrom`` is deliberately not used when a CPU archive
+    evaluator can be built.  Evolution metrics may be GPU-only snapshots and
+    can lack current per-symbol evidence.
     """
+    report: dict[str, Any] | None = coverage_report
+    if report is not None:
+        report.clear()
+        report.update({
+            "direction": _archive_direction(direction, engine, val_engine),
+            "cpu_reevaluation": False,
+            "cpu_validation_reevaluation": False,
+            "archive_candidates": 0,
+            "cpu_evaluated": 0,
+            "cpu_validation_evaluated": 0,
+            "admitted_rules": 0,
+            "retained_rules": 0,
+            "final_eligible_rules": 0,
+            "eligible_rules": [],
+            "positive_contributors": {},
+            "rejection_counts": {},
+            "rejections": [],
+            "reservations": {},
+            "available_symbols": [],
+            "symbol_diagnostics": {},
+            "symbol_rejections": {},
+            "btc_rejections": [],
+            "rejected_btc_candidates": [],
+        })
+
+    def _reject(chromosome: np.ndarray, *reasons: str) -> None:
+        if report is None:
+            return
+        clean_reasons = [str(reason) for reason in reasons if reason]
+        if not clean_reasons:
+            clean_reasons = ["unknown"]
+        for reason in clean_reasons:
+            counts = report["rejection_counts"]
+            counts[reason] = int(counts.get(reason, 0)) + 1
+        report["rejections"].append({
+            "chromosome": np.asarray(chromosome, dtype=np.int32).ravel().tolist(),
+            "reasons": clean_reasons,
+        })
+
     # Deduplicate and filter by condition count before any expensive backtest.
     unique_chroms: list[np.ndarray] = []
     seen: set[tuple] = set()
@@ -1689,9 +1941,12 @@ def _build_pool_from_archive(
         seen.add(key)
         active = _count_active_conditions(chrom, dont_cares)
         if active < _cfg.MIN_CONDITIONS or active > _cfg.MAX_CONDITIONS:
+            _reject(chrom, "condition_count")
             continue
         unique_chroms.append(chrom)
 
+    if report is not None:
+        report["archive_candidates"] = len(unique_chroms)
     if not unique_chroms:
         return []
 
@@ -1700,31 +1955,203 @@ def _build_pool_from_archive(
         direction, len(unique_chroms), len(archive),
     )
 
+    resolved_direction = _archive_direction(direction, engine, val_engine)
+    train_cpu = cpu_engine or _build_cpu_archive_engine(
+        engine, resolved_direction)
+    valid_cpu = cpu_val_engine or _build_cpu_archive_engine(
+        val_engine, resolved_direction,
+    )
+    if report is not None:
+        valid_frame = getattr(valid_cpu, "df", None)
+        if isinstance(valid_frame, pd.DataFrame) and "symbol" in valid_frame:
+            report["available_symbols"] = sorted(
+                {str(symbol)
+                 for symbol in valid_frame["symbol"].dropna().unique()}
+            )
+        report["cpu_reevaluation"] = bool(train_cpu is not None)
+        report["cpu_validation_reevaluation"] = bool(valid_cpu is not None)
+        report["cpu_backend"] = (
+            type(train_cpu).__name__ if train_cpu is not None else None
+        )
+
+    def _record_symbol_results(
+        chromosome: np.ndarray,
+        val_metrics: dict | None,
+        *,
+        admitted: bool,
+        admission_reasons: list[str] | None = None,
+    ) -> None:
+        if report is None:
+            return
+        observed = _snapshot_per_symbol_metrics(val_metrics)
+        symbols = set(report.get("available_symbols", [])) | set(observed)
+        for symbol in sorted(symbols):
+            values = observed.get(symbol, {})
+            if not values or int(values.get("trade_count", 0)) <= 0:
+                base_reason = "no_validation_trades"
+            elif int(values.get("trade_count", 0)) < int(
+                getattr(_cfg, "RB_MIN_VALID_TRADES", 6)
+            ):
+                base_reason = "insufficient_validation_trades"
+            elif float(values.get("net_pnl", 0.0)) <= 0.0:
+                base_reason = "non_positive_validation_pnl"
+            else:
+                base_reason = "positive_validation_contributor"
+
+            reasons = [] if admitted else list(admission_reasons or [])
+            if base_reason != "positive_validation_contributor":
+                reasons.insert(0, base_reason)
+            reason = "+".join(dict.fromkeys(reasons)) or "admitted"
+            detail = report["symbol_diagnostics"].setdefault(
+                symbol,
+                {
+                    "candidate_count": 0,
+                    "positive_candidate_count": 0,
+                    "rejected_candidate_count": 0,
+                    "reason_counts": {},
+                    "rejected_chromosomes": [],
+                },
+            )
+            detail["candidate_count"] += 1
+            detail["reason_counts"][reason] = int(
+                detail["reason_counts"].get(reason, 0)
+            ) + 1
+            if admitted and base_reason == "positive_validation_contributor":
+                detail["positive_candidate_count"] += 1
+            if not admitted or base_reason != "positive_validation_contributor":
+                detail["rejected_candidate_count"] += 1
+                chromosome_list = np.asarray(
+                    chromosome, dtype=np.int32,
+                ).ravel().tolist()
+                detail["rejected_chromosomes"].append(chromosome_list)
+                rejection = report["symbol_rejections"].setdefault(symbol, [])
+                rejection.append({
+                    "chromosome": chromosome_list,
+                    "reason": reason,
+                })
+                if str(symbol).upper().startswith("BTC"):
+                    report["btc_rejections"].append({
+                        "chromosome": chromosome_list,
+                        "reason": reason,
+                    })
+        report["rejected_btc_candidates"] = report["btc_rejections"]
+
     pool: list[dict] = []
     chrom_keys = [chromosome_key(c) for c in unique_chroms]
     for chrom, key in zip(unique_chroms, chrom_keys):
-        metrics = None
-        if metrics_by_chrom is not None:
-            metrics = metrics_by_chrom.get(key)
-        if metrics is None:
+        dense_chrom = _chromosome_for_pool_export(chrom, dont_cares)
+        if train_cpu is None:
+            _reject(chrom, "cpu_reevaluation_unavailable")
+            _record_symbol_results(
+                chrom,
+                None,
+                admitted=False,
+                admission_reasons=["cpu_reevaluation_unavailable"],
+            )
+            continue
+        try:
+            metrics_list = train_cpu.simulate_rule_batch(
+                chromosomes=_chromosome_batch(dense_chrom),
+                tp=_cfg.PHASE2_TP,
+                sl=_cfg.PHASE2_SL,
+                capital_pct=_cfg.PHASE2_CAPITAL_PCT,
+            )
+            metrics = metrics_list[0] if metrics_list else None
+        except Exception as exc:
+            logger.debug("Phase 2 CPU train re-evaluation failed: %s", exc)
+            _reject(chrom, "cpu_train_simulation_error")
+            _record_symbol_results(
+                chrom,
+                None,
+                admitted=False,
+                admission_reasons=["cpu_train_simulation_error"],
+            )
+            continue
+        if not isinstance(metrics, dict):
+            _reject(chrom, "cpu_train_metrics_missing")
+            _record_symbol_results(
+                chrom,
+                None,
+                admitted=False,
+                admission_reasons=["cpu_train_metrics_missing"],
+            )
+            continue
+        if report is not None:
+            report["cpu_evaluated"] += 1
+
+        val_metrics = None
+        if val_engine is not None or cpu_val_engine is not None:
+            if valid_cpu is None:
+                _reject(chrom, "cpu_validation_reevaluation_unavailable")
+                _record_symbol_results(
+                    chrom,
+                    None,
+                    admitted=False,
+                    admission_reasons=[
+                        "cpu_validation_reevaluation_unavailable"
+                    ],
+                )
+                continue
             try:
-                metrics_list = engine.simulate_rule_batch(
-                    chromosomes=_chromosome_batch(chrom),
+                val_list = valid_cpu.simulate_rule_batch(
+                    chromosomes=_chromosome_batch(dense_chrom),
                     tp=_cfg.PHASE2_TP,
                     sl=_cfg.PHASE2_SL,
                     capital_pct=_cfg.PHASE2_CAPITAL_PCT,
                 )
-                metrics = metrics_list[0]
-            except Exception:
+                val_metrics = val_list[0] if val_list else None
+            except Exception as exc:
+                logger.debug(
+                    "Phase 2 CPU validation re-evaluation failed: %s", exc)
+                _reject(chrom, "cpu_validation_simulation_error")
+                _record_symbol_results(
+                    chrom,
+                    None,
+                    admitted=False,
+                    admission_reasons=["cpu_validation_simulation_error"],
+                )
                 continue
+            if not isinstance(val_metrics, dict):
+                _reject(chrom, "cpu_validation_metrics_missing")
+                _record_symbol_results(
+                    chrom,
+                    None,
+                    admitted=False,
+                    admission_reasons=["cpu_validation_metrics_missing"],
+                )
+                continue
+            if report is not None:
+                report["cpu_validation_evaluated"] += 1
 
-        val_metrics = _simulate_val_metrics_for_chrom(chrom, val_engine)
         if not passes_pool_admission_gate(
             metrics,
             val_metrics,
             n_valid_rows=holdout_n_valid_rows,
             island_hyperparams=island_hyperparams,
         ):
+            reasons = ["pool_admission_gate"]
+            if val_metrics is None:
+                reasons.append("validation_metrics_missing")
+            else:
+                if float(metrics.get("total_return_pct", 0.0)) <= 0.0:
+                    reasons.append("train_return_floor")
+                if float(val_metrics.get("total_return_pct", 0.0)) <= 0.0:
+                    reasons.append("validation_return_floor")
+                if float(metrics.get("profit_factor", 0.0)) < float(
+                    getattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR_ADMISSION", 1.15)
+                ):
+                    reasons.append("train_pf_floor")
+                if float(val_metrics.get("profit_factor", 0.0)) < float(
+                    getattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR_ADMISSION", 1.15)
+                ):
+                    reasons.append("validation_pf_floor")
+            _reject(chrom, *reasons)
+            _record_symbol_results(
+                chrom,
+                val_metrics,
+                admitted=False,
+                admission_reasons=reasons,
+            )
             continue
 
         if (
@@ -1747,6 +2174,13 @@ def _build_pool_from_archive(
                 n_valid_rows=cv_fold_evaluator.n_valid_rows,
                 island_hyperparams=island_hyperparams,
             ):
+                _reject(chrom, "cv_admission_gate")
+                _record_symbol_results(
+                    chrom,
+                    val_metrics,
+                    admitted=False,
+                    admission_reasons=["cv_admission_gate"],
+                )
                 continue
 
         executed = int(metrics.get("executed_trades", 0))
@@ -1756,16 +2190,37 @@ def _build_pool_from_archive(
             n_rows=train_n_rows,
             island_hyperparams=island_hyperparams,
         ):
+            _reject(chrom, "train_trade_floor")
+            _record_symbol_results(
+                chrom,
+                val_metrics,
+                admitted=False,
+                admission_reasons=["train_trade_floor"],
+            )
             continue
 
         try:
-            dense_chrom = _chromosome_for_pool_export(chrom, dont_cares)
             conditions = decode_chromosome(dense_chrom, feature_infos)
         except Exception:
+            _reject(chrom, "condition_decode_error")
+            _record_symbol_results(
+                chrom,
+                val_metrics,
+                admitted=False,
+                admission_reasons=["condition_decode_error"],
+            )
             continue
         if not conditions:
+            _reject(chrom, "empty_conditions")
+            _record_symbol_results(
+                chrom,
+                val_metrics,
+                admitted=False,
+                admission_reasons=["empty_conditions"],
+            )
             continue
 
+        train_per_symbol = _snapshot_per_symbol_metrics(metrics)
         pool_entry = {
             "chromosome": dense_chrom.tolist(),
             "conditions": conditions,
@@ -1781,7 +2236,10 @@ def _build_pool_from_archive(
             "sl": float(_cfg.PHASE2_SL),
             "capital_pct": float(_cfg.PHASE2_CAPITAL_PCT),
         }
+        pool_entry["per_symbol_metrics"] = train_per_symbol
+        pool_entry["train_per_symbol_metrics"] = train_per_symbol
         if val_metrics is not None:
+            valid_per_symbol = _snapshot_per_symbol_metrics(val_metrics)
             pool_entry["val_objectives"] = {
                 "sortino_ratio": float(val_metrics.get(
                     "sortino_ratio", val_metrics.get("total_return_pct", 0.0))),
@@ -1792,43 +2250,49 @@ def _build_pool_from_archive(
             }
             pool_entry["val_executed_trades"] = int(
                 val_metrics.get("executed_trades", 0))
+            pool_entry["val_per_symbol_metrics"] = valid_per_symbol
+            pool_entry["valid_per_symbol_metrics"] = valid_per_symbol
+            if report is not None:
+                positive_symbols = sorted(
+                    _positive_contributor_symbols(
+                        {"per_symbol_metrics": valid_per_symbol},
+                    )
+                )
+                report["eligible_rules"].append({
+                    "chromosome": dense_chrom.tolist(),
+                    "positive_validation_symbols": positive_symbols,
+                })
+                for symbol in positive_symbols:
+                    symbol_report = report["positive_contributors"].setdefault(
+                        symbol, {"candidate_count": 0, "chromosomes": []},
+                    )
+                    symbol_report["candidate_count"] += 1
+                    symbol_report["chromosomes"].append(dense_chrom.tolist())
+        elif report is not None:
+            report["eligible_rules"].append({
+                "chromosome": dense_chrom.tolist(),
+                "positive_validation_symbols": [],
+            })
         pool.append(pool_entry)
+        _record_symbol_results(chrom, val_metrics, admitted=True)
 
-    # --- Cap pool size to PHASE2_KEEP_TOP_RULES (Task 5) ---
+    # --- Cap pool size while reserving positive contributors per symbol. ---
     keep_top = int(getattr(_cfg, "PHASE2_KEEP_TOP_RULES", 140))
     if len(pool) > keep_top:
-        from gpu_fuzzy_trader.phases.phase2_support import deployability_rank_score
-
-        def _rank_key(entry: dict) -> float:
-            train_m = {
-                "total_return_pct": float(entry.get("objectives", {}).get("total_return_pct", 0.0)),
-                "profit_factor": float(entry.get("objectives", {}).get("profit_factor", 1.0)),
-                "executed_trades": int(entry.get("executed_trades", 0)),
-                "sortino_ratio": float(entry.get("objectives", {}).get("sortino_ratio", 0.0)),
-                "max_drawdown_pct": float(entry.get("objectives", {}).get("max_drawdown_pct", 0.0)),
-            }
-            val_obj = entry.get("val_objectives")
-            val_m = None
-            if isinstance(val_obj, dict):
-                val_m = {
-                    "total_return_pct": float(val_obj.get("total_return_pct", 0.0)),
-                    "profit_factor": float(val_obj.get("profit_factor", 1.0)),
-                    "executed_trades": int(entry.get("val_executed_trades", 0)),
-                    "sortino_ratio": float(val_obj.get("sortino_ratio", 0.0)),
-                    "max_drawdown_pct": float(val_obj.get("max_drawdown_pct", 0.0)),
-                }
-            return deployability_rank_score(
-                train_m,
-                val_m,
-            )
-
-        pool.sort(key=_rank_key, reverse=True)
-        pool = pool[:keep_top]
+        pool = _reserve_symbol_pool_candidates(
+            pool,
+            keep_top=keep_top,
+            coverage_report=report,
+        )
         logger.info(
-            "Phase 2 [%s] pool capped to %d rules (sorted by deployability_rank_score)",
+            "Phase 2 [%s] pool capped to %d rules with symbol reservations",
             direction, keep_top,
         )
 
+    if report is not None:
+        report["admitted_rules"] = len(pool)
+        report["retained_rules"] = len(pool)
+        report["final_eligible_rules"] = len(pool)
     return pool
 
 
@@ -2872,6 +3336,7 @@ class Rule_Pool_Generator:
         )
 
         feature_probs = build_feature_sampling_probs(self.feature_infos)
+        coverage_report: dict[str, Any] = {}
 
         progress_tag = "Phase 2 [%s] NSGA-III" % self.direction
         use_two_stage = (
@@ -2909,6 +3374,7 @@ class Rule_Pool_Generator:
             stratum_fractions=_cfg.PHASE2_INIT_STRATUM_FRACTIONS,
             island_profile=self.island_profile,
             island_hyperparams=self.island_hyperparams,
+            coverage_report=coverage_report,
         )
 
         if use_two_stage:
@@ -3005,6 +3471,45 @@ class Rule_Pool_Generator:
         # Uses unsampled validation_fitness (full calendar span). Never silent-skip
         # when ≥1 monthly window exists (degraded mode if < MIN_MONTHS).
         pool = _run_monthly_admission_on_pool(pool, self)
+        # The evolution stages and the persistent pool can contribute entries
+        # from more than one archive pass.  Rebuild the coverage summary from
+        # the final monthly-admitted population so it describes what can
+        # actually reach RB, while preserving detailed rejection diagnostics
+        # collected during CPU re-evaluation.
+        coverage_report["eligible_rules"] = []
+        coverage_report["positive_contributors"] = {}
+        for entry in pool:
+            chromosome = list(entry.get("chromosome", []))
+            positive_symbols = sorted(
+                _positive_contributor_symbols(
+                    {
+                        "per_symbol_metrics": (
+                            _entry_validation_per_symbol_metrics(entry)
+                        )
+                    }
+                )
+            )
+            coverage_report["eligible_rules"].append({
+                "chromosome": chromosome,
+                "positive_validation_symbols": positive_symbols,
+            })
+            for symbol in positive_symbols:
+                symbol_report = coverage_report[
+                    "positive_contributors"
+                ].setdefault(
+                    symbol,
+                    {"candidate_count": 0, "chromosomes": []},
+                )
+                symbol_report["candidate_count"] += 1
+                symbol_report["chromosomes"].append(chromosome)
+        coverage_report["final_eligible_rules"] = len(pool)
+        pool = _reserve_symbol_pool_candidates(
+            list(pool),
+            keep_top=int(getattr(_cfg, "PHASE2_KEEP_TOP_RULES", 140)),
+            coverage_report=coverage_report,
+        )
+        coverage_report["admitted_rules"] = len(pool)
+        coverage_report["retained_rules"] = len(pool)
 
         if self.island_id is not None:
             pool = _filter_pool_by_admission(
@@ -3031,6 +3536,18 @@ class Rule_Pool_Generator:
             json.dump(pool, fh, indent=2)
         with open(history_path, "w", encoding="utf-8") as fh:
             json.dump(history, fh, indent=2)
+
+        coverage_dir = os.path.join(
+            os.path.dirname(pool_path) or _cfg.OUTPUTS_DIR,
+            "reports",
+        )
+        coverage_path = os.path.join(
+            coverage_dir,
+            f"phase2_{self.direction}_coverage.json",
+        )
+        os.makedirs(coverage_dir, exist_ok=True)
+        with open(coverage_path, "w", encoding="utf-8") as fh:
+            json.dump(coverage_report, fh, indent=2, default=str)
 
         logger.info(
             "Phase 2 [%s]: pool_size=%d, saved to %s",

@@ -89,6 +89,114 @@ def _passes_symbol_concentration_gate(valid_m: dict) -> tuple[bool, dict[str, An
     }
 
 
+def _passes_symbol_contribution_certificate(
+    valid_m: dict | None,
+    *,
+    min_symbols: int | None = None,
+    min_trades: int | None = None,
+) -> tuple[bool, dict[str, Any]]:
+    """Require positive, supported validation PnL from multiple symbols.
+
+    Symbol presence is not enough for a balanced team: a symbol must have
+    positive net validation PnL and at least the configured validation trade
+    floor.  The helper is strict about missing evidence; callers that support
+    legacy test doubles can explicitly skip enforcement when the metrics field
+    is absent.
+    """
+    required_symbols = int(
+        min_symbols
+        if min_symbols is not None
+        else getattr(_cfg, "RB_MIN_DISTINCT_SYMBOLS", 2)
+    )
+    required_trades = int(
+        min_trades
+        if min_trades is not None
+        else getattr(_cfg, "RB_MIN_VALID_TRADES", 6)
+    )
+    per_symbol = (valid_m or {}).get("per_symbol_metrics", {}) or {}
+    available = isinstance(per_symbol, dict) and bool(per_symbol)
+    qualifying: dict[str, dict[str, float | int]] = {}
+    rejected: dict[str, str] = {}
+    if isinstance(per_symbol, dict):
+        for symbol, values in per_symbol.items():
+            if not isinstance(values, dict):
+                rejected[str(symbol)] = "invalid_metrics"
+                continue
+            symbol_name = str(symbol)
+            try:
+                trades = int(values.get("trade_count", 0))
+                net_pnl = float(values.get("net_pnl", 0.0))
+            except (TypeError, ValueError):
+                rejected[symbol_name] = "invalid_metrics"
+                continue
+            if trades < required_trades:
+                rejected[symbol_name] = "insufficient_validation_trades"
+            elif net_pnl <= 0.0:
+                rejected[symbol_name] = "non_positive_validation_pnl"
+            else:
+                qualifying[symbol_name] = {
+                    "trade_count": trades,
+                    "net_pnl": net_pnl,
+                    "win_rate": float(values.get("win_rate", 0.0)),
+                }
+    missing_count = max(0, required_symbols - len(qualifying))
+    ok = available and len(qualifying) >= required_symbols
+    reasons: list[str] = []
+    if not available:
+        reasons.append("per_symbol_validation_metrics_missing")
+    if missing_count:
+        reasons.append("insufficient_positive_validation_symbols")
+    return bool(ok), {
+        "passed": bool(ok),
+        "available": bool(available),
+        "required_symbols": required_symbols,
+        "min_validation_trades_per_symbol": required_trades,
+        "qualifying_symbols": sorted(qualifying),
+        "qualifying": qualifying,
+        "rejected_symbols": rejected,
+        "missing_symbol_count": missing_count,
+        "reasons": reasons,
+    }
+
+
+def _portfolio_selection_certificate(
+    valid_m: dict | None,
+) -> tuple[bool, dict[str, Any]]:
+    """Return the certificate used by compose, risk, and profit selection."""
+    per_symbol = (valid_m or {}).get("per_symbol_metrics", {}) or {}
+    # Actual CPUBacktestEngine metrics always include this field.  Treat an
+    # absent/empty field as unavailable for legacy mocked callers; the final
+    # pipeline still records the missing certificate and real CPU output never
+    # takes this compatibility branch.
+    if not isinstance(per_symbol, dict) or not per_symbol:
+        return True, {
+            "passed": True,
+            "available": False,
+            "reason": "per_symbol_validation_metrics_unavailable",
+            "symbol_contribution": {
+                "passed": False,
+                "available": False,
+                "reasons": ["per_symbol_validation_metrics_missing"],
+            },
+        }
+    contribution_ok, contribution = _passes_symbol_contribution_certificate(
+        valid_m,
+    )
+    concentration_ok, concentration = _passes_symbol_concentration_gate(
+        valid_m or {},
+    )
+    return contribution_ok and concentration_ok, {
+        "passed": bool(contribution_ok and concentration_ok),
+        "available": True,
+        "symbol_contribution": contribution,
+        "symbol_concentration": concentration,
+        "reasons": [
+            *([] if contribution_ok else ["symbol_contribution"]),
+            *([] if concentration_ok else ["symbol_concentration"]),
+        ],
+    }
+
+
 def _passes_tail_holdout_gate(
     risk_history: list[dict],
 ) -> tuple[bool, dict[str, Any]]:
@@ -654,7 +762,9 @@ def _prepare_scoring_frame(df: pd.DataFrame) -> pd.DataFrame:
     feature_cols = [c for c in out.columns if c not in non_features]
     out[feature_cols] = out[feature_cols].fillna(0)
     if "symbol" in out.columns:
-        out["_symbol_bar_index"] = out.groupby("symbol").cumcount()
+        out["_symbol_bar_index"] = out.groupby(
+            "symbol", observed=False,
+        ).cumcount()
     else:
         out["_symbol_bar_index"] = np.arange(len(out))
     return downcast_numeric_df(out)
@@ -701,6 +811,269 @@ def _evaluate_ruleset(train_engine: CPUBacktestEngine, valid_engine: CPUBacktest
         min_valid_trades=int(getattr(_cfg, "RB_RULESET_MIN_VALID_TRADES", getattr(_cfg, "RB_MIN_VALID_TRADES", 15))),
     )
     return train_m, valid_m, score
+
+
+def _candidate_positive_symbols(candidate: CandidateRecord) -> set[str]:
+    """Return supported positive validation symbols for one candidate."""
+    per_symbol = (candidate.valid_metrics or {}).get(
+        "per_symbol_metrics", {},
+    ) or {}
+    if isinstance(per_symbol, dict) and per_symbol:
+        return {
+            str(symbol)
+            for symbol, values in per_symbol.items()
+            if isinstance(values, dict)
+            and int(values.get("trade_count", 0)) >= int(
+                getattr(_cfg, "RB_MIN_VALID_TRADES", 6)
+            )
+            and float(values.get("net_pnl", 0.0)) > 0.0
+        }
+    return _candidate_coverage_symbols(candidate)
+
+
+def _diversification_shortlist(
+    candidates: list[CandidateRecord],
+) -> list[CandidateRecord]:
+    """Keep global leaders plus the strongest leader(s) for each symbol."""
+    global_count = int(getattr(_cfg, "RB_DIVERSIFICATION_GLOBAL_LEADERS", 6))
+    per_symbol_count = int(
+        getattr(_cfg, "RB_DIVERSIFICATION_SYMBOL_LEADERS", 2)
+    )
+    ranked = sorted(candidates, key=lambda rec: rec.score, reverse=True)
+    shortlist: list[CandidateRecord] = []
+    seen: set[tuple[str, ...]] = set()
+
+    def add(record: CandidateRecord) -> None:
+        key = _rule_key(record.rule)
+        if key not in seen:
+            seen.add(key)
+            shortlist.append(record)
+
+    for record in ranked[:max(1, global_count)]:
+        add(record)
+    symbols = sorted({
+        symbol
+        for record in ranked
+        for symbol in _candidate_positive_symbols(record)
+    })
+    for symbol in symbols:
+        leaders = [
+            record for record in ranked
+            if symbol in _candidate_positive_symbols(record)
+        ]
+        for record in leaders[:max(1, per_symbol_count)]:
+            add(record)
+    return shortlist
+
+
+def _diversification_beam(
+    candidates: list[CandidateRecord],
+    train_engine: CPUBacktestEngine,
+    valid_engine: CPUBacktestEngine,
+    direction: str,
+    *,
+    min_distinct_symbols: int,
+) -> tuple[
+    list[CandidateRecord], dict, dict, float, list[dict]
+] | None:
+    """Find a certificate-safe diversified seed with a bounded beam."""
+    if min_distinct_symbols <= 1:
+        return None
+    if not any(
+        isinstance((candidate.valid_metrics or {}).get(
+            "per_symbol_metrics"), dict)
+        and bool((candidate.valid_metrics or {}).get("per_symbol_metrics"))
+        for candidate in candidates
+    ):
+        return None
+    shortlist = _diversification_shortlist(candidates)
+    if len(shortlist) < 2:
+        return None
+    beam_width = max(
+        1, int(getattr(_cfg, "RB_DIVERSIFICATION_BEAM_WIDTH", 6))
+    )
+    n_steps = max(
+        1, int(getattr(_cfg, "RB_DIVERSIFICATION_STEPS", 4))
+    )
+    max_overlap = float(getattr(_cfg, "RB_MAX_PAIR_OVERLAP", 0.35))
+
+    states: list[dict[str, Any]] = []
+    for candidate in shortlist:
+        try:
+            train_m, valid_m, score = _evaluate_ruleset(
+                train_engine, valid_engine, [candidate.rule],
+            )
+        except Exception:
+            continue
+        if not _is_positive_good(
+            train_m,
+            valid_m,
+            min_train_trades=int(getattr(
+                _cfg, "RB_RULESET_MIN_TRAIN_TRADES",
+                getattr(_cfg, "RB_MIN_TRAIN_TRADES", 25),
+            )),
+            min_valid_trades=int(getattr(
+                _cfg, "RB_RULESET_MIN_VALID_TRADES",
+                getattr(_cfg, "RB_MIN_VALID_TRADES", 15),
+            )),
+        ):
+            continue
+        states.append({
+            "selected": [candidate],
+            "train": train_m,
+            "valid": valid_m,
+            "score": score,
+        })
+    if not states:
+        return None
+
+    def coverage(state: dict[str, Any]) -> set[str]:
+        valid = state["valid"]
+        per_symbol = (valid or {}).get("per_symbol_metrics", {}) or {}
+        if isinstance(per_symbol, dict) and per_symbol:
+            return set(
+                _passes_symbol_contribution_certificate(
+                    valid,
+                    min_symbols=0,
+                )[1].get("qualifying_symbols", [])
+            )
+        out: set[str] = set()
+        for record in state["selected"]:
+            out |= _candidate_positive_symbols(record)
+        return out
+
+    def state_sort_key(state: dict[str, Any]) -> tuple:
+        covered = coverage(state)
+        # Until the target is covered, symbol breadth has priority over raw
+        # score.  Once covered, score determines which state continues.
+        return (
+            min(len(covered), min_distinct_symbols),
+            float(state["score"]),
+            -len(state["selected"]),
+        )
+
+    # Keep the highest-scoring state for every positive symbol, then fill the
+    # remainder by score.  This prevents an ETH-only leader from crowding out
+    # every BTC seed before diversification starts.
+    seeded: list[dict[str, Any]] = []
+    used_state_keys: set[tuple[tuple[str, ...], ...]] = set()
+    symbol_universe = sorted({
+        symbol for state in states for symbol in coverage(state)
+    })
+    for symbol in symbol_universe:
+        symbol_states = [
+            state for state in states if symbol in coverage(state)
+        ]
+        if symbol_states:
+            state = max(symbol_states, key=lambda item: float(item["score"]))
+            state_key = tuple(
+                _rule_key(record.rule) for record in state["selected"]
+            )
+            if state_key not in used_state_keys:
+                used_state_keys.add(state_key)
+                seeded.append(state)
+    for state in sorted(states, key=state_sort_key, reverse=True):
+        if len(seeded) >= beam_width:
+            break
+        state_key = tuple(_rule_key(record.rule)
+                          for record in state["selected"])
+        if state_key not in used_state_keys:
+            used_state_keys.add(state_key)
+            seeded.append(state)
+    states = seeded[:beam_width]
+    all_states = list(states)
+    history: list[dict] = []
+
+    for step in range(1, n_steps + 1):
+        expanded: list[dict[str, Any]] = list(states)
+        for state in states:
+            used = {_rule_key(record.rule) for record in state["selected"]}
+            for candidate in shortlist:
+                if _rule_key(candidate.rule) in used:
+                    continue
+                if _max_overlap(candidate, state["selected"]) > max_overlap:
+                    continue
+                trial = state["selected"] + [candidate]
+                try:
+                    train_m, valid_m, score = _evaluate_ruleset(
+                        train_engine, valid_engine,
+                        [record.rule for record in trial],
+                    )
+                except Exception:
+                    continue
+                if not _is_positive_good(
+                    train_m,
+                    valid_m,
+                    min_train_trades=int(getattr(
+                        _cfg, "RB_RULESET_MIN_TRAIN_TRADES",
+                        getattr(_cfg, "RB_MIN_TRAIN_TRADES", 25),
+                    )),
+                    min_valid_trades=int(getattr(
+                        _cfg, "RB_RULESET_MIN_VALID_TRADES",
+                        getattr(_cfg, "RB_MIN_VALID_TRADES", 15),
+                    )),
+                ):
+                    continue
+                expanded.append({
+                    "selected": trial,
+                    "train": train_m,
+                    "valid": valid_m,
+                    "score": score,
+                })
+        deduped: dict[tuple[tuple[str, ...], ...], dict[str, Any]] = {}
+        for state in expanded:
+            key = tuple(
+                sorted(_rule_key(record.rule) for record in state["selected"])
+            )
+            incumbent = deduped.get(key)
+            if incumbent is None or state_sort_key(state) > state_sort_key(incumbent):
+                deduped[key] = state
+        states = sorted(
+            deduped.values(), key=state_sort_key, reverse=True,
+        )[:beam_width]
+        all_states.extend(states)
+        history.append({
+            "step": step,
+            "action": "diversification_beam",
+            "beam_width": beam_width,
+            "beam_states": len(states),
+            "max_covered_symbols": max(
+                (len(coverage(state)) for state in states),
+                default=0,
+            ),
+        })
+
+    certified: list[dict[str, Any]] = []
+    for state in all_states:
+        if not isinstance(
+            (state["valid"] or {}).get("per_symbol_metrics"),
+            dict,
+        ) or not (state["valid"] or {}).get("per_symbol_metrics"):
+            continue
+        if len(coverage(state)) < min_distinct_symbols:
+            continue
+        passed, _certificate = _portfolio_selection_certificate(
+            state["valid"],
+        )
+        if passed:
+            certified.append(state)
+    if not certified:
+        return None
+    best = max(certified, key=lambda state: float(state["score"]))
+    history.append({
+        "step": len(history) + 1,
+        "action": "diversification_certificate_passed",
+        "score": float(best["score"]),
+        "rules": len(best["selected"]),
+        "covered_symbols": sorted(coverage(best)),
+    })
+    return (
+        list(best["selected"]),
+        best["train"],
+        best["valid"],
+        float(best["score"]),
+        history,
+    )
 
 
 def _eval_cv_fold_returns(
@@ -768,7 +1141,8 @@ def _filter_good_rules(
                 continue
             # Evaluate on CV folds if available (C4)
             cv_fold_returns = _eval_cv_fold_returns(rule, fold_engines)
-            score = _score_metrics(train_m, valid_m, cv_fold_returns=cv_fold_returns)
+            score = _score_metrics(
+                train_m, valid_m, cv_fold_returns=cv_fold_returns)
             # Prefer cross-symbol coverage when building multi-symbol teams
             # (generalist mode). Explicit single-symbol filters get no bonus.
             if not bool(getattr(_cfg, "RB_REQUIRE_SYMBOL_FILTERS", False)):
@@ -779,7 +1153,8 @@ def _filter_good_rules(
                 score += float(getattr(_cfg, "RB_MULTI_SYMBOL_COVERAGE_BONUS", 8.0)) * max(
                     0, n_cov - 1
                 )
-            rec = CandidateRecord(rule=rule, train_metrics=train_m, valid_metrics=valid_m, score=score)
+            rec = CandidateRecord(
+                rule=rule, train_metrics=train_m, valid_metrics=valid_m, score=score)
             rec.mask = _mask_for(rule, train_like_df, valid_df)
             records.append(rec)
 
@@ -811,7 +1186,8 @@ def _compose_ruleset(
         raise ValueError(f"No rb-positive rules available for {direction}")
 
     selected: list[CandidateRecord] = [candidates[0]]
-    cur_train, cur_valid, cur_score = _evaluate_ruleset(train_engine, valid_engine, [selected[0].rule])
+    cur_train, cur_valid, cur_score = _evaluate_ruleset(
+        train_engine, valid_engine, [selected[0].rule])
     history = [{
         "step": 1,
         "action": "seed",
@@ -834,17 +1210,51 @@ def _compose_ruleset(
         )
     else:
         min_distinct_symbols = int(getattr(_cfg, "RB_MIN_DISTINCT_SYMBOLS", 0))
+
+    beam_result = _diversification_beam(
+        candidates,
+        train_engine,
+        valid_engine,
+        direction,
+        min_distinct_symbols=min_distinct_symbols,
+    )
+    if beam_result is not None:
+        (
+            selected,
+            cur_train,
+            cur_valid,
+            cur_score,
+            beam_history,
+        ) = beam_result
+        history = beam_history
+        logger.info(
+            "RB [%s]: diversification beam selected %d-rule certified seed "
+            "covering %s",
+            direction,
+            len(selected),
+            sorted(_passes_symbol_contribution_certificate(
+                cur_valid,
+                min_symbols=0,
+            )[1].get("qualifying_symbols", [])),
+        )
+
     max_overlap = float(getattr(_cfg, "RB_MAX_PAIR_OVERLAP", 0.22))
     min_score_improve = float(getattr(_cfg, "RB_MIN_SCORE_IMPROVEMENT", 0.05))
-    min_train_ret_improve = float(getattr(_cfg, "RB_MIN_TRAIN_RETURN_IMPROVEMENT", 0.01))
-    min_valid_ret_improve = float(getattr(_cfg, "RB_MIN_VALID_RETURN_IMPROVEMENT", 0.01))
-    require_subset_improve = bool(getattr(_cfg, "RB_RULESET_MUST_BEAT_SUBSETS", True))
+    min_train_ret_improve = float(
+        getattr(_cfg, "RB_MIN_TRAIN_RETURN_IMPROVEMENT", 0.01))
+    min_valid_ret_improve = float(
+        getattr(_cfg, "RB_MIN_VALID_RETURN_IMPROVEMENT", 0.01))
+    require_subset_improve = bool(
+        getattr(_cfg, "RB_RULESET_MUST_BEAT_SUBSETS", True))
     return_only_add = bool(getattr(_cfg, "RB_RULE_ADD_BY_RETURN_ONLY", False))
     ignore_overlap = bool(getattr(_cfg, "RB_RULE_ADD_IGNORE_OVERLAP", False))
     if return_only_add:
-        require_subset_improve = False if bool(getattr(_cfg, "RB_RULE_ADD_IGNORE_SUBSET_BEAT", True)) else require_subset_improve
-        cur_return_score = _combined_return_score(cur_train, cur_valid, prev_pf=None, prev_dd=None)
-        min_return_improve = float(getattr(_cfg, "RB_MIN_COMBINED_RETURN_IMPROVEMENT", 0.05))
+        require_subset_improve = False if bool(getattr(
+            _cfg, "RB_RULE_ADD_IGNORE_SUBSET_BEAT", True)) else require_subset_improve
+        cur_return_score = _combined_return_score(
+            cur_train, cur_valid, prev_pf=None, prev_dd=None)
+        min_return_improve = float(
+            getattr(_cfg, "RB_MIN_COMBINED_RETURN_IMPROVEMENT", 0.05))
 
     used = {_rule_key(r.rule) for r in selected}
     while len(selected) < max_rules:
@@ -873,13 +1283,15 @@ def _compose_ruleset(
                     cand_syms = _candidate_coverage_symbols(cand)
                 if len(selected_syms) < min_distinct_symbols and not (cand_syms - selected_syms):
                     continue
-            train_m, valid_m, score = _evaluate_ruleset(train_engine, valid_engine, trial_rules)
+            train_m, valid_m, score = _evaluate_ruleset(
+                train_engine, valid_engine, trial_rules)
             if return_only_add:
                 if not _positive_returns(train_m, valid_m):
                     continue
                 prev_pf = _f(cur_valid, "profit_factor", 0.0)
                 prev_dd = _f(cur_valid, "max_drawdown_pct", 0.0)
-                ret_score = _combined_return_score(train_m, valid_m, prev_pf=prev_pf, prev_dd=prev_dd)
+                ret_score = _combined_return_score(
+                    train_m, valid_m, prev_pf=prev_pf, prev_dd=prev_dd)
                 if ret_score <= cur_return_score + min_return_improve:
                     continue
                 choose_score = ret_score
@@ -887,8 +1299,10 @@ def _compose_ruleset(
                 if not _is_positive_good(
                     train_m,
                     valid_m,
-                    min_train_trades=int(getattr(_cfg, "RB_RULESET_MIN_TRAIN_TRADES", getattr(_cfg, "RB_MIN_TRAIN_TRADES", 25))),
-                    min_valid_trades=int(getattr(_cfg, "RB_RULESET_MIN_VALID_TRADES", getattr(_cfg, "RB_MIN_VALID_TRADES", 15))),
+                    min_train_trades=int(getattr(_cfg, "RB_RULESET_MIN_TRAIN_TRADES", getattr(
+                        _cfg, "RB_MIN_TRAIN_TRADES", 25))),
+                    min_valid_trades=int(getattr(_cfg, "RB_RULESET_MIN_VALID_TRADES", getattr(
+                        _cfg, "RB_MIN_VALID_TRADES", 15))),
                 ):
                     continue
                 if require_subset_improve:
@@ -899,22 +1313,31 @@ def _compose_ruleset(
                 if score <= cur_score + min_score_improve:
                     continue
                 choose_score = score
+            # Once the beam has found a certified seed, score growth must not
+            # reintroduce a symbol imbalance or discard a positive contributor.
+            cert_ok, _cert_detail = _portfolio_selection_certificate(valid_m)
+            if not cert_ok:
+                continue
             if best is None or choose_score > best[0]:
                 best = (choose_score, cand, train_m, valid_m)
 
         if best is None:
-            logger.info("RB [%s]: no further positive/improving low-overlap extension found at %d rules.", direction, len(selected))
+            logger.info(
+                "RB [%s]: no further positive/improving low-overlap extension found at %d rules.", direction, len(selected))
             break
 
         chosen_score, chosen, cur_train, cur_valid = best
         cur_score = _score_metrics(
             cur_train,
             cur_valid,
-            min_train_trades=int(getattr(_cfg, "RB_RULESET_MIN_TRAIN_TRADES", getattr(_cfg, "RB_MIN_TRAIN_TRADES", 25))),
-            min_valid_trades=int(getattr(_cfg, "RB_RULESET_MIN_VALID_TRADES", getattr(_cfg, "RB_MIN_VALID_TRADES", 15))),
+            min_train_trades=int(getattr(_cfg, "RB_RULESET_MIN_TRAIN_TRADES", getattr(
+                _cfg, "RB_MIN_TRAIN_TRADES", 25))),
+            min_valid_trades=int(getattr(_cfg, "RB_RULESET_MIN_VALID_TRADES", getattr(
+                _cfg, "RB_MIN_VALID_TRADES", 15))),
         )
         if return_only_add:
-            cur_return_score = _combined_return_score(cur_train, cur_valid, prev_pf=None, prev_dd=None)
+            cur_return_score = _combined_return_score(
+                cur_train, cur_valid, prev_pf=None, prev_dd=None)
         selected.append(chosen)
         used.add(_rule_key(chosen.rule))
         history.append({
@@ -932,7 +1355,8 @@ def _compose_ruleset(
         })
         logger.info(
             "RB [%s]: grew to %d rules | score=%.2f train_ret=%.2f%% valid_ret=%.2f%%",
-            direction, len(selected), cur_score, _f(cur_train, "total_return_pct"), _f(cur_valid, "total_return_pct"),
+            direction, len(selected), cur_score, _f(
+                cur_train, "total_return_pct"), _f(cur_valid, "total_return_pct"),
         )
 
     return selected, cur_train, cur_valid, cur_score, history
@@ -954,11 +1378,15 @@ def _make_walk_forward_fold_engines(
     if "symbol" not in val_selection_df.columns or "datetime" not in val_selection_df.columns:
         # Single-symbol or no-symbol data: treat entire df as one symbol
         symbols = ["_all"]
-        sym_data = {"_all": val_selection_df.copy().sort_values("datetime").reset_index(drop=True)}
+        sym_data = {"_all": val_selection_df.copy().sort_values(
+            "datetime").reset_index(drop=True)}
     else:
         sym_data = {}
-        df_sorted = val_selection_df.copy().sort_values(["symbol", "datetime"]).reset_index(drop=True)
-        for sym, grp in df_sorted.groupby("symbol", sort=False):
+        df_sorted = val_selection_df.copy().sort_values(
+            ["symbol", "datetime"]).reset_index(drop=True)
+        for sym, grp in df_sorted.groupby(
+            "symbol", sort=False, observed=False,
+        ):
             sym_data[str(sym)] = grp.reset_index(drop=True)
         symbols = sorted(sym_data.keys())
 
@@ -994,14 +1422,16 @@ def _make_walk_forward_fold_engines(
             else:
                 end = head_len
             if start < head_len:
-                fold_dfs[i] = pd.concat([fold_dfs[i], head_df.iloc[start:end]], ignore_index=True)
+                fold_dfs[i] = pd.concat(
+                    [fold_dfs[i], head_df.iloc[start:end]], ignore_index=True)
 
     # Build fold engines
     fold_engines: list[CPUBacktestEngine] = []
     for fold_df in fold_dfs:
         if len(fold_df) == 0:
             # Empty fold — pad with a copy of another fold's data
-            fallback = next((fd for fd in fold_dfs if len(fd) > 0), val_selection_df)
+            fallback = next(
+                (fd for fd in fold_dfs if len(fd) > 0), val_selection_df)
             fold_df = fallback.copy()
         prepared = _prepare_scoring_frame(fold_df)
         fold_engines.append(CPUBacktestEngine(prepared, {}, direction))
@@ -1030,8 +1460,10 @@ def _optimize_risk(
     tail_holdout_engine: CPUBacktestEngine | None = None,
 ) -> tuple[list[dict], dict, dict, float, list[dict]]:
     rules = [_rule_to_engine(r.rule) for r in selected]
-    cur_train, cur_valid, cur_score = _evaluate_ruleset(train_engine, valid_engine, rules)
+    cur_train, cur_valid, cur_score = _evaluate_ruleset(
+        train_engine, valid_engine, rules)
     best_rules = [dict(r) for r in rules]
+    rejected_certificates: list[dict[str, Any]] = []
 
     use_walk_forward = fold_engines is not None and len(fold_engines) > 1
 
@@ -1044,11 +1476,14 @@ def _optimize_risk(
         "train_pf": _f(cur_train, "profit_factor"),
         "valid_pf": _f(cur_valid, "profit_factor"),
     }]
+    _, initial_cert = _portfolio_selection_certificate(cur_valid)
+    hist[0]["portfolio_certificate"] = initial_cert
     if use_walk_forward:
         # Compute initial fold scores
         init_fold_scores: list[float] = []
         for fold_engine in fold_engines:
-            _, fold_m, fold_s = _evaluate_ruleset(train_engine, fold_engine, rules)
+            _, fold_m, fold_s = _evaluate_ruleset(
+                train_engine, fold_engine, rules)
             init_fold_scores.append(fold_s)
         hist[0]["fold_scores"] = init_fold_scores
         hist[0]["min_fold_score"] = min(init_fold_scores)
@@ -1065,13 +1500,16 @@ def _optimize_risk(
     max_total_cap = float(_cfg.RB_MAX_TOTAL_CAPITAL)
     passes = int(_cfg.RB_RISK_OPT_PASSES)
     min_improve = float(getattr(_cfg, "RB_RISK_MIN_IMPROVEMENT", 0.02))
-    min_train_trades = int(getattr(_cfg, "RB_RULESET_MIN_TRAIN_TRADES", getattr(_cfg, "RB_MIN_TRAIN_TRADES", 25)))
-    min_valid_trades = int(getattr(_cfg, "RB_RULESET_MIN_VALID_TRADES", getattr(_cfg, "RB_MIN_VALID_TRADES", 15)))
+    min_train_trades = int(getattr(
+        _cfg, "RB_RULESET_MIN_TRAIN_TRADES", getattr(_cfg, "RB_MIN_TRAIN_TRADES", 25)))
+    min_valid_trades = int(getattr(
+        _cfg, "RB_RULESET_MIN_VALID_TRADES", getattr(_cfg, "RB_MIN_VALID_TRADES", 15)))
 
     for p in range(1, passes + 1):
         improved = False
         for idx in range(len(best_rules)):
-            local_best: tuple[float, list[dict], dict, dict, list[float] | None] | None = None
+            local_best: tuple[float, list[dict], dict,
+                              dict, list[float] | None] | None = None
             for tp in tp_grid:
                 for sl in sl_grid:
                     for cap in cap_grid:
@@ -1081,8 +1519,22 @@ def _optimize_risk(
                         trial[idx]["capital_pct"] = cap
                         if sum(float(r.get("capital_pct", 0.0)) for r in trial) > max_total_cap:
                             continue
-                        train_m, valid_m, score = _evaluate_ruleset(train_engine, valid_engine, trial)
+                        train_m, valid_m, score = _evaluate_ruleset(
+                            train_engine, valid_engine, trial)
                         if not _is_positive_good(train_m, valid_m, min_train_trades=min_train_trades, min_valid_trades=min_valid_trades):
+                            continue
+                        cert_ok, cert_detail = _portfolio_selection_certificate(
+                            valid_m)
+                        if not cert_ok:
+                            rejected_certificates.append({
+                                "stage": "risk_grid",
+                                "pass": p,
+                                "rule_index": idx + 1,
+                                "tp": tp,
+                                "sl": sl,
+                                "capital_pct": cap,
+                                "certificate": cert_detail,
+                            })
                             continue
 
                         if use_walk_forward:
@@ -1090,7 +1542,8 @@ def _optimize_risk(
                             fold_scores_local: list[float] = []
                             all_folds_pass = True
                             for fold_engine in fold_engines:
-                                _, fold_m, fold_s = _evaluate_ruleset(train_engine, fold_engine, trial)
+                                _, fold_m, fold_s = _evaluate_ruleset(
+                                    train_engine, fold_engine, trial)
                                 if not _is_positive_good(train_m, fold_m, min_train_trades=min_train_trades, min_valid_trades=min_valid_trades):
                                     all_folds_pass = False
                                     break
@@ -1103,7 +1556,8 @@ def _optimize_risk(
                             fold_scores_local = None
 
                         if local_best is None or selection_score > local_best[0]:
-                            local_best = (selection_score, trial, train_m, valid_m, fold_scores_local)
+                            local_best = (selection_score, trial,
+                                          train_m, valid_m, fold_scores_local)
             if local_best is not None and local_best[0] > cur_score + min_improve:
                 cur_score, best_rules, cur_train, cur_valid, fold_scores_improved = local_best
                 improved = True
@@ -1127,19 +1581,24 @@ def _optimize_risk(
                 hist.append(entry)
                 logger.info(
                     "RB [%s]: risk improve pass=%d rule=%d score=%.2f train=%.2f%% valid=%.2f%%",
-                    direction, p, idx + 1, cur_score, _f(cur_train, "total_return_pct"), _f(cur_valid, "total_return_pct"),
+                    direction, p, idx +
+                    1, cur_score, _f(cur_train, "total_return_pct"), _f(
+                        cur_valid, "total_return_pct"),
                 )
         if not improved:
             break
 
     # Tail holdout scoring on final selected combo (not used during search)
     if tail_holdout_engine is not None and hist:
-        _, tail_m, _ = _evaluate_ruleset(train_engine, tail_holdout_engine, best_rules)
+        _, tail_m, _ = _evaluate_ruleset(
+            train_engine, tail_holdout_engine, best_rules)
         final_entry = hist[-1]
-        final_entry["risk_tail_holdout_return_pct"] = _f(tail_m, "total_return_pct")
+        final_entry["risk_tail_holdout_return_pct"] = _f(
+            tail_m, "total_return_pct")
         final_entry["risk_tail_holdout_pf"] = _f(tail_m, "profit_factor")
         final_entry["risk_tail_holdout_dd"] = _f(tail_m, "max_drawdown_pct")
 
+    hist[0]["rejected_portfolio_certificates"] = rejected_certificates
     return best_rules, cur_train, cur_valid, cur_score, hist
 
 
@@ -1152,9 +1611,12 @@ def _profit_amp_objective(train_m: dict, valid_m: dict) -> float:
     balance_w = float(getattr(_cfg, "RB_PROFIT_AMP_BALANCE_WEIGHT", 0.20))
     dd_w = float(getattr(_cfg, "RB_PROFIT_AMP_DD_WEIGHT", 0.02))
     health_w = float(getattr(_cfg, "RB_PROFIT_AMP_HEALTH_WEIGHT", 0.030))
-    score = train_w * train_ret + valid_w * valid_ret + balance_w * min(train_ret, valid_ret)
-    score -= dd_w * (_f(train_m, "max_drawdown_pct", 100.0) + 1.35 * _f(valid_m, "max_drawdown_pct", 100.0))
-    score -= health_w * (_evaluator_health_penalty(train_m, role="train") + _evaluator_health_penalty(valid_m, role="valid"))
+    score = train_w * train_ret + valid_w * \
+        valid_ret + balance_w * min(train_ret, valid_ret)
+    score -= dd_w * (_f(train_m, "max_drawdown_pct", 100.0) +
+                     1.35 * _f(valid_m, "max_drawdown_pct", 100.0))
+    score -= health_w * (_evaluator_health_penalty(train_m, role="train") +
+                         _evaluator_health_penalty(valid_m, role="valid"))
     return float(score)
 
 
@@ -1189,12 +1651,20 @@ def _profit_amp_certificate(
     monthly_summary: MonthlyWindowSummary | None = None,
 ) -> tuple[bool, dict]:
     """Return whether a ruleset is robust enough to enter profit-first selection."""
-    min_train_trades = int(getattr(_cfg, "RB_RULESET_MIN_TRAIN_TRADES", getattr(_cfg, "RB_MIN_TRAIN_TRADES", 25)))
-    min_valid_trades = int(getattr(_cfg, "RB_RULESET_MIN_VALID_TRADES", getattr(_cfg, "RB_MIN_VALID_TRADES", 15)))
-    ok = _is_positive_good(train_m, valid_m, min_train_trades=min_train_trades, min_valid_trades=min_valid_trades)
+    min_train_trades = int(getattr(
+        _cfg, "RB_RULESET_MIN_TRAIN_TRADES", getattr(_cfg, "RB_MIN_TRAIN_TRADES", 25)))
+    min_valid_trades = int(getattr(
+        _cfg, "RB_RULESET_MIN_VALID_TRADES", getattr(_cfg, "RB_MIN_VALID_TRADES", 15)))
+    ok = _is_positive_good(
+        train_m, valid_m, min_train_trades=min_train_trades, min_valid_trades=min_valid_trades)
     reasons: list[str] = []
     if not ok:
         reasons.append("full_sample_positive_good_failed")
+    portfolio_ok, portfolio_certificate = _portfolio_selection_certificate(
+        valid_m)
+    if not portfolio_ok:
+        ok = False
+        reasons.extend(portfolio_certificate.get("reasons", []))
     if _f(valid_m, "max_drawdown_pct", 100.0) > float(getattr(_cfg, "RB_PROFIT_AMP_MAX_VALID_DD", 12.0)):
         ok = False
         reasons.append("valid_drawdown_too_high")
@@ -1225,6 +1695,7 @@ def _profit_amp_certificate(
         "valid_drawdown_pct": _f(valid_m, "max_drawdown_pct"),
         "train_trades": _i(train_m, "executed_trades"),
         "valid_trades": _i(valid_m, "executed_trades"),
+        "portfolio_certificate": portfolio_certificate,
     }
     if monthly_summary is not None:
         detail["monthly"] = asdict(monthly_summary)
@@ -1313,6 +1784,7 @@ def _profit_amp_select_rules(
     train_like_df: pd.DataFrame,
     valid_df: pd.DataFrame,
     direction: str,
+    rejection_sink: list[dict[str, Any]] | None = None,
 ) -> tuple[list[dict], dict, dict, float, tuple[bool, dict], list[dict], list[dict]] | None:
     """Greedily select rules by marginal profit while keeping every trial certificate-safe."""
     max_rules = int(_cfg.RB_MAX_RULES)
@@ -1322,13 +1794,21 @@ def _profit_amp_select_rules(
     overlap_penalty = float(getattr(_cfg, "RB_PROFIT_AMP_OVERLAP_PENALTY", 2.5))
     ranked = sorted(candidates, key=lambda r: _profit_amp_objective(r.train_metrics, r.valid_metrics), reverse=True)
     seed_best: tuple[float, CandidateRecord, dict, dict, float, tuple[bool, dict], list[dict]] | None = None
+    rejected_certificates: list[dict[str, Any]] = []
     for cand in ranked:
         train_m, valid_m, objective, cert, monthly_rows = _profit_amp_evaluate_candidate(train_engine, valid_engine, valid_df, [cand.rule], direction, check_monthly=False)
         if not cert[0]:
+            rejected_certificates.append({
+                "stage": "profit_amplifier_seed",
+                "rule": _rule_to_engine(cand.rule),
+                "certificate": cert[1],
+            })
             continue
         if seed_best is None or objective > seed_best[0]:
             seed_best = (objective, cand, train_m, valid_m, objective, cert, monthly_rows)
     if seed_best is None:
+        if rejection_sink is not None:
+            rejection_sink.extend(rejected_certificates)
         return None
     cur_objective, seed, cur_train, cur_valid, _, cur_cert, cur_monthly_rows = seed_best
     selected = [seed]
@@ -1357,6 +1837,11 @@ def _profit_amp_select_rules(
             trial_rules = [r.rule for r in selected] + [cand.rule]
             train_m, valid_m, objective, cert, monthly_rows = _profit_amp_evaluate_candidate(train_engine, valid_engine, valid_df, trial_rules, direction, check_monthly=False)
             if not cert[0]:
+                rejected_certificates.append({
+                    "stage": "profit_amplifier_add",
+                    "rule": _rule_to_engine(cand.rule),
+                    "certificate": cert[1],
+                })
                 continue
             trial_return_sum = _f(train_m, "total_return_pct") + _f(valid_m, "total_return_pct")
             if objective <= cur_objective + min_improve:
@@ -1385,6 +1870,9 @@ def _profit_amp_select_rules(
         })
     final_rules = [r.rule for r in selected]
     cur_train, cur_valid, cur_objective, cur_cert, cur_monthly_rows = _profit_amp_evaluate_candidate(train_engine, valid_engine, valid_df, final_rules, direction, check_monthly=True)
+    history[0]["rejected_portfolio_certificates"] = rejected_certificates
+    if rejection_sink is not None:
+        rejection_sink.extend(rejected_certificates)
     return final_rules, cur_train, cur_valid, cur_objective, cur_cert, history, cur_monthly_rows
 
 
@@ -1412,6 +1900,7 @@ def _profit_amp_reallocate_capital(
     max_total_cap = float(getattr(_cfg, "RB_MAX_TOTAL_CAPITAL", 95.0))
     passes = int(getattr(_cfg, "RB_PROFIT_AMP_CAPITAL_PASSES", 2))
     min_improve = float(getattr(_cfg, "RB_PROFIT_AMP_MIN_OBJECTIVE_IMPROVEMENT", 0.10))
+    rejected_certificates: list[dict[str, Any]] = []
     for pno in range(1, passes + 1):
         improved = False
         for idx in range(len(best_rules)):
@@ -1423,6 +1912,13 @@ def _profit_amp_reallocate_capital(
                     continue
                 train_m, valid_m, objective, cert, monthly_rows = _profit_amp_evaluate_candidate(train_engine, valid_engine, valid_df, trial, direction, check_monthly=False)
                 if not cert[0]:
+                    rejected_certificates.append({
+                        "stage": "profit_amplifier_capital",
+                        "pass": pno,
+                        "rule_index": idx + 1,
+                        "capital_pct": cap,
+                        "certificate": cert[1],
+                    })
                     continue
                 if local is None or objective > local[0]:
                     local = (objective, trial, train_m, valid_m, cert, monthly_rows)
@@ -1443,6 +1939,7 @@ def _profit_amp_reallocate_capital(
         if not improved:
             break
     cur_train, cur_valid, cur_objective, cur_cert, cur_monthly_rows = _profit_amp_evaluate_candidate(train_engine, valid_engine, valid_df, best_rules, direction, check_monthly=True)
+    history[0]["rejected_portfolio_certificates"] = rejected_certificates
     return best_rules, cur_train, cur_valid, cur_objective, cur_cert, history, cur_monthly_rows
 
 
@@ -1467,20 +1964,49 @@ def _run_profit_amplifier(
         "baseline_profit_amp_objective": baseline_objective,
         "baseline_certificate": baseline_cert[1],
         "baseline_monthly_metrics": baseline_monthly_rows,
+        "rejected_portfolio_certificates": [],
         "reason": "disabled_or_not_improved",
     }
+    if not baseline_cert[0]:
+        meta["rejected_portfolio_certificates"].append({
+            "stage": "profit_amplifier_baseline",
+            "certificate": baseline_cert[1],
+        })
     if not bool(getattr(_cfg, "RB_PROFIT_AMPLIFIER_ENABLED", True)):
         meta["reason"] = "disabled"
         return baseline_rules, baseline_train, baseline_valid, baseline_objective, meta
     ranked_candidates = _profit_amp_rank_candidates(candidates, baseline_rules, train_engine, valid_engine, train_like_df, valid_df)
-    selection = _profit_amp_select_rules(ranked_candidates, train_engine, valid_engine, train_like_df, valid_df, direction)
+    selection_rejections: list[dict[str, Any]] = []
+    selection = _profit_amp_select_rules(
+        ranked_candidates,
+        train_engine,
+        valid_engine,
+        train_like_df,
+        valid_df,
+        direction,
+        rejection_sink=selection_rejections,
+    )
     if selection is None:
         meta["reason"] = "no_certified_profit_seed"
+        meta["rejected_portfolio_certificates"].extend(selection_rejections)
         return baseline_rules, baseline_train, baseline_valid, baseline_objective, meta
     amp_rules, amp_train, amp_valid, amp_objective, amp_cert, select_history, amp_monthly_rows = selection
     capital_history: list[dict] = []
     if bool(getattr(_cfg, "RB_PROFIT_AMP_CAPITAL_REALLOCATION_ENABLED", True)):
         amp_rules, amp_train, amp_valid, amp_objective, amp_cert, capital_history, amp_monthly_rows = _profit_amp_reallocate_capital(amp_rules, train_engine, valid_engine, valid_df, direction)
+    rejected_certificates: list[dict] = list(
+        meta.get("rejected_portfolio_certificates", [])
+    )
+    for row in [*select_history, *capital_history]:
+        rejected_certificates.extend(
+            row.get("rejected_portfolio_certificates", [])
+            if isinstance(row, dict) else []
+        )
+    if not amp_cert[0]:
+        rejected_certificates.append({
+            "stage": "profit_amplifier_final",
+            "certificate": amp_cert[1],
+        })
     min_improve = float(getattr(_cfg, "RB_PROFIT_AMP_MIN_OBJECTIVE_IMPROVEMENT", 0.10))
     keep_baseline = bool(getattr(_cfg, "RB_PROFIT_AMP_KEEP_BASELINE_UNLESS_BETTER", True))
     if keep_baseline and amp_objective <= baseline_objective + min_improve:
@@ -1490,6 +2016,7 @@ def _run_profit_amplifier(
             "amplified_certificate": amp_cert[1],
             "selection_history": select_history,
             "capital_history": capital_history,
+            "rejected_portfolio_certificates": rejected_certificates,
             "amplified_monthly_metrics": amp_monthly_rows,
         })
         return baseline_rules, baseline_train, baseline_valid, baseline_objective, meta
@@ -1500,6 +2027,7 @@ def _run_profit_amplifier(
             "amplified_certificate": amp_cert[1],
             "selection_history": select_history,
             "capital_history": capital_history,
+            "rejected_portfolio_certificates": rejected_certificates,
             "amplified_monthly_metrics": amp_monthly_rows,
         })
         return baseline_rules, baseline_train, baseline_valid, baseline_objective, meta
@@ -1510,6 +2038,7 @@ def _run_profit_amplifier(
         "amplified_certificate": amp_cert[1],
         "selection_history": select_history,
         "capital_history": capital_history,
+        "rejected_portfolio_certificates": rejected_certificates,
         "amplified_monthly_metrics": amp_monthly_rows,
     })
     return amp_rules, amp_train, amp_valid, amp_objective, meta
@@ -1699,6 +2228,28 @@ def run_rb_governor_pipeline(
             min_train_trades=int(getattr(_cfg, "RB_RULESET_MIN_TRAIN_TRADES", getattr(_cfg, "RB_MIN_TRAIN_TRADES", 25))),
             min_valid_trades=int(getattr(_cfg, "RB_RULESET_MIN_VALID_TRADES", getattr(_cfg, "RB_MIN_VALID_TRADES", 15))),
         )
+        portfolio_cert_ok, portfolio_certificate = _portfolio_selection_certificate(
+            opt_test,
+        )
+        rejected_portfolio_certificates: list[dict] = []
+        for risk_entry in risk_history:
+            if isinstance(risk_entry, dict):
+                risk_rejections = risk_entry.get(
+                    "rejected_portfolio_certificates", []
+                )
+                if isinstance(risk_rejections, list):
+                    rejected_portfolio_certificates.extend(risk_rejections)
+        if isinstance(profit_meta, dict):
+            profit_rejections = profit_meta.get(
+                "rejected_portfolio_certificates", []
+            )
+            if isinstance(profit_rejections, list):
+                rejected_portfolio_certificates.extend(profit_rejections)
+        if not portfolio_cert_ok:
+            rejected_portfolio_certificates.append({
+                "stage": "final_portfolio",
+                "certificate": portfolio_certificate,
+            })
 
         # ── Hard gate: minimum distinct symbols on final output ──────────────
         if bool(getattr(_cfg, "RB_REQUIRE_SYMBOL_FILTERS", False)):
@@ -1730,6 +2281,7 @@ def run_rb_governor_pipeline(
                             "reason": "insufficient_distinct_symbols",
                             "n_symbols": n_symbols,
                             "required": min_distinct,
+                            "symbol_contribution_certificate": portfolio_certificate,
                         },
                     )
                     strategy_path = out_dir / f"{direction}.json"
@@ -1748,6 +2300,8 @@ def run_rb_governor_pipeline(
                         "compose_history": compose_history,
                         "risk_history": risk_history,
                         "profit_amplifier": profit_meta,
+                        "rejected_portfolio_certificates": rejected_portfolio_certificates,
+                        "symbol_contribution_certificate": portfolio_certificate,
                         "top_single_rules": [
                             {
                                 "rank": i + 1,
@@ -1788,9 +2342,16 @@ def run_rb_governor_pipeline(
         deployable = (
             val_ret >= (ret_gate - 1e-9)
             and val_pf >= (pf_gate - 1e-9)
+            and portfolio_cert_ok
             and sym_ok
             and tail_ok
         )
+        if not portfolio_cert_ok:
+            logger.warning(
+                "RB [%s]: symbol-contribution certificate failed (%s)",
+                direction,
+                portfolio_certificate.get("reasons", []),
+            )
         if not sym_ok:
             logger.warning(
                 "RB [%s]: symbol-concentration gate failed "
@@ -1812,8 +2373,16 @@ def run_rb_governor_pipeline(
         # Hard fail-closed: concentration / tail reject clears ruleset (do not
         # persist rejected teams for Phase 5). Return/PF-only soft path below
         # still saves rules with deployment_accepted=False.
-        if not sym_ok or not tail_ok:
+        if not portfolio_cert_ok or not sym_ok or not tail_ok:
             reasons: list[str] = []
+            if not portfolio_cert_ok:
+                certificate_reasons = portfolio_certificate.get("reasons", [])
+                if "symbol_contribution" in certificate_reasons:
+                    reasons.append("symbol_contribution")
+                elif "symbol_concentration" in certificate_reasons and sym_ok:
+                    reasons.append("symbol_concentration")
+                elif not certificate_reasons:
+                    reasons.append("symbol_contribution")
             if not sym_ok:
                 reasons.append("symbol_concentration")
             if not tail_ok:
@@ -1835,6 +2404,7 @@ def run_rb_governor_pipeline(
                     },
                     "symbol_concentration_gate": sym_gate,
                     "tail_holdout_gate": tail_gate,
+                    "symbol_contribution_certificate": portfolio_certificate,
                     "rb_score": 0.0,
                     "rb_profit_amp_objective": profit_objective,
                     "rb_profit_amp_accepted": bool(profit_meta.get("accepted", False)),
@@ -1860,6 +2430,8 @@ def run_rb_governor_pipeline(
                 "compose_history": compose_history,
                 "risk_history": risk_history,
                 "profit_amplifier": profit_meta,
+                "rejected_portfolio_certificates": rejected_portfolio_certificates,
+                "symbol_contribution_certificate": portfolio_certificate,
                 "top_single_rules": [
                     {
                         "rank": i + 1,
@@ -1879,6 +2451,7 @@ def run_rb_governor_pipeline(
                 "fail_closed_reason": fail_reason,
                 "symbol_concentration_gate": sym_gate,
                 "tail_holdout_gate": tail_gate,
+                "symbol_contribution_certificate": portfolio_certificate,
                 "validation_gate": {
                     "return_pct": val_ret,
                     "profit_factor": val_pf,
@@ -1913,6 +2486,7 @@ def run_rb_governor_pipeline(
                 },
                 "symbol_concentration_gate": sym_gate,
                 "tail_holdout_gate": tail_gate,
+                "symbol_contribution_certificate": portfolio_certificate,
                 "rb_score": opt_score,
                 "rb_train_return_pct": _f(opt_train, "total_return_pct"),
                 "rb_valid_return_pct": val_ret,
@@ -1944,6 +2518,8 @@ def run_rb_governor_pipeline(
             "compose_history": compose_history,
             "risk_history": risk_history,
             "profit_amplifier": profit_meta,
+            "rejected_portfolio_certificates": rejected_portfolio_certificates,
+            "symbol_contribution_certificate": portfolio_certificate,
             "top_single_rules": [
                 {
                     "rank": i + 1,

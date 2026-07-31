@@ -201,7 +201,7 @@ def _get_spearman_folds(df: pd.DataFrame, n_folds: int) -> list[pd.DataFrame]:
     
     sort_col = "datetime" if "datetime" in df.columns else None
     per_sym_folds = {}
-    for symbol, group in df.groupby("symbol", sort=True):
+    for symbol, group in df.groupby("symbol", sort=True, observed=False):
         g = group.sort_values(sort_col) if sort_col else group
         g = g.reset_index(drop=True)
         n = len(g)

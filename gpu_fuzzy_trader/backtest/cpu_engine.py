@@ -1112,7 +1112,7 @@ class CPUBacktestEngine:
         per_symbol_metrics: dict[str, dict] = {}
         if return_logs and logs:
             logs_df_tmp = pd.DataFrame(logs)
-            for sym, grp in logs_df_tmp.groupby("Symbol"):
+            for sym, grp in logs_df_tmp.groupby("Symbol", observed=False):
                 realized = grp[grp["Realized"] == True]
                 s_trades = len(grp)
                 s_wins = int((realized["Net_PnL"] > 0).sum()) if len(

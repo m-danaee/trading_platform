@@ -181,7 +181,7 @@ def _build_fold_from_ranges(
     valid_start = min(v[0] for v in valid_ranges.values())
     valid_end = max(v[1] for v in valid_ranges.values())
 
-    for symbol, group in df.groupby("symbol", sort=True):
+    for symbol, group in df.groupby("symbol", sort=True, observed=False):
         sym = str(symbol)
         if sym not in valid_ranges:
             continue
@@ -266,7 +266,7 @@ def build_purged_walk_forward_folds(
 
     n_cv_folds = max(0, n_splits)
     per_sym: dict[str, tuple[list[tuple[int, int]], tuple[int, int]]] = {}
-    for symbol, group in df.groupby("symbol", sort=True):
+    for symbol, group in df.groupby("symbol", sort=True, observed=False):
         per_sym[str(symbol)] = _split_symbol_segments(
             group,
             holdout_fraction=holdout_fraction,
@@ -290,7 +290,7 @@ def build_purged_walk_forward_folds(
             continue
 
         min_train_bars = 0
-        for sym, group in df.groupby("symbol", sort=True):
+        for sym, group in df.groupby("symbol", sort=True, observed=False):
             n_sym = len(group)
             min_train_bars = max(min_train_bars, int(
                 math.floor(n_sym * min_train_fraction)))

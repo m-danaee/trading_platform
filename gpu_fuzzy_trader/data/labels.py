@@ -34,7 +34,7 @@ def compute_labels(raw: pd.DataFrame) -> pd.DataFrame:
     """
     raw = raw.sort_values(["symbol", "datetime"]).reset_index(drop=True)
     parts: list[pd.DataFrame] = []
-    for _sym, g in raw.groupby("symbol", sort=True):
+    for _sym, g in raw.groupby("symbol", sort=True, observed=False):
         g = g.reset_index(drop=True)
         n = len(g)
 

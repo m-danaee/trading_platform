@@ -872,7 +872,15 @@ def _should_plateau_early_stop_phase2(
     island_profile: str = "global",
 ) -> bool:
     if _cfg.scoped_island_profile(island_profile):
-        if not _cfg.island_plateau_early_stop_enabled():
+        # The caller's profile is authoritative for an island epoch.  Do not
+        # let the global PHASE2_ISLAND_MODE switch hide the island-specific
+        # test/configuration knobs when an epoch explicitly passes
+        # ``cluster`` or ``orphan``.
+        if not bool(getattr(
+            _cfg,
+            "PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED",
+            _cfg.island_plateau_early_stop_enabled(),
+        )):
             return False
     elif not _cfg.PHASE2_PLATEAU_EARLY_STOP_ENABLED:
         return False
@@ -2056,6 +2064,7 @@ def _run_nsga2_fallback(
     stage: StageLabel = None,
     island_profile: str = "global",
     island_hyperparams: _cfg.IslandHyperparams | None = None,
+    coverage_report: dict | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """NumPy NSGA-II loop when EvoX is not installed."""
     _warn_evox_unavailable()
@@ -2600,6 +2609,7 @@ def _run_nsga2_fallback(
         train_n_rows=train_n_rows,
         island_hyperparams=island_hyperparams,
         direction=log_tag or "",
+        coverage_report=coverage_report,
     )
     return pareto_pool, history
 
@@ -2630,6 +2640,7 @@ def _run_nsga3(
     island_profile: str = "global",
     island_hyperparams: _cfg.IslandHyperparams | None = None,
     refresh_objectives_on_resume: bool = False,
+    coverage_report: dict | None = None,
 ) -> tuple[list[dict], list[dict]] | tuple[list[dict], list[dict], Phase2EvolutionState]:
     """NSGA-III evolutionary loop for Phase 2 rule pool generation."""
     from gpu_fuzzy_trader.phases.phase2_rule_pool import (
@@ -3320,6 +3331,7 @@ def _run_nsga3(
         train_n_rows=train_n_rows,
         island_hyperparams=island_hyperparams,
         direction=log_tag or "",
+        coverage_report=coverage_report,
     )
     if return_state:
         return pareto_pool, history, final_state
@@ -3525,6 +3537,7 @@ def run_phase2_evolution(
     island_profile: str = "global",
     island_hyperparams: _cfg.IslandHyperparams | None = None,
     refresh_objectives_on_resume: bool = False,
+    coverage_report: dict | None = None,
 ) -> tuple[list[dict], list[dict]] | tuple[list[dict], list[dict], Phase2EvolutionState]:
     """Run Phase 2 NSGA-III evolution. Returns (pareto_pool, history) or state."""
     evo_kwargs = dict(
@@ -3542,6 +3555,7 @@ def run_phase2_evolution(
         island_profile=island_profile,
         island_hyperparams=island_hyperparams,
         refresh_objectives_on_resume=refresh_objectives_on_resume,
+        coverage_report=coverage_report,
     )
     if not _EVOX_AVAILABLE:
         logger.warning(
@@ -3574,7 +3588,7 @@ def run_phase2_evolution(
                 "feature_probs", "init_strategy", "stratum_fractions",
                 "pool_val_engine", "cv_fold_evaluator",
                 "holdout_n_valid_rows", "train_n_rows",
-                "island_profile", "island_hyperparams",
+                "island_profile", "island_hyperparams", "coverage_report",
             )},
         )
 

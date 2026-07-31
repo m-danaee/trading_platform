@@ -134,7 +134,9 @@ class Data_Loader:
         # Build a boolean mask: keep all rows except the last TAIL_DROP_ROWS
         # per symbol.  Using cumcount from the tail avoids groupby/apply
         # issues with pandas 3.x index handling.
-        tail_count = df.groupby("symbol").cumcount(ascending=False)
+        tail_count = df.groupby(
+            "symbol", observed=False,
+        ).cumcount(ascending=False)
         df = df[tail_count >= TAIL_DROP_ROWS].reset_index(drop=True)
 
         # ------------------------------------------------------------------
@@ -156,7 +158,9 @@ class Data_Loader:
         # ------------------------------------------------------------------
         # 8. Compute _symbol_bar_index per symbol (after all drops)
         # ------------------------------------------------------------------
-        df["_symbol_bar_index"] = df.groupby("symbol").cumcount()
+        df["_symbol_bar_index"] = df.groupby(
+            "symbol", observed=False,
+        ).cumcount()
 
         return downcast_numeric_df(df)
 

@@ -723,6 +723,13 @@ PHASE2_OBJECTIVE_CORR_MIN_PARETO_SIZE = 5
 # 80→150 — one-symbol islands → many moderate specialists.
 PHASE2_KEEP_TOP_RULES = 150
 
+# PHASE2_MAX_RESERVED_RULES_PER_SYMBOL — maximum number of admitted pool
+# candidates reserved for each symbol before the global deployability ranking
+# fills the remaining slots.  Reservations are evidence-based: a candidate
+# must have positive validation PnL and the RB validation trade floor for that
+# symbol, so this cannot keep a failing rule just to satisfy a quota.
+PHASE2_MAX_RESERVED_RULES_PER_SYMBOL = 10
+
 # PHASE2_REQUIRE_LAST_FOLD_POSITIVE — in the holdout pool-admission path,
 # require the (single) validation fold to have positive total return.
 #   True  → pool admission rejects rules with val_return <= 0%.
@@ -1462,6 +1469,13 @@ RB_MAX_RULES: int = 20
 #   compose must pull rules from other islands; mild condition overlap is OK
 #   if traded symbols differ. Correlated with MIN_DISTINCT + coverage fix.
 RB_MAX_PAIR_OVERLAP: float = 0.35
+
+# Bounded certificate-first diversification search.  The beam is deliberately
+# small because each state requires a full CPU train/validation simulation.
+RB_DIVERSIFICATION_BEAM_WIDTH: int = 6
+RB_DIVERSIFICATION_STEPS: int = 4
+RB_DIVERSIFICATION_GLOBAL_LEADERS: int = 6
+RB_DIVERSIFICATION_SYMBOL_LEADERS: int = 2
 
 # RB_RULESET_MUST_BEAT_SUBSETS — a candidate team must beat both its parent
 #   subset and the standalone candidate on both train and val return.

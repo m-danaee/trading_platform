@@ -44,7 +44,7 @@ def _holdout_embargo_split(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame
     train_parts: list[pd.DataFrame] = []
     validation_parts: list[pd.DataFrame] = []
 
-    for _, group in df.groupby("symbol", sort=True):
+    for _, group in df.groupby("symbol", sort=True, observed=False):
         n = len(group)
         train_end = math.floor(n * train_frac)
         embargo_end = min(train_end + embargo, n)
@@ -100,7 +100,7 @@ def _chronological_half_split(
     """Per-symbol chronological first or second half of *df*."""
     parts: list[pd.DataFrame] = []
     sort_col = "datetime" if "datetime" in df.columns else None
-    for _, group in df.groupby("symbol", sort=True):
+    for _, group in df.groupby("symbol", sort=True, observed=False):
         g = group.sort_values(sort_col) if sort_col else group
         g = g.reset_index(drop=True)
         n = len(g)

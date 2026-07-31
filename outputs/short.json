@@ -1,9 +1,0 @@
-{
-  "direction": "short",
-  "rules_set": [],
-  "risk_optimized": false,
-  "deployment_accepted": false,
-  "fail_closed": true,
-  "reason": "no_positive_good_candidates",
-  "phase2_status": {}
-}
