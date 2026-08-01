@@ -80,12 +80,15 @@ def detect_system_ram_gb() -> float | None:
 def _vram_batch_cap(vram: float | None, config_default: int) -> int:
     """VRAM-tier cap for Phase 2 GPU vmap chunk size."""
     if vram is None:
-        # Unknown GPU: avoid using the full config default (often tuned for big GPUs).
-        return min(config_default, 32)
+        # Unknown GPU: avoid using the full config default (often tuned for
+        # desktop cards with more memory).
+        return min(config_default, 64)
     if vram <= 8.0:
-        return min(config_default, 16)
+        return min(config_default, 64)
     if vram <= 12.0:
-        return min(config_default, 32)
+        # A 12-GiB RTX 3080 Ti can hold a full 256-rule chunk with the
+        # int8 feature matrix and float32 kernels used by Phase 2.
+        return min(config_default, 256)
     if vram <= 16.0:
         return min(config_default, 256)
     if vram <= 24.0:
@@ -98,9 +101,9 @@ def _ram_batch_cap(ram: float | None) -> int | None:
     if ram is None:
         return None
     if ram <= 13.0:
-        return 32
-    if ram <= 16.0:
         return 64
+    if ram <= 16.0:
+        return 256
     return None
 
 
@@ -118,16 +121,16 @@ def resolve_phase2_gpu_batch_size() -> int:
     Host RAM also spikes during JAX XLA compile at the warmup batch size.
 
     VRAM tiers (applied first):
-    - unknown: min(config, 32)
-    - <= 8 GiB: 16
-    - <= 12 GiB: 32
+    - unknown: min(config, 64)
+    - <= 8 GiB: 64
+    - <= 12 GiB: 256
     - <= 16 GiB: 256  (Colab T4 — raised from 128 to cover full pop in one chunk)
     - <= 24 GiB: 96
     - > 24 GiB: config default
 
     Host RAM tiers (final cap):
-    - <= 13 GiB: 32  (Colab free tier — avoids SIGKILL during compile)
-    - <= 16 GiB: 64
+    - <= 13 GiB: 64  (small hosts — avoids SIGKILL during compile)
+    - <= 16 GiB: 256 (desktop 12-GiB GPUs remain throughput-bound)
 
     Note: ``@lru_cache`` ensures nvidia-smi and /proc/meminfo are probed only
     once per process, not on every ``simulate_rule_batch`` call.
@@ -248,6 +251,11 @@ def _warmup_engine(
             tp=_cfg.PHASE2_TP,
             sl=_cfg.PHASE2_SL,
             capital_pct=_cfg.PHASE2_CAPITAL_PCT,
+            # Compile the GPU kernel without triggering the optional CPU
+            # per-symbol enrichment pass.  ``generation=None`` means
+            # "always enrich" in GPUBacktestEngine.
+            generation=1,
+            is_last_gen=False,
         )
     else:
         k = int(target._data_matrix_jax.shape[1])
@@ -262,6 +270,8 @@ def _warmup_engine(
             tp=_cfg.PHASE2_TP,
             sl=_cfg.PHASE2_SL,
             capital_pct=_cfg.PHASE2_CAPITAL_PCT,
+            generation=1,
+            is_last_gen=False,
         )
 
     # Force XLA compile to finish before evolution starts.

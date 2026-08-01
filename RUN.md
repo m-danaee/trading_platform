@@ -117,23 +117,3 @@ PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q tests/unit/test_config_validat
 PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q tests/unit/test_rb_fail_closed.py
 PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q tests/unit/test_optuna_search.py
 ```
-
-## Phase 2 CPU vs GPU runtime benchmark
-
-```bash
-PYTEST_LOW_MEMORY=1 RUN_BENCHMARKS=1 .venv/bin/python -m pytest -q -s tests/benchmark/test_phase2_cpu_gpu_runtime.py
-```
-
-This benchmark times Phase 2 **batch ranking** (`simulate_rule_batch`) on the
-CPU engine and the physical JAX GPU engine with the same deterministic
-synthetic data, feature modes, int32 chromosomes, and simulation constants.
-It reports engine construction, cold first-call (the GPU call includes
-JAX/XLA compilation), and synchronized steady-state runtimes, then identifies
-the lower steady-state backend. It skips when no physical JAX GPU backend is
-active and never asserts that the GPU must win — results are informational
-and hardware-dependent.
-
-Scope note: this measures only the Phase 2 chromosome batch-ranking path.
-Exact rule-set / RB / out-of-sample evaluation remains CPU-backed
-(`CPUBacktestEngine` / `evaluator_v5.ipynb`); GPU results are an approximate
-ranking model used during evolution.

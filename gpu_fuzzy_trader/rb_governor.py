@@ -163,12 +163,19 @@ def _portfolio_selection_certificate(
     valid_m: dict | None,
 ) -> tuple[bool, dict[str, Any]]:
     """Return the certificate used by compose, risk, and profit selection."""
-    per_symbol = (valid_m or {}).get("per_symbol_metrics", {}) or {}
-    # Actual CPUBacktestEngine metrics always include this field.  Treat an
-    # absent/empty field as unavailable for legacy mocked callers; the final
-    # pipeline still records the missing certificate and real CPU output never
-    # takes this compatibility branch.
-    if not isinstance(per_symbol, dict) or not per_symbol:
+    metrics = valid_m or {}
+    has_symbol_field = (
+        isinstance(metrics, dict) and "per_symbol_metrics" in metrics
+    )
+    per_symbol = metrics.get("per_symbol_metrics", {}) or {}
+    # Actual CPUBacktestEngine marks the field as available even when the
+    # result has no trades.  Keep compatibility with lightweight legacy test
+    # doubles that omit the availability marker, while treating an explicit
+    # CPU ``False``/empty result as missing certificate evidence.
+    evidence_available = bool(
+        metrics.get("per_symbol_metrics_available", False)
+    ) if isinstance(metrics, dict) else False
+    if not has_symbol_field or (not per_symbol and not evidence_available):
         return True, {
             "passed": True,
             "available": False,
@@ -208,6 +215,14 @@ def _passes_tail_holdout_gate(
     final = risk_history[-1]
     if "risk_tail_holdout_return_pct" not in final:
         return True, {"enabled": True, "available": False, "passed": True}
+    if final.get("risk_tail_holdout_error"):
+        return False, {
+            "enabled": True,
+            "available": True,
+            "passed": False,
+            "reason": "tail_holdout_evaluation_error",
+            "error": str(final["risk_tail_holdout_error"]),
+        }
     tail_ret = float(final.get("risk_tail_holdout_return_pct", 0.0))
     min_ret = float(getattr(_cfg, "RB_TAIL_HOLDOUT_MIN_RETURN_PCT", 0.0))
     ok = tail_ret >= min_ret - 1e-12
@@ -2228,6 +2243,51 @@ def run_rb_governor_pipeline(
             min_train_trades=int(getattr(_cfg, "RB_RULESET_MIN_TRAIN_TRADES", getattr(_cfg, "RB_MIN_TRAIN_TRADES", 25))),
             min_valid_trades=int(getattr(_cfg, "RB_RULESET_MIN_VALID_TRADES", getattr(_cfg, "RB_MIN_VALID_TRADES", 15))),
         )
+
+        # The risk grid deliberately never sees the tail holdout.  Profit
+        # amplification runs after that grid, so refresh the report-only tail
+        # result for the actual final ruleset before applying the hard gate.
+        # This keeps the holdout isolated from selection while preventing a
+        # post-grid capital/rule change from inheriting a stale tail result.
+        if wf_tail_engine is not None:
+            tail_entry = dict(risk_history[-1]) if risk_history else {
+                "pass": "final",
+                "rule_index": -1,
+            }
+            try:
+                _, final_tail_metrics, _ = _evaluate_ruleset(
+                    train_engine,
+                    wf_tail_engine,
+                    opt_rules,
+                )
+                tail_entry.update({
+                    "risk_tail_holdout_return_pct": _f(
+                        final_tail_metrics, "total_return_pct",
+                    ),
+                    "risk_tail_holdout_pf": _f(
+                        final_tail_metrics, "profit_factor",
+                    ),
+                    "risk_tail_holdout_dd": _f(
+                        final_tail_metrics, "max_drawdown_pct",
+                    ),
+                })
+                tail_entry.pop("risk_tail_holdout_error", None)
+            except Exception as exc:
+                # A requested tail check that cannot be evaluated is not a
+                # pass.  Use a finite sentinel so JSON remains portable and
+                # the normal tail gate fails closed.
+                tail_entry.update({
+                    "risk_tail_holdout_return_pct": -1.0e9,
+                    "risk_tail_holdout_pf": 0.0,
+                    "risk_tail_holdout_dd": 100.0,
+                    "risk_tail_holdout_error": (
+                        f"{type(exc).__name__}: {exc}"
+                    ),
+                })
+            if risk_history:
+                risk_history[-1] = tail_entry
+            else:
+                risk_history.append(tail_entry)
         portfolio_cert_ok, portfolio_certificate = _portfolio_selection_certificate(
             opt_test,
         )

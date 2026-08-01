@@ -4,6 +4,12 @@
 # Colab T4 / cloud CUDA 12:
 #   pip install -U "jax[cuda12]==0.10.1"
 #
-# Local WSL/Linux with CUDA 13 driver (e.g. RTX 4050):
-jax-cuda13-plugin==0.10.1
-jax-cuda13-pjrt==0.10.1
+# Local Linux/WSL with a CUDA 13 driver (for example, RTX 3080 Ti).
+# Keep the complete JAX CUDA stack pinned together. The NVCC wheel supplies
+# ptxas, nvlink, and libdevice so XLA can compile locally instead of relying on
+# slower driver-side PTX compilation.
+jax==0.11.0
+jaxlib==0.11.0
+jax-cuda13-plugin==0.11.0
+jax-cuda13-pjrt==0.11.0
+nvidia-cuda-nvcc==13.0.88

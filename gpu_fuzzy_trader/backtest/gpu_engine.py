@@ -999,27 +999,38 @@ class GPUBacktestEngine:
                 # signature depend on the number of viable rules in each
                 # chunk, causing repeated compilations during evolution.
                 active_mask = counts_np >= min_scan
-                masked_signals = jnp.where(
-                    jnp.asarray(active_mask, dtype=jnp.bool_)[:, None],
-                    signals_batch,
-                    False,
-                )
-                scanned_results = self._simulate_signals_batch(
-                    masked_signals,
-                    price_returns_all,
-                    capital_rate,
-                    max_exposure_rate,
-                    N,
-                )
                 fast_rows = jnp.asarray(
                     _fast_reject_result_rows(counts_np, self.initial_capital),
                     dtype=_JXF,
                 )
-                results_jax = jnp.where(
-                    jnp.asarray(active_mask, dtype=jnp.bool_)[:, None],
-                    scanned_results,
-                    fast_rows,
-                )
+                if not np.any(active_mask):
+                    # Infeasible chunks are common during evolution.  CPU
+                    # admission returns immediately for these rules; avoid
+                    # launching a full masked equity scan that cannot change
+                    # any result.  The result rows are the same hard reject
+                    # metrics used below for mixed chunks.
+                    results_jax = fast_rows
+                else:
+                    # Keep the simulator input shape fixed for mixed chunks;
+                    # compacting active rows would trigger repeated XLA
+                    # compilations as viability changes between generations.
+                    masked_signals = jnp.where(
+                        jnp.asarray(active_mask, dtype=jnp.bool_)[:, None],
+                        signals_batch,
+                        False,
+                    )
+                    scanned_results = self._simulate_signals_batch(
+                        masked_signals,
+                        price_returns_all,
+                        capital_rate,
+                        max_exposure_rate,
+                        N,
+                    )
+                    results_jax = jnp.where(
+                        jnp.asarray(active_mask, dtype=jnp.bool_)[:, None],
+                        scanned_results,
+                        fast_rows,
+                    )
             else:
                 results_jax = self._simulate_signals_batch(
                     signals_batch,

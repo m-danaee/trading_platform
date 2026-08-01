@@ -1,0 +1,1281 @@
+{
+  "version": 1,
+  "direction": "short",
+  "feature_signature": [
+    {
+      "name": "high",
+      "mode": "positive"
+    },
+    {
+      "name": "ff_relative_volume_20",
+      "mode": "positive"
+    },
+    {
+      "name": "ff_volume_oscillator_5_20",
+      "mode": "signed"
+    },
+    {
+      "name": "ff_ema_slope_8_3",
+      "mode": "signed"
+    },
+    {
+      "name": "volume",
+      "mode": "positive"
+    },
+    {
+      "name": "ff_bollinger_width_20",
+      "mode": "positive"
+    },
+    {
+      "name": "ff_ema_spread_21_55",
+      "mode": "signed"
+    },
+    {
+      "name": "ff_bollinger_width_change_3",
+      "mode": "signed"
+    },
+    {
+      "name": "ff_support_distance_20",
+      "mode": "signed"
+    },
+    {
+      "name": "ff_roc_8",
+      "mode": "signed"
+    },
+    {
+      "name": "ff_vwap_distance_20",
+      "mode": "signed"
+    },
+    {
+      "name": "ff_sma_slope_20_5",
+      "mode": "signed"
+    },
+    {
+      "name": "ff_ppo_sign",
+      "mode": "ternary"
+    },
+    {
+      "name": "ff_price_vs_ema_20",
+      "mode": "ternary"
+    },
+    {
+      "name": "ff_ema_stack_8_21_55",
+      "mode": "ternary"
+    },
+    {
+      "name": "ff_rsi_7_level",
+      "mode": "ternary"
+    },
+    {
+      "name": "ff_price_vs_ema_50",
+      "mode": "ternary"
+    },
+    {
+      "name": "ff_volume_regime_20",
+      "mode": "ternary"
+    },
+    {
+      "name": "ff_rsi_14_midline_cross",
+      "mode": "binary"
+    },
+    {
+      "name": "ff_bollinger_percent_b_20",
+      "mode": "signed"
+    }
+  ],
+  "rules": [
+    {
+      "chromosome": [
+        5,
+        5,
+        10,
+        10,
+        5,
+        5,
+        0,
+        9,
+        10,
+        10,
+        10,
+        10,
+        0,
+        3,
+        3,
+        3,
+        3,
+        2,
+        2,
+        10
+      ],
+      "conditions": [
+        "[ff_ema_spread_21_55] IS Extreme Bearish",
+        "[ff_bollinger_width_change_3] IS Extreme Bullish",
+        "[ff_ppo_sign] IS Negative (-1)",
+        "[ff_volume_regime_20] IS Positive (1)"
+      ],
+      "objectives": {
+        "sortino_ratio": 0.1271961614977594,
+        "total_return_pct": 7.662081718444824,
+        "profit_factor": 1.1694018840789795,
+        "max_drawdown_pct": 5.152608394622803,
+        "win_rate": 47.61904761904761
+      },
+      "executed_trades": 378,
+      "tp": 2.0,
+      "sl": 1.2,
+      "capital_pct": 18.0,
+      "admission_passed": true,
+      "pool_admission_passed": true,
+      "per_symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 309,
+          "win_rate": 47.249190938511326,
+          "net_pnl": 63.8206901550293
+        },
+        "ETHUSDT": {
+          "trade_count": 69,
+          "win_rate": 49.275362318840585,
+          "net_pnl": 12.802356719970703
+        }
+      },
+      "train_per_symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 309,
+          "win_rate": 47.249190938511326,
+          "net_pnl": 63.8206901550293
+        },
+        "ETHUSDT": {
+          "trade_count": 69,
+          "win_rate": 49.275362318840585,
+          "net_pnl": 12.802356719970703
+        }
+      },
+      "val_objectives": {
+        "sortino_ratio": 0.2586669709176687,
+        "total_return_pct": 5.246365070343018,
+        "profit_factor": 1.379993200302124,
+        "max_drawdown_pct": 4.646197319030762,
+        "win_rate": 50.81967213114754
+      },
+      "val_executed_trades": 122,
+      "val_per_symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 39,
+          "win_rate": 33.33333333333333,
+          "net_pnl": -20.523027420043945
+        },
+        "ETHUSDT": {
+          "trade_count": 83,
+          "win_rate": 59.036144578313255,
+          "net_pnl": 72.98645782470703
+        }
+      },
+      "valid_per_symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 39,
+          "win_rate": 33.33333333333333,
+          "net_pnl": -20.523027420043945
+        },
+        "ETHUSDT": {
+          "trade_count": 83,
+          "win_rate": 59.036144578313255,
+          "net_pnl": 72.98645782470703
+        }
+      },
+      "robust_score": -0.24491080358136422
+    },
+    {
+      "chromosome": [
+        4,
+        5,
+        10,
+        10,
+        5,
+        5,
+        10,
+        10,
+        9,
+        10,
+        10,
+        10,
+        0,
+        3,
+        1,
+        3,
+        3,
+        3,
+        0,
+        10
+      ],
+      "conditions": [
+        "[high] IS Very High",
+        "[ff_support_distance_20] IS Extreme Bullish",
+        "[ff_ppo_sign] IS Negative (-1)",
+        "[ff_ema_stack_8_21_55] IS Neutral (0)",
+        "[ff_rsi_14_midline_cross] IS Inactive (0)"
+      ],
+      "objectives": {
+        "sortino_ratio": 0.20190076039329985,
+        "total_return_pct": 2.750265598297119,
+        "profit_factor": 1.2723244428634644,
+        "max_drawdown_pct": 3.6746292114257812,
+        "win_rate": 50.617283950617285
+      },
+      "executed_trades": 81,
+      "tp": 2.0,
+      "sl": 1.2,
+      "capital_pct": 18.0,
+      "admission_passed": true,
+      "pool_admission_passed": true,
+      "per_symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 26,
+          "win_rate": 65.38461538461539,
+          "net_pnl": 28.151527404785156
+        },
+        "ETHUSDT": {
+          "trade_count": 55,
+          "win_rate": 43.63636363636363,
+          "net_pnl": -0.6485352516174316
+        }
+      },
+      "train_per_symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 26,
+          "win_rate": 65.38461538461539,
+          "net_pnl": 28.151527404785156
+        },
+        "ETHUSDT": {
+          "trade_count": 55,
+          "win_rate": 43.63636363636363,
+          "net_pnl": -0.6485352516174316
+        }
+      },
+      "val_objectives": {
+        "sortino_ratio": 1.7173433925608854,
+        "total_return_pct": 3.67734432220459,
+        "profit_factor": 5.767765998840332,
+        "max_drawdown_pct": 0.5025513172149658,
+        "win_rate": 82.35294117647058
+      },
+      "val_executed_trades": 17,
+      "val_per_symbol_metrics": {
+        "ETHUSDT": {
+          "trade_count": 17,
+          "win_rate": 82.35294117647058,
+          "net_pnl": 36.77356719970703
+        }
+      },
+      "valid_per_symbol_metrics": {
+        "ETHUSDT": {
+          "trade_count": 17,
+          "win_rate": 82.35294117647058,
+          "net_pnl": 36.77356719970703
+        }
+      },
+      "robust_score": -0.1635413845319591
+    },
+    {
+      "chromosome": [
+        5,
+        5,
+        9,
+        10,
+        5,
+        5,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        2,
+        1,
+        2,
+        3,
+        3,
+        3,
+        2,
+        10
+      ],
+      "conditions": [
+        "[ff_volume_oscillator_5_20] IS Extreme Bullish",
+        "[ff_ppo_sign] IS Positive (1)",
+        "[ff_price_vs_ema_20] IS Neutral (0)",
+        "[ff_ema_stack_8_21_55] IS Positive (1)"
+      ],
+      "objectives": {
+        "sortino_ratio": 0.12609612863269606,
+        "total_return_pct": 2.52152681350708,
+        "profit_factor": 1.1681309938430786,
+        "max_drawdown_pct": 2.0026986598968506,
+        "win_rate": 47.78761061946903
+      },
+      "executed_trades": 113,
+      "tp": 2.0,
+      "sl": 1.2,
+      "capital_pct": 18.0,
+      "admission_passed": true,
+      "pool_admission_passed": true,
+      "per_symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 39,
+          "win_rate": 46.15384615384615,
+          "net_pnl": 5.098688125610352
+        },
+        "ETHUSDT": {
+          "trade_count": 74,
+          "win_rate": 48.64864864864865,
+          "net_pnl": 20.11650276184082
+        }
+      },
+      "train_per_symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 39,
+          "win_rate": 46.15384615384615,
+          "net_pnl": 5.098688125610352
+        },
+        "ETHUSDT": {
+          "trade_count": 74,
+          "win_rate": 48.64864864864865,
+          "net_pnl": 20.11650276184082
+        }
+      },
+      "val_objectives": {
+        "sortino_ratio": 0.5592884080213354,
+        "total_return_pct": 2.9267311096191406,
+        "profit_factor": 1.8760768175125122,
+        "max_drawdown_pct": 1.5043920278549194,
+        "win_rate": 60.60606060606061
+      },
+      "val_executed_trades": 33,
+      "val_per_symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 3,
+          "win_rate": 100.0,
+          "net_pnl": 9.719999313354492
+        },
+        "ETHUSDT": {
+          "trade_count": 30,
+          "win_rate": 56.666666666666664,
+          "net_pnl": 19.547365188598633
+        }
+      },
+      "valid_per_symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 3,
+          "win_rate": 100.0,
+          "net_pnl": 9.719999313354492
+        },
+        "ETHUSDT": {
+          "trade_count": 30,
+          "win_rate": 56.666666666666664,
+          "net_pnl": 19.547365188598633
+        }
+      },
+      "robust_score": -0.08752532013157294
+    },
+    {
+      "chromosome": [
+        4,
+        5,
+        10,
+        10,
+        5,
+        5,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        0,
+        3,
+        1,
+        3,
+        0,
+        3,
+        2,
+        10
+      ],
+      "conditions": [
+        "[high] IS Very High",
+        "[ff_ppo_sign] IS Negative (-1)",
+        "[ff_ema_stack_8_21_55] IS Neutral (0)",
+        "[ff_price_vs_ema_50] IS Negative (-1)"
+      ],
+      "objectives": {
+        "sortino_ratio": 0.16344027525511054,
+        "total_return_pct": 2.522885799407959,
+        "profit_factor": 1.2172762155532837,
+        "max_drawdown_pct": 4.161275863647461,
+        "win_rate": 49.45054945054945
+      },
+      "executed_trades": 91,
+      "tp": 2.0,
+      "sl": 1.2,
+      "capital_pct": 18.0,
+      "admission_passed": true,
+      "pool_admission_passed": true,
+      "per_symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 30,
+          "win_rate": 60.0,
+          "net_pnl": 23.697826385498047
+        },
+        "ETHUSDT": {
+          "trade_count": 61,
+          "win_rate": 44.26229508196721,
+          "net_pnl": 1.5306763648986816
+        }
+      },
+      "train_per_symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 30,
+          "win_rate": 60.0,
+          "net_pnl": 23.697826385498047
+        },
+        "ETHUSDT": {
+          "trade_count": 61,
+          "win_rate": 44.26229508196721,
+          "net_pnl": 1.5306763648986816
+        }
+      },
+      "val_objectives": {
+        "sortino_ratio": 0.9024672356686119,
+        "total_return_pct": 2.570211887359619,
+        "profit_factor": 2.681027412414551,
+        "max_drawdown_pct": 0.5031071901321411,
+        "win_rate": 68.42105263157895
+      },
+      "val_executed_trades": 19,
+      "val_per_symbol_metrics": {
+        "ETHUSDT": {
+          "trade_count": 19,
+          "win_rate": 68.42105263157895,
+          "net_pnl": 25.702211380004883
+        }
+      },
+      "valid_per_symbol_metrics": {
+        "ETHUSDT": {
+          "trade_count": 19,
+          "win_rate": 68.42105263157895,
+          "net_pnl": 25.702211380004883
+        }
+      },
+      "robust_score": -0.191719765656862
+    },
+    {
+      "chromosome": [
+        5,
+        5,
+        10,
+        10,
+        4,
+        4,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        0,
+        3,
+        1,
+        3,
+        0,
+        3,
+        2,
+        10
+      ],
+      "conditions": [
+        "[volume] IS Very High",
+        "[ff_bollinger_width_20] IS Very High",
+        "[ff_ppo_sign] IS Negative (-1)",
+        "[ff_ema_stack_8_21_55] IS Neutral (0)",
+        "[ff_price_vs_ema_50] IS Negative (-1)"
+      ],
+      "objectives": {
+        "sortino_ratio": 0.16344027525511054,
+        "total_return_pct": 2.522885799407959,
+        "profit_factor": 1.2172762155532837,
+        "max_drawdown_pct": 4.161275863647461,
+        "win_rate": 49.45054945054945
+      },
+      "executed_trades": 91,
+      "tp": 2.0,
+      "sl": 1.2,
+      "capital_pct": 18.0,
+      "admission_passed": true,
+      "pool_admission_passed": true,
+      "per_symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 30,
+          "win_rate": 60.0,
+          "net_pnl": 23.697826385498047
+        },
+        "ETHUSDT": {
+          "trade_count": 61,
+          "win_rate": 44.26229508196721,
+          "net_pnl": 1.5306763648986816
+        }
+      },
+      "train_per_symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 30,
+          "win_rate": 60.0,
+          "net_pnl": 23.697826385498047
+        },
+        "ETHUSDT": {
+          "trade_count": 61,
+          "win_rate": 44.26229508196721,
+          "net_pnl": 1.5306763648986816
+        }
+      },
+      "val_objectives": {
+        "sortino_ratio": 0.9024672356686119,
+        "total_return_pct": 2.570211887359619,
+        "profit_factor": 2.681027412414551,
+        "max_drawdown_pct": 0.5031071901321411,
+        "win_rate": 68.42105263157895
+      },
+      "val_executed_trades": 19,
+      "val_per_symbol_metrics": {
+        "ETHUSDT": {
+          "trade_count": 19,
+          "win_rate": 68.42105263157895,
+          "net_pnl": 25.702211380004883
+        }
+      },
+      "valid_per_symbol_metrics": {
+        "ETHUSDT": {
+          "trade_count": 19,
+          "win_rate": 68.42105263157895,
+          "net_pnl": 25.702211380004883
+        }
+      },
+      "robust_score": -0.191719765656862
+    },
+    {
+      "chromosome": [
+        4,
+        5,
+        10,
+        10,
+        5,
+        5,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        0,
+        3,
+        1,
+        3,
+        3,
+        3,
+        0,
+        10
+      ],
+      "conditions": [
+        "[high] IS Very High",
+        "[ff_ppo_sign] IS Negative (-1)",
+        "[ff_ema_stack_8_21_55] IS Neutral (0)",
+        "[ff_rsi_14_midline_cross] IS Inactive (0)"
+      ],
+      "objectives": {
+        "sortino_ratio": 0.1438972065203051,
+        "total_return_pct": 2.1916627883911133,
+        "profit_factor": 1.1891441345214844,
+        "max_drawdown_pct": 4.1613922119140625,
+        "win_rate": 48.888888888888886
+      },
+      "executed_trades": 90,
+      "tp": 2.0,
+      "sl": 1.2,
+      "capital_pct": 18.0,
+      "admission_passed": true,
+      "pool_admission_passed": true,
+      "per_symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 30,
+          "win_rate": 60.0,
+          "net_pnl": 23.697826385498047
+        },
+        "ETHUSDT": {
+          "trade_count": 60,
+          "win_rate": 43.333333333333336,
+          "net_pnl": -1.780315637588501
+        }
+      },
+      "train_per_symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 30,
+          "win_rate": 60.0,
+          "net_pnl": 23.697826385498047
+        },
+        "ETHUSDT": {
+          "trade_count": 60,
+          "win_rate": 43.333333333333336,
+          "net_pnl": -1.780315637588501
+        }
+      },
+      "val_objectives": {
+        "sortino_ratio": 1.1556912228066503,
+        "total_return_pct": 3.012526035308838,
+        "profit_factor": 3.364657402038574,
+        "max_drawdown_pct": 0.5031071901321411,
+        "win_rate": 73.68421052631578
+      },
+      "val_executed_trades": 19,
+      "val_per_symbol_metrics": {
+        "ETHUSDT": {
+          "trade_count": 19,
+          "win_rate": 73.68421052631578,
+          "net_pnl": 30.12531280517578
+        }
+      },
+      "valid_per_symbol_metrics": {
+        "ETHUSDT": {
+          "trade_count": 19,
+          "win_rate": 73.68421052631578,
+          "net_pnl": 30.12531280517578
+        }
+      },
+      "robust_score": -0.19367988994367263
+    },
+    {
+      "chromosome": [
+        5,
+        5,
+        10,
+        10,
+        4,
+        5,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        0,
+        3,
+        1,
+        3,
+        3,
+        3,
+        2,
+        0
+      ],
+      "conditions": [
+        "[volume] IS Very High",
+        "[ff_ppo_sign] IS Negative (-1)",
+        "[ff_ema_stack_8_21_55] IS Neutral (0)",
+        "[ff_bollinger_percent_b_20] IS Extreme Bearish"
+      ],
+      "objectives": {
+        "sortino_ratio": 0.1438972065203051,
+        "total_return_pct": 2.1916627883911133,
+        "profit_factor": 1.1891441345214844,
+        "max_drawdown_pct": 4.1613922119140625,
+        "win_rate": 48.888888888888886
+      },
+      "executed_trades": 90,
+      "tp": 2.0,
+      "sl": 1.2,
+      "capital_pct": 18.0,
+      "admission_passed": true,
+      "pool_admission_passed": true,
+      "per_symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 30,
+          "win_rate": 60.0,
+          "net_pnl": 23.697826385498047
+        },
+        "ETHUSDT": {
+          "trade_count": 60,
+          "win_rate": 43.333333333333336,
+          "net_pnl": -1.780315637588501
+        }
+      },
+      "train_per_symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 30,
+          "win_rate": 60.0,
+          "net_pnl": 23.697826385498047
+        },
+        "ETHUSDT": {
+          "trade_count": 60,
+          "win_rate": 43.333333333333336,
+          "net_pnl": -1.780315637588501
+        }
+      },
+      "val_objectives": {
+        "sortino_ratio": 1.057104175776835,
+        "total_return_pct": 2.8293490409851074,
+        "profit_factor": 3.220871686935425,
+        "max_drawdown_pct": 0.5031071901321411,
+        "win_rate": 72.22222222222221
+      },
+      "val_executed_trades": 18,
+      "val_per_symbol_metrics": {
+        "ETHUSDT": {
+          "trade_count": 18,
+          "win_rate": 72.22222222222221,
+          "net_pnl": 28.29351043701172
+        }
+      },
+      "valid_per_symbol_metrics": {
+        "ETHUSDT": {
+          "trade_count": 18,
+          "win_rate": 72.22222222222221,
+          "net_pnl": 28.29351043701172
+        }
+      },
+      "robust_score": -0.19367988994367263
+    },
+    {
+      "chromosome": [
+        5,
+        5,
+        10,
+        10,
+        5,
+        4,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        0,
+        0,
+        1,
+        3,
+        3,
+        3,
+        2,
+        10
+      ],
+      "conditions": [
+        "[ff_bollinger_width_20] IS Very High",
+        "[ff_ppo_sign] IS Negative (-1)",
+        "[ff_price_vs_ema_20] IS Negative (-1)",
+        "[ff_ema_stack_8_21_55] IS Neutral (0)"
+      ],
+      "objectives": {
+        "sortino_ratio": 0.1438972065203051,
+        "total_return_pct": 2.1916627883911133,
+        "profit_factor": 1.1891441345214844,
+        "max_drawdown_pct": 4.1613922119140625,
+        "win_rate": 48.888888888888886
+      },
+      "executed_trades": 90,
+      "tp": 2.0,
+      "sl": 1.2,
+      "capital_pct": 18.0,
+      "admission_passed": true,
+      "pool_admission_passed": true,
+      "per_symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 30,
+          "win_rate": 60.0,
+          "net_pnl": 23.697826385498047
+        },
+        "ETHUSDT": {
+          "trade_count": 60,
+          "win_rate": 43.333333333333336,
+          "net_pnl": -1.780315637588501
+        }
+      },
+      "train_per_symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 30,
+          "win_rate": 60.0,
+          "net_pnl": 23.697826385498047
+        },
+        "ETHUSDT": {
+          "trade_count": 60,
+          "win_rate": 43.333333333333336,
+          "net_pnl": -1.780315637588501
+        }
+      },
+      "val_objectives": {
+        "sortino_ratio": 1.057104175776835,
+        "total_return_pct": 2.8293490409851074,
+        "profit_factor": 3.220871686935425,
+        "max_drawdown_pct": 0.5031071901321411,
+        "win_rate": 72.22222222222221
+      },
+      "val_executed_trades": 18,
+      "val_per_symbol_metrics": {
+        "ETHUSDT": {
+          "trade_count": 18,
+          "win_rate": 72.22222222222221,
+          "net_pnl": 28.29351043701172
+        }
+      },
+      "valid_per_symbol_metrics": {
+        "ETHUSDT": {
+          "trade_count": 18,
+          "win_rate": 72.22222222222221,
+          "net_pnl": 28.29351043701172
+        }
+      },
+      "robust_score": -0.19367988994367263
+    },
+    {
+      "chromosome": [
+        4,
+        5,
+        10,
+        10,
+        5,
+        5,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        0,
+        3,
+        1,
+        3,
+        3,
+        3,
+        2,
+        0
+      ],
+      "conditions": [
+        "[high] IS Very High",
+        "[ff_ppo_sign] IS Negative (-1)",
+        "[ff_ema_stack_8_21_55] IS Neutral (0)",
+        "[ff_bollinger_percent_b_20] IS Extreme Bearish"
+      ],
+      "objectives": {
+        "sortino_ratio": 0.1438972065203051,
+        "total_return_pct": 2.1916627883911133,
+        "profit_factor": 1.1891441345214844,
+        "max_drawdown_pct": 4.1613922119140625,
+        "win_rate": 48.888888888888886
+      },
+      "executed_trades": 90,
+      "tp": 2.0,
+      "sl": 1.2,
+      "capital_pct": 18.0,
+      "admission_passed": true,
+      "pool_admission_passed": true,
+      "per_symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 30,
+          "win_rate": 60.0,
+          "net_pnl": 23.697826385498047
+        },
+        "ETHUSDT": {
+          "trade_count": 60,
+          "win_rate": 43.333333333333336,
+          "net_pnl": -1.780315637588501
+        }
+      },
+      "train_per_symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 30,
+          "win_rate": 60.0,
+          "net_pnl": 23.697826385498047
+        },
+        "ETHUSDT": {
+          "trade_count": 60,
+          "win_rate": 43.333333333333336,
+          "net_pnl": -1.780315637588501
+        }
+      },
+      "val_objectives": {
+        "sortino_ratio": 1.057104175776835,
+        "total_return_pct": 2.8293490409851074,
+        "profit_factor": 3.220871686935425,
+        "max_drawdown_pct": 0.5031071901321411,
+        "win_rate": 72.22222222222221
+      },
+      "val_executed_trades": 18,
+      "val_per_symbol_metrics": {
+        "ETHUSDT": {
+          "trade_count": 18,
+          "win_rate": 72.22222222222221,
+          "net_pnl": 28.29351043701172
+        }
+      },
+      "valid_per_symbol_metrics": {
+        "ETHUSDT": {
+          "trade_count": 18,
+          "win_rate": 72.22222222222221,
+          "net_pnl": 28.29351043701172
+        }
+      },
+      "robust_score": -0.19367988994367263
+    },
+    {
+      "chromosome": [
+        5,
+        5,
+        10,
+        10,
+        5,
+        4,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        0,
+        3,
+        1,
+        3,
+        3,
+        3,
+        2,
+        0
+      ],
+      "conditions": [
+        "[ff_bollinger_width_20] IS Very High",
+        "[ff_ppo_sign] IS Negative (-1)",
+        "[ff_ema_stack_8_21_55] IS Neutral (0)",
+        "[ff_bollinger_percent_b_20] IS Extreme Bearish"
+      ],
+      "objectives": {
+        "sortino_ratio": 0.1438972065203051,
+        "total_return_pct": 2.1916627883911133,
+        "profit_factor": 1.1891441345214844,
+        "max_drawdown_pct": 4.1613922119140625,
+        "win_rate": 48.888888888888886
+      },
+      "executed_trades": 90,
+      "tp": 2.0,
+      "sl": 1.2,
+      "capital_pct": 18.0,
+      "admission_passed": true,
+      "pool_admission_passed": true,
+      "per_symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 30,
+          "win_rate": 60.0,
+          "net_pnl": 23.697826385498047
+        },
+        "ETHUSDT": {
+          "trade_count": 60,
+          "win_rate": 43.333333333333336,
+          "net_pnl": -1.780315637588501
+        }
+      },
+      "train_per_symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 30,
+          "win_rate": 60.0,
+          "net_pnl": 23.697826385498047
+        },
+        "ETHUSDT": {
+          "trade_count": 60,
+          "win_rate": 43.333333333333336,
+          "net_pnl": -1.780315637588501
+        }
+      },
+      "val_objectives": {
+        "sortino_ratio": 1.057104175776835,
+        "total_return_pct": 2.8293490409851074,
+        "profit_factor": 3.220871686935425,
+        "max_drawdown_pct": 0.5031071901321411,
+        "win_rate": 72.22222222222221
+      },
+      "val_executed_trades": 18,
+      "val_per_symbol_metrics": {
+        "ETHUSDT": {
+          "trade_count": 18,
+          "win_rate": 72.22222222222221,
+          "net_pnl": 28.29351043701172
+        }
+      },
+      "valid_per_symbol_metrics": {
+        "ETHUSDT": {
+          "trade_count": 18,
+          "win_rate": 72.22222222222221,
+          "net_pnl": 28.29351043701172
+        }
+      },
+      "robust_score": -0.19367988994367263
+    },
+    {
+      "chromosome": [
+        5,
+        5,
+        10,
+        10,
+        5,
+        4,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        0,
+        0,
+        1,
+        3,
+        0,
+        3,
+        2,
+        10
+      ],
+      "conditions": [
+        "[ff_bollinger_width_20] IS Very High",
+        "[ff_ppo_sign] IS Negative (-1)",
+        "[ff_price_vs_ema_20] IS Negative (-1)",
+        "[ff_ema_stack_8_21_55] IS Neutral (0)",
+        "[ff_price_vs_ema_50] IS Negative (-1)"
+      ],
+      "objectives": {
+        "sortino_ratio": 0.1438972065203051,
+        "total_return_pct": 2.1916627883911133,
+        "profit_factor": 1.1891441345214844,
+        "max_drawdown_pct": 4.1613922119140625,
+        "win_rate": 48.888888888888886
+      },
+      "executed_trades": 90,
+      "tp": 2.0,
+      "sl": 1.2,
+      "capital_pct": 18.0,
+      "admission_passed": true,
+      "pool_admission_passed": true,
+      "per_symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 30,
+          "win_rate": 60.0,
+          "net_pnl": 23.697826385498047
+        },
+        "ETHUSDT": {
+          "trade_count": 60,
+          "win_rate": 43.333333333333336,
+          "net_pnl": -1.780315637588501
+        }
+      },
+      "train_per_symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 30,
+          "win_rate": 60.0,
+          "net_pnl": 23.697826385498047
+        },
+        "ETHUSDT": {
+          "trade_count": 60,
+          "win_rate": 43.333333333333336,
+          "net_pnl": -1.780315637588501
+        }
+      },
+      "val_objectives": {
+        "sortino_ratio": 1.057104175776835,
+        "total_return_pct": 2.8293490409851074,
+        "profit_factor": 3.220871686935425,
+        "max_drawdown_pct": 0.5031071901321411,
+        "win_rate": 72.22222222222221
+      },
+      "val_executed_trades": 18,
+      "val_per_symbol_metrics": {
+        "ETHUSDT": {
+          "trade_count": 18,
+          "win_rate": 72.22222222222221,
+          "net_pnl": 28.29351043701172
+        }
+      },
+      "valid_per_symbol_metrics": {
+        "ETHUSDT": {
+          "trade_count": 18,
+          "win_rate": 72.22222222222221,
+          "net_pnl": 28.29351043701172
+        }
+      },
+      "robust_score": -0.19367988994367263
+    },
+    {
+      "chromosome": [
+        5,
+        4,
+        10,
+        10,
+        5,
+        5,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        0,
+        3,
+        1,
+        3,
+        3,
+        3,
+        0,
+        10
+      ],
+      "conditions": [
+        "[ff_relative_volume_20] IS Very High",
+        "[ff_ppo_sign] IS Negative (-1)",
+        "[ff_ema_stack_8_21_55] IS Neutral (0)",
+        "[ff_rsi_14_midline_cross] IS Inactive (0)"
+      ],
+      "objectives": {
+        "sortino_ratio": 0.1438972065203051,
+        "total_return_pct": 2.1916627883911133,
+        "profit_factor": 1.1891441345214844,
+        "max_drawdown_pct": 4.1613922119140625,
+        "win_rate": 48.888888888888886
+      },
+      "executed_trades": 90,
+      "tp": 2.0,
+      "sl": 1.2,
+      "capital_pct": 18.0,
+      "admission_passed": true,
+      "pool_admission_passed": true,
+      "per_symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 30,
+          "win_rate": 60.0,
+          "net_pnl": 23.697826385498047
+        },
+        "ETHUSDT": {
+          "trade_count": 60,
+          "win_rate": 43.333333333333336,
+          "net_pnl": -1.780315637588501
+        }
+      },
+      "train_per_symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 30,
+          "win_rate": 60.0,
+          "net_pnl": 23.697826385498047
+        },
+        "ETHUSDT": {
+          "trade_count": 60,
+          "win_rate": 43.333333333333336,
+          "net_pnl": -1.780315637588501
+        }
+      },
+      "val_objectives": {
+        "sortino_ratio": 1.1556912228066503,
+        "total_return_pct": 3.012526035308838,
+        "profit_factor": 3.364657402038574,
+        "max_drawdown_pct": 0.5031071901321411,
+        "win_rate": 73.68421052631578
+      },
+      "val_executed_trades": 19,
+      "val_per_symbol_metrics": {
+        "ETHUSDT": {
+          "trade_count": 19,
+          "win_rate": 73.68421052631578,
+          "net_pnl": 30.12531280517578
+        }
+      },
+      "valid_per_symbol_metrics": {
+        "ETHUSDT": {
+          "trade_count": 19,
+          "win_rate": 73.68421052631578,
+          "net_pnl": 30.12531280517578
+        }
+      },
+      "robust_score": -0.19367988994367263
+    },
+    {
+      "chromosome": [
+        5,
+        5,
+        10,
+        10,
+        5,
+        4,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        0,
+        3,
+        1,
+        3,
+        3,
+        3,
+        0,
+        10
+      ],
+      "conditions": [
+        "[ff_bollinger_width_20] IS Very High",
+        "[ff_ppo_sign] IS Negative (-1)",
+        "[ff_ema_stack_8_21_55] IS Neutral (0)",
+        "[ff_rsi_14_midline_cross] IS Inactive (0)"
+      ],
+      "objectives": {
+        "sortino_ratio": 0.1438972065203051,
+        "total_return_pct": 2.1916627883911133,
+        "profit_factor": 1.1891441345214844,
+        "max_drawdown_pct": 4.1613922119140625,
+        "win_rate": 48.888888888888886
+      },
+      "executed_trades": 90,
+      "tp": 2.0,
+      "sl": 1.2,
+      "capital_pct": 18.0,
+      "admission_passed": true,
+      "pool_admission_passed": true,
+      "per_symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 30,
+          "win_rate": 60.0,
+          "net_pnl": 23.697826385498047
+        },
+        "ETHUSDT": {
+          "trade_count": 60,
+          "win_rate": 43.333333333333336,
+          "net_pnl": -1.780315637588501
+        }
+      },
+      "train_per_symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 30,
+          "win_rate": 60.0,
+          "net_pnl": 23.697826385498047
+        },
+        "ETHUSDT": {
+          "trade_count": 60,
+          "win_rate": 43.333333333333336,
+          "net_pnl": -1.780315637588501
+        }
+      },
+      "val_objectives": {
+        "sortino_ratio": 1.1556912228066503,
+        "total_return_pct": 3.012526035308838,
+        "profit_factor": 3.364657402038574,
+        "max_drawdown_pct": 0.5031071901321411,
+        "win_rate": 73.68421052631578
+      },
+      "val_executed_trades": 19,
+      "val_per_symbol_metrics": {
+        "ETHUSDT": {
+          "trade_count": 19,
+          "win_rate": 73.68421052631578,
+          "net_pnl": 30.12531280517578
+        }
+      },
+      "valid_per_symbol_metrics": {
+        "ETHUSDT": {
+          "trade_count": 19,
+          "win_rate": 73.68421052631578,
+          "net_pnl": 30.12531280517578
+        }
+      },
+      "robust_score": -0.19367988994367263
+    }
+  ]
+}

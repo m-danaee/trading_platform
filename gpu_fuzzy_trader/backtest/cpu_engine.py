@@ -890,6 +890,7 @@ class CPUBacktestEngine:
             "max_simultaneous_positions": 0,
             "max_total_open_exposure": 0.0,
             "per_symbol_metrics": {},
+            "per_symbol_metrics_available": True,
         }
 
         if len(entries) == 0:
@@ -1156,6 +1157,7 @@ class CPUBacktestEngine:
             "max_simultaneous_positions": max_simultaneous_positions,
             "max_total_open_exposure": max_total_open_exposure,
             "per_symbol_metrics": per_symbol_metrics,
+            "per_symbol_metrics_available": True,
             "sum_positive_trade_pnl": float(stats.get("gross_profit_sum", 0.0)),
             "sum_negative_trade_pnl": float(stats.get("gross_loss_sum", 0.0)),
             "max_single_trade_pnl": float(stats.get("max_single_trade_pnl", 0.0)),
@@ -1195,7 +1197,13 @@ class CPUBacktestEngine:
             B = chromosomes.shape[0]
         if not hasattr(self, "_data_matrix"):
             from gpu_fuzzy_trader.backtest.gpu_engine import _build_data_matrix, _MODE_NUM_CLASSES
-            self._feature_names = sorted(list(self.feature_modes.keys()))
+            # Chromosome positions are defined by the ordered feature list
+            # supplied by Phase 1.  Preserve that order here so the exact CPU
+            # admission evaluator interprets a dense chromosome identically
+            # to GPUBacktestEngine and decode_chromosome.  Alphabetizing the
+            # keys silently remaps genes to different columns whenever Phase
+            # 1 ranks features in a non-alphabetical order.
+            self._feature_names = list(self.feature_modes.keys())
             self._data_matrix = _build_data_matrix(self.df, self._feature_names, self.feature_modes)
             self._dont_cares = np.array(
                 [_MODE_NUM_CLASSES[self.feature_modes[f]] for f in self._feature_names],

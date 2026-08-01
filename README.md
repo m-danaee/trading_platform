@@ -47,7 +47,7 @@ Install the matching JAX GPU stack separately on CUDA hosts:
 # Colab T4 / CUDA 12
 .venv/bin/pip install -U "jax[cuda12]==0.10.1"
 
-# Local WSL/Linux with CUDA 13 (e.g. RTX 4050)
+# Local WSL/Linux with CUDA 13 (e.g. RTX 3080 Ti)
 .venv/bin/pip install -r requirements-gpu.txt
 ```
 

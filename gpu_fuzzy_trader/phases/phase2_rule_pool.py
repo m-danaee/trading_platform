@@ -1788,19 +1788,28 @@ def _reserve_symbol_pool_candidates(
     only once.  The remaining capacity is filled by the established global
     deployability rank.
     """
-    if keep_top <= 0 or len(pool) <= keep_top:
-        if coverage_report is not None:
-            coverage_report["reservations"] = {}
-            coverage_report["reservation_counts"] = {}
-            coverage_report["pool_before_reservation"] = len(pool)
-            coverage_report["pool_after_reservation"] = len(pool)
-        return list(pool)
-
     admitted_pool = [
         entry for entry in pool
         if entry.get("admission_passed", True)
         and entry.get("pool_admission_passed", True)
     ]
+    if keep_top <= 0:
+        if coverage_report is not None:
+            coverage_report["reservations"] = {}
+            coverage_report["reservation_counts"] = {}
+            coverage_report["pool_before_reservation"] = len(pool)
+            coverage_report["pool_after_reservation"] = 0
+        return []
+    if len(pool) <= keep_top:
+        if coverage_report is not None:
+            coverage_report["reservations"] = {}
+            coverage_report["reservation_counts"] = {}
+            coverage_report["pool_before_reservation"] = len(pool)
+            coverage_report["pool_after_reservation"] = len(admitted_pool)
+        # The helper is also used after merging persisted pools.  Do not let
+        # a stale/rejected row survive merely because the cap is not tight.
+        return list(admitted_pool)
+
     ranked = sorted(
         admitted_pool,
         key=lambda entry: (
@@ -2036,19 +2045,36 @@ def _build_pool_from_archive(
                     })
         report["rejected_btc_candidates"] = report["btc_rejections"]
 
-    pool: list[dict] = []
-    chrom_keys = [chromosome_key(c) for c in unique_chroms]
-    for chrom, key in zip(unique_chroms, chrom_keys):
-        dense_chrom = _chromosome_for_pool_export(chrom, dont_cares)
-        if train_cpu is None:
-            _reject(chrom, "cpu_reevaluation_unavailable")
+    # Final archive admission is deliberately fail-closed when either exact
+    # CPU split is unavailable.  Cached GPU rows can be useful for evolution,
+    # but they are not an admission certificate and may not contain symbol-
+    # level validation evidence.  In particular, do not let the relaxed
+    # ``PHASE2_POOL_REQUIRE_POSITIVE_SPLITS`` compatibility flag turn a
+    # missing validation re-evaluation into an eligible pool entry.
+    if train_cpu is None or valid_cpu is None:
+        missing_reason = (
+            "cpu_reevaluation_unavailable"
+            if train_cpu is None
+            else "cpu_validation_reevaluation_unavailable"
+        )
+        logger.error(
+            "Phase 2 [%s] archive admission failed closed: %s",
+            direction,
+            missing_reason,
+        )
+        for chrom in unique_chroms:
+            _reject(chrom, missing_reason)
             _record_symbol_results(
                 chrom,
                 None,
                 admitted=False,
-                admission_reasons=["cpu_reevaluation_unavailable"],
+                admission_reasons=[missing_reason],
             )
-            continue
+        return []
+
+    pool: list[dict] = []
+    for chrom in unique_chroms:
+        dense_chrom = _chromosome_for_pool_export(chrom, dont_cares)
         try:
             metrics_list = train_cpu.simulate_rule_batch(
                 chromosomes=_chromosome_batch(dense_chrom),
@@ -2079,49 +2105,36 @@ def _build_pool_from_archive(
         if report is not None:
             report["cpu_evaluated"] += 1
 
-        val_metrics = None
-        if val_engine is not None or cpu_val_engine is not None:
-            if valid_cpu is None:
-                _reject(chrom, "cpu_validation_reevaluation_unavailable")
-                _record_symbol_results(
-                    chrom,
-                    None,
-                    admitted=False,
-                    admission_reasons=[
-                        "cpu_validation_reevaluation_unavailable"
-                    ],
-                )
-                continue
-            try:
-                val_list = valid_cpu.simulate_rule_batch(
-                    chromosomes=_chromosome_batch(dense_chrom),
-                    tp=_cfg.PHASE2_TP,
-                    sl=_cfg.PHASE2_SL,
-                    capital_pct=_cfg.PHASE2_CAPITAL_PCT,
-                )
-                val_metrics = val_list[0] if val_list else None
-            except Exception as exc:
-                logger.debug(
-                    "Phase 2 CPU validation re-evaluation failed: %s", exc)
-                _reject(chrom, "cpu_validation_simulation_error")
-                _record_symbol_results(
-                    chrom,
-                    None,
-                    admitted=False,
-                    admission_reasons=["cpu_validation_simulation_error"],
-                )
-                continue
-            if not isinstance(val_metrics, dict):
-                _reject(chrom, "cpu_validation_metrics_missing")
-                _record_symbol_results(
-                    chrom,
-                    None,
-                    admitted=False,
-                    admission_reasons=["cpu_validation_metrics_missing"],
-                )
-                continue
-            if report is not None:
-                report["cpu_validation_evaluated"] += 1
+        try:
+            val_list = valid_cpu.simulate_rule_batch(
+                chromosomes=_chromosome_batch(dense_chrom),
+                tp=_cfg.PHASE2_TP,
+                sl=_cfg.PHASE2_SL,
+                capital_pct=_cfg.PHASE2_CAPITAL_PCT,
+            )
+            val_metrics = val_list[0] if val_list else None
+        except Exception as exc:
+            logger.debug(
+                "Phase 2 CPU validation re-evaluation failed: %s", exc)
+            _reject(chrom, "cpu_validation_simulation_error")
+            _record_symbol_results(
+                chrom,
+                None,
+                admitted=False,
+                admission_reasons=["cpu_validation_simulation_error"],
+            )
+            continue
+        if not isinstance(val_metrics, dict):
+            _reject(chrom, "cpu_validation_metrics_missing")
+            _record_symbol_results(
+                chrom,
+                None,
+                admitted=False,
+                admission_reasons=["cpu_validation_metrics_missing"],
+            )
+            continue
+        if report is not None:
+            report["cpu_validation_evaluated"] += 1
 
         if not passes_pool_admission_gate(
             metrics,
@@ -2235,6 +2248,8 @@ def _build_pool_from_archive(
             "tp": float(_cfg.PHASE2_TP),
             "sl": float(_cfg.PHASE2_SL),
             "capital_pct": float(_cfg.PHASE2_CAPITAL_PCT),
+            "admission_passed": True,
+            "pool_admission_passed": True,
         }
         pool_entry["per_symbol_metrics"] = train_per_symbol
         pool_entry["train_per_symbol_metrics"] = train_per_symbol
@@ -2278,6 +2293,7 @@ def _build_pool_from_archive(
 
     # --- Cap pool size while reserving positive contributors per symbol. ---
     keep_top = int(getattr(_cfg, "PHASE2_KEEP_TOP_RULES", 140))
+    admitted_count = len(pool)
     if len(pool) > keep_top:
         pool = _reserve_symbol_pool_candidates(
             pool,
@@ -2290,7 +2306,7 @@ def _build_pool_from_archive(
         )
 
     if report is not None:
-        report["admitted_rules"] = len(pool)
+        report["admitted_rules"] = admitted_count
         report["retained_rules"] = len(pool)
         report["final_eligible_rules"] = len(pool)
     return pool
@@ -3220,18 +3236,32 @@ class Rule_Pool_Generator:
 
             GPUBacktestEngine = get_gpu_backtest_engine_class()
             if GPUBacktestEngine is not None:
-                engine = GPUBacktestEngine(
-                    df,
-                    self._feature_modes,
-                    self.direction,
-                    **engine_kwargs,
-                )
-                Rule_Pool_Generator._set_island_engine_context(engine, self)
-                logger.info(
-                    "Phase 2 using GPUBacktestEngine (backend: %s)",
-                    engine.backend,
-                )
-                return engine
+                try:
+                    engine = GPUBacktestEngine(
+                        df,
+                        self._feature_modes,
+                        self.direction,
+                        **engine_kwargs,
+                    )
+                except Exception as exc:
+                    # Importing JAX successfully does not guarantee that the
+                    # runtime can compile kernels (for example, a missing
+                    # ptxas/nvlink toolchain).  A Phase 2 backend issue must
+                    # not turn a valid fail-closed selection into a pipeline
+                    # exception; use the exact CPU evaluator instead.
+                    logger.warning(
+                        "Phase 2 GPU engine initialization failed (%s: %s); "
+                        "falling back to CPUBacktestEngine.",
+                        type(exc).__name__,
+                        exc,
+                    )
+                else:
+                    Rule_Pool_Generator._set_island_engine_context(engine, self)
+                    logger.info(
+                        "Phase 2 using GPUBacktestEngine (backend: %s)",
+                        engine.backend,
+                    )
+                    return engine
             logger.warning(
                 "PHASE2_USE_GPU=True but JAX/GPU backtest unavailable; "
                 "falling back to CPUBacktestEngine for Phase 2.",
@@ -3503,12 +3533,12 @@ class Rule_Pool_Generator:
                 symbol_report["candidate_count"] += 1
                 symbol_report["chromosomes"].append(chromosome)
         coverage_report["final_eligible_rules"] = len(pool)
+        coverage_report["admitted_rules"] = len(pool)
         pool = _reserve_symbol_pool_candidates(
             list(pool),
             keep_top=int(getattr(_cfg, "PHASE2_KEEP_TOP_RULES", 140)),
             coverage_report=coverage_report,
         )
-        coverage_report["admitted_rules"] = len(pool)
         coverage_report["retained_rules"] = len(pool)
 
         if self.island_id is not None:

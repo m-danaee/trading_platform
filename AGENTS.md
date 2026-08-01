@@ -1,4 +1,3 @@
 - Always use .venv for running commands!
 - After changing sections of my code, remove additional(wasted) parts from old implementation to get clean my project.
 - Do not run all tests without `PYTEST_LOW_MEMORY=1` on local / WSL because it can hit OOM and if you can not run all tests because it get too much time (only run related tests that you edited them)!
-- Do not run my project because it get OOM error! I'm run it mostly on colab GPU!

@@ -1,0 +1,45 @@
+{
+  "task_id": "cpu-gpu-runtime",
+  "execution_unit": "cpu-gpu-runtime",
+  "branch": "feature/task-1-cpu-gpu-benchmark",
+  "base_branch": "main",
+  "profile": "balanced",
+  "risk": "LOW",
+  "score": 1,
+  "score_max": 10,
+  "caller_count": 0,
+  "script_status": "unavailable",
+  "warning": "scripts/nexus-blast.js and scripts/nexus-graph.sh are not present in the repo; no .opencode/knowledge/graph.json cache exists. Analysis performed manually with node available but no nexus scripts installed.",
+  "scope_in": [
+    "tests/benchmark/test_phase2_cpu_gpu_runtime.py",
+    "RUN.md"
+  ],
+  "change_types": {
+    "tests/benchmark/test_phase2_cpu_gpu_runtime.py": "add",
+    "RUN.md": "docs-only-optional"
+  },
+  "rationale": [
+    "No production code under gpu_fuzzy_trader/ is edited.",
+    "New test file has zero existing callers/dependents.",
+    "Pattern mirrors existing tests/benchmark/test_phase2_gpu_throughput.py with benchmark marker, skip guard, and block_until_ready timing.",
+    "conftest.py skips benchmark-marked tests unless RUN_BENCHMARKS=1, so default runs unaffected.",
+    "RUN.md is documentation with no code callers.",
+    "GPU availability is detected via jax_compat.get_gpu_backtest_engine_class() which already swallows import failures; test skips gracefully.",
+    "Verification is targeted to the new benchmark plus two existing GPU tests."
+  ],
+  "impacted_paths": [
+    "tests/benchmark/test_phase2_cpu_gpu_runtime.py",
+    "RUN.md"
+  ],
+  "read_only_dependencies": [
+    "gpu_fuzzy_trader/backtest/gpu_engine.py",
+    "gpu_fuzzy_trader/backtest/cpu_engine.py",
+    "gpu_fuzzy_trader/backtest/jax_compat.py",
+    "gpu_fuzzy_trader/_gpu_runtime.py",
+    "gpu_fuzzy_trader/config.py"
+  ],
+  "dependents": [],
+  "review_policy": "balanced-unified",
+  "review_notes": "Unified-reviewer pass over feature branch diff. No spec-reviewer escalation required (blast LOW, no production/API/data changes).",
+  "artifact": ".opencode/knowledge/blast/cpu-gpu-runtime.md"
+}

@@ -396,6 +396,29 @@ class TestGPUBacktestEngineInit:
         assert result["raw_signal_count"] == len(df)
         assert result["executed_trades"] > 0
 
+    def test_cpu_batch_preserves_gpu_chromosome_feature_order(self):
+        """Exact CPU re-evaluation must interpret genes like the GPU path."""
+        df = _make_df(n=20, feature_val=0.9)
+        feature_modes = {
+            "feat_signed": "signed",
+            "feat_binary": "binary",
+        }
+        chromosome = np.array([[9, 1]], dtype=np.int32)
+
+        gpu_result = GPUBacktestEngine(
+            df, feature_modes, "long",
+        ).simulate_rule_batch(
+            chromosome, tp=4.0, sl=2.0, capital_pct=50.0,
+        )[0]
+        cpu_result = CPUBacktestEngine(
+            df, feature_modes, "long",
+        ).simulate_rule_batch(
+            chromosome, tp=4.0, sl=2.0, capital_pct=50.0,
+        )[0]
+
+        assert cpu_result["raw_signal_count"] == gpu_result["raw_signal_count"]
+        assert cpu_result["executed_trades"] == gpu_result["executed_trades"]
+
     def test_missing_feature_raises_clear_error(self):
         df = _make_df(n=10)
         feature_modes = {"feat_missing": "binary"}
@@ -435,6 +458,31 @@ class TestSimulateRuleBatch:
         assert len(results) == 1
         assert results[0]["executed_trades"] == 0
         assert results[0]["total_return_pct"] == pytest.approx(0.0)
+
+    def test_infeasible_chunk_skips_equity_scan(self, monkeypatch):
+        """Zero-signal chunks should use reject metrics without scanning."""
+        cfg.PHASE2_SKIP_INFEASIBLE_SIGNAL_SCAN = True
+        cfg.PHASE2_SKIP_ZERO_SIGNAL_SCAN = True
+        df = _make_df(n=20)
+        engine = GPUBacktestEngine(
+            df, {"feat_binary": "binary"}, "long",
+        )
+
+        def fail_if_scanned(*args, **kwargs):
+            raise AssertionError("infeasible chunk launched an equity scan")
+
+        monkeypatch.setattr(engine, "_simulate_signals_batch", fail_if_scanned)
+        result = engine.simulate_rule_batch(
+            np.array([[0]], dtype=np.int32),
+            tp=4.0,
+            sl=2.0,
+            capital_pct=50.0,
+            generation=1,
+            is_last_gen=False,
+        )[0]
+
+        assert result["raw_signal_count"] == 0
+        assert result["executed_trades"] == 0
 
     def test_zero_signal_skip_matches_full_scan(self):
         """PHASE2_SKIP_ZERO_SIGNAL_SCAN must match always-scan metrics."""

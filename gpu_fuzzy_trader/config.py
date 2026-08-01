@@ -1192,8 +1192,9 @@ PHASE2_GPU_ENRICH_SYMBOL_METRICS = True
 #   Only run every N generations (always on last gen) to keep symbol-spread
 #   penalty fresh enough without paying the full cost every generation.
 #   1 = every gen (original behavior).
-#   5 = every 5th gen (default — saves ~80% of CPU enrichment cost).
-PHASE2_ENRICH_SYMBOL_METRICS_EVERY_N_GENS = 5
+#   20 = every 20th gen (default — keeps evolution GPU-bound; the mandatory
+#   exact CPU archive pass still refreshes the final pool metrics).
+PHASE2_ENRICH_SYMBOL_METRICS_EVERY_N_GENS = 20
 # =============================================================================
 # Phase 2 — NSGA-III search budget & archive
 # =============================================================================
