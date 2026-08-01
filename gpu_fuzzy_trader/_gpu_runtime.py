@@ -176,8 +176,9 @@ def log_gpu_runtime_config() -> None:
     used_str = f"{used:.2f} GiB" if used is not None else "unknown"
     cache_dir = os.environ.get("JAX_COMPILATION_CACHE_DIR", "")
     logger.info(
-        "Phase 2 GPU runtime: backend=%s devices=%s vram=%s ram=%s used=%s "
-        "batch_size=%d scan_unroll=%d fp32=%s data_int8=%s jax_cache=%s",
+        "Phase 2 runtime: backend=%s devices=%s vram=%s ram=%s used=%s "
+        "batch_size=%d scan_unroll=%d fp32=%s data_int8=%s "
+        "large_window_cpu_route=%s jax_cache=%s",
         backend,
         devices,
         vram_str,
@@ -187,6 +188,7 @@ def log_gpu_runtime_config() -> None:
         _cfg.PHASE2_SCAN_UNROLL,
         getattr(_cfg, "PHASE2_GPU_USE_FP32", True),
         getattr(_cfg, "PHASE2_GPU_DATA_INT8", True),
+        getattr(_cfg, "PHASE2_GPU_CPU_ROUTE_LARGE_DATA", True),
         cache_dir or "disabled",
     )
 
@@ -243,6 +245,17 @@ def _warmup_engine(
 
     target = _resolve_warmup_inner(engine)
     n = max(1, int(batch_size))
+
+    # Large-window RTX 4050 runs may intentionally use the optimized CPU
+    # ranking path.  Do not warm a GPU kernel with an all-wildcard sparse rule:
+    # that would perform a very expensive CPU admission pass without helping
+    # the subsequent evolution calls.
+    if (
+        hasattr(target, "_should_route_batch_to_cpu")
+        and target._should_route_batch_to_cpu(n)
+    ):
+        _WARMED_SIGNATURES.add(signature)
+        return
 
     if use_sparse_slots():
         slots = np.tile(empty_slots()[None, :, :], (n, 1, 1))

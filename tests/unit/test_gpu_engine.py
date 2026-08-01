@@ -44,6 +44,7 @@ if jax_available:
     from gpu_fuzzy_trader.backtest.gpu_engine import (
         GPUBacktestEngine,
         _build_data_matrix,
+        _build_event_batch,
         _discretize_series,
         _jax_compute_rule_signals,
         _jax_compute_trade_outcomes,
@@ -547,6 +548,53 @@ class TestSimulateRuleBatch:
         results = eng.simulate_rule_batch(
             chroms, tp=4.0, sl=2.0, capital_pct=50.0)
         assert len(results) == B
+
+    def test_sparse_event_scan_matches_full_row_scan(self, monkeypatch):
+        """Event packing must preserve full-scan equity metrics."""
+        df = _make_df(n=50, feature_val=0.9)
+        df["feat_binary"] = np.arange(50, dtype=np.int32) % 2
+        eng = _make_engine(df, max_hold_candles=2)
+        slots = np.full((5, 2), -1, dtype=np.int32)
+        slots[0] = [1, 1]  # every other row matches binary 1
+
+        monkeypatch.setattr(cfg, "PHASE2_GPU_EVENT_DRIVEN", True)
+        event_result = eng.simulate_rule_batch(
+            slots, tp=4.0, sl=2.0, capital_pct=50.0)[0]
+
+        monkeypatch.setattr(cfg, "PHASE2_GPU_EVENT_DRIVEN", False)
+        full_result = eng.simulate_rule_batch(
+            slots, tp=4.0, sl=2.0, capital_pct=50.0)[0]
+
+        for key in (
+            "total_return_pct", "sortino_ratio", "max_drawdown_pct",
+            "win_rate", "profit_factor", "executed_trades", "final_equity",
+            "raw_signal_count", "skipped_min_notional_count",
+        ):
+            assert event_result[key] == pytest.approx(full_result[key])
+        assert event_result["raw_signal_count"] == 25
+
+    def test_large_window_routes_ranking_to_cpu(self, monkeypatch):
+        """The RTX4050 policy avoids the slower full-row GPU scan on large data."""
+        monkeypatch.setattr(cfg, "PHASE2_GPU_CPU_ROUTE_LARGE_DATA", True)
+        monkeypatch.setattr(cfg, "PHASE2_GPU_CPU_ROUTE_MIN_BARS", 1)
+        monkeypatch.setattr(cfg, "PHASE2_GPU_CPU_ROUTE_MAX_BATCH", 256)
+
+        df = _make_df(n=20, feature_val=0.9)
+        eng = _make_engine(df)
+
+        def fail_if_gpu(*args, **kwargs):
+            raise AssertionError("large-window batch should use CPU")
+
+        monkeypatch.setattr(eng, "_simulate_signals_batch", fail_if_gpu)
+
+        result = eng.simulate_rule_batch(
+            np.array([[9, 1]], dtype=np.int32),
+            tp=4.0,
+            sl=2.0,
+            capital_pct=50.0,
+        )[0]
+        assert result["per_symbol_metrics_available"] is True
+        assert result["raw_signal_count"] == 20
 
     def test_result_keys_present(self):
         """Each result dict has required keys."""

@@ -4,9 +4,12 @@ This project evolves fuzzy trading rules in Phase 2, selects and risk-tunes
 teams with the RB Governor, and evaluates only evaluator-compatible strategy
 JSON with the read-only `evaluator_v5.ipynb` contract.
 
-Long Phase 2 and RB runs are intended for Colab or another GPU host. Do not
-run the full pipeline on a memory-constrained WSL machine. See [RUN.md](RUN.md)
-for extended setup and command reference.
+Long Phase 2 and RB runs are intended for a CUDA host. The default runtime is
+hybrid-tuned for an 8-core CPU plus a 6-GiB RTX 4050: large-window Phase 2
+ranking uses the optimized CPU batch path, while JAX/GPU remains available for
+smaller or high-throughput windows. Exact rule-set/RB/OOS evaluation stays on
+CPU. Do not run the full pipeline on a memory-constrained WSL machine. See
+[RUN.md](RUN.md) for the execution policy and command reference.
 
 ## Repository layout
 

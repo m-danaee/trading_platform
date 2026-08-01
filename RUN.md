@@ -1,8 +1,8 @@
 # Running the project
 
 Use the repository virtual environment for every command. Long Phase 2/RB
-runs are intended for Colab or another GPU host; do not run the full project
-on a memory-constrained WSL machine.
+runs are intended for a CUDA host; do not run the full project on a
+memory-constrained WSL machine.
 
 ## Setup
 
@@ -14,11 +14,31 @@ python3 -m venv .venv
 
 Install the appropriate JAX GPU package separately when using a CUDA host.
 
+## RTX 4050 + 8-core CPU execution policy
+
+The runtime uses a hybrid policy tuned for a 6-GiB RTX 4050 and an 8-core
+host:
+
+- Phase 1 feature transforms, dataframe preparation, exact rule-set scoring,
+  RB risk tuning, and Phase 5 OOS stay on CPU.
+- Phase 2 uses the optimized CPU batch evaluator for the default large
+  (~90k-bar) train window. This avoids a slower full-window GPU scan on this
+  hardware and also supplies reference-quality ranking metrics.
+- JAX/GPU is retained for smaller windows and larger dense batches, where
+  vectorized matching and the event-driven sparse kernel can amortize launch
+  overhead. FP32, int8 feature storage, bounded batches, and lazy compilation
+  keep VRAM use safe.
+
+The large-window route is enabled by default. To force JAX for an A/B test,
+set `gpu_fuzzy_trader.config.PHASE2_GPU_CPU_ROUTE_LARGE_DATA = False`; adjust
+`PHASE2_GPU_CPU_ROUTE_MIN_BARS` and `PHASE2_GPU_CPU_ROUTE_MAX_BATCH` only when
+benchmarking a different CPU/GPU combination.
+
 ## Pipeline commands
 
 ```bash
 .venv/bin/python -m gpu_fuzzy_trader.run_pipeline
-.venv/bin/python -m gpu_fuzzy_trader.run_pipeline --output outputs/run_a
+.venv/bin/python -m gpu_fuzzy_trader.run_pipeline --output outputs/
 .venv/bin/python -m gpu_fuzzy_trader.run_pipeline --resume
 .venv/bin/python -m gpu_fuzzy_trader.run_pipeline --phase 1
 .venv/bin/python -m gpu_fuzzy_trader.run_pipeline --phase 2
@@ -73,8 +93,8 @@ The evaluator-facing strategy files are `outputs/long.json` and
 Render a read-only dashboard from an existing run directory:
 
 ```bash
-.venv/bin/python -m gpu_fuzzy_trader.dashboard --output outputs/run_a
-.venv/bin/python -m gpu_fuzzy_trader.dashboard --output outputs/run_a --serve
+.venv/bin/python -m gpu_fuzzy_trader.dashboard --output outputs/
+.venv/bin/python -m gpu_fuzzy_trader.dashboard --output outputs/ --serve
 ```
 
 The first command writes `dashboard.html`; the second also serves the output

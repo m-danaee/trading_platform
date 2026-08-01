@@ -286,7 +286,11 @@ MAX_TOTAL_EXPOSURE_PCT = 100.0
 MIN_POSITION_NOTIONAL = 1.0
 
 # Shared CPU worker cap for batched rule-set simulations used by RB and tests.
-BACKTEST_BATCH_WORKERS = min(32, os.cpu_count() or 4)
+# Exact rule-set/RB evaluation is Python-heavy and each process carries a
+# prepared copy of the scoring arrays.  Capping the default at eight keeps an
+# 8-core host busy without spawning one worker per logical SMT thread (which
+# otherwise increases RAM pressure and process-pool overhead).
+BACKTEST_BATCH_WORKERS = min(8, os.cpu_count() or 4)
 
 
 # =============================================================================
@@ -463,6 +467,33 @@ PHASE2_GPU_USE_FP32 = True
 #   True  → lower VRAM for feature tensor; classes fit in 0..10.
 #   False → wider dtypes; slightly more VRAM.
 PHASE2_GPU_DATA_INT8 = True
+
+# PHASE2_GPU_CPU_ROUTE_LARGE_DATA — route Phase 2 ranking batches to the
+# vectorized CPU engine when the time-series window is large.  On an 8-core
+# CPU + 6-GiB RTX 4050, host-side sparse/event simulation is faster than the
+# GPU's full-row scan for the default ~90k-bar train window.
+#   True  → lower wall time on the RTX 4050 target; exact CPU ranking metrics.
+#   False → force the JAX batch path (useful for A/B benchmarks or a faster GPU).
+PHASE2_GPU_CPU_ROUTE_LARGE_DATA = True
+
+# Minimum bars and maximum population size for the CPU route.  Small windows
+# and unusually large batches remain on GPU because launch amortization can
+# reverse the crossover on stronger hardware.
+PHASE2_GPU_CPU_ROUTE_MIN_BARS = 20_000
+PHASE2_GPU_CPU_ROUTE_MAX_BATCH = 256
+
+# PHASE2_GPU_EVENT_DRIVEN — use an event-only equity scan for sparse-slot
+# chromosomes.  Sparse rules usually match a tiny fraction of bars; scanning
+# every bar with lax.scan wastes GPU time while the exact CPU path visits only
+# signal/release events.  The event kernel keeps the same accounting model but
+# scans a fixed, padded event buffer so XLA does not recompile every rule.
+PHASE2_GPU_EVENT_DRIVEN = True
+
+# PHASE2_GPU_EVENT_MAX_EVENTS — maximum unique signal/release rows in one
+# chromosome before the regular full-row GPU scan is used.  This is a shape
+# and memory guard, not a quality threshold.  4096 is ample for the default
+# 4–5-condition sparse genome on a 6-GiB RTX 4050.
+PHASE2_GPU_EVENT_MAX_EVENTS = 4096
 
 
 # =============================================================================

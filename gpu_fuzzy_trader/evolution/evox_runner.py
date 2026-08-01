@@ -610,6 +610,26 @@ def _refresh_survivor_val_metrics(
             )
 
 
+def _survivors_missing_cached_validation(
+    survivor_indices: list[int],
+    metrics_cache: list[dict],
+) -> list[int]:
+    """Return survivors that do not already carry a validation snapshot.
+
+    Validation data is immutable within an evolution epoch.  Once a survivor
+    has ``val_total_return_pct`` (including a legitimate zero), re-running the
+    same backtest every generation only duplicates GPU work.  Epoch rotation
+    resets objectives before this check, so a new train window still forces a
+    fresh evaluation.
+    """
+    return [
+        int(i)
+        for i in survivor_indices
+        if not isinstance(metrics_cache[int(i)], dict)
+        or metrics_cache[int(i)].get("val_total_return_pct") is None
+    ]
+
+
 def _update_deployable_archive(
     deployable_archive: dict[tuple[int, ...], dict],
     population: np.ndarray,
@@ -2168,10 +2188,14 @@ def _run_nsga2_fallback(
                         metrics,
                         val_m,
                     )
-        if run_val_this_gen and val_engine is not None and pre_survivors:
+        stale_survivors = _survivors_missing_cached_validation(
+            pre_survivors,
+            metrics_cache,
+        ) if run_val_this_gen and val_engine is not None else []
+        if stale_survivors:
             _refresh_survivor_val_metrics(
                 population,
-                pre_survivors,
+                stale_survivors,
                 metrics_cache,
                 objectives,
                 dont_cares,
@@ -2796,10 +2820,14 @@ def _run_nsga3(
             is_last_gen=is_last_gen,
             cv_fold_evaluator=cv_fold_evaluator,
         )
-        if run_val_this_gen and val_engine is not None and pre_survivors:
+        stale_survivors = _survivors_missing_cached_validation(
+            pre_survivors,
+            metrics_cache,
+        ) if run_val_this_gen and val_engine is not None else []
+        if stale_survivors:
             _refresh_survivor_val_metrics(
                 population,
-                pre_survivors,
+                stale_survivors,
                 metrics_cache,
                 objectives,
                 dont_cares,

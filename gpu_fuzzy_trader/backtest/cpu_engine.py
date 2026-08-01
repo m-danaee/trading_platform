@@ -538,11 +538,50 @@ class CPUBacktestEngine:
         """Precompute (N,) price return % for all rows given fixed TP/SL."""
         cache_key = (tp, sl, self.trade_direction)
         if cache_key not in self._trade_outcomes_cache:
-            n = len(self.max_ret)
-            out = np.empty(n, dtype=np.float32)
-            for i in range(n):
-                pct, _ = self._build_trade_outcome_single(i, tp, sl)
-                out[i] = pct
+            # The scalar helper remains the reference path for trade logs, but
+            # Phase 2/RB evaluates the same fixed TP/SL across every row.  Do
+            # that preprocessing in NumPy once instead of making one Python
+            # call per bar (90k+ calls on the checked-in data).
+            # Keep Python-float thresholds for comparisons: the scalar
+            # evaluator promotes each float32 row value to Python float before
+            # applying TP/SL, and rounding the thresholds here changes exact
+            # boundary exit reasons.
+            tp_f = float(tp)
+            sl_f = float(sl)
+            max_ret = self.max_ret.astype(np.float64)
+            min_ret = self.min_ret.astype(np.float64)
+            if self.trade_direction == "long":
+                hit_tp = max_ret >= tp_f
+                hit_sl = min_ret <= -sl_f
+                both_hit = hit_tp & hit_sl
+                both_result = np.where(
+                    self.max_before_min == 1, tp_f, -sl_f,
+                )
+                out = np.where(
+                    both_hit,
+                    both_result,
+                    np.where(
+                        hit_tp,
+                        tp_f,
+                        np.where(hit_sl, -sl_f, self.close_ret),
+                    ),
+                ).astype(np.float32, copy=False)
+            else:
+                hit_tp = min_ret <= -tp_f
+                hit_sl = max_ret >= sl_f
+                both_hit = hit_tp & hit_sl
+                both_result = np.where(
+                    self.max_before_min == 1, -sl_f, tp_f,
+                )
+                out = np.where(
+                    both_hit,
+                    both_result,
+                    np.where(
+                        hit_tp,
+                        tp_f,
+                        np.where(hit_sl, -sl_f, -self.close_ret),
+                    ),
+                ).astype(np.float32, copy=False)
             self._trade_outcomes_cache[cache_key] = out
         return self._trade_outcomes_cache[cache_key]
 
@@ -1179,7 +1218,6 @@ class CPUBacktestEngine:
         """Evaluate a batch of rule chromosomes on CPU (vectorized signals)."""
         chromosomes = np.asarray(chromosomes, dtype=np.int32)
         from gpu_fuzzy_trader.phases.phase2_sparse_encoding import (
-            compute_rule_signals_numpy,
             is_sparse_batch,
         )
 
@@ -1219,23 +1257,43 @@ class CPUBacktestEngine:
             chunk_chroms = chromosomes[b_start:b_end]
             bc = b_end - b_start
 
-            if sparse_batch:
-                all_signals = []
-                for bi in range(bc):
-                    all_signals.append(compute_rule_signals_numpy(
-                        self._data_matrix, chunk_chroms[bi]))
+            if sparse_batch and self._data_matrix.shape[1] > 0:
+                # Gather only the active sparse slots.  The old fallback built
+                # a Python list and then accessed ``.ndim`` (so CPU fallback
+                # failed for the production sparse encoding); this also avoids
+                # a separate N-row comparison loop for every chromosome.
+                feature_idx = chunk_chroms[:, :, 0]
+                safe_idx = np.maximum(feature_idx, 0)
+                gathered = np.take(
+                    self._data_matrix, safe_idx, axis=1,
+                ).transpose(1, 0, 2)
+                matched = gathered == chunk_chroms[:, None, :, 1]
+                all_signals = np.all(
+                    np.where(feature_idx[:, None, :] >= 0, matched, True),
+                    axis=2,
+                )
             elif K > 0 and self._data_matrix.shape[1] > 0:
-                dont_cares_row = self._dont_cares.reshape(1, 1, -1)
-                data_3d = self._data_matrix.reshape(1, self._data_matrix.shape[0], -1)
-                chroms_3d = chunk_chroms.reshape(bc, 1, K)
-                active = chroms_3d != dont_cares_row
-                match = data_3d == chroms_3d
-                effective = np.where(active, match, True)
-                all_signals = np.all(effective, axis=-1)
+                # Accumulate feature comparisons in-place.  This keeps peak
+                # memory at O(B*N), instead of materialising a B*N*K tensor
+                # for the CPU fallback.
+                all_signals = np.ones((bc, len(self.df)), dtype=bool)
+                for feature_idx in range(K):
+                    active = (
+                        chunk_chroms[:, feature_idx]
+                        != self._dont_cares[feature_idx]
+                    )
+                    if not np.any(active):
+                        continue
+                    match = (
+                        self._data_matrix[:, feature_idx][None, :]
+                        == chunk_chroms[:, feature_idx, None]
+                    )
+                    if not np.all(active):
+                        match[~active] = True
+                    all_signals &= match
             else:
                 all_signals = np.zeros((bc, len(self.df)), dtype=bool)
 
-            signal_counts = all_signals.sum(axis=1) if all_signals.ndim == 2 else np.array([s.sum() for s in all_signals])
             for bi in range(bc):
                 signals = all_signals[bi]
                 matched_indices = np.flatnonzero(signals)

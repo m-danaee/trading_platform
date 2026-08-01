@@ -21,6 +21,7 @@ from gpu_fuzzy_trader.evolution.evox_runner import (
     _population_unique_chromosome_ratio,
     _resolve_plateau_min_generation,
     _resolve_plateau_patience,
+    _survivors_missing_cached_validation,
     _should_inject_diversity_recovery,
     _should_plateau_early_stop_phase2,
     _update_deployable_archive,
@@ -30,6 +31,17 @@ from gpu_fuzzy_trader.evolution.evox_runner import (
     run_phase2_evolution,
     run_phase2_evolution_epoch,
 )
+
+
+def test_survivor_validation_refresh_only_targets_missing_snapshots():
+    metrics_cache = [
+        {"val_total_return_pct": 0.0},
+        {"val_total_return_pct": None},
+        {},
+    ]
+    assert _survivors_missing_cached_validation(
+        [0, 1, 2], metrics_cache,
+    ) == [1, 2]
 
 
 def _chromosome_with_min_active(

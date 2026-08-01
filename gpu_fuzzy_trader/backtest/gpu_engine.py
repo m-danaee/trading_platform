@@ -4,17 +4,19 @@ gpu_engine.py — GPUBacktestEngine
 JAX-accelerated backtest engine for Phase 2 rule pool generation.
 
 Primary use: evaluate batches of chromosome-encoded rules during evolutionary
-search (``simulate_rule_batch``). This path uses a simplified sequential
-equity model (vmap + ``lax.scan``) optimized for GPU throughput. It is an
-**approximate ranking model** for evolution — final strategies are validated
-on ``CPUBacktestEngine`` / ``evaluator_v5.ipynb``.
+search (``simulate_rule_batch``). Large production windows may dispatch to the
+vectorized CPU batch evaluator when that is faster on small-GPU hosts. The
+JAX path uses a simplified sequential equity model (vmap + ``lax.scan``) for
+GPU throughput; final strategies are validated on ``CPUBacktestEngine`` /
+``evaluator_v5.ipynb``.
 
 Compatibility interface (``simulate_rule_set``) delegates to CPUBacktestEngine.
 
 Performance notes:
   - Rule matching is vectorized per chunk (VRAM-aware batch size).
   - Trade outcomes are computed once for all N rows and cached on GPU.
-  - Equity simulation uses vmap'd ``lax.scan`` with ``PHASE2_SCAN_UNROLL``.
+  - Sparse GPU batches can use an event-only ``lax.scan``; dense batches use
+    the regular full-row scan with ``PHASE2_SCAN_UNROLL``.
   - Chromosome batches are uploaded to GPU once per evaluation call.
   - Open-exposure slots are sized by max_exposure/capital (not hold window).
 """
@@ -364,10 +366,11 @@ def _jax_open_slot(
     return new_slot_release, new_slot_notional, new_slot_pnl, new_open_exposure
 
 
-@_maybe_partial_jit(static_argnums=(4, 5, 6, 7, 8, 9, 10))
-def _jax_simulate_equity_batch(
-    signals_batch: jnp.ndarray,       # (B, N) bool
-    price_returns_all: jnp.ndarray,   # (N,) float64
+@_maybe_partial_jit(static_argnums=(5, 6, 7, 8, 9, 10, 11))
+def _jax_simulate_equity_event_batch(
+    signals_batch: jnp.ndarray,       # (B, M) bool; signal events only
+    event_rows: jnp.ndarray,          # (B, M) int32 row timestamps
+    price_returns_all: jnp.ndarray,   # (N,) float
     release_indices: jnp.ndarray,     # (N,) int32
     initial_capital: float,
     n_rows: int,
@@ -378,6 +381,13 @@ def _jax_simulate_equity_batch(
     max_exposure_rate: float,
     min_position_notional: float,
 ) -> jnp.ndarray:
+    """Run the equity state machine over padded signal/release events.
+
+    The accounting is intentionally the same as the regular full-row scan.
+    ``event_rows`` contains every signal row and every release row needed by
+    those signals; rows with no signal only release open positions. Padding
+    rows are harmless no-op events and keep the XLA shape stable across calls.
+    """
     fee_rate_f = _JXF(fee_rate)
     leverage_f = _JXF(leverage)
     capital_rate_f = _JXF(capital_rate)
@@ -386,20 +396,20 @@ def _jax_simulate_equity_batch(
     init_cap = _JXF(initial_capital)
     sortino_cap = _JXF(_cfg.SORTINO_CAP)
 
-    N = price_returns_all.shape[0]
+    # ``n_rows`` is static for the compiled engine.  Keep the original event
+    # row for release ordering, but clip only the array lookup used to obtain
+    # a harmless return value for padded rows.
+    last_row = max(0, int(n_rows) - 1)
+    safe_lookup_rows = jnp.clip(event_rows, 0, last_row)
+    event_returns = price_returns_all[safe_lookup_rows]
 
     max_slots = int(max_open_slots)
     init_slot_release = jnp.full(max_slots, -1, dtype=jnp.int32)
     init_slot_notional = jnp.zeros(max_slots, dtype=_JXF)
     init_slot_pnl = jnp.zeros(max_slots, dtype=_JXF)
-    row_indices = jnp.arange(N, dtype=jnp.int32)
-
-    def simulate_one(signal_mask):
+    def simulate_one(signal_mask, rows, price_returns):
         is_signal = signal_mask.astype(_JXF)
-        scan_xs = jnp.stack(
-            [is_signal, price_returns_all, row_indices.astype(_JXF)],
-            axis=-1,
-        )
+        scan_xs = (is_signal, price_returns, rows)
 
         init_carry = (
             init_cap,           # equity
@@ -432,7 +442,7 @@ def _jax_simulate_equity_batch(
 
             is_sig = x[0]
             price_return_pct = x[1]
-            current_row = x[2].astype(jnp.int32)
+            current_row = x[2]
 
             # ----- 1. Release due positions and credit PnL -----
             (slot_release, slot_notional, slot_pnl, open_exposure,
@@ -482,7 +492,13 @@ def _jax_simulate_equity_batch(
                 (is_sig > 0.5) & (~account_ruined)
                 & (position_notional < min_notional_f),
                 1, 0).astype(jnp.int32)
-            new_ruined = account_ruined | (new_equity <= 0.0)
+            # The sentinel padding row performs the same final release as the
+            # regular scan's post-loop cleanup.  That cleanup does not newly
+            # mark an account ruined, so only real data rows update this flag.
+            is_real_row = current_row < jnp.int32(n_rows)
+            new_ruined = account_ruined | (
+                (new_equity <= 0.0) & is_real_row
+            )
 
             # Sortino stats: compute at entry with correct equity (after releases)
             trade_ret = jnp.where(
@@ -495,7 +511,9 @@ def _jax_simulate_equity_batch(
                 is_neg, trade_ret ** 2, 0.0)
 
             # Store net_pnl in slot (will be credited at release)
-            release_idx = release_indices[current_row]
+            release_idx = release_indices[
+                jnp.clip(current_row, 0, last_row)
+            ]
             slot_release, slot_notional, slot_pnl, new_open_exposure = _jax_open_slot(
                 slot_release,
                 slot_notional,
@@ -585,9 +603,48 @@ def _jax_simulate_equity_batch(
             gross_profit, gross_loss, max_single_trade_pnl,
         ])
 
-    # vmap over the batch dimension
-    batched_simulate = vmap(simulate_one)
-    return batched_simulate(signals_batch)
+    # vmap over the batch dimension.  The event row buffer is fixed-width, so
+    # this remains one compiled program for all sparse batches of this engine.
+    return vmap(simulate_one)(
+        signals_batch,
+        event_rows,
+        event_returns,
+    )
+
+
+@_maybe_partial_jit(static_argnums=(4, 5, 6, 7, 8, 9, 10))
+def _jax_simulate_equity_batch(
+    signals_batch: jnp.ndarray,       # (B, N) bool
+    price_returns_all: jnp.ndarray,   # (N,) float
+    release_indices: jnp.ndarray,     # (N,) int32
+    initial_capital: float,
+    n_rows: int,
+    max_open_slots: int,
+    fee_rate: float,
+    leverage: float,
+    capital_rate: float,
+    max_exposure_rate: float,
+    min_position_notional: float,
+) -> jnp.ndarray:
+    """Compatibility wrapper for a regular full-row scan."""
+    row_indices = jnp.broadcast_to(
+        jnp.arange(signals_batch.shape[1], dtype=jnp.int32),
+        signals_batch.shape,
+    )
+    return _jax_simulate_equity_event_batch(
+        signals_batch,
+        row_indices,
+        price_returns_all,
+        release_indices,
+        initial_capital,
+        n_rows,
+        max_open_slots,
+        fee_rate,
+        leverage,
+        capital_rate,
+        max_exposure_rate,
+        min_position_notional,
+    )
 
 
 
@@ -628,6 +685,62 @@ def _fast_reject_result_rows(
     if np.any(infeasible):
         rows[infeasible, 2] = 100.0
     return rows
+
+
+def _build_event_batch(
+    signals_batch: np.ndarray,
+    release_indices: np.ndarray,
+    active_mask: np.ndarray,
+    max_events: int,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Pack signal and release rows into one fixed-width event buffer.
+
+    Sparse chromosomes normally match very few bars.  The full GPU equity
+    kernel still visits every bar, so this host-side packing keeps only rows
+    that can change the state machine: a signal row or the release row for a
+    signal.  A common fixed width is used for the whole chunk to avoid an XLA
+    compilation for every chromosome.
+
+    ``None`` is returned when any active rule exceeds the configured event
+    budget.  Such a chunk falls back to the regular full-row scan, which is
+    preferable for dense rules and prevents an oversized temporary buffer.
+    """
+    signals_batch = np.asarray(signals_batch, dtype=bool)
+    release_indices = np.asarray(release_indices, dtype=np.int64)
+    active_mask = np.asarray(active_mask, dtype=bool)
+    if signals_batch.ndim != 2 or release_indices.ndim != 1:
+        raise ValueError("signals_batch must be 2-D and release_indices 1-D")
+
+    b_count, n_rows = signals_batch.shape
+    capacity = max(1, int(max_events))
+    event_signals = np.zeros((b_count, capacity), dtype=bool)
+    # Sentinel n_rows is ordered after every real bar and makes padding perform
+    # the same final release that the regular scan performs after its last row.
+    event_rows = np.full((b_count, capacity), n_rows, dtype=np.int32)
+
+    for batch_idx in np.flatnonzero(active_mask):
+        signal_rows = np.flatnonzero(signals_batch[batch_idx]).astype(
+            np.int64, copy=False)
+        if signal_rows.size == 0:
+            continue
+
+        # A release at/before its entry row is normalized to the entry row.
+        # The full scan releases before opening on that row, so the combined
+        # event has the same release-before-entry ordering.
+        release_rows = np.maximum(
+            release_indices[signal_rows], signal_rows,
+        )
+        release_rows = release_rows[release_rows < n_rows]
+        rows = np.unique(np.concatenate((signal_rows, release_rows)))
+        if rows.size > capacity:
+            return None
+
+        count = int(rows.size)
+        event_rows[batch_idx, :count] = rows.astype(np.int32, copy=False)
+        signal_positions = np.searchsorted(rows, signal_rows)
+        event_signals[batch_idx, signal_positions] = True
+
+    return event_signals, event_rows
 
 
 def _batch_metrics_from_array(
@@ -693,8 +806,9 @@ def _batch_metrics_from_array(
 class GPUBacktestEngine:
     """JAX-accelerated backtest engine for Phase 2 rule pool generation.
 
-    ``simulate_rule_batch`` ranks chromosomes on GPU using a simplified equity
-    model. Use ``simulate_rule_set`` (CPU) for ground-truth evaluation.
+    ``simulate_rule_batch`` uses JAX for GPU-friendly workloads and routes
+    large windows to the optimized CPU batch path. Use ``simulate_rule_set``
+    (CPU) for ground-truth evaluation.
     """
 
     def __init__(
@@ -803,6 +917,13 @@ class GPUBacktestEngine:
         # Resolve GPU batch size once at engine init — VRAM/RAM probe is expensive.
         from gpu_fuzzy_trader._gpu_runtime import resolve_phase2_gpu_batch_size
         self._gpu_batch_size: int = max(1, resolve_phase2_gpu_batch_size())
+        self._gpu_event_capacity: int = max(
+            1,
+            min(
+                len(self.df),
+                int(getattr(_cfg, "PHASE2_GPU_EVENT_MAX_EVENTS", 4096)),
+            ),
+        )
 
         self._cpu_engine_ref: CPUBacktestEngine | None = None
         self._cpu_engine_constants = constants
@@ -899,6 +1020,43 @@ class GPUBacktestEngine:
             self.min_position_notional,
         )
 
+    def _simulate_event_batch(
+        self,
+        event_signals: jnp.ndarray,
+        event_rows: jnp.ndarray,
+        price_returns_all: jnp.ndarray,
+        capital_rate: float,
+        max_exposure_rate: float,
+        n_rows: int,
+    ) -> jnp.ndarray:
+        """Run the event-only equity state machine for sparse chromosomes."""
+        max_open_slots = _exposure_slot_capacity(
+            max_exposure_rate, capital_rate)
+        return _jax_simulate_equity_event_batch(
+            event_signals,
+            event_rows,
+            price_returns_all,
+            self._release_indices_jax,
+            self.initial_capital,
+            n_rows,
+            max_open_slots,
+            self.fee_rate,
+            self.leverage,
+            capital_rate,
+            max_exposure_rate,
+            self.min_position_notional,
+        )
+
+    def _should_route_batch_to_cpu(self, batch_size: int) -> bool:
+        """Return whether this host's CPU path is the faster large-window path."""
+        if not bool(getattr(_cfg, "PHASE2_GPU_CPU_ROUTE_LARGE_DATA", True)):
+            return False
+        min_bars = max(
+            0, int(getattr(_cfg, "PHASE2_GPU_CPU_ROUTE_MIN_BARS", 20_000)))
+        max_batch = max(
+            1, int(getattr(_cfg, "PHASE2_GPU_CPU_ROUTE_MAX_BATCH", 256)))
+        return len(self.df) >= min_bars and int(batch_size) <= max_batch
+
     def simulate_rule_batch(
         self,
         chromosomes: np.ndarray,
@@ -908,7 +1066,7 @@ class GPUBacktestEngine:
         generation: int | None = None,
         is_last_gen: bool = False,
     ) -> list[dict]:
-        """Evaluate a batch of rule chromosomes on GPU.
+        """Evaluate a batch of rule chromosomes with the hybrid runtime policy.
 
         Large populations are processed in chunks of ``PHASE2_GPU_BATCH_SIZE``
         to cap peak VRAM (rule matching materializes a (B, N, K) tensor).
@@ -936,7 +1094,6 @@ class GPUBacktestEngine:
         sparse_batch = is_sparse_batch(chromosomes, n_features=n_features)
         if sparse_batch:
             B = chromosomes.shape[0]
-            expected_k = len(self._feature_names)
             if chromosomes.shape[2] != 2:
                 raise ValueError(
                     "Sparse chromosomes must have shape (B, S, 2).")
@@ -947,6 +1104,17 @@ class GPUBacktestEngine:
                 raise ValueError(
                     f"Chromosome width {K} does not match engine feature "
                     f"count {expected_k}.")
+
+        if self._should_route_batch_to_cpu(B):
+            # The CPU batch implementation is vectorized for rule matching and
+            # avoids a 90k-step GPU lax.scan.  It is also the reference metric
+            # model, so no separate symbol-enrichment pass is needed here.
+            return self._lazy_cpu_engine.simulate_rule_batch(
+                chromosomes=chromosomes,
+                tp=tp,
+                sl=sl,
+                capital_pct=capital_pct,
+            )
 
         capital_rate = capital_pct / 100.0
         max_exposure_rate = self.max_total_exposure_pct / 100.0
@@ -989,43 +1157,82 @@ class GPUBacktestEngine:
                 _cfg.PHASE2_SKIP_ZERO_SIGNAL_SCAN
                 or bool(getattr(_cfg, "PHASE2_SKIP_INFEASIBLE_SIGNAL_SCAN", True))
             )
-            if use_fast_skip:
-                signal_counts = jnp.sum(
-                    signals_batch.astype(jnp.int32), axis=1)
-                counts_np = np.asarray(signal_counts, dtype=np.int64)
+            use_event_driven = (
+                sparse_batch
+                and bool(getattr(_cfg, "PHASE2_GPU_EVENT_DRIVEN", True))
+            )
+            if use_fast_skip or use_event_driven:
+                signals_np = None
+                if use_event_driven:
+                    # Signal counts are needed on the host to build the
+                    # fixed-width event rows.  Sparse matching is already
+                    # relatively small, so this avoids an extra device sum.
+                    signals_np = np.asarray(signals_batch, dtype=bool)
+                    counts_np = np.count_nonzero(
+                        signals_np, axis=1).astype(np.int64, copy=False)
+                else:
+                    signal_counts = jnp.sum(
+                        signals_batch.astype(jnp.int32), axis=1)
+                    counts_np = np.asarray(signal_counts, dtype=np.int64)
                 min_scan = _min_raw_signals_for_full_scan()
-                # Keep the simulator input shape fixed at (chunk_size, N).
-                # Selecting ``signals_batch[scan_idx]`` made the JAX scan
-                # signature depend on the number of viable rules in each
-                # chunk, causing repeated compilations during evolution.
                 active_mask = counts_np >= min_scan
                 fast_rows = jnp.asarray(
                     _fast_reject_result_rows(counts_np, self.initial_capital),
                     dtype=_JXF,
                 )
                 if not np.any(active_mask):
-                    # Infeasible chunks are common during evolution.  CPU
-                    # admission returns immediately for these rules; avoid
-                    # launching a full masked equity scan that cannot change
-                    # any result.  The result rows are the same hard reject
-                    # metrics used below for mixed chunks.
-                    results_jax = fast_rows
+                    if use_fast_skip:
+                        # Infeasible chunks are common during evolution.  CPU
+                        # admission returns immediately for these rules; avoid
+                        # launching a full masked equity scan that cannot
+                        # change any result.
+                        results_jax = fast_rows
+                    else:
+                        results_jax = self._simulate_signals_batch(
+                            signals_batch,
+                            price_returns_all,
+                            capital_rate,
+                            max_exposure_rate,
+                            N,
+                        )
                 else:
-                    # Keep the simulator input shape fixed for mixed chunks;
-                    # compacting active rows would trigger repeated XLA
-                    # compilations as viability changes between generations.
-                    masked_signals = jnp.where(
-                        jnp.asarray(active_mask, dtype=jnp.bool_)[:, None],
-                        signals_batch,
-                        False,
-                    )
-                    scanned_results = self._simulate_signals_batch(
-                        masked_signals,
-                        price_returns_all,
-                        capital_rate,
-                        max_exposure_rate,
-                        N,
-                    )
+                    event_inputs = None
+                    if use_event_driven and signals_np is not None:
+                        event_inputs = _build_event_batch(
+                            signals_np,
+                            self._release_indices,
+                            active_mask,
+                            self._gpu_event_capacity,
+                        )
+
+                    if event_inputs is not None:
+                        event_signals_np, event_rows_np = event_inputs
+                        scanned_results = self._simulate_event_batch(
+                            jnp.asarray(event_signals_np, dtype=jnp.bool_),
+                            jnp.asarray(event_rows_np, dtype=jnp.int32),
+                            price_returns_all,
+                            capital_rate,
+                            max_exposure_rate,
+                            N,
+                        )
+                    else:
+                        # Keep the regular simulator input shape fixed for
+                        # mixed chunks; compacting active rows would trigger
+                        # repeated XLA compilations as viability changes.
+                        scan_signals = signals_batch
+                        if use_fast_skip:
+                            scan_signals = jnp.where(
+                                jnp.asarray(active_mask, dtype=jnp.bool_)[:, None],
+                                signals_batch,
+                                False,
+                            )
+                        scanned_results = self._simulate_signals_batch(
+                            scan_signals,
+                            price_returns_all,
+                            capital_rate,
+                            max_exposure_rate,
+                            N,
+                        )
                     results_jax = jnp.where(
                         jnp.asarray(active_mask, dtype=jnp.bool_)[:, None],
                         scanned_results,
