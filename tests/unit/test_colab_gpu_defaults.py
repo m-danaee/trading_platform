@@ -17,13 +17,24 @@ def test_phase2_should_enrich_without_symbol_scope() -> None:
 def test_colab_defaults_apply_when_content_exists(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    original_route = cfg.PHASE2_GPU_CPU_ROUTE_LARGE_DATA
+    original_unroll = cfg.PHASE2_SCAN_UNROLL
     monkeypatch.setattr(cfg, "PHASE2_GPU_BATCH_SIZE_AUTO", False)
+    monkeypatch.setattr(cfg, "PHASE2_GPU_CPU_ROUTE_LARGE_DATA", True)
+    monkeypatch.setattr(cfg, "PHASE2_SCAN_UNROLL", 32)
     monkeypatch.setattr(cfg.os.path, "isdir", lambda path: path == "/content")
     monkeypatch.delenv("COLAB_RELEASE_TAG", raising=False)
 
     cfg._apply_colab_gpu_defaults()
 
     assert cfg.PHASE2_GPU_BATCH_SIZE_AUTO is True
+    assert cfg.PHASE2_GPU_CPU_ROUTE_LARGE_DATA is False
+    assert cfg.PHASE2_SCAN_UNROLL == 16
+
+    # The helper mutates module defaults by design; restore the local-test
+    # process so later tests still exercise the desktop policy.
+    monkeypatch.setattr(cfg, "PHASE2_GPU_CPU_ROUTE_LARGE_DATA", original_route)
+    monkeypatch.setattr(cfg, "PHASE2_SCAN_UNROLL", original_unroll)
 
 
 def test_3080ti_batch_tiers_use_full_population_chunk() -> None:

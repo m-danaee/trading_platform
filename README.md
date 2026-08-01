@@ -11,6 +11,11 @@ smaller or high-throughput windows. Exact rule-set/RB/OOS evaluation stays on
 CPU. Do not run the full pipeline on a memory-constrained WSL machine. See
 [RUN.md](RUN.md) for the execution policy and command reference.
 
+For the alternate Colab T4 path, run [main.ipynb](main.ipynb). Colab is
+detected automatically and keeps Phase 2 on the JAX GPU with memory-safe
+batching; the notebook stages data and outputs on `/content` before syncing
+results to Google Drive.
+
 ## Repository layout
 
 ```text

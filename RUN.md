@@ -34,6 +34,14 @@ set `gpu_fuzzy_trader.config.PHASE2_GPU_CPU_ROUTE_LARGE_DATA = False`; adjust
 `PHASE2_GPU_CPU_ROUTE_MIN_BARS` and `PHASE2_GPU_CPU_ROUTE_MAX_BATCH` only when
 benchmarking a different CPU/GPU combination.
 
+## Colab T4 notebook execution
+
+Run `main.ipynb` for the Colab T4 path. When `/content` is detected, the
+worker subprocess keeps the Phase 2 ranking on JAX/GPU, caps the default batch
+to 64 through the notebook environment, and uses scan unroll 16 to reduce
+host-RAM compile pressure. CSVs and outputs are staged on local `/content`
+storage; the notebook syncs results and the Phase 2 archive back to Drive.
+
 ## Pipeline commands
 
 ```bash

@@ -420,7 +420,8 @@ PHASE2_SAMPLE_ROTATION_FRACTION = 0.65
 PHASE2_GPU_BATCH_SIZE = 256
 
 # PHASE2_GPU_BATCH_SIZE_AUTO — cap batch size by detected GPU VRAM and host RAM.
-#   True  → apply tiers in _gpu_runtime (12 GiB RAM → 32; T4 ≤16 GiB VRAM → 256).
+#   True  → apply tiers in _gpu_runtime (standard ~12 GiB Colab RAM → 64;
+#           T4 ≤16 GiB VRAM → 256 before the host-RAM cap).
 #   False → use PHASE2_GPU_BATCH_SIZE exactly (env PHASE2_GPU_BATCH_SIZE still wins).
 PHASE2_GPU_BATCH_SIZE_AUTO = True
 
@@ -2129,9 +2130,20 @@ def _apply_colab_gpu_defaults() -> None:
     Colab T4 optimization for Phase 2 runs.
     """
     global PHASE2_GPU_BATCH_SIZE_AUTO
+    global PHASE2_GPU_CPU_ROUTE_LARGE_DATA, PHASE2_SCAN_UNROLL
     if not is_colab_runtime():
         return
+
+    # Colab's T4 has enough VRAM for the JAX ranking path, while the local
+    # RTX 4050 policy intentionally routes the default long window to CPU.
+    # This function runs in the pipeline subprocess too, unlike notebook-only
+    # Python mutations, so the hardware-specific choice is effective there.
     PHASE2_GPU_BATCH_SIZE_AUTO = True
+    PHASE2_GPU_CPU_ROUTE_LARGE_DATA = False
+
+    # Keep XLA's host-side compilation footprint bounded on standard Colab
+    # runtimes.  Respect an even smaller value supplied before config import.
+    PHASE2_SCAN_UNROLL = min(int(PHASE2_SCAN_UNROLL), 16)
 
 
 _apply_colab_gpu_defaults()
