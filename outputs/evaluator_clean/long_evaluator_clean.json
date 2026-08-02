@@ -1,4 +1,61 @@
 {
   "direction": "long",
-  "rules_set": []
+  "rules_set": [
+    {
+      "conditions": [
+        "[ff_kama_distance_10] IS Extreme Bearish",
+        "[ff_rsi_14_midline_cross] IS Active (1)",
+        "[ff_volume_regime_20] IS Neutral (0)",
+        "symbol is ETHUSDT"
+      ],
+      "tp": 1.5,
+      "sl": 2.5,
+      "capital_pct": 18.0,
+      "feature_conditions": [
+        "[ff_kama_distance_10] IS Extreme Bearish",
+        "[ff_rsi_14_midline_cross] IS Active (1)",
+        "[ff_volume_regime_20] IS Neutral (0)"
+      ],
+      "phase2_rule_id": "3d83387333539803dc56",
+      "rule_id": "3d83387333539803dc56"
+    },
+    {
+      "conditions": [
+        "[ff_range_expansion_ratio] IS Medium",
+        "[ff_sma_slope_20_5] IS Extreme Bullish",
+        "[ff_volume_trailing_rank_50] IS Very High",
+        "[ff_ppo_sign] IS Neutral (0)",
+        "symbol is BTCUSDT"
+      ],
+      "tp": 2.0,
+      "sl": 2.0,
+      "capital_pct": 15.0,
+      "feature_conditions": [
+        "[ff_range_expansion_ratio] IS Medium",
+        "[ff_sma_slope_20_5] IS Extreme Bullish",
+        "[ff_volume_trailing_rank_50] IS Very High",
+        "[ff_ppo_sign] IS Neutral (0)"
+      ],
+      "phase2_rule_id": "e31ad2565964bef7273b",
+      "rule_id": "e31ad2565964bef7273b"
+    },
+    {
+      "conditions": [
+        "[ff_kama_distance_10] IS Strong Bullish",
+        "[ff_sma_slope_20_5] IS Bullish",
+        "[ff_ppo_sign] IS Positive (1)",
+        "symbol is ETHUSDT"
+      ],
+      "tp": 4.0,
+      "sl": 2.5,
+      "capital_pct": 18.0,
+      "feature_conditions": [
+        "[ff_kama_distance_10] IS Strong Bullish",
+        "[ff_sma_slope_20_5] IS Bullish",
+        "[ff_ppo_sign] IS Positive (1)"
+      ],
+      "phase2_rule_id": "7465867441296470185c",
+      "rule_id": "7465867441296470185c"
+    }
+  ]
 }

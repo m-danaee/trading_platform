@@ -4,37 +4,42 @@
     {
       "name": "ff_support_distance_20",
       "mode": "signed",
-      "score": 0.007382736780776167
+      "score": 0.005041124832966037
     },
     {
-      "name": "ff_bollinger_width_20",
-      "mode": "positive",
-      "score": 0.0036578049941593527
-    },
-    {
-      "name": "ff_donchian_width_20",
-      "mode": "positive",
-      "score": 0.00356961695081548
-    },
-    {
-      "name": "ff_cvd_proxy_10",
+      "name": "ff_bollinger_percent_b_20",
       "mode": "signed",
-      "score": 0.002626290732899106
+      "score": 0.004838033394361618
     },
     {
-      "name": "ff_vwap_distance_20",
+      "name": "ff_roc_16",
       "mode": "signed",
-      "score": 0.0019119391572863798
+      "score": 0.0033200024167210356
     },
     {
       "name": "ff_relative_volume_20",
       "mode": "positive",
-      "score": 0.0014110745001709724
+      "score": 0.0026189844682227292
     },
     {
-      "name": "ff_sma_slope_20_5",
+      "name": "ff_volume_oscillator_5_20",
       "mode": "signed",
-      "score": 0.001272169356903996
+      "score": 0.002464581592429571
+    },
+    {
+      "name": "ff_rsi_14_distance_midline",
+      "mode": "signed",
+      "score": 0.0015449920308612253
+    },
+    {
+      "name": "ff_ema_spread_21_55",
+      "mode": "signed",
+      "score": 0.0015036738645624048
+    },
+    {
+      "name": "ff_range_expansion_ratio",
+      "mode": "positive",
+      "score": 0.0014155547652534572
     },
     {
       "name": "ff_ppo_sign",
@@ -42,19 +47,24 @@
       "score": 0.000966673424090389
     },
     {
-      "name": "ff_ema_spread_8_21",
+      "name": "ff_vwap_distance_20",
       "mode": "signed",
-      "score": 0.0009455973088070558
+      "score": 0.0008662790045605996
     },
     {
-      "name": "ff_roc_8",
+      "name": "ff_ema_spread_8_21",
       "mode": "signed",
-      "score": 0.0004898489280902307
+      "score": 0.0005000880284555809
     },
     {
       "name": "ff_price_vs_ema_20",
       "mode": "ternary",
       "score": 0.00032765977513051197
+    },
+    {
+      "name": "ff_cvd_proxy_10",
+      "mode": "signed",
+      "score": 0.00032084499571438663
     },
     {
       "name": "ff_ema_stack_8_21_55",
@@ -67,9 +77,9 @@
       "score": 0.000256856274110049
     },
     {
-      "name": "ff_price_vs_ema_50",
-      "mode": "ternary",
-      "score": 0.00024608519537139533
+      "name": "ff_volume_trailing_rank_50",
+      "mode": "positive",
+      "score": 0.00017736018937264395
     },
     {
       "name": "ff_volume_regime_20",
@@ -80,26 +90,6 @@
       "name": "ff_rsi_14_midline_cross",
       "mode": "binary",
       "score": 3.047867127256923e-05
-    },
-    {
-      "name": "ff_volume_trailing_rank_50",
-      "mode": "positive",
-      "score": 0.0
-    },
-    {
-      "name": "ff_bollinger_percent_b_20",
-      "mode": "signed",
-      "score": 0.0
-    },
-    {
-      "name": "ff_keltner_position_20",
-      "mode": "signed",
-      "score": 0.0
-    },
-    {
-      "name": "ff_ema_slope_8_3",
-      "mode": "signed",
-      "score": 0.0
     }
   ],
   "phase1_disabled": false

@@ -1,0 +1,98 @@
+feature,fuzzy_value,split,num_trades,total_return_pct,win_rate,sharpe_ratio
+ff_range_expansion_ratio,Very Low,test,1,0.23400001227855682,1.0,0.0
+ff_range_expansion_ratio,High,test,11,-0.5732733607292175,0.5454545454545454,-0.12036968634258075
+ff_range_expansion_ratio,Medium,test,58,-0.16770432889461517,0.5172413793103449,-0.005980478113520136
+ff_range_expansion_ratio,Low,test,2,-0.9704313278198242,0.0,-13910990.424965698
+ff_range_expansion_ratio,Very High,test,5,-0.2768727242946625,0.6,-0.1369306370007925
+ff_channel_midpoint_bias_20,Neutral Negative,test,27,-0.9851874113082886,0.5555555555555556,-0.0918491379474327
+ff_channel_midpoint_bias_20,Bearish,test,3,-0.02242257632315159,0.6666666666666666,-0.014433777414917989
+ff_channel_midpoint_bias_20,Extreme Bearish,test,0,0.0,0.0,0.0
+ff_channel_midpoint_bias_20,Bullish,test,28,-0.06873026490211487,0.5,-0.0009321707596321807
+ff_channel_midpoint_bias_20,Extreme Bullish,test,19,-0.677941620349884,0.47368421052631576,-0.11852703026538752
+ff_keltner_position_20,Neutral Negative,test,23,-1.3119752407073975,0.5652173913043478,-0.16507856579850053
+ff_keltner_position_20,Bearish,test,1,0.26904383301734924,1.0,0.0
+ff_keltner_position_20,Bullish,test,24,-0.12773840129375458,0.5,-0.00929582624360938
+ff_keltner_position_20,Extreme Bearish,test,0,0.0,0.0,0.0
+ff_keltner_position_20,Extreme Bullish,test,29,-0.5836122035980225,0.4827586206896552,-0.05992446758441055
+ff_support_distance_20,Neutral Negative,test,1,0.23400001227855682,1.0,0.0
+ff_support_distance_20,Extreme Bullish,test,76,-1.9882820844650269,0.5131578947368421,-0.06904010937518373
+ff_support_distance_20,Weak Bullish,test,0,0.0,0.0,0.0
+ff_support_distance_20,Strong Bullish,test,0,0.0,0.0,0.0
+ff_support_distance_20,Extreme Bearish,test,0,0.0,0.0,0.0
+ff_support_distance_20,Bullish,test,0,0.0,0.0,0.0
+ff_support_distance_20,Strong Bearish,test,0,0.0,0.0,0.0
+ff_support_distance_20,Weak Bearish,test,0,0.0,0.0,0.0
+ff_support_distance_20,Bearish,test,0,0.0,0.0,0.0
+ff_bollinger_width_20,Very Low,test,1,0.23400001227855682,1.0,0.0
+ff_bollinger_width_20,Low,test,58,1.0173635482788086,0.5689655172413793,0.05091326973620779
+ff_bollinger_width_20,Medium,test,17,-3.2384321689605713,0.29411764705882354,-0.4964721683235469
+ff_bollinger_width_20,High,test,1,0.23278622329235077,1.0,0.0
+ff_bollinger_width_20,Very High,test,0,0.0,0.0,0.0
+ff_roc_16,Neutral Negative,test,0,0.0,0.0,0.0
+ff_roc_16,Weak Bearish,test,11,1.2506099939346313,0.6363636363636364,0.2395982528976251
+ff_roc_16,Weak Bullish,test,65,-3.237678050994873,0.49230769230769234,-0.14265997999735178
+ff_roc_16,Bullish,test,1,0.23278622329235077,1.0,0.0
+ff_roc_16,Bearish,test,0,0.0,0.0,0.0
+ff_roc_16,Strong Bearish,test,0,0.0,0.0,0.0
+ff_roc_16,Strong Bullish,test,0,0.0,0.0,0.0
+ff_relative_volume_20,Very Low,test,1,0.23400001227855682,1.0,0.0
+ff_relative_volume_20,Medium,test,23,0.6631970405578613,0.5652173913043478,0.07562015330966085
+ff_relative_volume_20,Very High,test,14,-0.15177194774150848,0.5714285714285714,-0.027850468474101032
+ff_relative_volume_20,Low,test,6,-0.5760425925254822,0.3333333333333333,-0.15889166224314918
+ff_relative_volume_20,High,test,33,-1.9236640930175781,0.48484848484848486,-0.18528782710212882
+ff_bollinger_percent_b_20,Neutral Negative,test,27,-0.3043026924133301,0.5925925925925926,-0.026310001728176317
+ff_bollinger_percent_b_20,Bearish,test,3,-0.5842820405960083,0.3333333333333333,-0.512174775399654
+ff_bollinger_percent_b_20,Extreme Bearish,test,2,0.5047504305839539,1.0,9.899492703728475
+ff_bollinger_percent_b_20,Bullish,test,24,-0.27053001523017883,0.4583333333333333,-0.027246817548976277
+ff_bollinger_percent_b_20,Extreme Bullish,test,21,-1.0999175310134888,0.47619047619047616,-0.16361536557145645
+ff_kama_distance_10,Neutral Negative,test,0,0.0,0.0,0.0
+ff_kama_distance_10,Weak Bearish,test,3,0.798753023147583,1.0,46404624.96092103
+ff_kama_distance_10,Weak Bullish,test,1,-0.3335072994232178,0.0,0.0
+ff_kama_distance_10,Extreme Bearish,test,24,-0.5107623934745789,0.625,-0.06275607778399661
+ff_kama_distance_10,Strong Bearish,test,0,0.0,0.0,0.0
+ff_kama_distance_10,Bearish,test,2,-0.06437458842992783,0.5,-0.07071072605675825
+ff_kama_distance_10,Strong Bullish,test,2,0.5365411043167114,1.0,28457785.180416785
+ff_kama_distance_10,Extreme Bullish,test,44,-2.4491634368896484,0.4090909090909091,-0.13835572213862007
+ff_kama_distance_10,Bullish,test,1,0.26823166012763977,1.0,0.0
+ff_sma_slope_20_5,Neutral Negative,test,1,0.23400001227855682,1.0,0.0
+ff_sma_slope_20_5,Bearish,test,0,0.0,0.0,0.0
+ff_sma_slope_20_5,Weak Bearish,test,2,0.46435868740081787,1.0,16790700.325404108
+ff_sma_slope_20_5,Strong Bearish,test,1,-0.4867812991142273,0.0,0.0
+ff_sma_slope_20_5,Extreme Bearish,test,0,0.0,0.0,0.0
+ff_sma_slope_20_5,Weak Bullish,test,0,0.0,0.0,0.0
+ff_sma_slope_20_5,Bullish,test,1,-0.48066383600234985,0.0,0.0
+ff_sma_slope_20_5,Strong Bullish,test,15,-0.6820394396781921,0.3333333333333333,-0.07916323073433215
+ff_sma_slope_20_5,Extreme Bullish,test,57,-0.8031557202339172,0.5614035087719298,-0.04407554838226023
+ff_donchian_width_20,Very Low,test,1,0.23400001227855682,1.0,0.0
+ff_donchian_width_20,Low,test,53,0.048654697835445404,0.5471698113207547,0.00451633724519524
+ff_donchian_width_20,Medium,test,20,-2.0182836055755615,0.4,-0.23830038003477988
+ff_donchian_width_20,High,test,3,-0.018652915954589844,0.6666666666666666,-0.014433786271337302
+ff_donchian_width_20,Very High,test,0,0.0,0.0,0.0
+ff_volume_trailing_rank_50,Very Low,test,4,-0.04469136893749237,0.5,-0.02344994884121893
+ff_volume_trailing_rank_50,Low,test,5,0.3406323492527008,0.4,0.11887156275589476
+ff_volume_trailing_rank_50,Medium,test,5,0.8935688138008118,0.8,0.42835293466078556
+ff_volume_trailing_rank_50,High,test,15,-0.38125523924827576,0.6,-0.05902722746092182
+ff_volume_trailing_rank_50,Very High,test,48,-2.5625362396240234,0.4791666666666667,-0.168540065359605
+ff_ema_spread_21_55,Neutral Negative,test,1,0.23400001227855682,1.0,0.0
+ff_ema_spread_21_55,Extreme Bullish,test,52,0.5328431725502014,0.5576923076923077,0.02901986303016907
+ff_ema_spread_21_55,Strong Bullish,test,6,-2.4340157508850098,0.0,-4.775016802379792
+ff_ema_spread_21_55,Bullish,test,8,-0.6303845643997192,0.5,-0.21791546885083096
+ff_ema_spread_21_55,Weak Bullish,test,7,0.956398606300354,0.7142857142857143,0.584372162660005
+ff_ema_spread_21_55,Weak Bearish,test,2,-0.6515992283821106,0.0,-25881309.828604322
+ff_ema_spread_21_55,Bearish,test,0,0.0,0.0,0.0
+ff_ema_spread_21_55,Strong Bearish,test,1,0.23847581446170807,1.0,0.0
+ff_ema_spread_21_55,Extreme Bearish,test,0,0.0,0.0,0.0
+ff_ppo_sign,Neutral (0),test,54,-0.7935742735862732,0.5555555555555556,-0.04568896853109746
+ff_ppo_sign,Positive (1),test,23,-0.9607076644897461,0.43478260869565216,-0.08411889628352856
+ff_ppo_sign,Negative (-1),test,0,0.0,0.0,0.0
+ff_price_vs_ema_20,Neutral (0),test,21,-1.818192958831787,0.5238095238095238,-0.24861860624647283
+ff_price_vs_ema_20,Negative (-1),test,1,0.26904383301734924,1.0,0.0
+ff_price_vs_ema_20,Positive (1),test,55,-0.20513293147087097,0.509090909090909,-0.007695535404441068
+ff_rsi_7_level,Neutral (0),test,59,-0.22561587393283844,0.559322033898305,-0.006985205838577827
+ff_rsi_7_level,Positive (1),test,18,-1.5286660194396973,0.3888888888888889,-0.29093876892694914
+ff_rsi_7_level,Negative (-1),test,0,0.0,0.0,0.0
+ff_rsi_14_midline_cross,Inactive (0),test,1,0.26904383301734924,1.0,0.0
+ff_rsi_14_midline_cross,Active (1),test,76,-2.0233256816864014,0.5131578947368421,-0.07038844634467259
+ff_volume_regime_20,Neutral (0),test,31,-1.9209336042404175,0.5483870967741935,-0.1821358265212642
+ff_volume_regime_20,Negative (-1),test,13,1.009631872177124,0.46153846153846156,0.14824053973481655
+ff_volume_regime_20,Positive (1),test,33,-0.8429800868034363,0.5151515151515151,-0.0785165396509375

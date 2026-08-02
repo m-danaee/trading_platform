@@ -184,6 +184,7 @@ def _passes_symbol_contribution_certificate(
 def _portfolio_selection_certificate(
     valid_m: dict | None,
     *,
+    min_symbols: int | None = None,
     concentration_max_share: float | None = None,
     concentration_max_hhi: float | None = None,
 ) -> tuple[bool, dict[str, Any]]:
@@ -213,6 +214,7 @@ def _portfolio_selection_certificate(
         }
     contribution_ok, contribution = _passes_symbol_contribution_certificate(
         valid_m,
+        min_symbols=min_symbols,
     )
     concentration_ok, concentration = _passes_symbol_concentration_gate(
         valid_m or {},
@@ -751,7 +753,11 @@ def _symbol_specialized_variants(
             and explicit_symbols.issubset({str(symbols[0]).strip().lower()})
         )
         if baseline_source == "rb_univariate_baseline" or sole_symbol_scope:
-            return [base]
+            # Preserve the caller's lightweight rule shape here.  The RB
+            # candidate loop applies ``_rule_to_engine`` immediately after
+            # specialization, while direct callers/tests may intentionally
+            # compare the variant to the supplied dictionary.
+            return [dict(rule)]
         src = _source_symbols_from_rule(rule)
         out = dict(base)
         out["conditions"] = _attach_source_symbol_filters(
@@ -1055,6 +1061,101 @@ def _candidate_positive_symbols(candidate: CandidateRecord) -> set[str]:
     return _candidate_coverage_symbols(candidate)
 
 
+def _symbol_gate_policy(
+    candidates: list[CandidateRecord],
+    train_like: pd.DataFrame,
+    valid_df: pd.DataFrame,
+    tail_holdout_engine: CPUBacktestEngine | None = None,
+) -> dict[str, Any]:
+    """Build the per-direction symbol certificate policy.
+
+    Specialist islands are intentionally asymmetric: a direction can have a
+    healthy BTC island and no healthy ETH island (or vice versa).  Requiring
+    the configured universe floor in that case turns a valid direction into
+    an empty strategy before Phase 5.  We therefore lower the *effective*
+    coverage floor only when the post-admission candidate set itself has no
+    positive, tail-eligible candidate for a missing symbol.  Ordinary
+    multi-symbol teams
+    retain the configured floor and concentration limits.
+
+    This helper is validation-only.  It never inspects the Phase 5/test frame.
+    """
+    configured = max(1, int(getattr(_cfg, "RB_MIN_DISTINCT_SYMBOLS", 1)))
+    active_symbols = {
+        str(symbol).strip()
+        for symbol in _available_symbols(train_like, valid_df)
+        if str(symbol).strip()
+    }
+    active_by_lower = {symbol.lower(): symbol for symbol in active_symbols}
+    candidate_symbols: set[str] = set()
+    candidate_symbols_before_tail: set[str] = set()
+    for candidate in candidates:
+        raw_symbols = {
+            str(symbol).strip()
+            for symbol in _candidate_positive_symbols(candidate)
+            if str(symbol).strip()
+        }
+        scoped_symbols = {
+            active_by_lower[symbol.lower()]
+            for symbol in raw_symbols
+            if symbol.lower() in active_by_lower
+        }
+        candidate_symbols_before_tail |= scoped_symbols
+        if tail_holdout_engine is not None:
+            tail_ok, _ = _passes_tail_selection_gate(
+                tail_holdout_engine, [candidate.rule],
+            )
+            if not tail_ok:
+                continue
+        candidate_symbols |= scoped_symbols
+
+    specialist_mode = bool(
+        getattr(_cfg, "PHASE2_SYMBOL_SPECIALISTS_ENABLED", False)
+        or getattr(_cfg, "RB_REQUIRE_SYMBOL_FILTERS", False)
+    )
+    allow_partial = bool(
+        getattr(_cfg, "RB_ALLOW_PARTIAL_SPECIALIST_COVERAGE", False)
+    )
+    partial = bool(
+        specialist_mode
+        and allow_partial
+        and 0 < len(candidate_symbols) < configured
+    )
+    effective = len(candidate_symbols) if partial else configured
+    effective = max(1, effective)
+    return {
+        "configured_min_symbols": configured,
+        "effective_min_symbols": effective,
+        "partial_specialist_coverage": partial,
+        "specialist_mode": specialist_mode,
+        "allow_partial": allow_partial,
+        "candidate_positive_symbols": sorted(candidate_symbols),
+        "candidate_positive_symbols_before_tail": sorted(
+            candidate_symbols_before_tail
+        ),
+        # Symbols represented by the positive candidate pool but with no
+        # candidate surviving the reserved tail gate.
+        "tail_rejected_candidate_symbols": sorted(
+            candidate_symbols_before_tail - candidate_symbols
+        ),
+        "active_symbols": sorted(active_symbols),
+        "missing_candidate_symbols": sorted(active_symbols - candidate_symbols),
+        # A one-symbol specialist is not "concentrated" relative to the
+        # covered universe; the independent positive-contribution, return,
+        # PF, tail, and Phase 5 gates still apply.
+        "concentration_max_share": (
+            1.0 if partial else float(
+                getattr(_cfg, "RB_MAX_SYMBOL_SHARE_ABS_PNL", 1.0)
+            )
+        ),
+        "concentration_max_hhi": (
+            1.0 if partial else float(
+                getattr(_cfg, "RB_MAX_SYMBOL_HHI", 1.0)
+            )
+        ),
+    }
+
+
 def _diversification_shortlist(
     candidates: list[CandidateRecord],
 ) -> list[CandidateRecord]:
@@ -1308,6 +1409,7 @@ def _diversification_beam(
         # equal seed weights, so rejecting it here would prevent that tuning.
         passed, _certificate = _passes_symbol_contribution_certificate(
             state["valid"],
+            min_symbols=min_distinct_symbols,
         )
         tail_ok, _ = _passes_tail_selection_gate(
             tail_holdout_engine,
@@ -1361,6 +1463,84 @@ def _eval_cv_fold_returns(
     return returns if returns else None
 
 
+def _risk_envelope_admission_variant(
+    rule: dict,
+    train_engine: CPUBacktestEngine,
+    valid_engine: CPUBacktestEngine,
+) -> tuple[dict, dict, dict] | None:
+    """Find a validation-only TP/SL profile for a rule rejected at default risk.
+
+    Phase 2 uses one fixed TP/SL pair so the evolutionary objective remains
+    comparable.  RB, however, owns risk selection and already has a bounded
+    TP/SL grid.  Applying the positive-single gate *before* that grid meant a
+    rule could be profitable at a legitimate RB profile yet be discarded at
+    the Phase 2 profile.  This helper reuses the existing grid only as an
+    admission envelope; the ordinary walk-forward risk optimizer remains the
+    authority for the final profile.
+
+    Returns the best (rule, train metrics, validation metrics) triplet, or
+    ``None`` when no grid point clears the same positive-good thresholds.
+    No Phase 5/test frame is reachable from this function.
+    """
+    if not bool(getattr(_cfg, "RB_CANDIDATE_RISK_ADMISSION_ENABLED", True)):
+        return None
+
+    current_tp = float(rule.get("tp", getattr(_cfg, "RB_DEFAULT_TP", 2.0)))
+    current_sl = float(rule.get("sl", getattr(_cfg, "RB_DEFAULT_SL", 1.2)))
+    profiles: list[tuple[float, float]] = []
+    seen_profiles: set[tuple[float, float]] = set()
+    for raw_tp in getattr(_cfg, "RB_TP_GRID", (current_tp,)):
+        for raw_sl in getattr(_cfg, "RB_SL_GRID", (current_sl,)):
+            try:
+                tp = float(raw_tp)
+                sl = float(raw_sl)
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(tp) or not math.isfinite(sl):
+                continue
+            if bool(getattr(_cfg, "RB_REQUIRE_TP_SL_ABOVE_ONE", True)):
+                tp = max(tp, float(getattr(_cfg, "RB_MIN_TP", 1.01)))
+                sl = max(sl, float(getattr(_cfg, "RB_MIN_SL", 1.01)))
+            profile = (tp, sl)
+            if profile not in seen_profiles:
+                seen_profiles.add(profile)
+                profiles.append(profile)
+    if not profiles:
+        return None
+
+    best: tuple[tuple[float, float, float], dict, dict, dict] | None = None
+    for tp, sl in profiles:
+        candidate = dict(rule)
+        candidate["tp"] = tp
+        candidate["sl"] = sl
+        try:
+            train_m = train_engine.simulate_rule_set([candidate])
+            valid_m = valid_engine.simulate_rule_set([candidate])
+        except Exception:
+            continue
+        if not _is_positive_good(train_m, valid_m):
+            continue
+        # The weakest split is the primary tie-breaker.  This avoids choosing
+        # a profile solely for a large historical return while still using the
+        # shared RB score as a secondary quality/risk discriminator.
+        min_return = min(
+            _f(train_m, "total_return_pct"),
+            _f(valid_m, "total_return_pct"),
+        )
+        min_pf = min(
+            _f(train_m, "profit_factor"),
+            _f(valid_m, "profit_factor"),
+        )
+        score = _score_metrics(train_m, valid_m)
+        rank = (min_return, min_pf, score)
+        if best is None or rank > best[0]:
+            best = (rank, candidate, train_m, valid_m)
+
+    if best is None:
+        return None
+    return best[1], best[2], best[3]
+
+
 def _filter_good_rules(
     pool: list[dict],
     train_like_df: pd.DataFrame,
@@ -1376,6 +1556,7 @@ def _filter_good_rules(
     records: list[CandidateRecord] = []
     seen: set[tuple[str, ...]] = set()
     reject_counts: dict[str, int] = {}
+    risk_rescued = 0
     limit = int(getattr(_cfg, "RB_MAX_POOL_RULES_TO_EVALUATE", 700))
     symbols = _available_symbols(train_like_df, valid_df)
 
@@ -1395,35 +1576,47 @@ def _filter_good_rules(
                     "simulate_error", 0) + 1
                 continue
             if not _is_positive_good(train_m, valid_m):
-                if (
-                    recency_fitness_engine is not None
-                    and recency_sink is not None
-                    and bool(getattr(_cfg, "RB_RECENCY_RESCUE_ENABLED", False))
-                ):
-                    try:
-                        fitness_m = recency_fitness_engine.simulate_rule_set([rule])
-                    except Exception:
-                        fitness_m = None
-                    if fitness_m is not None and _is_recency_good(
-                        train_m, fitness_m, valid_m,
+                # A fixed Phase 2 profile is a discovery anchor, not RB's
+                # final risk choice.  Before rejecting the feature rule,
+                # search the existing RB TP/SL envelope on train and the
+                # validation-selection frame.  This does not read test data
+                # and does not bypass any later walk-forward/tail gate.
+                rescued = _risk_envelope_admission_variant(
+                    rule, train_engine, valid_engine,
+                )
+                if rescued is not None:
+                    rule, train_m, valid_m = rescued
+                    risk_rescued += 1
+                else:
+                    if (
+                        recency_fitness_engine is not None
+                        and recency_sink is not None
+                        and bool(getattr(_cfg, "RB_RECENCY_RESCUE_ENABLED", False))
                     ):
-                        rec = CandidateRecord(
-                            rule=rule,
-                            train_metrics=train_m,
-                            valid_metrics=valid_m,
-                            score=_recency_validation_score(
-                                fitness_m, valid_m,
-                            ),
-                            recency=True,
-                            recency_fitness_metrics=fitness_m,
-                        )
-                        rec.mask = _mask_for(rule, train_like_df, valid_df)
-                        recency_sink.append(rec)
-                for reason in _positive_good_reject_reasons(train_m, valid_m) or ["unknown"]:
-                    # Bucket by primary token (before '=')
-                    bucket = reason.split("=", 1)[0]
-                    reject_counts[bucket] = reject_counts.get(bucket, 0) + 1
-                continue
+                        try:
+                            fitness_m = recency_fitness_engine.simulate_rule_set([rule])
+                        except Exception:
+                            fitness_m = None
+                        if fitness_m is not None and _is_recency_good(
+                            train_m, fitness_m, valid_m,
+                        ):
+                            rec = CandidateRecord(
+                                rule=rule,
+                                train_metrics=train_m,
+                                valid_metrics=valid_m,
+                                score=_recency_validation_score(
+                                    fitness_m, valid_m,
+                                ),
+                                recency=True,
+                                recency_fitness_metrics=fitness_m,
+                            )
+                            rec.mask = _mask_for(rule, train_like_df, valid_df)
+                            recency_sink.append(rec)
+                    for reason in _positive_good_reject_reasons(train_m, valid_m) or ["unknown"]:
+                        # Bucket by primary token (before '=')
+                        bucket = reason.split("=", 1)[0]
+                        reject_counts[bucket] = reject_counts.get(bucket, 0) + 1
+                    continue
             # Evaluate on CV folds if available (C4)
             cv_fold_returns = _eval_cv_fold_returns(rule, fold_engines)
             score = _score_metrics(
@@ -1452,8 +1645,9 @@ def _filter_good_rules(
         del recency_sink[max_recency:]
     keep = int(getattr(_cfg, "RB_KEEP_TOP_RULES", 120))
     logger.info(
-        "RB [%s]: kept %d/%d single rules positive on training and validation.",
-        direction, min(len(records), keep), len(seen),
+        "RB [%s]: kept %d/%d single rules positive on training and validation "
+        "(%d recovered by TP/SL admission envelope).",
+        direction, min(len(records), keep), len(seen), risk_rescued,
     )
     if not records and reject_counts:
         top = sorted(reject_counts.items(),
@@ -1631,6 +1825,9 @@ def _compose_ruleset(
     direction: str,
     *,
     tail_holdout_engine: CPUBacktestEngine | None = None,
+    min_distinct_symbols: int | None = None,
+    concentration_max_share: float | None = None,
+    concentration_max_hhi: float | None = None,
 ) -> tuple[list[CandidateRecord], dict, dict, float, list[dict]]:
     if not candidates:
         raise ValueError(f"No rb-positive rules available for {direction}")
@@ -1659,7 +1856,9 @@ def _compose_ruleset(
     }]
 
     max_rules = int(_cfg.RB_MAX_RULES)
-    if bool(getattr(_cfg, "DEBUG_SYMBOL_SCOPE_ENABLED", False)):
+    if min_distinct_symbols is not None:
+        min_distinct_symbols = max(0, int(min_distinct_symbols))
+    elif bool(getattr(_cfg, "DEBUG_SYMBOL_SCOPE_ENABLED", False)):
         active_symbol_count = len(
             _available_symbols(
                 getattr(train_engine, "df", None),
@@ -1782,7 +1981,12 @@ def _compose_ruleset(
                 choose_score = score
             # Once the beam has found a certified seed, score growth must not
             # reintroduce a symbol imbalance or discard a positive contributor.
-            cert_ok, _cert_detail = _portfolio_selection_certificate(valid_m)
+            cert_ok, _cert_detail = _portfolio_selection_certificate(
+                valid_m,
+                min_symbols=min_distinct_symbols,
+                concentration_max_share=concentration_max_share,
+                concentration_max_hhi=concentration_max_hhi,
+            )
             if not cert_ok:
                 continue
             if best is None or choose_score > best[0]:
@@ -1925,6 +2129,10 @@ def _optimize_risk(
     direction: str,
     fold_engines: list[CPUBacktestEngine] | None = None,
     tail_holdout_engine: CPUBacktestEngine | None = None,
+    *,
+    min_distinct_symbols: int | None = None,
+    concentration_max_share: float | None = None,
+    concentration_max_hhi: float | None = None,
 ) -> tuple[list[dict], dict, dict, float, list[dict]]:
     rules = [_rule_to_engine(r.rule) for r in selected]
     cur_train, cur_valid, cur_score = _evaluate_ruleset(
@@ -1943,7 +2151,12 @@ def _optimize_risk(
         "train_pf": _f(cur_train, "profit_factor"),
         "valid_pf": _f(cur_valid, "profit_factor"),
     }]
-    _, initial_cert = _portfolio_selection_certificate(cur_valid)
+    _, initial_cert = _portfolio_selection_certificate(
+        cur_valid,
+        min_symbols=min_distinct_symbols,
+        concentration_max_share=concentration_max_share,
+        concentration_max_hhi=concentration_max_hhi,
+    )
     hist[0]["portfolio_certificate"] = initial_cert
     if use_walk_forward:
         # Compute initial fold scores
@@ -1991,7 +2204,11 @@ def _optimize_risk(
                         if not _is_positive_good(train_m, valid_m, min_train_trades=min_train_trades, min_valid_trades=min_valid_trades):
                             continue
                         cert_ok, cert_detail = _portfolio_selection_certificate(
-                            valid_m)
+                            valid_m,
+                            min_symbols=min_distinct_symbols,
+                            concentration_max_share=concentration_max_share,
+                            concentration_max_hhi=concentration_max_hhi,
+                        )
                         if not cert_ok:
                             rejected_certificates.append({
                                 "stage": "risk_grid",
@@ -2017,7 +2234,29 @@ def _optimize_risk(
                             for fold_engine in fold_engines:
                                 _, fold_m, fold_s = _evaluate_ruleset(
                                     train_engine, fold_engine, trial)
-                                if not _is_positive_good(train_m, fold_m, min_train_trades=min_train_trades, min_valid_trades=min_valid_trades):
+                                # A WF fold is intentionally shorter than the
+                                # complete validation-selection frame.  Scale
+                                # the absolute validation trade floor by its
+                                # row fraction (with a small floor) instead of
+                                # making every 3-month fold fail solely because
+                                # it cannot produce the full-frame count.
+                                fold_rows = len(getattr(fold_engine, "df", ()))
+                                valid_rows = max(
+                                    1, len(getattr(valid_engine, "df", ()))
+                                )
+                                fold_min_trades = max(
+                                    3,
+                                    int(math.ceil(
+                                        min_valid_trades
+                                        * min(1.0, fold_rows / valid_rows)
+                                    )),
+                                )
+                                if not _is_positive_good(
+                                    train_m,
+                                    fold_m,
+                                    min_train_trades=min_train_trades,
+                                    min_valid_trades=fold_min_trades,
+                                ):
                                     all_folds_pass = False
                                     break
                                 fold_scores_local.append(fold_s)
@@ -2122,6 +2361,10 @@ def _profit_amp_certificate(
     train_m: dict,
     valid_m: dict,
     monthly_summary: MonthlyWindowSummary | None = None,
+    *,
+    min_symbols: int | None = None,
+    concentration_max_share: float | None = None,
+    concentration_max_hhi: float | None = None,
 ) -> tuple[bool, dict]:
     """Return whether a ruleset is robust enough to enter profit-first selection."""
     min_train_trades = int(getattr(
@@ -2134,7 +2377,11 @@ def _profit_amp_certificate(
     if not ok:
         reasons.append("full_sample_positive_good_failed")
     portfolio_ok, portfolio_certificate = _portfolio_selection_certificate(
-        valid_m)
+        valid_m,
+        min_symbols=min_symbols,
+        concentration_max_share=concentration_max_share,
+        concentration_max_hhi=concentration_max_hhi,
+    )
     if not portfolio_ok:
         ok = False
         reasons.extend(portfolio_certificate.get("reasons", []))
@@ -2183,11 +2430,21 @@ def _profit_amp_evaluate_candidate(
     direction: str,
     *,
     check_monthly: bool = True,
+    min_symbols: int | None = None,
+    concentration_max_share: float | None = None,
+    concentration_max_hhi: float | None = None,
 ) -> tuple[dict, dict, float, tuple[bool, dict], list[dict]]:
     """Evaluate a trial ruleset and attach the hard trust certificate used by the amplifier."""
     train_m, valid_m, _ = _evaluate_ruleset(train_engine, valid_engine, rules)
     monthly_summary, monthly_rows = _profit_amp_monthly_summary(valid_df, rules, direction) if check_monthly else (None, [])
-    certificate = _profit_amp_certificate(train_m, valid_m, monthly_summary)
+    certificate = _profit_amp_certificate(
+        train_m,
+        valid_m,
+        monthly_summary,
+        min_symbols=min_symbols,
+        concentration_max_share=concentration_max_share,
+        concentration_max_hhi=concentration_max_hhi,
+    )
     objective = _profit_amp_objective(train_m, valid_m)
     return train_m, valid_m, objective, certificate, monthly_rows
 
@@ -2258,6 +2515,10 @@ def _profit_amp_select_rules(
     valid_df: pd.DataFrame,
     direction: str,
     rejection_sink: list[dict[str, Any]] | None = None,
+    *,
+    min_symbols: int | None = None,
+    concentration_max_share: float | None = None,
+    concentration_max_hhi: float | None = None,
 ) -> tuple[list[dict], dict, dict, float, tuple[bool, dict], list[dict], list[dict]] | None:
     """Greedily select rules by marginal profit while keeping every trial certificate-safe."""
     max_rules = int(_cfg.RB_MAX_RULES)
@@ -2269,7 +2530,17 @@ def _profit_amp_select_rules(
     seed_best: tuple[float, CandidateRecord, dict, dict, float, tuple[bool, dict], list[dict]] | None = None
     rejected_certificates: list[dict[str, Any]] = []
     for cand in ranked:
-        train_m, valid_m, objective, cert, monthly_rows = _profit_amp_evaluate_candidate(train_engine, valid_engine, valid_df, [cand.rule], direction, check_monthly=False)
+        train_m, valid_m, objective, cert, monthly_rows = _profit_amp_evaluate_candidate(
+            train_engine,
+            valid_engine,
+            valid_df,
+            [cand.rule],
+            direction,
+            check_monthly=False,
+            min_symbols=min_symbols,
+            concentration_max_share=concentration_max_share,
+            concentration_max_hhi=concentration_max_hhi,
+        )
         if not cert[0]:
             rejected_certificates.append({
                 "stage": "profit_amplifier_seed",
@@ -2308,7 +2579,17 @@ def _profit_amp_select_rules(
             if ov > max_overlap:
                 continue
             trial_rules = [r.rule for r in selected] + [cand.rule]
-            train_m, valid_m, objective, cert, monthly_rows = _profit_amp_evaluate_candidate(train_engine, valid_engine, valid_df, trial_rules, direction, check_monthly=False)
+            train_m, valid_m, objective, cert, monthly_rows = _profit_amp_evaluate_candidate(
+                train_engine,
+                valid_engine,
+                valid_df,
+                trial_rules,
+                direction,
+                check_monthly=False,
+                min_symbols=min_symbols,
+                concentration_max_share=concentration_max_share,
+                concentration_max_hhi=concentration_max_hhi,
+            )
             if not cert[0]:
                 rejected_certificates.append({
                     "stage": "profit_amplifier_add",
@@ -2342,7 +2623,17 @@ def _profit_amp_select_rules(
             "certificate": cur_cert[1],
         })
     final_rules = [r.rule for r in selected]
-    cur_train, cur_valid, cur_objective, cur_cert, cur_monthly_rows = _profit_amp_evaluate_candidate(train_engine, valid_engine, valid_df, final_rules, direction, check_monthly=True)
+    cur_train, cur_valid, cur_objective, cur_cert, cur_monthly_rows = _profit_amp_evaluate_candidate(
+        train_engine,
+        valid_engine,
+        valid_df,
+        final_rules,
+        direction,
+        check_monthly=True,
+        min_symbols=min_symbols,
+        concentration_max_share=concentration_max_share,
+        concentration_max_hhi=concentration_max_hhi,
+    )
     history[0]["rejected_portfolio_certificates"] = rejected_certificates
     if rejection_sink is not None:
         rejection_sink.extend(rejected_certificates)
@@ -2355,10 +2646,23 @@ def _profit_amp_reallocate_capital(
     valid_engine: CPUBacktestEngine,
     valid_df: pd.DataFrame,
     direction: str,
+    *,
+    min_symbols: int | None = None,
+    concentration_max_share: float | None = None,
+    concentration_max_hhi: float | None = None,
 ) -> tuple[list[dict], dict, dict, float, tuple[bool, dict], list[dict], list[dict]]:
     """Shift capital toward profit-contributing certified rules without changing rule conditions."""
     best_rules = [_rule_to_engine(r) for r in rules]
-    cur_train, cur_valid, cur_objective, cur_cert, cur_monthly_rows = _profit_amp_evaluate_candidate(train_engine, valid_engine, valid_df, best_rules, direction)
+    cur_train, cur_valid, cur_objective, cur_cert, cur_monthly_rows = _profit_amp_evaluate_candidate(
+        train_engine,
+        valid_engine,
+        valid_df,
+        best_rules,
+        direction,
+        min_symbols=min_symbols,
+        concentration_max_share=concentration_max_share,
+        concentration_max_hhi=concentration_max_hhi,
+    )
     history = [{
         "pass": 0,
         "rule_index": -1,
@@ -2383,7 +2687,17 @@ def _profit_amp_reallocate_capital(
                 trial[idx]["capital_pct"] = cap
                 if sum(float(r.get("capital_pct", 0.0)) for r in trial) > max_total_cap:
                     continue
-                train_m, valid_m, objective, cert, monthly_rows = _profit_amp_evaluate_candidate(train_engine, valid_engine, valid_df, trial, direction, check_monthly=False)
+                train_m, valid_m, objective, cert, monthly_rows = _profit_amp_evaluate_candidate(
+                    train_engine,
+                    valid_engine,
+                    valid_df,
+                    trial,
+                    direction,
+                    check_monthly=False,
+                    min_symbols=min_symbols,
+                    concentration_max_share=concentration_max_share,
+                    concentration_max_hhi=concentration_max_hhi,
+                )
                 if not cert[0]:
                     rejected_certificates.append({
                         "stage": "profit_amplifier_capital",
@@ -2411,7 +2725,17 @@ def _profit_amp_reallocate_capital(
                 })
         if not improved:
             break
-    cur_train, cur_valid, cur_objective, cur_cert, cur_monthly_rows = _profit_amp_evaluate_candidate(train_engine, valid_engine, valid_df, best_rules, direction, check_monthly=True)
+    cur_train, cur_valid, cur_objective, cur_cert, cur_monthly_rows = _profit_amp_evaluate_candidate(
+        train_engine,
+        valid_engine,
+        valid_df,
+        best_rules,
+        direction,
+        check_monthly=True,
+        min_symbols=min_symbols,
+        concentration_max_share=concentration_max_share,
+        concentration_max_hhi=concentration_max_hhi,
+    )
     history[0]["rejected_portfolio_certificates"] = rejected_certificates
     return best_rules, cur_train, cur_valid, cur_objective, cur_cert, history, cur_monthly_rows
 
@@ -2426,10 +2750,21 @@ def _run_profit_amplifier(
     train_like_df: pd.DataFrame,
     valid_df: pd.DataFrame,
     direction: str,
+    *,
+    min_symbols: int | None = None,
+    concentration_max_share: float | None = None,
+    concentration_max_hhi: float | None = None,
 ) -> tuple[list[dict], dict, dict, float, dict]:
     """Run robust-certified profit amplification and keep the baseline unless profit improves."""
     baseline_monthly, baseline_monthly_rows = _profit_amp_monthly_summary(valid_df, baseline_rules, direction)
-    baseline_cert = _profit_amp_certificate(baseline_train, baseline_valid, baseline_monthly)
+    baseline_cert = _profit_amp_certificate(
+        baseline_train,
+        baseline_valid,
+        baseline_monthly,
+        min_symbols=min_symbols,
+        concentration_max_share=concentration_max_share,
+        concentration_max_hhi=concentration_max_hhi,
+    )
     baseline_objective = _profit_amp_objective(baseline_train, baseline_valid)
     meta = {
         "enabled": bool(getattr(_cfg, "RB_PROFIT_AMPLIFIER_ENABLED", True)),
@@ -2458,6 +2793,9 @@ def _run_profit_amplifier(
         valid_df,
         direction,
         rejection_sink=selection_rejections,
+        min_symbols=min_symbols,
+        concentration_max_share=concentration_max_share,
+        concentration_max_hhi=concentration_max_hhi,
     )
     if selection is None:
         meta["reason"] = "no_certified_profit_seed"
@@ -2466,7 +2804,16 @@ def _run_profit_amplifier(
     amp_rules, amp_train, amp_valid, amp_objective, amp_cert, select_history, amp_monthly_rows = selection
     capital_history: list[dict] = []
     if bool(getattr(_cfg, "RB_PROFIT_AMP_CAPITAL_REALLOCATION_ENABLED", True)):
-        amp_rules, amp_train, amp_valid, amp_objective, amp_cert, capital_history, amp_monthly_rows = _profit_amp_reallocate_capital(amp_rules, train_engine, valid_engine, valid_df, direction)
+        amp_rules, amp_train, amp_valid, amp_objective, amp_cert, capital_history, amp_monthly_rows = _profit_amp_reallocate_capital(
+            amp_rules,
+            train_engine,
+            valid_engine,
+            valid_df,
+            direction,
+            min_symbols=min_symbols,
+            concentration_max_share=concentration_max_share,
+            concentration_max_hhi=concentration_max_hhi,
+        )
     rejected_certificates: list[dict] = list(
         meta.get("rejected_portfolio_certificates", [])
     )
@@ -2606,6 +2953,9 @@ def _select_recency_candidate(
     *,
     normal_certificate_ok: bool,
     tail_holdout_engine: CPUBacktestEngine | None = None,
+    min_symbols: int | None = None,
+    concentration_max_share: float | None = None,
+    concentration_max_hhi: float | None = None,
 ) -> tuple[CandidateRecord | None, dict[str, Any]]:
     """Choose a bounded recency candidate using validation-only evidence.
 
@@ -2638,9 +2988,15 @@ def _select_recency_candidate(
     )
     margin = float(getattr(_cfg, "RB_RECENCY_MIN_SCORE_MARGIN", 0.0))
     max_share = float(
-        getattr(_cfg, "RB_RECENCY_MAX_SYMBOL_SHARE_ABS_PNL", 0.85)
+        concentration_max_share
+        if concentration_max_share is not None
+        else getattr(_cfg, "RB_RECENCY_MAX_SYMBOL_SHARE_ABS_PNL", 0.85)
     )
-    max_hhi = float(getattr(_cfg, "RB_RECENCY_MAX_SYMBOL_HHI", 0.75))
+    max_hhi = float(
+        concentration_max_hhi
+        if concentration_max_hhi is not None
+        else getattr(_cfg, "RB_RECENCY_MAX_SYMBOL_HHI", 0.75)
+    )
 
     ranked = sorted(candidates, key=lambda rec: rec.score, reverse=True)
     rejected: list[dict[str, Any]] = []
@@ -2670,6 +3026,7 @@ def _select_recency_candidate(
             continue
         certificate_ok, certificate = _portfolio_selection_certificate(
             valid_m,
+            min_symbols=min_symbols,
             concentration_max_share=max_share,
             concentration_max_hhi=max_hhi,
         )
@@ -2903,17 +3260,43 @@ def run_rb_governor_pipeline(
             )
             continue
 
+        symbol_policy = _symbol_gate_policy(
+            candidates,
+            train_like,
+            valid_df,
+            tail_holdout_engine=wf_tail_engine,
+        )
+        effective_min_symbols = int(symbol_policy["effective_min_symbols"])
+        concentration_max_share = float(
+            symbol_policy["concentration_max_share"]
+        )
+        concentration_max_hhi = float(symbol_policy["concentration_max_hhi"])
+        if symbol_policy["partial_specialist_coverage"]:
+            logger.warning(
+                "RB [%s]: allowing partial specialist coverage for %s; "
+                "no positive candidate survived for %s",
+                direction,
+                symbol_policy["candidate_positive_symbols"],
+                symbol_policy["missing_candidate_symbols"],
+            )
+
         selected, sel_train, sel_test, sel_score, compose_history = _compose_ruleset(
             candidates,
             train_engine,
             valid_engine,
             direction,
             tail_holdout_engine=wf_tail_engine,
+            min_distinct_symbols=effective_min_symbols,
+            concentration_max_share=concentration_max_share,
+            concentration_max_hhi=concentration_max_hhi,
         )
 
         opt_rules, opt_train, opt_test, opt_score, risk_history = _optimize_risk(
             selected, train_engine, valid_engine, direction,
             fold_engines=wf_fold_engines, tail_holdout_engine=wf_tail_engine,
+            min_distinct_symbols=effective_min_symbols,
+            concentration_max_share=concentration_max_share,
+            concentration_max_hhi=concentration_max_hhi,
         )
         profit_rules, profit_train, profit_test, profit_objective, profit_meta = _run_profit_amplifier(
             opt_rules,
@@ -2925,6 +3308,9 @@ def run_rb_governor_pipeline(
             train_like,
             valid_df,
             direction,
+            min_symbols=effective_min_symbols,
+            concentration_max_share=concentration_max_share,
+            concentration_max_hhi=concentration_max_hhi,
         )
         opt_rules = profit_rules
         opt_train = profit_train
@@ -2960,7 +3346,12 @@ def run_rb_governor_pipeline(
                     exc,
                 )
         normal_certificate_ok, _normal_certificate = (
-            _portfolio_selection_certificate(opt_test)
+            _portfolio_selection_certificate(
+                opt_test,
+                min_symbols=effective_min_symbols,
+                concentration_max_share=concentration_max_share,
+                concentration_max_hhi=concentration_max_hhi,
+            )
         )
         recency_choice, recency_detail = _select_recency_candidate(
             recency_candidates,
@@ -2969,6 +3360,9 @@ def run_rb_governor_pipeline(
             opt_test,
             normal_certificate_ok=normal_certificate_ok,
             tail_holdout_engine=wf_tail_engine,
+            min_symbols=effective_min_symbols,
+            concentration_max_share=concentration_max_share,
+            concentration_max_hhi=concentration_max_hhi,
         )
         if recency_choice is not None:
             opt_rules = [_rule_to_engine(recency_choice.rule)]
@@ -3052,17 +3446,31 @@ def run_rb_governor_pipeline(
             portfolio_cert_ok, portfolio_certificate = (
                 _portfolio_selection_certificate(
                     opt_test,
-                    concentration_max_share=float(getattr(
-                        _cfg, "RB_RECENCY_MAX_SYMBOL_SHARE_ABS_PNL", 0.85,
-                    )),
-                    concentration_max_hhi=float(getattr(
-                        _cfg, "RB_RECENCY_MAX_SYMBOL_HHI", 0.75,
-                    )),
+                    min_symbols=effective_min_symbols,
+                    concentration_max_share=(
+                        concentration_max_share
+                        if symbol_policy["partial_specialist_coverage"]
+                        else float(getattr(
+                            _cfg, "RB_RECENCY_MAX_SYMBOL_SHARE_ABS_PNL", 0.85,
+                        ))
+                    ),
+                    concentration_max_hhi=(
+                        concentration_max_hhi
+                        if symbol_policy["partial_specialist_coverage"]
+                        else float(getattr(
+                            _cfg, "RB_RECENCY_MAX_SYMBOL_HHI", 0.75,
+                        ))
+                    ),
                 )
             )
         else:
             portfolio_cert_ok, portfolio_certificate = (
-                _portfolio_selection_certificate(opt_test)
+                _portfolio_selection_certificate(
+                    opt_test,
+                    min_symbols=effective_min_symbols,
+                    concentration_max_share=concentration_max_share,
+                    concentration_max_hhi=concentration_max_hhi,
+                )
             )
         rejected_portfolio_certificates: list[dict] = []
         for risk_entry in risk_history:
@@ -3159,12 +3567,15 @@ def run_rb_governor_pipeline(
 
         if bool(getattr(_cfg, "RB_REQUIRE_SYMBOL_FILTERS", False)):
             active_symbol_count = len(_available_symbols(train_like, valid_df))
-            if bool(getattr(_cfg, "DEBUG_SYMBOL_SCOPE_ENABLED", False)):
+            if (
+                bool(getattr(_cfg, "DEBUG_SYMBOL_SCOPE_ENABLED", False))
+                and not symbol_policy["partial_specialist_coverage"]
+            ):
                 min_distinct = int(
                     _cfg.effective_rb_min_distinct_symbols(active_symbol_count)
                 )
             else:
-                min_distinct = int(getattr(_cfg, "RB_MIN_DISTINCT_SYMBOLS", 0))
+                min_distinct = effective_min_symbols
             if min_distinct > 0:
                 n_symbols = len(_symbols_in_rules(opt_rules))
                 if n_symbols < min_distinct:
@@ -3186,6 +3597,7 @@ def run_rb_governor_pipeline(
                             "reason": "insufficient_distinct_symbols",
                             "n_symbols": n_symbols,
                             "required": min_distinct,
+                            "symbol_coverage_policy": symbol_policy,
                             "symbol_contribution_certificate": portfolio_certificate,
                         },
                     )
@@ -3226,6 +3638,7 @@ def run_rb_governor_pipeline(
                         "fail_closed_reason": "insufficient_distinct_symbols",
                         "n_symbols": n_symbols,
                         "required_symbols": min_distinct,
+                        "symbol_coverage_policy": symbol_policy,
                     }
                     with (reports_dir / f"rb_governor_{direction}_report.json").open("w", encoding="utf-8") as fh:
                         json.dump(report, fh, indent=2, default=str)
@@ -3245,13 +3658,25 @@ def run_rb_governor_pipeline(
         if recency_active:
             sym_ok, sym_gate = _passes_symbol_concentration_gate(
                 opt_test,
-                max_share=float(getattr(
-                    _cfg, "RB_RECENCY_MAX_SYMBOL_SHARE_ABS_PNL", 0.85,
-                )),
-                max_hhi=float(getattr(_cfg, "RB_RECENCY_MAX_SYMBOL_HHI", 0.75)),
+                max_share=(
+                    concentration_max_share
+                    if symbol_policy["partial_specialist_coverage"]
+                    else float(getattr(
+                        _cfg, "RB_RECENCY_MAX_SYMBOL_SHARE_ABS_PNL", 0.85,
+                    ))
+                ),
+                max_hhi=(
+                    concentration_max_hhi
+                    if symbol_policy["partial_specialist_coverage"]
+                    else float(getattr(_cfg, "RB_RECENCY_MAX_SYMBOL_HHI", 0.75))
+                ),
             )
         else:
-            sym_ok, sym_gate = _passes_symbol_concentration_gate(opt_test)
+            sym_ok, sym_gate = _passes_symbol_concentration_gate(
+                opt_test,
+                max_share=concentration_max_share,
+                max_hhi=concentration_max_hhi,
+            )
         tail_ok, tail_gate = _passes_tail_holdout_gate(risk_history)
         deployable = (
             val_ret >= (ret_gate - 1e-9)
@@ -3318,6 +3743,7 @@ def run_rb_governor_pipeline(
                     },
                     "symbol_concentration_gate": sym_gate,
                     "tail_holdout_gate": tail_gate,
+                    "symbol_coverage_policy": symbol_policy,
                     "symbol_contribution_certificate": portfolio_certificate,
                     "rb_score": 0.0,
                     "rb_profit_amp_objective": profit_objective,
@@ -3366,6 +3792,7 @@ def run_rb_governor_pipeline(
                 "fail_closed_reason": fail_reason,
                 "symbol_concentration_gate": sym_gate,
                 "tail_holdout_gate": tail_gate,
+                "symbol_coverage_policy": symbol_policy,
                 "symbol_contribution_certificate": portfolio_certificate,
                 "validation_gate": {
                     "return_pct": val_ret,
@@ -3401,6 +3828,7 @@ def run_rb_governor_pipeline(
                 },
                 "symbol_concentration_gate": sym_gate,
                 "tail_holdout_gate": tail_gate,
+                "symbol_coverage_policy": symbol_policy,
                 "symbol_contribution_certificate": portfolio_certificate,
                 "recency_rescue": recency_detail,
                 "rb_score": opt_score,
@@ -3436,6 +3864,7 @@ def run_rb_governor_pipeline(
             "profit_amplifier": profit_meta,
             "recency_rescue": recency_detail,
             "rejected_portfolio_certificates": rejected_portfolio_certificates,
+            "symbol_coverage_policy": symbol_policy,
             "symbol_contribution_certificate": portfolio_certificate,
             "top_single_rules": [
                 {

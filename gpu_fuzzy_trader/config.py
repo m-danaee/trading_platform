@@ -343,7 +343,7 @@ PHASE1_TOP_K_FEATURES = 20
 #   False → normal top-K MI-ranked selection (PHASE1_TOP_K_FEATURES=20).
 # Current default: keep the Phase 1 shortlist so the configured Phase 2 budget
 # is spent on a tractable feature genome.
-PHASE1_DISABLED: bool = True
+PHASE1_DISABLED: bool = False
 
 # PHASE1_MAX_FEATURE_OVERLAP — max shared feature names between long & short lists.
 #   Enforced as int(TOP_K × overlap) shared names (e.g. 25 × 0.8 → 20 shared).
@@ -1513,6 +1513,15 @@ RB_MIN_VALID_PF: float = 1.02
 RB_MIN_TRAIN_TRADES: int = 10
 RB_MIN_VALID_TRADES: int = 6
 
+# RB_CANDIDATE_RISK_ADMISSION_ENABLED — when the Phase 2 fixed profile rejects
+# a rule, let RB check the already-configured TP/SL envelope before discarding
+# it.  Phase 2 deliberately scores at one static profile, while RB is the
+# component that owns risk tuning; gating candidates only at that one profile
+# made the two contracts fight each other (notably on the short side).  The
+# envelope is evaluated on train + validation-selection only and the normal
+# walk-forward/tail gates still run after composition.
+RB_CANDIDATE_RISK_ADMISSION_ENABLED: bool = True
+
 # RB_RULESET_MIN_* — trade-count floors applied to the composed team (all
 #   rules together).  Should be larger than the per-rule floors because the
 #   combined team fires more frequently than any single rule.
@@ -1770,6 +1779,17 @@ RB_REQUIRE_SYMBOL_FILTERS: bool = False
 #   Mode A: traded symbols from metrics must expand toward this.
 #   Mode B: distinct ``symbol is X`` filters on final rules (hard gate).
 RB_MIN_DISTINCT_SYMBOLS: int = 2
+
+# RB_ALLOW_PARTIAL_SPECIALIST_COVERAGE — in symbol-specialist mode, a
+# direction may be deployed with the symbols that actually have a positive
+# train + validation-selection candidate when another symbol has no such
+# candidate.  This is deliberately narrower than changing
+# RB_MIN_DISTINCT_SYMBOLS globally: the missing symbol must be absent from the
+# post-admission candidates that also survive the reserved validation-tail
+# check, and the remaining symbol still has to pass all return/PF,
+# walk-forward, tail, and Phase 5 gates.  The output/report records the
+# partial book explicitly so it cannot be mistaken for full-universe coverage.
+RB_ALLOW_PARTIAL_SPECIALIST_COVERAGE: bool = True
 
 # Soft score bonus per extra traded symbol beyond the first (Mode A ranking).
 # 8→15 — stronger preference for multi-symbol traded coverage
@@ -2764,6 +2784,9 @@ def effective_config_snapshot(
             "max_symbol_share_abs_pnl": float(RB_MAX_SYMBOL_SHARE_ABS_PNL),
             "max_symbol_hhi": float(RB_MAX_SYMBOL_HHI),
             "symbol_filters_required": bool(RB_REQUIRE_SYMBOL_FILTERS),
+            "allow_partial_specialist_coverage": bool(
+                RB_ALLOW_PARTIAL_SPECIALIST_COVERAGE
+            ),
             "phase2_provenance_only": bool(
                 globals().get("RB_PHASE2_PROVENANCE_ONLY", False)
             ),

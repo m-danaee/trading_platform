@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import numpy as np
+import pandas as pd
 
 from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.phases.phase2_rule_pool import (
@@ -15,6 +16,7 @@ from gpu_fuzzy_trader.rb_governor import (
     CandidateRecord,
     _compose_ruleset,
     _portfolio_selection_certificate,
+    _symbol_gate_policy,
 )
 
 
@@ -71,6 +73,38 @@ def test_certificate_rejects_eth_only_and_accepts_balanced_team():
         "BTCUSDT",
         "ETHUSDT",
     ]
+
+
+def test_partial_specialist_policy_requires_missing_symbol_to_have_no_candidate():
+    eth = _candidate("ETH", 100.0, "ETHUSDT", [True, False])
+    frame = pd.DataFrame({"symbol": ["BTCUSDT", "ETHUSDT"]})
+
+    with patch.object(_cfg, "RB_MIN_DISTINCT_SYMBOLS", 2), patch.object(
+        _cfg, "PHASE2_SYMBOL_SPECIALISTS_ENABLED", True
+    ), patch.object(_cfg, "RB_ALLOW_PARTIAL_SPECIALIST_COVERAGE", True):
+        policy = _symbol_gate_policy([eth], frame, frame)
+
+    assert policy["partial_specialist_coverage"]
+    assert policy["effective_min_symbols"] == 1
+    assert policy["candidate_positive_symbols"] == ["ETHUSDT"]
+    assert policy["missing_candidate_symbols"] == ["BTCUSDT"]
+    assert policy["concentration_max_share"] == 1.0
+    assert policy["concentration_max_hhi"] == 1.0
+
+
+def test_partial_specialist_policy_keeps_full_floor_when_both_symbols_exist():
+    eth = _candidate("ETH", 100.0, "ETHUSDT", [True, False])
+    btc = _candidate("BTC", 70.0, "BTCUSDT", [False, True])
+    frame = pd.DataFrame({"symbol": ["BTCUSDT", "ETHUSDT"]})
+
+    with patch.object(_cfg, "RB_MIN_DISTINCT_SYMBOLS", 2), patch.object(
+        _cfg, "PHASE2_SYMBOL_SPECIALISTS_ENABLED", True
+    ), patch.object(_cfg, "RB_ALLOW_PARTIAL_SPECIALIST_COVERAGE", True):
+        policy = _symbol_gate_policy([eth, btc], frame, frame)
+
+    assert not policy["partial_specialist_coverage"]
+    assert policy["effective_min_symbols"] == 2
+    assert policy["concentration_max_share"] == _cfg.RB_MAX_SYMBOL_SHARE_ABS_PNL
 
 
 def test_compose_uses_balanced_beam_seed_instead_of_eth_leader():

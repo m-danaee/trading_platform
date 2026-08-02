@@ -66,6 +66,7 @@
     "symbol_specialists_enabled": true
   },
   "rb": {
+    "allow_partial_specialist_coverage": true,
     "capital_grid": [
       5.0,
       7.5,
