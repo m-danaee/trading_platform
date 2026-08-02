@@ -29,6 +29,7 @@ from gpu_fuzzy_trader.backtest.cpu_engine import (
     CPUBacktestEngine,
     _sortino_ratio_from_returns,
 )
+from gpu_fuzzy_trader.backtest.barrier import barrier_column_names
 from gpu_fuzzy_trader import config as _cfg
 
 logger = logging.getLogger(__name__)
@@ -1063,6 +1064,14 @@ class GPUBacktestEngine:
             1, int(getattr(_cfg, "PHASE2_GPU_CPU_ROUTE_MAX_BATCH", 256)))
         return len(self.df) >= min_bars and int(batch_size) <= max_batch
 
+    def _has_exact_barrier_pair(self, tp: float, sl: float) -> bool:
+        return all(
+            column in self.df.columns
+            for column in barrier_column_names(
+                self.trade_direction, float(tp), float(sl),
+            )
+        )
+
     def simulate_rule_batch(
         self,
         chromosomes: np.ndarray,
@@ -1111,7 +1120,12 @@ class GPUBacktestEngine:
                     f"Chromosome width {K} does not match engine feature "
                     f"count {expected_k}.")
 
-        if self._should_route_batch_to_cpu(B):
+        # The JAX state machine implements the historical aggregate-label
+        # contract.  Production tapes carry exact first-touch outcomes and
+        # true exit offsets, so route those batches through the CPU reference
+        # until an equivalent JAX barrier kernel is introduced.  Correctness
+        # takes precedence over the approximate GPU ranking in this path.
+        if self._has_exact_barrier_pair(tp, sl) or self._should_route_batch_to_cpu(B):
             # The CPU batch implementation is vectorized for rule matching and
             # avoids a 90k-step GPU lax.scan.  It is also the reference metric
             # model, so no separate symbol-enrichment pass is needed here.

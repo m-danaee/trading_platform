@@ -30,6 +30,9 @@ def downcast_numeric_df(df: pd.DataFrame) -> pd.DataFrame:
         and pd.api.types.is_numeric_dtype(out[c])
     ]
     for col in non_meta:
+        if str(col).startswith("_barrier_") and str(col).endswith("_offset"):
+            out[col] = out[col].fillna(-1).astype("int16")
+            continue
         out[col] = out[col].astype("float32")
     return out
 
@@ -49,12 +52,17 @@ def slim_backtest_df(
         Feature columns to retain. When None, keeps all non-meta/label columns.
     """
     if feature_names is None:
-        exclude = set(META_COLUMNS) | set(
-            LABEL_COLUMNS) | {"_symbol_bar_index"}
+        exclude = set(META_COLUMNS) | set(LABEL_COLUMNS)
+        exclude.update(c for c in df.columns if str(c).startswith("_"))
         feature_names = [c for c in df.columns if c not in exclude]
 
     cols: list[str] = []
-    for c in META_COLUMNS + list(LABEL_COLUMNS) + ["_symbol_bar_index"]:
+    # Internal columns carry execution metadata (bar index and exact barrier
+    # outcomes).  They are never feature candidates, but must survive every
+    # slim/prune step so the backtest engine can honour the production trade
+    # contract after Phase 1 removes unused indicators.
+    internal_columns = [c for c in df.columns if str(c).startswith("_")]
+    for c in META_COLUMNS + list(LABEL_COLUMNS) + internal_columns:
         if c in df.columns and c not in cols:
             cols.append(c)
     for name in feature_names:

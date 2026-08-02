@@ -31,6 +31,10 @@ from gpu_fuzzy_trader.validation.monthly_windows import (
     summarize_monthly_metrics,
     MonthlyWindowSummary,
 )
+from gpu_fuzzy_trader.phases.rule_identity import (
+    feature_conditions_only,
+    phase2_rule_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -390,12 +394,40 @@ def _rule_to_engine(rule: dict) -> dict:
     if bool(getattr(_cfg, "RB_REQUIRE_TP_SL_ABOVE_ONE", True)):
         tp = max(tp, float(getattr(_cfg, "RB_MIN_TP", 1.01)))
         sl = max(sl, float(getattr(_cfg, "RB_MIN_SL", 1.01)))
-    return {
+    out = {
         "conditions": list(rule.get("conditions", [])),
         "tp": tp,
         "sl": sl,
         "capital_pct": float(rule.get("capital_pct", getattr(_cfg, "RB_DEFAULT_CAPITAL_PCT", 12.5))),
     }
+    # Preserve Phase 2 provenance through every RB scoring/risk copy.  These
+    # fields are metadata, not feature conditions, and therefore do not alter
+    # evaluator matching semantics.
+    feature_conditions = feature_conditions_only(out["conditions"])
+    out["feature_conditions"] = list(
+        rule.get("feature_conditions", feature_conditions)
+    )
+    out["phase2_rule_id"] = str(
+        rule.get(
+            "phase2_rule_id",
+            phase2_rule_id(
+                out["conditions"],
+                direction=rule.get("direction"),
+                source_symbols=rule.get("source_symbols", []),
+            ),
+        )
+    )
+    out["rule_id"] = str(rule.get("rule_id", out["phase2_rule_id"]))
+    for key in (
+        "source_symbols",
+        "island_symbols",
+        "origin_symbol",
+        "migration_history",
+        "eligible_symbols",
+    ):
+        if key in rule:
+            out[key] = rule[key]
+    return out
 
 
 def _enforce_capital_budget(
@@ -678,7 +710,9 @@ def _ensure_symbol_filtered_rule(rule: dict, symbols: list[str]) -> dict:
         out["conditions"] = conditions
         return out
     max_symbols = int(getattr(_cfg, "RB_SYMBOL_MAX_SYMBOLS_PER_RULE", 3))
-    use_symbols = symbols[:max(1, max_symbols)] if symbols else []
+    scoped = _source_symbols_from_rule(rule)
+    use_pool = scoped or symbols
+    use_symbols = use_pool[:max(1, max_symbols)] if use_pool else []
     out["conditions"] = conditions + [_symbol_condition(s) for s in use_symbols]
     return out
 
@@ -732,6 +766,13 @@ def _symbol_specialized_variants(
         return [base]
 
     base_conditions = _strip_symbol_conditions(list(base.get("conditions", [])))
+    scoped_symbols = _source_symbols_from_rule(rule)
+    if scoped_symbols:
+        allowed = {str(sym).strip().lower() for sym in scoped_symbols}
+        symbols = [
+            sym for sym in symbols
+            if str(sym).strip().lower() in allowed
+        ] or symbols
     max_symbols = max(1, int(getattr(_cfg, "RB_SYMBOL_MAX_SYMBOLS_PER_RULE", 3)))
     max_variants = max(1, int(getattr(_cfg, "RB_SYMBOL_MAX_VARIANTS_PER_RULE", 10)))
     min_train_trades = int(getattr(_cfg, "RB_SYMBOL_MIN_TRAIN_TRADES", 10))
@@ -938,12 +979,18 @@ def _prepare_scoring_frame(df: pd.DataFrame) -> pd.DataFrame:
     non_features = set(labels) | {"datetime", "symbol", "dataset_type", "_symbol_bar_index"}
     feature_cols = [c for c in out.columns if c not in non_features]
     out[feature_cols] = out[feature_cols].fillna(0)
-    if "symbol" in out.columns:
-        out["_symbol_bar_index"] = out.groupby(
-            "symbol", observed=False,
-        ).cumcount()
-    else:
-        out["_symbol_bar_index"] = np.arange(len(out))
+    # Keep the source-tape bar identity when the loader supplied it.  Exact
+    # first-touch barrier offsets are measured on that complete tape; resetting
+    # a validation slice to zero would make every release target point at the
+    # wrong bar (usually the final flush).  Only legacy frames without the
+    # internal identity need a local fallback.
+    if "_symbol_bar_index" not in out.columns:
+        if "symbol" in out.columns:
+            out["_symbol_bar_index"] = out.groupby(
+                "symbol", observed=False,
+            ).cumcount()
+        else:
+            out["_symbol_bar_index"] = np.arange(len(out))
     return downcast_numeric_df(out)
 
 
@@ -2701,6 +2748,26 @@ def run_rb_governor_pipeline(
                 phase2_status={"reason": reason},
             )
             continue
+        # Normalize provenance for pools produced by current or compatible
+        # older writers.  The identity is based on immutable feature logic and
+        # island scope; RB risk copies must carry it unchanged.
+        phase2_pool_ids: set[str] = set()
+        for pool_entry in pool:
+            if not isinstance(pool_entry, dict):
+                continue
+            feature_conditions = feature_conditions_only(
+                pool_entry.get("conditions", [])
+            )
+            pool_entry["feature_conditions"] = feature_conditions
+            pool_entry["phase2_rule_id"] = str(
+                pool_entry.get("phase2_rule_id")
+                or phase2_rule_id(
+                    pool_entry.get("conditions", []),
+                    direction=direction,
+                    source_symbols=pool_entry.get("source_symbols", []),
+                )
+            )
+            phase2_pool_ids.add(pool_entry["phase2_rule_id"])
         train_engine = CPUBacktestEngine(train_like, {}, direction)
         valid_engine = CPUBacktestEngine(valid_df, {}, direction)
 
@@ -3018,6 +3085,78 @@ def run_rb_governor_pipeline(
             })
 
         # ── Hard gate: minimum distinct symbols on final output ──────────────
+        if bool(getattr(_cfg, "RB_PHASE2_PROVENANCE_ONLY", False)):
+            invalid_rules = []
+            for rule_index, rule in enumerate(opt_rules, start=1):
+                feature_conditions = _strip_symbol_conditions(
+                    list(rule.get("conditions", []))
+                )
+                n_conditions = len(feature_conditions)
+                rule_id = str(rule.get("phase2_rule_id", ""))
+                expected_features = list(rule.get("feature_conditions", []))
+                invalid_reason = None
+                if rule_id not in phase2_pool_ids:
+                    invalid_reason = "not_phase2_candidate"
+                elif expected_features and expected_features != feature_conditions:
+                    invalid_reason = "feature_conditions_changed"
+                elif not (
+                    int(getattr(_cfg, "MIN_CONDITIONS", 1))
+                    <= n_conditions
+                    <= int(getattr(_cfg, "MAX_CONDITIONS", n_conditions))
+                ):
+                    invalid_reason = "condition_count"
+                if invalid_reason is not None:
+                    invalid_rules.append({
+                        "rule_index": rule_index,
+                        "condition_count": n_conditions,
+                        "conditions": feature_conditions,
+                        "phase2_rule_id": rule_id,
+                        "reason": invalid_reason,
+                    })
+            if invalid_rules:
+                logger.warning(
+                    "RB [%s]: final rule contract failed (%d invalid rules); "
+                    "clearing strategy",
+                    direction,
+                    len(invalid_rules),
+                )
+                strategy = _strategy(
+                    direction,
+                    [],
+                    risk_optimized=False,
+                    extra={
+                        "deployment_accepted": False,
+                        "fail_closed": True,
+                        "reason": "phase2_condition_contract",
+                        "invalid_rules": invalid_rules,
+                    },
+                )
+                strategy_path = out_dir / f"{direction}.json"
+                with strategy_path.open("w", encoding="utf-8") as fh:
+                    json.dump(strategy, fh, indent=2)
+                _write_clean_evaluator(
+                    strategy,
+                    out_dir / "evaluator_clean" /
+                    f"{direction}_evaluator_clean.json",
+                )
+                report = {
+                    "direction": direction,
+                    "rb_score": 0.0,
+                    "train_metrics": {},
+                    "valid_metrics": {},
+                    "selected_rules": 0,
+                    "n_positive_single_rules": len(candidates),
+                    "fail_closed": True,
+                    "fail_closed_reason": "phase2_condition_contract",
+                    "invalid_rules": invalid_rules,
+                }
+                with (reports_dir / f"rb_governor_{direction}_report.json").open(
+                    "w", encoding="utf-8",
+                ) as fh:
+                    json.dump(report, fh, indent=2, default=str)
+                results[direction] = strategy
+                continue
+
         if bool(getattr(_cfg, "RB_REQUIRE_SYMBOL_FILTERS", False)):
             active_symbol_count = len(_available_symbols(train_like, valid_df))
             if bool(getattr(_cfg, "DEBUG_SYMBOL_SCOPE_ENABLED", False)):

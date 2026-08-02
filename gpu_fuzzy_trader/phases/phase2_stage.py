@@ -170,7 +170,7 @@ def island_stage_budgets(
     total = int(
         total_generations if total_generations is not None else _cfg.PHASE2_GENERATIONS)
     two_stage = bool(getattr(_cfg, "PHASE2_TWO_STAGE_ENABLED", False))
-    if getattr(_cfg, "PHASE2_ISLAND_MODE", "global") == "cluster":
+    if _cfg.phase2_island_mode_enabled():
         two_stage = bool(
             getattr(_cfg, "PHASE2_ISLAND_TWO_STAGE_ENABLED", False))
     if not two_stage:

@@ -1,6 +1,7 @@
 """CPU and GPU backtest engine sub-package."""
 
 from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
+from gpu_fuzzy_trader.backtest.joint_engine import JointPortfolioEngine
 from gpu_fuzzy_trader.backtest.jax_compat import (
     get_gpu_backtest_engine_class,
     jax_gpu_backtest_available,
@@ -8,6 +9,7 @@ from gpu_fuzzy_trader.backtest.jax_compat import (
 
 __all__ = [
     "CPUBacktestEngine",
+    "JointPortfolioEngine",
     "get_gpu_backtest_engine_class",
     "jax_gpu_backtest_available",
 ]

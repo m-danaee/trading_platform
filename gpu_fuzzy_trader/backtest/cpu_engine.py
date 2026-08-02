@@ -17,6 +17,10 @@ import numpy as np
 import pandas as pd
 
 from gpu_fuzzy_trader import config as _cfg
+from gpu_fuzzy_trader.backtest.barrier import (
+    barrier_column_names,
+    configured_barrier_pairs,
+)
 from gpu_fuzzy_trader.backtest.condition_cache import get_or_build_rule_mask
 from gpu_fuzzy_trader.backtest.symbol_conditions import (
     get_normalized_symbol_array,
@@ -76,6 +80,49 @@ def precompute_release_indices(
         if np.any(valid):
             release_index[rows_sorted[valid]
                           ] = rows_sorted[target_positions[valid]]
+
+    return release_index
+
+
+def precompute_release_indices_from_offsets(
+    symbols: np.ndarray,
+    symbol_bar_index: np.ndarray,
+    offsets: np.ndarray,
+) -> np.ndarray:
+    """Map exact first-touch bar offsets to row indices in the current frame.
+
+    ``offsets`` are computed on the complete per-symbol source tape.  A
+    split/backtest frame may contain only a prefix or a validation tail, so
+    the target is resolved by the stable per-symbol bar index rather than by
+    assuming rows are globally contiguous.  Targets outside the current
+    frame are released by the caller's final flush.
+    """
+    offsets = np.asarray(offsets)
+    n_rows = len(offsets)
+    release_index = np.full(n_rows, n_rows, dtype=np.int64)
+    row_index = np.arange(n_rows, dtype=np.int64)
+    symbol_codes, _ = pd.factorize(symbols, sort=False)
+
+    for sym_code in np.unique(symbol_codes):
+        sym_mask = symbol_codes == sym_code
+        rows = row_index[sym_mask]
+        bars = symbol_bar_index[sym_mask].astype(np.int64, copy=False)
+        local_offsets = offsets[sym_mask].astype(np.int64, copy=False)
+
+        order = np.argsort(bars, kind="mergesort")
+        rows_sorted = rows[order]
+        bars_sorted = bars[order]
+        offsets_sorted = local_offsets[order]
+        valid_offset = offsets_sorted >= 0
+        target_bars = bars_sorted + np.maximum(offsets_sorted, 0)
+        target_positions = np.searchsorted(
+            bars_sorted, target_bars, side="left",
+        )
+        valid = valid_offset & (target_positions < len(rows_sorted))
+        if np.any(valid):
+            release_index[rows_sorted[valid]] = rows_sorted[
+                target_positions[valid]
+            ]
 
     return release_index
 
@@ -533,10 +580,60 @@ class CPUBacktestEngine:
         )
         self._condition_mask_cache: dict[tuple[str, ...], np.ndarray] = {}
         self._trade_outcomes_cache: dict[tuple, np.ndarray] = {}
+        self._trade_bundle_cache: dict[
+            tuple, tuple[np.ndarray, np.ndarray, np.ndarray]
+        ] = {}
+        # Exact columns are present only on production tapes prepared by the
+        # loader.  Keeping this capability opt-in preserves the historical
+        # aggregate-label semantics expected by small synthetic unit fixtures
+        # while making real Phase 2/RB/Phase 5 runs use first-touch exits.
+        # The loader materialises the Cartesian product of the Phase 2 and RB
+        # TP/SL grids.  Check that same complete contract here; checking only
+        # zipped grid entries would leave valid cross-product pairs in legacy
+        # overlapping-position mode.
+        self._exact_barrier_available = any(
+            all(column in df.columns for column in barrier_column_names(
+                self.trade_direction, tp, sl,
+            ))
+            for tp, sl in configured_barrier_pairs()
+        )
 
     def _get_trade_outcomes(self, tp: float, sl: float) -> np.ndarray:
         """Precompute (N,) price return % for all rows given fixed TP/SL."""
+        return self._get_trade_bundle(tp, sl)[0]
+
+    def _get_trade_bundle(
+        self,
+        tp: float,
+        sl: float,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Return ``(return_pct, exit_offset, release_row)`` for one pair.
+
+        Exact first-touch columns are the production contract.  The fallback
+        computes the legacy aggregate-label return and fixed-horizon release
+        index so old synthetic fixtures and compatibility callers continue to
+        behave deterministically.
+        """
         cache_key = (tp, sl, self.trade_direction)
+        if cache_key in self._trade_bundle_cache:
+            return self._trade_bundle_cache[cache_key]
+
+        ret_name, off_name = barrier_column_names(
+            self.trade_direction, float(tp), float(sl),
+        )
+        if ret_name in self.df.columns and off_name in self.df.columns:
+            returns = self.df[ret_name].to_numpy(dtype=np.float32)
+            offsets = self.df[off_name].to_numpy(dtype=np.int64)
+            release = precompute_release_indices_from_offsets(
+                self.symbols,
+                self.symbol_bar_index,
+                offsets,
+            )
+            bundle = (returns, offsets, release)
+            self._trade_bundle_cache[cache_key] = bundle
+            self._trade_outcomes_cache[cache_key] = returns
+            return bundle
+
         if cache_key not in self._trade_outcomes_cache:
             # The scalar helper remains the reference path for trade logs, but
             # Phase 2/RB evaluates the same fixed TP/SL across every row.  Do
@@ -583,7 +680,13 @@ class CPUBacktestEngine:
                     ),
                 ).astype(np.float32, copy=False)
             self._trade_outcomes_cache[cache_key] = out
-        return self._trade_outcomes_cache[cache_key]
+        bundle = (
+            self._trade_outcomes_cache[cache_key],
+            np.full(len(self.df), self.max_hold_candles, dtype=np.int64),
+            self.release_index,
+        )
+        self._trade_bundle_cache[cache_key] = bundle
+        return bundle
 
     def _build_trade_outcome_single(
         self, idx: int, tp: float, sl: float
@@ -593,6 +696,23 @@ class CPUBacktestEngine:
 
         Mirrors evaluator_v5.ipynb's _build_trade_outcome_single exactly.
         """
+        ret_name, off_name = barrier_column_names(
+            self.trade_direction, float(tp), float(sl),
+        )
+        if ret_name in self.df.columns and off_name in self.df.columns:
+            result = float(self.df[ret_name].iloc[idx])
+            offset = int(self.df[off_name].iloc[idx])
+            # A first-touch return is exactly +/- the configured barrier.  A
+            # horizon close can coincidentally land on that value, but using
+            # the exact return value is the only deterministic OHLC contract
+            # available without tick data.
+            tol = 1e-5
+            if abs(result - float(tp)) <= tol:
+                return result, "TP"
+            if abs(result + float(sl)) <= tol:
+                return result, "SL"
+            return result, f"Time_{self.max_hold_candles}"
+
         s_max = float(self.max_ret[idx])
         s_min = float(self.min_ret[idx])
         s_close = float(self.close_ret[idx])
@@ -1002,6 +1122,18 @@ class CPUBacktestEngine:
 
             symbol = self.symbols[idx]
 
+            # Production semantics are one net position per symbol.  A
+            # repeated same-side signal while that symbol is already open is
+            # ignored; the joint long/short portfolio layer handles opposite
+            # direction reversal explicitly.  Legacy fixtures without exact
+            # barrier columns retain their original overlapping-position
+            # behaviour for backwards-compatible unit coverage.
+            if (
+                self._exact_barrier_available
+                and symbol_exposure.get(symbol, 0.0) > 0.0
+            ):
+                continue
+
             position_notional, sizing_info = self._calculate_position_notional(
                 equity=equity,
                 capital_pct=capital_pct,
@@ -1012,7 +1144,10 @@ class CPUBacktestEngine:
                 skipped_min_notional_count += 1
                 continue
 
-            price_return_pct = self._get_trade_outcomes(tp, sl)[idx]
+            price_returns, _offsets, release_indices = self._get_trade_bundle(
+                tp, sl,
+            )
+            price_return_pct = price_returns[idx]
             exit_reason = None
             if return_logs:
                 _, exit_reason = self._build_trade_outcome_single(idx, tp, sl)
@@ -1024,7 +1159,7 @@ class CPUBacktestEngine:
             trade_returns.append(net_pnl / equity if equity > 0.0 else 0.0)
             margin_used = position_notional / max(self.leverage, 1e-9)
 
-            release_idx = int(self.release_index[idx])
+            release_idx = int(release_indices[idx])
 
             log_index = None
             if return_logs:

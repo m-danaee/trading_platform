@@ -31,6 +31,16 @@ from gpu_fuzzy_trader.phases.phase5_oos import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _isolate_phase5_reporter_outputs(tmp_path, monkeypatch):
+    """Keep Reporter plots/CSVs out of the checked-in outputs directory."""
+    import gpu_fuzzy_trader.reporting.reporter as reporter_module
+
+    monkeypatch.setattr(
+        reporter_module, "_REPORTS_DIR", str(tmp_path / "reports"),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
 # ---------------------------------------------------------------------------
@@ -766,6 +776,18 @@ class TestOOSEvaluatorRun:
         m._REPORT_PATHS["per_symbol"] = str(
             tmp_path / "reports" / "test_per_symbol_performance.csv"
         )
+        m._REPORT_PATHS["joint"] = str(
+            tmp_path / "reports" / "test_joint_portfolio_report.json"
+        )
+        m._REPORT_PATHS["forward_long"] = str(
+            tmp_path / "reports" / "forward_long_report.json"
+        )
+        m._REPORT_PATHS["forward_short"] = str(
+            tmp_path / "reports" / "forward_short_report.json"
+        )
+        m._REPORT_PATHS["forward_joint"] = str(
+            tmp_path / "reports" / "forward_joint_portfolio_report.json"
+        )
 
         _write_rule_set(str(tmp_path / "long.json"), "long")
         csv_path = _write_synthetic_test_csv(tmp_path)
@@ -792,6 +814,18 @@ class TestOOSEvaluatorRun:
             tmp_path / "reports" / "test_short_report.json")
         m._REPORT_PATHS["per_symbol"] = str(
             tmp_path / "reports" / "test_per_symbol_performance.csv"
+        )
+        m._REPORT_PATHS["joint"] = str(
+            tmp_path / "reports" / "test_joint_portfolio_report.json"
+        )
+        m._REPORT_PATHS["forward_long"] = str(
+            tmp_path / "reports" / "forward_long_report.json"
+        )
+        m._REPORT_PATHS["forward_short"] = str(
+            tmp_path / "reports" / "forward_short_report.json"
+        )
+        m._REPORT_PATHS["forward_joint"] = str(
+            tmp_path / "reports" / "forward_joint_portfolio_report.json"
         )
 
         for d in directions:
@@ -1126,6 +1160,18 @@ class TestEquityCurvePlots:
             tmp_path / "reports" / "test_short_report.json")
         m._REPORT_PATHS["per_symbol"] = str(
             tmp_path / "reports" / "test_per_symbol_performance.csv"
+        )
+        m._REPORT_PATHS["joint"] = str(
+            tmp_path / "reports" / "test_joint_portfolio_report.json"
+        )
+        m._REPORT_PATHS["forward_long"] = str(
+            tmp_path / "reports" / "forward_long_report.json"
+        )
+        m._REPORT_PATHS["forward_short"] = str(
+            tmp_path / "reports" / "forward_short_report.json"
+        )
+        m._REPORT_PATHS["forward_joint"] = str(
+            tmp_path / "reports" / "forward_joint_portfolio_report.json"
         )
 
         for d in directions:

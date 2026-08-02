@@ -4,62 +4,32 @@
     {
       "name": "ff_support_distance_20",
       "mode": "signed",
-      "score": 0.005835023080176471
-    },
-    {
-      "name": "ff_relative_volume_20",
-      "mode": "positive",
-      "score": 0.0037182024109505547
-    },
-    {
-      "name": "ff_bollinger_percent_b_20",
-      "mode": "signed",
-      "score": 0.003377636388317562
-    },
-    {
-      "name": "ff_rsi_14_distance_midline",
-      "mode": "signed",
-      "score": 0.0027641242306730707
-    },
-    {
-      "name": "ff_roc_16",
-      "mode": "signed",
-      "score": 0.002656386573218983
-    },
-    {
-      "name": "ff_kama_distance_10",
-      "mode": "signed",
-      "score": 0.002228085428163107
-    },
-    {
-      "name": "ff_range_expansion_ratio",
-      "mode": "positive",
-      "score": 0.002162366984344022
-    },
-    {
-      "name": "ff_bollinger_width_20",
-      "mode": "positive",
-      "score": 0.0017874202561021235
+      "score": 0.006747176602189153
     },
     {
       "name": "ff_donchian_width_20",
       "mode": "positive",
-      "score": 0.0012046690617366629
+      "score": 0.0018439136946324373
     },
     {
-      "name": "ff_channel_midpoint_bias_20",
+      "name": "ff_roc_16",
       "mode": "signed",
-      "score": 0.0011974768470968125
+      "score": 0.001724956311312864
+    },
+    {
+      "name": "ff_sma_slope_20_5",
+      "mode": "signed",
+      "score": 0.001142978762856961
+    },
+    {
+      "name": "ff_ema_spread_21_55",
+      "mode": "signed",
+      "score": 0.0010169145409129055
     },
     {
       "name": "ff_ppo_sign",
       "mode": "ternary",
       "score": 0.0005288423688896609
-    },
-    {
-      "name": "ff_price_vs_ema_20",
-      "mode": "ternary",
-      "score": 0.00027672650232772513
     },
     {
       "name": "ff_rsi_7_level",
@@ -85,6 +55,16 @@
       "name": "ff_ema_stack_8_21_55",
       "mode": "ternary",
       "score": 4.715927144532777e-05
+    },
+    {
+      "name": "ff_kama_distance_10",
+      "mode": "signed",
+      "score": 0.0
+    },
+    {
+      "name": "ff_cvd_proxy_10",
+      "mode": "signed",
+      "score": 0.0
     }
   ],
   "phase1_disabled": false

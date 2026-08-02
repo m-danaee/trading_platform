@@ -61,6 +61,10 @@ from gpu_fuzzy_trader.phases.phase2_support import (
     passes_pool_trade_floor,
     trade_support_penalty as _trade_support_penalty,
 )
+from gpu_fuzzy_trader.phases.rule_identity import (
+    feature_conditions_only,
+    phase2_rule_id,
+)
 from gpu_fuzzy_trader.reporting.reporter import Reporter
 from gpu_fuzzy_trader.validation.monthly_windows import (
     build_monthly_windows,
@@ -2427,10 +2431,19 @@ def _merge_archive_entries(
         return []
 
     deduped: dict[tuple, dict] = {}
+    preserve_scope = bool(
+        getattr(_cfg, "PHASE2_SYMBOL_SPECIALISTS_ENABLED", False)
+    )
     for entry in entries:
-        key = tuple(
+        chromosome_key = tuple(
             int(v) for v in np.asarray(entry["chromosome"], dtype=np.int32).ravel().tolist()
         )
+        scope_key = (
+            tuple(sorted(str(s) for s in entry.get("source_symbols", [])))
+            if preserve_scope
+            else ()
+        )
+        key = (chromosome_key, scope_key)
         current = deduped.get(key)
         if current is None or _is_better_archive_entry(entry, current):
             deduped[key] = entry
@@ -3477,17 +3490,21 @@ class Rule_Pool_Generator:
         )
 
         previous_pool: list[dict] = []
-        try:
-            loaded_pool = Rule_Pool_Generator.load_pool(
-                self.direction,
-            )
-            if loaded_pool:
-                previous_pool = loaded_pool
-        except ValueError:
-            logger.warning(
-                "Phase 2 [%s]: existing pool file invalid; starting without seeds",
-                self.direction,
-            )
+        if not (
+            self.island_id is not None
+            and bool(getattr(_cfg, "PHASE2_SYMBOL_SPECIALISTS_ENABLED", False))
+        ):
+            try:
+                loaded_pool = Rule_Pool_Generator.load_pool(
+                    self.direction,
+                )
+                if loaded_pool:
+                    previous_pool = loaded_pool
+            except ValueError:
+                logger.warning(
+                    "Phase 2 [%s]: existing pool file invalid; starting without seeds",
+                    self.direction,
+                )
 
         if previous_pool:
             compatible_pool = _filter_compatible_previous_pool(
@@ -3718,6 +3735,7 @@ class Rule_Pool_Generator:
             pool = Rule_Pool_Generator._annotate_archive_entries(
                 pool,
                 source_symbols=self.source_symbols or None,
+                direction=self.direction,
             )
             self._release_resources()
             return pool
@@ -3874,6 +3892,7 @@ class Rule_Pool_Generator:
         *,
         shared_archive: bool = False,
         source_symbols: list[str] | None = None,
+        direction: str | None = None,
     ) -> list[dict]:
         annotated: list[dict] = []
         for entry in rules:
@@ -3882,6 +3901,15 @@ class Rule_Pool_Generator:
                 row["shared_archive"] = True
             if source_symbols:
                 row["source_symbols"] = sorted(set(source_symbols))
+            row["feature_conditions"] = feature_conditions_only(
+                row.get("conditions", [])
+            )
+            row["phase2_rule_id"] = phase2_rule_id(
+                row.get("conditions", []),
+                direction=direction,
+                source_symbols=row.get("source_symbols", source_symbols),
+            )
+            row["rule_id"] = row["phase2_rule_id"]
             val_obj = row.get("val_objectives") or {}
             train_obj = row.get("objectives") or {}
             from gpu_fuzzy_trader.phases.phase2_support import compute_robust_score
@@ -3960,6 +3988,7 @@ class Rule_Pool_Generator:
             merged,
             shared_archive=shared,
             source_symbols=source_symbols,
+            direction=direction,
         )
         payload = {
             "version": _ARCHIVE_SCHEMA_VERSION,
@@ -3982,6 +4011,14 @@ class Rule_Pool_Generator:
 
     def _assemble_epoch_seed_entries(self) -> list[dict]:
         """Merge local pool, symbol archive, and shared archive (dominant seeds)."""
+        # Singleton specialist islands must not seed from the direction-level
+        # pool written by a previous island.  That would silently turn an
+        # independent BTC/ETH search back into a cross-symbol warm start.
+        if (
+            self.source_symbols
+            and bool(getattr(_cfg, "PHASE2_SYMBOL_SPECIALISTS_ENABLED", False))
+        ):
+            return []
         seeds: list[dict] = []
         local_pool = Rule_Pool_Generator.load_pool(
             self.direction,
@@ -4198,6 +4235,7 @@ class Rule_Pool_Generator:
             pool = Rule_Pool_Generator._annotate_archive_entries(
                 pool,
                 source_symbols=self.source_symbols or None,
+                direction=self.direction,
             )
             self._release_resources()
             return pool
@@ -4212,6 +4250,7 @@ class Rule_Pool_Generator:
         )
         pool = Rule_Pool_Generator._annotate_archive_entries(
             pool,
+            direction=self.direction,
         )
 
         pool_path = _resolve_pool_path(self.direction)

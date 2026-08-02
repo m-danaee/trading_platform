@@ -555,7 +555,9 @@ class TestSimulateRuleBatch:
         df["feat_binary"] = np.arange(50, dtype=np.int32) % 2
         eng = _make_engine(df, max_hold_candles=2)
         slots = np.full((5, 2), -1, dtype=np.int32)
-        slots[0] = [1, 1]  # every other row matches binary 1
+        # Fixed signed bins map 0.9 to ordinal 9; the second gene selects
+        # every other row through the binary feature.
+        slots[0] = [9, 1]
 
         monkeypatch.setattr(cfg, "PHASE2_GPU_EVENT_DRIVEN", True)
         event_result = eng.simulate_rule_batch(

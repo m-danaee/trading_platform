@@ -41,9 +41,12 @@
   },
   "phase2": {
     "admission_min_val_trades": 10,
+    "configured_migration_enabled": true,
     "configured_n_clusters": 1,
+    "effective_migration_enabled": false,
     "effective_min_profitable_symbols": 2,
     "effective_n_clusters": 1,
+    "effective_symbol_island_count": 2,
     "estimated_effective_rows": 90854,
     "generations": 40,
     "island_mode": "global",
@@ -59,7 +62,8 @@
     "sampling_total": 701000,
     "stage_a_generations": 20,
     "stage_b_generations": 20,
-    "symbol_gene_dont_care_prob": 0.75
+    "symbol_gene_dont_care_prob": 0.75,
+    "symbol_specialists_enabled": true
   },
   "rb": {
     "capital_grid": [
@@ -71,7 +75,7 @@
       18.0
     ],
     "effective_min_distinct_symbols": 2,
-    "full_validation_recovery": true,
+    "full_validation_recovery": false,
     "max_feasible_rules_at_min_capital": 20,
     "max_pair_overlap": 0.35,
     "max_rules": 20,
@@ -80,6 +84,7 @@
     "max_total_capital": 100.0,
     "min_distinct_symbols": 2,
     "min_rules": 1,
+    "phase2_provenance_only": true,
     "recency_max_symbol_hhi": 0.75,
     "recency_max_symbol_loss_pct": 15.0,
     "recency_max_symbol_share_abs_pnl": 0.85,
@@ -88,13 +93,15 @@
     "recency_min_validation_pf": 1.05,
     "recency_min_validation_return": 0.5,
     "recency_min_validation_trades": 10,
-    "recency_rescue": true,
+    "recency_rescue": false,
     "risk_grid_wf_splits": 3,
     "risk_min_improvement": 0.02,
+    "symbol_filters_required": true,
     "tail_holdout_fraction": 0.25,
     "tail_holdout_min_trades": 4,
     "tail_holdout_selection_gate": true,
     "tail_min_return_pct": 0.0,
+    "univariate_baseline_enabled": false,
     "univariate_generalist": true
   },
   "split": {

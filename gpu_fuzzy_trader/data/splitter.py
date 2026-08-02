@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 import pandas as pd
 
 from gpu_fuzzy_trader import config as _cfg
+from gpu_fuzzy_trader.backtest.barrier import required_barrier_columns
 from gpu_fuzzy_trader.backtest.df_slim import downcast_numeric_df
 from gpu_fuzzy_trader.config import (
     TRAIN_70_PATH,
@@ -265,6 +266,15 @@ def load_cached_split_if_fresh() -> (
         | set(_cfg.LABEL_COLUMNS)
         | set(getattr(_cfg, "INTERNAL_COLUMNS", ()))
     )
+    # Exact first-touch columns are mandatory for raw OHLCV production
+    # sources.  Keep label-only compatibility caches usable for small legacy
+    # fixtures that cannot generate those columns in the first place.
+    try:
+        source_columns = set(pd.read_csv(csv_path, nrows=0).columns)
+    except (OSError, pd.errors.ParserError):
+        source_columns = set()
+    if {"open", "high", "low", "close", "volume"}.issubset(source_columns):
+        required_columns.update(required_barrier_columns())
     cached_frames = {
         "train": train_df,
         "validation": val_df,
@@ -322,6 +332,10 @@ def load_cached_split_if_fresh() -> (
     cv_folds: list | None = None
     if _cfg.split_mode_is_purged_walk_forward():
         loader = Data_Loader()
+        # Only the prepared row count is needed to rebuild CV fold geometry;
+        # the cache-schema check above already enforces exact barriers for raw
+        # OHLCV sources.  Keep this lightweight call compatible with custom
+        # loader doubles used by callers/tests.
         train_full = loader.load_dataset(csv_path)
         ref = manifest.get("reference_rows")
         if ref is None or int(ref) != len(train_full):

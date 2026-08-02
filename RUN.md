@@ -20,7 +20,7 @@ The runtime uses a hybrid policy tuned for a 6-GiB RTX 4050 and an 8-core
 host:
 
 - Phase 1 feature transforms, dataframe preparation, exact rule-set scoring,
-  RB risk tuning, and Phase 5 OOS stay on CPU.
+  RB risk tuning, and Phase 5 evaluation stay on CPU.
 - Phase 2 uses the optimized CPU batch evaluator for the default large
   (~90k-bar) train window. This avoids a slower full-window GPU scan on this
   hardware and also supplies reference-quality ranking metrics.
@@ -53,9 +53,11 @@ storage; the notebook syncs results and the Phase 2 archive back to Drive.
 .venv/bin/python -m gpu_fuzzy_trader.run_pipeline --phase 5
 ```
 
-The production order is data preparation, Phase 1 feature selection, Phase 2
-rule-pool evolution, RB Governor selection/risk tuning, and Phase 5 OOS
-evaluation. Existing integrations that use `--phase 3` or `--phase 4` remain
+The production order is data preparation, Phase 1 feature selection,
+independent symbol-specialist Phase 2 rule-pool evolution, RB Governor
+selection/risk tuning, and Phase 5 evaluation. Phase 5 reports the consumed
+test tape diagnostically; only a strictly newer `FORWARD_CSV_PATH` can produce
+an acceptance decision. Existing integrations that use `--phase 3` or `--phase 4` remain
 compatible: both normalize to the RB Governor and return the historical result
 keys. They are intentionally omitted from the production command list above.
 
@@ -83,14 +85,17 @@ performance.
 - `data/train_new.csv` feeds Phase 1 and Phase 2. Its OHLCV columns are used
   to derive the forward labels required by the backtest.
 - Validation fitness and selection windows feed Phase 2 and RB only.
-- `data/test_new.csv` is reserved for Phase 5 and uses the same OHLCV/features
-  schema.
+- `data/test_new.csv` is a consumed Phase 5 diagnostic holdout and uses the
+  same OHLCV/features schema. Set `FORWARD_CSV_PATH` to an untouched tape
+  whose first timestamp is strictly after the complete test tape for an
+  acceptance check.
 - `evaluator_v5.ipynb` is read-only and is the final evaluation authority.
 
 The checked-in `train_new.csv` and `test_new.csv` profile contains the balanced
-`BTCUSDT`/`ETHUSDT` universe. The default Phase 2 path is one global search with
-a two-symbol robustness target. Cluster mode remains available for larger
-universes; its active cluster count must fit the data preflight.
+`BTCUSDT`/`ETHUSDT` universe. The production Phase 2 path runs independent
+one-symbol BTC/ETH islands with no cross-island warm starts or migration;
+portfolio-level RB composition is responsible for joint coverage. Global and
+clustered modes remain available for controlled experiments.
 
 The evaluator-facing strategy files are `outputs/long.json` and
 `outputs/short.json`; clean copies are written below

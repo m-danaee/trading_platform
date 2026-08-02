@@ -33,7 +33,8 @@ requirements-gpu.txt GPU JAX plugin dependencies
 2. Phase 1 selects direction-specific features.
 3. Phase 2 generates and admits rule pools using island-resolved floors.
 4. RB Governor is the single production selection and risk path.
-5. Phase 5 evaluates the current RB outputs out of sample on `test_new.csv`.
+5. Phase 5 records diagnostics on the consumed `test_new.csv`; an optional
+   strictly newer `FORWARD_CSV_PATH` is the only acceptance tape.
 
 Existing callers using `--phase 3` or `--phase 4` remain compatible: both
 normalize to the RB Governor and return the historical result keys alongside
@@ -87,14 +88,18 @@ thresholds.
 - `data/train_new.csv` feeds Phase 1 and Phase 2. Its OHLCV columns are used
   to derive the forward labels required by the backtest.
 - Validation fitness and selection windows feed Phase 2 and RB only.
-- `data/test_new.csv` is reserved for Phase 5 and uses the same OHLCV/features
-  schema.
+- `data/test_new.csv` is a consumed diagnostic holdout for Phase 5 and uses
+  the same OHLCV/features schema.
+- `FORWARD_CSV_PATH` may point to a strictly newer, untouched tape. A run is
+  accepted only when long, short, and the joint portfolio are all profitable
+  on that forward period.
 - `evaluator_v5.ipynb` is read-only and is the final evaluation authority.
 
 The checked-in `train_new.csv` and `test_new.csv` profile contains the balanced
-`BTCUSDT`/`ETHUSDT` universe. The default Phase 2 path is therefore one global
-search with a two-symbol robustness target. Cluster mode remains available for
-larger universes; its active cluster count must fit the data preflight.
+`BTCUSDT`/`ETHUSDT` universe. Production Phase 2 therefore uses independent
+one-symbol BTC/ETH specialist islands with cross-island migration disabled;
+the RB Governor composes the specialists at portfolio level. The legacy global
+and clustered modes remain available for controlled experiments.
 
 Override paths with `DATA_ROOT`, `TRAIN_CSV_PATH`, or `TEST_CSV_PATH` when
 needed. The evaluator-facing strategy files are `outputs/long.json` and
@@ -132,6 +137,10 @@ the locked strategy without pruning or rewriting it from test-set PnL.
 - `reports/rb_governor_{direction}_report.json`: gate, risk, tail, and
   fail-closed diagnostics.
 - `reports/config_audit.json`: effective configuration snapshot.
+- `reports/test_*`: consumed-test diagnostics, marked
+  `acceptance_status=diagnostic_only`.
+- `reports/forward_*`: optional forward-candidate reports when
+  `FORWARD_CSV_PATH` is configured.
 
 Rejected directions overwrite any stale strategy file with an empty
 fail-closed result, so old artifacts cannot be reused accidentally.

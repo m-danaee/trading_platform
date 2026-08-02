@@ -1,14 +1,15 @@
 """
 phase5_oos.py — OOS_Evaluator (Phase 5)
 
-Final out-of-sample evaluation on the held-out test_new.csv.
+Final out-of-sample diagnostics on the consumed test_new.csv, with an optional
+untouched forward tape used for acceptance.
 
 Workflow:
   1. Load outputs/long.json and outputs/short.json via Output_Writer.load_and_validate()
       (handles the case where only one strategy file exists)
   2. Prepare train, validation, and test data with the same pipeline as training:
          - Sort by (datetime, symbol)
-         - Drop last 288 rows per symbol
+         - Attach exact first-touch outcomes, then drop rows with unavailable labels
          - Drop NaN label rows
          - Fill feature NaN with 0
          - Compute _symbol_bar_index
@@ -31,11 +32,13 @@ import os
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 
 from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
 from gpu_fuzzy_trader.backtest.df_slim import downcast_numeric_df
+from gpu_fuzzy_trader.backtest.joint_engine import JointPortfolioEngine
 from gpu_fuzzy_trader.data.loader import Data_Loader
 from gpu_fuzzy_trader.features.fuzzy_scaling import (
     apply_fuzzy_feature_scaling,
@@ -51,6 +54,17 @@ from gpu_fuzzy_trader.reporting.reporter import Reporter
 
 logger = logging.getLogger(__name__)
 
+
+class _Phase5JSONEncoder(json.JSONEncoder):
+    """Keep numeric report values numeric instead of stringifying NumPy scalars."""
+
+    def default(self, value):  # noqa: D401 - JSONEncoder hook
+        if isinstance(value, np.generic):
+            return value.item()
+        if isinstance(value, np.ndarray):
+            return value.tolist()
+        return str(value)
+
 # ---------------------------------------------------------------------------
 # Output paths
 # ---------------------------------------------------------------------------
@@ -64,7 +78,61 @@ _REPORT_PATHS: dict[str, str] = {
     "long": os.path.join(_cfg.REPORTS_DIR, "test_long_report.json"),
     "short": os.path.join(_cfg.REPORTS_DIR, "test_short_report.json"),
     "per_symbol": os.path.join(_cfg.REPORTS_DIR, "test_per_symbol_performance.csv"),
+    "joint": os.path.join(_cfg.REPORTS_DIR, "test_joint_portfolio_report.json"),
+    "forward_long": os.path.join(_cfg.REPORTS_DIR, "forward_long_report.json"),
+    "forward_short": os.path.join(_cfg.REPORTS_DIR, "forward_short_report.json"),
+    "forward_joint": os.path.join(
+        _cfg.REPORTS_DIR, "forward_joint_portfolio_report.json"
+    ),
 }
+
+# Reporter outputs are derived from the current Phase 5 run.  Clear this
+# fixed, explicit set before evaluation so a fail-closed/no-strategy run
+# cannot leave an older equity curve or CSV looking current.  Phase 2/RB
+# artifacts are intentionally not included here.
+_PHASE5_DERIVED_REPORT_NAMES: tuple[str, ...] = (
+    "test_long_report.json",
+    "test_short_report.json",
+    "test_joint_portfolio_report.json",
+    "test_per_symbol_performance.csv",
+    "forward_long_report.json",
+    "forward_short_report.json",
+    "forward_joint_portfolio_report.json",
+    "test_long_equity.png",
+    "test_short_equity.png",
+    "train_long_equity.png",
+    "train_short_equity.png",
+    "validation_long_equity.png",
+    "validation_short_equity.png",
+    "test_long_per_symbol_performance.csv",
+    "test_short_per_symbol_performance.csv",
+    "train_long_per_symbol_performance.csv",
+    "train_short_per_symbol_performance.csv",
+    "validation_long_per_symbol_performance.csv",
+    "validation_short_per_symbol_performance.csv",
+    "train_per_symbol_performance.csv",
+    "validation_per_symbol_performance.csv",
+    "strategy_evaluation_long.csv",
+    "strategy_evaluation_short.csv",
+    "per_rule_breakdown_long.png",
+    "per_rule_breakdown_short.png",
+    "distribution_equity_test_long.png",
+    "distribution_equity_test_short.png",
+    "distribution_equity_train_long.png",
+    "distribution_equity_train_short.png",
+    "distribution_equity_validation_long.png",
+    "distribution_equity_validation_short.png",
+    "spearman_correlation_long.csv",
+    "spearman_correlation_short.csv",
+    "feature_stratified_train_long.csv",
+    "feature_stratified_train_short.csv",
+    "feature_stratified_validation_long.csv",
+    "feature_stratified_validation_short.csv",
+    "feature_stratified_test_long.csv",
+    "feature_stratified_test_short.csv",
+    "generalization_diagnostics_long.json",
+    "generalization_diagnostics_short.json",
+)
 
 _FEATURE_PATHS: dict[str, str] = {
     "long": os.path.join(_cfg.OUTPUTS_DIR, "selected_features_long.json"),
@@ -87,11 +155,27 @@ class OOS_Evaluator:
     Parameters
     ----------
     test_csv_path : str or None
-        Path to the test CSV file.  Defaults to ``config.TEST_CSV_PATH``.
+        Path to the consumed diagnostic test CSV. Defaults to
+        ``config.TEST_CSV_PATH``.
+    forward_csv_path : str or None
+        Optional untouched future CSV. If absent, no deployment acceptance is
+        possible and test results are explicitly diagnostic-only.
     """
 
-    def __init__(self, test_csv_path: str | None = None) -> None:
+    def __init__(
+        self,
+        test_csv_path: str | None = None,
+        forward_csv_path: str | None = None,
+    ) -> None:
         self.test_csv_path: str = test_csv_path or _cfg.TEST_CSV_PATH
+        configured_forward = (
+            forward_csv_path
+            if forward_csv_path is not None
+            else getattr(_cfg, "FORWARD_CSV_PATH", None)
+        )
+        self.forward_csv_path: str | None = (
+            str(configured_forward).strip() if configured_forward else None
+        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -171,11 +255,7 @@ class OOS_Evaluator:
                 if split == "test":
                     all_per_symbol.extend(per_symbol_rows)
 
-            results[direction] = {
-                split: metrics_by_split[split]
-                for split in ("train", "validation", "test")
-                if split in metrics_by_split
-            }
+            results[direction] = dict(metrics_by_split)
 
             test_metrics = metrics_by_split.get("test", {})
             test_return = float(test_metrics.get("total_return_pct", 0.0))
@@ -188,7 +268,11 @@ class OOS_Evaluator:
                 )
 
             # 4. Save per-direction report
-            self._save_report(test_metrics, direction)
+            self._save_report(test_metrics, direction, split="test")
+            if "forward" in metrics_by_split:
+                self._save_report(
+                    metrics_by_split["forward"], direction, split="forward",
+                )
 
             selected_features = self._load_selected_features(direction)
             rule_set = strategy.get("rules_set", [])
@@ -297,7 +381,96 @@ class OOS_Evaluator:
                 )
 
         # 5. Save per-symbol CSV
+        # The direction-specific reports above are useful for diagnosing each
+        # specialist.  Deployment still owns one account, so run a second
+        # joint pass that nets BTC/ETH and long/short positions and applies
+        # same-side suppression/reversal at the next tradable open.
+        joint_by_split: dict[str, dict] = {}
+        joint_test_logs = pd.DataFrame()
+        try:
+            for split, split_df in datasets_by_split.items():
+                joint_metrics, joint_logs = JointPortfolioEngine(
+                    split_df,
+                ).simulate(strategies, return_logs=True)
+                joint_by_split[split] = joint_metrics
+                if split == "test":
+                    joint_test_logs = joint_logs
+            results["joint_portfolio"] = dict(joint_by_split)
+            self._save_report(
+                joint_by_split.get("test", {}), "joint_portfolio", split="test",
+            )
+            if "forward" in joint_by_split:
+                self._save_report(
+                    joint_by_split["forward"],
+                    "joint_portfolio",
+                    split="forward",
+                )
+            all_per_symbol.extend(
+                self._build_per_symbol_rows(
+                    joint_by_split.get("test", {}),
+                    "joint_portfolio",
+                    joint_test_logs,
+                )
+            )
+            logger.info(
+                "Phase 5 [joint]: test return %.2f%%, trades=%d, reversals=%d",
+                float(joint_by_split.get("test", {}).get("total_return_pct", 0.0)),
+                int(joint_by_split.get("test", {}).get("executed_trades", 0)),
+                int(joint_by_split.get("test", {}).get("reversal_count", 0)),
+            )
+        except Exception as exc:
+            logger.error(
+                "Phase 5 joint portfolio evaluation failed (non-fatal to "
+                "direction reports): %s",
+                exc,
+                exc_info=True,
+            )
+
         self._save_per_symbol_csv(all_per_symbol)
+
+        # The consumed test period is intentionally never an acceptance gate.
+        # A forward decision requires both direction specialists and the joint
+        # account to be profitable on a new, untouched period.
+        forward_available = "forward" in datasets_by_split
+        forward_direction_ok = all(
+            direction in results
+            and float(
+                results[direction].get("forward", {}).get(
+                    "total_return_pct", -float("inf")
+                )
+            ) > 0.0
+            for direction in ("long", "short")
+        )
+        forward_joint_ok = float(
+            results.get("joint_portfolio", {})
+            .get("forward", {})
+            .get("total_return_pct", -float("inf"))
+        ) > 0.0
+        results["acceptance"] = {
+            "status": (
+                "accepted"
+                if forward_available and forward_direction_ok and forward_joint_ok
+                else "diagnostic_only"
+                if not forward_available
+                else "rejected"
+            ),
+            "forward_dataset": self.forward_csv_path if forward_available else None,
+            "test_dataset_is_diagnostic_only": True,
+            "requires_positive_long_short_and_joint_forward_return": True,
+            "long_positive": bool(
+                "long" in results
+                and float(results["long"].get("forward", {}).get(
+                    "total_return_pct", -float("inf")
+                )) > 0.0
+            ),
+            "short_positive": bool(
+                "short" in results
+                and float(results["short"].get("forward", {}).get(
+                    "total_return_pct", -float("inf")
+                )) > 0.0
+            ),
+            "joint_positive": bool(forward_joint_ok),
+        }
 
         return results
 
@@ -366,9 +539,9 @@ class OOS_Evaluator:
 
         Applies the same preparation pipeline as training:
           1. Load CSV
-          2. Sort by (symbol, datetime)
-          3. Drop last 288 rows per symbol
-          4. Drop NaN label rows
+          2. Sort by (datetime, symbol)
+          3. Attach exact first-touch outcomes before label-tail trimming
+          4. Drop rows with unavailable labels
           5. Fill feature NaN with 0
           6. Compute _symbol_bar_index
 
@@ -383,7 +556,11 @@ class OOS_Evaluator:
             Prepared test DataFrame.
         """
         loader = Data_Loader()
-        return loader.load_dataset(test_csv_path)
+        return loader.load_dataset(
+            test_csv_path,
+            drop_tail=False,
+            include_barrier_outcomes=True,
+        )
 
     def _load_datasets_by_split(self) -> dict[str, pd.DataFrame]:
         """Load prepared train, validation, and test datasets."""
@@ -397,6 +574,9 @@ class OOS_Evaluator:
             datasets["train"] = train_df
             datasets["validation"] = val_df
             datasets["test"] = self.prepare_test_data(self.test_csv_path)
+            forward_df = self._load_forward_data()
+            if forward_df is not None:
+                datasets["forward"] = forward_df
             scaling = fit_fuzzy_feature_scaling(datasets["train"])
             for frame in datasets.values():
                 apply_fuzzy_feature_scaling(frame, scaling)
@@ -410,13 +590,20 @@ class OOS_Evaluator:
 
         loader = Data_Loader()
         splitter = Data_Splitter()
-        train_full = loader.load_dataset(_cfg.TRAIN_CSV_PATH)
+        train_full = loader.load_dataset(
+            _cfg.TRAIN_CSV_PATH,
+            drop_tail=False,
+            include_barrier_outcomes=True,
+        )
         train_df, val_df, _cv_folds = splitter.split_and_persist(train_full)
         test_df = self.prepare_test_data(self.test_csv_path)
 
         datasets["train"] = train_df
         datasets["validation"] = val_df
         datasets["test"] = test_df
+        forward_df = self._load_forward_data()
+        if forward_df is not None:
+            datasets["forward"] = forward_df
         scaling = fit_fuzzy_feature_scaling(datasets["train"])
         for frame in datasets.values():
             apply_fuzzy_feature_scaling(frame, scaling)
@@ -428,6 +615,50 @@ class OOS_Evaluator:
             len(test_df),
         )
         return datasets
+
+    def _load_forward_data(self) -> pd.DataFrame | None:
+        """Load and validate a strictly newer, untouched forward period."""
+        if not self.forward_csv_path:
+            return None
+        if not os.path.exists(self.forward_csv_path):
+            raise FileNotFoundError(
+                "Configured FORWARD_CSV_PATH does not exist: "
+                f"{self.forward_csv_path}"
+            )
+
+        # Compare source-tape timestamps, including rows whose labels are not
+        # yet available.  This prevents accidentally treating the unlabelled
+        # tail of test_new.csv as a new forward period.
+        test_meta = pd.read_csv(
+            self.test_csv_path, usecols=["datetime", "symbol"],
+        )
+        forward_meta = pd.read_csv(
+            self.forward_csv_path, usecols=["datetime", "symbol"],
+        )
+        test_dates = test_meta["datetime"]
+        forward_dates = forward_meta["datetime"]
+        test_max = pd.to_datetime(test_dates, errors="raise").max()
+        forward_min = pd.to_datetime(forward_dates, errors="raise").min()
+        if pd.isna(test_max) or pd.isna(forward_min) or forward_min <= test_max:
+            raise ValueError(
+                "FORWARD_CSV_PATH must start strictly after the complete "
+                "consumed test tape; refusing overlapping acceptance data."
+            )
+        test_symbols = {
+            str(value).strip().upper()
+            for value in test_meta["symbol"].dropna().unique()
+        }
+        forward_symbols = {
+            str(value).strip().upper()
+            for value in forward_meta["symbol"].dropna().unique()
+        }
+        if forward_symbols != test_symbols:
+            raise ValueError(
+                "FORWARD_CSV_PATH must contain exactly the consumed test "
+                f"symbol universe {sorted(test_symbols)}; got "
+                f"{sorted(forward_symbols)}."
+            )
+        return self.prepare_test_data(self.forward_csv_path)
 
     @staticmethod
     def _load_selected_features(direction: str) -> list[dict]:
@@ -458,9 +689,14 @@ class OOS_Evaluator:
 
     @staticmethod
     def _clear_previous_reports() -> None:
-        """Remove only the known Phase 5 report artifacts from a prior run."""
+        """Remove only known Phase 5 artifacts from the active report root."""
         for report_path in _REPORT_PATHS.values():
             Path(report_path).unlink(missing_ok=True)
+        # Derive the root from the patched long-report path so tests and
+        # alternate output directories remain isolated from the repository.
+        report_root = Path(_REPORT_PATHS["long"]).parent
+        for name in _PHASE5_DERIVED_REPORT_NAMES:
+            (report_root / name).unlink(missing_ok=True)
 
     def _evaluate_strategy(
         self,
@@ -578,15 +814,39 @@ class OOS_Evaluator:
 
         return rows
 
-    def _save_report(self, metrics: dict, direction: str) -> None:
-        """Save a per-direction JSON report to outputs/reports/."""
-        report_path = _REPORT_PATHS[direction]
+    def _save_report(
+        self,
+        metrics: dict,
+        direction: str,
+        *,
+        split: str = "test",
+    ) -> None:
+        """Save a split report, marking consumed test data as diagnostic-only."""
+        if split == "forward":
+            report_key = (
+                "forward_joint" if direction == "joint_portfolio"
+                else f"forward_{direction}"
+            )
+            fallback_name = f"forward_{direction}_report.json"
+        else:
+            report_key = (
+                "joint" if direction == "joint_portfolio" else direction
+            )
+            fallback_name = f"test_{direction}_report.json"
+        report_path = _REPORT_PATHS.get(
+            report_key,
+            os.path.join(_cfg.REPORTS_DIR, fallback_name),
+        )
         Path(report_path).parent.mkdir(parents=True, exist_ok=True)
 
         # Build a clean, serialisable report dict
         evaluation_status = str(metrics.get("evaluation_status", "ok"))
         report = {
             "direction": direction,
+            "split": split,
+            "acceptance_status": (
+                "diagnostic_only" if split == "test" else "forward_candidate"
+            ),
             "evaluation_status": evaluation_status,
             "total_return_pct": metrics.get("total_return_pct", 0.0),
             "max_drawdown_pct": metrics.get("max_drawdown_pct", 0.0),
@@ -605,7 +865,7 @@ class OOS_Evaluator:
             report["evaluation_error"] = str(metrics["evaluation_error"])
 
         with open(report_path, "w", encoding="utf-8") as fh:
-            json.dump(report, fh, indent=2, default=str)
+            json.dump(report, fh, indent=2, cls=_Phase5JSONEncoder)
 
         logger.info("Saved %s report to %s", direction, report_path)
 

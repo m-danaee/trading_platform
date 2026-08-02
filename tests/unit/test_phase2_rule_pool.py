@@ -1840,11 +1840,18 @@ class TestEvaluateChromosome:
             
             # objectives[2] is -f3_val + penalties (diversity no longer on f3)
             # f3_val is total_return = 15.0 since PHASE2_USE_TOTAL_RETURN_OBJ is True.
-            # cond_penalty is 10.0 because chromosome has 6 active conditions while MAX_CONDITIONS is 5.
-            # Without diversity on f3: -15.0 + 10.0 = -5.0 for both cases.
+            # cond_penalty follows the active production bound.  The
+            # approved 2-4 contract makes six active conditions incur
+            # (6 - MAX_CONDITIONS) * 10 = 20 points.
+            # Without diversity on f3, the expected value is the robust
+            # return objective plus the bound penalty calculated above.
             # Diversity lands on f4 when PHASE2_DIVERSITY_ON_F4=True.
-            assert np.isclose(objectives_self[2], -5.0)
-            assert np.isclose(objectives_similar[2], -5.0)
+            expected_f3 = -15.0 + max(
+                0.0,
+                (6 - int(_cfg.MAX_CONDITIONS)) * 10.0,
+            )
+            assert np.isclose(objectives_self[2], expected_f3)
+            assert np.isclose(objectives_similar[2], expected_f3)
             if bool(getattr(_cfg, "PHASE2_F4_ENABLED", False)) and bool(
                 getattr(_cfg, "PHASE2_DIVERSITY_ON_F4", True)
             ):
@@ -3114,8 +3121,8 @@ class TestIslandAwareTradeFloor:
 
 class TestConditionBounds:
     def test_config_allows_bounded_conditions(self):
-        assert _cfg.MIN_CONDITIONS == 4
-        assert _cfg.MAX_CONDITIONS == 5
+        assert _cfg.MIN_CONDITIONS == 2
+        assert _cfg.MAX_CONDITIONS == 4
 
     def test_mutation_repair_preserves_condition_bounds(self):
         from gpu_fuzzy_trader.phases.phase2_rule_pool import _mutate

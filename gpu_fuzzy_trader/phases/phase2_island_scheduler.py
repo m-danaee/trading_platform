@@ -531,6 +531,8 @@ def _run_cluster_islands(
         # 4. Migration: forward best individuals to the next cluster
         if (
             _cfg.PHASE2_MIGRATION_ENABLED
+            and not bool(getattr(_cfg, "PHASE2_SYMBOL_SPECIALISTS_ENABLED", False))
+            and not bool(getattr(_cfg, "PHASE2_ONE_SYMBOL_ISLANDS", False))
             and n_clusters > 1
             and idx + 1 < len(cluster_order)
         ):
@@ -578,6 +580,7 @@ def _run_cluster_islands(
         annotated = Rule_Pool_Generator._annotate_archive_entries(
             pool_part,
             source_symbols=cluster_map.get(cid, []),
+            direction=direction,
         )
         cluster_pools.extend(annotated)
         # (Fix 3: RAM quick wins — explicit engine teardown + GC)
@@ -629,7 +632,11 @@ def run_cluster_phase2(
     symbols = sorted(
         {str(s) for s in train_df["symbol"].dropna().unique().tolist()},
     ) if "symbol" in train_df.columns else []
-    if bool(getattr(_cfg, "PHASE2_ONE_SYMBOL_ISLANDS", False)):
+    specialist_islands = bool(
+        getattr(_cfg, "PHASE2_SYMBOL_SPECIALISTS_ENABLED", False)
+        or getattr(_cfg, "PHASE2_ONE_SYMBOL_ISLANDS", False)
+    )
+    if specialist_islands:
         # One island per symbol — skip KMeans / corr clustering.
         cluster_map = {str(i): [sym] for i, sym in enumerate(symbols)}
         cluster_payload = {
@@ -661,12 +668,15 @@ def run_cluster_phase2(
         direction,
         len(cluster_map),
         reference_rows,
-        bool(getattr(_cfg, "PHASE2_ONE_SYMBOL_ISLANDS", False)),
+        specialist_islands,
         int(_cfg.PHASE2_ISLAND_TOTAL_GENERATIONS),
+    )
+    migration_enabled = bool(
+        _cfg.PHASE2_MIGRATION_ENABLED and not specialist_islands
     )
     migration_status = (
         "enabled sequential post-cluster chain"
-        if _cfg.PHASE2_MIGRATION_ENABLED
+        if migration_enabled
         else "disabled (independent islands)"
     )
     receiver_guards = (

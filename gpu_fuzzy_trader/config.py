@@ -11,7 +11,7 @@ File layout
   4. Phase 2 — rule evolution (NSGA-III): risk, genome, gates, islands
   5. RB Governor — unified rule selection + risk tuning
   6. Monthly windows — shared validation penalties
-  7. Phase 5 — out-of-sample evaluation (test_new.csv only)
+  7. Phase 5 — consumed test diagnostics plus optional untouched forward acceptance
   8. Helpers — path resolvers, trade-floor scaling, island hyperparams
   9. Configuration validation + Colab runtime defaults
 
@@ -21,7 +21,7 @@ Pipeline phases
   Phase 1  Feature selection (train_new.csv only)
   Phase 2  NSGA-III rule-pool evolution (GPU backtests)
   RB       Rule-team selection + walk-forward TP/SL/capital optimization
-  Phase 5  Out-of-sample evaluation (test_new.csv only)
+  Phase 5  Test diagnostics; optional FORWARD_CSV_PATH acceptance
 
 Detailed behaviour and formulas: README.md and RUN.md; evaluator parity is
 defined by the read-only evaluator_v5.ipynb notebook.
@@ -41,7 +41,7 @@ Tuning cheat-sheet (symptom → knob)
                                    (must match evaluator_v5.ipynb)
   RB Governor too strict           RB_MIN_* ↓, RB_KEEP_TOP_RULES ↑
 
-Environment overrides: DATA_ROOT, TRAIN_CSV_PATH, TEST_CSV_PATH,
+Environment overrides: DATA_ROOT, TRAIN_CSV_PATH, TEST_CSV_PATH, FORWARD_CSV_PATH,
                        PHASE2_GPU_BATCH_SIZE, PHASE2_GPU_BATCH_SIZE_AUTO
 """
 
@@ -105,7 +105,8 @@ def _env_str(name: str, default: str) -> str:
 DATA_ROOT = os.environ.get("DATA_ROOT", "").strip()
 # Market data files (only these CSVs):
 #   train_new.csv — OHLCV + ff_* features (Phase 1, Phase 2, RB Governor)
-#   test_new.csv  — matching held-out OHLCV + ff_* features (Phase 5 OOS only)
+#   test_new.csv  — consumed diagnostic OHLCV + ff_* holdout
+#   forward.csv   — optional untouched future tape used only for acceptance
 TRAIN_CSV_PATH = _env_str(
     "TRAIN_CSV_PATH",
     os.path.join(
@@ -115,6 +116,10 @@ TEST_CSV_PATH = _env_str(
     "TEST_CSV_PATH",
     os.path.join(DATA_ROOT, "test_new.csv") if DATA_ROOT else "data/test_new.csv",
 )
+# The checked-in test_new.csv is a consumed diagnostic holdout.  A strategy is
+# never marked deployment-accepted from it; provide a new, untouched future
+# file through FORWARD_CSV_PATH when a real acceptance check is available.
+FORWARD_CSV_PATH = os.environ.get("FORWARD_CSV_PATH", "").strip() or None
 
 # Cached splits from train_new.csv (Phases 2–5). Rebuilt when train_new.csv is newer.
 TRAIN_70_PATH = "data/train_70.parquet"
@@ -167,7 +172,7 @@ INTERNAL_COLUMNS = ("_symbol_bar_index",)
 PHASE1_EXCLUDE_RAW_OHLCV = True
 
 # TAIL_DROP_ROWS — bars dropped per symbol at dataset tail (label horizon).
-# Must equal MAX_HOLD_CANDLES (288 = 24 h at 5-min bars).
+# Must equal MAX_HOLD_CANDLES (288 = 72 h at 15-minute bars).
 #   Higher → more rows removed, safer labels, less training data.
 #   Lower  → more rows kept, risk of NaN / lookahead leakage at symbol tails.
 TAIL_DROP_ROWS = 288
@@ -544,8 +549,8 @@ PHASE2_CAPITAL_PCT = 18.0
 #   Lower MIN → broader rules, more trades, risk of weak patterns.
 #   Higher MAX → allow complex rules (if encoding supports variable count).
 #   Lower MAX → force simplicity; more generalization, less specificity.
-MIN_CONDITIONS = 3
-MAX_CONDITIONS = 5
+MIN_CONDITIONS = 2
+MAX_CONDITIONS = 4
 
 # PHASE2_ENCODING — chromosome memory layout during evolution.
 #   "dense"        — length-K vector with per-feature dont_care.
@@ -1287,16 +1292,20 @@ PHASE2_SEED: int = get_seed()
 # =============================================================================
 # Phase 2 — Island / cluster mode (scoped evolution)
 # =============================================================================
-# When PHASE2_ISLAND_MODE == "cluster", Phase 2 runs K hybrid clusters. Each
-# cluster receives the configured island generation budget and is processed
+# When scoped-island mode is active, Phase 2 runs symbol or hybrid clusters.
+# Each island receives the configured generation budget and is processed
 # sequentially to keep GPU memory bounded. Global knobs below stay as universe
 # bases; runtime scaling uses resolve_island_hyperparams().
 
 # PHASE2_ISLAND_MODE — scoped evolution layout.
-#   "global"  → single universe-wide NSGA-III run (current default for the
-#                checked-in two-symbol train_new.csv/test_new.csv profile).
-#   "cluster" → K symbol clusters evolved as separate islands with migration.
+#   "global"  → single universe-wide NSGA-III run (legacy/diagnostic mode).
+#   "cluster" → K symbol clusters evolved as separate islands.
 PHASE2_ISLAND_MODE = "global"  # "global" | "cluster"
+# Production search policy: discover BTCUSDT and ETHUSDT rules in independent
+# symbol islands, then let the portfolio governor compose the specialists.
+# The legacy PHASE2_ISLAND_MODE/PHASE2_ONE_SYMBOL_ISLANDS switches remain
+# available for compatibility experiments and unit-sized runs.
+PHASE2_SYMBOL_SPECIALISTS_ENABLED: bool = True
 # PHASE2_ONE_SYMBOL_ISLANDS — when True, skip KMeans/corr clustering and give
 #   each symbol its own island. Generation budget is per-island full
 #   PHASE2_ISLAND_TOTAL_GENERATIONS for both one-symbol and multi-symbol
@@ -1305,10 +1314,9 @@ PHASE2_ISLAND_MODE = "global"  # "global" | "cluster"
 # islands and is therefore not the default. Keep this switch available for
 # larger universes where per-symbol exploration is intentional.
 PHASE2_ONE_SYMBOL_ISLANDS = False
-# PHASE2_N_CLUSTERS — number of hybrid symbol clusters when island mode is active
-#   and PHASE2_ONE_SYMBOL_ISLANDS is False. One cluster is the only useful
-#   cluster-mode default for the current two-symbol universe; increase it only
-#   after the active dataset has enough symbols for multi-symbol clusters.
+# PHASE2_N_CLUSTERS — number of hybrid symbol clusters when clustered mode is
+#   active and PHASE2_ONE_SYMBOL_ISLANDS is False. It is ignored by the
+#   production singleton-specialist switch.
 PHASE2_N_CLUSTERS = 1
 # PHASE2_CLUSTER_USE_RETURN_CORR — when True, build return-correlation embedding
 #   and blend with feature-means (weights below) for a hybrid clustering that
@@ -1347,7 +1355,9 @@ PHASE2_ISLAND_SCALE_TRADE_FLOORS = True
 PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN = 8
 # The two-window holdout geometry is the minimum evidence available by default.
 PHASE2_ISLAND_MONTHLY_MIN_MONTHS = 2
-# Migration — exchange top elites between sequential cluster islands.
+# Migration — optional exchange of top elites between sequential cluster
+# islands. Production symbol-specialist mode disables this to keep discovery
+# islands independent; retain the knobs for controlled migration experiments.
 # PHASE2_MIGRATION_ENABLED — master switch for inter-island elite exchange.
 PHASE2_MIGRATION_ENABLED: bool = True
 PHASE2_MIGRATION_TOP_K = 5
@@ -1454,7 +1464,7 @@ MONTHLY_BEARISH_RATIO_WEIGHT = 15.0
 MONTHLY_TREND_WEIGHT = 2.0
 MONTHLY_LATEST_WEIGHT = 0.6
 
-# Phase 5 — Out-of-sample evaluation (test_new.csv only; never used before Phase 5)
+# Phase 5 — consumed test diagnostics plus optional untouched forward acceptance
 # =============================================================================
 
 # PHASE5_VALIDATION_RETURN_GATE_PCT — min val return % for deployment flag.
@@ -1523,12 +1533,14 @@ RB_MAX_POOL_RULES_TO_EVALUATE: int = 400
 #   Should be comfortably larger than PHASE2_KEEP_TOP_RULES.
 RB_KEEP_TOP_RULES: int = 150
 
-# Deterministic one-condition baselines complement the stochastic Phase 2
-# search. They are reconstructed only from Phase-1-selected features already
-# present in the Phase 2 pool, then must pass the same train/validation/tail
-# RB gates as every evolved rule. Symbol-specialized variants make it possible
-# to compose a genuinely balanced multi-asset team.
-RB_UNIVARIATE_BASELINE_ENABLED: bool = True
+# RB is a governor over Phase 2 discoveries, not a second rule generator.
+# Keep the historical univariate complement available as an explicitly
+# opt-in diagnostic helper, but never add it to the production candidate pool.
+RB_UNIVARIATE_BASELINE_ENABLED: bool = False
+# When enabled by the canonical pipeline, every RB candidate/final rule must
+# preserve the Phase 2 feature-condition contract.  Kept opt-in for legacy
+# diagnostic callers that intentionally exercise relaxed RB behavior.
+RB_PHASE2_PROVENANCE_ONLY: bool = False
 RB_UNIVARIATE_BASELINE_MAX_RULES: int = 400
 # Include a generalist form of each one-condition baseline in addition to the
 # symbol-specialized forms.  The former is important when a condition has a
@@ -1543,7 +1555,7 @@ RB_UNIVARIATE_GENERALIST_ENABLED: bool = True
 # have adequate PF/trade support, and the older train loss/drawdown are within
 # explicit limits.  It never reads Phase-5 test data and is recorded in the
 # strategy/report when selected.
-RB_RECENCY_RESCUE_ENABLED: bool = True
+RB_RECENCY_RESCUE_ENABLED: bool = False
 RB_RECENCY_MIN_VALID_RETURN: float = 0.50
 RB_RECENCY_MIN_VALID_PF: float = 1.05
 # The chronological halves are intentionally short on this data.  Ten trades
@@ -1565,7 +1577,7 @@ RB_RECENCY_MAX_CANDIDATES: int = 40
 # This remains validation-only (Phase 5 test data is never read) and avoids
 # discarding a direction merely because the half-window was too sparse for a
 # balanced portfolio certificate.  Accepted directions do not pay this cost.
-RB_FULL_VALIDATION_RECOVERY_ENABLED: bool = True
+RB_FULL_VALIDATION_RECOVERY_ENABLED: bool = False
 
 
 # --- Team composition ---
@@ -2173,14 +2185,14 @@ def resolve_island_hyperparams(
 
 
 def island_early_stop_enabled() -> bool:
-    if PHASE2_ISLAND_MODE == "cluster":
+    if phase2_island_mode_enabled():
         return bool(PHASE2_ISLAND_EARLY_STOP_ENABLED)
     return bool(PHASE2_EARLY_STOP_ENABLED)
 
 
 
 def island_plateau_early_stop_enabled() -> bool:
-    if PHASE2_ISLAND_MODE == "cluster":
+    if phase2_island_mode_enabled():
         return bool(PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED)
     return bool(PHASE2_PLATEAU_EARLY_STOP_ENABLED)
 
@@ -2193,9 +2205,17 @@ def scoped_island_profile(island_profile: str) -> bool:
 
 
 def island_two_stage_enabled() -> bool:
-    if PHASE2_ISLAND_MODE == "cluster":
+    if phase2_island_mode_enabled():
         return bool(PHASE2_ISLAND_TWO_STAGE_ENABLED)
     return bool(PHASE2_TWO_STAGE_ENABLED)
+
+
+def phase2_island_mode_enabled() -> bool:
+    """Whether the production Phase 2 scheduler should use scoped islands."""
+    return bool(
+        str(PHASE2_ISLAND_MODE).strip().lower() == "cluster"
+        or bool(globals().get("PHASE2_SYMBOL_SPECIALISTS_ENABLED", False))
+    )
 
 
 # =============================================================================
@@ -2698,6 +2718,20 @@ def effective_config_snapshot(
             "min_trade_support": int(MIN_TRADE_SUPPORT),
             "min_trade_pool_floor": int(MIN_TRADE_POOL_FLOOR),
             "island_mode": str(PHASE2_ISLAND_MODE),
+            "symbol_specialists_enabled": bool(
+                globals().get("PHASE2_SYMBOL_SPECIALISTS_ENABLED", False)
+            ),
+            "configured_migration_enabled": bool(PHASE2_MIGRATION_ENABLED),
+            "effective_migration_enabled": bool(
+                PHASE2_MIGRATION_ENABLED
+                and not bool(globals().get("PHASE2_SYMBOL_SPECIALISTS_ENABLED", False))
+            ),
+            "effective_symbol_island_count": (
+                int(active_symbol_count)
+                if bool(globals().get("PHASE2_SYMBOL_SPECIALISTS_ENABLED", False))
+                and active_symbol_count is not None
+                else None
+            ),
             "configured_n_clusters": configured_cluster_count,
             "effective_n_clusters": effective_cluster_count,
             "effective_min_profitable_symbols": effective_min_profitable_symbols(n_symbols),
@@ -2729,6 +2763,13 @@ def effective_config_snapshot(
             "max_pair_overlap": float(RB_MAX_PAIR_OVERLAP),
             "max_symbol_share_abs_pnl": float(RB_MAX_SYMBOL_SHARE_ABS_PNL),
             "max_symbol_hhi": float(RB_MAX_SYMBOL_HHI),
+            "symbol_filters_required": bool(RB_REQUIRE_SYMBOL_FILTERS),
+            "phase2_provenance_only": bool(
+                globals().get("RB_PHASE2_PROVENANCE_ONLY", False)
+            ),
+            "univariate_baseline_enabled": bool(
+                RB_UNIVARIATE_BASELINE_ENABLED
+            ),
             "full_validation_recovery": bool(RB_FULL_VALIDATION_RECOVERY_ENABLED),
             "univariate_generalist": bool(RB_UNIVARIATE_GENERALIST_ENABLED),
             "recency_rescue": bool(RB_RECENCY_RESCUE_ENABLED),

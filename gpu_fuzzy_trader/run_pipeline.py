@@ -167,6 +167,18 @@ def _temporary_output_paths(output_dir: str | None):
             "per_symbol": os.path.join(
                 reports_root, "test_per_symbol_performance.csv"
             ),
+            "joint": os.path.join(
+                reports_root, "test_joint_portfolio_report.json"
+            ),
+            "forward_long": os.path.join(
+                reports_root, "forward_long_report.json"
+            ),
+            "forward_short": os.path.join(
+                reports_root, "forward_short_report.json"
+            ),
+            "forward_joint": os.path.join(
+                reports_root, "forward_joint_portfolio_report.json"
+            ),
         }
 
         _reporter_module._REPORTS_DIR = reports_root
@@ -207,7 +219,13 @@ def _log_pipeline_config() -> None:
             f" | DEBUG start={_cfg.DEBUG_SYMBOL!r} "
             f"count={_cfg.DEBUG_SYMBOL_COUNT}"
         )
-    if _cfg.PHASE2_ISLAND_MODE == "cluster":
+    if _cfg.phase2_island_mode_enabled():
+        specialists_enabled = bool(
+            getattr(_cfg, "PHASE2_SYMBOL_SPECIALISTS_ENABLED", False)
+        )
+        migration_effective = bool(
+            _cfg.PHASE2_MIGRATION_ENABLED and not specialists_enabled
+        )
         total_gens = int(_cfg.PHASE2_ISLAND_TOTAL_GENERATIONS)
         cluster_ids = [str(i) for i in range(max(1, int(_cfg.PHASE2_N_CLUSTERS)))]
         budgets = compute_cluster_generation_budgets(total_gens, cluster_ids)
@@ -215,7 +233,7 @@ def _log_pipeline_config() -> None:
         epoch_gens = int(_cfg.PHASE2_ISLAND_EPOCH_GENERATIONS)
         phase2_fmt = (
             "PHASE2 algo=%s pop=%d island_total=%d per_cluster_gens=%d epoch=%d "
-            "joint_train_val=%s migration=%s"
+            "joint_train_val=%s migration=%s specialists=%s"
         )
         phase2_args = (
             _cfg.PHASE2_ALGORITHM,
@@ -224,7 +242,8 @@ def _log_pipeline_config() -> None:
             gens_per_cluster,
             epoch_gens,
             _cfg.PHASE2_JOINT_TRAIN_VAL,
-            _cfg.PHASE2_MIGRATION_ENABLED,
+            migration_effective,
+            specialists_enabled,
         )
     else:
         phase2_fmt = "PHASE2 algo=%s pop=%d gen=%d joint_train_val=%s"
@@ -336,12 +355,21 @@ def _print_run_summary(results: dict[str, Any], phase: int | None, log_path: str
         phase5 = results.get("phase5", {})
         if phase5:
             for direction, metrics in phase5.items():
+                if direction == "acceptance":
+                    continue
                 test_m = _phase5_test_metrics(metrics)
                 print(
                     f"  {direction.upper()}: "
                     f"return={test_m.get('total_return_pct', 0.0):.2f}%, "
                     f"trades={test_m.get('executed_trades', 0)}, "
                     f"drawdown={test_m.get('max_drawdown_pct', 0.0):.2f}%"
+                )
+            acceptance = phase5.get("acceptance")
+            if acceptance:
+                print(
+                    "  Acceptance: "
+                    f"{acceptance.get('status', 'unknown')} "
+                    "(test period remains diagnostic-only)"
                 )
         else:
             print(f"  No OOS results (check {log_path} for details)")
@@ -382,12 +410,21 @@ def _print_run_summary(results: dict[str, Any], phase: int | None, log_path: str
     phase5 = results.get("phase5", {})
     if phase5:
         for direction, metrics in phase5.items():
+            if direction == "acceptance":
+                continue
             test_m = _phase5_test_metrics(metrics)
             print(
                 f"  {direction.upper()}: "
                 f"return={test_m.get('total_return_pct', 0.0):.2f}%, "
                 f"trades={test_m.get('executed_trades', 0)}, "
                 f"drawdown={test_m.get('max_drawdown_pct', 0.0):.2f}%"
+            )
+        acceptance = phase5.get("acceptance")
+        if acceptance:
+            print(
+                "  Acceptance: "
+                f"{acceptance.get('status', 'unknown')} "
+                "(test period remains diagnostic-only)"
             )
     else:
         print(f"  No OOS results (check {log_path} for details)")
@@ -739,7 +776,11 @@ class Pipeline_Orchestrator:
                 self._ensure_phase5_inputs()
                 self._release_between_phases("Phase 5")
                 results["phase5"] = self._run_phase5(
-                    allowed_directions=self._accepted_strategy_directions()
+                    # Standalone Phase 5 is explicitly diagnostic: load the
+                    # valid on-disk strategy files and evaluate them on the
+                    # consumed test period.  Current-run direction scoping is
+                    # only used by the full pipeline after RB returns.
+                    allowed_directions=None
                 )
 
             total_elapsed = time.monotonic() - pipeline_start
@@ -941,7 +982,15 @@ class Pipeline_Orchestrator:
 
         logger.info("Loading training data from %s …", _cfg.TRAIN_CSV_PATH)
         loader = Data_Loader()
-        train_full = loader.load_dataset(_cfg.TRAIN_CSV_PATH)
+        # Materialise exact first-touch outcomes from the full source tape
+        # before the loader removes the final horizon rows.  The internal
+        # columns survive splitting and are the execution contract consumed by
+        # CPU/GPU admission and Phase 5.
+        train_full = loader.load_dataset(
+            _cfg.TRAIN_CSV_PATH,
+            drop_tail=False,
+            include_barrier_outcomes=True,
+        )
         logger.info(
             "Loaded %d rows, %d symbols",
             len(train_full),
@@ -1265,6 +1314,23 @@ class Pipeline_Orchestrator:
 
             if not force:
                 existing_pool = Rule_Pool_Generator.skip_if_valid(direction)
+                if (
+                    existing_pool
+                    and bool(getattr(_cfg, "PHASE2_SYMBOL_SPECIALISTS_ENABLED", False))
+                    and any(
+                        not list(entry.get("source_symbols", []))
+                        or not entry.get("phase2_rule_id")
+                        or not list(entry.get("feature_conditions", []))
+                        for entry in existing_pool
+                        if isinstance(entry, dict)
+                    )
+                ):
+                    logger.info(
+                        "Discarding legacy global Phase 2 %s pool: "
+                        "specialist provenance is required",
+                        direction,
+                    )
+                    existing_pool = None
                 if existing_pool is not None:
                     pool_path = _phase2_module._POOL_PATHS[direction]
                     logger.info(
@@ -1306,7 +1372,7 @@ class Pipeline_Orchestrator:
                 dir_phase_name, len(feature_infos),
             )
             try:
-                if _cfg.PHASE2_ISLAND_MODE == "cluster":
+                if _cfg.phase2_island_mode_enabled():
                     from gpu_fuzzy_trader.phases.phase2_island_scheduler import (
                         run_cluster_phase2,
                     )
@@ -1409,6 +1475,25 @@ class Pipeline_Orchestrator:
             if "symbol" in train_df.columns
             else None
         )
+        # The production contract is deliberately narrower than the legacy
+        # compatibility API: RB may only select/compose Phase 2 discoveries,
+        # and specialist islands must remain explicitly symbol-scoped.  Apply
+        # these policy overrides only around the canonical pipeline call so
+        # small unit/diagnostic callers can still exercise legacy helpers.
+        rb_policy_attrs = {
+            "RB_REQUIRE_SYMBOL_FILTERS": bool(
+                getattr(_cfg, "PHASE2_SYMBOL_SPECIALISTS_ENABLED", False)
+            ),
+            "RB_UNIVARIATE_BASELINE_ENABLED": False,
+            "RB_PHASE2_PROVENANCE_ONLY": True,
+            "RB_RECENCY_RESCUE_ENABLED": False,
+            "RB_FULL_VALIDATION_RECOVERY_ENABLED": False,
+        }
+        rb_policy_previous = {
+            name: getattr(_cfg, name) for name in rb_policy_attrs
+        }
+        for name, value in rb_policy_attrs.items():
+            setattr(_cfg, name, value)
         _cfg.write_config_audit_report(
             _cfg.OUTPUTS_DIR,
             n_rows=len(train_df),
@@ -1444,6 +1529,9 @@ class Pipeline_Orchestrator:
                 )
                 for direction in ("long", "short")
             }
+        finally:
+            for name, value in rb_policy_previous.items():
+                setattr(_cfg, name, value)
 
         elapsed = time.monotonic() - t0
         _log_phase_entry(
@@ -1510,6 +1598,7 @@ class Pipeline_Orchestrator:
                         "executed_trades", 0),
                 }
                 for d, m in result.items()
+                if d != "acceptance"
             },
         )
         return result
