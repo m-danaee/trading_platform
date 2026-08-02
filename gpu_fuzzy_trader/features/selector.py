@@ -52,6 +52,23 @@ _DIRECTION_PATHS = {
     "short": _SHORT_PATH,
 }
 
+_RAW_OHLCV_FEATURES = frozenset({"open", "high", "low", "close", "volume"})
+
+
+def _candidate_feature_columns(train_df: pd.DataFrame) -> list[str]:
+    """Return evaluator-compatible columns eligible for Phase 1 discovery."""
+    exclude = (
+        set(config.LABEL_COLUMNS)
+        | set(config.META_COLUMNS)
+        | set(config.INTERNAL_COLUMNS)
+    )
+    if bool(getattr(config, "PHASE1_EXCLUDE_RAW_OHLCV", True)):
+        exclude |= _RAW_OHLCV_FEATURES
+    return [
+        c for c in train_df.columns
+        if c not in exclude and not c.startswith("_")
+    ]
+
 # Required top-level keys in the output JSON
 _REQUIRED_KEYS = {"direction", "features"}
 # Required keys in each feature entry
@@ -76,15 +93,7 @@ def build_phase1_shared_context(
     train_df: pd.DataFrame,
 ) -> Phase1SharedContext:
     """Precompute candidates, modes, and long/short targets in one pass."""
-    exclude = (
-        set(config.LABEL_COLUMNS)
-        | set(config.META_COLUMNS)
-        | set(config.INTERNAL_COLUMNS)
-    )
-    feature_cols = [
-        c for c in train_df.columns
-        if c not in exclude and not c.startswith("_")
-    ]
+    feature_cols = _candidate_feature_columns(train_df)
     detector = Feature_Detector()
     feature_modes = detector.detect_all_modes(train_df, feature_cols)
     feature_cols = _remove_low_dispersion(
@@ -352,15 +361,7 @@ class Feature_Selector:
                 direction, len(feature_cols),
             )
         else:
-            exclude = (
-                set(config.LABEL_COLUMNS)
-                | set(config.META_COLUMNS)
-                | set(config.INTERNAL_COLUMNS)
-            )
-            feature_cols = [
-                c for c in train_df.columns
-                if c not in exclude and not c.startswith("_")
-            ]
+            feature_cols = _candidate_feature_columns(train_df)
             n_candidates = len(feature_cols)
             if not feature_cols:
                 logger.warning(

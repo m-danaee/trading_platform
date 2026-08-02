@@ -161,6 +161,11 @@ LABEL_COLUMNS = [
 META_COLUMNS = ["datetime", "symbol"]
 INTERNAL_COLUMNS = ("_symbol_bar_index",)
 
+# Raw OHLCV price levels are not fuzzy indicators: evaluator-v5's fixed
+# ``[-1, 1]`` condition thresholds would turn them into permanent signals.
+# The replacement data provides the bounded ``ff_*`` features for rule search.
+PHASE1_EXCLUDE_RAW_OHLCV = True
+
 # TAIL_DROP_ROWS — bars dropped per symbol at dataset tail (label horizon).
 # Must equal MAX_HOLD_CANDLES (288 = 24 h at 5-min bars).
 #   Higher → more rows removed, safer labels, less training data.
@@ -275,6 +280,12 @@ FEE_PCT = 0.20
 #   Higher → longer holds, larger label window, must match TAIL_DROP_ROWS.
 #   Lower  → quicker time exits, more fee drag if rules fire often.
 MAX_HOLD_CANDLES = 288
+
+# VALIDATION_HALF_PURGE_CANDLES — bars removed on both sides of the internal
+# validation fitness/selection boundary.  The forward labels consume the next
+# MAX_HOLD_CANDLES bars, so the same horizon is required here as at the main
+# train/validation boundary.
+VALIDATION_HALF_PURGE_CANDLES = MAX_HOLD_CANDLES
 
 # MAX_TOTAL_EXPOSURE_PCT — cap on sum of concurrent rule capital allocations.
 # Must remain aligned with evaluator_v5.ipynb and RB_MAX_TOTAL_CAPITAL.
@@ -482,6 +493,13 @@ PHASE2_GPU_CPU_ROUTE_LARGE_DATA = True
 # reverse the crossover on stronger hardware.
 PHASE2_GPU_CPU_ROUTE_MIN_BARS = 20_000
 PHASE2_GPU_CPU_ROUTE_MAX_BATCH = 256
+
+# PHASE2_CPU_BATCH_SIZE — chromosomes per vectorized CPU signal chunk.
+# The CPU evaluator's sparse gather has a temporary shape of
+# ``batch × bars × active_slots``.  A conservative chunk keeps the entire
+# Phase 2 run below the 7.2-GiB WSL dynamic-memory ceiling while retaining
+# vectorized matching.  It changes neither chromosome fitness nor ranking.
+PHASE2_CPU_BATCH_SIZE = 16
 
 # PHASE2_GPU_EVENT_DRIVEN — use an event-only equity scan for sparse-slot
 # chromosomes.  Sparse rules usually match a tiny fraction of bars; scanning
@@ -819,6 +837,13 @@ PHASE2_MONTHLY_ADMISSION_MIN_RATIO = 0.40
 #   Higher → skip/degrade more often on short data.
 #   Lower  → require monthly evidence even on short trains.
 PHASE2_MONTHLY_ADMISSION_MIN_MONTHS = 2
+
+# A flat month is only neutral when the rule actually traded.  These controls
+# prevent zero-signal rules from passing the monthly gate by accumulating
+# artificial 0% months.
+PHASE2_MONTHLY_MIN_TRADES = 3
+PHASE2_MONTHLY_MIN_ACTIVE_RATIO = 0.60
+PHASE2_MONTHLY_MAX_BEARISH_RATIO = 0.50
 
 
 # =============================================================================
@@ -1406,6 +1431,15 @@ MONTHLY_WINDOW_MIN_ROWS = 2500
 MONTHLY_WINDOW_MAX_WINDOWS = 24
 MONTHLY_RECENCY_WEIGHT = 2.2
 MONTHLY_MIN_TRADES = 20
+# The Phase 2 gate uses a smaller per-window floor because its validation
+# windows are short; the broader monthly summary keeps the historical floor
+# above for score penalties and reporting.
+MONTHLY_ACTIVE_MIN_TRADES = 3
+# Active returns in this band are treated as range-market noise rather than
+# bearish months when the monthly stability diagnostics are computed.
+MONTHLY_FLAT_TOLERANCE_PCT = 0.50
+MONTHLY_MIN_ACTIVE_RATIO = 0.60
+MONTHLY_MAX_BEARISH_RATIO = 0.50
 MONTHLY_GOOD_RETURN_MIN_PCT = 0.5
 MONTHLY_MIN_PROFITABLE_RATIO = 0.60
 MONTHLY_WORST_RETURN_FLOOR = -1.5
@@ -1415,6 +1449,8 @@ MONTHLY_WORST_RETURN_WEIGHT = 1.2
 MONTHLY_WORST_PF_WEIGHT = 8.0
 MONTHLY_DD_WEIGHT = 0.7
 MONTHLY_PROFITABLE_RATIO_WEIGHT = 15.0
+MONTHLY_ACTIVE_RATIO_WEIGHT = 15.0
+MONTHLY_BEARISH_RATIO_WEIGHT = 15.0
 MONTHLY_TREND_WEIGHT = 2.0
 MONTHLY_LATEST_WEIGHT = 0.6
 
@@ -1478,13 +1514,58 @@ RB_RULESET_MIN_VALID_TRADES: int = 8
 
 # RB_MAX_POOL_RULES_TO_EVALUATE — cap on Phase 2 pool rules passed through
 #   symbol-specialization in ``_filter_good_rules``.
-#   Higher → more candidates, slower filtering.
-RB_MAX_POOL_RULES_TO_EVALUATE: int = 200
+#   Higher → more candidates, slower filtering. 400 covers the default
+#   evolved pool plus its bounded deterministic univariate complement.
+RB_MAX_POOL_RULES_TO_EVALUATE: int = 400
 
 # RB_KEEP_TOP_RULES — how many positive-good candidates survive the
 #   single-rule ranking to feed ``_compose_ruleset``.
 #   Should be comfortably larger than PHASE2_KEEP_TOP_RULES.
 RB_KEEP_TOP_RULES: int = 150
+
+# Deterministic one-condition baselines complement the stochastic Phase 2
+# search. They are reconstructed only from Phase-1-selected features already
+# present in the Phase 2 pool, then must pass the same train/validation/tail
+# RB gates as every evolved rule. Symbol-specialized variants make it possible
+# to compose a genuinely balanced multi-asset team.
+RB_UNIVARIATE_BASELINE_ENABLED: bool = True
+RB_UNIVARIATE_BASELINE_MAX_RULES: int = 400
+# Include a generalist form of each one-condition baseline in addition to the
+# symbol-specialized forms.  The former is important when a condition has a
+# stable cross-asset edge but the Phase-2 chromosome happened not to emit the
+# corresponding value for both symbols.  Both forms are still evaluated by
+# the exact RB gates before deployment.
+RB_UNIVARIATE_GENERALIST_ENABLED: bool = True
+
+# A bounded recency-regime rescue for non-stationary markets.  Ordinary RB
+# candidates must remain positive on the historical train split.  A rescue is
+# considered only when *both* chronological validation halves are positive,
+# have adequate PF/trade support, and the older train loss/drawdown are within
+# explicit limits.  It never reads Phase-5 test data and is recorded in the
+# strategy/report when selected.
+RB_RECENCY_RESCUE_ENABLED: bool = True
+RB_RECENCY_MIN_VALID_RETURN: float = 0.50
+RB_RECENCY_MIN_VALID_PF: float = 1.05
+# The chronological halves are intentionally short on this data.  Ten trades
+# per half is still enough for a bounded rescue while allowing a compact rule
+# to survive the sparse older/newer split.
+RB_RECENCY_MIN_VALID_TRADES: int = 10
+RB_RECENCY_MIN_TRAIN_TRADES: int = 25
+RB_RECENCY_MIN_TRAIN_PF: float = 0.80
+RB_RECENCY_MAX_TRAIN_LOSS_PCT: float = 12.0
+RB_RECENCY_MAX_TRAIN_DD_PCT: float = 25.0
+RB_RECENCY_MAX_SYMBOL_LOSS_PCT: float = 15.0
+RB_RECENCY_MAX_SYMBOL_SHARE_ABS_PNL: float = 0.85
+RB_RECENCY_MAX_SYMBOL_HHI: float = 0.75
+RB_RECENCY_MIN_SCORE_MARGIN: float = 0.0
+RB_RECENCY_MAX_CANDIDATES: int = 40
+
+# When a direction is fail-closed after the chronological validation-selection
+# frame, retry that direction once on the complete train/validation holdout.
+# This remains validation-only (Phase 5 test data is never read) and avoids
+# discarding a direction merely because the half-window was too sparse for a
+# balanced portfolio certificate.  Accepted directions do not pay this cost.
+RB_FULL_VALIDATION_RECOVERY_ENABLED: bool = True
 
 
 # --- Team composition ---
@@ -1509,6 +1590,10 @@ RB_DIVERSIFICATION_BEAM_WIDTH: int = 6
 RB_DIVERSIFICATION_STEPS: int = 4
 RB_DIVERSIFICATION_GLOBAL_LEADERS: int = 6
 RB_DIVERSIFICATION_SYMBOL_LEADERS: int = 2
+# Keep a few return leaders per symbol in addition to score leaders. High
+# frequency candidates can carry strong net PnL yet receive health penalties
+# before the risk grid lowers their allocation.
+RB_DIVERSIFICATION_RETURN_LEADERS: int = 4
 
 # RB_RULESET_MUST_BEAT_SUBSETS — a candidate team must beat both its parent
 #   subset and the standalone candidate on both train and val return.
@@ -1616,9 +1701,8 @@ RB_RISK_GRID_WF_SPLITS: int = 3
 RB_TAIL_HOLDOUT_FRACTION: float = 0.25
 
 # RB_RISK_GRID_USE_TAIL_HOLDOUT — reserve final RB_TAIL_HOLDOUT_FRACTION
-#   of val_selection as an untouched tie-break holdout (reported but NOT used
-#   during search).  Set False to use the full val_selection for folds.
-#   → keeps tail-holdout policy on the active RB path
+# of val_selection for chronological robustness validation.  Set False to use
+# the full val_selection for folds.
 RB_RISK_GRID_USE_TAIL_HOLDOUT: bool = True
 
 # RB_TAIL_HOLDOUT_HARD_GATE — when True, strategies whose tail-holdout return
@@ -1627,17 +1711,22 @@ RB_RISK_GRID_USE_TAIL_HOLDOUT: bool = True
 RB_TAIL_HOLDOUT_HARD_GATE: bool = True
 RB_TAIL_HOLDOUT_MIN_RETURN_PCT: float = 0.0
 
+# Enforce the same reserved chronological tail while composing and tuning a
+# ruleset.  Applying this only after greedy selection could discard the whole
+# direction despite other tail-positive validation candidates being available.
+# This remains validation-only; Phase 5 test data is never read here.
+RB_TAIL_HOLDOUT_SELECTION_GATE: bool = True
+RB_TAIL_HOLDOUT_MIN_TRADES: int = 4
+
 # RB_MAX_SYMBOL_SHARE_ABS_PNL — max fraction of abs PnL from a single symbol on
 #   the RB validation frame; above this → fail-closed empty strategy
 #   (deployment_accepted=False, rules_set cleared).
-# 0.50→0.55 — Colab fail-closed at top_share=0.556 / 0.615 on
-#   1–2 rule teams. Slight ease only; real fix is multi-island compose
-#   (traded coverage + looser overlap/return floors). Do not raise alone.
-RB_MAX_SYMBOL_SHARE_ABS_PNL: float = 0.55
+# A two-symbol portfolio can never have a top share below 0.50 except at exact
+# equality. 0.67 requires a material secondary contributor while allowing the
+# risk grid to certify a realistic 2:1 split.
+RB_MAX_SYMBOL_SHARE_ABS_PNL: float = 0.67
 # RB_MAX_SYMBOL_HHI — max Herfindahl index of abs PnL across symbols on valid;
 #   above this → same fail-closed empty strategy as share gate.
-# 0.55→0.60 — correlated with share ease (Colab HHI~0.46–0.46
-#   passed HHI but failed share; headroom for slightly larger teams).
 RB_MAX_SYMBOL_HHI: float = 0.60
 
 
@@ -2218,6 +2307,18 @@ def validate_config(
                   "TAIL_DROP_ROWS must equal MAX_HOLD_CANDLES")
     _config_check(int(HOLDOUT_EMBARGO_CANDLES) == int(MAX_HOLD_CANDLES),
                   "HOLDOUT_EMBARGO_CANDLES must equal MAX_HOLD_CANDLES")
+    _config_check(int(VALIDATION_HALF_PURGE_CANDLES) >= int(MAX_HOLD_CANDLES),
+                  "VALIDATION_HALF_PURGE_CANDLES must cover MAX_HOLD_CANDLES")
+    _config_check(int(PHASE2_MONTHLY_MIN_TRADES) >= 1,
+                  "PHASE2_MONTHLY_MIN_TRADES must be positive")
+    _config_check(
+        0.0 <= float(PHASE2_MONTHLY_MIN_ACTIVE_RATIO) <= 1.0,
+        "PHASE2_MONTHLY_MIN_ACTIVE_RATIO must be in [0, 1]",
+    )
+    _config_check(
+        0.0 <= float(PHASE2_MONTHLY_MAX_BEARISH_RATIO) <= 1.0,
+        "PHASE2_MONTHLY_MAX_BEARISH_RATIO must be in [0, 1]",
+    )
     fee_pct = _finite_config_number("FEE_PCT", FEE_PCT)
     initial_capital = _finite_config_number("INITIAL_CAPITAL", INITIAL_CAPITAL)
     leverage = _finite_config_number("LEVERAGE", LEVERAGE)
@@ -2466,6 +2567,8 @@ def validate_config(
                   "RB_TAIL_HOLDOUT_FRACTION must be in (0, 1)")
     _config_check(float(RB_TAIL_HOLDOUT_MIN_RETURN_PCT) >= 0.0,
                   "RB_TAIL_HOLDOUT_MIN_RETURN_PCT must be non-negative")
+    _config_check(int(RB_TAIL_HOLDOUT_MIN_TRADES) >= 0,
+                  "RB_TAIL_HOLDOUT_MIN_TRADES must be non-negative")
     _config_check(0.0 <= float(RB_MAX_PAIR_OVERLAP) <= 1.0,
                   "RB_MAX_PAIR_OVERLAP must be in [0, 1]")
     _config_check(0.0 <= float(RB_MAX_SYMBOL_SHARE_ABS_PNL) <= 1.0,
@@ -2582,6 +2685,7 @@ def effective_config_snapshot(
             "mode": str(SPLIT_MODE),
             "holdout_train_fraction": float(HOLDOUT_TRAIN_FRACTION),
             "embargo_candles": int(HOLDOUT_EMBARGO_CANDLES),
+            "validation_half_purge_candles": int(VALIDATION_HALF_PURGE_CANDLES),
             "tail_drop_rows": int(TAIL_DROP_ROWS),
         },
         "phase2": {
@@ -2600,6 +2704,9 @@ def effective_config_snapshot(
             "min_profitable_symbols_required": int(PHASE2_MIN_PROFITABLE_SYMBOLS),
             "symbol_gene_dont_care_prob": float(PHASE2_SYMBOL_GENE_DONT_CARE_PROB),
             "island_monthly_min_months": int(PHASE2_ISLAND_MONTHLY_MIN_MONTHS),
+            "monthly_min_trades": int(PHASE2_MONTHLY_MIN_TRADES),
+            "monthly_min_active_ratio": float(PHASE2_MONTHLY_MIN_ACTIVE_RATIO),
+            "monthly_max_bearish_ratio": float(PHASE2_MONTHLY_MAX_BEARISH_RATIO),
             "sample_max_bars_per_symbol": int(PHASE2_SAMPLE_MAX_BARS_PER_SYMBOL),
             "admission_min_val_trades": int(effective_pool_min_val_trades(n_rows)),
         },
@@ -2613,6 +2720,8 @@ def effective_config_snapshot(
             ),
             "risk_grid_wf_splits": int(RB_RISK_GRID_WF_SPLITS),
             "tail_holdout_fraction": float(RB_TAIL_HOLDOUT_FRACTION),
+            "tail_holdout_selection_gate": bool(RB_TAIL_HOLDOUT_SELECTION_GATE),
+            "tail_holdout_min_trades": int(RB_TAIL_HOLDOUT_MIN_TRADES),
             "min_distinct_symbols": int(RB_MIN_DISTINCT_SYMBOLS),
             "effective_min_distinct_symbols": effective_rb_symbol_floor,
             "risk_min_improvement": float(RB_RISK_MIN_IMPROVEMENT),
@@ -2620,6 +2729,17 @@ def effective_config_snapshot(
             "max_pair_overlap": float(RB_MAX_PAIR_OVERLAP),
             "max_symbol_share_abs_pnl": float(RB_MAX_SYMBOL_SHARE_ABS_PNL),
             "max_symbol_hhi": float(RB_MAX_SYMBOL_HHI),
+            "full_validation_recovery": bool(RB_FULL_VALIDATION_RECOVERY_ENABLED),
+            "univariate_generalist": bool(RB_UNIVARIATE_GENERALIST_ENABLED),
+            "recency_rescue": bool(RB_RECENCY_RESCUE_ENABLED),
+            "recency_min_validation_return": float(RB_RECENCY_MIN_VALID_RETURN),
+            "recency_min_validation_pf": float(RB_RECENCY_MIN_VALID_PF),
+            "recency_min_validation_trades": int(RB_RECENCY_MIN_VALID_TRADES),
+            "recency_max_train_loss_pct": float(RB_RECENCY_MAX_TRAIN_LOSS_PCT),
+            "recency_max_train_dd_pct": float(RB_RECENCY_MAX_TRAIN_DD_PCT),
+            "recency_max_symbol_loss_pct": float(RB_RECENCY_MAX_SYMBOL_LOSS_PCT),
+            "recency_max_symbol_share_abs_pnl": float(RB_RECENCY_MAX_SYMBOL_SHARE_ABS_PNL),
+            "recency_max_symbol_hhi": float(RB_RECENCY_MAX_SYMBOL_HHI),
         },
         "gates": {
             "phase2_train_return_min": float(PHASE2_POOL_TRAIN_RETURN_MIN_PCT),
@@ -2631,6 +2751,9 @@ def effective_config_snapshot(
             "phase2_max_train_valid_gap_pct": float(PHASE2_MAX_TRAIN_VAL_GAP_PCT),
             "phase2_monthly_min_months": int(PHASE2_MONTHLY_ADMISSION_MIN_MONTHS),
             "phase2_monthly_min_profitable_ratio": float(PHASE2_MONTHLY_ADMISSION_MIN_RATIO),
+            "phase2_monthly_min_trades": int(PHASE2_MONTHLY_MIN_TRADES),
+            "phase2_monthly_min_active_ratio": float(PHASE2_MONTHLY_MIN_ACTIVE_RATIO),
+            "phase2_monthly_max_bearish_ratio": float(PHASE2_MONTHLY_MAX_BEARISH_RATIO),
             "phase2_monthly_fail_closed": bool(PHASE2_MONTHLY_ADMISSION_FAIL_CLOSED),
             "rb_min_train_return": float(RB_MIN_TRAIN_RETURN),
             "rb_min_valid_return": float(RB_MIN_VALID_RETURN),

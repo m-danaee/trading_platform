@@ -793,7 +793,15 @@ def _should_early_stop_phase2(
     island_profile: str = "global",
 ) -> bool:
     if _cfg.scoped_island_profile(island_profile):
-        if not _cfg.island_early_stop_enabled():
+        # The explicit profile is authoritative for an island epoch.  Do not
+        # consult PHASE2_ISLAND_MODE here: helper-level callers and scheduled
+        # cluster/orphan epochs may pass a scoped profile while global config
+        # remains in ``global`` mode.
+        if not bool(getattr(
+            _cfg,
+            "PHASE2_ISLAND_EARLY_STOP_ENABLED",
+            _cfg.island_early_stop_enabled(),
+        )):
             return False
     elif not _cfg.PHASE2_EARLY_STOP_ENABLED:
         return False
@@ -1900,6 +1908,8 @@ def _reevaluate_infinite_objectives(
     diversity_metrics_by_key: dict[tuple[int, ...], dict] | None = None,
     stage_params: Phase2StageParams | None = None,
     run_val: bool = True,
+    generation: int | None = None,
+    is_last_gen: bool = False,
     cv_fold_evaluator=None,
 ) -> dict[str, int]:
     """Evaluate any individuals still marked with inf objectives."""
@@ -1926,6 +1936,8 @@ def _reevaluate_infinite_objectives(
         diversity_metrics_by_key=diversity_metrics_by_key,
         stage_params=stage_params,
         run_val=run_val,
+        generation=generation,
+        is_last_gen=is_last_gen,
         cv_fold_evaluator=cv_fold_evaluator,
     )
 
@@ -2553,6 +2565,8 @@ def _run_nsga2_fallback(
                 val_engine=val_engine,
                 stage_params=stage_params,
                 run_val=run_val_this_gen,
+                generation=gen,
+                is_last_gen=is_last_gen,
                 cv_fold_evaluator=cv_fold_evaluator,
             )
             mutation_rate = _stage_mutation_rate(
@@ -2594,7 +2608,12 @@ def _run_nsga2_fallback(
             off_metrics,
             val_engine=val_engine,
             stage_params=stage_params,
-            run_val=run_val_this_gen,
+            run_val=_should_run_val_this_gen(
+                gen + 1,
+                gen + 1 == n_generations - 1,
+            ),
+            generation=gen + 1,
+            is_last_gen=gen + 1 == n_generations - 1,
         )
 
         merge_pop = np.vstack([population, offspring])
@@ -3066,6 +3085,8 @@ def _run_nsga3(
                     diversity_metrics_by_key=diversity_metrics_by_key,
                     stage_params=stage_params,
                     run_val=run_val_this_gen,
+                    generation=gen,
+                    is_last_gen=is_last_gen,
                     cv_fold_evaluator=cv_fold_evaluator,
                 )
                 mutation_rate = _stage_mutation_rate(
@@ -3110,7 +3131,12 @@ def _run_nsga3(
                 diversity_reference=diversity_reference,
                 diversity_metrics_by_key=diversity_metrics_by_key,
                 stage_params=stage_params,
-                run_val=run_val_this_gen,
+                run_val=_should_run_val_this_gen(
+                    gen + 1,
+                    gen + 1 == n_generations - 1,
+                ),
+                generation=gen + 1,
+                is_last_gen=gen + 1 == n_generations - 1,
                 cv_fold_evaluator=cv_fold_evaluator,
             )
 

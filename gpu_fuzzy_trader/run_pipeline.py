@@ -35,6 +35,10 @@ from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.data.loader import Data_Loader
 from gpu_fuzzy_trader.data.splitter import Data_Splitter, load_cached_split_if_fresh
 from gpu_fuzzy_trader.features.selector import Feature_Selector
+from gpu_fuzzy_trader.features.fuzzy_scaling import (
+    apply_fuzzy_feature_scaling,
+    fit_fuzzy_feature_scaling,
+)
 from gpu_fuzzy_trader.validation.rolling_cv import (
     build_forbidden_ranges,
     mask_df_to_safe_region,
@@ -889,17 +893,13 @@ class Pipeline_Orchestrator:
         return result
 
     def _ensure_phase5_inputs(self) -> None:
-        """Ensure RB strategy outputs exist before running Phase 5 alone."""
+        """Ensure at least one valid strategy exists before standalone Phase 5."""
         evaluator = OOS_Evaluator()
         strategies = evaluator.load_strategies()
-        missing = [
-            direction for direction in ("long", "short")
-            if direction not in strategies
-        ]
-        if missing:
+        if not strategies:
             raise FileNotFoundError(
-                "Phase 5 requires RB strategy outputs for both directions. "
-                f"Missing or invalid: {', '.join(missing)}"
+                "Phase 5 requires at least one valid RB strategy output "
+                "(long.json or short.json)."
             )
 
     def _accepted_strategy_directions(self) -> frozenset[str]:
@@ -922,6 +922,9 @@ class Pipeline_Orchestrator:
         cached_split = load_cached_split_if_fresh()
         if cached_split is not None:
             train_df, val_df, val_fitness, val_selection, cv_folds = cached_split
+            scaling = fit_fuzzy_feature_scaling(train_df)
+            for frame in (train_df, val_df, val_fitness, val_selection):
+                apply_fuzzy_feature_scaling(frame, scaling)
             self._cv_folds = cv_folds
             self._preloaded_val_fitness = val_fitness
             self._preloaded_val_selection = val_selection
@@ -961,6 +964,9 @@ class Pipeline_Orchestrator:
         from gpu_fuzzy_trader.data.splitter import split_validation_fitness_selection
 
         val_fitness, val_selection = split_validation_fitness_selection(val_df)
+        scaling = fit_fuzzy_feature_scaling(train_df)
+        for frame in (train_df, val_df, val_fitness, val_selection):
+            apply_fuzzy_feature_scaling(frame, scaling)
         self._preloaded_val_fitness = val_fitness
         self._preloaded_val_selection = val_selection
 
@@ -1490,7 +1496,7 @@ class Pipeline_Orchestrator:
             result = evaluator.run(allowed_directions=allowed_directions)
         except Exception as exc:
             logger.error("Phase 5 failed: %s", exc, exc_info=True)
-            result = {}
+            raise RuntimeError("Phase 5 evaluation failed") from exc
 
         elapsed = time.monotonic() - t0
         _log_phase_entry(

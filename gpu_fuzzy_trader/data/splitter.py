@@ -96,10 +96,17 @@ def _chronological_half_split(
     df: pd.DataFrame,
     *,
     first_half: bool,
+    purge_rows: int = 0,
 ) -> pd.DataFrame:
-    """Per-symbol chronological first or second half of *df*."""
+    """Per-symbol chronological first or second half of *df*.
+
+    ``purge_rows`` is removed on both sides of the internal boundary.  This
+    is separate from the main train/validation embargo: labels at the end of
+    the fitness half otherwise inspect prices that belong to selection.
+    """
     parts: list[pd.DataFrame] = []
     sort_col = "datetime" if "datetime" in df.columns else None
+    purge_rows = max(0, int(purge_rows))
     for _, group in df.groupby("symbol", sort=True, observed=False):
         g = group.sort_values(sort_col) if sort_col else group
         g = g.reset_index(drop=True)
@@ -109,9 +116,9 @@ def _chronological_half_split(
             continue
         split_point = n // 2  # first half gets floor; second half gets ceil
         if first_half:
-            parts.append(g.iloc[:split_point])
+            parts.append(g.iloc[:max(0, split_point - purge_rows)])
         else:
-            parts.append(g.iloc[split_point:])
+            parts.append(g.iloc[min(n, split_point + purge_rows):])
     if not parts:
         return pd.DataFrame(columns=df.columns)
     return pd.concat(parts, ignore_index=True)
@@ -120,10 +127,63 @@ def _chronological_half_split(
 def split_validation_fitness_selection(
     validation_df: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Split holdout validation into fitness vs selection halves per symbol."""
-    val_fitness = _chronological_half_split(validation_df, first_half=True)
-    val_selection = _chronological_half_split(validation_df, first_half=False)
+    """Split validation into purged fitness and selection halves per symbol.
+
+    The gap is intentionally present even in ordinary holdout mode.  A
+    validation label opened near the end of fitness can otherwise use future
+    prices from selection, allowing the same bar path to influence both
+    evolutionary scoring and downstream model selection.
+    """
+    purge_rows = max(
+        int(getattr(_cfg, "VALIDATION_HALF_PURGE_CANDLES", 0)),
+        int(getattr(_cfg, "HOLDOUT_EMBARGO_CANDLES", 0)),
+        int(getattr(_cfg, "PURGED_WF_EMBARGO_CANDLES", 0)),
+    )
+    val_fitness = _chronological_half_split(
+        validation_df, first_half=True, purge_rows=purge_rows,
+    )
+    val_selection = _chronological_half_split(
+        validation_df, first_half=False, purge_rows=purge_rows,
+    )
     return val_fitness, val_selection
+
+
+def _validation_half_geometry_matches(
+    validation_df: pd.DataFrame,
+    val_fitness: pd.DataFrame,
+    val_selection: pd.DataFrame,
+) -> bool:
+    """Return whether cached internal halves match the purged geometry."""
+    purge_rows = max(
+        int(getattr(_cfg, "VALIDATION_HALF_PURGE_CANDLES", 0)),
+        int(getattr(_cfg, "HOLDOUT_EMBARGO_CANDLES", 0)),
+        int(getattr(_cfg, "PURGED_WF_EMBARGO_CANDLES", 0)),
+    )
+    if "symbol" not in validation_df.columns:
+        return False
+
+    def positions(frame: pd.DataFrame, symbol: object) -> list[object]:
+        part = frame[frame["symbol"].astype(str) == str(symbol)]
+        if "_symbol_bar_index" in part.columns:
+            return part.sort_values("_symbol_bar_index")["_symbol_bar_index"].tolist()
+        if "datetime" in part.columns:
+            return part.sort_values("datetime")["datetime"].tolist()
+        return part.index.tolist()
+
+    for symbol, group in validation_df.groupby("symbol", sort=True, observed=False):
+        if "datetime" in group.columns:
+            group = group.sort_values("datetime")
+        elif "_symbol_bar_index" in group.columns:
+            group = group.sort_values("_symbol_bar_index")
+        n = len(group)
+        split_point = n // 2
+        expected_fitness = group.iloc[:max(0, split_point - purge_rows)]
+        expected_selection = group.iloc[min(n, split_point + purge_rows):]
+        if positions(val_fitness, symbol) != positions(expected_fitness, symbol):
+            return False
+        if positions(val_selection, symbol) != positions(expected_selection, symbol):
+            return False
+    return True
 
 
 def load_cached_split_if_fresh() -> (
@@ -192,6 +252,72 @@ def load_cached_split_if_fresh() -> (
     val_df = downcast_numeric_df(pd.read_parquet(val_path))
     val_fitness = downcast_numeric_df(pd.read_parquet(fitness_path))
     val_selection = downcast_numeric_df(pd.read_parquet(selection_path))
+
+    # The four parquet files are a single cache unit.  A previous test run (or
+    # an interrupted copy) can leave train/validation parquets from one data
+    # set beside fitness/selection parquets from another.  Mtime and the
+    # split-mode fingerprint cannot detect that case, but passing the tiny
+    # mismatched fitness frame into Phase 2 silently removes validation from
+    # the search.  Validate the cheap structural invariants before accepting
+    # a cache hit.
+    required_columns = (
+        set(_cfg.META_COLUMNS)
+        | set(_cfg.LABEL_COLUMNS)
+        | set(getattr(_cfg, "INTERNAL_COLUMNS", ()))
+    )
+    cached_frames = {
+        "train": train_df,
+        "validation": val_df,
+        "validation_fitness": val_fitness,
+        "validation_selection": val_selection,
+    }
+    for frame_name, frame in cached_frames.items():
+        missing = required_columns.difference(frame.columns)
+        if missing:
+            logger.warning(
+                "Rejecting split cache: %s is missing required columns %s",
+                frame_name,
+                sorted(missing),
+            )
+            return None
+
+    if not _validation_half_geometry_matches(
+        val_df, val_fitness, val_selection,
+    ):
+        logger.warning(
+            "Rejecting split cache: validation fitness/selection halves do "
+            "not match the current purged geometry",
+        )
+        return None
+
+    # In holdout mode the manifest's reference_rows is the prepared source
+    # length.  When every symbol has a non-empty validation tail, it can be
+    # checked exactly from the cached partitions: train + validation + the
+    # fixed embargo per symbol.  This catches stale caches without rereading
+    # and relabelling the full CSV on every normal run.  Very small symbols
+    # whose embargo consumes the entire tail are left to the schema checks,
+    # because their original length is not recoverable from the partitions.
+    if not _cfg.split_mode_is_purged_walk_forward():
+        reference_rows = manifest.get("reference_rows")
+        if reference_rows is not None and "symbol" in train_df.columns:
+            train_symbols = set(train_df["symbol"].astype(str).unique())
+            val_symbols = set(val_df["symbol"].astype(str).unique())
+            symbols = train_symbols | val_symbols
+            val_counts = val_df["symbol"].astype(str).value_counts()
+            if symbols and all(int(val_counts.get(sym, 0)) > 0 for sym in symbols):
+                expected_reference_rows = (
+                    len(train_df)
+                    + len(val_df)
+                    + int(_cfg.HOLDOUT_EMBARGO_CANDLES) * len(symbols)
+                )
+                if int(reference_rows) != expected_reference_rows:
+                    logger.warning(
+                        "Rejecting split cache: manifest reference_rows=%s, "
+                        "cached holdout geometry implies %s",
+                        reference_rows,
+                        expected_reference_rows,
+                    )
+                    return None
 
     cv_folds: list | None = None
     if _cfg.split_mode_is_purged_walk_forward():

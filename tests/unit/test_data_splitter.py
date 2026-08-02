@@ -33,6 +33,7 @@ from gpu_fuzzy_trader.config import (
 from gpu_fuzzy_trader.data.splitter import (
     Data_Splitter,
     load_cached_split_if_fresh,
+    split_validation_fitness_selection,
     split_and_persist,
 )
 
@@ -447,6 +448,29 @@ class TestModuleLevelFunction:
             assert cv_func == cv_class
 
 
+class TestValidationHalfPurge:
+    def test_fitness_and_selection_are_separated_by_label_horizon(self):
+        validation = _make_df({"BTCUSDT": 1600, "ETHUSDT": 1701})
+        fitness, selection = split_validation_fitness_selection(validation)
+        purge = int(_cfg.VALIDATION_HALF_PURGE_CANDLES)
+
+        for symbol, group in validation.groupby("symbol", observed=False):
+            group = group.sort_values("datetime").reset_index(drop=True)
+            boundary = len(group) // 2
+            fitness_bars = fitness.loc[
+                fitness["symbol"] == symbol, "_symbol_bar_index"
+            ].tolist()
+            selection_bars = selection.loc[
+                selection["symbol"] == symbol, "_symbol_bar_index"
+            ].tolist()
+            assert fitness_bars == list(range(max(0, boundary - purge)))
+            assert selection_bars == list(
+                range(min(len(group), boundary + purge), len(group))
+            )
+            if fitness_bars and selection_bars:
+                assert fitness_bars[-1] + purge < selection_bars[0]
+
+
 class TestPurgedWalkForwardSplit:
     def test_purged_mode_returns_cv_folds(self, tmp_path, monkeypatch):
         import gpu_fuzzy_trader.config as config_mod
@@ -470,7 +494,7 @@ class TestLoadCachedSplitIfFresh:
         csv_path = tmp_path / "train.csv"
         csv_path.write_text("x\n1\n", encoding="utf-8")
 
-        n = 2000  # large enough to have non-empty validation after embargo
+        n = 4000  # large enough for both purged validation halves
         with _patch_split_paths(str(tmp_path))(split_mode) as paths:
             df = _make_df({1: n})
             Data_Splitter().split_and_persist(df)

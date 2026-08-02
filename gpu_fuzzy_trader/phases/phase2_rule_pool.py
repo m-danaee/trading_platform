@@ -69,6 +69,12 @@ from gpu_fuzzy_trader.validation.monthly_windows import (
 
 logger = logging.getLogger(__name__)
 
+# Increment this whenever chromosome classes or their source representation
+# change meaning. Version 2 used an incompatible adaptive encoding; version 3
+# restored fixed bins but still used unscaled ordinal source codes. Version 4
+# uses train-fitted ordinal scaling and must not seed from either older archive.
+_ARCHIVE_SCHEMA_VERSION = 4
+
 
 def trade_support_penalty(executed: int, **kwargs) -> float:
     """Backward-compatible wrapper returning penalty only."""
@@ -2630,6 +2636,12 @@ def _validate_archive_payload(
     if payload["feature_signature"] != expected_signature:
         raise ValueError(f"Phase 2 archive feature signature mismatch: {path}")
 
+    if int(payload.get("version", -1)) != _ARCHIVE_SCHEMA_VERSION:
+        raise ValueError(
+            "Phase 2 archive schema version mismatch: "
+            f"expected {_ARCHIVE_SCHEMA_VERSION}, got {payload.get('version')}: {path}"
+        )
+
     if not isinstance(payload["rules"], list):
         raise ValueError(f"Phase 2 archive 'rules' must be a list: {path}")
 
@@ -2662,10 +2674,10 @@ def _evaluate_rule_on_window(
     pool_entry: dict,
     window_df: pd.DataFrame,
     direction: str,
-) -> float:
+) -> dict:
     """Evaluate a single pool rule on a single monthly window.
 
-    Returns ``total_return_pct`` (float).  Uses the existing
+    Returns the full window metrics dict.  Uses the existing
     ``CPUBacktestEngine.simulate_rule_set`` with Phase 2 static risk
     parameters (``PHASE2_TP``, ``PHASE2_SL``, ``PHASE2_CAPITAL_PCT``).
     On engine errors (missing columns, misconfigured data, type errors),
@@ -2682,8 +2694,8 @@ def _evaluate_rule_on_window(
 
     Returns
     -------
-    float
-        ``total_return_pct`` from the backtest, or ``-100.0`` on failure.
+    dict
+        Backtest metrics, or a finite failure sentinel on error.
     """
     rule = {
         "conditions": pool_entry["conditions"],
@@ -2698,10 +2710,43 @@ def _evaluate_rule_on_window(
             direction,
             fee_pct=_cfg.FEE_PCT,
         )
-        metrics = engine.simulate_rule_set([rule])
-        return float(metrics.get("total_return_pct", 0.0))
+        return dict(engine.simulate_rule_set([rule]))
     except (KeyError, ValueError, AttributeError, TypeError):
-        return -100.0
+        return {
+            "total_return_pct": -100.0,
+            "profit_factor": 0.0,
+            "max_drawdown_pct": 100.0,
+            "executed_trades": 0,
+        }
+
+
+def _monthly_window_metrics(
+    result: object,
+    pool_entry: dict,
+) -> dict:
+    """Normalize a window evaluator result for the monthly gate.
+
+    The float fallback keeps small downstream integrations and older unit
+    doubles compatible while production evaluation always returns the exact
+    CPU metrics, including executed trade support.
+    """
+    if isinstance(result, dict):
+        return result
+    source = pool_entry if isinstance(pool_entry, dict) else {}
+    try:
+        return {
+            "total_return_pct": float(result),
+            "executed_trades": int(source.get("executed_trades", 0)),
+            "profit_factor": float(source.get("profit_factor", 0.0)),
+            "max_drawdown_pct": float(source.get("max_drawdown_pct", 0.0)),
+        }
+    except (TypeError, ValueError):
+        return {
+            "total_return_pct": -100.0,
+            "executed_trades": 0,
+            "profit_factor": 0.0,
+            "max_drawdown_pct": 100.0,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -2718,10 +2763,13 @@ def _apply_monthly_admission_gate(
     """Apply the monthly-window shadow-test gate to a pool of rules.
 
     Each rule is evaluated on every monthly window via
-    ``_evaluate_rule_on_window``.  Only rules whose good-month ratio
-    (per ``PHASE2_MONTHLY_GOOD_RETURN_MIN_PCT``) meets or exceeds
-    ``PHASE2_MONTHLY_ADMISSION_MIN_RATIO`` (or the island-specific
-    threshold when ``island_hyperparams`` is provided) are kept.
+    ``_evaluate_rule_on_window``.  A month counts as good only when the rule
+    has enough executed trades and its return clears
+    ``PHASE2_MONTHLY_GOOD_RETURN_MIN_PCT``.  Inactive months are neutral
+    evidence, never good evidence; the active-month coverage and bearish-month
+    limits are hard gates alongside the good-month ratio.
+    resulting per-rule diagnostics are retained in the pool artifact so a
+    fail-closed outcome can be investigated without rerunning evolution.
 
     By default the gate is fail-closed: if every rule fails, an empty pool is
     returned. The legacy keep-original behavior is available only through
@@ -2753,31 +2801,81 @@ def _apply_monthly_admission_gate(
             getattr(_cfg, "PHASE2_MONTHLY_ADMISSION_MIN_RATIO", 0.667))
     pre_filter_count = len(pool)
     profitable_ratios: list[float] = []
+    active_ratios: list[float] = []
     keep: list[dict] = []
+    monthly_trade_floor = max(
+        1, int(getattr(_cfg, "PHASE2_MONTHLY_MIN_TRADES", 3))
+    )
+    min_active_ratio = float(
+        getattr(_cfg, "PHASE2_MONTHLY_MIN_ACTIVE_RATIO", 0.60)
+    )
+    max_bearish_ratio = float(
+        getattr(_cfg, "PHASE2_MONTHLY_MAX_BEARISH_RATIO", 0.50)
+    )
+    flat_tolerance = float(
+        getattr(_cfg, "MONTHLY_FLAT_TOLERANCE_PCT", 0.50)
+    )
     for entry in pool:
         ret_pcts: list[float] = []
+        executed_trades: list[int] = []
+        bearish = 0
         for w in monthly_windows:
-            ret = _evaluate_rule_on_window(entry, w, direction)
+            raw_metrics = _evaluate_rule_on_window(entry, w, direction)
+            metrics = _monthly_window_metrics(raw_metrics, entry)
+            ret = float(metrics.get("total_return_pct", -100.0))
+            trades = int(metrics.get("executed_trades", 0))
             ret_pcts.append(ret)
+            executed_trades.append(trades)
+            if trades >= monthly_trade_floor and ret < -flat_tolerance:
+                bearish += 1
         min_good_return = float(
             getattr(_cfg, "PHASE2_MONTHLY_GOOD_RETURN_MIN_PCT", 0.0))
+        active = sum(t >= monthly_trade_floor for t in executed_trades)
         profitable = sum(
-            1 for r in ret_pcts
-            if monthly_return_counts_as_good(
-                r, min_good_return, strict_above_zero=True)
+            1 for r, t in zip(ret_pcts, executed_trades)
+            if t >= monthly_trade_floor and monthly_return_counts_as_good(
+                r, min_good_return, strict_above_zero=False)
         )
         ratio = profitable / max(1, len(ret_pcts))
+        active_ratio = active / max(1, len(ret_pcts))
+        bearish_ratio = bearish / max(1, len(ret_pcts))
+        passed = (
+            ratio >= min_profitable_ratio
+            and active_ratio >= min_active_ratio
+            and bearish_ratio <= max_bearish_ratio
+        )
+        if isinstance(entry, dict):
+            entry["monthly_admission"] = {
+                "window_returns_pct": ret_pcts,
+                "window_executed_trades": executed_trades,
+                "good_windows": profitable,
+                "active_windows": active,
+                "bearish_windows": bearish,
+                "windows": len(ret_pcts),
+                "good_return_min_pct": min_good_return,
+                "monthly_trade_floor": monthly_trade_floor,
+                "profitable_ratio": ratio,
+                "active_ratio": active_ratio,
+                "bearish_ratio": bearish_ratio,
+                "min_profitable_ratio": min_profitable_ratio,
+                "min_active_ratio": min_active_ratio,
+                "max_bearish_ratio": max_bearish_ratio,
+                "passed": passed,
+            }
         profitable_ratios.append(ratio)
-        if ratio >= min_profitable_ratio:
+        active_ratios.append(active_ratio)
+        if passed:
             keep.append(entry)
 
     post_filter_count = len(keep)
     if profitable_ratios:
         median_ratio = float(np.median(profitable_ratios))
         p10_ratio = float(np.percentile(profitable_ratios, 10))
+        median_active_ratio = float(np.median(active_ratios))
     else:
         median_ratio = 0.0
         p10_ratio = 0.0
+        median_active_ratio = 0.0
 
     if post_filter_count == 0:
         if bool(getattr(_cfg, "PHASE2_MONTHLY_ADMISSION_FAIL_CLOSED", True)):
@@ -2798,13 +2896,16 @@ def _apply_monthly_admission_gate(
 
     logger.info(
         "Phase 2 [%s]: monthly-admission gate %d → %d rules "
-        "(median_profitable_ratio=%.3f, p10=%.3f, min_ratio=%.3f)",
+        "(median_profitable_ratio=%.3f, median_active_ratio=%.3f, "
+        "p10=%.3f, min_ratio=%.3f, min_active=%.3f)",
         direction,
         pre_filter_count,
         post_filter_count,
         median_ratio,
+        median_active_ratio,
         p10_ratio,
         min_profitable_ratio,
+        min_active_ratio,
     )
     return keep
 
@@ -2984,6 +3085,10 @@ class Rule_Pool_Generator:
 
         self._engine = None
         self._val_engine = None
+        # Exact full validation evaluator used only for final pool admission.
+        # Evolution keeps its sampled validation engine for throughput, while
+        # archive eligibility must be based on the complete validation frame.
+        self._pool_val_engine = None
         # Cached val data for rebuilds after park_engines
         self._cached_slim_val = None
         # Unsampled val (slimmed) for monthly admission — full calendar span
@@ -3052,6 +3157,15 @@ class Rule_Pool_Generator:
                 self._cached_monthly_val = slim_backtest_df(
                     self._scoped_val_df, self._feature_names,
                 )
+                self._pool_val_engine = CPUBacktestEngine(
+                    self._cached_monthly_val,
+                    self._feature_modes,
+                    self.direction,
+                    fee_pct=_cfg.FEE_PCT,
+                )
+                self._pool_val_engine.n_valid_rows = len(
+                    self._cached_monthly_val
+                )
                 val_sampled = sample_df_for_phase2(
                     self._scoped_val_df,
                     random_state=self._val_sample_seed,
@@ -3085,6 +3199,7 @@ class Rule_Pool_Generator:
                     exc,
                 )
                 self._val_engine = None
+                self._pool_val_engine = None
                 self._cached_monthly_val = None
         elif self._cached_slim_val is not None:
             # Rebuild from cached data after park_engines (no re-sampling needed)
@@ -3092,6 +3207,16 @@ class Rule_Pool_Generator:
                 self._val_engine = self._build_engine_for_df(
                     self._cached_slim_val,
                 )
+                if self._cached_monthly_val is not None:
+                    self._pool_val_engine = CPUBacktestEngine(
+                        self._cached_monthly_val,
+                        self._feature_modes,
+                        self.direction,
+                        fee_pct=_cfg.FEE_PCT,
+                    )
+                    self._pool_val_engine.n_valid_rows = len(
+                        self._cached_monthly_val
+                    )
                 self._holdout_n_valid_rows = len(self._cached_slim_val)
                 self._val_engine.n_valid_rows = len(self._cached_slim_val)
                 if _cfg.PHASE2_JOINT_TRAIN_VAL:
@@ -3116,6 +3241,7 @@ class Rule_Pool_Generator:
                     exc,
                 )
                 self._val_engine = None
+                self._pool_val_engine = None
 
         from gpu_fuzzy_trader._memory import log_memory_rss
 
@@ -3192,6 +3318,7 @@ class Rule_Pool_Generator:
         """Release GPU engines and slim in-memory data between island epochs."""
         self._engine = None
         self._val_engine = None
+        self._pool_val_engine = None
         self._train_df = None
         if getattr(self, "_evolution_state", None) is not None:
             from gpu_fuzzy_trader.evolution.evox_runner import (
@@ -3210,8 +3337,36 @@ class Rule_Pool_Generator:
         release_phase2_resources()
 
     def _build_engine(self):
-        """Build GPUBacktestEngine if JAX available, else CPUBacktestEngine."""
+        """Build the selected Phase 2 backend for the sampled train frame."""
         return self._build_engine_for_df(self._train_df)
+
+    def _prefer_cpu_phase2_backend(self) -> bool:
+        """Return whether this generator should avoid allocating a JAX engine.
+
+        ``GPUBacktestEngine`` can route a large *batch* back to the CPU, but
+        constructing that wrapper still uploads its full input frame and
+        initializes JAX arrays first.  On the small-RAM hosts targeted by the
+        large-window CPU policy, that defeated the policy and could OOM before
+        the first batch was evaluated.  Select the backend once from the train
+        window instead, and use it consistently for its companion validation
+        engine as well.
+        """
+        if not bool(getattr(_cfg, "PHASE2_GPU_CPU_ROUTE_LARGE_DATA", True)):
+            return False
+        min_bars = max(
+            0,
+            int(getattr(_cfg, "PHASE2_GPU_CPU_ROUTE_MIN_BARS", 20_000)),
+        )
+        max_batch = max(
+            1,
+            int(getattr(_cfg, "PHASE2_GPU_CPU_ROUTE_MAX_BATCH", 256)),
+        )
+        population_size = int(
+            getattr(self, "pop_size", _cfg.PHASE2_POPULATION_SIZE)
+        )
+        train_df = getattr(self, "_train_df", None)
+        train_rows = len(train_df) if train_df is not None else 0
+        return train_rows >= min_bars and population_size <= max_batch
 
     @staticmethod
     def _set_island_engine_context(engine, owner) -> None:
@@ -3229,7 +3384,14 @@ class Rule_Pool_Generator:
 
         from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
 
-        if _cfg.PHASE2_USE_GPU:
+        if _cfg.PHASE2_USE_GPU and Rule_Pool_Generator._prefer_cpu_phase2_backend(self):
+            logger.info(
+                "Phase 2 using CPUBacktestEngine before JAX allocation "
+                "(large train window=%d rows, population=%d).",
+                len(self._train_df) if self._train_df is not None else len(df),
+                int(getattr(self, "pop_size", _cfg.PHASE2_POPULATION_SIZE)),
+            )
+        elif _cfg.PHASE2_USE_GPU:
             from gpu_fuzzy_trader.backtest.jax_compat import (
                 get_gpu_backtest_engine_class,
             )
@@ -3388,6 +3550,13 @@ class Rule_Pool_Generator:
         train_n_rows = len(
             self._train_df) if self._train_df is not None else None
 
+        pool_val_engine = self._pool_val_engine or self._val_engine
+        pool_valid_rows = (
+            len(self._cached_monthly_val)
+            if self._cached_monthly_val is not None
+            else self._holdout_n_valid_rows
+        )
+
         evo_kwargs = dict(
             feature_infos=self.feature_infos,
             engine=self._engine,
@@ -3395,9 +3564,9 @@ class Rule_Pool_Generator:
             rng=rng,
             seed_chromosomes=seed_chromosomes,
             val_engine=fitness_val_engine,
-            pool_val_engine=self._val_engine,
+            pool_val_engine=pool_val_engine,
             cv_fold_evaluator=self._cv_val_evaluator,
-            holdout_n_valid_rows=self._holdout_n_valid_rows,
+            holdout_n_valid_rows=pool_valid_rows,
             train_n_rows=train_n_rows,
             feature_probs=feature_probs,
             init_strategy=_cfg.PHASE2_INIT_STRATEGY,
@@ -3683,7 +3852,7 @@ class Rule_Pool_Generator:
 
         rules = _merge_archive_entries(payload["rules"])
         return {
-            "version": int(payload.get("version", 1)),
+            "version": _ARCHIVE_SCHEMA_VERSION,
             "direction": direction,
             "feature_signature": _archive_feature_signature(feature_infos),
             "rules": rules,
@@ -3753,7 +3922,7 @@ class Rule_Pool_Generator:
             return None
         rules = _merge_archive_entries(payload["rules"])
         return {
-            "version": int(payload.get("version", 1)),
+            "version": _ARCHIVE_SCHEMA_VERSION,
             "direction": direction,
             "feature_signature": _archive_feature_signature(feature_infos),
             "rules": rules,
@@ -3793,7 +3962,7 @@ class Rule_Pool_Generator:
             source_symbols=source_symbols,
         )
         payload = {
-            "version": 1,
+            "version": _ARCHIVE_SCHEMA_VERSION,
             "direction": direction,
             "feature_signature": _archive_feature_signature(feature_infos),
             "rules": merged,

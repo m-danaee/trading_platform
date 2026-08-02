@@ -414,6 +414,14 @@ def configure_phase2_gpu_runtime(
     """
     if not _cfg.PHASE2_USE_GPU:
         return
+    # The large-window route can now select CPU before creating any JAX arrays.
+    # Do not initialize a JAX device or run a synthetic CPU warmup merely
+    # because the global GPU flag is enabled; neither action benefits a CPU
+    # engine and both consume scarce host memory on WSL/small-RAM machines.
+    targets = _iter_warmup_targets(engine, val_engine)
+    if not any(hasattr(_resolve_warmup_inner(target), "_data_matrix_jax") for target in targets):
+        logger.info("Phase 2 CPU backend selected; skipping JAX runtime warmup.")
+        return
     log_gpu_runtime_config()
     try:
         warmup_phase2_gpu_kernels(

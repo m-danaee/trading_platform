@@ -454,6 +454,7 @@ _SPLIT_CONFIG_KEYS = (
     # Holdout split keys (active mode)
     "HOLDOUT_TRAIN_FRACTION",
     "HOLDOUT_EMBARGO_CANDLES",
+    "VALIDATION_HALF_PURGE_CANDLES",
 )
 
 
@@ -490,6 +491,9 @@ def write_cv_folds_manifest(
             "PURGED_WF_N_SPLITS": _cfg.PURGED_WF_N_SPLITS,
             "PURGED_WF_HOLDOUT_FRACTION": _cfg.PURGED_WF_HOLDOUT_FRACTION,
             "PURGED_WF_EMBARGO_CANDLES": _cfg.PURGED_WF_EMBARGO_CANDLES,
+            "VALIDATION_HALF_PURGE_CANDLES": getattr(
+                _cfg, "VALIDATION_HALF_PURGE_CANDLES", 0,
+            ),
         },
         "folds": [
             {

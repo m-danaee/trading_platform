@@ -116,7 +116,13 @@ _MODE_NUM_CLASSES: dict[str, int] = {
 
 
 def _discretize_series(series: pd.Series, mode: str) -> np.ndarray:
-    """Discretize a feature series into integer bin indices."""
+    """Discretize a feature series using evaluator_v5's fixed fuzzy bins.
+
+    Exported chromosomes decode to evaluator-facing condition strings.  The
+    batch-ranking classes must therefore retain exactly the same meanings as
+    ``CPUBacktestEngine._apply_dynamic_rule``; adaptive quantiles or ordinal
+    rescaling would make search fitness disagree with final rule evaluation.
+    """
     values = series.values.astype(float)
     if mode == "binary":
         return values.astype(np.int32)

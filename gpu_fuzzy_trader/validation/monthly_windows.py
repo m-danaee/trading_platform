@@ -81,6 +81,14 @@ class MonthlyWindowSummary:
     equity_slope: float
     max_equity_dip_pct: float
     score: float
+    # Activity-aware diagnostics.  Defaults preserve compatibility with
+    # callers constructing summaries directly in lightweight tests/tools.
+    active_windows: int = 0
+    active_ratio: float = 0.0
+    inactive_windows: int = 0
+    bearish_windows: int = 0
+    bearish_ratio: float = 0.0
+    monthly_trade_floor: int = 0
 
 
 def _datetime_series(df: pd.DataFrame) -> pd.Series:
@@ -249,7 +257,10 @@ def summarize_monthly_metrics(
     dips = (peak - equity) / np.maximum(peak, 1e-12) * 100.0
 
     # Active months mask (where strategy actually took trades)
-    active_mask = trades > 0
+    active_floor = max(
+        1, int(getattr(_cfg, "MONTHLY_ACTIVE_MIN_TRADES", 3))
+    )
+    active_mask = trades >= active_floor
     active_pfs = pfs[active_mask]
     
     # If the strategy smartly stayed out during a bad month, don't punish its worst PF
@@ -259,12 +270,21 @@ def summarize_monthly_metrics(
     min_good_return = float(
         getattr(_cfg, "MONTHLY_GOOD_RETURN_MIN_PCT", 0.0))
     good_count = sum(
-        1 for r in returns
-        if monthly_return_counts_as_good(
+        1 for r, active in zip(returns, active_mask)
+        if active and monthly_return_counts_as_good(
             float(r), min_good_return, strict_above_zero=False)
     )
     profitable = good_count
     profitable_ratio = good_count / max(1, len(returns))
+    active_windows = int(np.sum(active_mask))
+    active_ratio = active_windows / max(1, len(returns))
+    inactive_windows = len(returns) - active_windows
+    flat_tolerance = float(
+        getattr(_cfg, "MONTHLY_FLAT_TOLERANCE_PCT", 0.50)
+    )
+    bearish_mask = active_mask & (returns < -flat_tolerance)
+    bearish_windows = int(np.sum(bearish_mask))
+    bearish_ratio = bearish_windows / max(1, len(returns))
 
     # Composite score (used internally for ranking).
     score = (
@@ -273,6 +293,8 @@ def summarize_monthly_metrics(
         + 0.75 * float(np.min(returns))
         + 5.0 * worst_pf
         + 6.0 * profitable_ratio
+        + 3.0 * active_ratio
+        - 4.0 * bearish_ratio
         + 1.5 * slope
         - 0.65 * float(np.max(dds))
         - 0.20 * float(np.max(dips))
@@ -301,6 +323,12 @@ def summarize_monthly_metrics(
         equity_slope=slope,
         max_equity_dip_pct=float(np.max(dips)),
         score=float(score),
+        active_windows=active_windows,
+        active_ratio=float(active_ratio),
+        inactive_windows=inactive_windows,
+        bearish_windows=bearish_windows,
+        bearish_ratio=float(bearish_ratio),
+        monthly_trade_floor=active_floor,
     )
 
 
@@ -421,6 +449,22 @@ def monthly_penalty(
         max(0.0, min_profitable_ratio - summary.profitable_ratio)
         * profitable_ratio_weight
     )
+
+    min_active_ratio = float(
+        getattr(_cfg, "MONTHLY_MIN_ACTIVE_RATIO", 0.60)
+    )
+    active_weight = float(
+        getattr(_cfg, "MONTHLY_ACTIVE_RATIO_WEIGHT", 15.0)
+    )
+    penalty += max(0.0, min_active_ratio - summary.active_ratio) * active_weight
+
+    max_bearish_ratio = float(
+        getattr(_cfg, "MONTHLY_MAX_BEARISH_RATIO", 0.50)
+    )
+    bearish_weight = float(
+        getattr(_cfg, "MONTHLY_BEARISH_RATIO_WEIGHT", 15.0)
+    )
+    penalty += max(0.0, summary.bearish_ratio - max_bearish_ratio) * bearish_weight
 
     trend_weight = float(getattr(_cfg, "MONTHLY_TREND_WEIGHT", 2.0))
     penalty += max(0.0, -summary.equity_slope) * trend_weight

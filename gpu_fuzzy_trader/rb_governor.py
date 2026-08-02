@@ -19,6 +19,7 @@ from gpu_fuzzy_trader.backtest.cpu_engine import (
     _build_rule_signal_mask,
 )
 from gpu_fuzzy_trader.backtest.df_slim import downcast_numeric_df
+from gpu_fuzzy_trader.features.encoder import encode_condition, get_dont_care
 from gpu_fuzzy_trader.scoring import return_to_drawdown, profit_factor_term
 from gpu_fuzzy_trader.scoring.gates import (
     PositiveGoodThresholds,
@@ -41,6 +42,12 @@ class CandidateRecord:
     valid_metrics: dict
     score: float
     mask: np.ndarray | None = None
+    # A recency candidate is allowed to have a bounded loss on the older
+    # training regime when both chronological validation halves are positive.
+    # Keep this marker explicit so normal RB composition/risk code never
+    # silently treats a rescued rule as an ordinary positive-good rule.
+    recency: bool = False
+    recency_fitness_metrics: dict | None = None
 
 
 def _f(metrics: dict | None, key: str, default: float = 0.0) -> float:
@@ -73,18 +80,29 @@ def _symbol_concentration_stats(metrics: dict | None) -> tuple[float, float, str
     return float(np.sum(shares * shares)), float(np.max(shares)), top_symbol
 
 
-def _passes_symbol_concentration_gate(valid_m: dict) -> tuple[bool, dict[str, Any]]:
+def _passes_symbol_concentration_gate(
+    valid_m: dict,
+    *,
+    max_share: float | None = None,
+    max_hhi: float | None = None,
+) -> tuple[bool, dict[str, Any]]:
     """Hard gate: reject strategies dominated by one symbol on validation."""
     hhi, top_share, top_sym = _symbol_concentration_stats(valid_m)
-    max_share = float(getattr(_cfg, "RB_MAX_SYMBOL_SHARE_ABS_PNL", 0.50))
-    max_hhi = float(getattr(_cfg, "RB_MAX_SYMBOL_HHI", 0.55))
-    ok = top_share <= max_share + 1e-12 and hhi <= max_hhi + 1e-12
+    share_limit = float(
+        getattr(_cfg, "RB_MAX_SYMBOL_SHARE_ABS_PNL", 0.50)
+        if max_share is None else max_share
+    )
+    hhi_limit = float(
+        getattr(_cfg, "RB_MAX_SYMBOL_HHI", 0.55)
+        if max_hhi is None else max_hhi
+    )
+    ok = top_share <= share_limit + 1e-12 and hhi <= hhi_limit + 1e-12
     return ok, {
         "hhi_abs_pnl": hhi,
         "top_symbol_share_abs_pnl": top_share,
         "top_symbol": top_sym,
-        "max_share": max_share,
-        "max_hhi": max_hhi,
+        "max_share": share_limit,
+        "max_hhi": hhi_limit,
         "passed": bool(ok),
     }
 
@@ -161,6 +179,9 @@ def _passes_symbol_contribution_certificate(
 
 def _portfolio_selection_certificate(
     valid_m: dict | None,
+    *,
+    concentration_max_share: float | None = None,
+    concentration_max_hhi: float | None = None,
 ) -> tuple[bool, dict[str, Any]]:
     """Return the certificate used by compose, risk, and profit selection."""
     metrics = valid_m or {}
@@ -191,6 +212,8 @@ def _portfolio_selection_certificate(
     )
     concentration_ok, concentration = _passes_symbol_concentration_gate(
         valid_m or {},
+        max_share=concentration_max_share,
+        max_hhi=concentration_max_hhi,
     )
     return contribution_ok and concentration_ok, {
         "passed": bool(contribution_ok and concentration_ok),
@@ -232,6 +255,47 @@ def _passes_tail_holdout_gate(
         "tail_return_pct": tail_ret,
         "min_return_pct": min_ret,
         "passed": bool(ok),
+    }
+
+
+def _passes_tail_selection_gate(
+    tail_holdout_engine: CPUBacktestEngine | None,
+    rules: list[dict],
+) -> tuple[bool, dict[str, Any]]:
+    """Validate a trial ruleset on the reserved chronological validation tail.
+
+    The tail is an inner validation split, never Phase 5 test data.  Making it
+    part of composition and risk-grid feasibility prevents a post-hoc hard
+    gate from rejecting a direction when a tail-positive alternative existed.
+    """
+    enabled = bool(getattr(_cfg, "RB_TAIL_HOLDOUT_SELECTION_GATE", True))
+    if not enabled or tail_holdout_engine is None:
+        return True, {"enabled": enabled, "available": False, "passed": True}
+    try:
+        tail_metrics = tail_holdout_engine.simulate_rule_set(
+            [_rule_to_engine(rule) for rule in rules]
+        )
+    except Exception as exc:
+        return False, {
+            "enabled": True,
+            "available": True,
+            "passed": False,
+            "reason": "tail_holdout_evaluation_error",
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    min_ret = float(getattr(_cfg, "RB_TAIL_HOLDOUT_MIN_RETURN_PCT", 0.0))
+    min_trades = int(getattr(_cfg, "RB_TAIL_HOLDOUT_MIN_TRADES", 0))
+    ret = _f(tail_metrics, "total_return_pct")
+    trades = _i(tail_metrics, "executed_trades")
+    ok = ret >= min_ret - 1e-12 and trades >= min_trades
+    return bool(ok), {
+        "enabled": True,
+        "available": True,
+        "passed": bool(ok),
+        "tail_return_pct": ret,
+        "tail_trades": trades,
+        "min_return_pct": min_ret,
+        "min_trades": min_trades,
     }
 
 
@@ -640,6 +704,20 @@ def _symbol_specialized_variants(
     """
     base = _rule_to_engine(rule)
     if not bool(getattr(_cfg, "RB_REQUIRE_SYMBOL_FILTERS", False)):
+        explicit_symbols = _symbols_in_rules([base])
+        # Deterministic univariate baselines intentionally carry their scope.
+        # Also preserve a matching filter when the supplied universe has only
+        # that one symbol; in that case it is not an orphan filter.  Other
+        # explicit filters are stripped so a generalist candidate cannot retain
+        # an accidental scope from an incompatible island.
+        baseline_source = str(rule.get("source", "")).strip().lower()
+        sole_symbol_scope = (
+            len(symbols) == 1
+            and bool(explicit_symbols)
+            and explicit_symbols.issubset({str(symbols[0]).strip().lower()})
+        )
+        if baseline_source == "rb_univariate_baseline" or sole_symbol_scope:
+            return [base]
         src = _source_symbols_from_rule(rule)
         out = dict(base)
         out["conditions"] = _attach_source_symbol_filters(
@@ -758,6 +836,90 @@ def _positive_good_reject_reasons(
     return positive_good_reject_reasons(train_m, valid_m, thresholds)
 
 
+def _recency_validation_score(fitness_m: dict, selection_m: dict) -> float:
+    """Score the weaker chronological validation half.
+
+    Recency rescue is intentionally return-first: the candidate must make
+    money on *both* halves, so the minimum half-return is the useful
+    out-of-regime robustness statistic.  PF and drawdown are hard gates in
+    ``_is_recency_good`` rather than soft knobs that could let a high-return
+    but fragile candidate win.
+    """
+    return float(min(
+        _f(fitness_m, "total_return_pct", -1.0e9),
+        _f(selection_m, "total_return_pct", -1.0e9),
+    ))
+
+
+def _is_recency_good(
+    train_m: dict,
+    fitness_m: dict,
+    selection_m: dict,
+) -> bool:
+    """Check the bounded validation-only recency rescue certificate.
+
+    This is deliberately stricter than a single validation gate: the older
+    training regime may lose, but both chronological validation halves must
+    clear return/PF/trade floors and show activity on at least two symbols.
+    Concentration is checked with the explicit, slightly wider recency limits
+    at final deployment; per-symbol losses are bounded in evaluator PnL units
+    to prevent one symbol from carrying an otherwise weak signal.
+    """
+    if not bool(getattr(_cfg, "RB_RECENCY_RESCUE_ENABLED", False)):
+        return False
+    if _i(train_m, "executed_trades") < int(
+        getattr(_cfg, "RB_RECENCY_MIN_TRAIN_TRADES", 25)
+    ):
+        return False
+    if _f(train_m, "total_return_pct") < -float(
+        getattr(_cfg, "RB_RECENCY_MAX_TRAIN_LOSS_PCT", 12.0)
+    ):
+        return False
+    if _f(train_m, "profit_factor") < float(
+        getattr(_cfg, "RB_RECENCY_MIN_TRAIN_PF", 0.80)
+    ):
+        return False
+    if _f(train_m, "max_drawdown_pct", 100.0) > float(
+        getattr(_cfg, "RB_RECENCY_MAX_TRAIN_DD_PCT", 25.0)
+    ):
+        return False
+
+    min_return = float(getattr(_cfg, "RB_RECENCY_MIN_VALID_RETURN", 0.50))
+    min_pf = float(getattr(_cfg, "RB_RECENCY_MIN_VALID_PF", 1.05))
+    min_trades = int(getattr(_cfg, "RB_RECENCY_MIN_VALID_TRADES", 15))
+    max_symbol_loss = float(
+        getattr(_cfg, "RB_RECENCY_MAX_SYMBOL_LOSS_PCT", 15.0)
+    )
+    for metrics in (fitness_m, selection_m):
+        if _f(metrics, "total_return_pct") < min_return:
+            return False
+        if _f(metrics, "profit_factor") < min_pf:
+            return False
+        if _i(metrics, "executed_trades") < min_trades:
+            return False
+        per_symbol = (metrics or {}).get("per_symbol_metrics", {}) or {}
+        # Real evaluator output always includes this field.  Lightweight unit
+        # doubles may omit it; those remain eligible for the helper-level
+        # compatibility path, while production candidates require evidence.
+        if not isinstance(per_symbol, dict) or not per_symbol:
+            if bool((metrics or {}).get("per_symbol_metrics_available", False)):
+                return False
+            continue
+        traded = 0
+        for values in per_symbol.values():
+            if not isinstance(values, dict):
+                continue
+            trades = int(values.get("trade_count", 0) or 0)
+            net_pnl = _f(values, "net_pnl")
+            if trades > 0:
+                traded += 1
+            if net_pnl < -max_symbol_loss:
+                return False
+        if traded < 2:
+            return False
+    return True
+
+
 def _prepare_scoring_frame(df: pd.DataFrame) -> pd.DataFrame:
     """Prepare a scoring frame with evaluator ordering."""
     out = df.copy()
@@ -849,10 +1011,13 @@ def _candidate_positive_symbols(candidate: CandidateRecord) -> set[str]:
 def _diversification_shortlist(
     candidates: list[CandidateRecord],
 ) -> list[CandidateRecord]:
-    """Keep global leaders plus the strongest leader(s) for each symbol."""
+    """Keep global plus score and return leaders for each positive symbol."""
     global_count = int(getattr(_cfg, "RB_DIVERSIFICATION_GLOBAL_LEADERS", 6))
     per_symbol_count = int(
         getattr(_cfg, "RB_DIVERSIFICATION_SYMBOL_LEADERS", 2)
+    )
+    return_leader_count = int(
+        getattr(_cfg, "RB_DIVERSIFICATION_RETURN_LEADERS", 4)
     )
     ranked = sorted(candidates, key=lambda rec: rec.score, reverse=True)
     shortlist: list[CandidateRecord] = []
@@ -878,6 +1043,16 @@ def _diversification_shortlist(
         ]
         for record in leaders[:max(1, per_symbol_count)]:
             add(record)
+        return_leaders = sorted(
+            leaders,
+            key=lambda record: (
+                _f(record.valid_metrics, "total_return_pct"),
+                _f(record.train_metrics, "total_return_pct"),
+            ),
+            reverse=True,
+        )
+        for record in return_leaders[:max(1, return_leader_count)]:
+            add(record)
     return shortlist
 
 
@@ -888,6 +1063,7 @@ def _diversification_beam(
     direction: str,
     *,
     min_distinct_symbols: int,
+    tail_holdout_engine: CPUBacktestEngine | None = None,
 ) -> tuple[
     list[CandidateRecord], dict, dict, float, list[dict]
 ] | None:
@@ -932,6 +1108,11 @@ def _diversification_beam(
                 getattr(_cfg, "RB_MIN_VALID_TRADES", 15),
             )),
         ):
+            continue
+        tail_ok, _ = _passes_tail_selection_gate(
+            tail_holdout_engine, [candidate.rule],
+        )
+        if not tail_ok:
             continue
         states.append({
             "selected": [candidate],
@@ -1029,6 +1210,12 @@ def _diversification_beam(
                     )),
                 ):
                     continue
+                tail_ok, _ = _passes_tail_selection_gate(
+                    tail_holdout_engine,
+                    [record.rule for record in trial],
+                )
+                if not tail_ok:
+                    continue
                 expanded.append({
                     "selected": trial,
                     "train": train_m,
@@ -1067,10 +1254,19 @@ def _diversification_beam(
             continue
         if len(coverage(state)) < min_distinct_symbols:
             continue
-        passed, _certificate = _portfolio_selection_certificate(
+        # Composition establishes independently positive symbol coverage;
+        # risk optimization subsequently chooses each rule's capital weight
+        # and is responsible for the final concentration certificate. A pair
+        # can be genuinely diversifying yet fail concentration temporarily at
+        # equal seed weights, so rejecting it here would prevent that tuning.
+        passed, _certificate = _passes_symbol_contribution_certificate(
             state["valid"],
         )
-        if passed:
+        tail_ok, _ = _passes_tail_selection_gate(
+            tail_holdout_engine,
+            [record.rule for record in state["selected"]],
+        )
+        if passed and tail_ok:
             certified.append(state)
     if not certified:
         return None
@@ -1124,6 +1320,9 @@ def _filter_good_rules(
     valid_df: pd.DataFrame,
     direction: str,
     fold_engines: list[CPUBacktestEngine] | None = None,
+    *,
+    recency_fitness_engine: CPUBacktestEngine | None = None,
+    recency_sink: list[CandidateRecord] | None = None,
 ) -> list[CandidateRecord]:
     train_engine = CPUBacktestEngine(train_like_df, {}, direction)
     valid_engine = CPUBacktestEngine(valid_df, {}, direction)
@@ -1149,6 +1348,30 @@ def _filter_good_rules(
                     "simulate_error", 0) + 1
                 continue
             if not _is_positive_good(train_m, valid_m):
+                if (
+                    recency_fitness_engine is not None
+                    and recency_sink is not None
+                    and bool(getattr(_cfg, "RB_RECENCY_RESCUE_ENABLED", False))
+                ):
+                    try:
+                        fitness_m = recency_fitness_engine.simulate_rule_set([rule])
+                    except Exception:
+                        fitness_m = None
+                    if fitness_m is not None and _is_recency_good(
+                        train_m, fitness_m, valid_m,
+                    ):
+                        rec = CandidateRecord(
+                            rule=rule,
+                            train_metrics=train_m,
+                            valid_metrics=valid_m,
+                            score=_recency_validation_score(
+                                fitness_m, valid_m,
+                            ),
+                            recency=True,
+                            recency_fitness_metrics=fitness_m,
+                        )
+                        rec.mask = _mask_for(rule, train_like_df, valid_df)
+                        recency_sink.append(rec)
                 for reason in _positive_good_reject_reasons(train_m, valid_m) or ["unknown"]:
                     # Bucket by primary token (before '=')
                     bucket = reason.split("=", 1)[0]
@@ -1174,6 +1397,12 @@ def _filter_good_rules(
             records.append(rec)
 
     records.sort(key=lambda r: r.score, reverse=True)
+    if recency_sink is not None:
+        recency_sink.sort(key=lambda r: r.score, reverse=True)
+        max_recency = max(
+            0, int(getattr(_cfg, "RB_RECENCY_MAX_CANDIDATES", 40))
+        )
+        del recency_sink[max_recency:]
     keep = int(getattr(_cfg, "RB_KEEP_TOP_RULES", 120))
     logger.info(
         "RB [%s]: kept %d/%d single rules positive on training and validation.",
@@ -1191,16 +1420,186 @@ def _filter_good_rules(
     return records[:keep]
 
 
+def _univariate_baseline_pool(
+    pool: list[dict],
+    *frames: pd.DataFrame,
+) -> tuple[list[dict], int]:
+    """Add deterministic single-condition RB candidates.
+
+    Evolution is deliberately biased toward 4–5 condition rules. This compact
+    complement enumerates only the fuzzy modes already exposed by the current
+    Phase-2 pool, so it cannot introduce raw columns or a representation not
+    selected in Phase 1.  A generalist pass is emitted first, followed by the
+    symbol-specialized pass.  This ordering ensures the bounded budget cannot
+    truncate a late-but-useful condition such as a momentum state merely
+    because early alphabetical features consumed all slots.  Every candidate
+    still passes exact train, validation, tail, concentration, and Phase-5
+    gates before deployment.
+    """
+    if not bool(getattr(_cfg, "RB_UNIVARIATE_BASELINE_ENABLED", True)):
+        return list(pool), 0
+    max_rules = max(0, int(getattr(
+        _cfg, "RB_UNIVARIATE_BASELINE_MAX_RULES", 400,
+    )))
+    if max_rules == 0:
+        return list(pool), 0
+
+    mode_values: dict[str, set[str]] = {}
+    for mode in (
+        "binary",
+        "ternary",
+        "positive",
+        "sparse_positive",
+        "sparse_signed",
+        "signed",
+    ):
+        values = {
+            encode_condition("feature", gene, mode).split(" IS ", 1)[1]
+            for gene in range(get_dont_care(mode))
+        }
+        mode_values[mode] = values
+
+    possible_modes: dict[str, set[str]] = {}
+    for raw in pool:
+        for condition in raw.get("conditions", []) if isinstance(raw, dict) else []:
+            text = str(condition)
+            if not text.startswith("[") or "] IS " not in text:
+                continue
+            feature, value = text[1:].split("] IS ", 1)
+            supported = {
+                mode for mode, values in mode_values.items() if value in values
+            }
+            if not feature or not supported:
+                continue
+            if feature in possible_modes:
+                intersection = possible_modes[feature] & supported
+                if intersection:
+                    possible_modes[feature] = intersection
+            else:
+                possible_modes[feature] = supported
+
+    # Phase-2 chromosomes are sparse: a feature can be selected in Phase 1
+    # yet never appear as an active gene in the retained pool.  Recover its
+    # evaluator mode from the already-pruned train frame so the deterministic
+    # complement remains a true Phase-1 feature search rather than a random
+    # pool-dependent subset.  This is train-frame metadata only; validation and
+    # test values are never inspected to choose the mode.
+    try:
+        from gpu_fuzzy_trader.features.detector import Feature_Detector
+
+        for frame in frames:
+            if not isinstance(frame, pd.DataFrame):
+                continue
+            feature_cols = [
+                name for name in frame.columns
+                if str(name).startswith("ff_")
+            ]
+            if not feature_cols:
+                continue
+            detected = Feature_Detector().detect_all_modes(frame, feature_cols)
+            for feature, mode in detected.items():
+                possible_modes.setdefault(feature, set()).add(mode)
+            # The first frame is the train-like frame in every caller; do not
+            # let a later validation frame introduce a previously unseen mode.
+            break
+    except Exception:
+        # Pool-derived modes remain a safe fallback for lightweight test
+        # doubles or unusual frames.
+        pass
+
+    symbols = _available_symbols(*frames)
+    if not possible_modes or not symbols:
+        return list(pool), 0
+    capital_grid = tuple(float(value) for value in getattr(
+        _cfg, "RB_CAPITAL_GRID", (5.0,),
+    ))
+    baseline_capital = min(capital_grid) if capital_grid else 5.0
+    out = list(pool)
+    seen = {
+        _rule_key(raw) for raw in pool if isinstance(raw, dict)
+    }
+    added = 0
+    mode_order = (
+        "binary",
+        "ternary",
+        "positive",
+        "sparse_positive",
+        "sparse_signed",
+        "signed",
+    )
+
+    def add_rule(conditions: list[str]) -> bool:
+        nonlocal added
+        rule = {
+            "conditions": conditions,
+            "tp": float(getattr(_cfg, "RB_DEFAULT_TP", 2.0)),
+            "sl": float(getattr(_cfg, "RB_DEFAULT_SL", 1.2)),
+            # A frequent singleton is evaluated at the smallest permitted
+            # allocation first. The risk grid can increase it only if that
+            # remains robust and balanced.
+            "capital_pct": baseline_capital,
+            "source": "rb_univariate_baseline",
+        }
+        key = _rule_key(rule)
+        if key in seen:
+            return True
+        seen.add(key)
+        out.append(rule)
+        added += 1
+        return added < max_rules
+
+    ordered_features: list[tuple[str, str]] = []
+    for feature in sorted(possible_modes):
+        mode = next(
+            (item for item in mode_order if item in possible_modes[feature]),
+            None,
+        )
+        if mode is not None:
+            ordered_features.append((feature, mode))
+
+    # First reserve the complete generalist complement.  In Mode A a rule is
+    # allowed to trade both symbols, and this is also the only way to discover
+    # a condition whose useful state was absent from the stochastic pool.
+    if bool(getattr(_cfg, "RB_UNIVARIATE_GENERALIST_ENABLED", True)):
+        for feature, mode in ordered_features:
+            for gene in range(get_dont_care(mode)):
+                if not add_rule([encode_condition(feature, gene, mode)]):
+                    return out, added
+
+    # Then add specialists, preserving the historical symbol-scoped behavior
+    # for multi-asset diversification and specialist mode.
+    for feature, mode in ordered_features:
+        for gene in range(get_dont_care(mode)):
+            condition = encode_condition(feature, gene, mode)
+            for symbol in symbols:
+                if not add_rule([condition, _symbol_condition(symbol)]):
+                    return out, added
+    return out, added
+
+
 def _compose_ruleset(
     candidates: list[CandidateRecord],
     train_engine: CPUBacktestEngine,
     valid_engine: CPUBacktestEngine,
     direction: str,
+    *,
+    tail_holdout_engine: CPUBacktestEngine | None = None,
 ) -> tuple[list[CandidateRecord], dict, dict, float, list[dict]]:
     if not candidates:
         raise ValueError(f"No rb-positive rules available for {direction}")
 
-    selected: list[CandidateRecord] = [candidates[0]]
+    tail_eligible = [
+        candidate for candidate in candidates
+        if _passes_tail_selection_gate(tail_holdout_engine, [candidate.rule])[0]
+    ]
+    if tail_holdout_engine is not None and not tail_eligible:
+        logger.warning(
+            "RB [%s]: no single candidate passed the reserved tail gate; "
+            "retaining the ordinary seed so the final hard gate fails closed.",
+            direction,
+        )
+    seed_candidates = tail_eligible or candidates
+    selected: list[CandidateRecord] = [seed_candidates[0]]
     cur_train, cur_valid, cur_score = _evaluate_ruleset(
         train_engine, valid_engine, [selected[0].rule])
     history = [{
@@ -1232,6 +1631,7 @@ def _compose_ruleset(
         valid_engine,
         direction,
         min_distinct_symbols=min_distinct_symbols,
+        tail_holdout_engine=tail_holdout_engine,
     )
     if beam_result is not None:
         (
@@ -1300,6 +1700,11 @@ def _compose_ruleset(
                     continue
             train_m, valid_m, score = _evaluate_ruleset(
                 train_engine, valid_engine, trial_rules)
+            tail_ok, _ = _passes_tail_selection_gate(
+                tail_holdout_engine, trial_rules,
+            )
+            if not tail_ok:
+                continue
             if return_only_add:
                 if not _positive_returns(train_m, valid_m):
                     continue
@@ -1550,6 +1955,12 @@ def _optimize_risk(
                                 "capital_pct": cap,
                                 "certificate": cert_detail,
                             })
+                            continue
+
+                        tail_ok, _tail_detail = _passes_tail_selection_gate(
+                            tail_holdout_engine, trial,
+                        )
+                        if not tail_ok:
                             continue
 
                         if use_walk_forward:
@@ -2140,6 +2551,121 @@ def _write_fail_closed_strategy(
     return strategy
 
 
+def _select_recency_candidate(
+    candidates: list[CandidateRecord],
+    normal_rules: list[dict],
+    normal_fitness_m: dict | None,
+    normal_valid_m: dict,
+    *,
+    normal_certificate_ok: bool,
+    tail_holdout_engine: CPUBacktestEngine | None = None,
+) -> tuple[CandidateRecord | None, dict[str, Any]]:
+    """Choose a bounded recency candidate using validation-only evidence.
+
+    The baseline is scored by its weaker chronological validation half.  A
+    rescue can replace it when the baseline is not certificate-safe/deployable
+    or when the rescue has a better weak-half return by the configured margin.
+    The candidate itself must still satisfy the normal Phase 5 validation
+    return/PF gates, a relaxed but explicit concentration certificate, and the
+    reserved tail gate.
+    """
+    detail: dict[str, Any] = {
+        "enabled": bool(getattr(_cfg, "RB_RECENCY_RESCUE_ENABLED", False)),
+        "candidates": len(candidates),
+        "selected": False,
+        "reason": "disabled_or_empty",
+    }
+    if not detail["enabled"] or not candidates:
+        return None, detail
+
+    baseline_score = -1.0e9
+    if normal_fitness_m is not None:
+        baseline_score = _recency_validation_score(
+            normal_fitness_m, normal_valid_m,
+        )
+    validation_return_gate = float(_cfg.PHASE5_VALIDATION_RETURN_GATE_PCT)
+    validation_pf_gate = float(_cfg.PHASE5_VALIDATION_PROFIT_FACTOR_GATE)
+    baseline_gate_ok = (
+        _f(normal_valid_m, "total_return_pct") >= validation_return_gate - 1e-9
+        and _f(normal_valid_m, "profit_factor") >= validation_pf_gate - 1e-9
+    )
+    margin = float(getattr(_cfg, "RB_RECENCY_MIN_SCORE_MARGIN", 0.0))
+    max_share = float(
+        getattr(_cfg, "RB_RECENCY_MAX_SYMBOL_SHARE_ABS_PNL", 0.85)
+    )
+    max_hhi = float(getattr(_cfg, "RB_RECENCY_MAX_SYMBOL_HHI", 0.75))
+
+    ranked = sorted(candidates, key=lambda rec: rec.score, reverse=True)
+    rejected: list[dict[str, Any]] = []
+    for candidate in ranked[:max(
+        0, int(getattr(_cfg, "RB_RECENCY_MAX_CANDIDATES", 40))
+    )]:
+        valid_m = candidate.valid_metrics
+        score = float(candidate.score)
+        if score < baseline_score + margin - 1e-12 and baseline_gate_ok and normal_certificate_ok:
+            rejected.append({
+                "conditions": list(candidate.rule.get("conditions", [])),
+                "reason": "weak_half_score_not_better",
+                "score": score,
+            })
+            continue
+        if _f(valid_m, "total_return_pct") < validation_return_gate - 1e-9:
+            rejected.append({
+                "conditions": list(candidate.rule.get("conditions", [])),
+                "reason": "selection_return_gate",
+            })
+            continue
+        if _f(valid_m, "profit_factor") < validation_pf_gate - 1e-9:
+            rejected.append({
+                "conditions": list(candidate.rule.get("conditions", [])),
+                "reason": "selection_profit_factor_gate",
+            })
+            continue
+        certificate_ok, certificate = _portfolio_selection_certificate(
+            valid_m,
+            concentration_max_share=max_share,
+            concentration_max_hhi=max_hhi,
+        )
+        if not certificate_ok:
+            rejected.append({
+                "conditions": list(candidate.rule.get("conditions", [])),
+                "reason": "recency_portfolio_certificate",
+                "certificate": certificate,
+            })
+            continue
+        tail_ok, tail_detail = _passes_tail_selection_gate(
+            tail_holdout_engine, [candidate.rule],
+        )
+        if not tail_ok:
+            rejected.append({
+                "conditions": list(candidate.rule.get("conditions", [])),
+                "reason": "recency_tail_gate",
+                "tail_gate": tail_detail,
+            })
+            continue
+        detail.update({
+            "selected": True,
+            "reason": "weak_half_return_certificate",
+            "baseline_weak_half_score": baseline_score,
+            "candidate_weak_half_score": score,
+            "baseline_gate_ok": baseline_gate_ok,
+            "baseline_certificate_ok": bool(normal_certificate_ok),
+            "certificate": certificate,
+            "tail_gate": tail_detail,
+            "rejected": rejected,
+            "conditions": list(candidate.rule.get("conditions", [])),
+        })
+        return candidate, detail
+    detail.update({
+        "reason": "no_candidate_passed_recency_comparison",
+        "baseline_weak_half_score": baseline_score,
+        "baseline_gate_ok": baseline_gate_ok,
+        "baseline_certificate_ok": bool(normal_certificate_ok),
+        "rejected": rejected,
+    })
+    return None, detail
+
+
 def run_rb_governor_pipeline(
     train_df: pd.DataFrame,
     val_df: pd.DataFrame,
@@ -2150,6 +2676,7 @@ def run_rb_governor_pipeline(
     cv_folds: list | None = None,
     val_selection_df: pd.DataFrame | None = None,
     failure_reasons: dict[str, str] | None = None,
+    _allow_full_validation_recovery: bool = True,
 ) -> dict[str, dict]:
     """Build and optimize rb strategies for each direction and write outputs."""
     out_dir = Path(output_dir or _cfg.OUTPUTS_DIR)
@@ -2177,6 +2704,37 @@ def run_rb_governor_pipeline(
         train_engine = CPUBacktestEngine(train_like, {}, direction)
         valid_engine = CPUBacktestEngine(valid_df, {}, direction)
 
+        # Recency rescue uses the older chronological half of the complete
+        # validation holdout as a second, independent certificate.  The
+        # active ``valid_df`` remains the RB selection frame; Phase 5 test data
+        # is never involved in this branch.
+        recency_fitness_engine: CPUBacktestEngine | None = None
+        recency_candidates: list[CandidateRecord] = []
+        if bool(getattr(_cfg, "RB_RECENCY_RESCUE_ENABLED", False)):
+            try:
+                from gpu_fuzzy_trader.data.splitter import (
+                    split_validation_fitness_selection,
+                )
+
+                if "symbol" in val_df.columns:
+                    recency_fitness_raw, _ = split_validation_fitness_selection(
+                        val_df,
+                    )
+                else:
+                    midpoint = max(1, len(val_df) // 2)
+                    recency_fitness_raw = val_df.iloc[:midpoint].copy()
+                recency_fitness = _prepare_scoring_frame(recency_fitness_raw)
+                if len(recency_fitness) > 0:
+                    recency_fitness_engine = CPUBacktestEngine(
+                        recency_fitness, {}, direction,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "RB [%s]: recency fitness frame unavailable; skipping rescue: %s",
+                    direction,
+                    exc,
+                )
+
         # Build per-fold engines for CV-fold consistency (C4)
         fold_engines: list[CPUBacktestEngine] | None = None
         if cv_folds:
@@ -2190,7 +2748,81 @@ def run_rb_governor_pipeline(
                 logger.warning("RB [%s]: failed to build CV-fold engines; skipping CV term.", direction)
                 fold_engines = None
 
-        candidates = _filter_good_rules(pool, train_like, valid_df, direction, fold_engines=fold_engines)
+        # Build the chronological inner-validation tail before composing a
+        # strategy. It is a feasibility gate for selection and risk tuning;
+        # Phase 5 test data remains completely untouched.
+        wf_splits = int(getattr(_cfg, "RB_RISK_GRID_WF_SPLITS", 1))
+        use_tail = bool(getattr(_cfg, "RB_RISK_GRID_USE_TAIL_HOLDOUT", False))
+        tail_frac = float(_cfg.RB_TAIL_HOLDOUT_FRACTION)
+        wf_fold_engines: list[CPUBacktestEngine] | None = None
+        wf_tail_engine: CPUBacktestEngine | None = None
+        if wf_splits > 1 or use_tail:
+            wf_fold_engines, wf_tail_engine = _make_walk_forward_fold_engines(
+                scoring_val, wf_splits, tail_frac if use_tail else 0.0, direction,
+            )
+
+        candidate_pool, n_univariate_baselines = _univariate_baseline_pool(
+            pool, train_like, valid_df,
+        )
+        if n_univariate_baselines:
+            logger.info(
+                "RB [%s]: added %d deterministic univariate symbol baselines.",
+                direction,
+                n_univariate_baselines,
+            )
+        candidates = _filter_good_rules(
+            candidate_pool,
+            train_like,
+            valid_df,
+            direction,
+            fold_engines=fold_engines,
+            recency_fitness_engine=recency_fitness_engine,
+            recency_sink=recency_candidates,
+        )
+        # Also probe the highest-ranked ordinary candidates on the older
+        # validation half.  A rule can be positive on the historical train
+        # split yet still be the better *recent-regime* choice when its weak
+        # validation half beats the composed baseline.  Limit this probe to
+        # the bounded RB shortlist so runtime remains linear in the existing
+        # candidate budget rather than adding a second full pool scan.
+        if recency_fitness_engine is not None and candidates:
+            seen_recency = {_rule_key(rec.rule) for rec in recency_candidates}
+            probe_limit = max(
+                1,
+                int(getattr(_cfg, "RB_RECENCY_MAX_CANDIDATES", 40)) * 3,
+            )
+            for candidate in candidates[:probe_limit]:
+                key = _rule_key(candidate.rule)
+                if key in seen_recency:
+                    continue
+                try:
+                    fitness_m = recency_fitness_engine.simulate_rule_set(
+                        [candidate.rule],
+                    )
+                except Exception:
+                    continue
+                if not _is_recency_good(
+                    candidate.train_metrics,
+                    fitness_m,
+                    candidate.valid_metrics,
+                ):
+                    continue
+                recency_candidates.append(CandidateRecord(
+                    rule=candidate.rule,
+                    train_metrics=candidate.train_metrics,
+                    valid_metrics=candidate.valid_metrics,
+                    score=_recency_validation_score(
+                        fitness_m, candidate.valid_metrics,
+                    ),
+                    mask=candidate.mask,
+                    recency=True,
+                    recency_fitness_metrics=fitness_m,
+                ))
+                seen_recency.add(key)
+            recency_candidates.sort(key=lambda rec: rec.score, reverse=True)
+            del recency_candidates[
+                max(0, int(getattr(_cfg, "RB_RECENCY_MAX_CANDIDATES", 40))):
+            ]
         if not candidates:
             logger.warning(
                 "RB [%s]: no positive-good single rules; fail closed.",
@@ -2204,20 +2836,13 @@ def run_rb_governor_pipeline(
             )
             continue
 
-        selected, sel_train, sel_test, sel_score, compose_history = _compose_ruleset(candidates, train_engine, valid_engine, direction)
-
-        # Build walk-forward fold engines for risk grid (task-3: 2-fold)
-        # → fixes audit finding #3 (RB Governor risk-grid overfits val_selection)
-        # Reserve the final validation tail for an untouched robustness check.
-        wf_splits = int(getattr(_cfg, "RB_RISK_GRID_WF_SPLITS", 1))
-        use_tail = bool(getattr(_cfg, "RB_RISK_GRID_USE_TAIL_HOLDOUT", False))
-        tail_frac = float(_cfg.RB_TAIL_HOLDOUT_FRACTION)
-        wf_fold_engines: list[CPUBacktestEngine] | None = None
-        wf_tail_engine: CPUBacktestEngine | None = None
-        if wf_splits > 1 or use_tail:
-            wf_fold_engines, wf_tail_engine = _make_walk_forward_fold_engines(
-                scoring_val, wf_splits, tail_frac if use_tail else 0.0, direction,
-            )
+        selected, sel_train, sel_test, sel_score, compose_history = _compose_ruleset(
+            candidates,
+            train_engine,
+            valid_engine,
+            direction,
+            tail_holdout_engine=wf_tail_engine,
+        )
 
         opt_rules, opt_train, opt_test, opt_score, risk_history = _optimize_risk(
             selected, train_engine, valid_engine, direction,
@@ -2244,11 +2869,79 @@ def run_rb_governor_pipeline(
             min_valid_trades=int(getattr(_cfg, "RB_RULESET_MIN_VALID_TRADES", getattr(_cfg, "RB_MIN_VALID_TRADES", 15))),
         )
 
-        # The risk grid deliberately never sees the tail holdout.  Profit
-        # amplification runs after that grid, so refresh the report-only tail
+        # Evaluate the normal final ruleset on the older validation half and
+        # let a bounded recency candidate replace it only under the explicit
+        # validation-only comparison certificate.  This happens before the
+        # tail refresh so the tail gate is applied to whichever ruleset is
+        # actually persisted.
+        recency_active = False
+        recency_detail: dict[str, Any] = {
+            "enabled": bool(getattr(_cfg, "RB_RECENCY_RESCUE_ENABLED", False)),
+            "candidates": len(recency_candidates),
+            "selected": False,
+        }
+        normal_fitness_metrics: dict | None = None
+        if recency_fitness_engine is not None:
+            try:
+                normal_fitness_metrics = recency_fitness_engine.simulate_rule_set(
+                    [_rule_to_engine(rule) for rule in opt_rules],
+                )
+            except Exception as exc:
+                logger.warning(
+                    "RB [%s]: normal recency baseline evaluation failed: %s",
+                    direction,
+                    exc,
+                )
+        normal_certificate_ok, _normal_certificate = (
+            _portfolio_selection_certificate(opt_test)
+        )
+        recency_choice, recency_detail = _select_recency_candidate(
+            recency_candidates,
+            opt_rules,
+            normal_fitness_metrics,
+            opt_test,
+            normal_certificate_ok=normal_certificate_ok,
+            tail_holdout_engine=wf_tail_engine,
+        )
+        if recency_choice is not None:
+            opt_rules = [_rule_to_engine(recency_choice.rule)]
+            opt_train = recency_choice.train_metrics
+            opt_test = recency_choice.valid_metrics
+            opt_score = _score_metrics(
+                opt_train,
+                opt_test,
+                min_train_trades=int(getattr(
+                    _cfg, "RB_RULESET_MIN_TRAIN_TRADES",
+                    getattr(_cfg, "RB_MIN_TRAIN_TRADES", 25),
+                )),
+                min_valid_trades=int(getattr(
+                    _cfg, "RB_RULESET_MIN_VALID_TRADES",
+                    getattr(_cfg, "RB_MIN_VALID_TRADES", 15),
+                )),
+            )
+            recency_active = True
+            risk_history.append({
+                "pass": "recency_rescue",
+                "rule_index": 1,
+                "score": opt_score,
+                "train_return_pct": _f(opt_train, "total_return_pct"),
+                "valid_return_pct": _f(opt_test, "total_return_pct"),
+                "recency": True,
+            })
+            if isinstance(profit_meta, dict):
+                profit_meta = dict(profit_meta)
+                profit_meta["recency_rescue"] = recency_detail
+            logger.info(
+                "RB [%s]: recency rescue selected %d-rule candidate | "
+                "weak-half=%.2f%% selection=%.2f%%",
+                direction,
+                len(opt_rules),
+                float(recency_detail.get("candidate_weak_half_score", 0.0)),
+                _f(opt_test, "total_return_pct"),
+            )
+
+        # Profit amplification runs after the risk grid, so refresh the tail
         # result for the actual final ruleset before applying the hard gate.
-        # This keeps the holdout isolated from selection while preventing a
-        # post-grid capital/rule change from inheriting a stale tail result.
         if wf_tail_engine is not None:
             tail_entry = dict(risk_history[-1]) if risk_history else {
                 "pass": "final",
@@ -2288,9 +2981,22 @@ def run_rb_governor_pipeline(
                 risk_history[-1] = tail_entry
             else:
                 risk_history.append(tail_entry)
-        portfolio_cert_ok, portfolio_certificate = _portfolio_selection_certificate(
-            opt_test,
-        )
+        if recency_active:
+            portfolio_cert_ok, portfolio_certificate = (
+                _portfolio_selection_certificate(
+                    opt_test,
+                    concentration_max_share=float(getattr(
+                        _cfg, "RB_RECENCY_MAX_SYMBOL_SHARE_ABS_PNL", 0.85,
+                    )),
+                    concentration_max_hhi=float(getattr(
+                        _cfg, "RB_RECENCY_MAX_SYMBOL_HHI", 0.75,
+                    )),
+                )
+            )
+        else:
+            portfolio_cert_ok, portfolio_certificate = (
+                _portfolio_selection_certificate(opt_test)
+            )
         rejected_portfolio_certificates: list[dict] = []
         for risk_entry in risk_history:
             if isinstance(risk_entry, dict):
@@ -2397,7 +3103,16 @@ def run_rb_governor_pipeline(
         val_pf = _f(opt_test, "profit_factor")
         ret_gate = float(_cfg.PHASE5_VALIDATION_RETURN_GATE_PCT)
         pf_gate = float(_cfg.PHASE5_VALIDATION_PROFIT_FACTOR_GATE)
-        sym_ok, sym_gate = _passes_symbol_concentration_gate(opt_test)
+        if recency_active:
+            sym_ok, sym_gate = _passes_symbol_concentration_gate(
+                opt_test,
+                max_share=float(getattr(
+                    _cfg, "RB_RECENCY_MAX_SYMBOL_SHARE_ABS_PNL", 0.85,
+                )),
+                max_hhi=float(getattr(_cfg, "RB_RECENCY_MAX_SYMBOL_HHI", 0.75)),
+            )
+        else:
+            sym_ok, sym_gate = _passes_symbol_concentration_gate(opt_test)
         tail_ok, tail_gate = _passes_tail_holdout_gate(risk_history)
         deployable = (
             val_ret >= (ret_gate - 1e-9)
@@ -2468,6 +3183,7 @@ def run_rb_governor_pipeline(
                     "rb_score": 0.0,
                     "rb_profit_amp_objective": profit_objective,
                     "rb_profit_amp_accepted": bool(profit_meta.get("accepted", False)),
+                    "recency_rescue": recency_detail,
                 },
             )
             strategy_path = out_dir / f"{direction}.json"
@@ -2547,6 +3263,7 @@ def run_rb_governor_pipeline(
                 "symbol_concentration_gate": sym_gate,
                 "tail_holdout_gate": tail_gate,
                 "symbol_contribution_certificate": portfolio_certificate,
+                "recency_rescue": recency_detail,
                 "rb_score": opt_score,
                 "rb_train_return_pct": _f(opt_train, "total_return_pct"),
                 "rb_valid_return_pct": val_ret,
@@ -2578,6 +3295,7 @@ def run_rb_governor_pipeline(
             "compose_history": compose_history,
             "risk_history": risk_history,
             "profit_amplifier": profit_meta,
+            "recency_rescue": recency_detail,
             "rejected_portfolio_certificates": rejected_portfolio_certificates,
             "symbol_contribution_certificate": portfolio_certificate,
             "top_single_rules": [
@@ -2611,6 +3329,80 @@ def run_rb_governor_pipeline(
             strategy_path,
         )
         results[direction] = strategy
+    # A half-window can be too sparse for a balanced two-symbol certificate
+    # even when the complete, still-unseen validation holdout contains a
+    # stable team.  Retry only directions that did not produce an accepted
+    # deployment, and only when an actual selection subset was supplied.  The
+    # recursive call is explicitly disabled so recovery is bounded to one
+    # additional validation-only attempt and cannot loop.
+    recovery_enabled = bool(
+        getattr(_cfg, "RB_FULL_VALIDATION_RECOVERY_ENABLED", False)
+    )
+    selection_is_subset = (
+        val_selection_df is not None
+        and len(val_selection_df) < len(val_df)
+    )
+    recovery_directions = [
+        direction
+        for direction in directions
+        if pools.get(direction)
+        if not (
+            isinstance(results.get(direction), dict)
+            and results[direction].get("rules_set")
+            and results[direction].get("deployment_accepted") is True
+        )
+    ]
+    if (
+        _allow_full_validation_recovery
+        and recovery_enabled
+        and selection_is_subset
+        and recovery_directions
+    ):
+        logger.info(
+            "RB: retrying fail-closed directions %s on the complete "
+            "validation holdout (validation-only recovery).",
+            recovery_directions,
+        )
+        recovered = run_rb_governor_pipeline(
+            train_df,
+            val_df,
+            {direction: pools.get(direction, []) for direction in recovery_directions},
+            recovery_directions,
+            output_dir=out_dir,
+            cv_folds=cv_folds,
+            val_selection_df=val_df,
+            failure_reasons=failure_reasons,
+            _allow_full_validation_recovery=False,
+        )
+        for direction in recovery_directions:
+            candidate = recovered.get(direction)
+            if not isinstance(candidate, dict):
+                continue
+            accepted = bool(candidate.get("rules_set")) and (
+                candidate.get("deployment_accepted") is True
+            )
+            if accepted:
+                candidate["validation_recovery"] = {
+                    "used": True,
+                    "selection_frame": "complete_validation_holdout",
+                }
+                strategy_path = out_dir / f"{direction}.json"
+                try:
+                    with strategy_path.open("w", encoding="utf-8") as fh:
+                        json.dump(candidate, fh, indent=2)
+                except OSError as exc:
+                    logger.warning(
+                        "RB [%s]: could not annotate recovery strategy: %s",
+                        direction,
+                        exc,
+                    )
+                results[direction] = candidate
+                logger.info(
+                    "RB [%s]: validation-only recovery accepted a %d-rule "
+                    "strategy.",
+                    direction,
+                    len(candidate.get("rules_set", [])),
+                )
     return results
 
 

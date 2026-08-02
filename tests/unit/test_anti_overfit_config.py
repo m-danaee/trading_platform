@@ -35,7 +35,7 @@ def test_anti_overfit_config_bundle():
     assert cfg.PHASE2_USE_TOTAL_RETURN_OBJ is False
     assert cfg.PHASE2_MIN_PROFITABLE_SYMBOLS == 2
     assert cfg.RB_TAIL_HOLDOUT_HARD_GATE is True
-    assert cfg.RB_MAX_SYMBOL_SHARE_ABS_PNL == 0.55
+    assert cfg.RB_MAX_SYMBOL_SHARE_ABS_PNL == 0.67
     assert cfg.RB_MAX_SYMBOL_HHI == 0.60
     assert cfg.RB_MIN_TRAIN_RETURN == 0.25
     assert cfg.RB_MIN_VALID_RETURN == 0.25

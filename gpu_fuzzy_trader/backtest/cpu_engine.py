@@ -1214,8 +1214,15 @@ class CPUBacktestEngine:
         tp: float,
         sl: float,
         capital_pct: float,
+        generation: int | None = None,
+        is_last_gen: bool = False,
     ) -> list[dict]:
-        """Evaluate a batch of rule chromosomes on CPU (vectorized signals)."""
+        """Evaluate a batch of rule chromosomes on CPU (vectorized signals).
+
+        ``generation`` and ``is_last_gen`` are accepted for interface parity
+        with ``GPUBacktestEngine``.  The exact CPU path has no generation-
+        dependent enrichment, so the flags are intentionally ignored.
+        """
         chromosomes = np.asarray(chromosomes, dtype=np.int32)
         from gpu_fuzzy_trader.phases.phase2_sparse_encoding import (
             is_sparse_batch,
@@ -1251,7 +1258,10 @@ class CPUBacktestEngine:
         price_returns_all = self._get_trade_outcomes(tp, sl)
         results = []
 
-        chunk_size = 256
+        # Sparse gathering briefly materializes ``chunk × bars × slots``.
+        # Keep this independently configurable from the GPU batch so a large
+        # evolutionary population cannot exhaust a constrained WSL host.
+        chunk_size = max(1, int(getattr(_cfg, "PHASE2_CPU_BATCH_SIZE", 16)))
         for b_start in range(0, B, chunk_size):
             b_end = min(b_start + chunk_size, B)
             chunk_chroms = chromosomes[b_start:b_end]

@@ -37,6 +37,10 @@ from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
 from gpu_fuzzy_trader.backtest.df_slim import downcast_numeric_df
 from gpu_fuzzy_trader.data.loader import Data_Loader
+from gpu_fuzzy_trader.features.fuzzy_scaling import (
+    apply_fuzzy_feature_scaling,
+    fit_fuzzy_feature_scaling,
+)
 from gpu_fuzzy_trader.data.splitter import Data_Splitter
 from gpu_fuzzy_trader.features.selector import Feature_Selector
 from gpu_fuzzy_trader.output.writer import (
@@ -120,6 +124,11 @@ class OOS_Evaluator:
           - outputs/reports/test_short_report.json
           - outputs/reports/test_per_symbol_performance.csv
         """
+        # Reports are derived artifacts.  Remove the previous run's small,
+        # fixed set of Phase 5 reports before loading anything so a failed or
+        # partial run cannot leave an apparently current result on disk.
+        self._clear_previous_reports()
+
         # 1. Load strategies (whichever are available for this run)
         strategies = self.load_strategies(
             allowed_directions=allowed_directions)
@@ -332,6 +341,12 @@ class OOS_Evaluator:
                 continue
             try:
                 data = writer.load_and_validate(path)
+                declared_direction = str(data.get("direction", "")).strip().lower()
+                if declared_direction != direction:
+                    raise ValidationError(
+                        f"strategy direction {declared_direction!r} does not "
+                        f"match {direction}.json"
+                    )
                 strategies[direction] = data
                 logger.info("Loaded %s strategy from %s", direction, path)
             except ValidationError as exc:
@@ -382,6 +397,9 @@ class OOS_Evaluator:
             datasets["train"] = train_df
             datasets["validation"] = val_df
             datasets["test"] = self.prepare_test_data(self.test_csv_path)
+            scaling = fit_fuzzy_feature_scaling(datasets["train"])
+            for frame in datasets.values():
+                apply_fuzzy_feature_scaling(frame, scaling)
             logger.info(
                 "Loaded cached train / validation splits and prepared test data: train=%d, validation=%d, test=%d",
                 len(datasets["train"]),
@@ -399,6 +417,9 @@ class OOS_Evaluator:
         datasets["train"] = train_df
         datasets["validation"] = val_df
         datasets["test"] = test_df
+        scaling = fit_fuzzy_feature_scaling(datasets["train"])
+        for frame in datasets.values():
+            apply_fuzzy_feature_scaling(frame, scaling)
 
         logger.info(
             "Loaded and prepared datasets: train=%d, validation=%d, test=%d",
@@ -435,6 +456,12 @@ class OOS_Evaluator:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _clear_previous_reports() -> None:
+        """Remove only the known Phase 5 report artifacts from a prior run."""
+        for report_path in _REPORT_PATHS.values():
+            Path(report_path).unlink(missing_ok=True)
+
     def _evaluate_strategy(
         self,
         test_df: pd.DataFrame,
@@ -466,36 +493,27 @@ class OOS_Evaluator:
         try:
             metrics, trade_log = engine.simulate_rule_set(
                 rule_set, return_logs=True)
-        except ValueError as exc:
-            logger.warning(
-                "Phase 5 [%s]: simulate_rule_set failed for this split; treating as no trades: %s",
+            if not isinstance(metrics, dict):
+                raise TypeError(
+                    "simulate_rule_set returned a non-dict metrics object"
+                )
+        except Exception as exc:
+            error_text = f"{type(exc).__name__}: {exc}"
+            logger.error(
+                "Phase 5 [%s]: simulate_rule_set failed for this split; "
+                "marking evaluation as error: %s",
                 direction,
-                exc,
+                error_text,
+                exc_info=True,
             )
-            metrics = {
-                "direction": direction,
-                "total_return_pct": 0.0,
-                "sortino_ratio": 0.0,
-                "max_drawdown_pct": 0.0,
-                "win_rate": 0.0,
-                "account_ruined": False,
-                "loss_count": 0,
-                "time_closed_count": 0,
-                "raw_signal_count": 0,
-                "executed_trades": 0,
-                "final_equity": _cfg.INITIAL_CAPITAL,
-                "profit_factor": 0.0,
-                "avg_position_notional": 0.0,
-                "skipped_min_notional_count": 0,
-                "max_simultaneous_positions": 0,
-                "max_total_open_exposure": 0.0,
-                "per_symbol_metrics": {},
-            }
+            metrics = self._evaluation_error_metrics(direction, error_text)
             trade_log = pd.DataFrame()
+
+        metrics.setdefault("evaluation_status", "ok")
 
         # Requirement 11.4: zero-trade case — do NOT report account ruin
         # unless equity actually reached zero.
-        if metrics["executed_trades"] == 0:
+        if int(metrics.get("executed_trades", 0) or 0) == 0:
             metrics["account_ruined"] = False
             metrics["total_return_pct"] = 0.0
 
@@ -505,6 +523,32 @@ class OOS_Evaluator:
         )
 
         return metrics, per_symbol_rows, trade_log
+
+    @staticmethod
+    def _evaluation_error_metrics(direction: str, error_text: str) -> dict:
+        """Return an explicit, non-success result for a failed split."""
+        return {
+            "direction": direction,
+            "evaluation_status": "error",
+            "evaluation_error": error_text,
+            "total_return_pct": 0.0,
+            "sortino_ratio": 0.0,
+            "max_drawdown_pct": 0.0,
+            "win_rate": 0.0,
+            "account_ruined": False,
+            "loss_count": 0,
+            "time_closed_count": 0,
+            "raw_signal_count": 0,
+            "executed_trades": 0,
+            "final_equity": _cfg.INITIAL_CAPITAL,
+            "profit_factor": 0.0,
+            "avg_position_notional": 0.0,
+            "skipped_min_notional_count": 0,
+            "max_simultaneous_positions": 0,
+            "max_total_open_exposure": 0.0,
+            "per_symbol_metrics": {},
+            "per_symbol_metrics_available": False,
+        }
 
     @staticmethod
     def _build_per_symbol_rows(
@@ -540,20 +584,25 @@ class OOS_Evaluator:
         Path(report_path).parent.mkdir(parents=True, exist_ok=True)
 
         # Build a clean, serialisable report dict
+        evaluation_status = str(metrics.get("evaluation_status", "ok"))
         report = {
             "direction": direction,
+            "evaluation_status": evaluation_status,
             "total_return_pct": metrics.get("total_return_pct", 0.0),
             "max_drawdown_pct": metrics.get("max_drawdown_pct", 0.0),
             "win_rate": metrics.get("win_rate", 0.0),
             "profit_factor": metrics.get("profit_factor", 0.0),
             "executed_trades": metrics.get("executed_trades", 0),
             "account_status": (
-                "ruined" if metrics.get(
-                    "account_ruined", False) else "survived"
+                "error" if evaluation_status == "error" else
+                "ruined" if metrics.get("account_ruined", False) else
+                "survived"
             ),
             "final_equity": metrics.get("final_equity", _cfg.INITIAL_CAPITAL),
             "per_symbol_metrics": metrics.get("per_symbol_metrics", {}),
         }
+        if metrics.get("evaluation_error"):
+            report["evaluation_error"] = str(metrics["evaluation_error"])
 
         with open(report_path, "w", encoding="utf-8") as fh:
             json.dump(report, fh, indent=2, default=str)

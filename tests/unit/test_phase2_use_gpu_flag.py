@@ -47,3 +47,47 @@ class TestPhase2UseGpuFlag:
         from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
 
         assert isinstance(engine, CPUBacktestEngine)
+
+    def test_large_window_cpu_route_skips_jax_engine_construction(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ):
+        """The memory-safe CPU route must happen before JAX allocates arrays."""
+        monkeypatch.setattr(_cfg, "PHASE2_USE_GPU", True)
+        monkeypatch.setattr(_cfg, "PHASE2_GPU_CPU_ROUTE_LARGE_DATA", True)
+        monkeypatch.setattr(_cfg, "PHASE2_GPU_CPU_ROUTE_MIN_BARS", 1)
+        monkeypatch.setattr(_cfg, "PHASE2_GPU_CPU_ROUTE_MAX_BATCH", 200)
+        gen = SimpleNamespace(
+            _feature_modes={},
+            direction="long",
+            _regime_row_fractions=None,
+            pop_size=200,
+            _train_df=_minimal_backtest_df(),
+        )
+        df = _minimal_backtest_df()
+        mock_get_gpu = MagicMock(side_effect=AssertionError("JAX lookup is unsafe"))
+        with patch(
+            "gpu_fuzzy_trader.backtest.jax_compat.get_gpu_backtest_engine_class",
+            mock_get_gpu,
+        ):
+            engine = Rule_Pool_Generator._build_engine_for_df(gen, df)
+
+        mock_get_gpu.assert_not_called()
+        from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
+
+        assert isinstance(engine, CPUBacktestEngine)
+
+    def test_cpu_backend_skips_jax_warmup(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ):
+        """A selected CPU backend must not initialize JAX just to warm up."""
+        monkeypatch.setattr(_cfg, "PHASE2_USE_GPU", True)
+        cpu_engine = SimpleNamespace(simulate_rule_batch=lambda **_: [])
+        from gpu_fuzzy_trader import _gpu_runtime
+
+        with patch.object(_gpu_runtime, "log_gpu_runtime_config") as log_runtime, patch.object(
+            _gpu_runtime, "warmup_phase2_gpu_kernels"
+        ) as warmup:
+            _gpu_runtime.configure_phase2_gpu_runtime(cpu_engine)
+
+        log_runtime.assert_not_called()
+        warmup.assert_not_called()

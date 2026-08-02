@@ -20,6 +20,7 @@ from gpu_fuzzy_trader.rb_governor import (
     _score_metrics,
     _make_walk_forward_fold_engines,
     _optimize_risk,
+    _passes_tail_selection_gate,
     _evaluate_ruleset,
     _rule_to_engine,
     CandidateRecord,
@@ -244,3 +245,23 @@ class TestOptimizeRiskTailHoldoutFields:
             assert "risk_tail_holdout_return_pct" not in entry
             assert "risk_tail_holdout_pf" not in entry
             assert "risk_tail_holdout_dd" not in entry
+
+
+def test_tail_selection_gate_requires_positive_return_and_support(monkeypatch):
+    """Composition may use the reserved validation tail, never Phase 5 data."""
+    rules = [{"conditions": ["symbol is SYM1"], "tp": 2.0, "sl": 1.2}]
+    monkeypatch.setattr(_cfg, "RB_TAIL_HOLDOUT_SELECTION_GATE", True)
+    monkeypatch.setattr(_cfg, "RB_TAIL_HOLDOUT_MIN_RETURN_PCT", 0.0)
+    monkeypatch.setattr(_cfg, "RB_TAIL_HOLDOUT_MIN_TRADES", 4)
+
+    passed, detail = _passes_tail_selection_gate(
+        _MockEngine(_valid_metrics(return_pct=0.25, trades=4)), rules,
+    )
+    assert passed is True
+    assert detail["tail_trades"] == 4
+
+    passed, detail = _passes_tail_selection_gate(
+        _MockEngine(_valid_metrics(return_pct=0.25, trades=3)), rules,
+    )
+    assert passed is False
+    assert detail["passed"] is False

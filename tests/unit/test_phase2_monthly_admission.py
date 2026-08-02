@@ -56,6 +56,25 @@ class _DeterministicEvaluator:
         return float(self.returns_by_rule[rule_idx][window_idx])
 
 
+class _DeterministicMetricsEvaluator:
+    """Maps (rule_index, window_index) to complete monthly metrics."""
+
+    def __init__(self, metrics_by_rule: list[list[dict]]):
+        self.metrics_by_rule = metrics_by_rule
+        self.call_count = 0
+
+    def __call__(
+        self, pool_entry: dict, window_df: object, direction: str,
+    ) -> dict:
+        n_windows = len(self.metrics_by_rule[0]) if self.metrics_by_rule else 1
+        rule_idx = self.call_count // n_windows
+        window_idx = self.call_count % n_windows
+        self.call_count += 1
+        if rule_idx >= len(self.metrics_by_rule):
+            return {"total_return_pct": -100.0, "executed_trades": 0}
+        return dict(self.metrics_by_rule[rule_idx][window_idx])
+
+
 # ---------------------------------------------------------------------------
 # Shared fixture: a pool of 3 rules
 # ---------------------------------------------------------------------------
@@ -182,10 +201,10 @@ class TestMonthlyAdmissionGate:
         assert len(result) == 1
         assert result[0]["conditions"] == POOL_THREE[1]["conditions"]
 
-    def test_zero_threshold_strict_profit_excludes_flat_months(
+    def test_zero_threshold_counts_active_flat_months_as_non_loss(
         self, monkeypatch,
     ) -> None:
-        """Phase 2 at min=0 uses strict >0; flat months do not count."""
+        """Flat months count only when the rule actually trades."""
         returns = [
             [0.0, 0.0, 0.0, 1.0, 0.0, 0.0],  # rule 0: 1/6 strict profit
             [-1.0, -2.0, -3.0, -4.0, -5.0, -6.0],
@@ -199,7 +218,47 @@ class TestMonthlyAdmissionGate:
 
         result = _apply_monthly_admission_gate(
             POOL_THREE, list(range(6)), "long")
-        assert result == []
+        assert result == [POOL_THREE[0]]
+        assert result[0]["monthly_admission"] == {
+            "window_returns_pct": [0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+            "window_executed_trades": [50, 50, 50, 50, 50, 50],
+            "good_windows": 6,
+            "active_windows": 6,
+            "bearish_windows": 0,
+            "windows": 6,
+            "good_return_min_pct": 0.0,
+            "monthly_trade_floor": 3,
+            "profitable_ratio": 1.0,
+            "active_ratio": 1.0,
+            "bearish_ratio": 0.0,
+            "min_profitable_ratio": 0.5,
+            "min_active_ratio": 0.6,
+            "max_bearish_ratio": 0.5,
+            "passed": True,
+        }
+
+    def test_zero_trade_months_are_inactive_not_good(self, monkeypatch):
+        metrics = [
+            [
+                {"total_return_pct": 0.0, "executed_trades": 0}
+                for _ in range(6)
+            ],
+            [
+                {"total_return_pct": -1.0, "executed_trades": 3}
+                for _ in range(6)
+            ],
+            [
+                {"total_return_pct": -1.0, "executed_trades": 3}
+                for _ in range(6)
+            ],
+        ]
+        monkeypatch.setattr(
+            "gpu_fuzzy_trader.phases.phase2_rule_pool._evaluate_rule_on_window",
+            _DeterministicMetricsEvaluator(metrics),
+        )
+        assert _apply_monthly_admission_gate(
+            POOL_THREE, list(range(6)), "long",
+        ) == []
 
     def test_positive_threshold_requires_min_return(self, monkeypatch) -> None:
         """With PHASE2_MONTHLY_GOOD_RETURN_MIN_PCT=2, months need return >= 2%.

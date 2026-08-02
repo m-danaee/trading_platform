@@ -305,6 +305,19 @@ class TestLoadStrategies:
         finally:
             m._STRATEGY_PATHS.update(original)
 
+    def test_skips_strategy_when_declared_direction_mismatches_filename(self, tmp_path):
+        import gpu_fuzzy_trader.phases.phase5_oos as m
+
+        long_path = str(tmp_path / "long.json")
+        _write_rule_set(long_path, "short")
+        original = m._STRATEGY_PATHS.copy()
+        m._STRATEGY_PATHS["long"] = long_path
+        m._STRATEGY_PATHS["short"] = str(tmp_path / "short.json")
+        try:
+            assert OOS_Evaluator.load_strategies() == {}
+        finally:
+            m._STRATEGY_PATHS.update(original)
+
 
 # ---------------------------------------------------------------------------
 # Tests: prepare_test_data
@@ -442,6 +455,25 @@ class TestEvaluateStrategy:
         _, per_symbol_rows, _log = ev._evaluate_strategy(df, strategy, "short")
         for row in per_symbol_rows:
             assert row["direction"] == "short"
+
+    def test_simulation_error_is_explicitly_marked(self, monkeypatch):
+        ev = self._make_evaluator()
+        df = _make_df(n_rows=200)
+        strategy = _make_rule_set("long")
+
+        def _raise(*_args, **_kwargs):
+            raise RuntimeError("synthetic engine failure")
+
+        monkeypatch.setattr(
+            "gpu_fuzzy_trader.phases.phase5_oos.CPUBacktestEngine.simulate_rule_set",
+            _raise,
+        )
+        metrics, _, trade_log = ev._evaluate_strategy(df, strategy, "long")
+
+        assert metrics["evaluation_status"] == "error"
+        assert "synthetic engine failure" in metrics["evaluation_error"]
+        assert metrics["account_ruined"] is False
+        assert trade_log.empty
 
 
 # ---------------------------------------------------------------------------
@@ -593,6 +625,27 @@ class TestSaveReport:
             with open(report_path) as fh:
                 data = json.load(fh)
             assert data["account_status"] == "ruined"
+        finally:
+            m._REPORT_PATHS.update(original)
+
+    def test_account_status_error_when_evaluation_failed(self, tmp_path):
+        import gpu_fuzzy_trader.phases.phase5_oos as m
+        original = m._REPORT_PATHS.copy()
+        report_path = str(tmp_path / "reports" / "test_long_report.json")
+        m._REPORT_PATHS["long"] = report_path
+        try:
+            ev = OOS_Evaluator()
+            metrics = self._make_metrics()
+            metrics.update(
+                evaluation_status="error",
+                evaluation_error="RuntimeError: synthetic failure",
+            )
+            ev._save_report(metrics, "long")
+            with open(report_path) as fh:
+                data = json.load(fh)
+            assert data["evaluation_status"] == "error"
+            assert data["account_status"] == "error"
+            assert "synthetic failure" in data["evaluation_error"]
         finally:
             m._REPORT_PATHS.update(original)
 
