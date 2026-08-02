@@ -544,7 +544,7 @@ PHASE2_CAPITAL_PCT = 18.0
 #   Lower MIN → broader rules, more trades, risk of weak patterns.
 #   Higher MAX → allow complex rules (if encoding supports variable count).
 #   Lower MAX → force simplicity; more generalization, less specificity.
-MIN_CONDITIONS = 4
+MIN_CONDITIONS = 3
 MAX_CONDITIONS = 5
 
 # PHASE2_ENCODING — chromosome memory layout during evolution.

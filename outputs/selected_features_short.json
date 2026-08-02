@@ -1,0 +1,91 @@
+{
+  "direction": "short",
+  "features": [
+    {
+      "name": "ff_support_distance_20",
+      "mode": "signed",
+      "score": 0.004293697267892194
+    },
+    {
+      "name": "ff_cvd_proxy_10",
+      "mode": "signed",
+      "score": 0.003719846586451858
+    },
+    {
+      "name": "ff_sma_slope_20_5",
+      "mode": "signed",
+      "score": 0.003580085517590703
+    },
+    {
+      "name": "ff_kama_distance_10",
+      "mode": "signed",
+      "score": 0.0035536739250963123
+    },
+    {
+      "name": "ff_donchian_width_20",
+      "mode": "positive",
+      "score": 0.0034237802773613435
+    },
+    {
+      "name": "ff_bollinger_width_20",
+      "mode": "positive",
+      "score": 0.003046157670038463
+    },
+    {
+      "name": "ff_bollinger_percent_b_20",
+      "mode": "signed",
+      "score": 0.0029672612651241437
+    },
+    {
+      "name": "ff_bollinger_width_change_3",
+      "mode": "signed",
+      "score": 0.0028234335497292484
+    },
+    {
+      "name": "ff_ppo_sign",
+      "mode": "ternary",
+      "score": 0.000966673424090389
+    },
+    {
+      "name": "ff_relative_volume_20",
+      "mode": "positive",
+      "score": 0.0008591381161697774
+    },
+    {
+      "name": "ff_price_vs_ema_20",
+      "mode": "ternary",
+      "score": 0.00032765977513051197
+    },
+    {
+      "name": "ff_ema_stack_8_21_55",
+      "mode": "ternary",
+      "score": 0.0002650955851936747
+    },
+    {
+      "name": "ff_rsi_7_level",
+      "mode": "ternary",
+      "score": 0.000256856274110049
+    },
+    {
+      "name": "ff_price_vs_ema_50",
+      "mode": "ternary",
+      "score": 0.00024608519537139533
+    },
+    {
+      "name": "ff_roc_8",
+      "mode": "signed",
+      "score": 0.0002148263795145322
+    },
+    {
+      "name": "ff_volume_regime_20",
+      "mode": "ternary",
+      "score": 6.257253389467964e-05
+    },
+    {
+      "name": "ff_rsi_14_midline_cross",
+      "mode": "binary",
+      "score": 3.047867127256923e-05
+    }
+  ],
+  "phase1_disabled": false
+}

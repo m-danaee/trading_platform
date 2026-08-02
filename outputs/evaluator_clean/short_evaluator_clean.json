@@ -1,0 +1,16 @@
+{
+  "direction": "short",
+  "rules_set": [
+    {
+      "conditions": [
+        "[ff_cvd_proxy_10] IS Extreme Bearish",
+        "[ff_bollinger_width_change_3] IS Weak Bearish",
+        "[ff_ppo_sign] IS Negative (-1)",
+        "[ff_price_vs_ema_50] IS Negative (-1)"
+      ],
+      "tp": 2.0,
+      "sl": 1.2,
+      "capital_pct": 18.0
+    }
+  ]
+}

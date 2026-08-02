@@ -1,0 +1,13 @@
+{
+  "direction": "long",
+  "rules_set": [
+    {
+      "conditions": [
+        "[ff_rsi_14_distance_midline] IS Strong Bullish"
+      ],
+      "tp": 2.0,
+      "sl": 1.2,
+      "capital_pct": 5.0
+    }
+  ]
+}

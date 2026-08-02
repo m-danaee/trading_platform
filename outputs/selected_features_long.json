@@ -1,0 +1,91 @@
+{
+  "direction": "long",
+  "features": [
+    {
+      "name": "ff_support_distance_20",
+      "mode": "signed",
+      "score": 0.005835023080176471
+    },
+    {
+      "name": "ff_relative_volume_20",
+      "mode": "positive",
+      "score": 0.0037182024109505547
+    },
+    {
+      "name": "ff_bollinger_percent_b_20",
+      "mode": "signed",
+      "score": 0.003377636388317562
+    },
+    {
+      "name": "ff_rsi_14_distance_midline",
+      "mode": "signed",
+      "score": 0.0027641242306730707
+    },
+    {
+      "name": "ff_roc_16",
+      "mode": "signed",
+      "score": 0.002656386573218983
+    },
+    {
+      "name": "ff_kama_distance_10",
+      "mode": "signed",
+      "score": 0.002228085428163107
+    },
+    {
+      "name": "ff_range_expansion_ratio",
+      "mode": "positive",
+      "score": 0.002162366984344022
+    },
+    {
+      "name": "ff_bollinger_width_20",
+      "mode": "positive",
+      "score": 0.0017874202561021235
+    },
+    {
+      "name": "ff_donchian_width_20",
+      "mode": "positive",
+      "score": 0.0012046690617366629
+    },
+    {
+      "name": "ff_channel_midpoint_bias_20",
+      "mode": "signed",
+      "score": 0.0011974768470968125
+    },
+    {
+      "name": "ff_ppo_sign",
+      "mode": "ternary",
+      "score": 0.0005288423688896609
+    },
+    {
+      "name": "ff_price_vs_ema_20",
+      "mode": "ternary",
+      "score": 0.00027672650232772513
+    },
+    {
+      "name": "ff_rsi_7_level",
+      "mode": "ternary",
+      "score": 0.00025943360817721854
+    },
+    {
+      "name": "ff_rsi_14_midline_cross",
+      "mode": "binary",
+      "score": 0.00016788638833430128
+    },
+    {
+      "name": "ff_price_vs_ema_50",
+      "mode": "ternary",
+      "score": 0.00011598714200901017
+    },
+    {
+      "name": "ff_volume_regime_20",
+      "mode": "ternary",
+      "score": 8.713511825787952e-05
+    },
+    {
+      "name": "ff_ema_stack_8_21_55",
+      "mode": "ternary",
+      "score": 4.715927144532777e-05
+    }
+  ],
+  "phase1_disabled": false
+}

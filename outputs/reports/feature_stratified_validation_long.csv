@@ -1,0 +1,79 @@
+feature,fuzzy_value,split,num_trades,total_return_pct,win_rate,sharpe_ratio
+ff_support_distance_20,Extreme Bullish,validation,321,8.66137409210205,0.6012461059190031,0.334269124187022
+ff_support_distance_20,Weak Bearish,validation,0,0.0,0.0,0.0
+ff_support_distance_20,Strong Bullish,validation,0,0.0,0.0,0.0
+ff_support_distance_20,Strong Bearish,validation,0,0.0,0.0,0.0
+ff_support_distance_20,Extreme Bearish,validation,0,0.0,0.0,0.0
+ff_support_distance_20,Weak Bullish,validation,0,0.0,0.0,0.0
+ff_support_distance_20,Bullish,validation,0,0.0,0.0,0.0
+ff_support_distance_20,Bearish,validation,0,0.0,0.0,0.0
+ff_relative_volume_20,Low,validation,10,0.44608378410339355,0.7,0.5434265754453097
+ff_relative_volume_20,High,validation,67,2.3236942291259766,0.6417910447761194,0.4405907161939497
+ff_relative_volume_20,Medium,validation,47,0.9099231362342834,0.5531914893617021,0.23021460485751893
+ff_relative_volume_20,Very High,validation,197,4.981673717498779,0.5939086294416244,0.3127578659408024
+ff_bollinger_percent_b_20,Bullish,validation,9,0.5158994793891907,0.7777777777777778,0.7716774343492848
+ff_bollinger_percent_b_20,Extreme Bullish,validation,312,8.145474433898926,0.5961538461538461,0.32310742471797177
+ff_bollinger_percent_b_20,Neutral Negative,validation,0,0.0,0.0,0.0
+ff_bollinger_percent_b_20,Extreme Bearish,validation,0,0.0,0.0,0.0
+ff_bollinger_percent_b_20,Bearish,validation,0,0.0,0.0,0.0
+ff_rsi_14_distance_midline,Strong Bullish,validation,0,0.0,0.0,0.0
+ff_rsi_14_distance_midline,Bullish,validation,0,0.0,0.0,0.0
+ff_rsi_14_distance_midline,Weak Bullish,validation,0,0.0,0.0,0.0
+ff_rsi_14_distance_midline,Weak Bearish,validation,0,0.0,0.0,0.0
+ff_rsi_14_distance_midline,Bearish,validation,0,0.0,0.0,0.0
+ff_rsi_14_distance_midline,Extreme Bullish,validation,321,8.66137409210205,0.6012461059190031,0.334269124187022
+ff_rsi_14_distance_midline,Strong Bearish,validation,0,0.0,0.0,0.0
+ff_rsi_14_distance_midline,Extreme Bearish,validation,0,0.0,0.0,0.0
+ff_roc_16,Weak Bullish,validation,167,4.257571220397949,0.592814371257485,0.3156105100628735
+ff_roc_16,Weak Bearish,validation,0,0.0,0.0,0.0
+ff_roc_16,Bullish,validation,125,2.493680238723755,0.56,0.24579414003300132
+ff_roc_16,Bearish,validation,0,0.0,0.0,0.0
+ff_roc_16,Strong Bearish,validation,0,0.0,0.0,0.0
+ff_roc_16,Strong Bullish,validation,25,1.535927653312683,0.8,0.887940004478559
+ff_roc_16,Extreme Bullish,validation,4,0.3741956353187561,1.0,0.0
+ff_roc_16,Extreme Bearish,validation,0,0.0,0.0,0.0
+ff_kama_distance_10,Bullish,validation,5,0.3018934726715088,0.8,0.8105745790480613
+ff_kama_distance_10,Extreme Bullish,validation,300,7.342801094055176,0.5866666666666667,0.3025208420461067
+ff_kama_distance_10,Strong Bullish,validation,9,0.35085737705230713,0.6666666666666666,0.45833329548495244
+ff_kama_distance_10,Weak Bullish,validation,6,0.5687834024429321,1.0,71091760.30629656
+ff_kama_distance_10,Bearish,validation,0,0.0,0.0,0.0
+ff_kama_distance_10,Weak Bearish,validation,1,0.09703897684812546,1.0,0.0
+ff_kama_distance_10,Strong Bearish,validation,0,0.0,0.0,0.0
+ff_kama_distance_10,Extreme Bearish,validation,0,0.0,0.0,0.0
+ff_range_expansion_ratio,Medium,validation,100,2.959136724472046,0.62,0.37054504606102484
+ff_range_expansion_ratio,Low,validation,5,0.4746950566768646,1.0,25347761.412638478
+ff_range_expansion_ratio,High,validation,71,1.430757761001587,0.5492957746478874,0.2402764535039936
+ff_range_expansion_ratio,Very High,validation,145,3.7967848777770996,0.6,0.3244052854468021
+ff_bollinger_width_20,Low,validation,79,1.6285101175308228,0.569620253164557,0.25186385929646926
+ff_bollinger_width_20,Medium,validation,136,4.2696852684021,0.625,0.3940643355235533
+ff_bollinger_width_20,High,validation,70,0.8750779628753662,0.5142857142857142,0.15253279235870584
+ff_bollinger_width_20,Very High,validation,36,1.8881012201309204,0.75,0.7115937686396039
+ff_donchian_width_20,Medium,validation,139,2.9170515537261963,0.5611510791366906,0.25523221452780964
+ff_donchian_width_20,Low,validation,112,3.036884307861328,0.6071428571428571,0.33755427834291113
+ff_donchian_width_20,High,validation,48,0.9604217410087585,0.5625,0.24933771763009688
+ff_donchian_width_20,Very High,validation,22,1.7470170259475708,0.9090909090909091,1.6027154098493692
+ff_channel_midpoint_bias_20,Extreme Bullish,validation,316,8.364601135253906,0.5981012658227848,0.3273669146865424
+ff_channel_midpoint_bias_20,Bullish,validation,5,0.29677271842956543,0.8,0.8105745924331565
+ff_channel_midpoint_bias_20,Neutral Negative,validation,0,0.0,0.0,0.0
+ff_channel_midpoint_bias_20,Bearish,validation,0,0.0,0.0,0.0
+ff_channel_midpoint_bias_20,Extreme Bearish,validation,0,0.0,0.0,0.0
+ff_ppo_sign,Positive (1),validation,274,8.730572700500488,0.6313868613138686,0.400371651692702
+ff_ppo_sign,Neutral (0),validation,47,-0.06919846683740616,0.425531914893617,-0.024523270471533354
+ff_ppo_sign,Negative (-1),validation,0,0.0,0.0,0.0
+ff_price_vs_ema_20,Positive (1),validation,321,8.66137409210205,0.6012461059190031,0.334269124187022
+ff_price_vs_ema_20,Neutral (0),validation,0,0.0,0.0,0.0
+ff_price_vs_ema_20,Negative (-1),validation,0,0.0,0.0,0.0
+ff_rsi_7_level,Positive (1),validation,321,8.66137409210205,0.6012461059190031,0.334269124187022
+ff_rsi_7_level,Neutral (0),validation,0,0.0,0.0,0.0
+ff_rsi_7_level,Negative (-1),validation,0,0.0,0.0,0.0
+ff_rsi_14_midline_cross,Active (1),validation,321,8.66137409210205,0.6012461059190031,0.334269124187022
+ff_rsi_14_midline_cross,Inactive (0),validation,0,0.0,0.0,0.0
+ff_price_vs_ema_50,Positive (1),validation,321,8.66137409210205,0.6012461059190031,0.334269124187022
+ff_price_vs_ema_50,Negative (-1),validation,0,0.0,0.0,0.0
+ff_price_vs_ema_50,Neutral (0),validation,0,0.0,0.0,0.0
+ff_volume_regime_20,Negative (-1),validation,39,1.5002907514572144,0.6666666666666666,0.4798628889932448
+ff_volume_regime_20,Neutral (0),validation,36,1.2059162855148315,0.6388888888888888,0.4134139710137979
+ff_volume_regime_20,Positive (1),validation,246,5.955167293548584,0.5853658536585366,0.2996321370095578
+ff_ema_stack_8_21_55,Positive (1),validation,320,8.734360694885254,0.603125,0.33840653025261913
+ff_ema_stack_8_21_55,Neutral (0),validation,1,-0.07298622280359268,0.0,0.0
+ff_ema_stack_8_21_55,Negative (-1),validation,0,0.0,0.0,0.0

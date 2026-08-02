@@ -1,0 +1,152 @@
+{
+  "direction": "short",
+  "rules_set": [
+    {
+      "conditions": [
+        "[ff_cvd_proxy_10] IS Extreme Bearish",
+        "[ff_bollinger_width_change_3] IS Weak Bearish",
+        "[ff_ppo_sign] IS Negative (-1)",
+        "[ff_price_vs_ema_50] IS Negative (-1)"
+      ],
+      "tp": 2.0,
+      "sl": 1.2,
+      "capital_pct": 18.0
+    }
+  ],
+  "risk_optimized": true,
+  "deployment_accepted": true,
+  "deployment_reason": null,
+  "validation_gate": {
+    "return_pct": 2.3343563079833984,
+    "profit_factor": 1.71487557888031,
+    "required_return_pct": 2.0,
+    "required_profit_factor": 1.05
+  },
+  "symbol_concentration_gate": {
+    "hhi_abs_pnl": 0.5484179468280126,
+    "top_symbol_share_abs_pnl": 0.6555923308328733,
+    "top_symbol": "ETHUSDT",
+    "max_share": 0.85,
+    "max_hhi": 0.75,
+    "passed": true
+  },
+  "tail_holdout_gate": {
+    "enabled": true,
+    "available": true,
+    "tail_return_pct": 0.14137029647827148,
+    "min_return_pct": 0.0,
+    "passed": true
+  },
+  "symbol_contribution_certificate": {
+    "passed": true,
+    "available": true,
+    "symbol_contribution": {
+      "passed": true,
+      "available": true,
+      "required_symbols": 2,
+      "min_validation_trades_per_symbol": 6,
+      "qualifying_symbols": [
+        "BTCUSDT",
+        "ETHUSDT"
+      ],
+      "qualifying": {
+        "ETHUSDT": {
+          "trade_count": 15,
+          "net_pnl": 15.303857803344727,
+          "win_rate": 60.0
+        },
+        "BTCUSDT": {
+          "trade_count": 15,
+          "net_pnl": 8.039700508117676,
+          "win_rate": 53.333333333333336
+        }
+      },
+      "rejected_symbols": {},
+      "missing_symbol_count": 0,
+      "reasons": []
+    },
+    "symbol_concentration": {
+      "hhi_abs_pnl": 0.5484179468280126,
+      "top_symbol_share_abs_pnl": 0.6555923308328733,
+      "top_symbol": "ETHUSDT",
+      "max_share": 0.85,
+      "max_hhi": 0.75,
+      "passed": true
+    },
+    "reasons": []
+  },
+  "recency_rescue": {
+    "enabled": true,
+    "candidates": 4,
+    "selected": true,
+    "reason": "weak_half_return_certificate",
+    "baseline_weak_half_score": 2.3343563079833984,
+    "candidate_weak_half_score": 2.3343563079833984,
+    "baseline_gate_ok": true,
+    "baseline_certificate_ok": true,
+    "certificate": {
+      "passed": true,
+      "available": true,
+      "symbol_contribution": {
+        "passed": true,
+        "available": true,
+        "required_symbols": 2,
+        "min_validation_trades_per_symbol": 6,
+        "qualifying_symbols": [
+          "BTCUSDT",
+          "ETHUSDT"
+        ],
+        "qualifying": {
+          "ETHUSDT": {
+            "trade_count": 15,
+            "net_pnl": 15.303857803344727,
+            "win_rate": 60.0
+          },
+          "BTCUSDT": {
+            "trade_count": 15,
+            "net_pnl": 8.039700508117676,
+            "win_rate": 53.333333333333336
+          }
+        },
+        "rejected_symbols": {},
+        "missing_symbol_count": 0,
+        "reasons": []
+      },
+      "symbol_concentration": {
+        "hhi_abs_pnl": 0.5484179468280126,
+        "top_symbol_share_abs_pnl": 0.6555923308328733,
+        "top_symbol": "ETHUSDT",
+        "max_share": 0.85,
+        "max_hhi": 0.75,
+        "passed": true
+      },
+      "reasons": []
+    },
+    "tail_gate": {
+      "enabled": true,
+      "available": true,
+      "passed": true,
+      "tail_return_pct": 0.14137029647827148,
+      "tail_trades": 4,
+      "min_return_pct": 0.0,
+      "min_trades": 4
+    },
+    "rejected": [],
+    "conditions": [
+      "[ff_cvd_proxy_10] IS Extreme Bearish",
+      "[ff_bollinger_width_change_3] IS Weak Bearish",
+      "[ff_ppo_sign] IS Negative (-1)",
+      "[ff_price_vs_ema_50] IS Negative (-1)"
+    ]
+  },
+  "rb_score": -156.74665904934622,
+  "rb_train_return_pct": 7.327616214752197,
+  "rb_valid_return_pct": 2.3343563079833984,
+  "rb_valid_profit_factor": 1.71487557888031,
+  "rb_valid_max_drawdown_pct": 2.3899853229522705,
+  "rb_valid_executed_trades": 30,
+  "rb_train_minus_valid_return_pct": 4.993259906768799,
+  "rb_train_valid_ratio": 3.1390307425186394,
+  "rb_profit_amp_objective": 11.580598208904266,
+  "rb_profit_amp_accepted": false
+}
