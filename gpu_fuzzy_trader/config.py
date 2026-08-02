@@ -343,7 +343,7 @@ PHASE1_TOP_K_FEATURES = 20
 #   False → normal top-K MI-ranked selection (PHASE1_TOP_K_FEATURES=20).
 # Current default: keep the Phase 1 shortlist so the configured Phase 2 budget
 # is spent on a tractable feature genome.
-PHASE1_DISABLED: bool = False
+PHASE1_DISABLED: bool = True
 
 # PHASE1_MAX_FEATURE_OVERLAP — max shared feature names between long & short lists.
 #   Enforced as int(TOP_K × overlap) shared names (e.g. 25 × 0.8 → 20 shared).
