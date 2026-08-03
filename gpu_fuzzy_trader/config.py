@@ -1299,13 +1299,13 @@ PHASE2_ENRICH_SYMBOL_METRICS_EVERY_N_GENS = 20
 #   Higher → better Pareto coverage, ~linear GPU cost per generation.
 #   Lower  → faster gens, risk of premature convergence.
 # Larger pop for broader Pareto coverage on multi-symbol clusters.
-PHASE2_POPULATION_SIZE = 200
+PHASE2_POPULATION_SIZE = 500
 
 # PHASE2_GENERATIONS — generation budget for the global run and each active
 # cluster island. Cluster islands are processed sequentially, so wall-clock
 # scales with the number of active islands.
 # 20→40 — more search budget with early stop disabled.
-PHASE2_GENERATIONS = 40
+PHASE2_GENERATIONS = 100
 
 PHASE2_ALGORITHM = "NSGA3"
 
