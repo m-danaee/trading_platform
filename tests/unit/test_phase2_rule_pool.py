@@ -2631,8 +2631,8 @@ class TestF4ReturnConcentration:
         assert objectives.shape == (3,), f"Expected 3 objectives, got {objectives.shape}"
         assert "f4_concentration" not in out_metrics or out_metrics["f4_concentration"] == 0.0
 
-    def test_f4_zero_when_below_trade_floor(self, monkeypatch):
-        """f4 is 0 when executed_trades < trade_floor (no concentration signal)."""
+    def test_f4_is_worst_when_below_trade_floor(self, monkeypatch):
+        """Low-support rules receive worst-case concentration evidence."""
         from gpu_fuzzy_trader.phases.phase2_rule_pool import (
             compute_phase2_objectives_from_metrics,
         )
@@ -2662,9 +2662,9 @@ class TestF4ReturnConcentration:
         objectives, _ = compute_phase2_objectives_from_metrics(
             chrom, dont_cares, metrics, [],
         )
-        # f4 should be 0 because executed_trades (5) < trade_floor
+        # f4 should be worst-case because executed_trades (5) < trade_floor
         assert len(objectives) == 4, f"Expected 4 objectives, got {len(objectives)}"
-        assert objectives[3] == 0.0, f"Expected f4=0, got {objectives[3]}"
+        assert objectives[3] >= 1.0, f"Expected f4>=1, got {objectives[3]}"
 
     def test_f4_default_is_three_objectives_when_config_deleted(self, monkeypatch):
         """When PHASE2_F4_ENABLED is deleted from config (missing attr),

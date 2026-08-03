@@ -55,7 +55,9 @@ storage; the notebook syncs results and the Phase 2 archive back to Drive.
 
 The production order is data preparation, Phase 1 feature selection,
 independent symbol-specialist Phase 2 rule-pool evolution, RB Governor
-selection/risk tuning, and Phase 5 evaluation. Phase 5 reports the consumed
+selection/capital sizing, and Phase 5 evaluation. TP/SL and horizon are part of
+the immutable strategy identity; production RB does not rescue a candidate by
+changing its exit geometry. Phase 5 reports the consumed
 test tape diagnostically; only a strictly newer `FORWARD_CSV_PATH` can produce
 an acceptance decision. Existing integrations that use `--phase 3` or `--phase 4` remain
 compatible: both normalize to the RB Governor and return the historical result
@@ -93,9 +95,16 @@ performance.
 
 The checked-in `train_new.csv` and `test_new.csv` profile contains the balanced
 `BTCUSDT`/`ETHUSDT` universe. The production Phase 2 path runs independent
-one-symbol BTC/ETH islands with no cross-island warm starts or migration;
-portfolio-level RB composition is responsible for joint coverage. Global and
-clustered modes remain available for controlled experiments.
+one-symbol BTC/ETH islands with recipient-validated round-based migration;
+portfolio-level RB composition is responsible for joint coverage. A
+multi-symbol direction fails closed when one symbol has no qualifying
+specialist. Global and clustered modes remain available for controlled
+experiments.
+
+Each run writes a dataset manifest, append-only experiment ledger, nested
+outer-fold report, and baseline/ablation reports. The consumed test file is
+never a tuning input. A forward acceptance tape is locked after its first
+evaluation in an output directory.
 
 The evaluator-facing strategy files are `outputs/long.json` and
 `outputs/short.json`; clean copies are written below

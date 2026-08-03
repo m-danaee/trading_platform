@@ -23,7 +23,8 @@ gpu_fuzzy_trader/   Core pipeline package
 tests/              Unit, property, and benchmark tests
 RUN.md              Detailed runbook (setup, CLI, tests, troubleshooting)
 evaluator_v5.ipynb  Canonical evaluator notebook for rule-set evaluation
-requirements.txt    Base dependencies
+requirements.lock   Reproducible research dependency baseline
+requirements.txt    Base dependency ranges
 requirements-gpu.txt GPU JAX plugin dependencies
 ```
 
@@ -35,6 +36,11 @@ requirements-gpu.txt GPU JAX plugin dependencies
 4. RB Governor is the single production selection and risk path.
 5. Phase 5 records diagnostics on the consumed `test_new.csv`; an optional
    strictly newer `FORWARD_CSV_PATH` is the only acceptance tape.
+
+The RB Governor treats entry conditions, symbol scope, TP/SL, horizon, and cost
+model as one immutable strategy identity. Production RB may size capital, but
+it does not rescue rejected Phase 2 rules by silently searching a new TP/SL
+envelope.
 
 Existing callers using `--phase 3` or `--phase 4` remain compatible: both
 normalize to the RB Governor and return the historical result keys alongside
@@ -97,9 +103,16 @@ thresholds.
 
 The checked-in `train_new.csv` and `test_new.csv` profile contains the balanced
 `BTCUSDT`/`ETHUSDT` universe. Production Phase 2 therefore uses independent
-one-symbol BTC/ETH specialist islands with cross-island migration disabled;
-the RB Governor composes the specialists at portfolio level. The legacy global
-and clustered modes remain available for controlled experiments.
+one-symbol BTC/ETH specialist islands with guarded round-based migration; the
+RB Governor composes the specialists at portfolio level. A configured
+multi-symbol release fails closed if one symbol has no qualifying specialist;
+it is never silently converted into an ETH-only product. The legacy global and
+clustered modes remain available for controlled experiments.
+
+Every run writes `reports/dataset_manifest.json`,
+`reports/experiment_ledger.jsonl`, nested outer-fold diagnostics, and baseline
+reports. `test_new.csv` is frozen and never feeds feature selection, RB, or
+Optuna. A forward tape is accepted at most once per output directory.
 
 Override paths with `DATA_ROOT`, `TRAIN_CSV_PATH`, or `TEST_CSV_PATH` when
 needed. The evaluator-facing strategy files are `outputs/long.json` and

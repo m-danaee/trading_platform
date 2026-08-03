@@ -284,10 +284,20 @@ def _validate_rule_set(rule_set: object) -> dict:
     for i, rule in enumerate(rules_list, start=1):
         validated_rules.append(_validate_rule(rule, i))
 
-    return {
+    normalized = {
         "direction": direction,
         "rules_set": validated_rules,
     }
+    # Preserve audit metadata in the full strategy artifact.  The evaluator
+    # clean writer below still strips this to the strict notebook schema.
+    for key in (
+        "strategy_id",
+        "strategy_contract",
+        "provenance",
+    ):
+        if key in rule_set:
+            normalized[key] = rule_set[key]
+    return normalized
 
 
 # ---------------------------------------------------------------------------

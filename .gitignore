@@ -221,3 +221,7 @@ __marimo__/
 
 # CodeLookup dependency graph cache
 .codelookup/
+
+# Local research ablation artifacts are recorded in the ledger but are not
+# source releases. Keep generated experiment directories out of commits.
+/outputs/research_*/

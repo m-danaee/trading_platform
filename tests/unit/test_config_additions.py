@@ -21,7 +21,7 @@ def test_new_config_parameters_exist():
     assert c.PHASE2_MIGRATION_SEED_FRACTION == 0.10
     assert hasattr(c, 'PHASE2_SHARED_ARCHIVE_MIN_SYMBOLS') is False or 'PHASE2_SHARED_ARCHIVE_MIN_SYMBOLS' not in dir(c)
     assert c.PHASE1_REQUIRE_SIGN_CONSISTENCY is True
-    assert c.PHASE1_SIGN_CONSISTENCY_MIN_FOLDS == 2
+    assert c.PHASE1_SIGN_CONSISTENCY_MIN_FOLDS == 4
     assert c.PHASE2_REQUIRE_LAST_FOLD_POSITIVE is False
     assert c.PHASE2_SCAN_UNROLL == 32
     assert c.RB_MIN_RULES == 1

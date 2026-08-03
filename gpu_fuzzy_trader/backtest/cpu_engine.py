@@ -135,6 +135,35 @@ def _safe_profit_factor(gross_wins: float, gross_losses: float) -> float:
     return gross_wins / gross_losses
 
 
+def _expectancy_lcb_pct(
+    trade_returns: list[float] | np.ndarray,
+    *,
+    z_score: float,
+) -> tuple[float, float, float]:
+    """Return mean trade return, sample std, and a normal lower bound in %."""
+    values = np.asarray(trade_returns, dtype=np.float64) * 100.0
+    if values.size == 0:
+        return 0.0, 0.0, 0.0
+    mean = float(np.mean(values))
+    std = float(np.std(values, ddof=1)) if values.size > 1 else 0.0
+    standard_error = std / float(np.sqrt(values.size))
+    return mean, std, mean - float(z_score) * standard_error
+
+
+def _expected_shortfall_pct(
+    trade_returns: list[float] | np.ndarray,
+    *,
+    tail_fraction: float,
+) -> float:
+    """Mean of the worst trade-return tail, expressed in percentage points."""
+    values = np.asarray(trade_returns, dtype=np.float64) * 100.0
+    if values.size == 0:
+        return 0.0
+    fraction = min(1.0, max(1.0 / values.size, float(tail_fraction)))
+    tail_count = max(1, int(np.ceil(values.size * fraction)))
+    return float(np.mean(np.sort(values)[:tail_count]))
+
+
 def _sortino_ratio_from_returns(
     trade_returns: list[float] | np.ndarray,
     target_return: float = 0.0,
@@ -1050,6 +1079,10 @@ class CPUBacktestEngine:
             "max_total_open_exposure": 0.0,
             "per_symbol_metrics": {},
             "per_symbol_metrics_available": True,
+            "expectancy_pct_per_trade": 0.0,
+            "trade_return_std_pct": 0.0,
+            "expectancy_lcb_pct_per_trade": 0.0,
+            "expected_shortfall_pct": 0.0,
         }
 
         if len(entries) == 0:
@@ -1271,6 +1304,16 @@ class CPUBacktestEngine:
         # --- Summary metrics ---
         total_return_pct = (equity / initial_capital - 1.0) * 100.0
         sortino_ratio = _sortino_ratio_from_returns(trade_returns, scale_by_trades=True)
+        expectancy, trade_return_std, expectancy_lcb = _expectancy_lcb_pct(
+            trade_returns,
+            z_score=float(getattr(_cfg, "PHASE2_EXPECTANCY_LCB_Z", 1.645)),
+        )
+        expected_shortfall = _expected_shortfall_pct(
+            trade_returns,
+            tail_fraction=float(
+                getattr(_cfg, "PHASE2_EXPECTED_SHORTFALL_Q", 0.10)
+            ),
+        )
         win_rate = (
             (stats["wins"] / executed_trades) *
             100.0 if executed_trades > 0 else 0.0
@@ -1335,6 +1378,10 @@ class CPUBacktestEngine:
             "sum_positive_trade_pnl": float(stats.get("gross_profit_sum", 0.0)),
             "sum_negative_trade_pnl": float(stats.get("gross_loss_sum", 0.0)),
             "max_single_trade_pnl": float(stats.get("max_single_trade_pnl", 0.0)),
+            "expectancy_pct_per_trade": expectancy,
+            "trade_return_std_pct": trade_return_std,
+            "expectancy_lcb_pct_per_trade": expectancy_lcb,
+            "expected_shortfall_pct": expected_shortfall,
         }
 
         if return_logs:

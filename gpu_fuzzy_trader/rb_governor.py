@@ -34,7 +34,9 @@ from gpu_fuzzy_trader.validation.monthly_windows import (
 from gpu_fuzzy_trader.phases.rule_identity import (
     feature_conditions_only,
     phase2_rule_id,
+    strategy_id,
 )
+from gpu_fuzzy_trader.phases.phase2_support import expectancy_lcb_pct
 
 logger = logging.getLogger(__name__)
 
@@ -469,10 +471,30 @@ def _assert_capital_budget(rules: list[dict], *, max_total: float | None = None)
 def _strategy(direction: str, rules: list[dict], *, risk_optimized: bool = False, extra: dict | None = None) -> dict:
     clean_rules = _enforce_capital_budget(rules)
     _assert_capital_budget(clean_rules)
+    package_id = strategy_id(
+        direction=direction,
+        rules=clean_rules,
+        horizon_bars=int(getattr(_cfg, "MAX_HOLD_CANDLES", 0)),
+        cost_model_id=str(getattr(_cfg, "COST_MODEL_ID", "unknown")),
+    )
     out = {
         "direction": direction,
         "rules_set": clean_rules,
         "risk_optimized": bool(risk_optimized),
+        "strategy_id": package_id,
+        "strategy_contract": {
+            "identity_includes": [
+                "entry_conditions",
+                "eligible_symbols",
+                "take_profit",
+                "stop_loss",
+                "horizon_bars",
+                "cost_model_id",
+            ],
+            "horizon_bars": int(getattr(_cfg, "MAX_HOLD_CANDLES", 0)),
+            "cost_model_id": str(getattr(_cfg, "COST_MODEL_ID", "unknown")),
+            "capital_is_sizing_only": True,
+        },
     }
     if extra:
         out.update(extra)
@@ -496,6 +518,9 @@ def _score_metrics(train_m: dict, valid_m: dict, *, min_train_trades: int | None
     valid_pf = _f(valid_m, "profit_factor", 0.0)
     valid_wr = _f(valid_m, "win_rate", 0.0)
     valid_trades = _i(valid_m, "executed_trades", 0)
+    train_lcb = expectancy_lcb_pct(train_m)
+    valid_lcb = expectancy_lcb_pct(valid_m)
+    valid_es = _f(valid_m, "expected_shortfall_pct", 0.0)
 
     train_ratio = return_to_drawdown(train_ret, train_dd, dd_floor)
     valid_ratio = return_to_drawdown(valid_ret, valid_dd, dd_floor)
@@ -512,6 +537,8 @@ def _score_metrics(train_m: dict, valid_m: dict, *, min_train_trades: int | None
         + 0.025 * train_wr
         - 0.25 * valid_dd
         - 0.08 * train_dd
+        + 12.0 * min(train_lcb, valid_lcb)
+        - 0.75 * max(0.0, -valid_es)
         + shape_bonus
         - shape_penalty
     )
@@ -850,7 +877,13 @@ def _is_positive_good(train_m: dict, valid_m: dict, *, min_train_trades: int | N
             getattr(_cfg, "RB_REQUIRE_EXECUTION_HEALTH_ON_SINGLES", False)
         ),
     )
-    return gate_positive_good(train_m, valid_m, thresholds)
+    if not gate_positive_good(train_m, valid_m, thresholds):
+        return False
+    lcb_floor = float(getattr(_cfg, "RB_EXPECTANCY_LCB_MARGIN_PCT", 0.0))
+    return min(
+        expectancy_lcb_pct(train_m),
+        expectancy_lcb_pct(valid_m),
+    ) >= lcb_floor
 
 
 def _positive_good_reject_reasons(
@@ -880,7 +913,13 @@ def _positive_good_reject_reasons(
             getattr(_cfg, "RB_REQUIRE_EXECUTION_HEALTH_ON_SINGLES", False)
         ),
     )
-    return positive_good_reject_reasons(train_m, valid_m, thresholds)
+    reasons = positive_good_reject_reasons(train_m, valid_m, thresholds)
+    if not reasons:
+        lcb_floor = float(getattr(_cfg, "RB_EXPECTANCY_LCB_MARGIN_PCT", 0.0))
+        lcb = min(expectancy_lcb_pct(train_m), expectancy_lcb_pct(valid_m))
+        if lcb < lcb_floor:
+            reasons.append("expectancy_lcb")
+    return reasons
 
 
 def _recency_validation_score(fitness_m: dict, selection_m: dict) -> float:
@@ -1043,6 +1082,115 @@ def _evaluate_ruleset(train_engine: CPUBacktestEngine, valid_engine: CPUBacktest
     return train_m, valid_m, score
 
 
+def _cost_stress_gate(
+    train_engine: CPUBacktestEngine,
+    valid_engine: CPUBacktestEngine,
+    rules: list[dict],
+) -> tuple[bool, list[dict]]:
+    """Require the final package to survive a configured cost stress."""
+    if not (
+        bool(getattr(_cfg, "RB_CANONICAL_PIPELINE_ACTIVE", False))
+        and bool(getattr(_cfg, "RB_COST_STRESS_ENABLED", False))
+    ):
+        return True, []
+    results: list[dict] = []
+    base_fee = float(getattr(_cfg, "FEE_PCT", 0.0))
+    min_return = float(getattr(_cfg, "RB_COST_STRESS_MIN_RETURN_PCT", 0.0))
+    passed = True
+    for multiplier in getattr(_cfg, "RB_COST_STRESS_MULTIPLIERS", (1.0,)):
+        factor = float(multiplier)
+        if factor <= 1.0:
+            continue
+        stressed_train = CPUBacktestEngine(
+            train_engine.df,
+            {},
+            train_engine.trade_direction,
+            fee_pct=base_fee * factor,
+        ).simulate_rule_set([_rule_to_engine(rule) for rule in rules])
+        stressed_valid = CPUBacktestEngine(
+            valid_engine.df,
+            {},
+            valid_engine.trade_direction,
+            fee_pct=base_fee * factor,
+        ).simulate_rule_set([_rule_to_engine(rule) for rule in rules])
+        ok = (
+            _f(stressed_train, "total_return_pct") >= min_return
+            and _f(stressed_valid, "total_return_pct") >= min_return
+            and min(
+                expectancy_lcb_pct(stressed_train),
+                expectancy_lcb_pct(stressed_valid),
+            ) >= float(getattr(_cfg, "RB_EXPECTANCY_LCB_MARGIN_PCT", 0.0))
+        )
+        passed = passed and ok
+        results.append({
+            "multiplier": factor,
+            "train_return_pct": _f(stressed_train, "total_return_pct"),
+            "valid_return_pct": _f(stressed_valid, "total_return_pct"),
+            "train_profit_factor": _f(stressed_train, "profit_factor"),
+            "valid_profit_factor": _f(stressed_valid, "profit_factor"),
+            "passed": bool(ok),
+        })
+    return passed, results
+
+
+def _monthly_selection_certificate(
+    valid_engine: CPUBacktestEngine,
+    rules: list[dict],
+    direction: str,
+) -> tuple[bool, dict[str, Any]]:
+    """Require a composed team to be mostly non-loss across calendar windows."""
+    if not bool(getattr(_cfg, "RB_MONTHLY_CERTIFICATE_ENABLED", False)):
+        return True, {"enabled": False}
+    windows = build_monthly_windows(valid_engine.df)
+    minimum_windows = int(
+        getattr(_cfg, "PHASE2_MONTHLY_ADMISSION_MIN_MONTHS", 2)
+    )
+    if len(windows) < minimum_windows:
+        return True, {
+            "enabled": True,
+            "passed": True,
+            "evidence": "insufficient_windows",
+            "windows": len(windows),
+            "required_windows": minimum_windows,
+        }
+    metrics: list[dict] = []
+    for window in windows:
+        try:
+            metrics.append(CPUBacktestEngine(
+                window,
+                {},
+                direction,
+            ).simulate_rule_set([_rule_to_engine(rule) for rule in rules]))
+        except Exception as exc:
+            metrics.append({
+                "total_return_pct": -100.0,
+                "profit_factor": 0.0,
+                "max_drawdown_pct": 100.0,
+                "executed_trades": 0,
+                "error": f"{type(exc).__name__}: {exc}",
+            })
+    summary = summarize_monthly_metrics(metrics, n_rows=len(valid_engine.df))
+    passed = (
+        summary.profitable_ratio
+        >= float(getattr(_cfg, "RB_MONTHLY_MIN_PROFITABLE_RATIO", 0.55))
+        and summary.active_ratio
+        >= float(getattr(_cfg, "PHASE2_MONTHLY_MIN_ACTIVE_RATIO", 0.60))
+        and summary.bearish_ratio
+        <= float(getattr(_cfg, "RB_MONTHLY_MAX_BEARISH_RATIO", 0.35))
+    )
+    return bool(passed), {
+        "enabled": True,
+        "passed": bool(passed),
+        "windows": int(summary.windows),
+        "profitable_ratio": float(summary.profitable_ratio),
+        "active_ratio": float(summary.active_ratio),
+        "bearish_ratio": float(summary.bearish_ratio),
+        "worst_return_pct": float(summary.worst_return_pct),
+        "equity_slope": float(summary.equity_slope),
+        "window_metrics": metrics,
+    }
+
+
 def _candidate_positive_symbols(candidate: CandidateRecord) -> set[str]:
     """Return supported positive validation symbols for one candidate."""
     per_symbol = (candidate.valid_metrics or {}).get(
@@ -1116,6 +1264,14 @@ def _symbol_gate_policy(
     allow_partial = bool(
         getattr(_cfg, "RB_ALLOW_PARTIAL_SPECIALIST_COVERAGE", False)
     )
+    # A multi-symbol release is a product contract, not a soft preference.
+    # Never lower its required universe or concentration limits just because
+    # one island failed to produce a candidate.
+    if (
+        bool(getattr(_cfg, "RB_MULTI_SYMBOL_RELEASE", True))
+        and len(active_symbols) > 1
+    ):
+        allow_partial = False
     partial = bool(
         specialist_mode
         and allow_partial
@@ -1140,18 +1296,13 @@ def _symbol_gate_policy(
         ),
         "active_symbols": sorted(active_symbols),
         "missing_candidate_symbols": sorted(active_symbols - candidate_symbols),
-        # A one-symbol specialist is not "concentrated" relative to the
-        # covered universe; the independent positive-contribution, return,
-        # PF, tail, and Phase 5 gates still apply.
+        # Concentration limits remain the configured multi-symbol limits. They
+        # are never relaxed to 1.0 by missing candidate coverage.
         "concentration_max_share": (
-            1.0 if partial else float(
-                getattr(_cfg, "RB_MAX_SYMBOL_SHARE_ABS_PNL", 1.0)
-            )
+            float(getattr(_cfg, "RB_MAX_SYMBOL_SHARE_ABS_PNL", 1.0))
         ),
         "concentration_max_hhi": (
-            1.0 if partial else float(
-                getattr(_cfg, "RB_MAX_SYMBOL_HHI", 1.0)
-            )
+            float(getattr(_cfg, "RB_MAX_SYMBOL_HHI", 1.0))
         ),
     }
 
@@ -1541,6 +1692,44 @@ def _risk_envelope_admission_variant(
     return best[1], best[2], best[3]
 
 
+def _balanced_phase2_shortlist(pool: list[dict], limit: int) -> list[dict]:
+    """Take a bounded, symbol-balanced Phase 2 shortlist.
+
+    Global rank alone can consume the whole RB budget with one specialist and
+    make the missing island impossible to compose.  Round-robin selection is
+    deterministic and leaves the original ordering intact within each scope.
+    """
+    if limit <= 0 or len(pool) <= limit:
+        return list(pool)
+    groups: dict[str, list[dict]] = {}
+    for entry in pool:
+        symbols = entry.get("source_symbols", entry.get("island_symbols", []))
+        if isinstance(symbols, str):
+            symbols = [symbols]
+        label = ",".join(sorted({
+            str(symbol).strip() for symbol in (symbols or [])
+            if str(symbol).strip()
+        })) or "__global__"
+        groups.setdefault(label, []).append(entry)
+    ordered_groups = [
+        groups[key] for key in sorted(groups)
+    ]
+    selected: list[dict] = []
+    cursor = 0
+    while len(selected) < limit and ordered_groups:
+        progressed = False
+        for group in ordered_groups:
+            if cursor < len(group):
+                selected.append(group[cursor])
+                progressed = True
+                if len(selected) >= limit:
+                    break
+        if not progressed:
+            break
+        cursor += 1
+    return selected
+
+
 def _filter_good_rules(
     pool: list[dict],
     train_like_df: pd.DataFrame,
@@ -1560,7 +1749,7 @@ def _filter_good_rules(
     limit = int(getattr(_cfg, "RB_MAX_POOL_RULES_TO_EVALUATE", 700))
     symbols = _available_symbols(train_like_df, valid_df)
 
-    for raw in pool[:limit]:
+    for raw in _balanced_phase2_shortlist(pool, limit):
         for rule in _symbol_specialized_variants(raw, train_engine, valid_engine, symbols):
             # Variants already include island ``symbol is X`` OR filters in Mode A.
             rule = _rule_to_engine(rule)
@@ -2133,6 +2322,7 @@ def _optimize_risk(
     min_distinct_symbols: int | None = None,
     concentration_max_share: float | None = None,
     concentration_max_hhi: float | None = None,
+    immutable_exits: bool | None = None,
 ) -> tuple[list[dict], dict, dict, float, list[dict]]:
     rules = [_rule_to_engine(r.rule) for r in selected]
     cur_train, cur_valid, cur_score = _evaluate_ruleset(
@@ -2185,13 +2375,31 @@ def _optimize_risk(
     min_valid_trades = int(getattr(
         _cfg, "RB_RULESET_MIN_VALID_TRADES", getattr(_cfg, "RB_MIN_VALID_TRADES", 15)))
 
+    strict_exit_contract = (
+        bool(getattr(_cfg, "RB_RISK_OPTIMIZE_EXITS", False))
+        if immutable_exits is None
+        else bool(immutable_exits)
+    )
     for p in range(1, passes + 1):
         improved = False
         for idx in range(len(best_rules)):
             local_best: tuple[float, list[dict], dict,
                               dict, list[float] | None] | None = None
-            for tp in tp_grid:
-                for sl in sl_grid:
+            if not strict_exit_contract:
+                candidate_tp_grid = tp_grid
+                candidate_sl_grid = sl_grid
+            else:
+                # TP/SL are immutable entry-strategy semantics. RB still
+                # searches capital allocation, but never changes the exit
+                # geometry discovered and admitted by Phase 2.
+                candidate_tp_grid = (
+                    float(best_rules[idx].get("tp", _cfg.RB_DEFAULT_TP)),
+                )
+                candidate_sl_grid = (
+                    float(best_rules[idx].get("sl", _cfg.RB_DEFAULT_SL)),
+                )
+            for tp in candidate_tp_grid:
+                for sl in candidate_sl_grid:
                     for cap in cap_grid:
                         trial = [dict(r) for r in best_rules]
                         trial[idx]["tp"] = tp
@@ -3297,6 +3505,9 @@ def run_rb_governor_pipeline(
             min_distinct_symbols=effective_min_symbols,
             concentration_max_share=concentration_max_share,
             concentration_max_hhi=concentration_max_hhi,
+            immutable_exits=bool(
+                getattr(_cfg, "RB_CANONICAL_PIPELINE_ACTIVE", False)
+            ),
         )
         profit_rules, profit_train, profit_test, profit_objective, profit_meta = _run_profit_amplifier(
             opt_rules,
@@ -3493,7 +3704,10 @@ def run_rb_governor_pipeline(
             })
 
         # ── Hard gate: minimum distinct symbols on final output ──────────────
-        if bool(getattr(_cfg, "RB_PHASE2_PROVENANCE_ONLY", False)):
+        if (
+            bool(getattr(_cfg, "RB_CANONICAL_PIPELINE_ACTIVE", False))
+            and bool(getattr(_cfg, "RB_PHASE2_PROVENANCE_ONLY", False))
+        ):
             invalid_rules = []
             for rule_index, rule in enumerate(opt_rules, start=1):
                 feature_conditions = _strip_symbol_conditions(
@@ -3678,12 +3892,24 @@ def run_rb_governor_pipeline(
                 max_hhi=concentration_max_hhi,
             )
         tail_ok, tail_gate = _passes_tail_holdout_gate(risk_history)
+        cost_stress_ok, cost_stress = _cost_stress_gate(
+            train_engine,
+            valid_engine,
+            opt_rules,
+        )
+        monthly_ok, monthly_certificate = _monthly_selection_certificate(
+            valid_engine,
+            opt_rules,
+            direction,
+        )
         deployable = (
             val_ret >= (ret_gate - 1e-9)
             and val_pf >= (pf_gate - 1e-9)
             and portfolio_cert_ok
             and sym_ok
             and tail_ok
+            and cost_stress_ok
+            and monthly_ok
         )
         if not portfolio_cert_ok:
             logger.warning(
@@ -3708,11 +3934,29 @@ def run_rb_governor_pipeline(
                 float(tail_gate.get("tail_return_pct", 0.0)),
                 float(tail_gate.get("min_return_pct", 0.0)),
             )
+        if not cost_stress_ok:
+            logger.warning(
+                "RB [%s]: cost-stress gate failed (%s)",
+                direction,
+                cost_stress,
+            )
+        if not monthly_ok:
+            logger.warning(
+                "RB [%s]: monthly selection certificate failed (%s)",
+                direction,
+                monthly_certificate,
+            )
 
         # Hard fail-closed: concentration / tail reject clears ruleset (do not
         # persist rejected teams for Phase 5). Return/PF-only soft path below
         # still saves rules with deployment_accepted=False.
-        if not portfolio_cert_ok or not sym_ok or not tail_ok:
+        if (
+            not portfolio_cert_ok
+            or not sym_ok
+            or not tail_ok
+            or not cost_stress_ok
+            or not monthly_ok
+        ):
             reasons: list[str] = []
             if not portfolio_cert_ok:
                 certificate_reasons = portfolio_certificate.get("reasons", [])
@@ -3726,6 +3970,10 @@ def run_rb_governor_pipeline(
                 reasons.append("symbol_concentration")
             if not tail_ok:
                 reasons.append("tail_holdout")
+            if not cost_stress_ok:
+                reasons.append("cost_stress")
+            if not monthly_ok:
+                reasons.append("monthly_stability")
             fail_reason = "+".join(reasons)
             strategy = _strategy(
                 direction,
@@ -3743,6 +3991,8 @@ def run_rb_governor_pipeline(
                     },
                     "symbol_concentration_gate": sym_gate,
                     "tail_holdout_gate": tail_gate,
+                    "cost_stress_gate": cost_stress,
+                    "monthly_certificate": monthly_certificate,
                     "symbol_coverage_policy": symbol_policy,
                     "symbol_contribution_certificate": portfolio_certificate,
                     "rb_score": 0.0,
@@ -3792,6 +4042,8 @@ def run_rb_governor_pipeline(
                 "fail_closed_reason": fail_reason,
                 "symbol_concentration_gate": sym_gate,
                 "tail_holdout_gate": tail_gate,
+                "cost_stress_gate": cost_stress,
+                "monthly_certificate": monthly_certificate,
                 "symbol_coverage_policy": symbol_policy,
                 "symbol_contribution_certificate": portfolio_certificate,
                 "validation_gate": {

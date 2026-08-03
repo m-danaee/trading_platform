@@ -84,12 +84,12 @@ def test_partial_specialist_policy_requires_missing_symbol_to_have_no_candidate(
     ), patch.object(_cfg, "RB_ALLOW_PARTIAL_SPECIALIST_COVERAGE", True):
         policy = _symbol_gate_policy([eth], frame, frame)
 
-    assert policy["partial_specialist_coverage"]
-    assert policy["effective_min_symbols"] == 1
+    assert not policy["partial_specialist_coverage"]
+    assert policy["effective_min_symbols"] == 2
     assert policy["candidate_positive_symbols"] == ["ETHUSDT"]
     assert policy["missing_candidate_symbols"] == ["BTCUSDT"]
-    assert policy["concentration_max_share"] == 1.0
-    assert policy["concentration_max_hhi"] == 1.0
+    assert policy["concentration_max_share"] == _cfg.RB_MAX_SYMBOL_SHARE_ABS_PNL
+    assert policy["concentration_max_hhi"] == _cfg.RB_MAX_SYMBOL_HHI
 
 
 def test_partial_specialist_policy_keeps_full_floor_when_both_symbols_exist():

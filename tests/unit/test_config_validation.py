@@ -20,7 +20,7 @@ def test_default_config_snapshot_is_valid_and_reports_effective_budgets() -> Non
     assert snapshot["rb"]["max_feasible_rules_at_min_capital"] >= cfg.RB_MAX_RULES
     assert snapshot["phase2"]["effective_min_profitable_symbols"] == 2
     assert snapshot["phase2"]["island_mode"] == cfg.PHASE2_ISLAND_MODE
-    assert snapshot["phase2"]["effective_n_clusters"] == 1
+    assert snapshot["phase2"]["effective_n_clusters"] == 4
     assert snapshot["gates"]["rb_min_valid_trades"] <= snapshot["gates"]["rb_ruleset_min_valid_trades"]
 
 

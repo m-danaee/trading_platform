@@ -751,6 +751,7 @@ def compute_phase2_objectives_from_metrics(
     """
     from gpu_fuzzy_trader.phases.phase2_support import (
         _raw_feasibility_violation_score,
+        expectancy_lcb_pct,
         resolve_evolution_floors,
         robust_return_pct,
     )
@@ -775,6 +776,38 @@ def compute_phase2_objectives_from_metrics(
     dd_for_obj = max_dd
     win_rate = float(metrics.get("win_rate", 0.0))
     executed = int(metrics.get("executed_trades", 0))
+    uncertainty_available = bool(
+        metrics.get(
+            "_uncertainty_metrics_available",
+            any(
+                key in metrics
+                for key in (
+                    "expectancy_lcb_pct_per_trade",
+                    "trade_return_std_pct",
+                    "expected_shortfall_pct",
+                )
+            ),
+        )
+    )
+    metrics["_uncertainty_metrics_available"] = uncertainty_available
+    expectancy_lcb = expectancy_lcb_pct(metrics)
+    metrics["expectancy_lcb_pct_per_trade"] = float(expectancy_lcb)
+    expected_shortfall = float(
+        metrics.get("expected_shortfall_pct", 0.0) or 0.0
+    )
+    metrics["expected_shortfall_pct"] = expected_shortfall
+    es_penalty = max(0.0, -expected_shortfall) * float(
+        getattr(_cfg, "PHASE2_EXPECTED_SHORTFALL_WEIGHT", 0.0)
+    )
+    cv_returns = [
+        float(value) for value in metrics.get("_cv_fold_returns", [])
+        if value is not None
+    ]
+    fold_instability = (
+        float(np.std(cv_returns, ddof=1))
+        if len(cv_returns) > 1 else 0.0
+    )
+    metrics["fold_return_std_pct"] = fold_instability
 
     sortino_for_obj = sortino_train
     val_floor_penalty = 0.0
@@ -1026,6 +1059,8 @@ def compute_phase2_objectives_from_metrics(
         + (_cfg.PHASE2_SUPPORT_PENALTY_WEIGHT_F2 * support_penalty)
         + drawdown_gate_penalty
         + trade_penalty
+        + es_penalty
+        + 0.25 * fold_instability
         + (0.0 if getattr(_cfg, "PHASE2_F4_ENABLED", False) else diversity_f4)
     )
     f3 = (
@@ -1034,6 +1069,15 @@ def compute_phase2_objectives_from_metrics(
         + diversity_f1_f3
         + cond_penalty
         + overfit_gap_penalty
+        - (
+            0.0
+            if (
+                bool(_cfg.PHASE2_USE_TOTAL_RETURN_OBJ)
+                or not uncertainty_available
+            )
+            else float(getattr(_cfg, "PHASE2_EXPECTANCY_LCB_WEIGHT", 0.0))
+            * float(np.tanh(expectancy_lcb))
+        )
     )
 
     if val_metrics is not None:
@@ -1062,7 +1106,9 @@ def compute_phase2_objectives_from_metrics(
             f4_concentration = min(f4_concentration, f4_v)
 
         if executed < trade_floor:
-            f4_concentration = 0.0
+            # A low-support rule is not concentration-safe.  Zero used to
+            # reward sparse rules on the fourth objective.
+            f4_concentration = 1.0
 
     metrics["f4_concentration"] = f4_concentration
     f4 = f4_concentration + diversity_f4
@@ -2503,8 +2549,15 @@ def _pool_seed_chromosomes(
         if not isinstance(chrom, list) or not chrom:
             continue
         chrom_arr = np.asarray(chrom, dtype=np.int32)
-        if use_sparse_slots() and dont_cares is not None:
+        if use_sparse_slots() and dont_cares is not None and not is_sparse_chromosome(
+            chrom_arr
+        ):
             chrom_arr = dense_to_sparse(chrom_arr, dont_cares)
+        elif use_sparse_slots() and is_sparse_chromosome(chrom_arr):
+            from gpu_fuzzy_trader.phases.phase2_sparse_encoding import (
+                canonicalize_slots,
+            )
+            chrom_arr = canonicalize_slots(chrom_arr)
         key = chromosome_key(chrom_arr)
         if key in seen:
             continue
@@ -4224,9 +4277,17 @@ class Rule_Pool_Generator:
         )
         new_pool = result[0] if isinstance(result, tuple) else []
         if self.island_id is not None:
+            pre_admission_count = len(new_pool)
             pool = _filter_pool_by_admission(
                 list(new_pool),
                 island_hyperparams=self.island_hyperparams,
+            )
+            logger.info(
+                "Phase 2 [%s %s]: final admission %d -> %d rules",
+                self.direction,
+                self.island_id,
+                pre_admission_count,
+                len(pool),
             )
 
             # --- Monthly-window gate for islands ---

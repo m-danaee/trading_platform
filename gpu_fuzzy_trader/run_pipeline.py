@@ -48,6 +48,12 @@ from gpu_fuzzy_trader.phases.phase2_island_scheduler import (
     compute_cluster_generation_budgets,
 )
 from gpu_fuzzy_trader.phases.phase5_oos import OOS_Evaluator
+from gpu_fuzzy_trader.research_integrity import (
+    ExperimentLedger,
+    count_trials,
+    write_dataset_manifests,
+)
+from gpu_fuzzy_trader.research_profile import ResearchProfile
 
 import argparse
 from contextlib import contextmanager
@@ -224,16 +230,23 @@ def _log_pipeline_config() -> None:
             getattr(_cfg, "PHASE2_SYMBOL_SPECIALISTS_ENABLED", False)
         )
         migration_effective = bool(
-            _cfg.PHASE2_MIGRATION_ENABLED and not specialists_enabled
+            _cfg.PHASE2_MIGRATION_ENABLED
         )
         total_gens = int(_cfg.PHASE2_ISLAND_TOTAL_GENERATIONS)
         cluster_ids = [str(i) for i in range(max(1, int(_cfg.PHASE2_N_CLUSTERS)))]
-        budgets = compute_cluster_generation_budgets(total_gens, cluster_ids)
+        budgets = compute_cluster_generation_budgets(
+            total_gens,
+            cluster_ids,
+            shared_budget=bool(
+                getattr(_cfg, "PHASE2_SHARED_ISLAND_GENERATION_BUDGET", False)
+            ),
+        )
         gens_per_cluster = budgets[cluster_ids[0]]
         epoch_gens = int(_cfg.PHASE2_ISLAND_EPOCH_GENERATIONS)
         phase2_fmt = (
-            "PHASE2 algo=%s pop=%d island_total=%d per_cluster_gens=%d epoch=%d "
-            "joint_train_val=%s migration=%s specialists=%s"
+            "PHASE2 algo=%s pop=%d island_total=%d configured_cluster_gens=%d "
+            "epoch=%d shared_budget=%s joint_train_val=%s migration=%s "
+            "specialists=%s"
         )
         phase2_args = (
             _cfg.PHASE2_ALGORITHM,
@@ -241,6 +254,7 @@ def _log_pipeline_config() -> None:
             total_gens,
             gens_per_cluster,
             epoch_gens,
+            _cfg.PHASE2_SHARED_ISLAND_GENERATION_BUDGET,
             _cfg.PHASE2_JOINT_TRAIN_VAL,
             migration_effective,
             specialists_enabled,
@@ -555,6 +569,14 @@ class Pipeline_Orchestrator:
                     "phase2": self._phase2_status,
                     "rb_governor": self._rb_status_summary(rb_result),
                 }
+                results["nested_validation"] = self._run_nested_validation(
+                    train_df,
+                    rb_result,
+                    trial_count=count_trials(
+                        phase2=phase2_result,
+                        rb=rb_result,
+                    ),
+                )
                 phase5_directions = frozenset(
                     direction
                     for direction, strategy in rb_result.items()
@@ -575,6 +597,7 @@ class Pipeline_Orchestrator:
                 # Summary
                 # ------------------------------------------------------------------
                 total_elapsed = time.monotonic() - pipeline_start
+                self._record_research_integrity(results, total_elapsed)
                 logger.info("=" * 60)
                 logger.info("Pipeline complete in %.2fs", total_elapsed)
                 logger.info("=" * 60)
@@ -663,6 +686,14 @@ class Pipeline_Orchestrator:
                     "phase2": self._phase2_status,
                     "rb_governor": self._rb_status_summary(rb_result),
                 }
+                results["nested_validation"] = self._run_nested_validation(
+                    train_df,
+                    rb_result,
+                    trial_count=count_trials(
+                        phase2=phase2_result,
+                        rb=rb_result,
+                    ),
+                )
                 phase5_directions = frozenset(
                     direction
                     for direction, strategy in rb_result.items()
@@ -676,6 +707,7 @@ class Pipeline_Orchestrator:
                 results["phase5"] = phase5_result
 
                 total_elapsed = time.monotonic() - pipeline_start
+                self._record_research_integrity(results, total_elapsed)
                 logger.info("=" * 60)
                 logger.info(
                     "Pipeline (Phase 2, RB Governor, Phase 5) complete in %.2fs",
@@ -782,6 +814,9 @@ class Pipeline_Orchestrator:
                     # only used by the full pipeline after RB returns.
                     allowed_directions=None
                 )
+                self._record_research_integrity(
+                    results, time.monotonic() - pipeline_start,
+                )
 
             total_elapsed = time.monotonic() - pipeline_start
             logger.info("=" * 60)
@@ -829,11 +864,135 @@ class Pipeline_Orchestrator:
         """Create outputs/ and outputs/reports/ directories if they don't exist."""
         os.makedirs(_cfg.OUTPUTS_DIR, exist_ok=True)
         os.makedirs(_cfg.REPORTS_DIR, exist_ok=True)
+        if bool(getattr(_cfg, "DATASET_MANIFEST_ENABLED", True)):
+            try:
+                write_dataset_manifests(
+                    _cfg.OUTPUTS_DIR,
+                    {
+                        "train": _cfg.TRAIN_CSV_PATH,
+                        "test_diagnostic": _cfg.TEST_CSV_PATH,
+                        "forward_acceptance": getattr(
+                            _cfg, "FORWARD_CSV_PATH", None,
+                        ),
+                    },
+                )
+            except Exception as exc:
+                logger.warning("Dataset manifest failed (non-fatal): %s", exc)
         logger.info(
             "Output directories ready: %s, %s",
             _cfg.OUTPUTS_DIR,
             _cfg.REPORTS_DIR,
         )
+
+    @staticmethod
+    def _record_research_integrity(
+        results: dict[str, Any],
+        elapsed_seconds: float,
+    ) -> None:
+        """Append one auditable record after a pipeline evaluation completes."""
+        if not bool(getattr(_cfg, "EXPERIMENT_LEDGER_ENABLED", True)):
+            return
+        phase5 = results.get("phase5", {})
+        diagnostic: dict[str, dict[str, Any]] = {}
+        if isinstance(phase5, dict):
+            for direction, value in phase5.items():
+                if direction == "acceptance" or not isinstance(value, dict):
+                    continue
+                metrics = value.get("test", value)
+                if not isinstance(metrics, dict):
+                    continue
+                diagnostic[direction] = {
+                    "total_return_pct": float(
+                        metrics.get("total_return_pct", 0.0) or 0.0
+                    ),
+                    "profit_factor": float(
+                        metrics.get("profit_factor", 0.0) or 0.0
+                    ),
+                    "max_drawdown_pct": float(
+                        metrics.get("max_drawdown_pct", 0.0) or 0.0
+                    ),
+                    "executed_trades": int(
+                        metrics.get("executed_trades", 0) or 0
+                    ),
+                }
+        rb = results.get("rb_governor", {})
+        phase2 = results.get("phase2", {})
+        config_keys = (
+            "GLOBAL_SEED",
+            "PHASE2_GENERATIONS",
+            "PHASE2_POPULATION_SIZE",
+            "PHASE2_TP",
+            "PHASE2_SL",
+            "RB_RISK_OPTIMIZE_EXITS",
+            "RB_CANDIDATE_RISK_ADMISSION_ENABLED",
+            "RB_PHASE2_PROVENANCE_ONLY",
+            "RB_ALLOW_PARTIAL_SPECIALIST_COVERAGE",
+            "PHASE2_VAL_IN_FITNESS_PENALTY",
+        )
+        config_delta = {
+            key: getattr(_cfg, key)
+            for key in config_keys
+            if hasattr(_cfg, key)
+        }
+        trial_count = count_trials(phase2=phase2, rb=rb)
+        ExperimentLedger(_cfg.OUTPUTS_DIR).append({
+            "record_type": "pipeline_run",
+            "elapsed_seconds": round(float(elapsed_seconds), 3),
+            "phase2_pool_sizes": {
+                direction: len(value) if isinstance(value, list) else 0
+                for direction, value in (
+                    phase2.items() if isinstance(phase2, dict) else []
+                )
+            },
+            "rb_status": {
+                direction: {
+                    "accepted": bool(
+                        isinstance(value, dict)
+                        and value.get("deployment_accepted") is True
+                        and value.get("rules_set")
+                    ),
+                    "rules": len(value.get("rules_set", []))
+                    if isinstance(value, dict) else 0,
+                }
+                for direction, value in (
+                    rb.items() if isinstance(rb, dict) else []
+                )
+            },
+            "diagnostic_test_metrics": diagnostic,
+            "acceptance": (
+                phase5.get("acceptance", {})
+                if isinstance(phase5, dict) else {}
+            ),
+            "trial_count_estimate": trial_count,
+            "config": config_delta,
+            "research_profile": {
+                "profile_id": ResearchProfile.from_config(_cfg).profile_id,
+                **ResearchProfile.from_config(_cfg).as_dict(),
+            },
+        })
+        try:
+            from gpu_fuzzy_trader.validation.multiplicity import (
+                summarize_multiplicity,
+            )
+            nested = results.get("nested_validation", {})
+            fold_returns = [
+                float(report.get("median_return_pct", 0.0))
+                for report in nested.values()
+                if isinstance(report, dict)
+            ] if isinstance(nested, dict) else []
+            multiplicity = summarize_multiplicity(
+                fold_returns=fold_returns,
+                n_trials=trial_count,
+            )
+            Path(_cfg.REPORTS_DIR, "multiplicity_summary.json").write_text(
+                json.dumps(multiplicity, indent=2, sort_keys=True),
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            logger.warning(
+                "Multiplicity report failed (non-fatal): %s",
+                exc,
+            )
 
     @staticmethod
     def _validate_active_configuration(train_df: pd.DataFrame) -> None:
@@ -1488,6 +1647,10 @@ class Pipeline_Orchestrator:
             "RB_PHASE2_PROVENANCE_ONLY": True,
             "RB_RECENCY_RESCUE_ENABLED": False,
             "RB_FULL_VALIDATION_RECOVERY_ENABLED": False,
+            "RB_CANDIDATE_RISK_ADMISSION_ENABLED": False,
+            "RB_RISK_OPTIMIZE_EXITS": False,
+            "RB_ALLOW_PARTIAL_SPECIALIST_COVERAGE": False,
+            "RB_CANONICAL_PIPELINE_ACTIVE": True,
         }
         rb_policy_previous = {
             name: getattr(_cfg, name) for name in rb_policy_attrs
@@ -1602,6 +1765,53 @@ class Pipeline_Orchestrator:
             },
         )
         return result
+
+    @staticmethod
+    def _run_nested_validation(
+        train_df: pd.DataFrame,
+        strategies: dict[str, dict],
+        *,
+        trial_count: int = 1,
+    ) -> dict[str, dict]:
+        """Evaluate current packages on purged outer folds only."""
+        if not bool(getattr(_cfg, "NESTED_VALIDATION_ENABLED", True)):
+            return {}
+        try:
+            from gpu_fuzzy_trader.validation.nested_walk_forward import (
+                write_nested_reports,
+            )
+            nested_strategies = {
+                direction: {
+                    **strategy,
+                    "trial_count": int(trial_count),
+                }
+                for direction, strategy in strategies.items()
+            }
+            nested = write_nested_reports(
+                _cfg.OUTPUTS_DIR,
+                nested_strategies,
+                train_df,
+                n_outer=int(getattr(
+                    _cfg, "NESTED_VALIDATION_OUTER_FOLDS", 3,
+                )),
+            )
+            from gpu_fuzzy_trader.validation.baselines import (
+                write_baseline_reports,
+            )
+            baseline = write_baseline_reports(
+                _cfg.OUTPUTS_DIR,
+                train_df,
+                nested_strategies,
+            )
+            for direction, report in nested.items():
+                report["baselines"] = baseline.get(direction, {})
+            return nested
+        except Exception as exc:
+            logger.warning(
+                "Nested validation failed (non-fatal to pipeline): %s",
+                exc,
+            )
+            return {}
 
 
 # ---------------------------------------------------------------------------

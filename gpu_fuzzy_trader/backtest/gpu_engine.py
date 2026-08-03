@@ -797,6 +797,26 @@ def _batch_metrics_from_array(
             "sum_positive_trade_pnl": float(base["sum_positive_trade_pnl"][b]),
             "sum_negative_trade_pnl": float(base["sum_negative_trade_pnl"][b]),
             "max_single_trade_pnl": float(base["max_single_trade_pnl"][b]),
+            # The JAX kernel keeps only running aggregates.  Use a
+            # deliberately conservative aggregate fallback until exact CPU
+            # enrichment runs; this prevents PF=99 from receiving a free
+            # uncertainty score.
+            "expectancy_pct_per_trade": (
+                float(base["total_return_pct"][b])
+                / max(float(base["executed_trades"][b]), 1.0)
+            ),
+            "trade_return_std_pct": 0.0,
+            "expectancy_lcb_pct_per_trade": (
+                float(base["total_return_pct"][b])
+                / max(float(base["executed_trades"][b]), 1.0)
+                - float(getattr(_cfg, "PHASE2_EXPECTANCY_LCB_Z", 1.645))
+                * abs(float(base["total_return_pct"][b]))
+                / max(float(base["executed_trades"][b]), 1.0)
+                / max(float(base["executed_trades"][b]) ** 0.5, 1.0)
+            ),
+            "expected_shortfall_pct": -abs(
+                float(base["total_return_pct"][b])
+            ) / max(float(base["executed_trades"][b]), 1.0),
             # Per-symbol metrics are optional CPU enrichment. Explicitly
             # record their absence so fitness code cannot mistake missing
             # evidence for a favorable synthetic result.

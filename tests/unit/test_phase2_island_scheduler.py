@@ -34,6 +34,16 @@ def test_one_symbol_islands_get_full_budget_each(monkeypatch):
     assert sum(budgets.values()) == 200
 
 
+def test_shared_budget_keeps_total_generation_budget_fixed():
+    budgets = compute_cluster_generation_budgets(
+        40,
+        ["0", "1", "2"],
+        shared_budget=True,
+    )
+    assert sum(budgets.values()) == 40
+    assert max(budgets.values()) - min(budgets.values()) <= 1
+
+
 def test_epoch_rounds_cover_budget(monkeypatch):
     monkeypatch.setattr(cfg, "PHASE2_ONE_SYMBOL_ISLANDS", False)
     total = int(cfg.PHASE2_ISLAND_TOTAL_GENERATIONS)

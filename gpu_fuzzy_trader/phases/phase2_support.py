@@ -519,6 +519,38 @@ def robust_win_rate_pct(
     return _joint_primary_metric(train_wr, val_wr, joint=joint)
 
 
+def expectancy_lcb_pct(
+    metrics: dict | None,
+    *,
+    z_score: float | None = None,
+) -> float:
+    """Return a conservative lower bound for per-trade net expectancy.
+
+    Exact CPU reports carry trade-level dispersion. GPU reports use the
+    aggregate fallback, which is intentionally conservative and is replaced
+    by CPU values during final admission.
+    """
+    values = metrics or {}
+    try:
+        direct = float(values.get("expectancy_lcb_pct_per_trade"))
+    except (TypeError, ValueError):
+        direct = float("nan")
+    if np.isfinite(direct):
+        return direct
+    trades = max(1, int(values.get("executed_trades", 0) or 0))
+    expectancy = float(values.get("total_return_pct", 0.0) or 0.0) / trades
+    try:
+        std = float(values.get("trade_return_std_pct", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        std = 0.0
+    z = float(
+        z_score
+        if z_score is not None
+        else getattr(_cfg, "PHASE2_EXPECTANCY_LCB_Z", 1.645)
+    )
+    return float(expectancy - z * abs(std) / np.sqrt(trades))
+
+
 def _val_terms_in_fitness() -> bool:
     """True when val-derived feasibility penalties belong in NSGA-III fitness."""
     return bool(_cfg.PHASE2_JOINT_TRAIN_VAL) or bool(
@@ -681,7 +713,15 @@ def deployability_rank_score(
     else:
         dd = train_dd
 
-    if bool(_cfg.PHASE2_USE_TOTAL_RETURN_OBJ):
+    if bool(getattr(_cfg, "PHASE2_RANK_USE_LCB_EXPECTANCY", True)):
+        lcb_train = expectancy_lcb_pct(train_metrics)
+        lcb_val = expectancy_lcb_pct(val_metrics) if val_metrics is not None else lcb_train
+        # Prefer the weaker split while retaining a small PF tie-breaker.
+        primary = min(lcb_train, lcb_val) + 0.25 * min(
+            float(train_metrics.get("profit_factor", 0.0)),
+            float((val_metrics or {}).get("profit_factor", 0.0)),
+        )
+    elif bool(_cfg.PHASE2_USE_TOTAL_RETURN_OBJ):
         use_robust = bool(_cfg.PHASE2_USE_ROBUST_RETURN_OBJ)
         primary = robust_return_pct(
             train_metrics, val_metrics, joint=joint and use_robust,

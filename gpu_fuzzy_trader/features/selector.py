@@ -598,6 +598,63 @@ class Feature_Selector:
                 val_df=val_df,
             )
 
+        # Preserve symbol-specific discoveries before the cross-symbol
+        # overlap reducer.  The shared ranking is still the main path, but a
+        # useful BTC-only/ETH-only feature must not disappear because its
+        # average MI was diluted by the other asset.
+        specialist_mode = bool(
+            getattr(config, "PHASE2_SYMBOL_SPECIALISTS_ENABLED", False)
+        )
+        if (
+            specialist_mode
+            and bool(getattr(config, "PHASE1_SYMBOL_UNION_ENABLED", False))
+            and "symbol" in train_df.columns
+        ):
+            symbols = sorted(
+                {str(value) for value in train_df["symbol"].dropna().unique()}
+            )
+            top_k = max(1, int(getattr(config, "PHASE1_SYMBOL_TOP_K", 8)))
+            max_union = max(
+                int(config.PHASE1_TOP_K_FEATURES),
+                int(getattr(config, "PHASE1_SYMBOL_UNION_MAX_FEATURES", 24)),
+            )
+            for direction in ("long", "short"):
+                by_name = {
+                    str(feature["name"]): dict(feature)
+                    for feature in ranked[direction]
+                }
+                for symbol in symbols:
+                    symbol_train = train_df.loc[
+                        train_df["symbol"].astype(str) == symbol
+                    ].copy()
+                    if symbol_train.empty:
+                        continue
+                    local = self.select_features(
+                        symbol_train,
+                        direction,
+                        shared=None,
+                        val_df=None,
+                    )
+                    for feature in local[:top_k]:
+                        name = str(feature["name"])
+                        incumbent = by_name.get(name)
+                        if incumbent is None or float(feature["score"]) > float(
+                            incumbent.get("score", 0.0)
+                        ):
+                            by_name[name] = dict(feature)
+                ranked[direction] = sorted(
+                    by_name.values(),
+                    key=lambda feature: float(feature.get("score", 0.0)),
+                    reverse=True,
+                )[:max_union]
+                logger.info(
+                    "Phase 1 [%s]: specialist feature union retained %d "
+                    "features across %d symbol(s)",
+                    direction,
+                    len(ranked[direction]),
+                    len(symbols),
+                )
+
         results = _reduce_overlap(
             ranked,
             config.PHASE1_MAX_FEATURE_OVERLAP,

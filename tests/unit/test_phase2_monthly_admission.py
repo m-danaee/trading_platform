@@ -164,9 +164,9 @@ class TestMonthlyAdmissionGate:
     # ------------------------------------------------------------------
 
     def test_boundary_exact_half_profitable(self, monkeypatch):
-        """Rule with exactly 3/6 = 0.5 passes at >=0.5 threshold."""
+        """Rule with 4/6 passes the tightened 0.55 threshold."""
         returns = [
-            [1.0, -1.0, 1.0, -1.0, 1.0, -1.0],  # rule 0: 3/6 = 0.5 (passes)
+            [1.0, -1.0, 1.0, -1.0, 1.0, 1.0],  # rule 0: 4/6 (passes)
             [-1.0, -2.0, -3.0, -4.0, -5.0, -6.0],  # rule 1: 0/6
             [-0.1, -0.2, -0.3, -0.4, -0.5, -0.6],  # rule 2: 0/6
         ]
@@ -176,7 +176,7 @@ class TestMonthlyAdmissionGate:
         )
 
         result = _apply_monthly_admission_gate(POOL_THREE, list(range(6)), "long")
-        # Rule 0 (0.5) passes at >=0.5; rules 1+2 rejected.
+        # Rule 0 (4/6) passes at >=0.55; rules 1+2 rejected.
         assert len(result) == 1
         assert result[0]["conditions"] == POOL_THREE[0]["conditions"]
 
@@ -185,10 +185,11 @@ class TestMonthlyAdmissionGate:
     # ------------------------------------------------------------------
 
     def test_boundary_just_below_threshold(self, monkeypatch):
-        """Rule with 2/6 ≈ 0.33 is below 0.5 threshold; rule with 3/6 = 0.5 passes."""
+        """Rule with 3/6 is below 0.55; rule with 4/6 passes."""
+        monkeypatch.setattr(_cfg, "PHASE2_MONTHLY_ADMISSION_MIN_RATIO", 0.55)
         returns = [
-            [1.0, -1.0, 1.0, -1.0, -1.0, -1.0],  # rule 0: 2/6 ≈ 0.33 (rejected)
-            [1.0, -1.0, 1.0, -1.0, 1.0, -1.0],   # rule 1: 3/6 = 0.5 (passes)
+            [1.0, -1.0, 1.0, -1.0, 1.0, -1.0],  # rule 0: 3/6 (rejected)
+            [1.0, -1.0, 1.0, -1.0, 1.0, 1.0],   # rule 1: 4/6 (passes)
             [-1.0, -2.0, -3.0, -4.0, -5.0, -6.0],  # rule 2: 0/6
         ]
         monkeypatch.setattr(
@@ -197,7 +198,7 @@ class TestMonthlyAdmissionGate:
         )
 
         result = _apply_monthly_admission_gate(POOL_THREE, list(range(6)), "long")
-        # Rule 1 (0.5) passes; rule 0 rejected; rule 2 rejected.
+        # Rule 1 (4/6) passes; rule 0 rejected; rule 2 rejected.
         assert len(result) == 1
         assert result[0]["conditions"] == POOL_THREE[1]["conditions"]
 
@@ -231,9 +232,9 @@ class TestMonthlyAdmissionGate:
             "profitable_ratio": 1.0,
             "active_ratio": 1.0,
             "bearish_ratio": 0.0,
-            "min_profitable_ratio": 0.5,
+            "min_profitable_ratio": _cfg.PHASE2_MONTHLY_ADMISSION_MIN_RATIO,
             "min_active_ratio": 0.6,
-            "max_bearish_ratio": 0.5,
+            "max_bearish_ratio": _cfg.PHASE2_MONTHLY_MAX_BEARISH_RATIO,
             "passed": True,
         }
 

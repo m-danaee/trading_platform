@@ -50,6 +50,10 @@ from gpu_fuzzy_trader.output.writer import (
     Output_Writer,
     ValidationError,
 )
+from gpu_fuzzy_trader.research_integrity import (
+    reserve_forward_evaluation,
+    write_forward_acceptance_record,
+)
 from gpu_fuzzy_trader.reporting.reporter import Reporter
 
 logger = logging.getLogger(__name__)
@@ -176,6 +180,7 @@ class OOS_Evaluator:
         self.forward_csv_path: str | None = (
             str(configured_forward).strip() if configured_forward else None
         )
+        self._forward_acceptance_metadata: dict | None = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -472,6 +477,13 @@ class OOS_Evaluator:
             "joint_positive": bool(forward_joint_ok),
         }
 
+        if forward_available and self._forward_acceptance_metadata is not None:
+            write_forward_acceptance_record(
+                _cfg.OUTPUTS_DIR,
+                self._forward_acceptance_metadata,
+                results["acceptance"],
+            )
+
         return results
 
     @staticmethod
@@ -558,7 +570,7 @@ class OOS_Evaluator:
         loader = Data_Loader()
         return loader.load_dataset(
             test_csv_path,
-            drop_tail=False,
+            drop_tail=True,
             include_barrier_outcomes=True,
         )
 
@@ -624,6 +636,11 @@ class OOS_Evaluator:
             raise FileNotFoundError(
                 "Configured FORWARD_CSV_PATH does not exist: "
                 f"{self.forward_csv_path}"
+            )
+        if bool(getattr(_cfg, "FORWARD_ACCEPTANCE_ONCE", True)):
+            self._forward_acceptance_metadata = reserve_forward_evaluation(
+                self.forward_csv_path,
+                _cfg.OUTPUTS_DIR,
             )
 
         # Compare source-tape timestamps, including rows whose labels are not

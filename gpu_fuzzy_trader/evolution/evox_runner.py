@@ -23,6 +23,7 @@ from gpu_fuzzy_trader.evolution.constraints import constrained_non_dominated_sor
 
 import logging
 import time
+import hashlib
 
 import numpy as np
 
@@ -663,6 +664,7 @@ def _update_deployable_archive(
                 "chromosome": chrom,
                 "rank_score": rank,
                 "metrics": _metrics_snapshot(metrics),
+                "behavior_descriptor": _behavior_descriptor(chrom, metrics),
             }
 
     if len(deployable_archive) <= max_size:
@@ -688,10 +690,56 @@ def _harvest_archive_chromosomes(
             key=lambda entry: float(entry.get("rank_score", -np.inf)),
             reverse=True,
         )
+        if bool(getattr(_cfg, "PHASE2_BEHAVIORAL_ARCHIVE_ENABLED", False)):
+            # Preserve one strong elite per trading-behavior niche before
+            # filling by rank.  The chromosome-keyed archive remains intact
+            # for compatibility and elite preservation.
+            selected: list[dict] = []
+            seen_descriptors: set[tuple[int, ...]] = set()
+            for entry in ranked:
+                descriptor = tuple(entry.get("behavior_descriptor", ()))
+                if descriptor in seen_descriptors:
+                    continue
+                seen_descriptors.add(descriptor)
+                selected.append(entry)
+            selected_keys = {id(entry) for entry in selected}
+            selected.extend(
+                entry for entry in ranked if id(entry) not in selected_keys
+            )
+            return [entry["chromosome"] for entry in selected]
         return [entry["chromosome"] for entry in ranked]
     if hall_of_fame:
         return list(hall_of_fame.values())
     return list(pareto_archive)
+
+
+def _behavior_descriptor(
+    chromosome: np.ndarray,
+    metrics: dict,
+) -> tuple[int, int, int, int]:
+    """Compact behavior niche: support, monthly stability, DD, feature family."""
+    trades = max(0, int(metrics.get("executed_trades", 0) or 0))
+    monthly = float(
+        metrics.get(
+            "monthly_profitable_ratio",
+            metrics.get("profitable_month_ratio", 0.0),
+        ) or 0.0
+    )
+    drawdown = max(0.0, float(metrics.get("max_drawdown_pct", 0.0) or 0.0))
+    active = np.asarray(chromosome).reshape(-1)
+    active_features = tuple(
+        int(value) for value in active[::2] if int(value) >= 0
+    )
+    feature_hash = int.from_bytes(
+        hashlib.sha256(repr(active_features).encode("utf-8")).digest()[:2],
+        "big",
+    ) % 16
+    return (
+        min(6, int(np.log2(max(trades, 1)))),
+        min(5, max(0, int(monthly * 5.0))),
+        min(5, int(drawdown // 5.0)),
+        feature_hash,
+    )
 
 
 def _pareto_robust_return_pct(

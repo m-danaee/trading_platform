@@ -40,14 +40,15 @@ logger = logging.getLogger(__name__)
 def compute_cluster_generation_budgets(
     total_gens: int,
     cluster_ids: list[str],
+    *,
+    shared_budget: bool = False,
 ) -> dict[str, int]:
     """Resolve per-island generation budgets.
 
-    Each island receives the full ``total_gens`` budget (wall-clock scales
-    with the number of islands). Splitting a short global budget across
-    clusters (e.g. 20 gens / K=3 → ~7 gens) starves Stage B: after Stage A
-    the remainder falls below ``PHASE2_ISLAND_MIN_EPOCH_GENERATIONS`` and is
-    skipped, leaving only a few exploration gens and near-empty pools.
+    By default each island receives the full ``total_gens`` compatibility
+    budget. Production cooperative mode passes ``shared_budget=True`` so the
+    total is divided across islands and wall time remains comparable to a
+    global search.
 
     Parameters
     ----------
@@ -62,6 +63,12 @@ def compute_cluster_generation_budgets(
         Mapping ``{cluster_id: generation_budget}``.
     """
     per = max(1, int(total_gens))
+    if shared_budget and cluster_ids:
+        base, remainder = divmod(per, len(cluster_ids))
+        return {
+            cid: max(1, base + (1 if idx < remainder else 0))
+            for idx, cid in enumerate(cluster_ids)
+        }
     return {cid: per for cid in cluster_ids}
 
 
@@ -411,6 +418,100 @@ def _should_skip_epoch(remaining: int) -> bool:
     return remaining < int(_cfg.PHASE2_ISLAND_MIN_EPOCH_GENERATIONS)
 
 
+def _exchange_migrants_between_islands(
+    generators: dict[str, Rule_Pool_Generator],
+    cluster_order: list[str],
+    *,
+    direction: str,
+    migration_round: int,
+) -> dict[str, int]:
+    """Perform a guarded, order-independent migration exchange.
+
+    Islands are processed sequentially for VRAM safety, but the exchange is
+    all-to-all (or ring when configured) from frozen post-round archives.  A
+    recipient evaluates every migrant on its own train/validation data before
+    accepting it, and accepted seeds are queued for the next round.
+    """
+    if not bool(getattr(_cfg, "PHASE2_MIGRATION_ENABLED", False)):
+        return {}
+    from gpu_fuzzy_trader.evolution.evox_runner import extract_deployable_migrants
+
+    topology = str(getattr(_cfg, "PHASE2_MIGRATION_TOPOLOGY", "all_to_all"))
+    exchanges: dict[str, int] = {}
+    snapshots: dict[str, list[dict]] = {}
+    for source_id in cluster_order:
+        source = generators[source_id]
+        if source._evolution_state is None:
+            snapshots[source_id] = []
+            continue
+        try:
+            snapshots[source_id] = extract_deployable_migrants(
+                source._evolution_state,
+                top_k=int(_cfg.PHASE2_MIGRATION_TOP_K),
+            )
+        except Exception as exc:
+            logger.debug(
+                "Phase 2 [%s]: failed to extract migrants from %s: %s",
+                direction, source_id, exc,
+            )
+            snapshots[source_id] = []
+
+    for source_index, source_id in enumerate(cluster_order):
+        migrants = snapshots.get(source_id, [])
+        if not migrants:
+            continue
+        if topology == "ring":
+            target_ids = [
+                cluster_order[(source_index + 1) % len(cluster_order)]
+            ]
+        else:
+            target_ids = [
+                target_id for target_id in cluster_order
+                if target_id != source_id
+            ]
+        for target_id in target_ids:
+            target = generators[target_id]
+            tagged = []
+            for migrant in migrants:
+                entry = dict(migrant)
+                entry["origin_symbol"] = list(
+                    getattr(generators[source_id], "source_symbols", [])
+                )
+                entry["migration_round"] = int(migration_round)
+                entry["source_cluster_id"] = str(source_id)
+                entry["target_cluster_id"] = str(target_id)
+                tagged.append(entry)
+            try:
+                inbound = filter_migrants_for_cluster(
+                    tagged,
+                    target,
+                    source_cluster_id=source_id,
+                    target_cluster_id=target_id,
+                )
+                if inbound:
+                    target.set_pending_migrant_seeds(
+                        _merge_archive_entries(inbound)
+                    )
+                    exchanges[f"{source_id}->{target_id}"] = len(inbound)
+            except Exception as exc:
+                logger.debug(
+                    "Phase 2 [%s]: migration %s->%s failed: %s",
+                    direction, source_id, target_id, exc,
+                )
+            finally:
+                # Recipient evaluation may have rebuilt its parked engines.
+                try:
+                    target.park_engines()
+                except Exception:
+                    pass
+    if exchanges:
+        logger.info(
+            "Phase 2 [%s]: migration round=%d accepted=%s",
+            direction, migration_round, exchanges,
+        )
+    return exchanges
+
+
 def _run_cluster_islands(
     train_df: pd.DataFrame,
     val_df: pd.DataFrame,
@@ -425,7 +526,13 @@ def _run_cluster_islands(
                          key=lambda x: int(x) if x.isdigit() else x)
     n_clusters = len(cluster_ids)
     total_gens = int(_cfg.PHASE2_ISLAND_TOTAL_GENERATIONS)
-    cluster_budgets = compute_cluster_generation_budgets(total_gens, cluster_ids)
+    cluster_budgets = compute_cluster_generation_budgets(
+        total_gens,
+        cluster_ids,
+        shared_budget=bool(
+            getattr(_cfg, "PHASE2_SHARED_ISLAND_GENERATION_BUDGET", False)
+        ),
+    )
     epoch_gens = int(_cfg.PHASE2_ISLAND_EPOCH_GENERATIONS)
 
     generators: dict[str, Rule_Pool_Generator] = {}
@@ -472,29 +579,30 @@ def _run_cluster_islands(
     )
 
     cluster_order = list(cluster_ids)
-    for idx, cid in enumerate(cluster_order):
-        gen = generators[cid]
-        gens_per_cluster = cluster_budgets[cid]
-
-        # 1. Warm this cluster's GPU engines before its first epoch
-        try:
-            warmup_phase2_gpu_kernels(
-                gen._engine,
-                gen._val_engine,
-                cluster_id=cid,
-            )
-        except Exception as exc:
-            logger.debug(
-                "Phase 2 [%s]: warmup failed for cluster %s: %s",
-                direction, cid, exc,
-            )
-
-        # 2. Run all epochs for this cluster sequentially
-        epoch_idx = 0
-        while gen._island_generations_done < gens_per_cluster:
+    migration_enabled = bool(
+        getattr(_cfg, "PHASE2_MIGRATION_ENABLED", False)
+        and n_clusters > 1
+    )
+    interval = max(
+        1,
+        int(getattr(
+            _cfg,
+            "PHASE2_MIGRATION_INTERVAL_GENERATIONS",
+            epoch_gens,
+        )),
+    )
+    epoch_gens = min(epoch_gens, interval)
+    round_idx = 0
+    while any(
+        generators[cid]._island_generations_done < cluster_budgets[cid]
+        for cid in cluster_order
+    ):
+        for cid in cluster_order:
+            gen = generators[cid]
+            gens_per_cluster = cluster_budgets[cid]
             remaining = gens_per_cluster - gen._island_generations_done
-
-            # Skip tiny remaining epochs (engine rebuild ~30s with negligible benefit)
+            if remaining <= 0:
+                continue
             if _should_skip_epoch(remaining):
                 min_gens = int(_cfg.PHASE2_ISLAND_MIN_EPOCH_GENERATIONS)
                 logger.info(
@@ -502,68 +610,45 @@ def _run_cluster_islands(
                     "(remaining=%d < PHASE2_ISLAND_MIN_EPOCH_GENERATIONS=%d)",
                     direction, cid, remaining, min_gens,
                 )
-                gen._island_generations_done = gens_per_cluster  # exit loop cleanly
-                break
+                gen._island_generations_done = gens_per_cluster
+                continue
 
-            # Per-epoch window rotation: re-sample for epoch > 0 so each
-            # epoch sees a different contiguous sub-window (Fix 1).
-            if epoch_idx > 0 and _cfg.PHASE2_PER_EPOCH_WINDOW_ROTATION:
-                gen.resample_train_for_epoch(epoch_idx)
-
+            try:
+                warmup_phase2_gpu_kernels(
+                    gen._engine,
+                    gen._val_engine,
+                    cluster_id=cid,
+                )
+            except Exception as exc:
+                logger.debug(
+                    "Phase 2 [%s]: warmup failed for cluster %s: %s",
+                    direction, cid, exc,
+                )
+            if round_idx > 0 and _cfg.PHASE2_PER_EPOCH_WINDOW_ROTATION:
+                gen.resample_train_for_epoch(round_idx)
             gen.run_epoch(n_generations=min(epoch_gens, remaining))
             gen.park_engines()
-            epoch_idx += 1
-
-        # 3. Evict this cluster's JAX signatures after all epochs are done
-        try:
-            evicted = evict_cluster_signatures(cluster_id=cid)
-            if evicted > 0:
-                logger.info(
-                    "Phase 2 [%s]: evicted %d signatures for cluster %s",
-                    direction, evicted, cid,
+            try:
+                evicted = evict_cluster_signatures(cluster_id=cid)
+                if evicted > 0:
+                    logger.info(
+                        "Phase 2 [%s]: evicted %d signatures for cluster %s",
+                        direction, evicted, cid,
+                    )
+            except Exception as exc:
+                logger.debug(
+                    "Phase 2 [%s]: signature eviction failed for %s: %s",
+                    direction, cid, exc,
                 )
-        except Exception as exc:
-            logger.debug(
-                "Phase 2 [%s]: evict_cluster_signatures failed for cluster %s: %s",
-                direction, cid, exc,
-            )
 
-        # 4. Migration: forward best individuals to the next cluster
-        if (
-            _cfg.PHASE2_MIGRATION_ENABLED
-            and not bool(getattr(_cfg, "PHASE2_SYMBOL_SPECIALISTS_ENABLED", False))
-            and not bool(getattr(_cfg, "PHASE2_ONE_SYMBOL_ISLANDS", False))
-            and n_clusters > 1
-            and idx + 1 < len(cluster_order)
-        ):
-            next_cid = cluster_order[idx + 1]
-            next_gen = generators[next_cid]
-            from gpu_fuzzy_trader.evolution.evox_runner import (
-                extract_deployable_migrants,
+        if migration_enabled:
+            _exchange_migrants_between_islands(
+                generators,
+                cluster_order,
+                direction=direction,
+                migration_round=round_idx,
             )
-
-            if gen._evolution_state is not None:
-                try:
-                    migrants = extract_deployable_migrants(
-                        gen._evolution_state,
-                        top_k=int(_cfg.PHASE2_MIGRATION_TOP_K),
-                    )
-                    if migrants:
-                        inbound = filter_migrants_for_cluster(
-                            migrants[: int(_cfg.PHASE2_MIGRATION_TOP_K)],
-                            next_gen,
-                            source_cluster_id=cid,
-                            target_cluster_id=next_cid,
-                        )
-                        if inbound:
-                            next_gen.set_pending_migrant_seeds(
-                                _merge_archive_entries(inbound),
-                            )
-                except Exception as exc:
-                    logger.debug(
-                        "Phase 2 [%s]: migration from cluster %s to %s failed: %s",
-                        direction, cid, next_cid, exc,
-                    )
+        round_idx += 1
 
     # Free cache memory across all cluster generators before finalizing
     # (Fix 2: RAM quick wins — clear global metrics cache between clusters).
@@ -672,10 +757,10 @@ def run_cluster_phase2(
         int(_cfg.PHASE2_ISLAND_TOTAL_GENERATIONS),
     )
     migration_enabled = bool(
-        _cfg.PHASE2_MIGRATION_ENABLED and not specialist_islands
+        _cfg.PHASE2_MIGRATION_ENABLED and len(cluster_map) > 1
     )
     migration_status = (
-        "enabled sequential post-cluster chain"
+        "enabled round-based bidirectional exchange"
         if migration_enabled
         else "disabled (independent islands)"
     )

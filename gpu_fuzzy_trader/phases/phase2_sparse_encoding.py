@@ -296,12 +296,56 @@ def crossover_sparse(
     parent_b: np.ndarray,
     rng: np.random.Generator,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Uniform crossover on slot rows (each slot is one condition)."""
+    """Crossover active feature building blocks rather than slot positions.
+
+    Sparse slots are canonicalized by feature index, so row-wise uniform
+    crossover can combine unrelated alleles merely because they occupy the
+    same slot.  The feature-set operator samples from the union of both
+    parents and preserves each selected feature's fuzzy class.
+    """
+    if not bool(getattr(_cfg, "PHASE2_FEATURE_SET_CROSSOVER", True)):
+        s = max_slots()
+        mask = rng.random(s) < 0.5
+        child_a = np.where(mask[:, None], parent_a, parent_b).astype(np.int32)
+        child_b = np.where(mask[:, None], parent_b, parent_a).astype(np.int32)
+        return child_a, child_b
+
     s = max_slots()
-    mask = rng.random(s) < 0.5
-    child_a = np.where(mask[:, None], parent_a, parent_b).astype(np.int32)
-    child_b = np.where(mask[:, None], parent_b, parent_a).astype(np.int32)
-    return child_a, child_b
+    rows: dict[int, list[np.ndarray]] = {}
+    for parent in (parent_a, parent_b):
+        for row in np.asarray(parent, dtype=np.int32):
+            feature = int(row[0])
+            if feature < 0:
+                continue
+            rows.setdefault(feature, []).append(np.asarray(row, dtype=np.int32))
+
+    candidates = [row for values in rows.values() for row in values]
+    if not candidates:
+        return np.asarray(parent_a, dtype=np.int32).copy(), np.asarray(
+            parent_b, dtype=np.int32
+        ).copy()
+
+    def _build_child(prefer_parent: np.ndarray) -> np.ndarray:
+        selected: list[np.ndarray] = []
+        preferred = {
+            int(row[0]): np.asarray(row, dtype=np.int32)
+            for row in np.asarray(prefer_parent, dtype=np.int32)
+            if int(row[0]) >= 0
+        }
+        feature_ids = list(rows)
+        rng.shuffle(feature_ids)
+        for feature in feature_ids[:s]:
+            options = rows[feature]
+            if feature in preferred and rng.random() < 0.5:
+                selected.append(preferred[feature])
+            else:
+                selected.append(options[int(rng.integers(0, len(options)))])
+        out = empty_slots()
+        if selected:
+            out[:len(selected)] = np.asarray(selected[:s], dtype=np.int32)
+        return canonicalize_slots(out)
+
+    return _build_child(parent_a), _build_child(parent_b)
 
 
 def mutate_sparse(

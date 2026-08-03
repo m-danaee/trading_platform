@@ -68,10 +68,10 @@ _logger = logging.getLogger(__name__)
 # =============================================================================
 
 # GLOBAL_SEED
-#   None  → one cryptographically random seed per process (default).
-#   int   → fully reproducible runs (e.g. 42).
+#   None  → one cryptographically random seed per process (explicit exploration).
+#   int   → fully reproducible runs.
 # Higher/lower: N/A — only None vs fixed integer matters for reproducibility.
-GLOBAL_SEED: int | None = None
+GLOBAL_SEED: int | None = 42
 
 _PROCESS_SEED: int | None = None
 
@@ -120,6 +120,16 @@ TEST_CSV_PATH = _env_str(
 # never marked deployment-accepted from it; provide a new, untouched future
 # file through FORWARD_CSV_PATH when a real acceptance check is available.
 FORWARD_CSV_PATH = os.environ.get("FORWARD_CSV_PATH", "").strip() or None
+
+# Research-integrity artifacts.  The consumed test tape is never a selection
+# input; these files make dataset lineage and adaptive trial counts auditable.
+EXPERIMENT_LEDGER_ENABLED: bool = True
+DATASET_MANIFEST_ENABLED: bool = True
+NESTED_VALIDATION_ENABLED: bool = True
+NESTED_VALIDATION_OUTER_FOLDS: int = 3
+# A forward tape is a release acceptance observation, not a reusable
+# validation set.  A given output directory may consume it only once.
+FORWARD_ACCEPTANCE_ONCE: bool = True
 
 # Cached splits from train_new.csv (Phases 2–5). Rebuilt when train_new.csv is newer.
 TRAIN_70_PATH = "data/train_70.parquet"
@@ -280,6 +290,9 @@ LEVERAGE = 1.0
 #   Higher → penalizes high-turnover rules; net return and PF drop for active rules.
 #   Lower  → optimistic backtest; must match evaluator_v5.ipynb for valid OOS.
 FEE_PCT = 0.20
+# Identifier included in strategy packages so a fee/execution-model change
+# cannot silently reuse an old economic strategy identity.
+COST_MODEL_ID: str = "crypto_bar_v2"
 
 # MAX_HOLD_CANDLES — force-exit horizon (bars) when neither TP nor SL hits.
 #   Higher → longer holds, larger label window, must match TAIL_DROP_ROWS.
@@ -355,6 +368,12 @@ PHASE1_MAX_FEATURE_OVERLAP = 0.8
 #   True  → direction-specific feature rankings (recommended).
 #   False → shared target; long/short pools share more structure.
 PHASE1_ASYMMETRIC_TARGET = True
+# When specialist islands are active, retain a bounded union of per-symbol
+# feature rankings. A globally averaged MI ranking can erase a valid
+# symbol-specific relationship before Phase 2 ever sees it.
+PHASE1_SYMBOL_UNION_ENABLED: bool = True
+PHASE1_SYMBOL_TOP_K: int = 8
+PHASE1_SYMBOL_UNION_MAX_FEATURES: int = 24
 
 # --- Sign consistency across stationarity folds ---
 
@@ -366,19 +385,19 @@ PHASE1_REQUIRE_SIGN_CONSISTENCY: bool = True
 # PHASE1_SIGN_CONSISTENCY_MIN_FOLDS — folds that must agree on correlation sign.
 #   Higher → stricter; features must be stable across more sub-periods.
 #   Lower  → more features pass; must be ≤ PHASE1_STATIONARITY_FOLDS.
-PHASE1_SIGN_CONSISTENCY_MIN_FOLDS: int = 2
+PHASE1_SIGN_CONSISTENCY_MIN_FOLDS: int = 4
 
 # PHASE1_SIGN_CONSISTENCY_MIN_ABS_CORR — ignore sign flips below this |ρ|.
 #   Higher → only strong correlations must be consistent; more features kept.
 #   Lower  → even weak correlations must be stable; stricter pruning.
-PHASE1_SIGN_CONSISTENCY_MIN_ABS_CORR: float = 0.02
+PHASE1_SIGN_CONSISTENCY_MIN_ABS_CORR: float = 0.03
 
 # --- Stationarity (reduce time-varying features) ---
 
 # PHASE1_STATIONARITY_FOLDS — chronological chunks for stability tests.
 #   Higher → more robust stationarity check, fewer features pass.
 #   Lower  → faster, looser stationarity filter.
-PHASE1_STATIONARITY_FOLDS = 2
+PHASE1_STATIONARITY_FOLDS = 5
 
 # PHASE1_STATIONARITY_CV_MAX — max coefficient-of-variation across fold MI ranks.
 #   Higher → allow more rank instability; keep more features.
@@ -557,6 +576,9 @@ MAX_CONDITIONS = 4
 #   "sparse_slots" — fixed slots (MAX_CONDITIONS, 2); dynamic active count.
 # Pool JSON / archives remain dense K-vectors for RB compatibility.
 PHASE2_ENCODING = "sparse_slots"
+# Preserve active feature building blocks during sparse crossover.  Slot-wise
+# crossover can exchange unrelated features merely because they share a row.
+PHASE2_FEATURE_SET_CROSSOVER: bool = True
 
 
 # =============================================================================
@@ -623,6 +645,17 @@ PHASE2_F4_EPSILON = 1e-6
 # PHASE2_N_OBJECTIVES — number of NSGA-III objectives (3 or 4). Used to size
 #   objective arrays and reference vector calls in evox_runner.py.
 PHASE2_N_OBJECTIVES = 4
+
+# Lower-confidence edge estimates keep sparse PF/Sortino winners from
+# dominating the archive. Exact per-trade dispersion is used when available;
+# aggregate metrics use a conservative fallback.
+PHASE2_EXPECTANCY_LCB_Z = 1.645
+PHASE2_EXPECTANCY_LCB_WEIGHT = 8.0
+PHASE2_RANK_USE_LCB_EXPECTANCY: bool = True
+PHASE2_EXPECTED_SHORTFALL_Q: float = 0.10
+PHASE2_EXPECTED_SHORTFALL_WEIGHT: float = 1.5
+PHASE2_COST_STRESS_MULTIPLIERS: tuple[float, ...] = (1.0, 1.5)
+PHASE2_BEHAVIORAL_ARCHIVE_ENABLED: bool = True
 
 # PHASE2_F3_OBJECTIVE — third objective: "profit_factor" (default when
 # PHASE2_USE_TOTAL_RETURN_OBJ=False),
@@ -825,11 +858,10 @@ PHASE2_MONTHLY_GOOD_RETURN_MIN_PCT = 0.0
 # PHASE2_MONTHLY_ADMISSION_MIN_RATIO — fraction of monthly windows that must
 # be profitable for a rule to be admitted (non-island path; island uses
 # island_hyperparams.monthly_admission_min_profitable_ratio from this value).
-#   0.400 → allow some flat/weak months; thicker pool for RB multi-symbol teams.
-#   0.667 → rule must be profitable in two-thirds of windows; tighter stability.
-# run.log: monthly gate emptied clusters (1→0, 2→0) then graceful-degraded to
-# weak originals — ease slightly so stable non-loss rules survive.
-PHASE2_MONTHLY_ADMISSION_MIN_RATIO = 0.40
+#   0.500 → minimum feasible evidence on the short validation calendar while
+#           still requiring half the windows to be non-loss.
+#   Higher → stronger stability but a thinner specialist pool.
+PHASE2_MONTHLY_ADMISSION_MIN_RATIO = 0.50
 
 # PHASE2_MONTHLY_ADMISSION_MIN_MONTHS — minimum number of monthly windows
 # required before the gate is applied. validation_fitness is ~110 calendar days
@@ -886,7 +918,9 @@ PHASE2_JOINT_TRAIN_VAL = False
 #   If the feasible set starves under these penalties, retune floors/weights —
 #   do not flip JOINT_TRAIN_VAL=True without a separate holdout design.
 #   → Phase 2 feasible-search item 4 / OOS plan 003
-PHASE2_VAL_IN_FITNESS_PENALTY = True
+# Production keeps validation as an admission/archive screen rather than
+# applying the same holdout as continuous evolutionary selection pressure.
+PHASE2_VAL_IN_FITNESS_PENALTY = False
 
 # PHASE2_VAL_SIM_INTERVAL — fallback validation cadence when validation is
 # report-only. If PHASE2_JOINT_TRAIN_VAL or PHASE2_VAL_IN_FITNESS_PENALTY is
@@ -1334,6 +1368,11 @@ PHASE2_CLUSTER_CORR_WEIGHT = 0.7
 #   cluster island. The scheduler processes islands sequentially; it does not
 #   divide this budget across clusters.
 PHASE2_ISLAND_TOTAL_GENERATIONS = PHASE2_GENERATIONS
+# Share the configured total across active islands for cooperative searches.
+# The legacy budget helper remains available to compatibility tests, while the
+# production scheduler uses this flag to keep wall time comparable to global
+# evolution.
+PHASE2_SHARED_ISLAND_GENERATION_BUDGET: bool = True
 # PHASE2_ISLAND_EPOCH_GENERATIONS — generations per island engine epoch/window.
 #   Migration occurs after a completed cluster, not at this epoch boundary.
 PHASE2_ISLAND_EPOCH_GENERATIONS = 10
@@ -1371,6 +1410,8 @@ PHASE2_MIGRATION_MIN_VAL_TRADES = None          # None = use island trade floor
 # governs cross-run warm-start and stays 0.25). 0.10 = 20 of 200 slots, so
 # migrants displace ≤10% of converged locals.
 PHASE2_MIGRATION_SEED_FRACTION: float = 0.10
+PHASE2_MIGRATION_INTERVAL_GENERATIONS: int = PHASE2_ISLAND_EPOCH_GENERATIONS
+PHASE2_MIGRATION_TOPOLOGY: str = "all_to_all"
 
 # PHASE2_ORPHAN_* — relaxed hyperparams for low-row symbol slices left out of clusters.
 # Disabled True→False: consistently fails with viability collapse; Symbol '7'
@@ -1513,14 +1554,15 @@ RB_MIN_VALID_PF: float = 1.02
 RB_MIN_TRAIN_TRADES: int = 10
 RB_MIN_VALID_TRADES: int = 6
 
-# RB_CANDIDATE_RISK_ADMISSION_ENABLED — when the Phase 2 fixed profile rejects
-# a rule, let RB check the already-configured TP/SL envelope before discarding
-# it.  Phase 2 deliberately scores at one static profile, while RB is the
-# component that owns risk tuning; gating candidates only at that one profile
-# made the two contracts fight each other (notably on the short side).  The
-# envelope is evaluated on train + validation-selection only and the normal
-# walk-forward/tail gates still run after composition.
-RB_CANDIDATE_RISK_ADMISSION_ENABLED: bool = True
+# RB_CANDIDATE_RISK_ADMISSION_ENABLED — legacy post-discovery TP/SL rescue.
+# False is the production research contract: a Phase 2 candidate must pass at
+# its discovery exit geometry. Enabling this flag creates a new exit-policy
+# search family and must only be used by an explicitly nested experiment.
+RB_CANDIDATE_RISK_ADMISSION_ENABLED: bool = False
+# Internal policy marker set only by Pipeline_Orchestrator.  Small compatibility
+# callers may exercise legacy helper behavior without bypassing the canonical
+# production contract.
+RB_CANONICAL_PIPELINE_ACTIVE: bool = False
 
 # RB_RULESET_MIN_* — trade-count floors applied to the composed team (all
 #   rules together).  Should be larger than the per-rule floors because the
@@ -1546,10 +1588,10 @@ RB_KEEP_TOP_RULES: int = 150
 # Keep the historical univariate complement available as an explicitly
 # opt-in diagnostic helper, but never add it to the production candidate pool.
 RB_UNIVARIATE_BASELINE_ENABLED: bool = False
-# When enabled by the canonical pipeline, every RB candidate/final rule must
-# preserve the Phase 2 feature-condition contract.  Kept opt-in for legacy
-# diagnostic callers that intentionally exercise relaxed RB behavior.
-RB_PHASE2_PROVENANCE_ONLY: bool = False
+# Every production RB candidate/final rule must preserve the Phase 2
+# feature-condition contract. Legacy callers may override this only in
+# isolated tests.
+RB_PHASE2_PROVENANCE_ONLY: bool = True
 RB_UNIVARIATE_BASELINE_MAX_RULES: int = 400
 # Include a generalist form of each one-condition baseline in addition to the
 # symbol-specialized forms.  The former is important when a condition has a
@@ -1687,17 +1729,29 @@ RB_DEFAULT_CAPITAL_PCT: float = 18.0
 RB_REQUIRE_TP_SL_ABOVE_ONE: bool = True
 RB_MIN_TP: float = 1.0
 RB_MIN_SL: float = 1.0
+# RB_RISK_OPTIMIZE_EXITS — exit barriers are part of strategy identity.
+# False means RB may size capital but cannot silently rewrite TP/SL discovered
+# by Phase 2. An exit experiment must create a new strategy family.
+RB_RISK_OPTIMIZE_EXITS: bool = False
+RB_EXPECTANCY_LCB_Z: float = 1.645
+RB_EXPECTANCY_LCB_MARGIN_PCT: float = 0.0
+RB_COST_STRESS_MULTIPLIERS: tuple[float, ...] = (1.0, 1.5)
+RB_COST_STRESS_ENABLED: bool = True
+RB_COST_STRESS_MIN_RETURN_PCT: float = 0.0
+RB_MONTHLY_CERTIFICATE_ENABLED: bool = True
+RB_MONTHLY_MIN_PROFITABLE_RATIO: float = 0.55
+RB_MONTHLY_MAX_BEARISH_RATIO: float = 0.35
 
 
 # --- RB risk-grid search -----------------------------------------------------
 
-# RB_TP_GRID / RB_SL_GRID / RB_CAPITAL_GRID — values enumerated per rule in
-#   the round-robin grid search. Coarse grids keep runtime reasonable on the
-#   current dataset and remain practical for larger universes.
+# RB_TP_GRID / RB_SL_GRID / RB_CAPITAL_GRID — experimental exit and capital
+# profiles. Production uses the capital grid only because TP/SL are immutable
+# strategy identity; exit grids remain available for explicitly nested studies.
 # The minimum is 5% so the maximum 20-rule team fits under the evaluator's
 # 100% exposure contract before normalization.
-RB_TP_GRID: tuple[float, ...] = (1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0)
-RB_SL_GRID: tuple[float, ...] = (1.0, 1.2, 1.5, 2.0, 2.5)
+RB_TP_GRID: tuple[float, ...] = (1.5, 2.0, 2.5, 3.0)
+RB_SL_GRID: tuple[float, ...] = (1.0, 1.2, 1.5, 2.0)
 RB_CAPITAL_GRID: tuple[float, ...] = (5.0, 7.5, 10.0, 12.0, 15.0, 18.0)
 
 # RB_RISK_OPT_PASSES — round-robin passes through all rules.
@@ -1789,7 +1843,11 @@ RB_MIN_DISTINCT_SYMBOLS: int = 2
 # check, and the remaining symbol still has to pass all return/PF,
 # walk-forward, tail, and Phase 5 gates.  The output/report records the
 # partial book explicitly so it cannot be mistaken for full-universe coverage.
-RB_ALLOW_PARTIAL_SPECIALIST_COVERAGE: bool = True
+RB_ALLOW_PARTIAL_SPECIALIST_COVERAGE: bool = False
+# A configured two-symbol release is not allowed to silently become a
+# single-symbol release. Single-asset specialists must be exported under an
+# explicit product/artifact identity instead.
+RB_MULTI_SYMBOL_RELEASE: bool = True
 
 # Soft score bonus per extra traded symbol beyond the first (Mode A ranking).
 # 8→15 — stronger preference for multi-symbol traded coverage
@@ -2495,6 +2553,10 @@ def validate_config(
     )
     _config_check(float(PHASE2_F4_EPSILON) > 0.0,
                   "PHASE2_F4_EPSILON must be positive")
+    _config_check(float(PHASE2_EXPECTANCY_LCB_Z) > 0.0,
+                  "PHASE2_EXPECTANCY_LCB_Z must be positive")
+    _config_check(float(PHASE2_EXPECTANCY_LCB_WEIGHT) >= 0.0,
+                  "PHASE2_EXPECTANCY_LCB_WEIGHT must be non-negative")
     _config_check(int(MIN_TRADE_POOL_FLOOR) <= int(MIN_TRADE_SUPPORT),
                   "MIN_TRADE_POOL_FLOOR must be <= MIN_TRADE_SUPPORT")
     _config_check(int(MIN_TRADE_SUPPORT) > 0,
@@ -2603,6 +2665,18 @@ def validate_config(
                   "RB_RISK_MIN_IMPROVEMENT must be non-negative")
     _config_check(int(RB_RISK_GRID_WF_SPLITS) >= 1,
                   "RB_RISK_GRID_WF_SPLITS must be >= 1")
+    _config_check(float(RB_EXPECTANCY_LCB_Z) > 0.0,
+                  "RB_EXPECTANCY_LCB_Z must be positive")
+    _config_check(float(RB_EXPECTANCY_LCB_MARGIN_PCT) >= -100.0,
+                  "RB_EXPECTANCY_LCB_MARGIN_PCT is invalid")
+    _config_check(
+        all(float(value) >= 1.0 for value in RB_COST_STRESS_MULTIPLIERS),
+        "RB_COST_STRESS_MULTIPLIERS must be >= 1",
+    )
+    _config_check(int(PHASE2_MIGRATION_INTERVAL_GENERATIONS) >= 1,
+                  "PHASE2_MIGRATION_INTERVAL_GENERATIONS must be positive")
+    _config_check(int(NESTED_VALIDATION_OUTER_FOLDS) >= 1,
+                  "NESTED_VALIDATION_OUTER_FOLDS must be positive")
     _config_check(0.0 < float(RB_TAIL_HOLDOUT_FRACTION) < 1.0,
                   "RB_TAIL_HOLDOUT_FRACTION must be in (0, 1)")
     _config_check(float(RB_TAIL_HOLDOUT_MIN_RETURN_PCT) >= 0.0,
@@ -2696,10 +2770,18 @@ def effective_config_snapshot(
         )
     active_symbol_count = int(n_symbols) if n_symbols is not None else None
     configured_cluster_count = int(PHASE2_N_CLUSTERS)
+    specialist_mode = bool(
+        globals().get("PHASE2_SYMBOL_SPECIALISTS_ENABLED", False)
+        or PHASE2_ONE_SYMBOL_ISLANDS
+    )
     effective_cluster_count = (
-        1
-        if str(PHASE2_ISLAND_MODE).lower() == "global"
-        else configured_cluster_count
+        active_symbol_count
+        if specialist_mode and active_symbol_count is not None
+        else (
+            1
+            if str(PHASE2_ISLAND_MODE).lower() == "global"
+            else configured_cluster_count
+        )
     )
     if active_symbol_count is not None and bool(DEBUG_SYMBOL_SCOPE_ENABLED):
         effective_cluster_count = min(effective_cluster_count, active_symbol_count)
@@ -2743,9 +2825,15 @@ def effective_config_snapshot(
             ),
             "configured_migration_enabled": bool(PHASE2_MIGRATION_ENABLED),
             "effective_migration_enabled": bool(
-                PHASE2_MIGRATION_ENABLED
-                and not bool(globals().get("PHASE2_SYMBOL_SPECIALISTS_ENABLED", False))
+                PHASE2_MIGRATION_ENABLED and phase2_island_mode_enabled()
             ),
+            "shared_generation_budget": bool(
+                PHASE2_SHARED_ISLAND_GENERATION_BUDGET
+            ),
+            "migration_interval_generations": int(
+                PHASE2_MIGRATION_INTERVAL_GENERATIONS
+            ),
+            "migration_topology": str(PHASE2_MIGRATION_TOPOLOGY),
             "effective_symbol_island_count": (
                 int(active_symbol_count)
                 if bool(globals().get("PHASE2_SYMBOL_SPECIALISTS_ENABLED", False))
@@ -2757,6 +2845,11 @@ def effective_config_snapshot(
             "effective_min_profitable_symbols": effective_min_profitable_symbols(n_symbols),
             "min_profitable_symbols_required": int(PHASE2_MIN_PROFITABLE_SYMBOLS),
             "symbol_gene_dont_care_prob": float(PHASE2_SYMBOL_GENE_DONT_CARE_PROB),
+            "val_in_fitness_penalty": bool(PHASE2_VAL_IN_FITNESS_PENALTY),
+            "expectancy_lcb_z": float(PHASE2_EXPECTANCY_LCB_Z),
+            "expected_shortfall_q": float(PHASE2_EXPECTED_SHORTFALL_Q),
+            "phase1_symbol_union": bool(PHASE1_SYMBOL_UNION_ENABLED),
+            "phase1_symbol_top_k": int(PHASE1_SYMBOL_TOP_K),
             "island_monthly_min_months": int(PHASE2_ISLAND_MONTHLY_MIN_MONTHS),
             "monthly_min_trades": int(PHASE2_MONTHLY_MIN_TRADES),
             "monthly_min_active_ratio": float(PHASE2_MONTHLY_MIN_ACTIVE_RATIO),
@@ -2773,6 +2866,14 @@ def effective_config_snapshot(
                 float(RB_MAX_TOTAL_CAPITAL) // min_capital
             ),
             "risk_grid_wf_splits": int(RB_RISK_GRID_WF_SPLITS),
+            "risk_optimize_exits": bool(RB_RISK_OPTIMIZE_EXITS),
+            "candidate_risk_admission": bool(
+                RB_CANDIDATE_RISK_ADMISSION_ENABLED
+            ),
+            "cost_stress_enabled": bool(RB_COST_STRESS_ENABLED),
+            "cost_stress_multipliers": [
+                float(value) for value in RB_COST_STRESS_MULTIPLIERS
+            ],
             "tail_holdout_fraction": float(RB_TAIL_HOLDOUT_FRACTION),
             "tail_holdout_selection_gate": bool(RB_TAIL_HOLDOUT_SELECTION_GATE),
             "tail_holdout_min_trades": int(RB_TAIL_HOLDOUT_MIN_TRADES),
@@ -2790,6 +2891,14 @@ def effective_config_snapshot(
             "phase2_provenance_only": bool(
                 globals().get("RB_PHASE2_PROVENANCE_ONLY", False)
             ),
+            "strategy_identity_exit_immutable": not bool(
+                RB_RISK_OPTIMIZE_EXITS
+            ),
+            "monthly_certificate": bool(RB_MONTHLY_CERTIFICATE_ENABLED),
+            "monthly_min_profitable_ratio": float(
+                RB_MONTHLY_MIN_PROFITABLE_RATIO
+            ),
+            "monthly_max_bearish_ratio": float(RB_MONTHLY_MAX_BEARISH_RATIO),
             "univariate_baseline_enabled": bool(
                 RB_UNIVARIATE_BASELINE_ENABLED
             ),
