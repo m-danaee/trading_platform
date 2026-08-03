@@ -1164,13 +1164,13 @@ PHASE2_TWO_STAGE_ENABLED = True
 #   Higher → more diverse initial Pareto before val-focused Stage B.
 #   Lower  → quicker handoff; Stage B may miss good regions.
 # Scaled to PHASE2_GENERATIONS=40 (A:B = 20:20).
-PHASE2_STAGE_A_GENERATIONS = 20
+PHASE2_STAGE_A_GENERATIONS = 65
 
 # PHASE2_STAGE_B_GENERATIONS — Stage B (refinement) generation budget.
 #   Higher → more val-robust polishing; total time = A + B gens.
 #   Lower  → less refinement after exploration.
 # Matched to 40-gen island budget (A:B = 20:20).
-PHASE2_STAGE_B_GENERATIONS = 20
+PHASE2_STAGE_B_GENERATIONS = 35
 
 # PHASE2_STAGE_B_SEED_TOP_K — elites from Stage A seeded into Stage B.
 #   Higher → broader refinement starting set; slower Stage B per gen.
