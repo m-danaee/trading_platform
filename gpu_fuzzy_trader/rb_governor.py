@@ -468,9 +468,50 @@ def _assert_capital_budget(rules: list[dict], *, max_total: float | None = None)
         )
 
 
+def _assert_mandatory_context(direction: str, rules: list[dict]) -> None:
+    """Fail closed if the fixed trend-context conditions were lost.
+
+    The mandatory direction + LWC-trigger conditions must survive candidate
+    copying, ruleset composition, risk-grid evaluation, profit amplification,
+    and final strategy writing.  Enforcement mirrors Output_Writer: strict when
+    the strategy declares any context condition (or the strict flag is on),
+    and always rejects opposite-direction / duplicate context.
+    """
+    mandatory = _cfg.mandatory_context_conditions(direction)
+    ctx_cols = set(_cfg.CONTEXT_COLUMNS)
+
+    def _ctx_feature(cond: str) -> str | None:
+        if not (cond.startswith("[") and " IS " in cond):
+            return None
+        feat = cond.split(" IS ", 1)[0][1:].strip()
+        if feat.endswith("]"):
+            feat = feat[:-1].rstrip()
+        return feat if feat in ctx_cols else None
+
+    for idx, rule in enumerate(rules, start=1):
+        present = [str(c).strip() for c in rule.get("conditions", [])]
+        seen: set[str] = set()
+        for c in present:
+            feat = _ctx_feature(c)
+            if feat:
+                if c in seen:
+                    raise AssertionError(
+                        f"Rule {idx}: duplicate mandatory context "
+                        f"condition {c!r} after RB composition.")
+                seen.add(c)
+        if _cfg.REQUIRE_CONTEXT_IN_STRATEGY:
+            for ctx_condition in mandatory:
+                if ctx_condition not in present:
+                    raise AssertionError(
+                        f"Rule {idx}: mandatory context condition "
+                        f"{ctx_condition!r} was lost during RB composition "
+                        f"for direction {direction!r}.")
+
+
 def _strategy(direction: str, rules: list[dict], *, risk_optimized: bool = False, extra: dict | None = None) -> dict:
     clean_rules = _enforce_capital_budget(rules)
     _assert_capital_budget(clean_rules)
+    _assert_mandatory_context(direction, clean_rules)
     package_id = strategy_id(
         direction=direction,
         rules=clean_rules,

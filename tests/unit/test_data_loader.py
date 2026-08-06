@@ -154,9 +154,9 @@ class TestOHLCVLabelGeneration:
         assert len(df) == 5
         assert df["open"].iloc[0] == 100.0
         assert df["label_open_next"].iloc[0] == 101.0
-        assert df["label_close_288"].iloc[0] == 388.5
+        assert df["label_close_288"].iloc[0] == 196.5
         assert df["label_min_288"].iloc[0] == 100.0
-        assert df["label_max_288"].iloc[0] == 389.0
+        assert df["label_max_288"].iloc[0] == 197.0
         assert df["label_max_before_min"].iloc[0] == 0.0
 
     def test_partial_labels_are_rejected(self):

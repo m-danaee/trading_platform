@@ -17,6 +17,7 @@ from typing import Any, Iterable, Mapping
 
 import pandas as pd
 
+from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.phases.rule_identity import strategy_id
 
 
@@ -76,6 +77,8 @@ def write_dataset_manifests(
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "created_at": _utc_now(),
+        "context_contract_digest": _cfg.context_contract_digest(),
+        "context_contract": _cfg.context_contract(),
         "datasets": {
             name: dataset_manifest(dataset_path)
             for name, dataset_path in datasets.items()

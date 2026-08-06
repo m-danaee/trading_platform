@@ -30,6 +30,7 @@ from gpu_fuzzy_trader.backtest.cpu_engine import (
     _safe_profit_factor,
     _sortino_ratio_from_returns,
 )
+from gpu_fuzzy_trader.backtest.joint_engine import JointPortfolioEngine
 from gpu_fuzzy_trader.backtest.symbol_conditions import (
     normalize_symbol_value,
     parse_symbol_condition,
@@ -69,6 +70,56 @@ def _make_df(
 
 def _make_engine(df: pd.DataFrame, direction: str = "long", **kw) -> CPUBacktestEngine:
     return CPUBacktestEngine(df, feature_modes={}, direction=direction, **kw)
+
+
+class TestContextEntryPaths:
+    @staticmethod
+    def _context_df() -> pd.DataFrame:
+        df = _make_df(n=3)
+        df["hwc_state"] = [2, 1, 2]
+        df["mwc_state"] = [2, 1, 2]
+        df["lwc_state"] = [2, 1, 2]
+        df["tf_permission_long"] = [0, 1, 0]
+        df["tf_permission_short"] = [0, 0, 0]
+        df["lwc_pullback_reversal_long"] = [0, 1, 0]
+        df["lwc_pullback_reversal_short"] = [0, 0, 0]
+        return df
+
+    @staticmethod
+    def _rule() -> dict:
+        return {
+            "conditions": ["[feat_a] IS Very High"],
+            "tp": 4.0,
+            "sl": 2.0,
+            "capital_pct": 10.0,
+        }
+
+    def test_joint_entries_apply_direction_context_mask(self):
+        df = self._context_df()
+        engine = _make_engine(df, "long")
+        joint = JointPortfolioEngine.__new__(JointPortfolioEngine)
+        joint.df = df
+        joint.long_engine = engine
+        joint.short_engine = _make_engine(df, "short")
+        joint.entry_time_priority = np.arange(len(df), dtype=np.int64)
+
+        entries = joint._entries(
+            "long", {"direction": "long", "rules_set": [self._rule()]})
+        assert [entry["idx"] for entry in entries] == [1]
+
+    def test_cached_entries_are_post_filtered_by_context(self):
+        df = self._context_df()
+        engine = _make_engine(df, "long")
+        all_entries = _build_entries_from_rule_set(
+            df, [self._rule()], {}, context_mask=np.ones(len(df), dtype=bool))
+
+        class FakeCache:
+            def build_entries(self, rule_set, split):
+                return all_entries
+
+        metrics = engine.simulate_rule_set_from_cache(
+            [self._rule()], FakeCache(), "validation")
+        assert metrics["raw_signal_count"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -540,7 +591,7 @@ class TestTradeOutcomeLong:
         # Neither TP nor SL hit; close_ret = 1.5%
         ret, reason = eng._build_trade_outcome_single(0, tp=4.0, sl=2.0)
         assert ret == pytest.approx(1.5)
-        assert reason == "Time_288"
+        assert reason == "Time_96"
 
 
 class TestTradeOutcomeShort:
@@ -596,7 +647,7 @@ class TestTradeOutcomeShort:
         # close_ret = 1.5%, short returns -1.5%
         ret, reason = eng._build_trade_outcome_single(0, tp=4.0, sl=2.0)
         assert ret == pytest.approx(-1.5)
-        assert reason == "Time_288"
+        assert reason == "Time_96"
 
 
 
@@ -947,6 +998,20 @@ class TestPerSymbolMetrics:
 # ---------------------------------------------------------------------------
 
 class TestReturnLogs:
+    def test_entry_time_is_next_bar_open(self):
+        df = _make_df(n=3, feature_val=0.9)
+        rule_set = [{
+            "conditions": ["[feat_a] IS Very High"],
+            "tp": 4.0,
+            "sl": 2.0,
+            "capital_pct": 50.0,
+        }]
+        eng = _make_engine(df, max_hold_candles=2)
+        _metrics, logs_df = eng.simulate_rule_set(rule_set, return_logs=True)
+        assert logs_df.loc[0, "Entry_Index"] == 0
+        assert logs_df.loc[0, "Entry_Time"] == pd.Timestamp(
+            "2024-01-01 00:05")
+
     def test_logs_df_has_expected_columns(self):
         df = _make_df(n=3, feature_val=0.9)
         rule_set = [{"conditions": ["[feat_a] IS Very High"], "tp": 4.0, "sl": 2.0, "capital_pct": 50.0}]

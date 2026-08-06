@@ -67,6 +67,78 @@ class ValidationError(Exception):
 _CONDITION_RE = re.compile(r"^\[(.+?)\] IS (.+)$")
 
 
+def _condition_feature(condition: str) -> str | None:
+    m = _CONDITION_RE.match(condition)
+    if not m:
+        return None
+    return m.group(1).strip()
+
+
+def _context_feature_direction(feature: str) -> str | None:
+    """Return the strategy direction a context column belongs to (if any)."""
+    if feature in _cfg.CONTEXT_PERMISSION_COLUMNS or feature in _cfg.CONTEXT_TRIGGER_COLUMNS:
+        for direction in ("long", "short"):
+            if feature == _cfg.context_permission_column(direction) or \
+               feature == _cfg.context_trigger_column(direction):
+                return direction
+    return None
+
+
+def _validate_context_contract(rule_set: dict, validated_rules: list[dict]) -> None:
+    """Enforce the mandatory trend-context contract on a strategy.
+
+    Rejects:
+      - rules containing opposite-direction context conditions,
+      - duplicate mandatory context conditions,
+      - (when the strategy carries any context condition, or the strict flag
+        is set) rules missing the direction's two mandatory conditions.
+
+    MIN_CONDITIONS / MAX_CONDITIONS count evolved conditions; the fixed
+    context conditions are policy, not ordinary genes.
+    """
+    direction = rule_set.get("direction")
+    if direction not in ("long", "short"):
+        return
+    mandatory = _cfg.mandatory_context_conditions(direction)
+
+    for idx, rule in enumerate(validated_rules, start=1):
+        conditions = rule["conditions"]
+        present = [c for c in conditions if isinstance(c, str)]
+
+        opposite_cols = set()
+        for direction_name in ("long", "short"):
+            if direction_name != direction:
+                opposite_cols.add(_cfg.context_permission_column(direction_name))
+                opposite_cols.add(_cfg.context_trigger_column(direction_name))
+        bad_opposite = [c for c in present if _condition_feature(c) in opposite_cols]
+        if bad_opposite:
+            raise ValidationError(
+                f"Rule {idx}: contains opposite-direction context condition(s) "
+                f"{bad_opposite} for direction {direction!r}. Direction-specific "
+                "context cannot cross sides."
+            )
+
+        # Duplicate mandatory conditions are rejected.
+        seen: set[str] = set()
+        for c in present:
+            feat = _condition_feature(c)
+            if feat and feat in _cfg.CONTEXT_COLUMNS:
+                if c in seen:
+                    raise ValidationError(
+                        f"Rule {idx}: duplicate mandatory context condition "
+                        f"{c!r}."
+                    )
+                seen.add(c)
+
+        if _cfg.REQUIRE_CONTEXT_IN_STRATEGY:
+            for ctx_condition in mandatory:
+                if ctx_condition not in present:
+                    raise ValidationError(
+                        f"Rule {idx}: missing mandatory context condition "
+                        f"{ctx_condition!r} for direction {direction!r}."
+                    )
+
+
 def _validate_symbol_condition(condition: str) -> None:
     """Validate an optional symbol filter (symbol is X / [symbol] IS X)."""
     try:
@@ -283,6 +355,8 @@ def _validate_rule_set(rule_set: object) -> dict:
     validated_rules = []
     for i, rule in enumerate(rules_list, start=1):
         validated_rules.append(_validate_rule(rule, i))
+
+    _validate_context_contract(rule_set, validated_rules)
 
     normalized = {
         "direction": direction,

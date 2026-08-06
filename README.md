@@ -2,7 +2,9 @@
 
 This project evolves fuzzy trading rules in Phase 2, selects and risk-tunes
 teams with the RB Governor, and evaluates only evaluator-compatible strategy
-JSON with the read-only `evaluator_v5.ipynb` contract.
+JSON with the `evaluator_v5.ipynb` contract. Entries use a causal
+multi-timeframe trend hierarchy: 4h and 1h regimes grant directional
+permission, while a 15m pullback reversal triggers the entry search.
 
 Long Phase 2 and RB runs are intended for a CUDA host. The default runtime is
 hybrid-tuned for an 8-core CPU plus a 6-GiB RTX 4050: large-window Phase 2
@@ -23,6 +25,7 @@ gpu_fuzzy_trader/   Core pipeline package
 tests/              Unit, property, and benchmark tests
 RUN.md              Detailed runbook (setup, CLI, tests, troubleshooting)
 evaluator_v5.ipynb  Canonical evaluator notebook for rule-set evaluation
+PLAN.md             Frozen multi-timeframe trading and research policy
 requirements.lock   Reproducible research dependency baseline
 requirements.txt    Base dependency ranges
 requirements-gpu.txt GPU JAX plugin dependencies
@@ -30,17 +33,43 @@ requirements-gpu.txt GPU JAX plugin dependencies
 
 ## Pipeline
 
-1. Data preparation loads `train_new.csv` and builds cached train/validation splits.
-2. Phase 1 selects direction-specific features.
-3. Phase 2 generates and admits rule pools using island-resolved floors.
-4. RB Governor is the single production selection and risk path.
-5. Phase 5 records diagnostics on the consumed `test_new.csv`; an optional
-   strictly newer `FORWARD_CSV_PATH` is the only acceptance tape.
+1. Causal enrichment fits regime thresholds from the training tape only and
+   produces separate enriched train, test, and optional forward CSVs.
+2. Data preparation loads the enriched training tape and builds cached
+   train/validation splits.
+3. Phase 1 selects direction-specific 15m `ff_*` confirmations. Fixed context
+   columns are excluded from feature selection and chromosomes.
+4. Phase 2 generates and admits rule pools using island-resolved floors while
+   applying the mandatory context mask to every candidate.
+5. RB Governor is the single production selection and risk path. It preserves
+   the fixed context policy and keeps existing capital sizing behavior.
+6. Phase 5 records diagnostics on the consumed enriched test tape; an optional
+   strictly newer enriched forward tape is the only acceptance tape.
 
 The RB Governor treats entry conditions, symbol scope, TP/SL, horizon, and cost
 model as one immutable strategy identity. Production RB may size capital, but
 it does not rescue rejected Phase 2 rules by silently searching a new TP/SL
 envelope.
+
+The first release is trend-following only. Long entries require Bullish 4h and
+1h states; short entries require Bearish 4h and 1h states. Range, Noisy,
+opposite, and unavailable states block entries. The current 15m state must also
+reverse in the permitted direction after an opposite state occurred within the
+previous eight completed 15m states.
+
+These two direction-specific conditions are mandatory execution policy in
+every exported rule:
+
+```text
+Long:  [tf_permission_long] IS Active (1)
+       [lwc_pullback_reversal_long] IS Active (1)
+Short: [tf_permission_short] IS Active (1)
+       [lwc_pullback_reversal_short] IS Active (1)
+```
+
+They are not NSGA-III genes. Mutation, crossover, feature selection, and
+condition-count limits cannot remove them. `MIN_CONDITIONS` and
+`MAX_CONDITIONS` count only evolved 15m confirmations.
 
 Existing callers using `--phase 3` or `--phase 4` remain compatible: both
 normalize to the RB Governor and return the historical result keys alongside
@@ -70,6 +99,38 @@ Install the matching JAX GPU stack separately on CUDA hosts:
 
 Use the repository virtual environment for every command.
 
+Generate enriched tapes before running the multi-timeframe pipeline. Raw tapes
+are never overwritten:
+
+```bash
+.venv/bin/python -m gpu_fuzzy_trader.data.trend_context \
+  --train data/train_new.csv \
+  --test data/test_new.csv \
+  --forward data/forward.csv
+```
+
+Omit `--forward` until a strictly newer untouched tape is available. The
+default outputs are:
+
+```text
+data/enriched/train_new_hwc_mwc_lwc.csv
+data/enriched/test_new_hwc_mwc_lwc.csv
+data/enriched/forward_hwc_mwc_lwc.csv
+data/enriched/trend_context_manifest.json
+```
+
+Point the normal pipeline paths at those enriched tapes. Phase 5 explicitly
+rejects a raw, non-enriched test or forward tape:
+
+```bash
+TRAIN_CSV_PATH=data/enriched/train_new_hwc_mwc_lwc.csv \
+TEST_CSV_PATH=data/enriched/test_new_hwc_mwc_lwc.csv \
+FORWARD_CSV_PATH=data/enriched/forward_hwc_mwc_lwc.csv \
+.venv/bin/python -m gpu_fuzzy_trader.run_pipeline
+```
+
+Leave `FORWARD_CSV_PATH` unset when no untouched forward tape exists.
+
 ```bash
 .venv/bin/python -m gpu_fuzzy_trader.run_pipeline
 .venv/bin/python -m gpu_fuzzy_trader.run_pipeline --output outputs/run_a
@@ -91,15 +152,28 @@ thresholds.
 
 ## Data and evaluator
 
-- `data/train_new.csv` feeds Phase 1 and Phase 2. Its OHLCV columns are used
-  to derive the forward labels required by the backtest.
+- `data/train_new.csv` is the raw training tape and the only source used to fit
+  pooled regime thresholds. Thresholds are frozen for every later tape.
+- `data/enriched/train_new_hwc_mwc_lwc.csv` feeds Phase 1 and Phase 2 after
+  enrichment. Its OHLCV columns are used to derive forward labels separately
+  within the training research boundary.
 - Validation fitness and selection windows feed Phase 2 and RB only.
-- `data/test_new.csv` is a consumed diagnostic holdout for Phase 5 and uses
-  the same OHLCV/features schema.
-- `FORWARD_CSV_PATH` may point to a strictly newer, untouched tape. A run is
-  accepted only when long, short, and the joint portfolio are all profitable
-  on that forward period.
-- `evaluator_v5.ipynb` is read-only and is the final evaluation authority.
+- `data/test_new.csv` is the raw consumed diagnostic holdout. Phase 5 loads its
+  enriched counterpart and never fits thresholds, selects rules, or rewrites
+  strategies from test results.
+- `FORWARD_CSV_PATH` must point to an enriched, strictly newer untouched tape.
+  A run is accepted only when long, short, and the joint portfolio are all
+  profitable on that forward period.
+- `evaluator_v5.ipynb` is the canonical evaluator contract. Its constants and
+  dynamic time-exit behavior match the 96-bar CPU pipeline contract.
+
+CSV timestamps are timezone-naive 15m bar-open times aligned to
+`:00/:15/:30/:45`. Enrichment rejects duplicate `(datetime, symbol)` keys,
+gaps, off-grid timestamps, and ambiguous history/target overlap. A signal row
+uses the HWC/MWC state available at its next-open execution time: the 10:45
+signal can use a 1h bar closing at 11:00 for an 11:00 entry, and the 11:45
+signal can use the 4h bar closing at 12:00 for a 12:00 entry. Rolling warm-up
+may use preceding research history, but history rows are not emitted or scored.
 
 The checked-in `train_new.csv` and `test_new.csv` profile contains the balanced
 `BTCUSDT`/`ETHUSDT` universe. Production Phase 2 therefore uses independent
@@ -125,7 +199,20 @@ needed. The evaluator-facing strategy files are `outputs/long.json` and
 matter for results: evaluator fees/capital/leverage/exposure/notional, label
 horizon and embargo geometry, stage budgets, population/archive limits,
 mutation and support floors, monthly windows, RB risk grids, rule-capital
-feasibility, threshold ordering, and risk-tail geometry.
+feasibility, threshold ordering, risk-tail geometry, and the complete trend
+context contract.
+
+The maximum holding period is 96 15m bars, or 24 hours. Label generation,
+barrier outcomes, force exits, tail drops, holdout embargo, purged-walk-forward
+embargo, and validation-half purge use the same 96-bar horizon. Legacy label
+column names ending in `_288` remain temporarily for schema compatibility; the
+values and runtime behavior use 96 bars.
+
+Strategy, pool, archive, split, feature-selection, and dataset identities
+include the context algorithm, fitted thresholds, threshold-fitting source and
+interval, raw/history/enriched hashes, timeframes, timestamp semantics, state
+codes, pullback lookback, permission policy, and holding horizon. Resume and
+cache loading reject artifacts when that identity changes.
 
 The canonical exposure contract is 100%. RB permits up to 20 rules and starts
 the capital grid at 5%, so the maximum rule count remains feasible before
@@ -150,6 +237,8 @@ the locked strategy without pruning or rewriting it from test-set PnL.
 - `reports/rb_governor_{direction}_report.json`: gate, risk, tail, and
   fail-closed diagnostics.
 - `reports/config_audit.json`: effective configuration snapshot.
+- `data/enriched/trend_context_manifest.json`: context thresholds, source and
+  history lineage, enriched hashes, timeframes, and timestamp policy.
 - `reports/test_*`: consumed-test diagnostics, marked
   `acceptance_status=diagnostic_only`.
 - `reports/forward_*`: optional forward-candidate reports when
@@ -201,6 +290,8 @@ targeted runs while iterating on a change:
 
 ```bash
 PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q tests/unit/test_config_validation.py
+PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q tests/unit/test_trend_context.py
+PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q tests/unit/test_cpu_engine.py
 PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q tests/unit/test_rb_fail_closed.py
 PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q tests/unit/test_optuna_search.py
 ```

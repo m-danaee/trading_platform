@@ -415,6 +415,7 @@ def _build_entries_from_rule_set(
     mask_cache: dict[tuple[str, ...], np.ndarray] | None = None,
     row_priority: np.ndarray | None = None,
     normalized_symbols: np.ndarray | None = None,
+    context_mask: np.ndarray | None = None,
 ) -> list[dict]:
     """
     Priority-based rule assignment: first matching rule wins per row.
@@ -427,6 +428,13 @@ def _build_entries_from_rule_set(
         return []
 
     n_rows = len(df)
+    if context_mask is None:
+        context_mask = np.ones(n_rows, dtype=bool)
+    else:
+        context_mask = np.asarray(context_mask, dtype=bool)
+        if len(context_mask) != n_rows:
+            raise ValueError(
+                "context_mask length does not match dataset length.")
     if row_priority is None:
         if "datetime" in df.columns:
             row_priority = compute_entry_time_priority(
@@ -468,6 +476,8 @@ def _build_entries_from_rule_set(
         rule_signals = _build_rule_signal_mask(
             df, conditions, mask_cache, rule_number=rule_idx
         )
+        # Fixed mandatory context policy ANDed into every rule's signal mask.
+        rule_signals = rule_signals & context_mask
 
         new_match_mask = rule_signals & (~assigned_mask)
         matched_indices = np.flatnonzero(new_match_mask)
@@ -594,11 +604,24 @@ class CPUBacktestEngine:
 
         if "datetime" in df.columns:
             self.datetimes = df["datetime"].values
+            row_times = pd.to_datetime(df["datetime"])
+            if "symbol" in df.columns:
+                next_times = row_times.groupby(
+                    df["symbol"], sort=False, observed=False,
+                ).shift(-1)
+            else:
+                next_times = row_times.shift(-1)
+            self.entry_datetimes = next_times.fillna(
+                row_times + pd.Timedelta(
+                    minutes=int(_cfg.LWC_TIMEFRAME_MINUTES),
+                )
+            ).to_numpy()
             self.entry_time_priority = compute_entry_time_priority(
                 self.datetimes, len(df)
             )
         else:
             self.datetimes = np.arange(len(df))
+            self.entry_datetimes = self.datetimes
             self.entry_time_priority = np.arange(len(df), dtype=np.int64)
 
         self.release_index = precompute_release_indices(
@@ -626,6 +649,41 @@ class CPUBacktestEngine:
             ))
             for tp, sl in configured_barrier_pairs()
         )
+        # ------------------------------------------------------------------
+        # Trend-context fixed execution mask (defense-in-depth).
+        #
+        # The mandatory direction + LWC-trigger policy is applied
+        # deterministically here so it holds for exact CPU admission, RB
+        # evaluation/composition, Phase 5, and every JSON-injected rule,
+        # independent of whether a rule's condition list carries the exported
+        # context conditions.  When context columns are absent (legacy /
+        # synthetic fixtures) the mask is a no-op.
+        # ------------------------------------------------------------------
+        self._context_mask = self._build_context_mask(df)
+
+    def _build_context_mask(self, df: pd.DataFrame) -> np.ndarray:
+        """Return a per-row boolean mask enforcing the fixed context policy.
+
+        For a long engine the mask is
+            ``tf_permission_long == 1 AND lwc_pullback_reversal_long == 1``
+        and analogously for short.  Exactly matches the mandatory conditions
+        injected at Phase 2 and required by Output_Writer.  When context
+        columns are absent the mask is all-True (no-op).
+        """
+        n = len(df)
+        from gpu_fuzzy_trader.config import CONTEXT_COLUMNS as _CTX_COLS
+        if not any(c in df.columns for c in _CTX_COLS):
+            return np.ones(n, dtype=bool)
+        perm = _cfg.context_permission_column(self.trade_direction)
+        trig = _cfg.context_trigger_column(self.trade_direction)
+        if perm not in df.columns or trig not in df.columns:
+            raise ValueError(
+                f"Enriched dataframe is missing context columns required for "
+                f"direction {self.trade_direction!r}: {perm}, {trig}"
+            )
+        perm_ok = df[perm].to_numpy() == 1
+        trig_ok = df[trig].to_numpy() == 1
+        return (perm_ok & trig_ok)
 
     def _get_trade_outcomes(self, tp: float, sl: float) -> np.ndarray:
         """Precompute (N,) price return % for all rows given fixed TP/SL."""
@@ -767,7 +825,7 @@ class CPUBacktestEngine:
             # any cap here would create a divergence that invalidates the
             # user's standalone OOS check. If you want to re-introduce a cap,
             # update evaluator_v5.ipynb FIRST and document the change.
-            return float(s_close), "Time_288"
+            return float(s_close), f"Time_{self.max_hold_candles}"
 
         # short
         hit_tp = s_min <= -tp
@@ -789,7 +847,7 @@ class CPUBacktestEngine:
         # any cap here would create a divergence that invalidates the
         # user's standalone OOS check. If you want to re-introduce a cap,
         # update evaluator_v5.ipynb FIRST and document the change.
-        return float(-s_close), "Time_288"
+        return float(-s_close), f"Time_{self.max_hold_candles}"
 
     def _calculate_position_notional(
         self,
@@ -865,7 +923,7 @@ class CPUBacktestEngine:
                     stats["loss_count"] += 1
                     stats["gross_loss_sum"] += abs(pos["net_pnl"])
 
-                if pos["exit_reason"] == "Time_288":
+                if pos["exit_reason"] == f"Time_{self.max_hold_candles}":
                     stats["time_closed_count"] += 1
 
                 account_status = "ACTIVE"
@@ -951,6 +1009,7 @@ class CPUBacktestEngine:
             self._condition_mask_cache,
             row_priority=self.entry_time_priority,
             normalized_symbols=normalized_symbols,
+            context_mask=self._context_mask,
         )
         entries = [
             e for e in entries
@@ -999,6 +1058,7 @@ class CPUBacktestEngine:
             self._condition_mask_cache,
             row_priority=self.entry_time_priority,
             normalized_symbols=normalized_symbols,
+            context_mask=self._context_mask,
         )
         return self._simulate_rule_set_entries(
             entries, return_logs=return_logs, initial_capital=self.initial_capital
@@ -1011,11 +1071,41 @@ class CPUBacktestEngine:
         split: str,
         return_logs: bool = False,
     ) -> "dict | tuple[dict, pd.DataFrame]":
-        """Simulate using a precomputed rule-evaluation mask cache."""
+        """Simulate using a precomputed rule-evaluation mask cache.
+
+        The mandatory direction + LWC-trigger context policy is enforced
+        unconditionally here (defense-in-depth).  A cache may be built by any
+        external rule builder that does not know about the fixed context mask,
+        so every entry is post-filtered against ``self._context_mask`` before
+        the shared simulation loop runs.  This guarantees the cached path can
+        never admit a blocked long/short row.
+        """
         entries = cache.build_entries(rule_set, split)
+        entries = self._filter_entries_by_context_mask(entries)
         return self._simulate_rule_set_entries(
             entries, return_logs=return_logs, initial_capital=self.initial_capital
         )
+
+    def _filter_entries_by_context_mask(
+        self, entries: list[dict],
+    ) -> list[dict]:
+        """Drop cached entries on rows the fixed context mask forbids.
+
+        ``idx`` validity is checked before indexing so an out-of-range cache
+        entry fails closed instead of raising an opaque NumPy IndexError.
+        """
+        n_rows = len(self.df)
+        out: list[dict] = []
+        for entry in entries:
+            idx = int(entry.get("idx", -1))
+            if idx < 0 or idx >= n_rows:
+                raise ValueError(
+                    f"cache entry idx {idx} is out of range for a dataset of "
+                    f"{n_rows} rows."
+                )
+            if bool(self._context_mask[idx]):
+                out.append(entry)
+        return out
 
     def simulate_rule_set_batch(
         self,
@@ -1205,7 +1295,7 @@ class CPUBacktestEngine:
                         "Rule_TP": tp,
                         "Rule_SL": sl,
                         "Symbol": symbol,
-                        "Entry_Time": self.datetimes[idx],
+                        "Entry_Time": self.entry_datetimes[idx],
                         "Entry_Index": int(idx),
                         "Symbol_Bar_Index": int(self.symbol_bar_index[idx]),
                         "Entry_Price": self.entry_price[idx],
@@ -1487,7 +1577,7 @@ class CPUBacktestEngine:
                 all_signals = np.zeros((bc, len(self.df)), dtype=bool)
 
             for bi in range(bc):
-                signals = all_signals[bi]
+                signals = all_signals[bi] & self._context_mask
                 matched_indices = np.flatnonzero(signals)
                 entries = [
                     {

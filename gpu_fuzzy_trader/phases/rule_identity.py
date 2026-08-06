@@ -13,15 +13,28 @@ import json
 from collections.abc import Iterable
 from typing import Any
 
+from gpu_fuzzy_trader import config as _cfg
+
+_CONTEXT_COLUMNS = frozenset(_cfg.CONTEXT_COLUMNS)
+
 
 def feature_conditions_only(conditions: Iterable[object]) -> list[str]:
-    """Return normalized non-symbol conditions without changing their order."""
+    """Return normalized non-symbol, non-context conditions in order.
+
+    Symbol scope and the mandatory trend-context conditions are execution /
+    policy metadata, not discovered feature logic, so they are excluded from
+    the feature identity.
+    """
     result: list[str] = []
     for condition in conditions:
         text = str(condition).strip()
         lowered = text.lower()
         if lowered.startswith("symbol is ") or lowered.startswith("[symbol] is "):
             continue
+        if text.startswith("[") and "] is " in text.lower():
+            feature = text[1:text.find("]")]
+            if feature in _CONTEXT_COLUMNS:
+                continue
         result.append(text)
     return result
 
@@ -36,6 +49,7 @@ def phase2_rule_id(
     payload = {
         "direction": str(direction).strip().lower() if direction else None,
         "feature_conditions": feature_conditions_only(conditions),
+        "context_contract_digest": _cfg.context_contract_digest(),
         "source_symbols": sorted(
             {str(symbol).strip() for symbol in (source_symbols or []) if str(symbol).strip()}
         ),
@@ -77,6 +91,7 @@ def strategy_id(
         "direction": str(direction).strip().lower(),
         "horizon_bars": int(horizon_bars),
         "cost_model_id": str(cost_model_id),
+        "context_contract_digest": _cfg.context_contract_digest(),
         "rules": normalized_rules,
     }
     encoded = json.dumps(

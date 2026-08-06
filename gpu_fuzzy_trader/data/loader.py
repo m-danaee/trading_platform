@@ -17,11 +17,13 @@ No caching or persistence — caller is responsible for that.
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.backtest.df_slim import downcast_numeric_df
 from gpu_fuzzy_trader.config import (
+    CONTEXT_COLUMNS,
     LABEL_COLUMNS,
     META_COLUMNS,
     TAIL_DROP_ROWS,
@@ -30,6 +32,75 @@ from gpu_fuzzy_trader.data.labels import compute_labels
 
 
 _OHLCV_COLUMNS = ("open", "high", "low", "close", "volume")
+
+_CONTEXT_STATE_COLUMNS = ("hwc_state", "mwc_state", "lwc_state")
+_CONTEXT_PERMISSION_COLUMNS = ("tf_permission_long", "tf_permission_short")
+_CONTEXT_TRIGGER_COLUMNS = (
+    "lwc_pullback_reversal_long",
+    "lwc_pullback_reversal_short",
+)
+_VALID_STATE_CODES = frozenset(_cfg.CONTEXT_STATE_CODES.values())
+
+
+def validate_context_columns(df: pd.DataFrame) -> None:
+    """Validate the mandatory trend-context contract on an enriched frame.
+
+    Fails closed on any violation: missing columns, missing values, invalid
+    state codes, non-binary permissions/triggers, permission truth-table
+    violations, or mutually active long+short permissions.  Missing context is
+    never silently converted to zero or Range.
+    """
+    missing = [c for c in CONTEXT_COLUMNS if c not in df.columns]
+    if missing:
+        raise ValueError(
+            "Enriched input is missing required context columns: "
+            f"{missing}. Raw tapes must be enriched by "
+            "gpu_fuzzy_trader.data.trend_context first."
+        )
+
+    if df[list(CONTEXT_COLUMNS)].isna().any().any():
+        raise ValueError(
+            "Enriched input contains missing values in context columns; "
+            "refusing to interpret them as zero or Range."
+        )
+
+    for col in _CONTEXT_STATE_COLUMNS:
+        bad = set(df[col].dropna().unique()) - _VALID_STATE_CODES
+        if bad:
+            raise ValueError(
+                f"Context column {col!r} contains invalid state codes {sorted(bad)}; "
+                f"valid codes are {sorted(_VALID_STATE_CODES)} "
+                "(-1 Bearish, 0 Range, 1 Bullish, 2 Noisy)."
+            )
+
+    for col in _CONTEXT_PERMISSION_COLUMNS + _CONTEXT_TRIGGER_COLUMNS:
+        bad = set(df[col].dropna().unique()) - {0, 1}
+        if bad:
+            raise ValueError(
+                f"Context column {col!r} must be binary (0/1), got {sorted(bad)}."
+            )
+
+    hwc = df["hwc_state"].to_numpy()
+    mwc = df["mwc_state"].to_numpy()
+    perm_long = df["tf_permission_long"].to_numpy()
+    perm_short = df["tf_permission_short"].to_numpy()
+    bullish = _cfg.CONTEXT_STATE_CODES["bullish"]
+    bearish = _cfg.CONTEXT_STATE_CODES["bearish"]
+
+    expected_long = ((hwc == bullish) & (mwc == bullish)).astype(np.int8)
+    expected_short = ((hwc == bearish) & (mwc == bearish)).astype(np.int8)
+    if np.any(perm_long != expected_long) or np.any(perm_short != expected_short):
+        raise ValueError(
+            "Context permission truth table violated: tf_permission_long must "
+            "be 1 iff hwc_state==Bullish AND mwc_state==Bullish, and "
+            "tf_permission_short must be 1 iff hwc_state==Bearish AND "
+            "mwc_state==Bearish."
+        )
+    if np.any((perm_long == 1) & (perm_short == 1)):
+        raise ValueError(
+            "Context permissions must be mutually exclusive: long and short "
+            "cannot both be active on the same row."
+        )
 
 
 def _ensure_labels(df: pd.DataFrame) -> pd.DataFrame:
@@ -86,6 +157,7 @@ class Data_Loader:
         *,
         drop_tail: bool = True,
         include_barrier_outcomes: bool = False,
+        require_context: bool | None = None,
     ) -> pd.DataFrame:
         """
         Load a CSV dataset with full preparation pipeline:
@@ -95,6 +167,8 @@ class Data_Loader:
         3. Derive labels from OHLCV when labels are not supplied
         4. Sort by (datetime, symbol)
         5. Optionally attach exact first-touch barrier outcomes
+        5b. Validate the mandatory trend-context contract when the tape is
+            enriched (context columns present) or ``require_context`` is set
         6. Optionally drop last TAIL_DROP_ROWS rows per symbol
         7. Drop rows where any LABEL_COLUMNS value is NaN
         8. Fill NaN in feature columns with 0
@@ -115,6 +189,11 @@ class Data_Loader:
         include_barrier_outcomes:
             Attach exact first-touch return/offset columns before trimming the
             source tail.
+        require_context:
+            When *None*, context columns are validated whenever they are
+            present in the CSV (enriched inputs).  When ``True`` the full
+            context contract is required and rejected if missing.  When
+            ``False`` the context validation is skipped entirely.
 
         Returns
         -------
@@ -140,6 +219,18 @@ class Data_Loader:
         # 4. Sort by (datetime, symbol)
         # ------------------------------------------------------------------
         df = df.sort_values(["datetime", "symbol"]).reset_index(drop=True)
+
+        # ------------------------------------------------------------------
+        # 4b. Validate mandatory trend-context contract.
+        # ------------------------------------------------------------------
+        context_present = any(c in df.columns for c in CONTEXT_COLUMNS)
+        enforce = (
+            bool(getattr(_cfg, "REQUIRE_CONTEXT_COLUMNS", False))
+            if require_context is None
+            else bool(require_context)
+        )
+        if context_present or enforce:
+            validate_context_columns(df)
 
         # ------------------------------------------------------------------
         # 5. Attach exact outcomes before trimming the source tail.
@@ -211,6 +302,7 @@ def load_dataset(
     *,
     drop_tail: bool = True,
     include_barrier_outcomes: bool = False,
+    require_context: bool | None = None,
 ) -> pd.DataFrame:
     """Module-level wrapper around ``Data_Loader.load_dataset``."""
     return Data_Loader().load_dataset(
@@ -218,4 +310,5 @@ def load_dataset(
         feature_cols=feature_cols,
         drop_tail=drop_tail,
         include_barrier_outcomes=include_barrier_outcomes,
+        require_context=require_context,
     )

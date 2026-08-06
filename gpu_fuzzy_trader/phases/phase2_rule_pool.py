@@ -2289,10 +2289,23 @@ def _build_pool_from_archive(
             )
             continue
 
+        # Mandatory trend-context conditions are injected after chromosome
+        # decoding and are never part of the chromosome / evolved feature set.
+        # MIN_CONDITIONS / MAX_CONDITIONS count only the evolved conditions
+        # above; the fixed context contract is policy, not discovery.
+        n_evolved_conditions = len(conditions)
+        if direction in ("long", "short"):
+            evolved_set = set(conditions)
+            for ctx_condition in _cfg.mandatory_context_conditions(direction):
+                if ctx_condition not in evolved_set:
+                    conditions.append(ctx_condition)
+
         train_per_symbol = _snapshot_per_symbol_metrics(metrics)
         pool_entry = {
             "chromosome": dense_chrom.tolist(),
             "conditions": conditions,
+            "n_evolved_conditions": n_evolved_conditions,
+            "context_contract_digest": _cfg.context_contract_digest(),
             "objectives": {
                 "sortino_ratio": float(metrics.get("sortino_ratio", metrics.get("total_return_pct", 0.0))),
                 "total_return_pct": float(metrics.get("total_return_pct", 0.0)),
@@ -2632,15 +2645,21 @@ def _stage_b_seed_chromosomes(
 def _condition_feature_names(conditions: list[str]) -> set[str]:
     """
     Extract feature names from textual conditions like: "[feat] IS Value".
-    Returns an empty set when parsing fails for a condition.
+    Returns an empty set when parsing fails for a condition.  Mandatory
+    trend-context columns are fixed execution policy, not evolved features,
+    and are never part of the feature-compatibility check.
     """
     names: set[str] = set()
+    ctx_columns = set(_cfg.CONTEXT_COLUMNS)
     for cond in conditions:
         if not isinstance(cond, str):
             continue
         left = cond.split(" IS ", 1)[0].strip()
         if left.startswith("[") and left.endswith("]") and len(left) >= 3:
-            names.add(left[1:-1].strip())
+            feature = left[1:-1].strip()
+            if feature in ctx_columns:
+                continue
+            names.add(feature)
     return names
 
 

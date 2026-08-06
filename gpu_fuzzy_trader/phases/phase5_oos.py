@@ -572,6 +572,7 @@ class OOS_Evaluator:
             test_csv_path,
             drop_tail=True,
             include_barrier_outcomes=True,
+            require_context=True,
         )
 
     def _load_datasets_by_split(self) -> dict[str, pd.DataFrame]:
@@ -609,7 +610,6 @@ class OOS_Evaluator:
         )
         train_df, val_df, _cv_folds = splitter.split_and_persist(train_full)
         test_df = self.prepare_test_data(self.test_csv_path)
-
         datasets["train"] = train_df
         datasets["validation"] = val_df
         datasets["test"] = test_df
@@ -734,6 +734,24 @@ class OOS_Evaluator:
             Trade log DataFrame (for equity curve reporting).
         """
         rule_set = strategy.get("rules_set", [])
+
+        # Fail closed: when the evaluated tape is enriched (carries context
+        # columns), the strategy must declare the mandatory direction-specific
+        # context conditions.  Phase 5 never fits thresholds, selects rules,
+        # prunes, or rewrites strategies — it validates and evaluates.
+        ctx_columns = set(getattr(_cfg, "CONTEXT_COLUMNS", ()))
+        if any(c in test_df.columns for c in ctx_columns):
+            mandatory = _cfg.mandatory_context_conditions(direction)
+            for rule in rule_set:
+                present = [str(c).strip() for c in rule.get("conditions", [])]
+                missing = [m for m in mandatory if m not in present]
+                if missing:
+                    raise ValueError(
+                        f"Phase 5 [{direction}]: strategy rule is missing "
+                        f"mandatory context conditions {missing} on an "
+                        f"enriched tape. Refusing to evaluate an incomplete "
+                        "strategy contract."
+                    )
 
         # feature_modes is not used for rule matching (threshold-based),
         # but the engine interface requires it.

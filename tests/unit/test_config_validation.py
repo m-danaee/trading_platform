@@ -83,6 +83,20 @@ def test_evaluator_constants_match_read_only_notebook() -> None:
         assert float(match.group(1)) == float(value), name
 
 
+def test_evaluator_notebook_contains_context_and_dynamic_horizon_contract() -> None:
+    notebook_path = Path(__file__).parents[2] / "evaluator_v5.ipynb"
+    notebook = json.loads(notebook_path.read_text(encoding="utf-8"))
+    source = "\n".join(
+        "".join(cell.get("source", []))
+        for cell in notebook.get("cells", [])
+        if cell.get("cell_type") == "code"
+    )
+    assert "from gpu_fuzzy_trader.config import CONTEXT_COLUMNS" in source
+    assert "c not in CONTEXT_COLUMNS" in source
+    assert "Time_288" not in source
+    assert 'f"Time_{self.max_hold_candles}"' in source
+
+
 def test_exposure_cap_must_match_evaluator(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cfg, "RB_MAX_TOTAL_CAPITAL", 150.0)
     with pytest.raises(cfg.ConfigError, match="must equal MAX_TOTAL_EXPOSURE_PCT"):

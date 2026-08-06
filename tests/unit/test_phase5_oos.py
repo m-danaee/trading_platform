@@ -50,7 +50,10 @@ def _make_rule_set(direction: str = "long", n_rules: int = 2) -> dict:
     rules = []
     for i in range(n_rules):
         rules.append({
-            "conditions": [f"[feat_{i}] IS Very High"],
+            "conditions": [
+                f"[feat_{i}] IS Very High",
+                *_cfg.mandatory_context_conditions(direction),
+            ],
             "tp": _cfg.PHASE2_TP,
             "sl": _cfg.PHASE2_SL,
             "capital_pct": _cfg.PHASE2_CAPITAL_PCT,
@@ -116,6 +119,15 @@ def _make_df(
         for i in range(5):
             data[f"feat_{i}"] = rng.uniform(0, 1, size=n)
 
+        long_rows = np.arange(n) % 2 == 0
+        data["hwc_state"] = np.where(long_rows, 1, -1)
+        data["mwc_state"] = np.where(long_rows, 1, -1)
+        data["lwc_state"] = np.where(long_rows, 1, -1)
+        data["tf_permission_long"] = long_rows.astype(np.int8)
+        data["tf_permission_short"] = (~long_rows).astype(np.int8)
+        data["lwc_pullback_reversal_long"] = long_rows.astype(np.int8)
+        data["lwc_pullback_reversal_short"] = (~long_rows).astype(np.int8)
+
         dfs.append(pd.DataFrame(data))
 
     return pd.concat(dfs, ignore_index=True)
@@ -170,6 +182,7 @@ class TestLoadStrategies:
                         "symbol is 1",
                         "[feat_0] IS Very High",
                         "[feat_1] IS High",
+                        *_cfg.mandatory_context_conditions("long"),
                     ],
                 },
                 {
@@ -180,6 +193,7 @@ class TestLoadStrategies:
                         "[symbol] IS 2",
                         "[feat_0] IS Very High",
                         "[feat_1] IS High",
+                        *_cfg.mandatory_context_conditions("long"),
                     ],
                 },
             ],
@@ -410,7 +424,10 @@ class TestEvaluateStrategy:
             "direction": "long",
             "rules_set": [
                 {
-                    "conditions": ["[feat_0] IS Very High"],
+                    "conditions": [
+                        "[feat_0] IS Very High",
+                        *_cfg.mandatory_context_conditions("long"),
+                    ],
                     "tp": 4.0,
                     "sl": 2.0,
                     "capital_pct": 50.0,
@@ -431,7 +448,10 @@ class TestEvaluateStrategy:
             "direction": "long",
             "rules_set": [
                 {
-                    "conditions": ["[feat_0] IS Very High"],
+                    "conditions": [
+                        "[feat_0] IS Very High",
+                        *_cfg.mandatory_context_conditions("long"),
+                    ],
                     "tp": 4.0,
                     "sl": 2.0,
                     "capital_pct": 50.0,

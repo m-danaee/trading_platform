@@ -61,6 +61,7 @@ def _candidate_feature_columns(train_df: pd.DataFrame) -> list[str]:
         set(config.LABEL_COLUMNS)
         | set(config.META_COLUMNS)
         | set(config.INTERNAL_COLUMNS)
+        | set(config.CONTEXT_COLUMNS)
     )
     if bool(getattr(config, "PHASE1_EXCLUDE_RAW_OHLCV", True)):
         exclude |= _RAW_OHLCV_FEATURES

@@ -921,6 +921,27 @@ class GPUBacktestEngine:
                 (len(df), 0), dtype=_JX_INT)
             self._dont_cares_jax = jnp.zeros((0,), dtype=_JX_INT)
 
+        # ------------------------------------------------------------------
+        # Mandatory trend-context mask for the GPU evolution path.  Applied to
+        # every chromosome's signal batch (never part of the feature matrix or
+        # chromosome shape).  No-op when context columns are absent.
+        # ------------------------------------------------------------------
+        from gpu_fuzzy_trader.config import CONTEXT_COLUMNS as _CTX
+        if any(c in df.columns for c in _CTX):
+            perm = _cfg.context_permission_column(self.trade_direction)
+            trig = _cfg.context_trigger_column(self.trade_direction)
+            if perm not in df.columns or trig not in df.columns:
+                raise ValueError(
+                    f"Enriched dataframe missing context columns for direction "
+                    f"{self.trade_direction!r}: {perm}, {trig}"
+                )
+            ctx_mask_np = (
+                (df[perm].to_numpy() == 1) & (df[trig].to_numpy() == 1)
+            ).astype(bool)
+        else:
+            ctx_mask_np = np.ones(len(df), dtype=bool)
+        self._context_mask_jax = jnp.array(ctx_mask_np, dtype=jnp.bool_)
+
         # --- Pre-compute release indices ---
         from gpu_fuzzy_trader.backtest.cpu_engine import (
             precompute_release_indices,
@@ -1192,6 +1213,10 @@ class GPUBacktestEngine:
             else:
                 signals_batch = jnp.zeros(
                     (end - start, N), dtype=jnp.bool_)
+
+            # Mandatory direction + LWC-trigger context mask (fixed policy,
+            # never part of the feature matrix or chromosome width).
+            signals_batch = signals_batch & self._context_mask_jax[None, :]
 
             use_fast_skip = (
                 _cfg.PHASE2_SKIP_ZERO_SIGNAL_SCAN

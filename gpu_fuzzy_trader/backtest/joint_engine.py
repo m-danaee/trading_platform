@@ -60,6 +60,7 @@ class JointPortfolioEngine:
         )
         self.symbols = self.long_engine.symbols
         self.datetimes = self.long_engine.datetimes
+        self.entry_datetimes = self.long_engine.entry_datetimes
         self.symbol_bar_index = self.long_engine.symbol_bar_index
         self.entry_price = self.long_engine.entry_price
         self.entry_time_priority = compute_entry_time_priority(
@@ -115,6 +116,7 @@ class JointPortfolioEngine:
             engine._condition_mask_cache,
             row_priority=self.entry_time_priority,
             normalized_symbols=normalized,
+            context_mask=engine._context_mask,
         )
         for entry in entries:
             entry["direction"] = direction
@@ -331,7 +333,7 @@ class JointPortfolioEngine:
                     "Rule_TP": tp,
                     "Rule_SL": sl,
                     "Symbol": symbol,
-                    "Entry_Time": self.datetimes[idx],
+                    "Entry_Time": self.entry_datetimes[idx],
                     "Entry_Index": idx,
                     "Symbol_Bar_Index": int(self.symbol_bar_index[idx]),
                     "Entry_Price": float(self.entry_price[idx]),

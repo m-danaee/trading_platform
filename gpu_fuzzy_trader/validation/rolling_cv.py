@@ -466,6 +466,10 @@ def purged_config_fingerprint() -> str:
     for key in _SPLIT_CONFIG_KEYS:
         val = getattr(_cfg, key, None)
         parts.append(f"{key}={val!r}")
+    # The frozen trend-context contract and 96-bar horizon are part of the
+    # split identity: a context or horizon change must reject cached splits.
+    parts.append(f"context_contract_digest={_cfg.context_contract_digest()}")
+    parts.append(f"horizon_bars={int(_cfg.MAX_HOLD_CANDLES)}")
     raw = "|".join(parts)
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 

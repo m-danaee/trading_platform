@@ -8,7 +8,11 @@ from __future__ import annotations
 
 import pandas as pd
 
-from gpu_fuzzy_trader.config import LABEL_COLUMNS, META_COLUMNS
+from gpu_fuzzy_trader.config import (
+    CONTEXT_COLUMNS,
+    LABEL_COLUMNS,
+    META_COLUMNS,
+)
 
 
 def downcast_numeric_df(df: pd.DataFrame) -> pd.DataFrame:
@@ -62,7 +66,11 @@ def slim_backtest_df(
     # slim/prune step so the backtest engine can honour the production trade
     # contract after Phase 1 removes unused indicators.
     internal_columns = [c for c in df.columns if str(c).startswith("_")]
-    for c in META_COLUMNS + list(LABEL_COLUMNS) + internal_columns:
+    # Mandatory trend-context columns are fixed execution conditions (not
+    # ordinary features) and must survive every slimmed train/validation/
+    # evaluation frame so the direction + LWC-trigger masks keep working.
+    context_columns = [c for c in CONTEXT_COLUMNS if c in df.columns]
+    for c in META_COLUMNS + list(LABEL_COLUMNS) + internal_columns + context_columns:
         if c in df.columns and c not in cols:
             cols.append(c)
     for name in feature_names:

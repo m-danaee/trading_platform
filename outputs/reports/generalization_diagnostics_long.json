@@ -1,0 +1,54 @@
+{
+  "direction": "long",
+  "split_metrics": {
+    "train": {
+      "total_return_pct": 0.0,
+      "profit_factor": 0.0,
+      "win_rate": 0.0,
+      "max_drawdown_pct": 0.0,
+      "executed_trades": 0
+    },
+    "validation": {
+      "total_return_pct": 0.0,
+      "profit_factor": 0.0,
+      "win_rate": 0.0,
+      "max_drawdown_pct": 0.0,
+      "executed_trades": 0
+    },
+    "test": {
+      "total_return_pct": -0.9956598281860352,
+      "profit_factor": 0.5376551151275635,
+      "win_rate": 33.33333333333333,
+      "max_drawdown_pct": 1.391892433166504,
+      "executed_trades": 15
+    }
+  },
+  "split_shift": {
+    "train_to_validation_delta_pct": 0.0,
+    "validation_to_test_delta_pct": -0.9956598281860352,
+    "train_to_test_delta_pct": -0.9956598281860352,
+    "train_to_test_sign_flip": true
+  },
+  "symbol_concentration": {
+    "train": {
+      "hhi_abs_pnl": 0.0,
+      "top_symbol_share_abs_pnl": 0.0,
+      "top_symbol": ""
+    },
+    "validation": {
+      "hhi_abs_pnl": 0.0,
+      "top_symbol_share_abs_pnl": 0.0,
+      "top_symbol": ""
+    },
+    "test": {
+      "hhi_abs_pnl": 0.6216158002962892,
+      "top_symbol_share_abs_pnl": 0.7465925792641469,
+      "top_symbol": "SYM_B"
+    }
+  },
+  "feature_bucket_concentration": {
+    "train": {},
+    "validation": {},
+    "test": {}
+  }
+}

@@ -32,12 +32,13 @@ def test_assert_capital_budget_raises_when_over_cap():
 
 def test_strategy_output_respects_rb_max_total_capital(monkeypatch):
     monkeypatch.setattr(_cfg, "RB_MAX_TOTAL_CAPITAL", 100.0)
+    mandatory = list(_cfg.mandatory_context_conditions("long"))
     strategy = _strategy(
         "long",
         [
-            {"conditions": ["a"], "tp": 2.0, "sl": 1.0, "capital_pct": 40.0},
-            {"conditions": ["b"], "tp": 2.0, "sl": 1.0, "capital_pct": 40.0},
-            {"conditions": ["c"], "tp": 2.0, "sl": 1.0, "capital_pct": 40.0},
+            {"conditions": ["a", *mandatory], "tp": 2.0, "sl": 1.0, "capital_pct": 40.0},
+            {"conditions": ["b", *mandatory], "tp": 2.0, "sl": 1.0, "capital_pct": 40.0},
+            {"conditions": ["c", *mandatory], "tp": 2.0, "sl": 1.0, "capital_pct": 40.0},
         ],
     )
     total = sum(r["capital_pct"] for r in strategy["rules_set"])

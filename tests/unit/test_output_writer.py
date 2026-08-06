@@ -23,6 +23,12 @@ from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.output.writer import Output_Writer, ValidationError
 
 
+@pytest.fixture(autouse=True)
+def _legacy_writer_contract(monkeypatch):
+    """These schema tests predate mandatory trend context."""
+    monkeypatch.setattr(_cfg, "REQUIRE_CONTEXT_IN_STRATEGY", False)
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
