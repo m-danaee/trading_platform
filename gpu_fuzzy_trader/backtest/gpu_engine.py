@@ -938,6 +938,20 @@ class GPUBacktestEngine:
             ctx_mask_np = (
                 (df[perm].to_numpy() == 1) & (df[trig].to_numpy() == 1)
             ).astype(bool)
+            ctx_coverage = ctx_mask_np.sum() / max(len(ctx_mask_np), 1)
+            log_fn = (
+                logger.warning if ctx_coverage < 0.05 else logger.debug
+            )
+            log_fn(
+                "GPUBacktestEngine [%s]: context mask coverage %.2f%% "
+                "(%d / %d rows); perm=%s trig=%s",
+                self.trade_direction,
+                ctx_coverage * 100.0,
+                int(ctx_mask_np.sum()),
+                len(ctx_mask_np),
+                perm,
+                trig,
+            )
         else:
             ctx_mask_np = np.ones(len(df), dtype=bool)
         self._context_mask_jax = jnp.array(ctx_mask_np, dtype=jnp.bool_)

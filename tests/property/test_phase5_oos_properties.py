@@ -184,9 +184,11 @@ def test_property_27_test_data_preparation_consistency(raw_df: pd.DataFrame) -> 
         csv_path = os.path.join(tmpdir, "test_data.csv")
         raw_df.to_csv(csv_path, index=False)
 
-        # Load via both paths
-        loader_df = Data_Loader().load_dataset(csv_path)
-        oos_df = OOS_Evaluator.prepare_test_data(csv_path)
+        # Both paths now enforce enriched context (loader validates when present
+        # or when require_context=True). Compare with require_context=False so
+        # raw synthetic fixtures without HWC/MWC/LWC columns are comparable.
+        loader_df = Data_Loader().load_dataset(csv_path, require_context=False)
+        oos_df = OOS_Evaluator.prepare_test_data(csv_path, require_context=False)
 
     # --- Shape must match ---
     assert loader_df.shape == oos_df.shape, (

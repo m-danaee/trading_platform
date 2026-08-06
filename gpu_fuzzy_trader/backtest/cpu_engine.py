@@ -681,9 +681,20 @@ class CPUBacktestEngine:
                 f"Enriched dataframe is missing context columns required for "
                 f"direction {self.trade_direction!r}: {perm}, {trig}"
             )
-        perm_ok = df[perm].to_numpy() == 1
-        trig_ok = df[trig].to_numpy() == 1
-        return (perm_ok & trig_ok)
+        mask = (df[perm].to_numpy() == 1) & (df[trig].to_numpy() == 1)
+        coverage = mask.sum() / max(len(mask), 1)
+        log_fn = logger.warning if coverage < 0.05 else logger.debug
+        log_fn(
+            "CPUBacktestEngine [%s]: context mask coverage %.2f%% "
+            "(%d / %d rows); perm=%s trig=%s",
+            self.trade_direction,
+            coverage * 100.0,
+            int(mask.sum()),
+            len(mask),
+            perm,
+            trig,
+        )
+        return mask
 
     def _get_trade_outcomes(self, tp: float, sl: float) -> np.ndarray:
         """Precompute (N,) price return % for all rows given fixed TP/SL."""

@@ -378,6 +378,9 @@ HWC_TIMEFRAME_MINUTES: int = 240
 MWC_TIMEFRAME_MINUTES: int = 60
 LWC_TIMEFRAME_MINUTES: int = 15
 # The pullback lookback over completed 15m LWC states (previous N bars).
+# Frozen at 8 per PLAN.md / README.md wave-cycle contract (previous 8 completed
+# LWC states). Changing this value rewrites the regime trigger identity and
+# must be accompanied by a contract version bump and full tape re-enrichment.
 LWC_PULLBACK_LOOKBACK: int = 8
 # Default train-only pooled percentile thresholds (frozen before any
 # validation / test / forward results are reviewed).
@@ -540,8 +543,8 @@ PHASE1_TOP_K_FEATURES = 20
 # detected by Feature_Detector. Phase 2 then evolves over the full feature set.
 #   True  → larger GA search space, more GPU RAM per chromosome, no MI prefilter.
 #   False → normal top-K MI-ranked selection (PHASE1_TOP_K_FEATURES=20).
-# Current default: keep the Phase 1 shortlist so the configured Phase 2 budget
-# is spent on a tractable feature genome.
+# Current default: bypass Phase 1 (full dispersion-filtered feature set) so the
+# configured Phase 2 budget explores the broader genome with context gates.
 PHASE1_DISABLED: bool = True
 
 # PHASE1_MAX_FEATURE_OVERLAP — max shared feature names between long & short lists.
@@ -1349,13 +1352,13 @@ PHASE2_TWO_STAGE_ENABLED = True
 # PHASE2_STAGE_A_GENERATIONS — Stage A (exploration) generation budget.
 #   Higher → more diverse initial Pareto before val-focused Stage B.
 #   Lower  → quicker handoff; Stage B may miss good regions.
-# Scaled to PHASE2_GENERATIONS=40 (A:B = 20:20).
+# Scaled to PHASE2_GENERATIONS=100 (A:B = 65:35).
 PHASE2_STAGE_A_GENERATIONS = 65
 
 # PHASE2_STAGE_B_GENERATIONS — Stage B (refinement) generation budget.
 #   Higher → more val-robust polishing; total time = A + B gens.
 #   Lower  → less refinement after exploration.
-# Matched to 40-gen island budget (A:B = 20:20).
+# Matched to 100-gen budget (A:B = 65:35).
 PHASE2_STAGE_B_GENERATIONS = 35
 
 # PHASE2_STAGE_B_SEED_TOP_K — elites from Stage A seeded into Stage B.
@@ -2616,8 +2619,13 @@ def validate_config(
         "LWC/MWC/HWC must be 15m/1h/4h (×4 hierarchy)",
     )
     _config_check(
-        int(LWC_PULLBACK_LOOKBACK) >= 1,
-        "LWC_PULLBACK_LOOKBACK must be positive",
+        1 <= int(LWC_PULLBACK_LOOKBACK) <= int(MAX_HOLD_CANDLES),
+        "LWC_PULLBACK_LOOKBACK must be in [1, MAX_HOLD_CANDLES] (frozen at 8)",
+    )
+    _config_check(
+        int(LWC_PULLBACK_LOOKBACK) == 8,
+        "LWC_PULLBACK_LOOKBACK is frozen at 8 per the wave-cycle contract; "
+        "bump CONTEXT_ALGORITHM_VERSION and re-enrich all tapes to change it",
     )
     _config_check(
         int(CONTEXT_STRUCTURAL_LOOKBACK) >= 1,
@@ -3033,6 +3041,18 @@ def effective_config_snapshot(
             "leverage": float(LEVERAGE),
             "max_total_exposure_pct": float(MAX_TOTAL_EXPOSURE_PCT),
             "min_position_notional": float(MIN_POSITION_NOTIONAL),
+            "execution_policy": {
+                "hardware_routing": {
+                    "large_window_cpu_route": bool(PHASE2_GPU_CPU_ROUTE_LARGE_DATA),
+                    "route_min_bars": int(PHASE2_GPU_CPU_ROUTE_MIN_BARS),
+                    "route_max_batch": int(PHASE2_GPU_CPU_ROUTE_MAX_BATCH),
+                },
+                "numerics": {
+                    "gpu_fp32": bool(PHASE2_GPU_USE_FP32),
+                    "gpu_data_int8": bool(PHASE2_GPU_DATA_INT8),
+                    "per_symbol_available": None,
+                },
+            },
         },
         "split": {
             "mode": str(SPLIT_MODE),

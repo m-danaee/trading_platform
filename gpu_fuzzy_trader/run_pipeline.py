@@ -1157,6 +1157,44 @@ class Pipeline_Orchestrator:
             if "symbol" in train_full.columns
             else 0,
         )
+        from gpu_fuzzy_trader.config import CONTEXT_COLUMNS as _CTX_COLS
+        if any(c in train_full.columns for c in _CTX_COLS):
+            for _dir, _perm, _trig in [
+                ("long", _cfg.context_permission_column("long"),
+                 _cfg.context_trigger_column("long")),
+                ("short", _cfg.context_permission_column("short"),
+                 _cfg.context_trigger_column("short")),
+            ]:
+                if _perm in train_full.columns and _trig in train_full.columns:
+                    _mask = (
+                        (train_full[_perm].to_numpy() == 1)
+                        & (train_full[_trig].to_numpy() == 1)
+                    )
+                    _pct = _mask.sum() / max(len(_mask), 1)
+                    _log = logger.warning if _pct < 0.03 else logger.info
+                    _log(
+                        "Context mask [%s]: %.2f%% of rows active "
+                        "(%d / %d); perm=%s trig=%s",
+                        _dir, _pct * 100, int(_mask.sum()),
+                        len(_mask), _perm, _trig,
+                    )
+        else:
+            # Fail-closed: production pipeline requires enriched tapes carrying
+            # the mandatory permission+trigger contract. Raw tapes must be
+            # enriched first via `python -m gpu_fuzzy_trader.data.trend_context`.
+            logger.warning(
+                "Pipeline input %s has no context columns (%s) — "
+                "mandatory HWC/MWC permission + LWC trigger gates are "
+                "inactive. Enrich the tape first.",
+                _cfg.TRAIN_CSV_PATH, list(_CTX_COLS),
+            )
+            if bool(getattr(_cfg, "REQUIRE_CONTEXT_COLUMNS", False)):
+                raise RuntimeError(
+                    f"REQUIRE_CONTEXT_COLUMNS=True but { _cfg.TRAIN_CSV_PATH } "
+                    f"has no context columns {list(_CTX_COLS)} — "
+                    "run `python -m gpu_fuzzy_trader.data.trend_context --train "
+                    f"{ _cfg.TRAIN_CSV_PATH }` first."
+                )
 
         splitter = Data_Splitter()
         split_label = (

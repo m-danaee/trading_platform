@@ -32,9 +32,14 @@ def _make_rule(
     sl: float = 2.0,
     capital_pct: float = 50.0,
     conditions: list[str] | None = None,
+    direction: str = "long",
 ) -> dict:
     if conditions is None:
         conditions = ["[feature_a] IS Bearish", "[feature_b] IS Very High"]
+    from gpu_fuzzy_trader import config as _cfg
+    ctx = list(_cfg.mandatory_context_conditions(direction))
+    if not any(c in conditions for c in ctx):
+        conditions = list(conditions) + ctx
     return {"tp": tp, "sl": sl, "capital_pct": capital_pct, "conditions": conditions}
 
 
@@ -61,12 +66,14 @@ def strategy_with_extras() -> dict:
                 sl=2.0,
                 capital_pct=50.0,
                 conditions=["[vol] IS High", "[atr] IS Rising"],
+                direction="short",
             ),
             _make_rule(
                 tp=3.0,
                 sl=1.5,
                 capital_pct=25.0,
                 conditions=["[trend] IS Falling", "[rsi] IS Oversold"],
+                direction="short",
             ),
         ],
         "risk_optimized": True,

@@ -42,8 +42,9 @@ def test_recovery_retries_only_rejected_direction_on_full_validation(tmp_path: P
     train_df = _frame(8)
     val_df = _frame(8)
     val_selection = val_df.iloc[4:].reset_index(drop=True)
+    ctx = list(_cfg.mandatory_context_conditions("long"))
     rule = {
-        "conditions": ["[feat] IS High"],
+        "conditions": ["[feat] IS High", *ctx],
         "tp": 2.0,
         "sl": 1.2,
         "capital_pct": 5.0,
@@ -83,7 +84,7 @@ def test_recovery_retries_only_rejected_direction_on_full_validation(tmp_path: P
         result = run_rb_governor_pipeline(
             train_df,
             val_df,
-            {"long": [{"conditions": ["[feat] IS High"]}]},
+            {"long": [{"conditions": ["[feat] IS High", *_cfg.mandatory_context_conditions("long")]}]},
             ("long",),
             output_dir=tmp_path,
             val_selection_df=val_selection,

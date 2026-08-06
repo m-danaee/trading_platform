@@ -304,9 +304,7 @@ def load_cached_split_if_fresh() -> (
     # length.  When every symbol has a non-empty validation tail, it can be
     # checked exactly from the cached partitions: train + validation + the
     # fixed embargo per symbol.  This catches stale caches without rereading
-    # and relabelling the full CSV on every normal run.  Very small symbols
-    # whose embargo consumes the entire tail are left to the schema checks,
-    # because their original length is not recoverable from the partitions.
+    # and relabelling the full CSV on every normal run.
     if not _cfg.split_mode_is_purged_walk_forward():
         reference_rows = manifest.get("reference_rows")
         if reference_rows is not None and "symbol" in train_df.columns:
@@ -314,7 +312,35 @@ def load_cached_split_if_fresh() -> (
             val_symbols = set(val_df["symbol"].astype(str).unique())
             symbols = train_symbols | val_symbols
             val_counts = val_df["symbol"].astype(str).value_counts()
-            if symbols and all(int(val_counts.get(sym, 0)) > 0 for sym in symbols):
+            has_empty_val = any(
+                int(val_counts.get(sym, 0)) == 0 for sym in symbols
+            ) if symbols else False
+            if has_empty_val:
+                # Debug/undersampled universe where the embargo consumes the
+                # entire tail for at least one symbol: the holdout geometry
+                # is not recoverable from partitions alone. Fall back to a
+                # lightweight exact check by rereading the CSV row count.
+                try:
+                    from gpu_fuzzy_trader.data.loader import Data_Loader as _DL
+                    _loader = _DL()
+                    _full = _loader.load_dataset(csv_path, drop_tail=False,
+                                                  include_barrier_outcomes=False)
+                    # dropna on labels mirrors loader's tail/label logic
+                    _full = _full.dropna(subset=list(_cfg.LABEL_COLUMNS))
+                    if int(reference_rows) != len(_full):
+                        logger.warning(
+                            "Rejecting split cache: manifest reference_rows=%s, "
+                            "full CSV implies %s (debug/zero-val universe)",
+                            reference_rows, len(_full),
+                        )
+                        return None
+                except Exception as exc:
+                    logger.warning(
+                        "Rejecting split cache: cannot verify reference_rows "
+                        "for debug/zero-val universe (%s)", exc,
+                    )
+                    return None
+            elif symbols and all(int(val_counts.get(sym, 0)) > 0 for sym in symbols):
                 expected_reference_rows = (
                     len(train_df)
                     + len(val_df)

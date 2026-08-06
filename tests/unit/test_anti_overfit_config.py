@@ -23,16 +23,16 @@ def test_anti_overfit_config_bundle():
     assert cfg.PHASE2_PROFIT_FACTOR_FLOOR_ADMISSION == 1.15
     assert cfg.PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION == 1.0
     assert cfg.PHASE2_RETURN_FLOOR_PCT == 0.25
-    assert cfg.PHASE2_GENERATIONS == 40
-    assert cfg.PHASE2_POPULATION_SIZE == 200
+    assert cfg.PHASE2_GENERATIONS == 100
+    assert cfg.PHASE2_POPULATION_SIZE == 500
     assert cfg.PHASE2_TWO_STAGE_ENABLED is True
     assert cfg.PHASE2_SAMPLE_MAX_BARS_PER_SYMBOL == 60_000
     assert cfg.PHASE2_SAMPLE_ROTATION_FRACTION == 0.65
     assert cfg.PHASE2_TP == 2.0
     assert cfg.PHASE2_MONTHLY_ADMISSION_MIN_MONTHS == 2
-    assert cfg.PHASE1_DISABLED is False
+    assert cfg.PHASE1_DISABLED is True
     assert cfg.PHASE2_DIVERSITY_ON_F4 is True
-    assert cfg.PHASE2_USE_TOTAL_RETURN_OBJ is False
+    assert cfg.PHASE2_USE_TOTAL_RETURN_OBJ is True
     assert cfg.PHASE2_MIN_PROFITABLE_SYMBOLS == 2
     assert cfg.RB_TAIL_HOLDOUT_HARD_GATE is True
     assert cfg.RB_MAX_SYMBOL_SHARE_ABS_PNL == 0.67
@@ -60,8 +60,8 @@ def test_anti_overfit_config_bundle():
     assert cfg.PHASE2_EARLY_STOP_ENABLED is False
     assert cfg.PHASE2_PLATEAU_EARLY_STOP_ENABLED is False
     assert cfg.PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED is False
-    assert cfg.PHASE2_STAGE_A_GENERATIONS == 20
-    assert cfg.PHASE2_STAGE_B_GENERATIONS == 20
+    assert cfg.PHASE2_STAGE_A_GENERATIONS == 65
+    assert cfg.PHASE2_STAGE_B_GENERATIONS == 35
     assert cfg.PHASE2_STAGE_A_MUTATION_WEIGHTED_ACTIVATE_PROB == 0.70
     assert cfg.RB_MIN_RULES == 1
     assert cfg.RB_MAX_RULES == 20

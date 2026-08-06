@@ -545,7 +545,7 @@ class OOS_Evaluator:
         return strategies
 
     @staticmethod
-    def prepare_test_data(test_csv_path: str) -> pd.DataFrame:
+    def prepare_test_data(test_csv_path: str, *, require_context: bool | None = None) -> pd.DataFrame:
         """
         Prepare test data using Data_Loader.load_dataset().
 
@@ -568,11 +568,15 @@ class OOS_Evaluator:
             Prepared test DataFrame.
         """
         loader = Data_Loader()
+        # require_context=None defaults to True (enriched). Pass False only
+        # for synthetic fixtures without context columns (test-only).
+        if require_context is None:
+            require_context = True
         return loader.load_dataset(
             test_csv_path,
             drop_tail=True,
             include_barrier_outcomes=True,
-            require_context=True,
+            require_context=require_context,
         )
 
     def _load_datasets_by_split(self) -> dict[str, pd.DataFrame]:

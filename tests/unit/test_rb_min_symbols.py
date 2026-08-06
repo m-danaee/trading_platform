@@ -32,8 +32,10 @@ from gpu_fuzzy_trader.rb_governor import (
 
 
 def _single_symbol_rule(sym: str) -> dict:
+    # Must include mandatory long context conditions (strict contract)
+    ctx = list(_cfg.mandatory_context_conditions("long"))
     return {
-        "conditions": [f"symbol is {sym}", "[feat] IS High"],
+        "conditions": [f"symbol is {sym}", "[feat] IS High", *ctx],
         "tp": 2.0,
         "sl": 1.2,
         "capital_pct": 10.0,
@@ -45,8 +47,9 @@ def _multi_symbol_rules() -> list[dict]:
 
 
 def _no_symbol_rule() -> dict:
+    ctx = list(_cfg.mandatory_context_conditions("long"))
     return {
-        "conditions": ["[feat] IS High"],
+        "conditions": ["[feat] IS High", *ctx],
         "tp": 2.0,
         "sl": 1.2,
         "capital_pct": 18.0,
@@ -131,13 +134,15 @@ class TestSymbolsInRules:
         assert _symbols_in_rules([]) == set()
 
     def test_bracket_symbol_condition(self):
-        rules = [{"conditions": ["[symbol] is BTC", "[feat] IS High"]}]
+        ctx = list(_cfg.mandatory_context_conditions("long"))
+        rules = [{"conditions": ["[symbol] is BTC", "[feat] IS High", *ctx]}]
         assert _symbols_in_rules(rules) == {"btc"}
 
     def test_mixed_conditions(self):
+        ctx = list(_cfg.mandatory_context_conditions("long"))
         rules = [
-            {"conditions": ["symbol is BTC", "[feat] IS High"]},
-            {"conditions": ["[symbol] is ETH", "[feat] IS Low"]},
+            {"conditions": ["symbol is BTC", "[feat] IS High", *ctx]},
+            {"conditions": ["[symbol] is ETH", "[feat] IS Low", *ctx]},
         ]
         assert _symbols_in_rules(rules) == {"btc", "eth"}
 

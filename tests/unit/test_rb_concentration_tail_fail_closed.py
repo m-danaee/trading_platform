@@ -22,8 +22,9 @@ from gpu_fuzzy_trader.rb_governor import CandidateRecord, run_rb_governor_pipeli
 
 
 def _rule(sym: str = "BTC") -> dict:
+    ctx = list(_cfg.mandatory_context_conditions("long"))
     return {
-        "conditions": [f"symbol is {sym}", "[feat] IS High"],
+        "conditions": [f"symbol is {sym}", "[feat] IS High", *ctx],
         "tp": 2.0,
         "sl": 1.2,
         "capital_pct": 10.0,

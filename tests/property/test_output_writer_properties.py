@@ -93,28 +93,35 @@ def valid_rule_st(draw: st.DrawFn) -> dict:
     """
     Generate a valid rule dict with:
       - tp, sl, capital_pct: floats where at least one is non-zero
-      - conditions: 1-5 valid condition strings
+      - conditions: 1-5 valid condition strings + mandatory context
     """
-    # Generate tp/sl/capital_pct ensuring not all zero
     tp = draw(st.floats(min_value=0.0, max_value=10.0, allow_nan=False, allow_infinity=False))
     sl = draw(st.floats(min_value=0.0, max_value=5.0, allow_nan=False, allow_infinity=False))
     capital_pct = draw(st.floats(min_value=0.0, max_value=100.0, allow_nan=False, allow_infinity=False))
-
-    # Ensure at least one is non-zero (avoid the all-zero rejection case)
     if tp == 0.0 and sl == 0.0 and capital_pct == 0.0:
         tp = draw(st.floats(min_value=0.1, max_value=10.0, allow_nan=False, allow_infinity=False))
-
     n_conditions = draw(st.integers(min_value=1, max_value=5))
     conditions = draw(
         st.lists(valid_condition_st(), min_size=n_conditions, max_size=n_conditions)
     )
-
     return {
         "tp": tp,
         "sl": sl,
         "capital_pct": capital_pct,
         "conditions": conditions,
     }
+
+
+def _with_mandatory_context(rule_set: dict) -> dict:
+    """Append the direction's mandatory context conditions to every rule."""
+    direction = rule_set["direction"]
+    ctx = list(_cfg.mandatory_context_conditions(direction))
+    out = dict(rule_set)
+    out["rules_set"] = [
+        {**rule, "conditions": list(rule["conditions"]) + ctx}
+        for rule in rule_set["rules_set"]
+    ]
+    return out
 
 
 @st.composite
@@ -187,6 +194,7 @@ def rule_set_with_all_zero_rule_st(draw: st.DrawFn) -> dict:
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture],
 )
 def test_property_23a_valid_rule_set_schema(rule_set: dict) -> None:
+    rule_set = _with_mandatory_context(rule_set)
     """
     **Property 23: JSON Output Schema Validity**
     **Validates: Requirements 12.1–12.9**
@@ -303,6 +311,7 @@ def test_property_23a_valid_rule_set_schema(rule_set: dict) -> None:
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture],
 )
 def test_property_23b_oversized_rule_set_truncated_to_global_max(rule_set: dict) -> None:
+    rule_set = _with_mandatory_context(rule_set)
     """
     **Property 23: JSON Output Schema Validity**
     **Validates: Requirements 12.8**

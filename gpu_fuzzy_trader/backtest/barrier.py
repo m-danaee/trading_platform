@@ -236,7 +236,7 @@ def attach_barrier_outcomes(
     if missing:
         raise ValueError(f"Barrier outcomes require columns: {sorted(missing)}")
 
-    horizon = int(horizon or getattr(_cfg, "MAX_HOLD_CANDLES", 288))
+    horizon = int(horizon or getattr(_cfg, "MAX_HOLD_CANDLES", 96))
     if horizon < 1:
         raise ValueError("Barrier horizon must be positive")
     pairs = list(pairs or configured_barrier_pairs())

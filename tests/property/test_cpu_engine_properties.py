@@ -344,7 +344,7 @@ def _expected_outcome(
             return float(tp), "TP"
         if hit_sl:
             return float(-sl), "SL"
-        return float(s_close), "Time_288"
+        return float(s_close), "Time_1"
     else:  # short
         hit_tp = s_min <= -tp
         hit_sl = s_max >= sl
@@ -357,7 +357,7 @@ def _expected_outcome(
             return float(tp), "TP"
         if hit_sl:
             return float(-sl), "SL"
-        return float(-s_close), "Time_288"
+        return float(-s_close), "Time_1"
 
 
 # ---------------------------------------------------------------------------
@@ -383,14 +383,14 @@ def test_property_11_trade_outcome_correctness(scenario: dict) -> None:
       - min_ret <= -sl AND max_ret < tp            → SL,  return = -sl
       - both hit, max_before_min == 1              → TP first, return = +tp
       - both hit, max_before_min == 0              → SL first, return = -sl
-      - neither hit                                → Time_288, return = close_ret
+      - neither hit                                → Time_{MAX_HOLD}, return = close_ret
 
     Short:
       - min_ret <= -tp AND max_ret < sl            → TP,  return = +tp
       - max_ret >= sl  AND min_ret > -tp           → SL,  return = -sl
       - both hit, max_before_min == 1              → SL first, return = -sl
       - both hit, max_before_min == 0              → TP first, return = +tp
-      - neither hit                                → Time_288, return = -close_ret
+      - neither hit                                → Time_{MAX_HOLD}, return = -close_ret
     """
     direction = scenario["direction"]
     tp = scenario["tp"]
@@ -492,7 +492,7 @@ def test_property_11b_exit_reason_consistency_with_return(scenario: dict) -> Non
     The exit reason and price return must be internally consistent:
       - "TP"       → price_return_pct == +tp  (positive)
       - "SL"       → price_return_pct == -sl  (negative)
-      - "Time_288" → price_return_pct == close_ret (long) or -close_ret (short)
+      - "Time_{MAX_HOLD}" → price_return_pct == close_ret (long) or -close_ret (short)
     """
     direction = scenario["direction"]
     tp = scenario["tp"]
@@ -559,7 +559,7 @@ def test_property_11b_exit_reason_consistency_with_return(scenario: dict) -> Non
         assert abs(actual_return - (-sl)) < 1e-3, (
             f"SL exit must return -sl={-sl:.6f}, got {actual_return:.6f}"
         )
-    elif actual_reason == "Time_288":
+    elif actual_reason.startswith("Time_"):
         # Use the same round-trip as the engine: price → pct
         label_close = entry * (1.0 + close_ret_pct / 100.0)
         engine_close_ret = (label_close - entry) / entry * 100.0
@@ -568,7 +568,7 @@ def test_property_11b_exit_reason_consistency_with_return(scenario: dict) -> Non
         else:
             expected_time_ret = -engine_close_ret
         assert abs(actual_return - expected_time_ret) < 1e-3, (
-            f"Time_288 exit must return {expected_time_ret:.6f} "
+            f"{actual_reason} exit must return {expected_time_ret:.6f} "
             f"(direction={direction}, close_ret={close_ret_pct:.6f}), "
             f"got {actual_return:.6f}"
         )
