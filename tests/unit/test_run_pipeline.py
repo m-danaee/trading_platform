@@ -95,7 +95,12 @@ def test_context_coverage_preflight_logs_all_splits_and_directions(
     frame = _context_frame()
 
     with caplog.at_level(logging.INFO, logger="gpu_fuzzy_trader.run_pipeline"):
-        report = _context_coverage_preflight(frame, frame, frame)
+        report = _context_coverage_preflight(
+            frame,
+            frame,
+            frame,
+            floor_aware=False,
+        )
 
     assert report["validation_fitness"]["short"]["eligible_rows"] == 2
     for split_name in ("train", "validation_fitness", "validation_selection"):
@@ -131,6 +136,90 @@ def test_context_coverage_preflight_rejects_nonempty_raw_splits() -> None:
 
     with pytest.raises(RuntimeError, match="no context columns"):
         _context_coverage_preflight(frame, frame, frame)
+
+
+def test_context_coverage_reports_permission_trigger_breakdown() -> None:
+    frame = _context_frame(rows=8)
+    frame.loc[4, "tf_permission_long"] = 1
+    frame.loc[5, "lwc_pullback_reversal_long"] = 1
+
+    stats = pipeline._context_coverage_for_direction(frame, "long")
+
+    assert stats["permission_rows"] == 3
+    assert stats["trigger_rows"] == 3
+    assert stats["eligible_rows"] == 2
+    assert stats["permission_only_rows"] == 1
+    assert stats["trigger_only_rows"] == 1
+    assert stats["by_symbol_detail"]["A"]["eligible_rows"] == 1
+
+
+def test_floor_aware_preflight_rejects_sparse_island_support() -> None:
+    frame = _context_frame(rows=20)
+    for column in (
+        "tf_permission_long",
+        "tf_permission_short",
+        "lwc_pullback_reversal_long",
+        "lwc_pullback_reversal_short",
+    ):
+        frame[column] = 1
+
+    with pytest.raises(RuntimeError, match="min_trade_support"):
+        _context_coverage_preflight(
+            frame,
+            frame,
+            frame,
+            floor_aware=True,
+            run_id="test-run",
+        )
+
+
+def test_current_run_oos_directions_follow_accepted_phase2_pool(tmp_path) -> None:
+    frame = _context_frame(rows=200)
+    for column in (
+        "tf_permission_long",
+        "tf_permission_short",
+        "lwc_pullback_reversal_long",
+        "lwc_pullback_reversal_short",
+    ):
+        frame[column] = 1
+
+    orch = Pipeline_Orchestrator(output_dir=str(tmp_path))
+    orch._load_and_split_data = MagicMock(return_value=(frame, frame))
+    orch._validate_active_configuration = MagicMock()
+    orch._validation_scoring_frames = MagicMock(return_value=(frame, frame))
+    orch._run_phase1 = MagicMock(return_value={
+        "long": [{"name": "feature", "mode": "positive"}],
+        "short": [{"name": "feature", "mode": "positive"}],
+    })
+    orch._run_phase2 = MagicMock(return_value={
+        "long": [{"phase2_rule_id": "long-rule"}],
+        "short": [],
+    })
+    orch._run_rb_governor = MagicMock(return_value={
+        "long": {
+            "rules_set": [{"conditions": []}],
+            "deployment_accepted": True,
+        },
+        "short": {
+            "rules_set": [],
+            "deployment_accepted": False,
+        },
+    })
+    orch._run_nested_validation = MagicMock(return_value={})
+    orch._release_between_phases = MagicMock()
+    orch._run_phase5 = MagicMock(return_value={})
+
+    result = orch.run(force=True)
+
+    assert result["run_id"]
+    assert orch._run_phase5.call_args.kwargs["allowed_directions"] == frozenset(
+        {"long"}
+    )
+    manifest = json.loads(
+        (tmp_path / "reports" / "run_manifest.json").read_text()
+    )
+    assert manifest["run_id"] == result["run_id"]
+    assert manifest["status"] == "completed"
 
 
 def test_phase_log_entry_is_structured_json(tmp_path) -> None:

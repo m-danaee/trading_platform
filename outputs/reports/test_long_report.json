@@ -1,0 +1,23 @@
+{
+  "direction": "long",
+  "evaluation_status": "ok",
+  "total_return_pct": "1.6512275",
+  "max_drawdown_pct": "2.6022549",
+  "win_rate": 49.0,
+  "profit_factor": "1.2276856",
+  "executed_trades": 200,
+  "account_status": "survived",
+  "final_equity": "1016.5123",
+  "per_symbol_metrics": {
+    "BTCUSDT": {
+      "trade_count": 79,
+      "win_rate": 36.708860759493675,
+      "net_pnl": -9.168968200683594
+    },
+    "ETHUSDT": {
+      "trade_count": 121,
+      "win_rate": 57.02479338842975,
+      "net_pnl": 25.680835723876953
+    }
+  }
+}

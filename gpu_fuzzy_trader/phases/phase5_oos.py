@@ -170,8 +170,10 @@ class OOS_Evaluator:
         self,
         test_csv_path: str | None = None,
         forward_csv_path: str | None = None,
+        run_id: str | None = None,
     ) -> None:
         self.test_csv_path: str = test_csv_path or _cfg.TEST_CSV_PATH
+        self.run_id = str(run_id) if run_id else None
         configured_forward = (
             forward_csv_path
             if forward_csv_path is not None
@@ -881,6 +883,7 @@ class OOS_Evaluator:
         # Build a clean, serialisable report dict
         evaluation_status = str(metrics.get("evaluation_status", "ok"))
         report = {
+            "run_id": self.run_id,
             "direction": direction,
             "split": split,
             "acceptance_status": (

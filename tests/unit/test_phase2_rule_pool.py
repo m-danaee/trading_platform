@@ -3830,3 +3830,92 @@ class TestRefreshObjectivesOnResumeGate:
         assert self._evaluate_gate(first_epoch=True) is False, (
             "Expected refresh=False on first epoch when rotation is OFF"
         )
+
+
+def test_finalize_island_passes_full_admission_context(
+    tmp_path,
+    monkeypatch,
+):
+    """Final archive admission must use the full validation frame."""
+    import gpu_fuzzy_trader.phases.phase2_rule_pool as module
+
+    captured: dict = {}
+    pool_path = tmp_path / "phase2_long_pool.json"
+    original_pool_paths = module._POOL_PATHS.copy()
+    module._POOL_PATHS["long"] = str(pool_path)
+
+    class CVEvaluator:
+        n_valid_rows = 99
+
+    def fake_evolution(**kwargs):
+        captured.update(kwargs)
+        return [], []
+
+    generator = object.__new__(Rule_Pool_Generator)
+    generator.direction = "long"
+    generator.feature_infos = _make_feature_infos(["positive"])
+    generator.pop_size = 4
+    generator._rng = np.random.default_rng(42)
+    generator._evolution_state = {"state": True}
+    generator._engine = object()
+    generator._val_engine = object()
+    generator._pool_val_engine = object()
+    generator._cv_val_evaluator = CVEvaluator()
+    generator._cached_monthly_val = pd.DataFrame({"value": np.arange(42)})
+    generator._holdout_n_valid_rows = 7
+    generator._train_df = pd.DataFrame({"value": np.arange(99)})
+    generator.island_id = "cluster_0"
+    generator.source_symbols = ["BTCUSDT"]
+    generator.island_hyperparams = None
+    generator.island_profile = "cluster"
+    generator.run_id = "run-123"
+
+    monkeypatch.setattr(
+        module.Rule_Pool_Generator,
+        "_ensure_engines",
+        lambda self: None,
+    )
+    monkeypatch.setattr(
+        "gpu_fuzzy_trader.evolution.evox_runner.run_phase2_evolution",
+        fake_evolution,
+    )
+    monkeypatch.setattr(
+        "gpu_fuzzy_trader.phases.phase2_init.build_feature_sampling_probs",
+        lambda feature_infos: {},
+    )
+    monkeypatch.setattr(
+        module,
+        "_filter_pool_by_admission",
+        lambda pool, **kwargs: pool,
+    )
+    monkeypatch.setattr(
+        module,
+        "_run_monthly_admission_on_pool",
+        lambda pool, generator: pool,
+    )
+    monkeypatch.setattr(
+        module.Rule_Pool_Generator,
+        "_annotate_archive_entries",
+        staticmethod(lambda pool, **kwargs: pool),
+    )
+    monkeypatch.setattr(
+        module.Rule_Pool_Generator,
+        "_release_resources",
+        lambda self: None,
+    )
+
+    try:
+        assert generator.finalize_island() == []
+    finally:
+        module._POOL_PATHS.update(original_pool_paths)
+
+    assert captured["pool_val_engine"] is generator._pool_val_engine
+    assert captured["holdout_n_valid_rows"] == 42
+    assert captured["train_n_rows"] == 99
+    assert captured["cv_fold_evaluator"] is generator._cv_val_evaluator
+    report_path = tmp_path / "reports" / (
+        "phase2_long_island_cluster_0_coverage.json"
+    )
+    report = json.loads(report_path.read_text())
+    assert report["run_id"] == "run-123"
+    assert report["admission_evidence"]["pool_validation_rows"] == 42

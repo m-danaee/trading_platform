@@ -1,0 +1,24 @@
+{
+  "eligible_rules": [],
+  "positive_contributors": {},
+  "final_eligible_rules": 0,
+  "admitted_rules": 0,
+  "reservations": {},
+  "reservation_counts": {},
+  "pool_before_reservation": 0,
+  "pool_after_reservation": 0,
+  "retained_rules": 0,
+  "run_id": null,
+  "admission_evidence": {
+    "run_id": null,
+    "direction": "long",
+    "island_id": null,
+    "source_symbols": [],
+    "train_rows": 130,
+    "fitness_validation_rows": null,
+    "pool_validation_rows": null,
+    "pool_validation_frame": "fallback_validation_engine",
+    "cv_validation_rows": null
+  },
+  "final_pool_size": 0
+}

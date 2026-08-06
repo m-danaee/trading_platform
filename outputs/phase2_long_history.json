@@ -1,0 +1,11 @@
+{
+  "mode": "cluster_islands",
+  "clusters": {
+    "0": [
+      "BTCUSDT"
+    ],
+    "1": [
+      "ETHUSDT"
+    ]
+  }
+}

@@ -630,6 +630,20 @@ class TestSaveReport:
         finally:
             m._REPORT_PATHS.update(original)
 
+    def test_report_records_current_run_id(self, tmp_path):
+        import gpu_fuzzy_trader.phases.phase5_oos as m
+        original = m._REPORT_PATHS.copy()
+        report_path = str(tmp_path / "reports" / "test_long_report.json")
+        m._REPORT_PATHS["long"] = report_path
+        try:
+            ev = OOS_Evaluator(run_id="run-123")
+            ev._save_report(self._make_metrics(), "long")
+            with open(report_path) as fh:
+                data = json.load(fh)
+            assert data["run_id"] == "run-123"
+        finally:
+            m._REPORT_PATHS.update(original)
+
     def test_account_status_survived_when_not_ruined(self, tmp_path):
         import gpu_fuzzy_trader.phases.phase5_oos as m
         original = m._REPORT_PATHS.copy()

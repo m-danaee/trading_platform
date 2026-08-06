@@ -25,6 +25,7 @@ from gpu_fuzzy_trader.features.symbol_cluster import (
 )
 from gpu_fuzzy_trader.phases.phase2_rule_pool import (
     Rule_Pool_Generator,
+    _derive_val_sample_seed,
     _get_dont_cares,
     _merge_archive_entries,
     sample_df_for_phase2,
@@ -32,6 +33,10 @@ from gpu_fuzzy_trader.phases.phase2_rule_pool import (
 from gpu_fuzzy_trader.phases.phase2_support import (
     passes_evolution_deployability_preview,
     passes_pool_admission_gate,
+)
+from gpu_fuzzy_trader.context_diagnostics import (
+    context_coverage_for_direction,
+    context_floor_failures,
 )
 
 logger = logging.getLogger(__name__)
@@ -288,6 +293,150 @@ def _reference_sample_rows(train_df: pd.DataFrame, seed: int | None) -> int:
     return len(sampled)
 
 
+def _context_support_preflight(
+    train_df: pd.DataFrame,
+    val_df: pd.DataFrame,
+    direction: str,
+    cluster_map: dict[str, list[str]],
+    reference_rows: int,
+    seed: int | None,
+    cv_folds: list | None,
+    run_id: str | None = None,
+) -> dict[str, Any]:
+    """Check exact cluster windows before spending the Phase 2 budget."""
+    from gpu_fuzzy_trader.validation.rolling_cv import build_forbidden_ranges
+
+    base_seed = int(seed if seed is not None else _cfg.PHASE2_SEED)
+    forbidden_ranges = (
+        build_forbidden_ranges(cv_folds) if cv_folds else []
+    )
+    report: dict[str, Any] = {
+        "direction": direction,
+        "reference_rows": int(reference_rows),
+        "islands": {},
+        "failures": [],
+    }
+    for cluster_id, symbols in cluster_map.items():
+        scoped_train = _cfg.filter_df_to_symbols(train_df, symbols)
+        scoped_val = _cfg.filter_df_to_symbols(val_df, symbols)
+        island_seed = _derive_island_seed(
+            base_seed, f"{direction}_{cluster_id}",
+        )
+        if island_seed is None:
+            island_seed = base_seed
+        sampled_train = sample_df_for_phase2(
+            scoped_train,
+            random_state=island_seed,
+            forbidden_ranges=forbidden_ranges,
+        )
+        sampled_val = sample_df_for_phase2(
+            scoped_val,
+            random_state=_derive_val_sample_seed(island_seed),
+        )
+        hp = _cfg.resolve_island_hyperparams(
+            "cluster",
+            len(sampled_train),
+            max(1, int(reference_rows)),
+            n_symbols=max(1, len(symbols)),
+        )
+        train_stats = context_coverage_for_direction(
+            sampled_train, direction,
+        )
+        val_fitness_stats = context_coverage_for_direction(
+            sampled_val, direction,
+        )
+        val_pool_stats = context_coverage_for_direction(
+            scoped_val, direction,
+        )
+        island_report = {
+            "cluster_id": str(cluster_id),
+            "symbols": list(symbols),
+            "seed": int(island_seed),
+            "train_rows": int(len(sampled_train)),
+            "validation_fitness_rows": int(len(sampled_val)),
+            "validation_pool_rows": int(len(scoped_val)),
+            "floors": {
+                "min_trade_support": int(hp.min_trade_support),
+                "min_trade_pool_floor": int(hp.min_trade_pool_floor),
+                "validation_trade_floor": int(hp.val_trade_floor),
+            },
+            "coverage": {
+                "train_sample": train_stats,
+                "validation_fitness_sample": val_fitness_stats,
+                "validation_pool": val_pool_stats,
+            },
+        }
+        report["islands"][str(cluster_id)] = island_report
+
+        checks = (
+            (
+                "train_sample",
+                train_stats,
+                {
+                    "support_floor": hp.min_trade_support,
+                    "pool_floor": hp.min_trade_pool_floor,
+                },
+            ),
+            (
+                "validation_fitness_sample",
+                val_fitness_stats,
+                {"validation_floor": hp.val_trade_floor},
+            ),
+            (
+                "validation_pool",
+                val_pool_stats,
+                {"validation_floor": hp.val_trade_floor},
+            ),
+        )
+        for split_name, stats, floors in checks:
+            for reason in context_floor_failures(stats, **floors):
+                report["failures"].append(
+                    f"{cluster_id}/{split_name}: {reason}"
+                )
+
+        def _pct(value: Any) -> float:
+            return float(value) if value is not None else 0.0
+
+        def _count(value: Any) -> int:
+            return int(value) if value is not None else 0
+
+        logger.info(
+            "Context support [%s/%s]: train %.2f%% (%d/%d), "
+            "validation fitness %.2f%% (%d/%d), validation pool %.2f%% "
+            "(%d/%d), floors=%s",
+            direction,
+            cluster_id,
+            _pct(train_stats["coverage_pct"]),
+            _count(train_stats["eligible_rows"]),
+            int(train_stats["total_rows"]),
+            _pct(val_fitness_stats["coverage_pct"]),
+            _count(val_fitness_stats["eligible_rows"]),
+            int(val_fitness_stats["total_rows"]),
+            _pct(val_pool_stats["coverage_pct"]),
+            _count(val_pool_stats["eligible_rows"]),
+            int(val_pool_stats["total_rows"]),
+            island_report["floors"],
+        )
+
+    report["run_id"] = run_id
+    report_path = os.path.join(
+        _cfg.OUTPUTS_DIR,
+        "reports",
+        f"phase2_{direction}_context_support.json",
+    )
+    os.makedirs(os.path.dirname(report_path), exist_ok=True)
+    with open(report_path, "w", encoding="utf-8") as fh:
+        json.dump(report, fh, indent=2, default=str)
+    if report["failures"]:
+        details = "; ".join(str(item) for item in report["failures"])
+        raise RuntimeError(
+            f"Phase 2 [{direction}] context support preflight failed before "
+            f"island evolution: {details}. Mandatory permission/trigger "
+            "coverage cannot satisfy the resolved trade floors."
+        )
+    return report
+
+
 def _score_rule_on_symbol_val(
     rule: dict,
     val_sym_df: pd.DataFrame,
@@ -340,6 +489,7 @@ def _run_orphan_boosts(
     reference_rows: int,
     seed: int | None,
     cv_folds: list | None,
+    run_id: str | None = None,
 ) -> list[dict]:
     if not _cfg.PHASE2_ORPHAN_ENABLED:
         return pool
@@ -381,6 +531,7 @@ def _run_orphan_boosts(
                 source_symbols=[sym],
                 island_hyperparams=hp,
                 island_profile="orphan",
+                run_id=run_id,
             )
             n_gens = int(_cfg.PHASE2_ORPHAN_GENERATIONS)
             epoch = int(_cfg.PHASE2_ISLAND_EPOCH_GENERATIONS)
@@ -521,6 +672,7 @@ def _run_cluster_islands(
     reference_rows: int,
     seed: int | None,
     cv_folds: list | None,
+    run_id: str | None = None,
 ) -> list[dict]:
     cluster_ids = sorted(cluster_map.keys(),
                          key=lambda x: int(x) if x.isdigit() else x)
@@ -561,6 +713,7 @@ def _run_cluster_islands(
             island_profile="cluster",
             reference_rows=reference_rows,
             defer_warmup=True,
+            run_id=run_id,
         )
 
     # ------------------------------------------------------------------
@@ -703,6 +856,7 @@ def run_cluster_phase2(
     direction: str,
     cv_folds: list | None = None,
     seed: int | None = None,
+    run_id: str | None = None,
 ) -> list[dict]:
     """Run cluster-island Phase 2 for one direction and return merged pool."""
     seed = seed if seed is not None else _cfg.PHASE2_SEED
@@ -747,6 +901,17 @@ def run_cluster_phase2(
     persist_symbol_clusters(SYMBOL_CLUSTERS_PATH, cluster_payload)
     cluster_map = dict(cluster_payload["clusters"])
 
+    context_support = _context_support_preflight(
+        train_df,
+        val_df,
+        direction,
+        cluster_map,
+        reference_rows,
+        seed,
+        cv_folds,
+        run_id,
+    )
+
     logger.info(
         "Phase 2 [%s]: cluster island mode K=%d reference_rows=%d "
         "one_symbol=%s per_island_gens=%s",
@@ -788,6 +953,7 @@ def run_cluster_phase2(
         reference_rows,
         seed,
         cv_folds,
+        run_id,
     )
 
     pool = _run_orphan_boosts(
@@ -799,6 +965,7 @@ def run_cluster_phase2(
         reference_rows,
         seed,
         cv_folds,
+        run_id,
     )
 
     pool_path = _cfg.phase2_pool_path(direction)
@@ -808,6 +975,28 @@ def run_cluster_phase2(
         json.dump(pool, fh, indent=2)
     with open(history_path, "w", encoding="utf-8") as fh:
         json.dump({"mode": "cluster_islands",
-                  "clusters": cluster_map}, fh, indent=2)
+                  "clusters": cluster_map,
+                   "run_id": run_id,
+                   "context_support": context_support}, fh, indent=2)
+
+    reports_dir = os.path.join(_cfg.OUTPUTS_DIR, "reports")
+    os.makedirs(reports_dir, exist_ok=True)
+    coverage_path = os.path.join(
+        reports_dir, f"phase2_{direction}_coverage.json",
+    )
+    with open(coverage_path, "w", encoding="utf-8") as fh:
+        json.dump(
+            {
+                "run_id": run_id,
+                "direction": direction,
+                "mode": "cluster_islands",
+                "clusters": cluster_map,
+                "pool_size": len(pool),
+                "context_support": context_support,
+            },
+            fh,
+            indent=2,
+            default=str,
+        )
 
     return pool

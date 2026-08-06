@@ -44,8 +44,18 @@ from gpu_fuzzy_trader.validation.rolling_cv import (
     mask_df_to_safe_region,
 )
 from gpu_fuzzy_trader.phases.phase2_rule_pool import Rule_Pool_Generator
+from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+    _derive_val_sample_seed,
+    sample_df_for_phase2,
+)
 from gpu_fuzzy_trader.phases.phase2_island_scheduler import (
     compute_cluster_generation_budgets,
+    _derive_island_seed,
+)
+from gpu_fuzzy_trader.context_diagnostics import (
+    context_coverage_for_direction,
+    context_coverage_report,
+    context_floor_failures,
 )
 from gpu_fuzzy_trader.phases.phase5_oos import OOS_Evaluator
 from gpu_fuzzy_trader.research_integrity import (
@@ -60,6 +70,7 @@ from contextlib import contextmanager
 import pandas as pd
 from typing import Any
 from datetime import datetime, timezone
+import uuid
 import time
 import sys
 import os
@@ -229,47 +240,8 @@ def _context_coverage_for_direction(
     frame: pd.DataFrame,
     direction: str,
 ) -> dict[str, object]:
-    """Return eligible-row and per-symbol counts for one direction."""
-    permission = _cfg.context_permission_column(direction)
-    trigger = _cfg.context_trigger_column(direction)
-    missing = [
-        column for column in (permission, trigger)
-        if column not in frame.columns
-    ]
-    if missing:
-        return {
-            "eligible_rows": None,
-            "total_rows": int(len(frame)),
-            "coverage_pct": None,
-            "by_symbol": {},
-            "missing_columns": missing,
-        }
-
-    eligible = (
-        (frame[permission].to_numpy() == 1)
-        & (frame[trigger].to_numpy() == 1)
-    )
-    by_symbol: dict[str, int] = {}
-    if "symbol" in frame.columns:
-        for symbol, group in frame.groupby(
-            "symbol", sort=True, observed=False,
-        ):
-            symbol_eligible = (
-                (group[permission].to_numpy() == 1)
-                & (group[trigger].to_numpy() == 1)
-            )
-            by_symbol[str(symbol)] = int(symbol_eligible.sum())
-    else:
-        by_symbol["<all>"] = int(eligible.sum())
-
-    eligible_rows = int(eligible.sum())
-    return {
-        "eligible_rows": eligible_rows,
-        "total_rows": int(len(frame)),
-        "coverage_pct": eligible_rows / max(len(frame), 1) * 100.0,
-        "by_symbol": by_symbol,
-        "missing_columns": [],
-    }
+    """Return shared permission/trigger/conjunction coverage diagnostics."""
+    return context_coverage_for_direction(frame, direction)
 
 
 def _context_coverage_report(
@@ -278,25 +250,176 @@ def _context_coverage_report(
     val_selection_df: pd.DataFrame,
 ) -> dict[str, dict[str, dict[str, object]]]:
     """Return split-aware context coverage for both trading directions."""
-    frames = {
+    return context_coverage_report({
         "train": train_df,
         "validation_fitness": val_fitness_df,
         "validation_selection": val_selection_df,
+    })
+
+
+def _context_island_sample_report(
+    train_df: pd.DataFrame,
+    val_fitness_df: pd.DataFrame,
+    *,
+    cv_folds: list | None = None,
+    seed: int | None = None,
+) -> dict[str, Any]:
+    """Report context support on the windows Phase 2 islands actually sample.
+
+    The production default uses singleton specialist islands.  For a generic
+    clustered configuration this is a conservative per-universe proxy; the
+    scheduler repeats the same check after it has resolved the exact cluster
+    map.
+    """
+    base_seed = int(seed if seed is not None else _cfg.PHASE2_SEED)
+    forbidden_ranges = (
+        build_forbidden_ranges(cv_folds) if cv_folds else []
+    )
+    reference_sample = sample_df_for_phase2(
+        train_df,
+        random_state=base_seed,
+    )
+    reference_rows = len(reference_sample)
+
+    if "symbol" in train_df.columns:
+        symbols = sorted(
+            {str(value) for value in train_df["symbol"].dropna().unique()}
+        )
+    else:
+        symbols = []
+    singleton_mode = bool(
+        getattr(_cfg, "PHASE2_SYMBOL_SPECIALISTS_ENABLED", False)
+        or getattr(_cfg, "PHASE2_ONE_SYMBOL_ISLANDS", False)
+    )
+    if symbols and singleton_mode:
+        scopes = [
+            (str(index), [symbol])
+            for index, symbol in enumerate(symbols)
+        ]
+    else:
+        scopes = [("universe", symbols)]
+
+    report: dict[str, Any] = {
+        "mode": "singleton_proxy" if singleton_mode else "universe_proxy",
+        "reference_rows": int(reference_rows),
+        "sampling_total": int(_cfg.PHASE1_SAMPLING_TOTAL),
+        "islands": {},
+        "failures": [],
     }
-    return {
-        split_name: {
-            direction: _context_coverage_for_direction(frame, direction)
-            for direction in ("long", "short")
+    for island_id, scope_symbols in scopes:
+        if scope_symbols:
+            train_scope = train_df[
+                train_df["symbol"].astype(str).isin(scope_symbols)
+            ]
+            val_scope = val_fitness_df[
+                val_fitness_df["symbol"].astype(str).isin(scope_symbols)
+            ]
+        else:
+            train_scope = train_df
+            val_scope = val_fitness_df
+
+        island_data: dict[str, Any] = {
+            "island_id": str(island_id),
+            "symbols": list(scope_symbols),
+            "directions": {},
         }
-        for split_name, frame in frames.items()
-    }
+        for direction in ("long", "short"):
+            island_seed = _derive_island_seed(
+                base_seed,
+                f"{direction}_{island_id}",
+            )
+            if island_seed is None:
+                island_seed = base_seed
+            train_sample = sample_df_for_phase2(
+                train_scope,
+                random_state=island_seed,
+                forbidden_ranges=forbidden_ranges,
+            )
+            val_sample = sample_df_for_phase2(
+                val_scope,
+                random_state=_derive_val_sample_seed(island_seed),
+            )
+            hp = _cfg.resolve_island_hyperparams(
+                "cluster",
+                len(train_sample),
+                max(1, reference_rows),
+                n_symbols=max(1, len(scope_symbols)),
+            )
+            train_stats = _context_coverage_for_direction(
+                train_sample, direction,
+            )
+            val_stats = _context_coverage_for_direction(
+                val_sample, direction,
+            )
+            direction_data: dict[str, Any] = {
+                "seed": int(island_seed),
+                "train_rows": int(len(train_sample)),
+                "validation_fitness_rows": int(len(val_sample)),
+                "floors": {
+                    "min_trade_support": int(hp.min_trade_support),
+                    "min_trade_pool_floor": int(hp.min_trade_pool_floor),
+                    "validation_trade_floor": int(hp.val_trade_floor),
+                },
+                "coverage": {
+                    "train_sample": train_stats,
+                    "validation_fitness_sample": val_stats,
+                },
+            }
+            island_data["directions"][direction] = direction_data
+            train_failures = context_floor_failures(
+                train_stats,
+                support_floor=hp.min_trade_support,
+                pool_floor=hp.min_trade_pool_floor,
+            )
+            val_failures = context_floor_failures(
+                val_stats,
+                validation_floor=hp.val_trade_floor,
+            )
+            for split_name, split_failures in (
+                ("train_sample", train_failures),
+                ("validation_fitness_sample", val_failures),
+            ):
+                for reason in split_failures:
+                    report["failures"].append(
+                        f"{direction}/{island_id}/{split_name}: {reason}"
+                    )
+        report["islands"][str(island_id)] = island_data
+    return report
+
+
+def _write_context_preflight_report(
+    report: dict[str, Any],
+    failures: list[str],
+    run_id: str | None,
+) -> None:
+    """Persist the diagnostic even when preflight blocks the pipeline."""
+    if run_id is None:
+        return
+    preflight_path = Path(_cfg.REPORTS_DIR) / "phase2_context_preflight.json"
+    preflight_path.parent.mkdir(parents=True, exist_ok=True)
+    preflight_path.write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "failures": failures,
+                "coverage": report,
+            },
+            indent=2,
+            default=str,
+        ),
+        encoding="utf-8",
+    )
 
 
 def _context_coverage_preflight(
     train_df: pd.DataFrame,
     val_fitness_df: pd.DataFrame,
     val_selection_df: pd.DataFrame,
-) -> dict[str, dict[str, dict[str, object]]]:
+    *,
+    cv_folds: list | None = None,
+    floor_aware: bool = True,
+    run_id: str | None = None,
+) -> dict[str, Any]:
     """Log split-aware context coverage and fail before Phase 2 if unusable."""
     report = _context_coverage_report(
         train_df, val_fitness_df, val_selection_df,
@@ -324,12 +447,14 @@ def _context_coverage_preflight(
                 continue
             logger.info(
                 "Context coverage [%s/%s]: %.2f%% (%d / %d rows); "
-                "per_symbol=%s",
+                "permission=%s trigger=%s per_symbol=%s",
                 split_name,
                 direction,
                 stats["coverage_pct"],
                 stats["eligible_rows"],
                 stats["total_rows"],
+                stats.get("permission_rows"),
+                stats.get("trigger_rows"),
                 stats["by_symbol"],
             )
 
@@ -338,6 +463,11 @@ def _context_coverage_preflight(
     # must fail before Phase 2 rather than silently disabling the fixed gate.
     if not any_context_columns:
         if not all(frame.empty for frame in frames.values()):
+            _write_context_preflight_report(
+                report,
+                ["no context columns in non-empty split frames"],
+                run_id,
+            )
             raise RuntimeError(
                 "Context coverage preflight failed before Phase 2: no context "
                 "columns are present in the non-empty split frames. Enrich "
@@ -360,6 +490,91 @@ def _context_coverage_preflight(
                 )
             elif int(stats["eligible_rows"]) == 0:
                 failures.append(f"{split_name}/{direction} has zero eligible rows")
+
+    if floor_aware and not train_df.empty and not val_fitness_df.empty:
+        report["run_id"] = run_id
+        floor_requirements: dict[str, dict[str, dict[str, int]]] = {}
+        for split_name, frame in (
+            ("train", train_df),
+            ("validation_fitness", val_fitness_df),
+        ):
+            floor_requirements[split_name] = {}
+            for direction in ("long", "short"):
+                if split_name == "train":
+                    floors = {
+                        "min_trade_support": int(
+                            _cfg.effective_min_trade_support(len(frame))
+                        ),
+                        "min_trade_pool_floor": int(
+                            _cfg.effective_min_trade_pool_floor(len(frame))
+                        ),
+                    }
+                else:
+                    floors = {
+                        "validation_trade_floor": int(
+                            _cfg.effective_pool_min_val_trades(len(frame))
+                        ),
+                    }
+                floor_requirements[split_name][direction] = floors
+                failures.extend(
+                    f"{split_name}/{direction}: {reason}"
+                    for reason in context_floor_failures(
+                        report[split_name][direction],
+                        support_floor=floors.get("min_trade_support"),
+                        pool_floor=floors.get("min_trade_pool_floor"),
+                        validation_floor=floors.get(
+                            "validation_trade_floor"
+                        ),
+                    )
+                )
+        report["floor_requirements"] = floor_requirements
+
+        if _cfg.phase2_island_mode_enabled():
+            island_report = _context_island_sample_report(
+                train_df,
+                val_fitness_df,
+                cv_folds=cv_folds,
+                seed=_cfg.PHASE2_SEED,
+            )
+            report["island_samples"] = island_report
+            failures.extend(
+                f"island sample: {failure}"
+                for failure in island_report["failures"]
+            )
+            for island_id, island in island_report["islands"].items():
+                for direction, direction_data in island["directions"].items():
+                    train_stats = direction_data["coverage"]["train_sample"]
+                    val_stats = direction_data[
+                        "coverage"
+                    ]["validation_fitness_sample"]
+                    if (
+                        train_stats["eligible_rows"] is None
+                        or val_stats["eligible_rows"] is None
+                    ):
+                        logger.warning(
+                            "Context support [%s/%s] unavailable; "
+                            "missing train=%s validation=%s",
+                            direction,
+                            island_id,
+                            train_stats.get("missing_columns", []),
+                            val_stats.get("missing_columns", []),
+                        )
+                        continue
+                    logger.info(
+                        "Context support [%s/%s]: train %.2f%% (%d/%d), "
+                        "validation fitness %.2f%% (%d/%d), floors=%s",
+                        direction,
+                        island_id,
+                        train_stats["coverage_pct"],
+                        train_stats["eligible_rows"],
+                        train_stats["total_rows"],
+                        val_stats["coverage_pct"],
+                        val_stats["eligible_rows"],
+                        val_stats["total_rows"],
+                        direction_data["floors"],
+                    )
+
+    _write_context_preflight_report(report, failures, run_id)
 
     if failures:
         raise RuntimeError(
@@ -629,6 +844,115 @@ class Pipeline_Orchestrator:
         self._val_fitness_df: pd.DataFrame | None = None
         self._val_selection_df: pd.DataFrame | None = None
         self._phase2_status: dict[str, dict[str, Any]] = {}
+        self._run_id: str | None = None
+        self._run_started_at: str | None = None
+        self._run_mode: str | None = None
+        self._run_status: str | None = None
+
+    def _begin_run(
+        self,
+        mode: str,
+        *,
+        clear_derived: bool,
+        clear_phase2: bool = False,
+    ) -> None:
+        """Create a run identity and remove artifacts that cannot be trusted."""
+        self._run_started_at = _now_iso()
+        self._run_mode = str(mode)
+        self._run_status = "running"
+        self._run_id = (
+            datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            + "-"
+            + uuid.uuid4().hex[:10]
+        )
+        if clear_derived:
+            try:
+                OOS_Evaluator._clear_previous_reports()
+            except Exception as exc:
+                logger.warning(
+                    "Failed to clear stale Phase 5 reports at run start: %s",
+                    exc,
+                )
+            report_root = Path(_cfg.REPORTS_DIR)
+            for pattern in (
+                "phase2_*_coverage.json",
+                "phase2_*_island_*_coverage.json",
+                "phase2_*_context_support.json",
+                "phase2_context_preflight.json",
+            ):
+                for path in report_root.glob(pattern):
+                    path.unlink(missing_ok=True)
+        if clear_phase2:
+            output_root = Path(_cfg.OUTPUTS_DIR)
+            for name in (
+                "phase2_long_pool.json",
+                "phase2_short_pool.json",
+                "phase2_long_history.json",
+                "phase2_short_history.json",
+                "long.json",
+                "short.json",
+            ):
+                (output_root / name).unlink(missing_ok=True)
+            for path in Path(_cfg.REPORTS_DIR).glob(
+                "rb_governor_*_report.json"
+            ):
+                path.unlink(missing_ok=True)
+            if mode == "full":
+                for name in (
+                    "selected_features_long.json",
+                    "selected_features_short.json",
+                ):
+                    (output_root / name).unlink(missing_ok=True)
+
+        run_manifest = {
+            "run_id": self._run_id,
+            "mode": self._run_mode,
+            "status": "running",
+            "started_at": self._run_started_at,
+            "output_dir": str(_cfg.OUTPUTS_DIR),
+            "context_contract_digest": _cfg.context_contract_digest(),
+        }
+        manifest_path = Path(_cfg.REPORTS_DIR) / "run_manifest.json"
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(
+            json.dumps(run_manifest, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+
+    def _finish_run(self, status: str, *, error: str | None = None) -> None:
+        """Persist the final status for the current run identity."""
+        if not self._run_id:
+            return
+        self._run_status = str(status)
+        manifest_path = Path(_cfg.REPORTS_DIR) / "run_manifest.json"
+        payload: dict[str, Any] = {
+            "run_id": self._run_id,
+            "mode": self._run_mode,
+            "status": str(status),
+            "started_at": self._run_started_at,
+            "finished_at": _now_iso(),
+            "output_dir": str(_cfg.OUTPUTS_DIR),
+            "context_contract_digest": _cfg.context_contract_digest(),
+        }
+        if error:
+            payload["error"] = str(error)
+        manifest_path.write_text(
+            json.dumps(payload, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+
+    @contextmanager
+    def _run_identity_guard(self):
+        """Mark standalone phase runs failed when an exception escapes."""
+        try:
+            yield
+        except Exception as exc:
+            if self._run_status == "running":
+                self._finish_run("failed", error=str(exc))
+            raise
+        else:
+            if self._run_status == "running":
+                self._finish_run("completed")
 
     # ------------------------------------------------------------------
     # Public API
@@ -645,7 +969,7 @@ class Pipeline_Orchestrator:
             the primary output of that phase (feature lists, pools, rule
             sets, OOS metrics, etc.).
         """
-        with _temporary_output_paths(self._output_dir):
+        with _temporary_output_paths(self._output_dir), self._run_identity_guard():
             logger.info("=" * 60)
             logger.info("GPU-Fuzzy Trading Pipeline — starting")
             logger.info("=" * 60)
@@ -658,6 +982,12 @@ class Pipeline_Orchestrator:
             # Step 0: Create output directories
             # ------------------------------------------------------------------
             self._create_output_dirs()
+            self._begin_run(
+                "full",
+                clear_derived=bool(force),
+                clear_phase2=bool(force),
+            )
+            results["run_id"] = self._run_id
 
             # ------------------------------------------------------------------
             # Attach run.log FileHandler (must come after output dirs exist)
@@ -683,7 +1013,12 @@ class Pipeline_Orchestrator:
                     "val_fitness_rows": len(val_fitness_df),
                     "val_selection_rows": len(val_selection_df),
                     "context_coverage": _context_coverage_preflight(
-                        train_df, val_fitness_df, val_selection_df,
+                        train_df,
+                        val_fitness_df,
+                        val_selection_df,
+                        cv_folds=self._cv_folds,
+                        floor_aware=True,
+                        run_id=self._run_id,
                     ),
                 }
 
@@ -755,6 +1090,7 @@ class Pipeline_Orchestrator:
                 # ------------------------------------------------------------------
                 total_elapsed = time.monotonic() - pipeline_start
                 self._record_research_integrity(results, total_elapsed)
+                self._finish_run("completed")
                 logger.info("=" * 60)
                 logger.info("Pipeline complete in %.2fs", total_elapsed)
                 logger.info("=" * 60)
@@ -762,6 +1098,8 @@ class Pipeline_Orchestrator:
                 return results
 
             finally:
+                if self._run_status == "running":
+                    self._finish_run("failed", error="pipeline aborted")
                 _end_ts = datetime.now(timezone.utc).strftime(
                     "%Y-%m-%dT%H:%M:%SZ")
                 _run_log_handler.stream.write(
@@ -788,7 +1126,7 @@ class Pipeline_Orchestrator:
         dict
             Keys: ``data``, ``phase1`` (loaded paths only), ``phase2`` … ``phase5``.
         """
-        with _temporary_output_paths(self._output_dir):
+        with _temporary_output_paths(self._output_dir), self._run_identity_guard():
             logger.info("=" * 60)
             logger.info("GPU-Fuzzy Trading Pipeline — Phase 2, RB Governor, Phase 5")
             logger.info("=" * 60)
@@ -798,6 +1136,12 @@ class Pipeline_Orchestrator:
             results: dict[str, Any] = {}
 
             self._create_output_dirs()
+            self._begin_run(
+                "from_phase2",
+                clear_derived=bool(force),
+                clear_phase2=bool(force),
+            )
+            results["run_id"] = self._run_id
             _run_log_handler = self._attach_run_log_handler()
             _sep = "=" * 80
             _start_ts = datetime.now(
@@ -816,7 +1160,12 @@ class Pipeline_Orchestrator:
                     "val_fitness_rows": len(val_fitness_df),
                     "val_selection_rows": len(val_selection_df),
                     "context_coverage": _context_coverage_preflight(
-                        train_df, val_fitness_df, val_selection_df,
+                        train_df,
+                        val_fitness_df,
+                        val_selection_df,
+                        cv_folds=self._cv_folds,
+                        floor_aware=True,
+                        run_id=self._run_id,
                     ),
                 }
 
@@ -870,6 +1219,7 @@ class Pipeline_Orchestrator:
 
                 total_elapsed = time.monotonic() - pipeline_start
                 self._record_research_integrity(results, total_elapsed)
+                self._finish_run("completed")
                 logger.info("=" * 60)
                 logger.info(
                     "Pipeline (Phase 2, RB Governor, Phase 5) complete in %.2fs",
@@ -880,6 +1230,8 @@ class Pipeline_Orchestrator:
                 return results
 
             finally:
+                if self._run_status == "running":
+                    self._finish_run("failed", error="pipeline aborted")
                 _end_ts = datetime.now(timezone.utc).strftime(
                     "%Y-%m-%dT%H:%M:%SZ")
                 _run_log_handler.stream.write(
@@ -900,7 +1252,7 @@ class Pipeline_Orchestrator:
                 f"got {phase!r}"
             )
 
-        with _temporary_output_paths(self._output_dir):
+        with _temporary_output_paths(self._output_dir), self._run_identity_guard():
             logger.info("=" * 60)
             logger.info("GPU-Fuzzy Trading Pipeline — phase %d", phase)
             logger.info("=" * 60)
@@ -910,6 +1262,12 @@ class Pipeline_Orchestrator:
             results: dict[str, Any] = {}
 
             self._create_output_dirs()
+            self._begin_run(
+                f"phase_{phase}",
+                clear_derived=phase >= 2,
+                clear_phase2=phase == 2,
+            )
+            results["run_id"] = self._run_id
 
             if phase == 1:
                 train_df, val_df = self._load_and_split_data()
@@ -933,7 +1291,12 @@ class Pipeline_Orchestrator:
                     "val_fitness_rows": len(val_fitness_df),
                     "val_selection_rows": len(val_selection_df),
                     "context_coverage": _context_coverage_preflight(
-                        train_df, val_fitness_df, val_selection_df,
+                        train_df,
+                        val_fitness_df,
+                        val_selection_df,
+                        cv_folds=self._cv_folds,
+                        floor_aware=True,
+                        run_id=self._run_id,
                     ),
                 }
                 phase1_result = self._load_phase1_outputs()
@@ -986,6 +1349,7 @@ class Pipeline_Orchestrator:
                 )
 
             total_elapsed = time.monotonic() - pipeline_start
+            self._finish_run("completed")
             logger.info("=" * 60)
             logger.info("Phase %d complete in %.2fs", phase, total_elapsed)
             logger.info("=" * 60)
@@ -1051,8 +1415,8 @@ class Pipeline_Orchestrator:
             _cfg.REPORTS_DIR,
         )
 
-    @staticmethod
     def _record_research_integrity(
+        self,
         results: dict[str, Any],
         elapsed_seconds: float,
     ) -> None:
@@ -1104,6 +1468,8 @@ class Pipeline_Orchestrator:
         trial_count = count_trials(phase2=phase2, rb=rb)
         ExperimentLedger(_cfg.OUTPUTS_DIR).append({
             "record_type": "pipeline_run",
+            "run_id": self._run_id,
+            "run_mode": self._run_mode,
             "elapsed_seconds": round(float(elapsed_seconds), 3),
             "phase2_pool_sizes": {
                 direction: len(value) if isinstance(value, list) else 0
@@ -1126,6 +1492,9 @@ class Pipeline_Orchestrator:
                 )
             },
             "diagnostic_test_metrics": diagnostic,
+            "context_coverage": results.get("data", {}).get(
+                "context_coverage", {}
+            ),
             "acceptance": (
                 phase5.get("acceptance", {})
                 if isinstance(phase5, dict) else {}
@@ -1747,6 +2116,7 @@ class Pipeline_Orchestrator:
                         direction=direction,
                         cv_folds=self._cv_folds,
                         seed=_cfg.PHASE2_SEED,
+                        run_id=self._run_id,
                     )
                 else:
                     generator = Rule_Pool_Generator(
@@ -1756,6 +2126,7 @@ class Pipeline_Orchestrator:
                         val_df=val_df,
                         cv_folds=self._cv_folds,
                         seed=_cfg.PHASE2_SEED,
+                        run_id=self._run_id,
                     )
                     pool = generator.run()
             except Exception as exc:
@@ -1948,7 +2319,7 @@ class Pipeline_Orchestrator:
         else:
             logger.info("Running %s …", phase_name)
         try:
-            evaluator = OOS_Evaluator()
+            evaluator = OOS_Evaluator(run_id=self._run_id)
             result = evaluator.run(allowed_directions=allowed_directions)
         except Exception as exc:
             logger.error("Phase 5 failed: %s", exc, exc_info=True)

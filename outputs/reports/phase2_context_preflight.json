@@ -1,0 +1,543 @@
+{
+  "run_id": "test-run",
+  "failures": [
+    "train/long: eligible_rows=20<min_trade_support=60",
+    "train/short: eligible_rows=20<min_trade_support=60",
+    "island sample: long/0/train_sample: eligible_rows=6<min_trade_support=30",
+    "island sample: long/0/train_sample: eligible_rows=6<min_trade_pool_floor=8",
+    "island sample: long/0/validation_fitness_sample: eligible_rows=6<validation_trade_floor=8",
+    "island sample: short/0/train_sample: eligible_rows=6<min_trade_support=30",
+    "island sample: short/0/train_sample: eligible_rows=6<min_trade_pool_floor=8",
+    "island sample: short/0/validation_fitness_sample: eligible_rows=6<validation_trade_floor=8",
+    "island sample: long/1/train_sample: eligible_rows=6<min_trade_support=30",
+    "island sample: long/1/train_sample: eligible_rows=6<min_trade_pool_floor=8",
+    "island sample: long/1/validation_fitness_sample: eligible_rows=6<validation_trade_floor=8",
+    "island sample: short/1/train_sample: eligible_rows=6<min_trade_support=30",
+    "island sample: short/1/train_sample: eligible_rows=6<min_trade_pool_floor=8",
+    "island sample: short/1/validation_fitness_sample: eligible_rows=6<validation_trade_floor=8"
+  ],
+  "coverage": {
+    "train": {
+      "long": {
+        "eligible_rows": 20,
+        "total_rows": 20,
+        "coverage_pct": 100.0,
+        "permission_rows": 20,
+        "trigger_rows": 20,
+        "permission_only_rows": 0,
+        "trigger_only_rows": 0,
+        "neither_rows": 0,
+        "by_symbol": {
+          "A": 10,
+          "B": 10
+        },
+        "by_symbol_detail": {
+          "A": {
+            "total_rows": 10,
+            "permission_rows": 10,
+            "trigger_rows": 10,
+            "eligible_rows": 10,
+            "permission_only_rows": 0,
+            "trigger_only_rows": 0,
+            "coverage_pct": 100.0
+          },
+          "B": {
+            "total_rows": 10,
+            "permission_rows": 10,
+            "trigger_rows": 10,
+            "eligible_rows": 10,
+            "permission_only_rows": 0,
+            "trigger_only_rows": 0,
+            "coverage_pct": 100.0
+          }
+        },
+        "missing_columns": []
+      },
+      "short": {
+        "eligible_rows": 20,
+        "total_rows": 20,
+        "coverage_pct": 100.0,
+        "permission_rows": 20,
+        "trigger_rows": 20,
+        "permission_only_rows": 0,
+        "trigger_only_rows": 0,
+        "neither_rows": 0,
+        "by_symbol": {
+          "A": 10,
+          "B": 10
+        },
+        "by_symbol_detail": {
+          "A": {
+            "total_rows": 10,
+            "permission_rows": 10,
+            "trigger_rows": 10,
+            "eligible_rows": 10,
+            "permission_only_rows": 0,
+            "trigger_only_rows": 0,
+            "coverage_pct": 100.0
+          },
+          "B": {
+            "total_rows": 10,
+            "permission_rows": 10,
+            "trigger_rows": 10,
+            "eligible_rows": 10,
+            "permission_only_rows": 0,
+            "trigger_only_rows": 0,
+            "coverage_pct": 100.0
+          }
+        },
+        "missing_columns": []
+      }
+    },
+    "validation_fitness": {
+      "long": {
+        "eligible_rows": 20,
+        "total_rows": 20,
+        "coverage_pct": 100.0,
+        "permission_rows": 20,
+        "trigger_rows": 20,
+        "permission_only_rows": 0,
+        "trigger_only_rows": 0,
+        "neither_rows": 0,
+        "by_symbol": {
+          "A": 10,
+          "B": 10
+        },
+        "by_symbol_detail": {
+          "A": {
+            "total_rows": 10,
+            "permission_rows": 10,
+            "trigger_rows": 10,
+            "eligible_rows": 10,
+            "permission_only_rows": 0,
+            "trigger_only_rows": 0,
+            "coverage_pct": 100.0
+          },
+          "B": {
+            "total_rows": 10,
+            "permission_rows": 10,
+            "trigger_rows": 10,
+            "eligible_rows": 10,
+            "permission_only_rows": 0,
+            "trigger_only_rows": 0,
+            "coverage_pct": 100.0
+          }
+        },
+        "missing_columns": []
+      },
+      "short": {
+        "eligible_rows": 20,
+        "total_rows": 20,
+        "coverage_pct": 100.0,
+        "permission_rows": 20,
+        "trigger_rows": 20,
+        "permission_only_rows": 0,
+        "trigger_only_rows": 0,
+        "neither_rows": 0,
+        "by_symbol": {
+          "A": 10,
+          "B": 10
+        },
+        "by_symbol_detail": {
+          "A": {
+            "total_rows": 10,
+            "permission_rows": 10,
+            "trigger_rows": 10,
+            "eligible_rows": 10,
+            "permission_only_rows": 0,
+            "trigger_only_rows": 0,
+            "coverage_pct": 100.0
+          },
+          "B": {
+            "total_rows": 10,
+            "permission_rows": 10,
+            "trigger_rows": 10,
+            "eligible_rows": 10,
+            "permission_only_rows": 0,
+            "trigger_only_rows": 0,
+            "coverage_pct": 100.0
+          }
+        },
+        "missing_columns": []
+      }
+    },
+    "validation_selection": {
+      "long": {
+        "eligible_rows": 20,
+        "total_rows": 20,
+        "coverage_pct": 100.0,
+        "permission_rows": 20,
+        "trigger_rows": 20,
+        "permission_only_rows": 0,
+        "trigger_only_rows": 0,
+        "neither_rows": 0,
+        "by_symbol": {
+          "A": 10,
+          "B": 10
+        },
+        "by_symbol_detail": {
+          "A": {
+            "total_rows": 10,
+            "permission_rows": 10,
+            "trigger_rows": 10,
+            "eligible_rows": 10,
+            "permission_only_rows": 0,
+            "trigger_only_rows": 0,
+            "coverage_pct": 100.0
+          },
+          "B": {
+            "total_rows": 10,
+            "permission_rows": 10,
+            "trigger_rows": 10,
+            "eligible_rows": 10,
+            "permission_only_rows": 0,
+            "trigger_only_rows": 0,
+            "coverage_pct": 100.0
+          }
+        },
+        "missing_columns": []
+      },
+      "short": {
+        "eligible_rows": 20,
+        "total_rows": 20,
+        "coverage_pct": 100.0,
+        "permission_rows": 20,
+        "trigger_rows": 20,
+        "permission_only_rows": 0,
+        "trigger_only_rows": 0,
+        "neither_rows": 0,
+        "by_symbol": {
+          "A": 10,
+          "B": 10
+        },
+        "by_symbol_detail": {
+          "A": {
+            "total_rows": 10,
+            "permission_rows": 10,
+            "trigger_rows": 10,
+            "eligible_rows": 10,
+            "permission_only_rows": 0,
+            "trigger_only_rows": 0,
+            "coverage_pct": 100.0
+          },
+          "B": {
+            "total_rows": 10,
+            "permission_rows": 10,
+            "trigger_rows": 10,
+            "eligible_rows": 10,
+            "permission_only_rows": 0,
+            "trigger_only_rows": 0,
+            "coverage_pct": 100.0
+          }
+        },
+        "missing_columns": []
+      }
+    },
+    "run_id": "test-run",
+    "floor_requirements": {
+      "train": {
+        "long": {
+          "min_trade_support": 60,
+          "min_trade_pool_floor": 15
+        },
+        "short": {
+          "min_trade_support": 60,
+          "min_trade_pool_floor": 15
+        }
+      },
+      "validation_fitness": {
+        "long": {
+          "validation_trade_floor": 10
+        },
+        "short": {
+          "validation_trade_floor": 10
+        }
+      }
+    },
+    "island_samples": {
+      "mode": "singleton_proxy",
+      "reference_rows": 12,
+      "sampling_total": 701000,
+      "islands": {
+        "0": {
+          "island_id": "0",
+          "symbols": [
+            "A"
+          ],
+          "directions": {
+            "long": {
+              "seed": 1171961240,
+              "train_rows": 6,
+              "validation_fitness_rows": 6,
+              "floors": {
+                "min_trade_support": 30,
+                "min_trade_pool_floor": 8,
+                "validation_trade_floor": 8
+              },
+              "coverage": {
+                "train_sample": {
+                  "eligible_rows": 6,
+                  "total_rows": 6,
+                  "coverage_pct": 100.0,
+                  "permission_rows": 6,
+                  "trigger_rows": 6,
+                  "permission_only_rows": 0,
+                  "trigger_only_rows": 0,
+                  "neither_rows": 0,
+                  "by_symbol": {
+                    "A": 6
+                  },
+                  "by_symbol_detail": {
+                    "A": {
+                      "total_rows": 6,
+                      "permission_rows": 6,
+                      "trigger_rows": 6,
+                      "eligible_rows": 6,
+                      "permission_only_rows": 0,
+                      "trigger_only_rows": 0,
+                      "coverage_pct": 100.0
+                    }
+                  },
+                  "missing_columns": []
+                },
+                "validation_fitness_sample": {
+                  "eligible_rows": 6,
+                  "total_rows": 6,
+                  "coverage_pct": 100.0,
+                  "permission_rows": 6,
+                  "trigger_rows": 6,
+                  "permission_only_rows": 0,
+                  "trigger_only_rows": 0,
+                  "neither_rows": 0,
+                  "by_symbol": {
+                    "A": 6
+                  },
+                  "by_symbol_detail": {
+                    "A": {
+                      "total_rows": 6,
+                      "permission_rows": 6,
+                      "trigger_rows": 6,
+                      "eligible_rows": 6,
+                      "permission_only_rows": 0,
+                      "trigger_only_rows": 0,
+                      "coverage_pct": 100.0
+                    }
+                  },
+                  "missing_columns": []
+                }
+              }
+            },
+            "short": {
+              "seed": 1104404000,
+              "train_rows": 6,
+              "validation_fitness_rows": 6,
+              "floors": {
+                "min_trade_support": 30,
+                "min_trade_pool_floor": 8,
+                "validation_trade_floor": 8
+              },
+              "coverage": {
+                "train_sample": {
+                  "eligible_rows": 6,
+                  "total_rows": 6,
+                  "coverage_pct": 100.0,
+                  "permission_rows": 6,
+                  "trigger_rows": 6,
+                  "permission_only_rows": 0,
+                  "trigger_only_rows": 0,
+                  "neither_rows": 0,
+                  "by_symbol": {
+                    "A": 6
+                  },
+                  "by_symbol_detail": {
+                    "A": {
+                      "total_rows": 6,
+                      "permission_rows": 6,
+                      "trigger_rows": 6,
+                      "eligible_rows": 6,
+                      "permission_only_rows": 0,
+                      "trigger_only_rows": 0,
+                      "coverage_pct": 100.0
+                    }
+                  },
+                  "missing_columns": []
+                },
+                "validation_fitness_sample": {
+                  "eligible_rows": 6,
+                  "total_rows": 6,
+                  "coverage_pct": 100.0,
+                  "permission_rows": 6,
+                  "trigger_rows": 6,
+                  "permission_only_rows": 0,
+                  "trigger_only_rows": 0,
+                  "neither_rows": 0,
+                  "by_symbol": {
+                    "A": 6
+                  },
+                  "by_symbol_detail": {
+                    "A": {
+                      "total_rows": 6,
+                      "permission_rows": 6,
+                      "trigger_rows": 6,
+                      "eligible_rows": 6,
+                      "permission_only_rows": 0,
+                      "trigger_only_rows": 0,
+                      "coverage_pct": 100.0
+                    }
+                  },
+                  "missing_columns": []
+                }
+              }
+            }
+          }
+        },
+        "1": {
+          "island_id": "1",
+          "symbols": [
+            "B"
+          ],
+          "directions": {
+            "long": {
+              "seed": 1453359469,
+              "train_rows": 6,
+              "validation_fitness_rows": 6,
+              "floors": {
+                "min_trade_support": 30,
+                "min_trade_pool_floor": 8,
+                "validation_trade_floor": 8
+              },
+              "coverage": {
+                "train_sample": {
+                  "eligible_rows": 6,
+                  "total_rows": 6,
+                  "coverage_pct": 100.0,
+                  "permission_rows": 6,
+                  "trigger_rows": 6,
+                  "permission_only_rows": 0,
+                  "trigger_only_rows": 0,
+                  "neither_rows": 0,
+                  "by_symbol": {
+                    "B": 6
+                  },
+                  "by_symbol_detail": {
+                    "B": {
+                      "total_rows": 6,
+                      "permission_rows": 6,
+                      "trigger_rows": 6,
+                      "eligible_rows": 6,
+                      "permission_only_rows": 0,
+                      "trigger_only_rows": 0,
+                      "coverage_pct": 100.0
+                    }
+                  },
+                  "missing_columns": []
+                },
+                "validation_fitness_sample": {
+                  "eligible_rows": 6,
+                  "total_rows": 6,
+                  "coverage_pct": 100.0,
+                  "permission_rows": 6,
+                  "trigger_rows": 6,
+                  "permission_only_rows": 0,
+                  "trigger_only_rows": 0,
+                  "neither_rows": 0,
+                  "by_symbol": {
+                    "B": 6
+                  },
+                  "by_symbol_detail": {
+                    "B": {
+                      "total_rows": 6,
+                      "permission_rows": 6,
+                      "trigger_rows": 6,
+                      "eligible_rows": 6,
+                      "permission_only_rows": 0,
+                      "trigger_only_rows": 0,
+                      "coverage_pct": 100.0
+                    }
+                  },
+                  "missing_columns": []
+                }
+              }
+            },
+            "short": {
+              "seed": 1144066098,
+              "train_rows": 6,
+              "validation_fitness_rows": 6,
+              "floors": {
+                "min_trade_support": 30,
+                "min_trade_pool_floor": 8,
+                "validation_trade_floor": 8
+              },
+              "coverage": {
+                "train_sample": {
+                  "eligible_rows": 6,
+                  "total_rows": 6,
+                  "coverage_pct": 100.0,
+                  "permission_rows": 6,
+                  "trigger_rows": 6,
+                  "permission_only_rows": 0,
+                  "trigger_only_rows": 0,
+                  "neither_rows": 0,
+                  "by_symbol": {
+                    "B": 6
+                  },
+                  "by_symbol_detail": {
+                    "B": {
+                      "total_rows": 6,
+                      "permission_rows": 6,
+                      "trigger_rows": 6,
+                      "eligible_rows": 6,
+                      "permission_only_rows": 0,
+                      "trigger_only_rows": 0,
+                      "coverage_pct": 100.0
+                    }
+                  },
+                  "missing_columns": []
+                },
+                "validation_fitness_sample": {
+                  "eligible_rows": 6,
+                  "total_rows": 6,
+                  "coverage_pct": 100.0,
+                  "permission_rows": 6,
+                  "trigger_rows": 6,
+                  "permission_only_rows": 0,
+                  "trigger_only_rows": 0,
+                  "neither_rows": 0,
+                  "by_symbol": {
+                    "B": 6
+                  },
+                  "by_symbol_detail": {
+                    "B": {
+                      "total_rows": 6,
+                      "permission_rows": 6,
+                      "trigger_rows": 6,
+                      "eligible_rows": 6,
+                      "permission_only_rows": 0,
+                      "trigger_only_rows": 0,
+                      "coverage_pct": 100.0
+                    }
+                  },
+                  "missing_columns": []
+                }
+              }
+            }
+          }
+        }
+      },
+      "failures": [
+        "long/0/train_sample: eligible_rows=6<min_trade_support=30",
+        "long/0/train_sample: eligible_rows=6<min_trade_pool_floor=8",
+        "long/0/validation_fitness_sample: eligible_rows=6<validation_trade_floor=8",
+        "short/0/train_sample: eligible_rows=6<min_trade_support=30",
+        "short/0/train_sample: eligible_rows=6<min_trade_pool_floor=8",
+        "short/0/validation_fitness_sample: eligible_rows=6<validation_trade_floor=8",
+        "long/1/train_sample: eligible_rows=6<min_trade_support=30",
+        "long/1/train_sample: eligible_rows=6<min_trade_pool_floor=8",
+        "long/1/validation_fitness_sample: eligible_rows=6<validation_trade_floor=8",
+        "short/1/train_sample: eligible_rows=6<min_trade_support=30",
+        "short/1/train_sample: eligible_rows=6<min_trade_pool_floor=8",
+        "short/1/validation_fitness_sample: eligible_rows=6<validation_trade_floor=8"
+      ]
+    }
+  }
+}

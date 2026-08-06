@@ -1,0 +1,156 @@
+{
+  "direction": "short",
+  "features": [
+    {
+      "name": "ff_donchian_width_20",
+      "mode": "positive",
+      "score": 0.0
+    },
+    {
+      "name": "ff_ema_spread_21_55",
+      "mode": "signed",
+      "score": 0.0
+    },
+    {
+      "name": "ff_relative_volume_20",
+      "mode": "positive",
+      "score": 0.0
+    },
+    {
+      "name": "ff_ppo_sign",
+      "mode": "ternary",
+      "score": 0.0
+    },
+    {
+      "name": "ff_volume_regime_20",
+      "mode": "ternary",
+      "score": 0.0
+    },
+    {
+      "name": "ff_bollinger_width_20",
+      "mode": "positive",
+      "score": 0.0
+    },
+    {
+      "name": "ff_volume_oscillator_5_20",
+      "mode": "signed",
+      "score": 0.0
+    },
+    {
+      "name": "ff_range_expansion_ratio",
+      "mode": "positive",
+      "score": 0.0
+    },
+    {
+      "name": "ff_price_vs_ema_50",
+      "mode": "ternary",
+      "score": 0.0
+    },
+    {
+      "name": "ff_bollinger_percent_b_20",
+      "mode": "signed",
+      "score": 0.0
+    },
+    {
+      "name": "ff_ema_stack_8_21_55",
+      "mode": "ternary",
+      "score": 0.0
+    },
+    {
+      "name": "ff_volume_trailing_rank_50",
+      "mode": "positive",
+      "score": 0.0
+    },
+    {
+      "name": "ff_kama_distance_10",
+      "mode": "signed",
+      "score": 0.0
+    },
+    {
+      "name": "ff_sma_slope_20_5",
+      "mode": "signed",
+      "score": 0.0
+    },
+    {
+      "name": "ff_rsi_14_distance_midline",
+      "mode": "signed",
+      "score": 0.0
+    },
+    {
+      "name": "ff_roc_16",
+      "mode": "signed",
+      "score": 0.0
+    },
+    {
+      "name": "ff_ema_spread_8_21",
+      "mode": "signed",
+      "score": 0.0
+    },
+    {
+      "name": "ff_support_distance_20",
+      "mode": "signed",
+      "score": 0.0
+    },
+    {
+      "name": "ff_cvd_proxy_10",
+      "mode": "signed",
+      "score": 0.0
+    },
+    {
+      "name": "ff_kama_slope_10_3",
+      "mode": "signed",
+      "score": 0.0
+    },
+    {
+      "name": "ff_rsi_7_level",
+      "mode": "ternary",
+      "score": 0.0
+    },
+    {
+      "name": "ff_keltner_position_20",
+      "mode": "signed",
+      "score": 0.0
+    },
+    {
+      "name": "ff_ema_slope_8_3",
+      "mode": "signed",
+      "score": 0.0
+    },
+    {
+      "name": "ff_channel_midpoint_bias_20",
+      "mode": "signed",
+      "score": 0.0
+    },
+    {
+      "name": "ff_price_vs_ema_20",
+      "mode": "ternary",
+      "score": 0.0
+    },
+    {
+      "name": "ff_rsi_14_midline_cross",
+      "mode": "binary",
+      "score": 0.0
+    },
+    {
+      "name": "ff_roc_8",
+      "mode": "signed",
+      "score": 0.0
+    },
+    {
+      "name": "ff_bollinger_width_change_3",
+      "mode": "signed",
+      "score": 0.0
+    },
+    {
+      "name": "ff_di_spread_14",
+      "mode": "signed",
+      "score": 0.0
+    },
+    {
+      "name": "ff_vwap_distance_20",
+      "mode": "signed",
+      "score": 0.0
+    }
+  ],
+  "phase1_disabled": true
+}

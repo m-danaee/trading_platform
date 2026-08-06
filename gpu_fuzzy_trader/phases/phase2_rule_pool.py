@@ -36,6 +36,7 @@ import json
 import logging
 import os
 import time
+from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
@@ -3104,6 +3105,7 @@ class Rule_Pool_Generator:
         reference_rows: int | None = None,
         pending_migrant_seeds: list[dict] | None = None,
         defer_warmup: bool = False,
+        run_id: str | None = None,
     ) -> None:
         if direction not in ("long", "short"):
             raise ValueError(
@@ -3128,6 +3130,7 @@ class Rule_Pool_Generator:
         self.reference_rows = reference_rows
         self._pending_migrant_seeds = list(pending_migrant_seeds or [])
         self._defer_warmup = defer_warmup
+        self.run_id = str(run_id) if run_id else None
 
         self._scoped_train_df = train_df
         self._scoped_val_df = val_df
@@ -3399,6 +3402,96 @@ class Rule_Pool_Generator:
             return
         self._build_engines()
 
+    def _pool_admission_context(self) -> dict[str, Any]:
+        """Return the full current-run context required for pool admission."""
+        pool_val_engine = (
+            getattr(self, "_pool_val_engine", None)
+            if getattr(self, "_pool_val_engine", None) is not None
+            else getattr(self, "_val_engine", None)
+        )
+        pool_valid_rows = (
+            len(getattr(self, "_cached_monthly_val", None))
+            if getattr(self, "_cached_monthly_val", None) is not None
+            else getattr(self, "_holdout_n_valid_rows", None)
+        )
+        train_n_rows = (
+            len(getattr(self, "_train_df", None))
+            if getattr(self, "_train_df", None) is not None else None
+        )
+        return {
+            "pool_val_engine": pool_val_engine,
+            "cv_fold_evaluator": getattr(self, "_cv_val_evaluator", None),
+            "holdout_n_valid_rows": pool_valid_rows,
+            "train_n_rows": train_n_rows,
+        }
+
+    def _admission_evidence_metadata(self) -> dict[str, Any]:
+        """Describe the frames used by this generator's admission evidence."""
+        def _frame_rows(engine) -> int | None:
+            frame = getattr(engine, "df", None)
+            return int(len(frame)) if isinstance(frame, pd.DataFrame) else None
+
+        context = self._pool_admission_context()
+        pool_rows = (
+            int(len(getattr(self, "_cached_monthly_val", None)))
+            if getattr(self, "_cached_monthly_val", None) is not None
+            else context["holdout_n_valid_rows"]
+        )
+        return {
+            "run_id": getattr(self, "run_id", None),
+            "direction": self.direction,
+            "island_id": getattr(self, "island_id", None),
+            "source_symbols": list(getattr(self, "source_symbols", [])),
+            "train_rows": context["train_n_rows"],
+            "fitness_validation_rows": _frame_rows(
+                getattr(self, "_val_engine", None)
+            ),
+            "pool_validation_rows": pool_rows,
+            "pool_validation_frame": (
+                "full_unsampled_monthly_validation"
+                if getattr(self, "_cached_monthly_val", None) is not None
+                else "fallback_validation_engine"
+            ),
+            "cv_validation_rows": (
+                int(self._cv_val_evaluator.n_valid_rows)
+                if getattr(self, "_cv_val_evaluator", None) is not None
+                else None
+            ),
+        }
+
+    def _write_admission_report(
+        self,
+        coverage_report: dict[str, Any],
+        *,
+        final_pool_size: int,
+    ) -> str:
+        """Persist current-run archive admission evidence."""
+        coverage_report["run_id"] = getattr(self, "run_id", None)
+        coverage_report["admission_evidence"] = (
+            self._admission_evidence_metadata()
+        )
+        coverage_report["final_pool_size"] = int(final_pool_size)
+        report_root = Path(
+            os.path.dirname(_resolve_pool_path(self.direction))
+            or _cfg.OUTPUTS_DIR
+        ) / "reports"
+        island_id = getattr(self, "island_id", None)
+        if island_id is None:
+            suffix = "coverage"
+        else:
+            safe_island = "".join(
+                char if char.isalnum() or char in "-_" else "_"
+                for char in str(island_id)
+            )
+            suffix = f"island_{safe_island}_coverage"
+        path = report_root / f"phase2_{self.direction}_{suffix}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(coverage_report, indent=2, default=str),
+            encoding="utf-8",
+        )
+        return str(path)
+
     def park_engines(self) -> None:
         """Release GPU engines and slim in-memory data between island epochs."""
         self._engine = None
@@ -3636,15 +3729,7 @@ class Rule_Pool_Generator:
         ):
             fitness_val_engine = self._cv_val_evaluator
 
-        train_n_rows = len(
-            self._train_df) if self._train_df is not None else None
-
-        pool_val_engine = self._pool_val_engine or self._val_engine
-        pool_valid_rows = (
-            len(self._cached_monthly_val)
-            if self._cached_monthly_val is not None
-            else self._holdout_n_valid_rows
-        )
+        admission_context = self._pool_admission_context()
 
         evo_kwargs = dict(
             feature_infos=self.feature_infos,
@@ -3653,10 +3738,7 @@ class Rule_Pool_Generator:
             rng=rng,
             seed_chromosomes=seed_chromosomes,
             val_engine=fitness_val_engine,
-            pool_val_engine=pool_val_engine,
-            cv_fold_evaluator=self._cv_val_evaluator,
-            holdout_n_valid_rows=pool_valid_rows,
-            train_n_rows=train_n_rows,
+            **admission_context,
             feature_probs=feature_probs,
             init_strategy=_cfg.PHASE2_INIT_STRATEGY,
             stratum_fractions=_cfg.PHASE2_INIT_STRATUM_FRACTIONS,
@@ -3800,6 +3882,7 @@ class Rule_Pool_Generator:
         coverage_report["retained_rules"] = len(pool)
 
         if self.island_id is not None:
+            pre_final_filter_count = len(pool)
             pool = _filter_pool_by_admission(
                 list(pool),
                 island_hyperparams=self.island_hyperparams,
@@ -3808,6 +3891,20 @@ class Rule_Pool_Generator:
                 pool,
                 source_symbols=self.source_symbols or None,
                 direction=self.direction,
+            )
+            coverage_report["final_filter_input_rules"] = (
+                pre_final_filter_count
+            )
+            coverage_report["final_filter_output_rules"] = len(pool)
+            report_path = self._write_admission_report(
+                coverage_report,
+                final_pool_size=len(pool),
+            )
+            logger.info(
+                "Phase 2 [%s %s]: admission evidence saved to %s",
+                self.direction,
+                self.island_id,
+                report_path,
             )
             self._release_resources()
             return pool
@@ -3826,17 +3923,10 @@ class Rule_Pool_Generator:
         with open(history_path, "w", encoding="utf-8") as fh:
             json.dump(history, fh, indent=2)
 
-        coverage_dir = os.path.join(
-            os.path.dirname(pool_path) or _cfg.OUTPUTS_DIR,
-            "reports",
+        coverage_path = self._write_admission_report(
+            coverage_report,
+            final_pool_size=len(pool),
         )
-        coverage_path = os.path.join(
-            coverage_dir,
-            f"phase2_{self.direction}_coverage.json",
-        )
-        os.makedirs(coverage_dir, exist_ok=True)
-        with open(coverage_path, "w", encoding="utf-8") as fh:
-            json.dump(coverage_report, fh, indent=2, default=str)
 
         logger.info(
             "Phase 2 [%s]: pool_size=%d, saved to %s",
@@ -4235,6 +4325,7 @@ class Rule_Pool_Generator:
             not first_epoch
             and bool(getattr(_cfg, "PHASE2_PER_EPOCH_WINDOW_ROTATION", True))
         )
+        admission_context = self._pool_admission_context()
         self._evolution_state, epoch_history = run_phase2_evolution_epoch(
             feature_infos=self.feature_infos,
             engine=self._engine,
@@ -4245,6 +4336,7 @@ class Rule_Pool_Generator:
             seed_chromosomes=seed_chromosomes,
             log_tag=tag,
             val_engine=self._val_engine,
+            **admission_context,
             feature_probs=feature_probs,
             init_strategy=_cfg.PHASE2_INIT_STRATEGY,
             stratum_fractions=_cfg.PHASE2_INIT_STRATUM_FRACTIONS,
@@ -4275,6 +4367,8 @@ class Rule_Pool_Generator:
         rng = self._rng
         feature_probs = build_feature_sampling_probs(self.feature_infos)
         tag = f"Phase 2 [{self.direction}] finalize"
+        admission_context = self._pool_admission_context()
+        coverage_report: dict[str, Any] = {}
 
         if self._evolution_state is None:
             return self.run()
@@ -4290,9 +4384,11 @@ class Rule_Pool_Generator:
             return_state=False,
             log_tag=tag,
             val_engine=self._val_engine,
+            **admission_context,
             feature_probs=feature_probs,
             island_profile=self.island_profile,
             island_hyperparams=self.island_hyperparams,
+            coverage_report=coverage_report,
         )
         new_pool = result[0] if isinstance(result, tuple) else []
         if self.island_id is not None:
@@ -4301,12 +4397,13 @@ class Rule_Pool_Generator:
                 list(new_pool),
                 island_hyperparams=self.island_hyperparams,
             )
+            post_admission_count = len(pool)
             logger.info(
                 "Phase 2 [%s %s]: final admission %d -> %d rules",
                 self.direction,
                 self.island_id,
                 pre_admission_count,
-                len(pool),
+                post_admission_count,
             )
 
             # --- Monthly-window gate for islands ---
@@ -4316,6 +4413,19 @@ class Rule_Pool_Generator:
                 pool,
                 source_symbols=self.source_symbols or None,
                 direction=self.direction,
+            )
+            coverage_report["pre_admission_rules"] = pre_admission_count
+            coverage_report["monthly_gate_input_rules"] = post_admission_count
+            coverage_report["final_filter_output_rules"] = len(pool)
+            report_path = self._write_admission_report(
+                coverage_report,
+                final_pool_size=len(pool),
+            )
+            logger.info(
+                "Phase 2 [%s %s]: admission evidence saved to %s",
+                self.direction,
+                self.island_id,
+                report_path,
             )
             self._release_resources()
             return pool
