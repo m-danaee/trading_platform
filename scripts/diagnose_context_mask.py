@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Diagnose context mask coverage in the enriched training CSV.
+"""Diagnose split-aware context mask coverage in enriched tapes.
 
 Run on Colab (or wherever the data lives):
     python scripts/diagnose_context_mask.py
 
-This shows what fraction of bars are eligible for trading under the
-mandatory context gate (tf_permission_long AND lwc_pullback_reversal_long).
-If the percentage is <3%, zero-trade collapse in Phase 2 is expected.
+This reports both long and short eligibility for the training, validation,
+validation-fitness, and validation-selection frames, including per-symbol
+counts. Zero coverage in train or validation-fitness is a Phase 2 blocker.
 """
 import sys
 import os
@@ -15,9 +15,81 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pandas as pd
-import numpy as np
 
 from gpu_fuzzy_trader import config as _cfg
+
+
+def _coverage(frame: pd.DataFrame, direction: str) -> dict[str, object]:
+    """Return eligible-row counts for one direction and split frame."""
+    perm = _cfg.context_permission_column(direction)
+    trig = _cfg.context_trigger_column(direction)
+    missing = [column for column in (perm, trig) if column not in frame.columns]
+    if missing:
+        return {
+            "eligible_rows": None,
+            "total_rows": int(len(frame)),
+            "percent": None,
+            "by_symbol": {},
+            "missing": missing,
+        }
+
+    mask = (frame[perm].to_numpy() == 1) & (frame[trig].to_numpy() == 1)
+    by_symbol: dict[str, int] = {}
+    if "symbol" in frame.columns:
+        for symbol, group in frame.groupby("symbol", sort=True, observed=False):
+            group_mask = (
+                (group[perm].to_numpy() == 1)
+                & (group[trig].to_numpy() == 1)
+            )
+            by_symbol[str(symbol)] = int(group_mask.sum())
+    else:
+        by_symbol["<all>"] = int(mask.sum())
+    eligible = int(mask.sum())
+    return {
+        "eligible_rows": eligible,
+        "total_rows": int(len(frame)),
+        "percent": eligible / max(len(frame), 1) * 100,
+        "by_symbol": by_symbol,
+        "missing": [],
+    }
+
+
+def _print_split_coverage(
+    split_name: str,
+    frame: pd.DataFrame | None,
+) -> dict[str, dict[str, object]]:
+    """Print both direction and per-symbol coverage for one split."""
+    if frame is None:
+        print(f"\n[{split_name}] unavailable (split parquet not found)")
+        return {}
+
+    print(f"\n[{split_name}] rows: {len(frame):,}")
+    report: dict[str, dict[str, object]] = {}
+    for direction in ("long", "short"):
+        stats = _coverage(frame, direction)
+        report[direction] = stats
+        if stats["eligible_rows"] is None:
+            print(
+                f"  {direction.upper():5s}: unavailable; missing "
+                f"{stats['missing']}"
+            )
+            continue
+        by_symbol = ", ".join(
+            f"{symbol}={count:,}"
+            for symbol, count in stats["by_symbol"].items()
+        ) or "<none>"
+        print(
+            f"  {direction.upper():5s}: "
+            f"{stats['percent']:.2f}% "
+            f"({stats['eligible_rows']:,} / {stats['total_rows']:,}) "
+            f"by_symbol: {by_symbol}"
+        )
+        if stats["percent"] < 1.0:
+            print("         *** CRITICAL: <1% coverage — inspect Phase 2 floors")
+        elif stats["percent"] < 3.0:
+            print("         *** WARNING: <3% coverage — Phase 2 may be sparse")
+    return report
+
 
 path = _cfg.TRAIN_CSV_PATH
 print(f"Loading: {path}")
@@ -35,28 +107,31 @@ missing = [c for c in ctx_cols if c not in df.columns]
 
 if missing:
     print(f"\n[WARNING] Missing context columns: {missing}")
-    print("  → The context mask will be all-True (no filtering). This is fine if data has no context.")
-    sys.exit(0)
+    print("  → Coverage cannot be established until the tape is enriched.")
 
 print(f"\n  Context columns present: {present}")
-print()
 
-for direction in ("long", "short"):
-    perm = _cfg.context_permission_column(direction)
-    trig = _cfg.context_trigger_column(direction)
-    mask = (df[perm].to_numpy() == 1) & (df[trig].to_numpy() == 1)
-    pct = mask.sum() / max(len(mask), 1) * 100
-    print(f"[{direction.upper():5s}] context mask: {pct:.2f}%  ({mask.sum():,} / {len(mask):,} rows)")
-    if pct < 1.0:
-        print(f"         *** CRITICAL: <1% coverage — Phase 2 will find zero trades ***")
-    elif pct < 3.0:
-        print(f"         *** WARNING: <3% coverage — Phase 2 will likely collapse ***")
+print(
+    "  Contract: "
+    f"LWC lookback={_cfg.LWC_PULLBACK_LOOKBACK} bars; "
+    "threshold quantiles=60th/60th/40th"
+)
 
-    # Per-symbol breakdown
-    if "symbol" in df.columns:
-        for sym, grp in df.groupby("symbol"):
-            m = (grp[perm].to_numpy() == 1) & (grp[trig].to_numpy() == 1)
-            print(f"           {sym}: {m.mean()*100:.2f}%  ({m.sum():,} / {len(m):,})")
+frames: dict[str, pd.DataFrame | None] = {"train": df}
+for split_name, split_path in (
+    ("validation", _cfg.VALIDATION_30_PATH),
+    ("validation_fitness", _cfg.VALIDATION_FITNESS_PATH),
+    ("validation_selection", _cfg.VALIDATION_SELECTION_PATH),
+):
+    try:
+        frames[split_name] = pd.read_parquet(split_path)
+    except (FileNotFoundError, OSError, ImportError, ValueError):
+        frames[split_name] = None
+
+coverage_reports = {
+    split_name: _print_split_coverage(split_name, frame)
+    for split_name, frame in frames.items()
+}
 
 print()
 
@@ -68,24 +143,39 @@ for col in ("hwc_state", "mwc_state", "lwc_state"):
         parts = [f"{codes.get(k, k)}={v:,} ({v/len(df)*100:.1f}%)" for k, v in vc.items()]
         print(f"  {col}: {' | '.join(parts)}")
 
-# Long permission (hwc+mwc both bullish)
-if "tf_permission_long" in df.columns:
-    perm_pct = (df["tf_permission_long"] == 1).mean() * 100
-    print(f"\n  tf_permission_long (hwcB+mwcB): {perm_pct:.2f}%")
-
-if "lwc_pullback_reversal_long" in df.columns:
-    trig_pct = (df["lwc_pullback_reversal_long"] == 1).mean() * 100
-    print(f"  lwc_pullback_reversal_long:      {trig_pct:.2f}%")
-
 print()
 print("Recommendation:")
-long_pct = ((df["tf_permission_long"] == 1) & (df["lwc_pullback_reversal_long"] == 1)).mean() * 100 if "tf_permission_long" in df.columns else 0
-if long_pct < 3.0:
-    print("  Context coverage is too low for Phase 2 evolution.")
-    print("  Options:")
-    print("  1. Check if the enriched CSV was generated correctly (re-run trend_context enrichment)")
-    print("  2. Increase LWC_PULLBACK_LOOKBACK in config.py (currently:", _cfg.LWC_PULLBACK_LOOKBACK, ")")
-    print("  3. Lower MIN_TRADE_POOL_FLOOR and MIN_TRADE_SUPPORT to match expected trade density")
-    expected_per_chrom = long_pct / 100 * 29600  # approx bars per island
-    print(f"  4. Expected trades/chromosome at {long_pct:.1f}% coverage with 29600 rows: ~{expected_per_chrom:.0f}")
-    print(f"     (current MIN_TRADE_POOL_FLOOR = {_cfg.MIN_TRADE_POOL_FLOOR})")
+failures: list[str] = []
+for split_name in ("train", "validation_fitness"):
+    split_report = coverage_reports.get(split_name, {})
+    for direction in ("long", "short"):
+        stats = split_report.get(direction, {})
+        eligible = stats.get("eligible_rows")
+        if eligible is None:
+            failures.append(f"{split_name}/{direction}: missing context columns")
+        elif int(eligible) == 0:
+            failures.append(f"{split_name}/{direction}: zero eligible rows")
+
+if failures:
+    print("  [ACTION REQUIRED] Context coverage preflight would stop Phase 2:")
+    for failure in failures:
+        print(f"    - {failure}")
+    print("  Re-run trend_context enrichment with the active 24-bar contract,")
+    print("  then rebuild all split and Phase 1/Phase 2 artifacts.")
+else:
+    low_coverage = [
+        f"{split_name}/{direction}"
+        for split_name, split_report in coverage_reports.items()
+        for direction, stats in split_report.items()
+        if stats.get("percent") is not None
+        and float(stats["percent"]) < 1.0
+    ]
+    if low_coverage:
+        print(
+            "  [WARNING] Nonzero context exists, but coverage is below 1% "
+            "in: " + ", ".join(low_coverage)
+        )
+    print(
+        "  Train and validation-fitness have nonzero eligible rows in both "
+        "directions; validation-selection is reported above for diagnosis."
+    )

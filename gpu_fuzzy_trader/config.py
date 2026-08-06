@@ -370,7 +370,7 @@ CONTEXT_STATE_CODES: dict[str, int] = {
     "noisy": 2,
 }
 # Structural classifier formulas and version (part of strategy identity).
-CONTEXT_ALGORITHM_VERSION: str = "regime_v2_next_open_alignment"
+CONTEXT_ALGORITHM_VERSION: str = "regime_v3_next_open_alignment"
 # CSV timestamps are 15m bar-open times.
 CONTEXT_BAR_SECONDS: int = 15 * 60
 # The frozen timeframe hierarchy: HWC = 4h, MWC = 1h, LWC = 15m.
@@ -378,10 +378,11 @@ HWC_TIMEFRAME_MINUTES: int = 240
 MWC_TIMEFRAME_MINUTES: int = 60
 LWC_TIMEFRAME_MINUTES: int = 15
 # The pullback lookback over completed 15m LWC states (previous N bars).
-# Frozen at 8 per PLAN.md / README.md wave-cycle contract (previous 8 completed
-# LWC states). Changing this value rewrites the regime trigger identity and
-# must be accompanied by a contract version bump and full tape re-enrichment.
-LWC_PULLBACK_LOOKBACK: int = 8
+# Frozen at 24 per PLAN.md / README.md wave-cycle contract (previous 24
+# completed LWC states). Changing this value rewrites the regime trigger
+# identity and must be accompanied by a contract version bump and full tape
+# re-enrichment.
+LWC_PULLBACK_LOOKBACK: int = 24
 # Default train-only pooled percentile thresholds (frozen before any
 # validation / test / forward results are reviewed).
 CONTEXT_EFFICIENCY_TREND_THRESHOLD_QUANTILE: float = 0.60
@@ -2620,11 +2621,11 @@ def validate_config(
     )
     _config_check(
         1 <= int(LWC_PULLBACK_LOOKBACK) <= int(MAX_HOLD_CANDLES),
-        "LWC_PULLBACK_LOOKBACK must be in [1, MAX_HOLD_CANDLES] (frozen at 8)",
+        "LWC_PULLBACK_LOOKBACK must be in [1, MAX_HOLD_CANDLES] (frozen at 24)",
     )
     _config_check(
-        int(LWC_PULLBACK_LOOKBACK) == 8,
-        "LWC_PULLBACK_LOOKBACK is frozen at 8 per the wave-cycle contract; "
+        int(LWC_PULLBACK_LOOKBACK) == 24,
+        "LWC_PULLBACK_LOOKBACK is frozen at 24 per the wave-cycle contract; "
         "bump CONTEXT_ALGORITHM_VERSION and re-enrich all tapes to change it",
     )
     _config_check(

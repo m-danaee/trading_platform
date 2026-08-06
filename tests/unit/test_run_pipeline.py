@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import logging
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -11,7 +12,12 @@ import pandas as pd
 import pytest
 
 from gpu_fuzzy_trader import run_pipeline as pipeline
-from gpu_fuzzy_trader.run_pipeline import Pipeline_Orchestrator, _log_phase_entry
+from gpu_fuzzy_trader.run_pipeline import (
+    Pipeline_Orchestrator,
+    _context_coverage_preflight,
+    _context_coverage_report,
+    _log_phase_entry,
+)
 
 
 def _frame(rows: int = 12) -> pd.DataFrame:
@@ -31,6 +37,27 @@ def _frame(rows: int = 12) -> pd.DataFrame:
     )
 
 
+def _context_frame(rows: int = 12) -> pd.DataFrame:
+    """Return a small frame with both direction context gates."""
+    frame = _frame(rows)
+    for column in (
+        "tf_permission_long",
+        "tf_permission_short",
+        "lwc_pullback_reversal_long",
+        "lwc_pullback_reversal_short",
+    ):
+        frame[column] = np.zeros(rows, dtype=np.int8)
+    frame.loc[[0, 1], [
+        "tf_permission_long",
+        "lwc_pullback_reversal_long",
+    ]] = 1
+    frame.loc[[2, 3], [
+        "tf_permission_short",
+        "lwc_pullback_reversal_short",
+    ]] = 1
+    return frame
+
+
 def _strategies() -> dict[str, dict]:
     return {
         direction: {
@@ -42,6 +69,68 @@ def _strategies() -> dict[str, dict]:
         }
         for direction in ("long", "short")
     }
+
+
+def test_context_coverage_report_includes_split_and_symbol_counts() -> None:
+    frame = _context_frame()
+
+    report = _context_coverage_report(
+        frame,
+        frame.iloc[:6].copy(),
+        frame.iloc[6:].copy(),
+    )
+
+    assert set(report) == {
+        "train", "validation_fitness", "validation_selection",
+    }
+    assert report["train"]["long"]["eligible_rows"] == 2
+    assert report["train"]["long"]["by_symbol"] == {"A": 1, "B": 1}
+    assert report["train"]["short"]["eligible_rows"] == 2
+    assert report["validation_selection"]["long"]["eligible_rows"] == 0
+
+
+def test_context_coverage_preflight_logs_all_splits_and_directions(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    frame = _context_frame()
+
+    with caplog.at_level(logging.INFO, logger="gpu_fuzzy_trader.run_pipeline"):
+        report = _context_coverage_preflight(frame, frame, frame)
+
+    assert report["validation_fitness"]["short"]["eligible_rows"] == 2
+    for split_name in ("train", "validation_fitness", "validation_selection"):
+        for direction in ("long", "short"):
+            assert f"Context coverage [{split_name}/{direction}]" in caplog.text
+    assert "per_symbol={'A': 1, 'B': 1}" in caplog.text
+
+
+def test_context_coverage_preflight_stops_zero_direction_before_phase2(
+    tmp_path,
+) -> None:
+    frame = _context_frame()
+    frame.loc[:, [
+        "tf_permission_short",
+        "lwc_pullback_reversal_short",
+    ]] = 0
+    orch = Pipeline_Orchestrator(output_dir=str(tmp_path))
+    orch._load_and_split_data = MagicMock(return_value=(frame, frame))
+    orch._validate_active_configuration = MagicMock()
+    orch._validation_scoring_frames = MagicMock(return_value=(frame, frame))
+    orch._run_phase1 = MagicMock()
+    orch._run_phase2 = MagicMock()
+
+    with pytest.raises(RuntimeError, match="validation_fitness/short"):
+        orch.run(force=True)
+
+    orch._run_phase1.assert_not_called()
+    orch._run_phase2.assert_not_called()
+
+
+def test_context_coverage_preflight_rejects_nonempty_raw_splits() -> None:
+    frame = _frame()
+
+    with pytest.raises(RuntimeError, match="no context columns"):
+        _context_coverage_preflight(frame, frame, frame)
 
 
 def test_phase_log_entry_is_structured_json(tmp_path) -> None:

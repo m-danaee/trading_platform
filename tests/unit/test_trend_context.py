@@ -1,7 +1,6 @@
 import numpy as np
 import json
 
-import numpy as np
 import pandas as pd
 import pytest
 
@@ -37,6 +36,32 @@ def _enriched():
     raw = _raw_tape()
     th = tc.fit_thresholds(raw)
     return tc.generate_enriched_frame(raw, th)
+
+
+class TestContextContract:
+    def test_selected_lookback_and_threshold_quantiles_are_frozen(self):
+        contract = cfg.context_contract()
+
+        assert cfg.LWC_PULLBACK_LOOKBACK == 24
+        assert contract["lwc_pullback_lookback"] == 24
+        assert contract["algorithm_version"] == "regime_v3_next_open_alignment"
+        assert contract["efficiency_trend_threshold_quantile"] == 0.60
+        assert contract["ema_spread_trend_threshold_quantile"] == 0.60
+        assert contract["volatility_compression_quantile"] == 0.40
+
+    def test_default_pullback_window_uses_previous_24_states(self):
+        lwc = np.array([_B] + [_R] * 23 + [_U, _U], dtype=np.int8)
+        idx = pd.RangeIndex(len(lwc))
+        hwc = pd.Series(np.full(len(lwc), _U, dtype=np.int8), index=idx)
+        mwc = pd.Series(np.full(len(lwc), _U, dtype=np.int8), index=idx)
+        symbols = pd.Series(["AA"] * len(lwc), index=idx)
+
+        out = tc.compute_permissions_and_triggers(
+            hwc, mwc, pd.Series(lwc, index=idx), symbols,
+        )
+
+        assert out["lwc_pullback_reversal_long"].iloc[24] == 1
+        assert out["lwc_pullback_reversal_long"].iloc[25] == 0
 
 
 class TestThresholdDeterminism:

@@ -55,7 +55,7 @@ The first release is trend-following only. Long entries require Bullish 4h and
 1h states; short entries require Bearish 4h and 1h states. Range, Noisy,
 opposite, and unavailable states block entries. The current 15m state must also
 reverse in the permitted direction after an opposite state occurred within the
-previous eight completed 15m states.
+previous 24 completed 15m states.
 
 These two direction-specific conditions are mandatory execution policy in
 every exported rule:
@@ -98,6 +98,12 @@ Install the matching JAX GPU stack separately on CUDA hosts:
 ## Run
 
 Use the repository virtual environment for every command.
+
+The active context contract uses a 24-bar LWC pullback lookback and frozen
+train-only classifier quantiles of 60th/60th/40th percentile. Changing this
+contract changes dataset and strategy identity: re-enrich every train, test, and
+forward tape, then rebuild splits and Phase 1/Phase 2 artifacts. Do not reuse
+enriched CSVs or derived artifacts from the previous contract.
 
 Generate enriched tapes before running the multi-timeframe pipeline. Raw tapes
 are never overwritten:

@@ -217,6 +217,160 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+_CONTEXT_COVERAGE_SPLITS = (
+    "train",
+    "validation_fitness",
+    "validation_selection",
+)
+_CONTEXT_PREFLIGHT_SPLITS = ("train", "validation_fitness")
+
+
+def _context_coverage_for_direction(
+    frame: pd.DataFrame,
+    direction: str,
+) -> dict[str, object]:
+    """Return eligible-row and per-symbol counts for one direction."""
+    permission = _cfg.context_permission_column(direction)
+    trigger = _cfg.context_trigger_column(direction)
+    missing = [
+        column for column in (permission, trigger)
+        if column not in frame.columns
+    ]
+    if missing:
+        return {
+            "eligible_rows": None,
+            "total_rows": int(len(frame)),
+            "coverage_pct": None,
+            "by_symbol": {},
+            "missing_columns": missing,
+        }
+
+    eligible = (
+        (frame[permission].to_numpy() == 1)
+        & (frame[trigger].to_numpy() == 1)
+    )
+    by_symbol: dict[str, int] = {}
+    if "symbol" in frame.columns:
+        for symbol, group in frame.groupby(
+            "symbol", sort=True, observed=False,
+        ):
+            symbol_eligible = (
+                (group[permission].to_numpy() == 1)
+                & (group[trigger].to_numpy() == 1)
+            )
+            by_symbol[str(symbol)] = int(symbol_eligible.sum())
+    else:
+        by_symbol["<all>"] = int(eligible.sum())
+
+    eligible_rows = int(eligible.sum())
+    return {
+        "eligible_rows": eligible_rows,
+        "total_rows": int(len(frame)),
+        "coverage_pct": eligible_rows / max(len(frame), 1) * 100.0,
+        "by_symbol": by_symbol,
+        "missing_columns": [],
+    }
+
+
+def _context_coverage_report(
+    train_df: pd.DataFrame,
+    val_fitness_df: pd.DataFrame,
+    val_selection_df: pd.DataFrame,
+) -> dict[str, dict[str, dict[str, object]]]:
+    """Return split-aware context coverage for both trading directions."""
+    frames = {
+        "train": train_df,
+        "validation_fitness": val_fitness_df,
+        "validation_selection": val_selection_df,
+    }
+    return {
+        split_name: {
+            direction: _context_coverage_for_direction(frame, direction)
+            for direction in ("long", "short")
+        }
+        for split_name, frame in frames.items()
+    }
+
+
+def _context_coverage_preflight(
+    train_df: pd.DataFrame,
+    val_fitness_df: pd.DataFrame,
+    val_selection_df: pd.DataFrame,
+) -> dict[str, dict[str, dict[str, object]]]:
+    """Log split-aware context coverage and fail before Phase 2 if unusable."""
+    report = _context_coverage_report(
+        train_df, val_fitness_df, val_selection_df,
+    )
+    frames = {
+        "train": train_df,
+        "validation_fitness": val_fitness_df,
+        "validation_selection": val_selection_df,
+    }
+    any_context_columns = any(
+        any(column in frame.columns for column in _cfg.CONTEXT_COLUMNS)
+        for frame in frames.values()
+    )
+
+    for split_name in _CONTEXT_COVERAGE_SPLITS:
+        for direction in ("long", "short"):
+            stats = report[split_name][direction]
+            if stats["eligible_rows"] is None:
+                logger.warning(
+                    "Context coverage [%s/%s] unavailable; missing columns=%s",
+                    split_name,
+                    direction,
+                    stats["missing_columns"],
+                )
+                continue
+            logger.info(
+                "Context coverage [%s/%s]: %.2f%% (%d / %d rows); "
+                "per_symbol=%s",
+                split_name,
+                direction,
+                stats["coverage_pct"],
+                stats["eligible_rows"],
+                stats["total_rows"],
+                stats["by_symbol"],
+            )
+
+    # Keep empty compatibility fixtures usable for orchestration tests.  A
+    # non-empty production frame without context columns is raw/unusable and
+    # must fail before Phase 2 rather than silently disabling the fixed gate.
+    if not any_context_columns:
+        if not all(frame.empty for frame in frames.values()):
+            raise RuntimeError(
+                "Context coverage preflight failed before Phase 2: no context "
+                "columns are present in the non-empty split frames. Enrich "
+                "all tapes with the active 24-bar contract first."
+            )
+        logger.warning(
+            "Context coverage preflight skipped for empty compatibility "
+            "fixtures: no context columns are present."
+        )
+        return report
+
+    failures: list[str] = []
+    for split_name in _CONTEXT_PREFLIGHT_SPLITS:
+        for direction in ("long", "short"):
+            stats = report[split_name][direction]
+            if stats["eligible_rows"] is None:
+                failures.append(
+                    f"{split_name}/{direction} missing "
+                    f"{stats['missing_columns']}"
+                )
+            elif int(stats["eligible_rows"]) == 0:
+                failures.append(f"{split_name}/{direction} has zero eligible rows")
+
+    if failures:
+        raise RuntimeError(
+            "Context coverage preflight failed before Phase 2: "
+            + "; ".join(failures)
+            + ". Re-enrich all tapes with the active 24-bar contract and "
+            "rebuild the split and Phase 1/Phase 2 artifacts."
+        )
+    return report
+
+
 def _log_pipeline_config() -> None:
     """Log key hyperparameters at pipeline start."""
     debug_suffix = ""
@@ -528,6 +682,9 @@ class Pipeline_Orchestrator:
                     "val_rows": len(val_df),
                     "val_fitness_rows": len(val_fitness_df),
                     "val_selection_rows": len(val_selection_df),
+                    "context_coverage": _context_coverage_preflight(
+                        train_df, val_fitness_df, val_selection_df,
+                    ),
                 }
 
                 # ------------------------------------------------------------------
@@ -656,6 +813,11 @@ class Pipeline_Orchestrator:
                 results["data"] = {
                     "train_rows": len(train_df),
                     "val_rows": len(val_df),
+                    "val_fitness_rows": len(val_fitness_df),
+                    "val_selection_rows": len(val_selection_df),
+                    "context_coverage": _context_coverage_preflight(
+                        train_df, val_fitness_df, val_selection_df,
+                    ),
                 }
 
                 phase1_result = self._load_phase1_outputs()
@@ -768,6 +930,11 @@ class Pipeline_Orchestrator:
                 results["data"] = {
                     "train_rows": len(train_df),
                     "val_rows": len(val_df),
+                    "val_fitness_rows": len(val_fitness_df),
+                    "val_selection_rows": len(val_selection_df),
+                    "context_coverage": _context_coverage_preflight(
+                        train_df, val_fitness_df, val_selection_df,
+                    ),
                 }
                 phase1_result = self._load_phase1_outputs()
                 train_df, val_df = self._prune_splits_after_phase1(

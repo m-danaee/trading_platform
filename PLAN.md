@@ -76,6 +76,7 @@ Initial train-only pooled thresholds:
 - Absolute normalized EMA spread threshold: 60th percentile.
 - Realized-volatility compression threshold: 40th percentile.
 - Common initial structural lookback: 20 bars per cycle.
+- LWC pullback lookback: 24 completed 15m states.
 - Warm-up or unavailable context is Noisy, never Range.
 
 State codes are fixed and documented:
@@ -129,12 +130,12 @@ The deterministic LWC trigger is:
 ```text
 Long:
   current LWC state is Bullish
-  AND at least one of the previous 8 completed LWC states was Bearish
+  AND at least one of the previous 24 completed LWC states was Bearish
   AND long HWC/MWC permission is active
 
 Short:
   current LWC state is Bearish
-  AND at least one of the previous 8 completed LWC states was Bullish
+  AND at least one of the previous 24 completed LWC states was Bullish
   AND short HWC/MWC permission is active
 ```
 
@@ -151,7 +152,10 @@ data/enriched/trend_context_manifest.json
 ```
 
 The enrichment command must be deterministic and usable for every future
-forward tape. Raw CSV hashes remain part of research-integrity records.
+forward tape. Raw CSV hashes remain part of research-integrity records. The
+24-bar context contract requires full re-enrichment whenever the contract
+version or lookback changes; old enriched tapes, split parquets, feature
+selections, Phase 2 pools, and archives must not be reused.
 
 ## Mandatory Context
 
