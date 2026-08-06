@@ -370,7 +370,9 @@ CONTEXT_STATE_CODES: dict[str, int] = {
     "noisy": 2,
 }
 # Structural classifier formulas and version (part of strategy identity).
-CONTEXT_ALGORITHM_VERSION: str = "regime_v3_next_open_alignment"
+# Version 4 allows a neutral MWC consolidation while HWC retains direction,
+# so enriched tapes generated under the strict v3 permission policy are stale.
+CONTEXT_ALGORITHM_VERSION: str = "regime_v4_mwc_range_reentry"
 # CSV timestamps are 15m bar-open times.
 CONTEXT_BAR_SECONDS: int = 15 * 60
 # The frozen timeframe hierarchy: HWC = 4h, MWC = 1h, LWC = 15m.
@@ -392,6 +394,10 @@ CONTEXT_VOLATILITY_COMPRESSION_QUANTILE: float = 0.40
 CONTEXT_STRUCTURAL_LOOKBACK: int = 20
 # Minimum realised-volatility window; warm-up/unavailable context is Noisy.
 CONTEXT_VOL_WINDOW: int = 20
+# A neutral MWC state is a valid consolidation while HWC retains direction.
+# Noisy MWC states remain excluded.  This policy is part of the enrichment
+# contract and requires full tape re-enrichment when changed.
+CONTEXT_ALLOW_MWC_RANGE_PERMISSION: bool = True
 # The mandatory direction-specific context + LWC trigger conditions.  These
 # are fixed execution conditions, never ordinary NSGA genes.
 CONTEXT_PERMISSION_COLUMNS: tuple[str, str] = (
@@ -483,8 +489,17 @@ def context_contract() -> dict[str, object]:
         "structural_lookback": int(CONTEXT_STRUCTURAL_LOOKBACK),
         "lwc_pullback_lookback": int(LWC_PULLBACK_LOOKBACK),
         "permission_policy": {
-            "long": "hwc_bullish AND mwc_bullish",
-            "short": "hwc_bearish AND mwc_bearish",
+            "long": (
+                "hwc_bullish AND mwc_bullish_or_range"
+                if CONTEXT_ALLOW_MWC_RANGE_PERMISSION
+                else "hwc_bullish AND mwc_bullish"
+            ),
+            "short": (
+                "hwc_bearish AND mwc_bearish_or_range"
+                if CONTEXT_ALLOW_MWC_RANGE_PERMISSION
+                else "hwc_bearish AND mwc_bearish"
+            ),
+            "mwc_range_allowed": bool(CONTEXT_ALLOW_MWC_RANGE_PERMISSION),
         },
         "horizon_bars_15m": int(MAX_HOLD_CANDLES),
         "context_columns": list(CONTEXT_COLUMNS),

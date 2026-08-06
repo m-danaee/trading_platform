@@ -538,6 +538,30 @@
         "short/1/train_sample: eligible_rows=6<min_trade_pool_floor=8",
         "short/1/validation_fitness_sample: eligible_rows=6<validation_trade_floor=8"
       ]
+    },
+    "blocked_directions": [
+      "long",
+      "short"
+    ],
+    "direction_failures": {
+      "long": [
+        "train/long: eligible_rows=20<min_trade_support=60",
+        "island sample: long/0/train_sample: eligible_rows=6<min_trade_support=30",
+        "island sample: long/0/train_sample: eligible_rows=6<min_trade_pool_floor=8",
+        "island sample: long/0/validation_fitness_sample: eligible_rows=6<validation_trade_floor=8",
+        "island sample: long/1/train_sample: eligible_rows=6<min_trade_support=30",
+        "island sample: long/1/train_sample: eligible_rows=6<min_trade_pool_floor=8",
+        "island sample: long/1/validation_fitness_sample: eligible_rows=6<validation_trade_floor=8"
+      ],
+      "short": [
+        "train/short: eligible_rows=20<min_trade_support=60",
+        "island sample: short/0/train_sample: eligible_rows=6<min_trade_support=30",
+        "island sample: short/0/train_sample: eligible_rows=6<min_trade_pool_floor=8",
+        "island sample: short/0/validation_fitness_sample: eligible_rows=6<validation_trade_floor=8",
+        "island sample: short/1/train_sample: eligible_rows=6<min_trade_support=30",
+        "island sample: short/1/train_sample: eligible_rows=6<min_trade_pool_floor=8",
+        "island sample: short/1/validation_fitness_sample: eligible_rows=6<validation_trade_floor=8"
+      ]
     }
   }
 }

@@ -44,7 +44,8 @@ class TestContextContract:
 
         assert cfg.LWC_PULLBACK_LOOKBACK == 24
         assert contract["lwc_pullback_lookback"] == 24
-        assert contract["algorithm_version"] == "regime_v3_next_open_alignment"
+        assert contract["algorithm_version"] == "regime_v4_mwc_range_reentry"
+        assert contract["permission_policy"]["mwc_range_allowed"] is True
         assert contract["efficiency_trend_threshold_quantile"] == 0.60
         assert contract["ema_spread_trend_threshold_quantile"] == 0.60
         assert contract["volatility_compression_quantile"] == 0.40
@@ -62,6 +63,31 @@ class TestContextContract:
 
         assert out["lwc_pullback_reversal_long"].iloc[24] == 1
         assert out["lwc_pullback_reversal_long"].iloc[25] == 0
+
+    def test_mwc_range_allows_directional_reentry(self):
+        idx = pd.RangeIndex(2)
+        symbols = pd.Series(["AA", "AA"], index=idx)
+        lwc_long = pd.Series([_B, _U], index=idx)
+        long_out = tc.compute_permissions_and_triggers(
+            pd.Series([_U, _U], index=idx),
+            pd.Series([_R, _R], index=idx),
+            lwc_long,
+            symbols,
+            lookback=1,
+        )
+        assert long_out["tf_permission_long"].tolist() == [1, 1]
+        assert long_out["lwc_pullback_reversal_long"].tolist() == [0, 1]
+
+        lwc_short = pd.Series([_U, _B], index=idx)
+        short_out = tc.compute_permissions_and_triggers(
+            pd.Series([_B, _B], index=idx),
+            pd.Series([_R, _R], index=idx),
+            lwc_short,
+            symbols,
+            lookback=1,
+        )
+        assert short_out["tf_permission_short"].tolist() == [1, 1]
+        assert short_out["lwc_pullback_reversal_short"].tolist() == [0, 1]
 
 
 class TestThresholdDeterminism:

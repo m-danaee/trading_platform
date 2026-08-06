@@ -85,8 +85,8 @@
     "semantic_hash": "149367b7fb6376cfed93b898ffd7396c"
   },
   "gpu_fuzzy_trader/config.py": {
-    "mtime": 1786041826.3725257,
-    "ast_hash": "2b0f80a3e695c968e9018ccb4c8921c9",
+    "mtime": 1786051429.0353909,
+    "ast_hash": "46a03ca55ed82abc90514d1f79eb18d1",
     "semantic_hash": ""
   },
   "gpu_fuzzy_trader/dashboard.py": {
@@ -125,7 +125,7 @@
     "semantic_hash": "86f0482277822a391c2cad1a7bfff48c"
   },
   "gpu_fuzzy_trader/evolution/evox_runner.py": {
-    "mtime": 1786048765.2929976,
+    "mtime": 1786049671.2073362,
     "ast_hash": "bfa1d1a4f651d66e915af7180ada8bd2",
     "semantic_hash": ""
   },
@@ -195,12 +195,12 @@
     "semantic_hash": "bc42ff7da42997a37ac642a3b9497b52"
   },
   "gpu_fuzzy_trader/phases/phase2_island_scheduler.py": {
-    "mtime": 1786049057.4588578,
-    "ast_hash": "86588dc124a226e78b669617f14752cc",
+    "mtime": 1786049678.4716353,
+    "ast_hash": "65e31530033fbdd46e7bfbd77cf1bba0",
     "semantic_hash": ""
   },
   "gpu_fuzzy_trader/phases/phase2_rule_pool.py": {
-    "mtime": 1786049319.02673,
+    "mtime": 1786049681.919044,
     "ast_hash": "7725f3ddf53674769e9697e7a8c6bdb6",
     "semantic_hash": ""
   },
@@ -220,7 +220,7 @@
     "semantic_hash": "7ef641451c88da3699ba91b6e90db609"
   },
   "gpu_fuzzy_trader/phases/phase5_oos.py": {
-    "mtime": 1786048797.100413,
+    "mtime": 1786049671.9526021,
     "ast_hash": "538f112b764375c5e4e8df02fe6aa408",
     "semantic_hash": ""
   },
@@ -255,8 +255,8 @@
     "semantic_hash": "f4f8b978ff5b2fddb12ef75722693d04"
   },
   "gpu_fuzzy_trader/run_pipeline.py": {
-    "mtime": 1786049305.4431725,
-    "ast_hash": "9c188a1f9af08d4164847e708e847010",
+    "mtime": 1786051542.4710689,
+    "ast_hash": "3eb473b8d574410c0eebf5f63c3a5b74",
     "semantic_hash": ""
   },
   "gpu_fuzzy_trader/scoring/__init__.py": {
@@ -660,7 +660,7 @@
     "semantic_hash": "6652c75a5636b85a36efeef8224e09b4"
   },
   "tests/unit/test_phase2_rule_pool.py": {
-    "mtime": 1786048981.1399238,
+    "mtime": 1786049669.9652262,
     "ast_hash": "e3fc65923d7f1f3120b8e521ff112a8a",
     "semantic_hash": ""
   },
@@ -695,7 +695,7 @@
     "semantic_hash": "e8ce105ca867f19ebca551e31e2a4c1e"
   },
   "tests/unit/test_phase5_oos.py": {
-    "mtime": 1786049072.8849828,
+    "mtime": 1786049669.1686983,
     "ast_hash": "3f38c62a5bf71f6bbc270df010b9ebc5",
     "semantic_hash": ""
   },
@@ -785,8 +785,8 @@
     "semantic_hash": "7dba24b2ba1ff8e1aef3527517fc05f9"
   },
   "tests/unit/test_run_pipeline.py": {
-    "mtime": 1786049226.463935,
-    "ast_hash": "666b8a6fc5e3b608adba7eac0d3423a5",
+    "mtime": 1786051548.0302222,
+    "ast_hash": "41a58717e3b38f779ee7ec3ebb357a3d",
     "semantic_hash": ""
   },
   "tests/unit/test_symbol_cluster.py": {
@@ -920,72 +920,72 @@
     "semantic_hash": "6781a2e245f692f821c0cc59ecaf590d"
   },
   "gpu_fuzzy_trader/data/trend_context.py": {
-    "mtime": 1786018652.555058,
-    "ast_hash": "d56a1cd4e1136687dd9c7793757bb194",
+    "mtime": 1786051434.429168,
+    "ast_hash": "9cee2c7ed983453dcc91b8c45e270381",
     "semantic_hash": ""
   },
   "outputs/reports/generalization_diagnostics_long.json": {
-    "mtime": 1786049086.7560444,
+    "mtime": 1786050800.9543803,
     "ast_hash": "2f1b4c9cead28064ab279ef444849434",
     "semantic_hash": ""
   },
   "tests/unit/test_trend_context.py": {
-    "mtime": 1786041943.709756,
-    "ast_hash": "a354d64509cfe125b4cc4c2cb2cd6086",
+    "mtime": 1786051446.224115,
+    "ast_hash": "89c0b791d4b3975272ea16e68c74d2fb",
     "semantic_hash": ""
   },
   "outputs/reports/distribution_equity_test_long.png": {
-    "mtime": 1786049086.0550044,
+    "mtime": 1786050800.2555811,
     "ast_hash": "38ac1f399d20f2a7d09fde5aeefa5952",
     "semantic_hash": ""
   },
   "outputs/reports/per_rule_breakdown_long.png": {
-    "mtime": 1786049085.8029451,
+    "mtime": 1786050799.995012,
     "ast_hash": "1d02cb6e131e1d06e540efb6ff56897b",
     "semantic_hash": ""
   },
   "outputs/reports/phase2_long_metrics.png": {
-    "mtime": 1786049153.0096452,
+    "mtime": 1786051543.081808,
     "ast_hash": "e857b67340c1b49f1f8a82c11ce67437",
     "semantic_hash": ""
   },
   "outputs/reports/phase2_long_pnl.png": {
-    "mtime": 1786049153.0785646,
+    "mtime": 1786051543.1487923,
     "ast_hash": "6b29629826eb516bacd8ba89d8994f64",
     "semantic_hash": ""
   },
   "outputs/reports/phase2_short_metrics.png": {
-    "mtime": 1786049144.724509,
+    "mtime": 1786051535.6781466,
     "ast_hash": "8ce77e2d79f4d3d0c02e7cb88445292c",
     "semantic_hash": ""
   },
   "outputs/reports/phase2_short_pnl.png": {
-    "mtime": 1786049144.7993433,
+    "mtime": 1786051535.7411845,
     "ast_hash": "01bb157a4108d50e7966705ee6ad4bbc",
     "semantic_hash": ""
   },
   "outputs/reports/test_long_equity.png": {
-    "mtime": 1786049085.5036247,
+    "mtime": 1786050799.6357424,
     "ast_hash": "a8854ed538dc97eb89ffcc48dcd3524c",
     "semantic_hash": ""
   },
   "outputs/reports/train_long_equity.png": {
-    "mtime": 1786049085.554824,
+    "mtime": 1786050799.6989107,
     "ast_hash": "66b453bf0264d9441c73fd16ed9f57cd",
     "semantic_hash": ""
   },
   "outputs/reports/validation_long_equity.png": {
-    "mtime": 1786049085.6060238,
+    "mtime": 1786050799.750235,
     "ast_hash": "3f686aa5f6e84ae83b124fe869b0f5cf",
     "semantic_hash": ""
   },
   "scripts/diagnose_context_mask.py": {
-    "mtime": 1786049065.44613,
-    "ast_hash": "1b08466f843d4fba29c86d00dc228326",
+    "mtime": 1786051441.6015158,
+    "ast_hash": "a26f88d381ccde9f56dd9addd58a158a",
     "semantic_hash": ""
   },
   "gpu_fuzzy_trader/context_diagnostics.py": {
-    "mtime": 1786048533.537787,
+    "mtime": 1786049668.6442518,
     "ast_hash": "8485b8c796c62dc706b165c835d9ccba",
     "semantic_hash": ""
   },
@@ -1160,8 +1160,13 @@
     "semantic_hash": ""
   },
   "outputs/reports/phase2_context_preflight.json": {
-    "mtime": 1786049285.4782367,
-    "ast_hash": "c67f94ec1ad22e12b52fc98282b17fd9",
+    "mtime": 1786051507.411183,
+    "ast_hash": "00f8b7722420dd4bb0a6d14cc47c070d",
+    "semantic_hash": ""
+  },
+  "outputs/reports/phase2_long_island_test_island_coverage.json": {
+    "mtime": 1786051519.4241283,
+    "ast_hash": "0c1886c77f4310628d41a4191aa0a404",
     "semantic_hash": ""
   }
 }

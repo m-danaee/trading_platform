@@ -100,7 +100,9 @@ print(f"\n  Context columns present: {present}")
 print(
     "  Contract: "
     f"LWC lookback={_cfg.LWC_PULLBACK_LOOKBACK} bars; "
-    "threshold quantiles=60th/60th/40th"
+    "threshold quantiles=60th/60th/40th; "
+    "MWC range permission="
+    f"{bool(_cfg.CONTEXT_ALLOW_MWC_RANGE_PERMISSION)}"
 )
 
 frames: dict[str, pd.DataFrame | None] = {"train": df}

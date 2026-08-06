@@ -257,6 +257,42 @@ def _context_coverage_report(
     })
 
 
+def _validate_enriched_context_contract() -> None:
+    """Reject enriched tapes generated under a different context contract."""
+    input_path = Path(_cfg.TRAIN_CSV_PATH)
+    if not input_path.name.endswith("_hwc_mwc_lwc.csv"):
+        return
+
+    manifest_path = Path(_cfg.ENRICHED_MANIFEST_PATH)
+    if not manifest_path.exists():
+        raise RuntimeError(
+            f"Enriched training tape {input_path} has no context manifest at "
+            f"{manifest_path}. Re-enrich the raw train_new.csv before running "
+            "the pipeline."
+        )
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(
+            f"Cannot read enriched context manifest {manifest_path}: {exc}. "
+            "Re-enrich the raw train_new.csv before running the pipeline."
+        ) from exc
+
+    actual_version = manifest.get("context_algorithm_version")
+    if actual_version is None:
+        contract = manifest.get("context_contract", {})
+        if isinstance(contract, dict):
+            actual_version = contract.get("algorithm_version")
+    expected_version = str(_cfg.CONTEXT_ALGORITHM_VERSION)
+    if str(actual_version) != expected_version:
+        raise RuntimeError(
+            f"Enriched training tape {input_path} uses context contract "
+            f"{actual_version!r}, but the pipeline requires "
+            f"{expected_version!r}. Re-enrich raw train_new.csv and rebuild "
+            "the cached splits before running."
+        )
+
+
 def _context_island_sample_report(
     train_df: pd.DataFrame,
     val_fitness_df: pd.DataFrame,
@@ -420,7 +456,7 @@ def _context_coverage_preflight(
     floor_aware: bool = True,
     run_id: str | None = None,
 ) -> dict[str, Any]:
-    """Log split-aware context coverage and fail before Phase 2 if unusable."""
+    """Log coverage and block only directions that cannot meet their floors."""
     report = _context_coverage_report(
         train_df, val_fitness_df, val_selection_df,
     )
@@ -480,16 +516,33 @@ def _context_coverage_preflight(
         return report
 
     failures: list[str] = []
+    direction_failures: dict[str, list[str]] = {
+        "long": [],
+        "short": [],
+    }
+
+    def _record_failure(direction: str | None, reason: str) -> None:
+        failures.append(reason)
+        if direction in direction_failures:
+            direction_failures[direction].append(reason)
+        else:
+            for fallback_direction in direction_failures:
+                direction_failures[fallback_direction].append(reason)
+
     for split_name in _CONTEXT_PREFLIGHT_SPLITS:
         for direction in ("long", "short"):
             stats = report[split_name][direction]
             if stats["eligible_rows"] is None:
-                failures.append(
+                _record_failure(
+                    direction,
                     f"{split_name}/{direction} missing "
-                    f"{stats['missing_columns']}"
+                    f"{stats['missing_columns']}",
                 )
             elif int(stats["eligible_rows"]) == 0:
-                failures.append(f"{split_name}/{direction} has zero eligible rows")
+                _record_failure(
+                    direction,
+                    f"{split_name}/{direction} has zero eligible rows",
+                )
 
     if floor_aware and not train_df.empty and not val_fitness_df.empty:
         report["run_id"] = run_id
@@ -516,17 +569,18 @@ def _context_coverage_preflight(
                         ),
                     }
                 floor_requirements[split_name][direction] = floors
-                failures.extend(
-                    f"{split_name}/{direction}: {reason}"
-                    for reason in context_floor_failures(
-                        report[split_name][direction],
-                        support_floor=floors.get("min_trade_support"),
-                        pool_floor=floors.get("min_trade_pool_floor"),
-                        validation_floor=floors.get(
-                            "validation_trade_floor"
-                        ),
+                for reason in context_floor_failures(
+                    report[split_name][direction],
+                    support_floor=floors.get("min_trade_support"),
+                    pool_floor=floors.get("min_trade_pool_floor"),
+                    validation_floor=floors.get(
+                        "validation_trade_floor"
+                    ),
+                ):
+                    _record_failure(
+                        direction,
+                        f"{split_name}/{direction}: {reason}",
                     )
-                )
         report["floor_requirements"] = floor_requirements
 
         if _cfg.phase2_island_mode_enabled():
@@ -537,10 +591,16 @@ def _context_coverage_preflight(
                 seed=_cfg.PHASE2_SEED,
             )
             report["island_samples"] = island_report
-            failures.extend(
-                f"island sample: {failure}"
-                for failure in island_report["failures"]
-            )
+            for failure in island_report["failures"]:
+                direction = (
+                    str(failure).split("/", 1)[0]
+                    if "/" in str(failure)
+                    else None
+                )
+                _record_failure(
+                    direction,
+                    f"island sample: {failure}",
+                )
             for island_id, island in island_report["islands"].items():
                 for direction, direction_data in island["directions"].items():
                     train_stats = direction_data["coverage"]["train_sample"]
@@ -574,14 +634,32 @@ def _context_coverage_preflight(
                         direction_data["floors"],
                     )
 
+    blocked_directions = sorted(
+        direction
+        for direction, direction_reasons in direction_failures.items()
+        if direction_reasons
+    )
+    report["blocked_directions"] = blocked_directions
+    report["direction_failures"] = direction_failures
     _write_context_preflight_report(report, failures, run_id)
 
-    if failures:
+    if len(blocked_directions) == len(direction_failures):
         raise RuntimeError(
-            "Context coverage preflight failed before Phase 2: "
+            "Context coverage preflight blocked all directions before Phase 2: "
             + "; ".join(failures)
-            + ". Re-enrich all tapes with the active 24-bar contract and "
-            "rebuild the split and Phase 1/Phase 2 artifacts."
+            + ". Repair context enrichment/sampling or recalibrate the "
+            "direction-specific floors before rerunning."
+        )
+    if blocked_directions:
+        supported_directions = sorted(
+            set(direction_failures) - set(blocked_directions)
+        )
+        logger.warning(
+            "Context coverage preflight blocked directions=%s; continuing "
+            "supported directions=%s. Blocked directions will not enter "
+            "Phase 2 or Phase 5.",
+            blocked_directions,
+            supported_directions,
         )
     return report
 
@@ -1007,20 +1085,24 @@ class Pipeline_Orchestrator:
                 train_df, val_df = self._load_and_split_data()
                 self._validate_active_configuration(train_df)
                 val_fitness_df, val_selection_df = self._validation_scoring_frames(val_df)
+                context_report = _context_coverage_preflight(
+                    train_df,
+                    val_fitness_df,
+                    val_selection_df,
+                    cv_folds=self._cv_folds,
+                    floor_aware=True,
+                    run_id=self._run_id,
+                )
                 results["data"] = {
                     "train_rows": len(train_df),
                     "val_rows": len(val_df),
                     "val_fitness_rows": len(val_fitness_df),
                     "val_selection_rows": len(val_selection_df),
-                    "context_coverage": _context_coverage_preflight(
-                        train_df,
-                        val_fitness_df,
-                        val_selection_df,
-                        cv_folds=self._cv_folds,
-                        floor_aware=True,
-                        run_id=self._run_id,
-                    ),
+                    "context_coverage": context_report,
                 }
+                blocked_directions = frozenset(
+                    context_report.get("blocked_directions", [])
+                )
 
                 # ------------------------------------------------------------------
                 # Phase 1: Feature Selection
@@ -1041,7 +1123,12 @@ class Pipeline_Orchestrator:
                 # Phase 2: Rule Pool Generation
                 # ------------------------------------------------------------------
                 phase2_result = self._run_phase2(
-                    train_df, phase1_result, force=force, val_df=val_fitness_df)
+                    train_df,
+                    phase1_result,
+                    force=force,
+                    val_df=val_fitness_df,
+                    blocked_directions=blocked_directions,
+                )
                 results["phase2"] = phase2_result
 
                 self._release_between_phases("RB Governor")
@@ -1154,20 +1241,24 @@ class Pipeline_Orchestrator:
                 train_df, val_df = self._load_and_split_data()
                 self._validate_active_configuration(train_df)
                 val_fitness_df, val_selection_df = self._validation_scoring_frames(val_df)
+                context_report = _context_coverage_preflight(
+                    train_df,
+                    val_fitness_df,
+                    val_selection_df,
+                    cv_folds=self._cv_folds,
+                    floor_aware=True,
+                    run_id=self._run_id,
+                )
                 results["data"] = {
                     "train_rows": len(train_df),
                     "val_rows": len(val_df),
                     "val_fitness_rows": len(val_fitness_df),
                     "val_selection_rows": len(val_selection_df),
-                    "context_coverage": _context_coverage_preflight(
-                        train_df,
-                        val_fitness_df,
-                        val_selection_df,
-                        cv_folds=self._cv_folds,
-                        floor_aware=True,
-                        run_id=self._run_id,
-                    ),
+                    "context_coverage": context_report,
                 }
+                blocked_directions = frozenset(
+                    context_report.get("blocked_directions", [])
+                )
 
                 phase1_result = self._load_phase1_outputs()
                 results["phase1"] = phase1_result
@@ -1179,7 +1270,12 @@ class Pipeline_Orchestrator:
                     self._cv_folds, phase1_result)
 
                 phase2_result = self._run_phase2(
-                    train_df, phase1_result, force=force, val_df=val_fitness_df)
+                    train_df,
+                    phase1_result,
+                    force=force,
+                    val_df=val_fitness_df,
+                    blocked_directions=blocked_directions,
+                )
                 results["phase2"] = phase2_result
 
                 self._release_between_phases("RB Governor")
@@ -1285,20 +1381,24 @@ class Pipeline_Orchestrator:
                 train_df, val_df = self._load_and_split_data()
                 self._validate_active_configuration(train_df)
                 val_fitness_df, val_selection_df = self._validation_scoring_frames(val_df)
+                context_report = _context_coverage_preflight(
+                    train_df,
+                    val_fitness_df,
+                    val_selection_df,
+                    cv_folds=self._cv_folds,
+                    floor_aware=True,
+                    run_id=self._run_id,
+                )
                 results["data"] = {
                     "train_rows": len(train_df),
                     "val_rows": len(val_df),
                     "val_fitness_rows": len(val_fitness_df),
                     "val_selection_rows": len(val_selection_df),
-                    "context_coverage": _context_coverage_preflight(
-                        train_df,
-                        val_fitness_df,
-                        val_selection_df,
-                        cv_folds=self._cv_folds,
-                        floor_aware=True,
-                        run_id=self._run_id,
-                    ),
+                    "context_coverage": context_report,
                 }
+                blocked_directions = frozenset(
+                    context_report.get("blocked_directions", [])
+                )
                 phase1_result = self._load_phase1_outputs()
                 train_df, val_df = self._prune_splits_after_phase1(
                     train_df, val_df, phase1_result)
@@ -1307,7 +1407,12 @@ class Pipeline_Orchestrator:
                 self._cv_folds = self._prune_cv_folds_after_phase1(
                     self._cv_folds, phase1_result)
                 results["phase2"] = self._run_phase2(
-                    train_df, phase1_result, force=True, val_df=val_fitness_df)
+                    train_df,
+                    phase1_result,
+                    force=True,
+                    val_df=val_fitness_df,
+                    blocked_directions=blocked_directions,
+                )
 
             elif phase in {3, 4}:
                 train_df, val_df = self._load_and_split_data()
@@ -1655,6 +1760,7 @@ class Pipeline_Orchestrator:
         When ``SPLIT_MODE`` is ``purged_walk_forward``, also rebuilds CV folds
         (stored on ``self._cv_folds``) for Phase 2 and RB.
         """
+        _validate_enriched_context_contract()
         cached_split = load_cached_split_if_fresh()
         if cached_split is not None:
             train_df, val_df, val_fitness, val_selection, cv_folds = cached_split
@@ -2023,6 +2129,7 @@ class Pipeline_Orchestrator:
         phase1_result: dict[str, list[dict]],
         force: bool = False,
         val_df: pd.DataFrame | None = None,
+        blocked_directions: frozenset[str] | None = None,
     ) -> dict:
         """
         Run Phase 2 (Rule Pool Generation) or skip if valid outputs exist.
@@ -2030,7 +2137,7 @@ class Pipeline_Orchestrator:
         Returns
         -------
         dict
-            ``{"long": [...], "short": [...]}``
+            ``{"long": [...], "short": [...]}``; blocked directions are empty.
         """
 
         phase_name = "Phase 2: Rule Pool Generation"
@@ -2044,6 +2151,30 @@ class Pipeline_Orchestrator:
             dir_phase_name = f"{phase_name} [{direction}]"
             dir_start_ts = _now_iso()
             dir_t0 = time.monotonic()
+
+            if blocked_directions and direction in blocked_directions:
+                logger.warning(
+                    "Phase 2 [%s]: blocked by context-support preflight; "
+                    "no rules will be generated.",
+                    direction,
+                )
+                pools[direction] = []
+                self._phase2_status[direction] = {
+                    "status": "blocked",
+                    "reason": "context_support_preflight",
+                    "pool_size": 0,
+                }
+                dir_elapsed = time.monotonic() - dir_t0
+                _log_phase_entry(
+                    self._log_path,
+                    dir_phase_name,
+                    dir_start_ts,
+                    _now_iso(),
+                    dir_elapsed,
+                    skipped=False,
+                    result_summary=self._phase2_status[direction],
+                )
+                continue
 
             if not force:
                 existing_pool = Rule_Pool_Generator.skip_if_valid(direction)

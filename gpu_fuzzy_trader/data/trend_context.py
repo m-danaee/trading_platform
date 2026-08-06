@@ -431,16 +431,18 @@ def compute_permissions_and_triggers(
 ) -> pd.DataFrame:
     """Return the four execution columns.
 
-    - ``tf_permission_long``  = hwc Bullish AND mwc Bullish
-    - ``tf_permission_short`` = hwc Bearish AND mwc Bearish
+    - ``tf_permission_long``  = hwc Bullish AND (mwc Bullish OR Range)
+    - ``tf_permission_short`` = hwc Bearish AND (mwc Bearish OR Range)
     - ``lwc_pullback_reversal_long``  = long permission AND current LWC Bullish
       AND any of the previous ``lookback`` completed LWC states Bearish
     - ``lwc_pullback_reversal_short`` = short permission AND current LWC
       Bearish AND any of the previous ``lookback`` completed LWC states Bullish
 
-    A current Noisy state never triggers; Range may occur inside the pullback
-    sequence.  Per-symbol: the pullback window is computed independently for
-    each symbol, regardless of row ordering (symbols may be interleaved).
+    A current Noisy state never triggers.  MWC Range is treated as a valid
+    consolidation while HWC retains direction; the policy is configurable via
+    ``CONTEXT_ALLOW_MWC_RANGE_PERMISSION``.  Per-symbol: the pullback window
+    is computed independently for each symbol, regardless of row ordering
+    (symbols may be interleaved).
     """
     lookback = int(_cfg.LWC_PULLBACK_LOOKBACK) if lookback is None else int(lookback)
     n = len(lwc)
@@ -452,12 +454,15 @@ def compute_permissions_and_triggers(
     trig_long = np.zeros(n, dtype=np.int8)
     trig_short = np.zeros(n, dtype=np.int8)
 
-    perm_long[:] = (
-        (hwc_np == STATE_BULLISH) & (mwc_np == STATE_BULLISH)
-    ).astype(np.int8)
-    perm_short[:] = (
-        (hwc_np == STATE_BEARISH) & (mwc_np == STATE_BEARISH)
-    ).astype(np.int8)
+    mwc_range_allowed = bool(_cfg.CONTEXT_ALLOW_MWC_RANGE_PERMISSION)
+    mwc_long = (mwc_np == STATE_BULLISH) | (
+        mwc_range_allowed & (mwc_np == STATE_RANGE)
+    )
+    mwc_short = (mwc_np == STATE_BEARISH) | (
+        mwc_range_allowed & (mwc_np == STATE_RANGE)
+    )
+    perm_long[:] = ((hwc_np == STATE_BULLISH) & mwc_long).astype(np.int8)
+    perm_short[:] = ((hwc_np == STATE_BEARISH) & mwc_short).astype(np.int8)
 
     block = pd.DataFrame(
         {

@@ -17,6 +17,7 @@ from gpu_fuzzy_trader.run_pipeline import (
     _context_coverage_preflight,
     _context_coverage_report,
     _log_phase_entry,
+    _validate_enriched_context_contract,
 )
 
 
@@ -171,6 +172,68 @@ def test_floor_aware_preflight_rejects_sparse_island_support() -> None:
             floor_aware=True,
             run_id="test-run",
         )
+
+
+def test_context_preflight_blocks_only_unsupported_direction(monkeypatch) -> None:
+    frame = _context_frame(rows=200)
+    frame.loc[:, [
+        "tf_permission_long",
+        "lwc_pullback_reversal_long",
+    ]] = 0
+    frame.loc[:, [
+        "tf_permission_short",
+        "lwc_pullback_reversal_short",
+    ]] = 1
+    monkeypatch.setattr(
+        pipeline._cfg,
+        "phase2_island_mode_enabled",
+        lambda: False,
+    )
+
+    report = _context_coverage_preflight(frame, frame, frame)
+
+    assert report["blocked_directions"] == ["long"]
+    assert report["direction_failures"]["long"]
+    assert report["direction_failures"]["short"] == []
+
+
+def test_phase2_skips_context_blocked_direction(tmp_path) -> None:
+    frame = _context_frame(rows=200)
+    orchestrator = Pipeline_Orchestrator(output_dir=str(tmp_path))
+
+    pools = orchestrator._run_phase2(
+        frame,
+        {"long": [{"phase2_rule_id": "blocked"}], "short": []},
+        force=True,
+        val_df=frame,
+        blocked_directions=frozenset({"long"}),
+    )
+
+    assert pools == {"long": [], "short": []}
+    assert orchestrator._phase2_status["long"]["reason"] == (
+        "context_support_preflight"
+    )
+
+
+def test_stale_enriched_context_contract_is_rejected(tmp_path, monkeypatch) -> None:
+    enriched_path = tmp_path / "train_new_hwc_mwc_lwc.csv"
+    enriched_path.write_text("datetime,symbol\n", encoding="utf-8")
+    manifest_path = tmp_path / "trend_context_manifest.json"
+    manifest_path.write_text(
+        json.dumps({
+            "context_algorithm_version": "regime_v3_next_open_alignment",
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(pipeline._cfg, "TRAIN_CSV_PATH", str(enriched_path))
+    monkeypatch.setattr(
+        pipeline._cfg,
+        "ENRICHED_MANIFEST_PATH",
+        str(manifest_path),
+    )
+
+    with pytest.raises(RuntimeError, match="uses context contract"):
+        _validate_enriched_context_contract()
 
 
 def test_current_run_oos_directions_follow_accepted_phase2_pool(tmp_path) -> None:
