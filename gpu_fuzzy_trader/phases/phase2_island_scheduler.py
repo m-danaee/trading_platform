@@ -820,6 +820,19 @@ def _run_cluster_islands(
             if round_idx > 0 and _cfg.PHASE2_PER_EPOCH_WINDOW_ROTATION:
                 gen.resample_train_for_epoch(round_idx)
             gen.run_epoch(n_generations=min(epoch_gens, remaining))
+            if (
+                bool(getattr(_cfg, "PHASE2_ABORT_ZERO_DEPLOYABLE_EPOCHS", True))
+                and gen._evolution_state is not None
+                and not gen._evolution_state.deployable_archive
+            ):
+                leftover = gens_per_cluster - gen._island_generations_done
+                if leftover > 0:
+                    logger.warning(
+                        "Phase 2 [%s]: aborting remaining %d gens on cluster %s "
+                        "— deployable archive empty after epoch (sparse context)",
+                        direction, leftover, cid,
+                    )
+                    gen._island_generations_done = gens_per_cluster
             gen.park_engines()
             try:
                 evicted = evict_cluster_signatures(cluster_id=cid)

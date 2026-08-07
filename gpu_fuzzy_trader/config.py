@@ -384,13 +384,12 @@ CONTEXT_STATE_CODES: dict[str, int] = {
     "noisy": 2,
 }
 # Structural classifier formulas and version (part of strategy identity).
-# Version 6 keeps v5 train-prefix / per-timeframe threshold fitting and the
-# decoupled LTF trigger, but defaults the historical pullback-print gate OFF
-# (`CONTEXT_REQUIRE_PERMISSION_ON_PULLBACK_PRINT=False`) so opposite LWC prints
-# in the lookback window count even if HTF permission was not yet active on
-# that bar. Tradeable entries still require current-row permission AND trigger.
-# Enriched tapes built under v5 (gated pullback) are stale.
-CONTEXT_ALGORITHM_VERSION: str = "regime_v6_ungated_pullback_print"
+# Version 7 widens LWC pullback prints to treat Range as consolidation
+# pullback, softens train-prefix classifier quantiles (0.55/0.55/0.45), and
+# keeps the ungated historical pullback-permission policy from v6. Tradeable
+# entries still require current-row permission AND trigger. Enriched tapes
+# built under v6 are stale.
+CONTEXT_ALGORITHM_VERSION: str = "regime_v7_range_pullback_coverage"
 # CSV timestamps are 15m bar-open times.
 CONTEXT_BAR_SECONDS: int = 15 * 60
 # The frozen timeframe hierarchy: HWC = 4h, MWC = 1h, LWC = 15m.
@@ -405,9 +404,10 @@ LWC_TIMEFRAME_MINUTES: int = 15
 LWC_PULLBACK_LOOKBACK: int = 24
 # Default train-only pooled percentile thresholds (frozen before any
 # validation / test / forward results are reviewed).
-CONTEXT_EFFICIENCY_TREND_THRESHOLD_QUANTILE: float = 0.60
-CONTEXT_EMA_SPREAD_TREND_THRESHOLD_QUANTILE: float = 0.60
-CONTEXT_VOLATILITY_COMPRESSION_QUANTILE: float = 0.40
+# Softened so LWC prints more directional states under HTF permission.
+CONTEXT_EFFICIENCY_TREND_THRESHOLD_QUANTILE: float = 0.55
+CONTEXT_EMA_SPREAD_TREND_THRESHOLD_QUANTILE: float = 0.55
+CONTEXT_VOLATILITY_COMPRESSION_QUANTILE: float = 0.45
 # Common structural lookback (bars per cycle) used for the rolling indicators.
 CONTEXT_STRUCTURAL_LOOKBACK: int = 20
 # Minimum realised-volatility window; warm-up/unavailable context is Noisy.
@@ -422,6 +422,9 @@ CONTEXT_ALLOW_MWC_RANGE_PERMISSION: bool = True
 # permission still gates tradeable entries via the mandatory conditions.
 # Changing this flag requires a contract version bump and full re-enrichment.
 CONTEXT_REQUIRE_PERMISSION_ON_PULLBACK_PRINT: bool = False
+# When True (default), LWC Range counts as a pullback print alongside the
+# strict opposite state (Bearish for long / Bullish for short).
+CONTEXT_PULLBACK_INCLUDE_RANGE: bool = True
 # The mandatory direction-specific context + LWC trigger conditions.  These
 # are fixed execution conditions, never ordinary NSGA genes.
 CONTEXT_PERMISSION_COLUMNS: tuple[str, str] = (
@@ -529,6 +532,7 @@ def context_contract() -> dict[str, object]:
             "require_permission_on_pullback_print": bool(
                 CONTEXT_REQUIRE_PERMISSION_ON_PULLBACK_PRINT
             ),
+            "pullback_include_range": bool(CONTEXT_PULLBACK_INCLUDE_RANGE),
         },
         "horizon_bars_15m": int(MAX_HOLD_CANDLES),
         "context_columns": list(CONTEXT_COLUMNS),
@@ -1462,8 +1466,8 @@ PHASE2_STAGE_A_ARCHIVE_SEED_FRACTION = 0.25
 PHASE2_STAGE_A_RETURN_FLOOR_PCT = 0.0
 
 # PHASE2_STAGE_A_MIN_TRADE_SUPPORT — trade-count target before support penalty vanishes in Stage A.
-# 30→15 — one-symbol moderate-support exploration.
-PHASE2_STAGE_A_MIN_TRADE_SUPPORT = 15
+# 15→8 — sparse context (permission∧trigger) needs a reachable exploration floor.
+PHASE2_STAGE_A_MIN_TRADE_SUPPORT = 8
 
 # PHASE2_STAGE_A_USE_ROBUST_RETURN_OBJ — Stage A f3 uses train return instead of min(train,val).
 PHASE2_STAGE_A_USE_ROBUST_RETURN_OBJ = True
@@ -1618,14 +1622,23 @@ PHASE2_ISLAND_MIN_EPOCH_GENERATIONS = 4
 # when PHASE2_ISLAND_TWO_STAGE_ENABLED=True; Stage B uses global floors.
 PHASE2_ISLAND_TWO_STAGE_ENABLED = True
 PHASE2_ISLAND_EARLY_STOP_ENABLED = False
-# False — full configured island budget, no plateau early stop.
-PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED = False
-PHASE2_ISLAND_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO: bool = True
-PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE: int = 10
+# True — stop grinding empty feasible sets on sparse-context islands.
+PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED = True
+# False — allow plateau stop even when deployable=0 (otherwise sparse islands
+# never stop and burn the full generation budget).
+PHASE2_ISLAND_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO: bool = False
+PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE: int = 5
 # PHASE2_ISLAND_SCALE_TRADE_FLOORS — scale support floors to island row count.
 PHASE2_ISLAND_SCALE_TRADE_FLOORS = True
-# 10→8 — one-symbol absolute floor for moderate-support rules.
-PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN = 8
+# 8→5 — reachable pool floor under sparse permission∧trigger coverage.
+PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN = 5
+# Cap singleton-island support so Stage A can explore before features thin
+# the already-sparse context mask further (was scaling to ~30 on 29.6k rows).
+PHASE2_SPARSE_ISLAND_MAX_TRADE_SUPPORT: int = 12
+PHASE2_SPARSE_ISLAND_MAX_VAL_TRADE_FLOOR: int = 5
+# Abort remaining island Stage A epochs after an epoch ends with deployable=0
+# and viability-collapse restarts already exhausted.
+PHASE2_ABORT_ZERO_DEPLOYABLE_EPOCHS: bool = True
 # When True (default), a specialist/cluster island that cannot meet context
 # trade floors is skipped instead of blocking the whole direction, as long as
 # at least one other island still passes. Needed when LWC×permission conjunction
@@ -2488,8 +2501,26 @@ def resolve_island_hyperparams(
 
     val_floor = scale_trade_floor_by_universe(
         max(int(MIN_TRADE_POOL_FLOOR) // 4, 10), rows, ref,
-        absolute_min=8,
+        absolute_min=int(PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN),
     )
+
+    # Singleton specialist islands under sparse context need reachable floors;
+    # uncapped scaling (e.g. support=30 on 29.6k rows) makes Stage A explore
+    # an empty feasible set when permission∧trigger coverage is ~0.3%.
+    if profile != "orphan" and sym_n <= 1:
+        min_support = min(
+            int(min_support),
+            int(PHASE2_SPARSE_ISLAND_MAX_TRADE_SUPPORT),
+        )
+        pool_floor = min(
+            int(pool_floor),
+            int(PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN),
+        )
+        val_floor = min(
+            int(val_floor),
+            int(PHASE2_SPARSE_ISLAND_MAX_VAL_TRADE_FLOOR),
+        )
+        sortino_thr = min(int(sortino_thr), int(min_support))
 
     return IslandHyperparams(
         profile=profile,

@@ -32,10 +32,11 @@ The first implementation uses:
   A neutral MWC consolidation is a valid continuation while HWC retains
   direction (`CONTEXT_ALLOW_MWC_RANGE_PERMISSION`); MWC Noisy still blocks.
 - Noisy, opposite, or unavailable HWC/MWC states block entries.
-- LWC must show a pullback followed by a directional reversal (any opposite
-  LWC print in the previous 24 bars counts by default). Optional stricter
-  mode (`CONTEXT_REQUIRE_PERMISSION_ON_PULLBACK_PRINT=True`) also requires
-  that historical print to have occurred while same-direction permission was
+- LWC must show a pullback followed by a directional reversal. By default any
+  Bearish/Range print (long) or Bullish/Range print (short) in the previous
+  24 bars counts (`CONTEXT_PULLBACK_INCLUDE_RANGE`). Optional stricter mode
+  (`CONTEXT_REQUIRE_PERMISSION_ON_PULLBACK_PRINT=True`) also requires that
+  historical print to have occurred while same-direction permission was
   already active. Tradeable entries still require current-row permission AND
   trigger.
 - Existing RB Governor capital sizing remains unchanged.
@@ -143,16 +144,18 @@ The deterministic LWC trigger is:
 ```text
 Long:
   current LWC state is Bullish
-  AND at least one of the previous 24 completed LWC states was Bearish
+  AND at least one of the previous 24 completed LWC states was Bearish or Range
 
 Short:
   current LWC state is Bearish
-  AND at least one of the previous 24 completed LWC states was Bullish
+  AND at least one of the previous 24 completed LWC states was Bullish or Range
 ```
 
 Optional (`CONTEXT_REQUIRE_PERMISSION_ON_PULLBACK_PRINT=True`): the historical
-opposite LWC print must also have occurred while same-direction HWC/MWC
-permission was active on that bar. Default is False.
+pullback print must also have occurred while same-direction HWC/MWC
+permission was active on that bar. Default is False. Set
+`CONTEXT_PULLBACK_INCLUDE_RANGE=False` to require a strict opposite-direction
+print only.
 
 The trigger is a pure LTF-timing signal and is intentionally not ANDed with
 the *current*-row permission, so `permission_only`/`trigger_only` coverage

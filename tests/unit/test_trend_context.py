@@ -44,17 +44,20 @@ class TestContextContract:
 
         assert cfg.LWC_PULLBACK_LOOKBACK == 24
         assert contract["lwc_pullback_lookback"] == 24
-        assert contract["algorithm_version"] == "regime_v6_ungated_pullback_print"
+        assert contract["algorithm_version"] == "regime_v7_range_pullback_coverage"
         assert contract["permission_policy"]["mwc_range_allowed"] is True
         assert contract["trigger_policy"][
             "require_permission_on_pullback_print"
         ] is False
-        assert contract["efficiency_trend_threshold_quantile"] == 0.60
-        assert contract["ema_spread_trend_threshold_quantile"] == 0.60
-        assert contract["volatility_compression_quantile"] == 0.40
+        assert contract["trigger_policy"]["pullback_include_range"] is True
+        assert contract["efficiency_trend_threshold_quantile"] == 0.55
+        assert contract["ema_spread_trend_threshold_quantile"] == 0.55
+        assert contract["volatility_compression_quantile"] == 0.45
 
     def test_default_pullback_window_uses_previous_24_states(self):
-        lwc = np.array([_B] + [_R] * 23 + [_U, _U], dtype=np.int8)
+        # Use Noisy fillers so only the initial Bearish print arms the window
+        # (Range would also count under CONTEXT_PULLBACK_INCLUDE_RANGE).
+        lwc = np.array([_B] + [_N] * 23 + [_U, _U], dtype=np.int8)
         idx = pd.RangeIndex(len(lwc))
         hwc = pd.Series(np.full(len(lwc), _U, dtype=np.int8), index=idx)
         mwc = pd.Series(np.full(len(lwc), _U, dtype=np.int8), index=idx)
@@ -182,16 +185,28 @@ class TestIncompleteBoundaryBars:
 
 class TestPermissionGatedPullback:
     def test_default_allows_pullback_without_historical_permission(self):
-        """Default v6: opposite LWC print counts even if permission was off."""
+        """Default: opposite LWC print counts even if permission was off."""
         idx = pd.RangeIndex(3)
         symbols = pd.Series(["AA"] * 3, index=idx)
         hwc = pd.Series([_B, _U, _U], index=idx)
         mwc = pd.Series([_B, _U, _U], index=idx)
-        lwc = pd.Series([_B, _R, _U], index=idx)
+        lwc = pd.Series([_B, _N, _U], index=idx)
         assert cfg.CONTEXT_REQUIRE_PERMISSION_ON_PULLBACK_PRINT is False
         out = tc.compute_permissions_and_triggers(
             hwc, mwc, lwc, symbols, lookback=2)
         assert out["tf_permission_long"].tolist() == [0, 1, 1]
+        assert out["lwc_pullback_reversal_long"].iloc[2] == 1
+
+    def test_range_counts_as_pullback_print_by_default(self):
+        """v7: Range consolidation in lookback is enough to arm the trigger."""
+        idx = pd.RangeIndex(3)
+        symbols = pd.Series(["AA"] * 3, index=idx)
+        hwc = pd.Series([_U, _U, _U], index=idx)
+        mwc = pd.Series([_U, _U, _U], index=idx)
+        lwc = pd.Series([_R, _R, _U], index=idx)
+        assert cfg.CONTEXT_PULLBACK_INCLUDE_RANGE is True
+        out = tc.compute_permissions_and_triggers(
+            hwc, mwc, lwc, symbols, lookback=2)
         assert out["lwc_pullback_reversal_long"].iloc[2] == 1
 
     def test_gated_mode_requires_permission_at_the_historical_bar(self, monkeypatch):
@@ -200,18 +215,16 @@ class TestPermissionGatedPullback:
         idx = pd.RangeIndex(3)
         symbols = pd.Series(["AA"] * 3, index=idx)
 
-        # Bearish LWC print occurs while long permission is OFF; permission
-        # then turns on; current LWC turns Bullish. The stale bearish print
-        # from before permission was active must not count when gated.
-        hwc = pd.Series([_B, _U, _U], index=idx)
-        mwc = pd.Series([_B, _U, _U], index=idx)
-        lwc = pd.Series([_B, _R, _U], index=idx)
+        # Bearish prints while long permission is OFF; permission then turns
+        # on with Bullish LWC. Stale opposite prints must not count when gated.
+        hwc = pd.Series([_B, _B, _U], index=idx)
+        mwc = pd.Series([_B, _B, _U], index=idx)
+        lwc = pd.Series([_B, _B, _U], index=idx)
         out = tc.compute_permissions_and_triggers(hwc, mwc, lwc, symbols, lookback=2)
-        assert out["tf_permission_long"].tolist() == [0, 1, 1]
+        assert out["tf_permission_long"].tolist() == [0, 0, 1]
         assert out["lwc_pullback_reversal_long"].iloc[2] == 0
 
-        # Same LWC path, but permission is active throughout: the Bearish
-        # print now occurred during an active uptrend and must trigger.
+        # Same LWC path, but permission is active throughout.
         hwc2 = pd.Series([_U, _U, _U], index=idx)
         mwc2 = pd.Series([_U, _U, _U], index=idx)
         out2 = tc.compute_permissions_and_triggers(hwc2, mwc2, lwc, symbols, lookback=2)

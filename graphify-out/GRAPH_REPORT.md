@@ -1,35 +1,35 @@
 # Graph Report - trading_platform  (2026-08-07)
 
 ## Corpus Check
-- 188 files · ~271,110 words
+- 189 files · ~271,747 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 4856 nodes · 11008 edges · 193 communities (182 shown, 11 thin omitted)
+- 4865 nodes · 11028 edges · 199 communities (189 shown, 10 thin omitted)
 - Extraction: 95% EXTRACTED · 5% INFERRED · 0% AMBIGUOUS · INFERRED: 563 edges (avg confidence: 0.57)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `1865873e`
+- Built from commit: `c8307656`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
 ## Community Hubs (Navigation)
 - evox_runner.py
 - .run
-- rb_governor.py
+- CPUBacktestEngine
 - _make_engine
-- Pipeline_Orchestrator
-- run_phase2_evolution_epoch
+- .run
+- _symbol_specialized_variants
 - test_evox_runner.py
-- _valid_metrics
-- Rule_Pool_Generator
+- _score_metrics
+- _get_dont_cares
 - _make_df
 - phase2_rule_pool.py
 - run_phase2_evolution
 - Output_Writer
 - Data_Splitter
-- test_run_pipeline.py
+- Pipeline_Orchestrator
 - _apply_monthly_admission_gate
 - test_feature_detector_properties.py
 - _make_train_df
@@ -39,10 +39,10 @@
 - selector.py
 - Feature_Selector
 - rolling_cv.py
-- TestPlotPhase2Metrics
+- Reporter
 - test_encoder_properties.py
 - write_evaluator_clean
-- _compose_ruleset
+- CandidateRecord
 - nested_walk_forward.py
 - _preserve_deployable_elites
 - maybe_log_generation
@@ -53,10 +53,10 @@
 - writer.py
 - config.py
 - TestEquityCurveDateAxis
-- test_phase2_window_rotation.py
+- _make_multi_sym_df
 - research_integrity.py
 - _loader_from_rows
-- test_phase5_oos.py
+- TestOOSEvaluatorRun
 - gpu_engine.py
 - _gpu_runtime.py
 - ._ensure_dir
@@ -69,72 +69,72 @@
 - _compute_rule_signal_mask
 - validate_config
 - build_hybrid_symbol_clusters
-- _legacy_writer_contract
+- _build_entries_from_rule_set
 - trend_context.py
 - Feature_Detector
 - test_reporter.py
 - GPUBacktestEngine
 - get_normalized_symbol_array
-- ValueError
-- sample_df_for_phase2
+- ndarray
+- test_phase2_use_gpu_flag.py
 - TestEquityCurvePlots
 - TestRulePoolGeneratorRun
 - test_plateau_state_leak.py
-- TestFeasibilityGateFailures
+- _feasibility_gate_failures
 - dashboard.py
-- TestWriteSpearmanCorrelationReport
+- _make_selected_features
 - test_data_loader_properties.py
-- barrier.py
+- cpu_engine.py
 - _m
 - _apply_dynamic_rule
 - test_cpu_engine.py
-- run_rb_governor_pipeline
+- test_rb_fail_closed.py
 - execution_ok
 - TestWriteStrategyEvaluationTable
 - test_gpu_engine.py
 - test_crash_fix_and_run_logging.py
 - TestDeferredWarmup
 - test_feature_selector_properties.py
-- phase2_island_scheduler.py
+- _score_rule_on_symbol_val
 - compute_labels
 - TestPlotPerRuleBreakdown
 - resolve_island_hyperparams
-- evaluator_health.py
+- test_evaluator_health.py
 - _build_target
-- .test_accepts_high_val_return_and_trades
+- filter_migrants_for_cluster
 - test_gpu_engine_properties.py
 - TestRunLogHandlerLifecycle
 - resolve_evolution_floors
-- phase5_oos.py
+- apply_fuzzy_feature_scaling
 - set_purged_wf_reference_rows
-- test_phase2_support.py
-- Encoder
+- deployability_rank_score
+- .encode_condition
 - test_output_writer_properties.py
 - Data_Loader
 - test_phase2_gpu_throughput.py
 - .decode_chromosome
 - .load_strategies
 - gate_positive_good
-- _derive_island_seed
+- phase2_island_scheduler.py
 - resolve_phase2_stage_params
 - _remove_low_dispersion
 - prop_settings
 - test_crash_fix_properties.py
-- Reporter
+- TestPlotDistributionAndEquity
 - baselines.py
-- _normalize_for_association
+- Rule_Pool_Generator
 - _jax_compute_trade_outcomes
 - _should_post_restart_early_stop_phase2
 - _build_pool_from_archive
 - TestExecutionHealthInGate
-- _make_df
-- TestDeriveValSampleSeed
+- test_phase5_oos.py
+- compute_phase2_objectives_from_metrics
 - TestHammingThresholdAutoScale
 - TestValLeakGate
 - DataFrame
 - _jax_compute_rule_signals
 - TestParetoCollapseWarningGate
-- CPUBacktestEngine
+- test_rb_governor_tail_holdout.py
 - _compute_stability
 - phase2_support.py
 - MonthlyWindowSummary
@@ -145,14 +145,14 @@
 - .run
 - stratification_scenario_strategy
 - TestSpearmanSignConsistency
-- .encode_condition
+- .save_archive
 - log_memory_rss
 - _derive_epoch_seed
 - _apply_colab_gpu_defaults
-- loader.py
-- test_evaluator_health.py
+- phase5_oos.py
+- TestHealthPenaltyWiredIntoRB
 - OOS_Evaluator
-- compute_phase2_objectives_from_metrics
+- TestDecoupledObjectives
 - _raw_feasibility_violation_score
 - .load_pool
 - test_phase5_oos_properties.py
@@ -161,42 +161,48 @@
 - TestEndToEndRotation
 - TestRefreshObjectivesOnResumeGate
 - conftest.py
-- .get_dont_care
+- TestMakeWalkForwardFoldEngines
 - .skip_if_valid
 - _validate_schema
 - splitter.py
 - TestSplitRatio
-- passes_pool_admission_gate
+- ValueError
 - BFS and DFS Graph Traversal
-- TestGPUCPUNumericalParity
+- .run_epoch
 - load_cached_split_if_fresh
 - TestSparsePositiveMode
 - TestZeroRatioBoundary
-- _validate_pool_schema
+- TestF4ReturnConcentration
 - TestGlobalMetricsCacheClearing
-- cpu_engine.py
+- TestSeedDirectionUniqueness
 - .load_and_validate
-- Phase2StageParams
+- _should_plateau_early_stop_phase2
 - TestNaNHandling
 - TestSparseSignedMode
-- TestPlotPhase2Pnl
+- TestMakeFoldEnginesTailHoldout
 - TestMigrationSeedFraction
 - test_phase2_rule_pool.py
 - strategy_id
-- TestPoolAdmissionOverfitRatioGate
-- test_phase2_batch_evaluator_parity.py
-- _plateau_diversity_restart
-- TestSavePerSymbolCsv
+- passes_pool_admission_gate
+- ._prune_splits_after_phase1
+- TestPlateauDiversityRestart
+- TestIslandAwareTradeFloor
 - TestHallOfFameTrim
-- trade_support_penalty
+- test_phase2_support.py
 - TestNClustersDefined
 - test_nsga3_selection.py
 - test_gpu_engine_import_does_not_crash_on_jax_failure
 - test_jax_compat.py
-- _downsample_chronological
-- TestMigrationEnabledByDefault
+- DataFrame
+- effective_min_profitable_symbols
 - TestEvolutionFeasibilityFloors
-- _largest_safe_range
+- trade_support_penalty
+- TestRobustReturnObjective
+- _pareto_sortino_stats
+- TestEvalCvFoldReturns
+- ConfigError
+- TestContextEntryPaths
+- TestF3PathResolution
 - opencode.json
 - graphify.js
 - Obsolete implementation cleanup policy
@@ -215,9 +221,9 @@
 5. `prop_settings()` - 79 edges
 6. `Pipeline_Orchestrator` - 68 edges
 7. `Data_Loader` - 62 edges
-8. `_run_nsga3()` - 58 edges
-9. `Feature_Selector` - 58 edges
-10. `OOS_Evaluator` - 58 edges
+8. `_run_nsga3()` - 59 edges
+9. `_run_nsga2_fallback()` - 58 edges
+10. `Feature_Selector` - 58 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `Graphify Pipeline` --semantically_similar_to--> `Graphify Pipeline`  [INFERRED] [semantically similar]
@@ -241,79 +247,79 @@
 - **Fail-closed research boundary** — readme_configuration_contract, readme_symbol_specialist_islands, readme_rb_governor, readme_holdout_acceptance_contract, readme_fail_closed_deployment [INFERRED 0.95]
 - **Hardware-aware execution flow** — run_rtx4050_execution_policy, run_colab_t4_path, run_pipeline_orchestrator, readme_hybrid_execution_policy [INFERRED 0.95]
 
-## Communities (193 total, 11 thin omitted)
+## Communities (199 total, 10 thin omitted)
 
 ### Community 0 - "evox_runner.py"
 Cohesion: 0.05
-Nodes (93): IslandHyperparams, Resolved Phase 2 knobs for cluster or orphan slices., _assign_eval_result(), _behavior_descriptor(), _binary_tournament_pick(), _build_diversity_reference(), _constraint_violations(), _count_deployable_preview() (+85 more)
+Nodes (101): _assign_eval_result(), _behavior_descriptor(), _binary_tournament_pick(), _build_diversity_reference(), _constraint_violations(), _count_deployable_preview(), _count_pop_viable(), _das_dennis() (+93 more)
 
 ### Community 1 - ".run"
-Cohesion: 0.05
-Nodes (41): _archive_feature_signature(), _deployable_archive_pool_entries(), _entry_validation_per_symbol_metrics(), _filter_pool_by_admission(), _merge_archive_entries(), _monthly_admission_source_df(), _pool_entry_rank(), _pool_path_key() (+33 more)
+Cohesion: 0.11
+Nodes (20): _condition_feature_names(), _filter_compatible_previous_pool(), _filter_pool_by_admission(), _pool_entry_passes_admission(), _pool_path_key(), Any, Check stored train/val metrics on a pool JSON entry., Extract feature names from textual conditions like: "[feat] IS Value". Returns… (+12 more)
 
-### Community 2 - "rb_governor.py"
-Cohesion: 0.05
-Nodes (83): expectancy_lcb_pct(), Return a conservative lower bound for per-trade net expectancy. Exact CPU…, _attach_source_symbol_filters(), _available_symbols(), _balanced_phase2_shortlist(), _cost_stress_gate(), _diversification_shortlist(), _ensure_symbol_filtered_rule() (+75 more)
+### Community 2 - "CPUBacktestEngine"
+Cohesion: 0.07
+Nodes (80): CPUBacktestEngine, CPU backtest engine that exactly mirrors evaluator_v5.ipynb's…, expectancy_lcb_pct(), Return a conservative lower bound for per-trade net expectancy. Exact CPU…, _available_symbols(), _balanced_phase2_shortlist(), _cost_stress_gate(), _eval_cv_fold_returns() (+72 more)
 
 ### Community 3 - "_make_engine"
-Cohesion: 0.05
-Nodes (33): _build_entries_from_rule_set(), Priority-based rule assignment: first matching rule wins per row. Mirrors…, _make_df(), _make_engine(), DataFrame, All TP trades → win_rate = 100%., No losing trades → profit_factor = 99.0., Row matching both rules should be assigned to rule 1 only. (+25 more)
+Cohesion: 0.10
+Nodes (18): _make_df(), _make_engine(), All TP trades → win_rate = 100%., No losing trades → profit_factor = 99.0., Build a minimal DataFrame for testing., position_notional = equity * capital_pct/100 * leverage when exposure is free., position_notional is capped when exposure is nearly full., When exposure is full, position_notional = 0. (+10 more)
 
-### Community 4 - "Pipeline_Orchestrator"
-Cohesion: 0.06
-Nodes (43): FileHandler, _context_coverage_for_direction(), _log_phase_entry(), _log_pipeline_config(), _now_iso(), Pipeline_Orchestrator, DataFrame, Persist the final status for the current run identity. (+35 more)
+### Community 4 - ".run"
+Cohesion: 0.07
+Nodes (32): FileHandler, _log_phase_entry(), _log_pipeline_config(), _now_iso(), DataFrame, Persist the final status for the current run identity., Mark standalone phase runs failed when an exception escapes., Run all pipeline phases in order. Returns ------- dict Results from each phase,… (+24 more)
 
-### Community 5 - "run_phase2_evolution_epoch"
-Cohesion: 0.14
-Nodes (15): StageLabel, Evolve one island epoch and return updated resumable state., run_phase2_evolution_epoch(), _FakeEngine, Verify reset_plateau clears restart counters on resumed state., AC: resumed island epoch with reset_plateau=True clears restart counters., Global/non-island mode: reset_plateau=False preserves counters. Uses…, Task 2: Verify refresh_objectives_on_resume resets stale objectives on resumed… (+7 more)
+### Community 5 - "_symbol_specialized_variants"
+Cohesion: 0.10
+Nodes (31): _attach_source_symbol_filters(), _ensure_symbol_filtered_rule(), _has_symbol_condition(), _is_recency_good(), _is_symbol_condition(), Path, Add deterministic single-condition RB candidates. Evolution is deliberately…, Persist an explicit empty strategy and diagnostic report. (+23 more)
 
 ### Community 6 - "test_evox_runner.py"
-Cohesion: 0.06
-Nodes (35): _evaluate_population_indices(), _inherit_val_metrics_from_global_cache(), _load_global_metrics_cache(), _metrics_snapshot(), Phase2EvolutionState, Shallow copy for evolution caches (metrics are flat numeric dicts)., Store processed metrics (and optional val sidecar) in the run-wide cache., Bound run-wide eval cache size to limit RAM growth across long runs. Uses FIFO… (+27 more)
-
-### Community 7 - "_valid_metrics"
-Cohesion: 0.08
-Nodes (27): _combined_return_score(), Profit objective for lenient rule addition, but now evaluator_v5 aware. A new…, _MockEngine, Minimal mock that mimics CPUBacktestEngine for testing _optimize_risk.…, Verify the CV-fold consistency penalty in ``_score_metrics``. New formula…, cv_fold_returns=[5.0, -2.0, 3.0] — worst fold negative + high variance., All positive folds with low variance — no penalty., cv_fold_returns=None skips the CV term. (+19 more)
-
-### Community 8 - "Rule_Pool_Generator"
 Cohesion: 0.05
-Nodes (33): _count_active_conditions(), _get_dont_cares(), _mutate(), Mutate a chromosome (returns a copy). When activating a dont_care gene, feature…, Return array of dont_care sentinels for each feature., Count active rule conditions (sparse slots or dense dont_care encoding)., Phase 2: GPU-accelerated multi-objective evolutionary rule pool generation.…, Inject guarded migration seeds for the next epoch. (+25 more)
+Nodes (44): _inherit_val_metrics_from_global_cache(), _inject_diversity_recovery(), Phase2EvolutionState, Replace a fraction of the population with fresh or archive-mutated seeds., Copy val_* from global cache for identical chromosomes when val is skipped.…, Evolve one island epoch and return updated resumable state., Resumable NSGA-III state for symbol-island epoch scheduling., Return survivors that do not already carry a validation snapshot. Validation… (+36 more)
+
+### Community 7 - "_score_metrics"
+Cohesion: 0.07
+Nodes (40): _combined_return_score(), _evaluate_ruleset(), _optimize_risk(), Return (ok, bonus, penalty) for the desired train-valid balance shape. In…, Dominant objective: return/DD with train-valid balance, plus CV-fold…, Profit objective for lenient rule addition, but now evaluator_v5 aware. A new…, _score_metrics(), _train_valid_shape() (+32 more)
+
+### Community 8 - "_get_dont_cares"
+Cohesion: 0.07
+Nodes (30): _count_active_conditions(), _get_dont_cares(), _mutate(), Mutate a chromosome (returns a copy). When activating a dont_care gene, feature…, Return array of dont_care sentinels for each feature., Count active rule conditions (sparse slots or dense dont_care encoding)., _is_all_inactive_sparse(), _make_feature_infos() (+22 more)
 
 ### Community 9 - "_make_df"
 Cohesion: 0.08
 Nodes (21): _make_df(), _make_engine(), MonkeyPatch, Chromosome positions must follow feature_modes insertion order., Exact CPU re-evaluation must interpret genes like the GPU path., Chromosome that matches nothing returns 0 executed trades., Zero-signal chunks should use reject metrics without scanning., PHASE2_SKIP_ZERO_SIGNAL_SCAN must match always-scan metrics. (+13 more)
 
 ### Community 10 - "phase2_rule_pool.py"
-Cohesion: 0.08
-Nodes (65): _hamming_distance(), Hamming distance between two chromosomes (sparse-aware)., _random_active_class(), _archive_objective_vector(), _chromosome_for_pool_export(), _crossover(), _diversity_penalty_blended(), _hamming_distance() (+57 more)
+Cohesion: 0.09
+Nodes (54): _random_active_class(), _chromosome_for_pool_export(), _crossover(), _pool_seed_chromosomes(), phase2_rule_pool.py — Rule_Pool_Generator (Phase 2) GPU-accelerated multi-…, Uniform crossover (dense per-gene or sparse per-slot)., Dense K-vector for pool JSON / decode_chromosome., Stack chromosome rows into a batch (dense 2D or sparse 3D). (+46 more)
 
 ### Community 11 - "run_phase2_evolution"
 Cohesion: 0.04
-Nodes (45): Shared val-cadence check for both NSGA-II fallback and NSGA-III loops. Val…, Run Phase 2 NSGA-III evolution. Returns (pareto_pool, history) or state., run_phase2_evolution(), _should_run_val_this_gen(), Evolutionary algorithm drivers for Phase 2., skipif, TestRunPhase2EvolutionFallback, TestRunPhase2EvolutionSmoke (+37 more)
+Nodes (44): StageLabel, Run Phase 2 NSGA-III evolution. Returns (pareto_pool, history) or state., run_phase2_evolution(), Evolutionary algorithm drivers for Phase 2., skipif, TestRunPhase2EvolutionFallback, TestRunPhase2EvolutionSmoke, Unit tests for Pareto-collapse warning gate (audit finding #13). AC: The… (+36 more)
 
 ### Community 12 - "Output_Writer"
 Cohesion: 0.06
-Nodes (22): Output_Writer, Serializes RuleSet dicts to JSON and loads/validates existing JSON files.…, _make_rule(), _make_rule_set(), Unit tests for gpu_fuzzy_trader.output.writer — Output_Writer Tests cover: -…, A rule with only tp non-zero should be accepted., Spot-check a variety of valid fuzzy value names., Write rule_set to a temp file and reload the raw JSON. (+14 more)
+Nodes (25): Output_Writer, Serializes RuleSet dicts to JSON and loads/validates existing JSON files.…, _legacy_writer_contract(), _make_rule(), _make_rule_set(), fixture, Unit tests for gpu_fuzzy_trader.output.writer — Output_Writer Tests cover: -…, A rule with only tp non-zero should be accepted. (+17 more)
 
 ### Community 13 - "Data_Splitter"
 Cohesion: 0.13
 Nodes (20): Data_Splitter, Chronological train/validation splitter., Module-level wrapper around ``Data_Splitter.split_and_persist``., split_and_persist(), _make_df(), _make_timestamps(), _patch_split_paths(), DataFrame (+12 more)
 
-### Community 14 - "test_run_pipeline.py"
-Cohesion: 0.12
-Nodes (30): _context_coverage_preflight(), _context_coverage_report(), Temporarily rebind all cached output paths for one pipeline run., Return split-aware context coverage for both trading directions., Reject enriched tapes generated under a different context contract., Log coverage and block only directions that cannot meet their floors., _temporary_output_paths(), _validate_enriched_context_contract() (+22 more)
+### Community 14 - "Pipeline_Orchestrator"
+Cohesion: 0.10
+Nodes (34): _context_coverage_preflight(), _context_coverage_report(), Pipeline_Orchestrator, Return the active output root for this run., Temporarily rebind all cached output paths for one pipeline run., Load Phase 2 pools for both directions from the persistent cache., Ensure at least one valid strategy exists before standalone Phase 5., Return split-aware context coverage for both trading directions. (+26 more)
 
 ### Community 15 - "_apply_monthly_admission_gate"
 Cohesion: 0.06
-Nodes (29): _apply_monthly_admission_gate(), _evaluate_rule_on_window(), _monthly_window_metrics(), Evaluate a single pool rule on a single monthly window. Returns the full window…, Normalize a window evaluator result for the monthly gate. The float fallback…, Apply the monthly-window shadow-test gate to a pool of rules. Each rule is…, _DeterministicEvaluator, _DeterministicMetricsEvaluator (+21 more)
+Nodes (29): _apply_monthly_admission_gate(), _monthly_window_metrics(), Normalize a window evaluator result for the monthly gate. The float fallback…, Apply the monthly-window shadow-test gate to a pool of rules. Each rule is…, monthly_return_counts_as_good(), Return True when a monthly window counts toward the good-month ratio.…, _DeterministicEvaluator, _DeterministicMetricsEvaluator (+21 more)
 
 ### Community 16 - "test_feature_detector_properties.py"
 Cohesion: 0.09
 Nodes (45): all_nan_series(), arbitrary_numeric_series(), binary_series(), large_value_series(), positive_series(), composite, DrawFn, given (+37 more)
 
 ### Community 17 - "_make_train_df"
-Cohesion: 0.09
-Nodes (21): Sample up to *total_rows* rows, distributed equally across symbols. A single…, _sample_df(), _make_train_df(), DataFrame, Critical: bars must be contiguous so the backtest engine preserves temporal…, Random start must be bounded so the slice always fits forward., divmod distribution gives exactly total_rows (no rounding loss). 701_000 % 14…, total_rows < n_symbols must NOT force 1 row per symbol. (+13 more)
+Cohesion: 0.07
+Nodes (27): Sample up to *total_rows* rows, distributed equally across symbols. A single…, _sample_df(), _make_train_df(), DataFrame, Critical: bars must be contiguous so the backtest engine preserves temporal…, Random start must be bounded so the slice always fits forward., divmod distribution gives exactly total_rows (no rounding loss). 701_000 % 14…, total_rows < n_symbols must NOT force 1 row per symbol. (+19 more)
 
 ### Community 18 - "_split"
 Cohesion: 0.08
@@ -328,36 +334,36 @@ Cohesion: 0.09
 Nodes (19): detect_feature_mode(), Module-level convenience wrapper around Feature_Detector.detect_feature_mode., Has negative values, zero_ratio ≤ 0.3 → signed., zero_ratio == 0.3 is NOT > 0.3, so mode is signed (not sparse_signed)., Values {0, 1} match both binary and ternary criteria; binary wins., Values {-1, 0, 1} match ternary; should NOT fall through to signed., Adding value 2 to {0, 1} breaks binary → falls through to positive., Adding value 2 to {-1, 0, 1} breaks ternary → falls through to… (+11 more)
 
 ### Community 21 - "selector.py"
-Cohesion: 0.09
+Cohesion: 0.08
 Nodes (37): _align_feature_array(), build_phase1_shared_context(), _build_symbol_masks(), _candidate_feature_columns(), _check_spearman_sign_consistency(), _compute_chronological_stationarity_scores(), _get_spearman_folds(), _mi_scores_for_mask() (+29 more)
 
 ### Community 22 - "Feature_Selector"
 Cohesion: 0.10
-Nodes (19): Feature_Selector, Score and rank features separately for long and short directions., _make_train_df(), MonkeyPatch, Create a minimal training DataFrame with label columns and feature columns., Label columns must not appear in selected features., Meta columns must not appear in selected features., Loader internal columns and ``_``-prefixed names are not candidates. (+11 more)
+Nodes (20): Feature_Selector, Score and rank features separately for long and short directions., _make_train_df(), MonkeyPatch, Create a minimal training DataFrame with label columns and feature columns., Label columns must not appear in selected features., Meta columns must not appear in selected features., Loader internal columns and ``_``-prefixed names are not candidates. (+12 more)
 
 ### Community 23 - "rolling_cv.py"
 Cohesion: 0.09
 Nodes (39): aggregate_fold_metrics(), _bar_index_col(), _build_fold_from_ranges(), build_forbidden_ranges(), build_purged_walk_forward_folds(), cv_folds_only(), derive_primary_holdout(), FoldMetricsSummary (+31 more)
 
-### Community 24 - "TestPlotPhase2Metrics"
-Cohesion: 0.23
-Nodes (4): _make_history(), History entries with missing keys should not raise., Create a minimal Phase 2 history list., TestPlotPhase2Metrics
+### Community 24 - "Reporter"
+Cohesion: 0.10
+Nodes (14): Generates visual and tabular reports for each pipeline phase. All output files…, Reporter, _make_history(), _make_per_symbol_metrics(), _make_pnl_history(), History entries with missing keys should not raise., History entries with missing keys should not raise., Create a minimal Phase 2 history list. (+6 more)
 
 ### Community 25 - "test_encoder_properties.py"
-Cohesion: 0.09
-Nodes (37): all_active_chromosome_strategy(), chromosome_with_dont_cares_strategy(), feature_name_strategy(), composite, DrawFn, given, ndarray, Property-based tests for gpu_fuzzy_trader.features.encoder.Encoder **Validates:… (+29 more)
+Cohesion: 0.08
+Nodes (41): all_active_chromosome_strategy(), chromosome_with_dont_cares_strategy(), feature_name_strategy(), composite, DrawFn, given, ndarray, Property-based tests for gpu_fuzzy_trader.features.encoder.Encoder **Validates:… (+33 more)
 
 ### Community 26 - "write_evaluator_clean"
 Cohesion: 0.08
 Nodes (29): _maybe_write_evaluator_clean(), Write a stripped strategy file containing only ``direction`` and ``rules_set``.…, Write a stripped strategy file alongside the main strategy JSON. This is a…, write_evaluator_clean(), _make_rule(), minimal_strategy(), fixture, Path (+21 more)
 
-### Community 27 - "_compose_ruleset"
-Cohesion: 0.16
-Nodes (27): _candidate_coverage_symbols(), _compose_ruleset(), Symbol coverage for compose diversity. Prefer **traded** symbols from backtest…, patch, _cand(), engines(), _generalist_cand(), fixture (+19 more)
+### Community 27 - "CandidateRecord"
+Cohesion: 0.09
+Nodes (45): effective_rb_min_distinct_symbols(), Return the RB coverage target for the active debug universe. Full runs keep…, _candidate_coverage_symbols(), _candidate_positive_symbols(), CandidateRecord, _compose_ruleset(), _diversification_beam(), _diversification_shortlist() (+37 more)
 
 ### Community 28 - "nested_walk_forward.py"
-Cohesion: 0.13
-Nodes (25): Validation helpers for monthly, nested, and multiplicity-safe research., deflated_sharpe_ratio(), estimate_pbo(), Selection-multiplicity diagnostics for strategy research artifacts., Estimate the fraction of folds where the IS winner misses OOS median. Inputs…, Return a normal-approximation deflated Sharpe probability. This is a…, Create a compact ledger-ready multiplicity report., summarize_multiplicity() (+17 more)
+Cohesion: 0.14
+Nodes (24): Validation helpers for monthly, nested, and multiplicity-safe research., deflated_sharpe_ratio(), estimate_pbo(), Selection-multiplicity diagnostics for strategy research artifacts., Estimate the fraction of folds where the IS winner misses OOS median. Inputs…, Return a normal-approximation deflated Sharpe probability. This is a…, Create a compact ledger-ready multiplicity report., summarize_multiplicity() (+16 more)
 
 ### Community 29 - "_preserve_deployable_elites"
 Cohesion: 0.09
@@ -372,8 +378,8 @@ Cohesion: 0.07
 Nodes (37): Local low-memory test policy, Virtual environment command policy, Package compile gate, Locked research dependencies, Focused low-memory test gate, Python 3.11 CI runtime, Research CI workflow, Balanced Mode-A assumption (+29 more)
 
 ### Community 32 - "_select_diverse_subset"
-Cohesion: 0.12
-Nodes (15): Max-min Hamming diversity sampling: greedy pick farthest from chosen. Returns…, _select_diverse_subset(), ndarray, Tests for H5/M4/M5 evolution convergence behaviors. Covers: - HoF trimming at…, Verify _select_diverse_subset correctness for edge cases., Create n distinct dense chromosomes., k=0 should return [] even with non-empty chromosomes., k<0 should return []. (+7 more)
+Cohesion: 0.08
+Nodes (23): _normalize_for_association(), Max-min Hamming diversity sampling: greedy pick farthest from chosen. Returns…, Rank-based normalization (robust to outliers like trade_penalty=50)., _select_diverse_subset(), ndarray, Tests for H5/M4/M5 evolution convergence behaviors. Covers: - HoF trimming at…, Verify _select_diverse_subset correctness for edge cases., Create n distinct dense chromosomes. (+15 more)
 
 ### Community 33 - "test_rb_min_symbols.py"
 Cohesion: 0.10
@@ -389,31 +395,31 @@ Nodes (23): context_permission_column(), context_trigger_column(), Return the di
 
 ### Community 36 - "config.py"
 Cohesion: 0.07
-Nodes (35): _config_check(), ConfigError, effective_min_trade_support(), effective_monthly_min_trades(), effective_sortino_min_trade_threshold(), effective_val_trade_floor_for_objectives(), _finite_config_number(), get_purged_wf_reference_rows() (+27 more)
+Nodes (32): effective_min_trade_support(), effective_monthly_min_trades(), effective_sortino_min_trade_threshold(), effective_val_trade_floor_for_objectives(), get_purged_wf_reference_rows(), get_seed(), holdout_train_val_label(), island_early_stop_enabled() (+24 more)
 
 ### Community 37 - "TestEquityCurveDateAxis"
-Cohesion: 0.09
-Nodes (21): _make_trade_log(), DataFrame, fixture, Unit tests for date-based x-axis in Reporter.plot_equity_curve (Task 10.3).…, When Entry_Time is absent, x-axis label is 'Trade #'., When Entry_Time is all-NaN, x-axis label is 'Trade #'., axhline is called (initial-capital line) in date mode., axhline is called (initial-capital line) in Trade # mode. (+13 more)
+Cohesion: 0.07
+Nodes (23): Reporting and visualization sub-package., reporter.py — Reporting and visualization for the GPU-Fuzzy Trading Pipeline.…, _make_trade_log(), DataFrame, fixture, Unit tests for date-based x-axis in Reporter.plot_equity_curve (Task 10.3).…, When Entry_Time is absent, x-axis label is 'Trade #'., When Entry_Time is all-NaN, x-axis label is 'Trade #'. (+15 more)
 
-### Community 38 - "test_phase2_window_rotation.py"
-Cohesion: 0.10
-Nodes (22): Cap *total_rows* so the per-symbol request fits within the safe range. When…, _resolve_sample_total_rows(), _make_multi_sym_df(), DataFrame, Tests for per-epoch train-window rotation (task-1)., Capping logic for per-epoch window rotation., With PHASE2_PER_EPOCH_WINDOW_ROTATION=False, total_rows is unchanged., With rotation enabled, total_rows is capped by rotation fraction. (+14 more)
+### Community 38 - "_make_multi_sym_df"
+Cohesion: 0.09
+Nodes (23): _largest_safe_range(), Return (start, end) of the largest contiguous bar range not in *forbidden*. The…, Cap *total_rows* so the per-symbol request fits within the safe range. When…, _resolve_sample_total_rows(), _make_multi_sym_df(), DataFrame, Capping logic for per-epoch window rotation., With PHASE2_PER_EPOCH_WINDOW_ROTATION=False, total_rows is unchanged. (+15 more)
 
 ### Community 39 - "research_integrity.py"
-Cohesion: 0.16
-Nodes (24): _canonical_json(), count_trials(), dataset_manifest(), ExperimentLedger, forward_acceptance_lock_path(), Any, Path, PathLike (+16 more)
+Cohesion: 0.14
+Nodes (26): _canonical_json(), count_trials(), dataset_manifest(), ExperimentLedger, forward_acceptance_lock_path(), Any, Path, PathLike (+18 more)
 
 ### Community 40 - "_loader_from_rows"
 Cohesion: 0.07
 Nodes (30): load_dataset(), Module-level wrapper around ``Data_Loader.load_dataset``., _base_row(), _loader_from_rows(), _make_csv(), _make_ohlcv_rows(), _make_rows(), _make_timestamps() (+22 more)
 
-### Community 41 - "test_phase5_oos.py"
+### Community 41 - "TestOOSEvaluatorRun"
 Cohesion: 0.10
-Nodes (13): _isolate_phase5_reporter_outputs(), fixture, Unit tests for gpu_fuzzy_trader.phases.phase5_oos.OOS_Evaluator Tests cover: -…, Override module-level path dicts and return originals., Keep Reporter plots/CSVs out of the checked-in outputs directory., Write a valid selected-features JSON to path., Write a synthetic test CSV with all required columns (including feat_0..4) to a…, Integration tests using tmp_path overrides for all output paths. The run()… (+5 more)
+Nodes (13): _isolate_phase5_reporter_outputs(), fixture, Override module-level path dicts and return originals., Keep Reporter plots/CSVs out of the checked-in outputs directory., Write a valid selected-features JSON to path., Write a synthetic test CSV with all required columns (including feat_0..4) to a…, Integration tests using tmp_path overrides for all output paths. The run()…, Run OOS_Evaluator.run() once for the whole class (long direction only). (+5 more)
 
 ### Community 42 - "gpu_engine.py"
 Cohesion: 0.07
-Nodes (34): _batch_metrics_from_array(), _build_event_batch(), _exposure_slot_capacity(), _fast_reject_result_rows(), _jax_compute_rule_signals_sparse_batch(), _jax_open_slot(), _jax_release_open_slots(), _jax_simulate_equity_event_batch() (+26 more)
+Nodes (37): _batch_metrics_from_array(), _build_event_batch(), _exposure_slot_capacity(), _fast_reject_result_rows(), _jax_compute_rule_signals_sparse_batch(), _jax_open_slot(), _jax_release_open_slots(), _jax_simulate_equity_batch() (+29 more)
 
 ### Community 43 - "_gpu_runtime.py"
 Cohesion: 0.06
@@ -428,8 +434,8 @@ Cohesion: 0.09
 Nodes (21): __main__.py — Entry point for `python -m gpu_fuzzy_trader.run_pipeline` Allows…, Any, Typed, versioned profile for the active research contract., Small stable surface for comparing experiments. The legacy config module…, ResearchProfile, main(), _NumpyJSONEncoder, _phase5_test_metrics() (+13 more)
 
 ### Community 46 - "test_certificate_first_selection.py"
-Cohesion: 0.10
-Nodes (29): _candidate_positive_symbols(), _passes_symbol_concentration_gate(), _passes_symbol_contribution_certificate(), _passes_tail_holdout_gate(), _portfolio_selection_certificate(), Any, Require positive, supported validation PnL from multiple symbols. Symbol…, Return supported positive validation symbols for one candidate. (+21 more)
+Cohesion: 0.15
+Nodes (17): _entry_validation_per_symbol_metrics(), _pool_entry_rank(), Read validation per-symbol metrics across pool schema revisions., Compute the existing deployability rank from a pool entry., Cap a pool while reserving admitted candidates for positive symbols. The…, _reserve_symbol_pool_candidates(), _BatchEngine, _candidate() (+9 more)
 
 ### Community 47 - "non_dominated_sort"
 Cohesion: 0.12
@@ -440,8 +446,8 @@ Cohesion: 0.10
 Nodes (29): _active_search_space(), apply_trial_config(), collect_validation_metrics(), compute_score(), _copy_phase1_2_outputs(), main(), objective(), _pearson() (+21 more)
 
 ### Community 49 - "_init_population"
-Cohesion: 0.09
-Nodes (31): assign_strata_to_indices(), build_feature_sampling_probs(), pick_active_count(), _pick_active_index(), _pick_inactive_index(), ndarray, phase2_init.py — Sparsity-guided stratified population initialization for Phase…, Assign elite / explorer labels to non-seeded population rows. (+23 more)
+Cohesion: 0.14
+Nodes (22): assign_strata_to_indices(), build_feature_sampling_probs(), pick_active_count(), _pick_active_index(), _pick_inactive_index(), ndarray, phase2_init.py — Sparsity-guided stratified population initialization for Phase…, Assign elite / explorer labels to non-seeded population rows. (+14 more)
 
 ### Community 50 - "test_phase2_rule_pool_properties.py"
 Cohesion: 0.11
@@ -452,16 +458,16 @@ Cohesion: 0.15
 Nodes (13): conditions_cache_key(), get_or_build_rule_mask(), ndarray, condition_cache.py — Cached boolean masks for textual rule conditions. Avoids…, Stable hashable key for a list of condition strings., Return a boolean row mask for *conditions*, using *cache* when provided. The…, _compute_rule_signal_mask(), Build one boolean signal mask (evaluator_v5 parity). Feature conditions are… (+5 more)
 
 ### Community 52 - "validate_config"
-Cohesion: 0.11
-Nodes (28): context_contract(), _debug_symbol_universe_size(), effective_config_snapshot(), effective_min_profitable_symbols(), Active symbol count when debug scope is on; None for full-universe runs., Cap cross-symbol profitability gate to the active universe size. With…, Validate all high-impact hyperparameter relationships. The function is…, Return resolved values and derived constraints for audit/reporting. (+20 more)
+Cohesion: 0.15
+Nodes (23): context_contract(), effective_config_snapshot(), Validate all high-impact hyperparameter relationships. The function is…, Return resolved values and derived constraints for audit/reporting., Write the effective configuration snapshot and return its path., Return the full context contract for strategy/dataset identity., validate_config(), write_config_audit_report() (+15 more)
 
 ### Community 53 - "build_hybrid_symbol_clusters"
 Cohesion: 0.11
 Nodes (30): build_hybrid_symbol_clusters(), _corr_embedding_block(), _feature_names_union(), _feature_profile_block(), load_symbol_clusters(), persist_symbol_clusters(), Any, DataFrame (+22 more)
 
-### Community 54 - "_legacy_writer_contract"
-Cohesion: 0.67
-Nodes (3): _legacy_writer_contract(), fixture, These schema tests predate mandatory trend context.
+### Community 54 - "_build_entries_from_rule_set"
+Cohesion: 0.10
+Nodes (14): _build_entries_from_rule_set(), Priority-based rule assignment: first matching rule wins per row. Mirrors…, DataFrame, Row matching both rules should be assigned to rule 1 only., Rows not matching rule 1 should be assigned to rule 2., v5: earlier JSON rule wins over lower dataset row index at same time., Release index should point to the row where bar_index + 288 is reached., Rows near the end should get release_index = len(df). (+6 more)
 
 ### Community 55 - "trend_context.py"
 Cohesion: 0.08
@@ -472,56 +478,56 @@ Cohesion: 0.13
 Nodes (12): detect_all_modes(), Feature_Detector, DataFrame, Series, detector.py — Feature_Detector Classifies each feature column into exactly one…, Classify feature columns by their discretization type., Classify a single feature series into one of six modes. Detection order…, Classify every column in *feature_cols* and return a mapping. Parameters… (+4 more)
 
 ### Community 57 - "test_reporter.py"
-Cohesion: 0.15
-Nodes (16): _make_selected_features(), _make_stratified_dataset(), _make_stratified_datasets_by_split(), _make_stratified_logs_by_split(), _make_stratified_trade_log(), Unit tests for gpu_fuzzy_trader.reporting.reporter.Reporter Tests cover: -…, Create a dataset with fuzzy-valued feature columns., Create a trade log with Entry_Index values within dataset bounds. (+8 more)
+Cohesion: 0.19
+Nodes (11): _make_stratified_dataset(), _make_stratified_datasets_by_split(), _make_stratified_logs_by_split(), _make_stratified_trade_log(), Unit tests for gpu_fuzzy_trader.reporting.reporter.Reporter Tests cover: -…, Create a dataset with fuzzy-valued feature columns., Create a trade log with Entry_Index values within dataset bounds., Feature not in dataset → that feature is skipped, no error raised. (+3 more)
 
 ### Community 58 - "GPUBacktestEngine"
-Cohesion: 0.10
-Nodes (16): GPUBacktestEngine, CPU engine for rule-set simulation used by Phase 2/RB., Rule-set sim using a mask cache (delegates to the CPU engine)., Evaluate multiple rule sets (parallel CPU; optional mask cache)., RB JAX path: cached mask entry build + parallel CPU equity. Equity results…, Same interface as CPUBacktestEngine for compatibility., JAX-accelerated backtest engine for Phase 2 rule pool generation.…, Return the JAX backend in use ('gpu', 'cpu', or 'tpu'). (+8 more)
+Cohesion: 0.05
+Nodes (32): GPUBacktestEngine, CPU engine for rule-set simulation used by Phase 2/RB., Return whether this host's CPU path is the faster large-window path., Rule-set sim using a mask cache (delegates to the CPU engine)., Evaluate multiple rule sets (parallel CPU; optional mask cache)., RB JAX path: cached mask entry build + parallel CPU equity. Equity results…, Same interface as CPUBacktestEngine for compatibility., JAX-accelerated backtest engine for Phase 2 rule pool generation.… (+24 more)
 
 ### Community 59 - "get_normalized_symbol_array"
-Cohesion: 0.10
-Nodes (16): _batch_eval_rule_set_pickled(), Simulate a rule set on rows [row_start, row_end) without copying the df. Used…, Simulate a rule set and return performance metrics. Parameters ----------…, Evaluate multiple rule sets in parallel (ProcessPool, thread fallback)., Top-level worker for ProcessPoolExecutor (must be picklable)., _rule_symbols_for_allocation(), _rules_need_normalized_symbols(), get_normalized_symbol_array() (+8 more)
+Cohesion: 0.13
+Nodes (12): _batch_eval_rule_set_pickled(), Simulate a rule set on rows [row_start, row_end) without copying the df. Used…, Simulate a rule set and return performance metrics. Parameters ----------…, Simulate using a precomputed rule-evaluation mask cache. The mandatory…, Drop cached entries on rows the fixed context mask forbids. ``idx`` validity is…, Evaluate multiple rule sets in parallel (ProcessPool, thread fallback)., Top-level worker for ProcessPoolExecutor (must be picklable)., _rules_need_normalized_symbols() (+4 more)
 
-### Community 60 - "ValueError"
-Cohesion: 0.06
-Nodes (35): barrier_column_names(), Return stable internal return/offset column names for one risk pair., _append_allocated_entries(), _build_rule_signal_mask(), compute_entry_time_priority(), _expectancy_lcb_pct(), _expected_shortfall_pct(), _parse_condition() (+27 more)
+### Community 60 - "ndarray"
+Cohesion: 0.11
+Nodes (17): _append_allocated_entries(), _build_rule_signal_mask(), _expectancy_lcb_pct(), _expected_shortfall_pct(), precompute_release_indices_from_offsets(), DataFrame, ndarray, Return mean trade return, sample std, and a normal lower bound in %. (+9 more)
 
-### Community 61 - "sample_df_for_phase2"
-Cohesion: 0.12
-Nodes (14): DataFrame, Build train/val backtest engines., Build the selected Phase 2 backend for the sampled train frame., Return whether this generator should avoid allocating a JAX engine.…, Build an engine on *df* using the same backend selection logic., Resolve Phase 2 row budget then sample with aligned symbol windows., sample_df_for_phase2(), _minimal_backtest_df() (+6 more)
+### Community 61 - "test_phase2_use_gpu_flag.py"
+Cohesion: 0.25
+Nodes (7): _minimal_backtest_df(), DataFrame, MonkeyPatch, Phase 2 respects PHASE2_USE_GPU=False without loading JAX GPU engine., The memory-safe CPU route must happen before JAX allocates arrays., A selected CPU backend must not initialize JAX just to warm up., TestPhase2UseGpuFlag
 
 ### Community 62 - "TestEquityCurvePlots"
 Cohesion: 0.13
 Nodes (13): Build a flat list of per-symbol metric dicts for CSV output. Uses the…, DataFrame, Verify plot_equity_curve is called for all three splits and handles empty logs., Helper: run OOS_Evaluator.run() with mocked internals and capture plot calls., plot_equity_curve must be called with 'train', 'validation', and 'test'., plot_equity_curve must be called exactly three times (one per split)., Empty train trade log must not raise an exception., Empty validation trade log must not raise an exception. (+5 more)
 
 ### Community 63 - "TestRulePoolGeneratorRun"
-Cohesion: 0.15
-Nodes (8): Integration tests using tiny population and generation counts., Verify that Rule_Pool_Generator's persistent self._rng advances across multiple…, After two run_epoch() calls, the internal RNG state must differ from the…, The RNG should produce *different* sequences in two consecutive run_epoch()…, Two generators with different seeds must have different RNG state., Rule_Pool_Generator must initialize self._rng as a Generator., TestRulePoolGeneratorRng, TestRulePoolGeneratorRun
+Cohesion: 0.09
+Nodes (12): Integration tests using tiny population and generation counts., In holdout mode, val engine must be built for pool admission even when…, All pool entries must have active conditions within [MIN_CONDITIONS,…, Phase 2 must use static TP=PHASE2_TP, SL=PHASE2_SL,…, Pool entries must have executed_trades >= MIN_TRADE_POOL_FLOOR., Verify that Rule_Pool_Generator's persistent self._rng advances across multiple…, After two run_epoch() calls, the internal RNG state must differ from the…, The RNG should produce *different* sequences in two consecutive run_epoch()… (+4 more)
 
 ### Community 64 - "test_plateau_state_leak.py"
 Cohesion: 0.11
 Nodes (21): _make_minimal_gen(), _mock_evolution_state(), _mock_stage_plan(), Regression tests for plateau-state leak fixes (Fixes A + B). Fix A:…, AC-1, AC-3: plateau_streak resets per epoch; reset_plateau=True always., reset_plateau=True is passed on the very first epoch call., reset_plateau=True is also passed on epoch 2 (regression for leak)., Even when PHASE2_ISLAND_TWO_STAGE_ENABLED=False, reset_plateau=True. (+13 more)
 
-### Community 65 - "TestFeasibilityGateFailures"
+### Community 65 - "_feasibility_gate_failures"
 Cohesion: 0.09
-Nodes (13): fixture, Tests for _feasibility_gate_failures — per-gate breakdown., A rule that should pass all 9 gates., A rule with too few train trades., A rule passing all gates returns all-zero dict., When val_metrics is None, only val_required=1, others=0., A rule with too few train trades fails train_trade_floor., When PHASE2_REQUIRE_LAST_FOLD_POSITIVE=True and val_ret <= 0, val_ret_positive… (+5 more)
+Nodes (17): _feasibility_gate_failures(), Return per-gate failure flags for evolution-time feasibility diagnostics. Uses…, fixture, Tests for _feasibility_gate_failures — per-gate breakdown., A rule that should pass all 9 gates., A rule with too few train trades., A rule passing all gates returns all-zero dict., When val_metrics is None, only val_required=1, others=0. (+9 more)
 
 ### Community 66 - "dashboard.py"
 Cohesion: 0.15
 Nodes (25): build_dashboard_data(), _direction_data(), _history_rows(), _load_json(), main(), Any, Path, Read-only HTML dashboard for existing pipeline artifacts. The dashboard… (+17 more)
 
-### Community 67 - "TestWriteSpearmanCorrelationReport"
+### Community 67 - "_make_selected_features"
 Cohesion: 0.13
-Nodes (10): _make_dataset_with_label(), _make_datasets_by_split(), Feature not in dataset → NaN for that split., Dataset without label_close_288 → NaN for all features on that split., None dataset for a split → NaN for all features on that split., Empty selected_features → CSV with header only., All non-NaN Spearman values must be in [-1.0, 1.0]., Create a dataset DataFrame with feature columns and label_close_288. (+2 more)
+Nodes (14): _make_dataset_with_label(), _make_datasets_by_split(), _make_selected_features(), Feature not in dataset → NaN for that split., Dataset without label_close_288 → NaN for all features on that split., Dataset with only 1 non-NaN paired row → NaN., Rows must be sorted by abs(train_spearman) descending., None dataset for a split → NaN for all features on that split. (+6 more)
 
 ### Community 68 - "test_data_loader_properties.py"
 Cohesion: 0.15
 Nodes (26): dataframe_with_nan_features(), dataframe_with_nan_labels(), _load_from_df(), _make_datetime_series(), composite, DataFrame, DrawFn, given (+18 more)
 
-### Community 69 - "barrier.py"
-Cohesion: 0.20
-Nodes (14): attach_barrier_outcomes(), configured_barrier_pairs(), _first_touch_for_symbol(), _first_touch_for_symbol_numba(), _first_touch_for_symbol_python(), _number_token(), DataFrame, ndarray (+6 more)
+### Community 69 - "cpu_engine.py"
+Cohesion: 0.10
+Nodes (26): attach_barrier_outcomes(), barrier_column_names(), configured_barrier_pairs(), _first_touch_for_symbol(), _first_touch_for_symbol_numba(), _first_touch_for_symbol_python(), _number_token(), DataFrame (+18 more)
 
 ### Community 70 - "_m"
 Cohesion: 0.13
@@ -532,12 +538,12 @@ Cohesion: 0.21
 Nodes (4): _apply_dynamic_rule(), Apply one exported text condition using the original threshold logic. Exactly…, Test all threshold branches of _apply_dynamic_rule., TestApplyDynamicRule
 
 ### Community 72 - "test_cpu_engine.py"
-Cohesion: 0.08
-Nodes (19): _normalize_direction(), Compute a non-annualized Sortino Ratio from per-trade returns., _safe_profit_factor(), _sortino_ratio_from_returns(), JointPortfolioEngine, DataFrame, Evaluate long and short rule books in one net-position account., Backward-compatible wrapper returning penalty only. (+11 more)
+Cohesion: 0.10
+Nodes (16): _normalize_direction(), Compute a non-annualized Sortino Ratio from per-trade returns., _safe_profit_factor(), _sortino_ratio_from_returns(), JointPortfolioEngine, DataFrame, Joint long/short portfolio simulation. Phase 2 and RB score each direction…, Evaluate long and short rule books in one net-position account. (+8 more)
 
-### Community 73 - "run_rb_governor_pipeline"
-Cohesion: 0.09
-Nodes (37): effective_rb_min_distinct_symbols(), Return the RB coverage target for the active debug universe. Full runs keep…, _assert_capital_budget(), _assert_mandatory_context(), _enforce_capital_budget(), evaluate_strategy_file_governor(), Path, PathLike (+29 more)
+### Community 73 - "test_rb_fail_closed.py"
+Cohesion: 0.15
+Nodes (20): _assert_capital_budget(), _assert_mandatory_context(), _enforce_capital_budget(), Normalize rule capital_pct so sum <= RB_MAX_TOTAL_CAPITAL., Fail closed if the fixed trend-context conditions were lost. The mandatory…, _strategy(), RB governor capital budget normalization tests., test_assert_capital_budget_raises_when_over_cap() (+12 more)
 
 ### Community 74 - "execution_ok"
 Cohesion: 0.15
@@ -552,8 +558,8 @@ Cohesion: 0.13
 Nodes (13): _build_data_matrix(), _discretize_series(), DataFrame, Series, Discretize a feature series using evaluator_v5's fixed fuzzy bins. Exported…, Build an (N, K) integer matrix of discretized feature values., disable_skip_optimization(), DataFrame (+5 more)
 
 ### Community 77 - "test_crash_fix_and_run_logging.py"
-Cohesion: 0.12
-Nodes (17): _capture_logs(), _make_feature_infos_crash(), _make_train_df_crash(), DataFrame, Unit tests for crash-fix-and-run-logging spec. Covers: - Task 1.1: Smoke tests…, Requirement 3.1 — save_archive is called before _release_resources in run()., Mock save_archive and _release_resources, run Rule_Pool_Generator.run() with a…, save_archive is called with self.direction as the first argument. (+9 more)
+Cohesion: 0.13
+Nodes (16): _capture_logs(), _make_feature_infos_crash(), _make_train_df_crash(), Unit tests for crash-fix-and-run-logging spec. Covers: - Task 1.1: Smoke tests…, Requirement 3.1 — save_archive is called before _release_resources in run()., Mock save_archive and _release_resources, run Rule_Pool_Generator.run() with a…, save_archive is called with self.direction as the first argument., Requirement 3.3 — If save_archive raises, the exception is caught, a WARNING is… (+8 more)
 
 ### Community 78 - "TestDeferredWarmup"
 Cohesion: 0.20
@@ -563,9 +569,9 @@ Nodes (6): Unit tests for the ``defer_warmup`` flag on ``Rule_Pool_Generator``. 
 Cohesion: 0.15
 Nodes (23): dataset_with_high_dispersion_feature(), dataset_with_label_and_meta_columns(), dataset_with_sufficient_dispersion_feature(), _make_label_block(), composite, DataFrame, DrawFn, given (+15 more)
 
-### Community 80 - "phase2_island_scheduler.py"
-Cohesion: 0.09
-Nodes (34): filter_df_to_symbols(), phase2_history_path(), phase2_pool_path(), DataFrame, Return rows for the given symbols; raises if column missing or no rows., Resolve Phase 2 pool path., Resolve Phase 2 history path., clear_global_metrics_cache() (+26 more)
+### Community 80 - "_score_rule_on_symbol_val"
+Cohesion: 0.43
+Nodes (6): Lightweight val-only score for orphan detection., _score_rule_on_symbol_val(), _symbol_has_viable_pool_rule(), Unit tests for guarded migration and orphan detection helpers., test_orphan_detection_empty_pool(), test_score_rule_on_symbol_returns_trades()
 
 ### Community 81 - "compute_labels"
 Cohesion: 0.20
@@ -576,80 +582,80 @@ Cohesion: 0.16
 Nodes (11): _make_full_trade_log(), _make_rule_set(), _make_split_logs(), Create a trade log with all columns needed for sharpe computation., Create a minimal rule set with *n* rules., Create a trade log with Rule_Index, Net_PnL, Equity_After columns., Create trade_logs_by_split dict with all three splits populated., One split None, others valid — should not raise. (+3 more)
 
 ### Community 83 - "resolve_island_hyperparams"
-Cohesion: 0.11
-Nodes (21): effective_phase2_val_return_floor_pct(), Direction-aware Phase 2 validation return floor for fitness penalties., Scale integer trade floors by slice size vs full-universe reference., Resolve scaled trade floors and relaxed cross-symbol gates., resolve_island_hyperparams(), scale_trade_floor_by_universe(), Regression tests for anti-overfit / exploration-retune config bundle., test_anti_overfit_config_bundle() (+13 more)
+Cohesion: 0.13
+Nodes (18): Scale integer trade floors by slice size vs full-universe reference., Resolve scaled trade floors and relaxed cross-symbol gates., resolve_island_hyperparams(), scale_trade_floor_by_universe(), Regression tests for anti-overfit / exploration-retune config bundle., test_cluster_island_symbol_robustness_enabled(), test_one_symbol_island_hyperparams_target_one_profitable(), parametrize (+10 more)
 
-### Community 84 - "evaluator_health.py"
-Cohesion: 0.29
-Nodes (6): evaluator_health.py — Pure functions for evaluator-failure-mode awareness.…, Read a numeric metric, returning *default* for missing / None / NaN / Inf., Read an integer metric safely., _safe_float(), _safe_int(), Scoring helpers shared across pipeline phases. Re-exports…
+### Community 84 - "test_evaluator_health.py"
+Cohesion: 0.15
+Nodes (9): evaluator_health.py — Pure functions for evaluator-failure-mode awareness.…, Read a numeric metric, returning *default* for missing / None / NaN / Inf., Read an integer metric safely., _safe_float(), _safe_int(), Scoring helpers shared across pipeline phases. Re-exports…, Unit tests for ``evaluator_health_penalty`` and ``execution_ok`` (Task 4).…, Both public functions are importable from the module. (+1 more)
 
 ### Community 85 - "_build_target"
 Cohesion: 0.17
 Nodes (12): _build_target(), Build a direction-specific target signal. Default…, Encoding-aware win class: 2 in asymmetric mode, 1 in legacy mode., Encoding-aware loss class: 0 in either mode., Long: max >= entry*(1+TP/100), min > entry*(1-SL/100) → success., Long: both hit but max_before_min==0 → SL first → failure., Long: both hit but max_before_min==1 → TP first → success., Long: neither TP nor SL hit → failure (or neutral in asymmetric mode). (+4 more)
 
-### Community 86 - ".test_accepts_high_val_return_and_trades"
-Cohesion: 0.23
-Nodes (9): _make_migrant_dict(), _make_mock_receiver(), Migrant with val_return 2.5% and >=15 val trades should be accepted., Migrant with enough val_return but too few val trades should be rejected., Build a minimal migrant dict matching extract_deployable_migrants output., Build a minimal mock Rule_Pool_Generator for filter_migrants_for_cluster tests., Test the migration gate logic with mocked engine evaluations., Migrant with val_return 0.5% should be rejected with reason=val_return. (+1 more)
+### Community 86 - "filter_migrants_for_cluster"
+Cohesion: 0.11
+Nodes (19): filter_migrants_for_cluster(), _migrant_to_metrics(), Backtest one migrant chromosome on receiver cluster engines., Accept only migrants that pass deployability on the receiver cluster slice., _make_migrant_dict(), _make_mock_receiver(), Unit tests for migration safety — migrant gate and seed fraction. Acceptance…, Migrant with val_return 2.5% and >=15 val trades should be accepted. (+11 more)
 
 ### Community 87 - "test_gpu_engine_properties.py"
 Cohesion: 0.16
 Nodes (17): _assert_parity(), _make_engines(), _make_parity_df(), parity_scenario_strategy(), composite, DataFrame, DrawFn, given (+9 more)
 
 ### Community 88 - "TestRunLogHandlerLifecycle"
-Cohesion: 0.12
-Nodes (15): MonkeyPatch, Phase 2 reproducibility default seed., PHASE2_SEED is drawn once at import via get_seed(); set GLOBAL_SEED=42 to fix…, Requirements 1.1, 1.4, 1.5, 1.6, 1.7 — run.log FileHandler is attached, writes…, Count FileHandlers on the root logger pointing to *path*., Patch every phase method on Pipeline_Orchestrator to be a no-op., run.log must exist after run() and contain both separator lines., Root logger must have no extra FileHandlers pointing to run.log after run(). (+7 more)
+Cohesion: 0.11
+Nodes (16): DataFrame, MonkeyPatch, Phase 2 reproducibility default seed., PHASE2_SEED is drawn once at import via get_seed(); set GLOBAL_SEED=42 to fix…, Requirements 1.1, 1.4, 1.5, 1.6, 1.7 — run.log FileHandler is attached, writes…, Count FileHandlers on the root logger pointing to *path*., Patch every phase method on Pipeline_Orchestrator to be a no-op., run.log must exist after run() and contain both separator lines. (+8 more)
 
 ### Community 89 - "resolve_evolution_floors"
-Cohesion: 0.31
-Nodes (6): EvolutionFloors, Resolved evolution-time floors (pool admission gates remain strict)., Return stage-aware fitness floors; defaults to global strict knobs. When both…, resolve_evolution_floors(), Stage A soft floors must survive island_hyperparams (cluster two-stage)., TestResolveEvolutionFloorsIslandTwoStage
+Cohesion: 0.18
+Nodes (8): EvolutionFloors, Resolved evolution-time floors (pool admission gates remain strict)., Return stage-aware fitness floors; defaults to global strict knobs. When both…, resolve_evolution_floors(), Stage A soft floors must survive island_hyperparams (cluster two-stage)., _pool_admission_floors returns the ADMISSION floor (1.15), not the EVOLUTION…, TestPoolAdmissionScaledFloors, TestResolveEvolutionFloorsIslandTwoStage
 
-### Community 90 - "phase5_oos.py"
-Cohesion: 0.15
-Nodes (13): Joint long/short portfolio simulation. Phase 2 and RB score each direction…, apply_fuzzy_feature_scaling(), fit_fuzzy_feature_scaling(), Any, DataFrame, Train-fitted normalization for ordinal ``ff_*`` fuzzy feature codes. The…, Build a train-only scaling contract for ordinal ``ff_*`` columns., Apply an existing train-fitted scaling contract in place and return *df*. (+5 more)
+### Community 90 - "apply_fuzzy_feature_scaling"
+Cohesion: 0.29
+Nodes (9): apply_fuzzy_feature_scaling(), fit_fuzzy_feature_scaling(), Any, DataFrame, Train-fitted normalization for ordinal ``ff_*`` fuzzy feature codes. The…, Build a train-only scaling contract for ordinal ``ff_*`` columns., Apply an existing train-fitted scaling contract in place and return *df*., Tests for train-fitted ordinal fuzzy feature scaling. (+1 more)
 
 ### Community 91 - "set_purged_wf_reference_rows"
 Cohesion: 0.18
 Nodes (7): Store full train_new.csv row count after loader prep (split time)., set_purged_wf_reference_rows(), holdout_mode(), purged_mode(), fixture, Tests for purged-WF trade-floor scaling helpers., TestScaleTradeFloor
 
-### Community 92 - "test_phase2_support.py"
-Cohesion: 0.17
-Nodes (10): deployability_rank_score(), _joint_primary_metric(), Train-only or conservative min(train, val) for ranking / objectives., Conservative return used for objectives, plateau, and archive ranking., Conservative win rate for ranking when f3 uses win rate., Higher is better. Used to rank deployable archive entries and Stage B seeds.…, robust_return_pct(), robust_win_rate_pct() (+2 more)
+### Community 92 - "deployability_rank_score"
+Cohesion: 0.15
+Nodes (12): compute_robust_score(), deployability_rank_score(), _joint_primary_metric(), passes_evolution_deployability_preview(), Train-only or conservative min(train, val) for ranking / objectives., Conservative win rate for ranking when f3 uses win rate., Lightweight deployability check used during evolution (no per-fold CV). Mirrors…, Higher is better. Used to rank deployable archive entries and Stage B seeds.… (+4 more)
 
-### Community 93 - "Encoder"
-Cohesion: 0.10
-Nodes (20): ConfigurationError, decode_chromosome(), encode_condition(), Encoder, get_dont_care(), Exception, ndarray, encoder.py — Encoder Maps gene integer values to fuzzy value names, formats… (+12 more)
+### Community 93 - ".encode_condition"
+Cohesion: 0.06
+Nodes (27): ConfigurationError, decode_chromosome(), encode_condition(), Encoder, get_dont_care(), Exception, ndarray, encoder.py — Encoder Maps gene integer values to fuzzy value names, formats… (+19 more)
 
 ### Community 94 - "test_output_writer_properties.py"
-Cohesion: 0.13
-Nodes (26): parse_symbol_condition(), symbol_conditions.py — Symbol filter parsing (evaluator_v5 parity). Feature…, Parse optional symbol filters. Supported formats: "symbol is 1" "symbol IS 1"…, all_zero_rule_st(), _is_valid_exported_condition(), oversized_rule_set_st(), composite, DrawFn (+18 more)
+Cohesion: 0.10
+Nodes (32): _rule_symbols_for_allocation(), normalize_symbol_value(), parse_symbol_condition(), symbol_conditions.py — Symbol filter parsing (evaluator_v5 parity). Feature…, Normalize symbol values so strategy conditions such as: "symbol is 1" "symbol…, Parse optional symbol filters. Supported formats: "symbol is 1" "symbol IS 1"…, Split normal feature conditions from optional symbol filters. Feature…, split_feature_and_symbol_conditions() (+24 more)
 
 ### Community 95 - "Data_Loader"
 Cohesion: 0.06
-Nodes (26): Data_Loader, Stateless data loader for the GPU-Fuzzy Trading Pipeline., Exception, Raised when a rule set fails schema validation., ValidationError, _Phase5JSONEncoder, Keep numeric report values numeric instead of stringifying NumPy scalars., _enriched() (+18 more)
+Nodes (27): Data_Loader, Stateless data loader for the GPU-Fuzzy Trading Pipeline., Exception, Raised when a rule set fails schema validation., ValidationError, _Phase5JSONEncoder, Keep numeric report values numeric instead of stringifying NumPy scalars., _enriched() (+19 more)
 
 ### Community 96 - "test_phase2_gpu_throughput.py"
-Cohesion: 0.13
-Nodes (19): _jax_compute_rule_signals_batch(), _jax_simulate_equity_batch(), Batch rule matching for B chromosomes simultaneously. Returns (B, N) boolean…, Compatibility wrapper for a regular full-row scan., CPU and GPU backtest engine sub-package., get_gpu_backtest_engine_class(), jax_gpu_backtest_available(), Any (+11 more)
+Cohesion: 0.15
+Nodes (17): _jax_compute_rule_signals_batch(), Batch rule matching for B chromosomes simultaneously. Returns (B, N) boolean…, CPU and GPU backtest engine sub-package., get_gpu_backtest_engine_class(), jax_gpu_backtest_available(), Any, Detect whether JAX / GPUBacktestEngine can be loaded on this host. JAX can fail…, Return ``GPUBacktestEngine`` if ``gpu_engine`` imports cleanly; else ``None``. (+9 more)
 
 ### Community 97 - ".decode_chromosome"
-Cohesion: 0.26
-Nodes (4): See module-level :func:`decode_chromosome`., All 10 signed values decode correctly via decode_chromosome., Chromosome with numpy int32/int64 values should work., TestDecodeChromosome
+Cohesion: 0.17
+Nodes (9): See module-level :func:`decode_chromosome`., All 10 signed values decode correctly via decode_chromosome., Chromosome with numpy int32/int64 values should work., TestDecodeChromosome, _backtest_df(), DataFrame, Regression tests for evaluator-facing Phase 2 chromosome semantics., Search fitness must use the same fuzzy class as RB/Phase 5 evaluation. (+1 more)
 
 ### Community 98 - ".load_strategies"
 Cohesion: 0.19
 Nodes (6): Load long.json and short.json via Output_Writer.load_and_validate(). Parameters…, Return only non-empty RB strategies accepted for deployment., Write a valid rule set JSON to path., Override module-level path dicts and return originals (for standalone tests)., TestLoadStrategies, _write_rule_set()
 
 ### Community 99 - "gate_positive_good"
-Cohesion: 0.28
-Nodes (16): _finite_number(), gate_positive_good(), _metric_int(), positive_good_reject_reasons(), PositiveGoodThresholds, Shared metric gates used by Phase 2 admission and RB Governor. The gate is…, Minimum evidence required on train and validation splits., Return stable, machine-readable reasons for a gate rejection. (+8 more)
+Cohesion: 0.24
+Nodes (18): _positive_good_reject_reasons(), Human-readable reasons why ``_is_positive_good`` failed (diagnostics)., _finite_number(), gate_positive_good(), _metric_int(), positive_good_reject_reasons(), PositiveGoodThresholds, Shared metric gates used by Phase 2 admission and RB Governor. The gate is… (+10 more)
 
-### Community 100 - "_derive_island_seed"
-Cohesion: 0.07
-Nodes (39): context_coverage_for_direction(), context_coverage_report(), context_floor_failures(), Any, DataFrame, Shared diagnostics for the mandatory direction-specific context contract., Return coverage diagnostics for every named frame and direction., Return mathematically impossible trade-floor failures for coverage. (+31 more)
+### Community 100 - "phase2_island_scheduler.py"
+Cohesion: 0.06
+Nodes (58): filter_df_to_symbols(), DataFrame, Return rows for the given symbols; raises if column missing or no rows., context_coverage_for_direction(), context_coverage_report(), context_floor_failures(), Any, DataFrame (+50 more)
 
 ### Community 101 - "resolve_phase2_stage_params"
-Cohesion: 0.07
-Nodes (25): True when Stage A viability is critically low and search has plateaued., _should_inject_diversity_recovery(), _should_viability_recovery(), island_stage_budgets(), IslandStagePlan, StageLabel, Phase 2 two-stage search hyperparameter profiles (exploration vs refinement)., Resolved stage and remaining generation budget for one symbol island. (+17 more)
+Cohesion: 0.06
+Nodes (31): _diversity_recovery_min_unique_ratio(), Stop burning gens when the feasible set is empty and restarts are spent. Sparse…, True when Stage A viability is critically low and search has plateaued., _should_abort_zero_deployable_collapse(), _should_inject_diversity_recovery(), _should_viability_recovery(), island_stage_budgets(), IslandStagePlan (+23 more)
 
 ### Community 102 - "_remove_low_dispersion"
 Cohesion: 0.17
@@ -663,17 +669,17 @@ Nodes (31): HealthCheck, prop_settings(), Shared Hypothesis settings for propert
 Cohesion: 0.10
 Nodes (26): _append_xla_flag(), configure_jax_env(), _cuda_package_root(), Path, JAX/XLA runtime configuration — call before the first ``import jax``., Find a pip-installed CUDA toolkit root, if one is available., Append an XLA flag once, preserving explicit user configuration., Configure JAX/XLA runtime for predictable desktop-friendly GPU usage. -… (+18 more)
 
-### Community 105 - "Reporter"
-Cohesion: 0.12
-Nodes (12): Generates visual and tabular reports for each pipeline phase. All output files…, Reporter, _make_dist_logs_by_split(), _make_dist_trade_log(), _make_per_symbol_metrics(), Create a trade log with all columns needed for distribution/equity plots., Create trade_logs_by_split dict with all three splits populated., A trade log with a single trade should not raise. (+4 more)
+### Community 105 - "TestPlotDistributionAndEquity"
+Cohesion: 0.16
+Nodes (6): _make_dist_logs_by_split(), _make_dist_trade_log(), Create a trade log with all columns needed for distribution/equity plots., Create trade_logs_by_split dict with all three splits populated., A trade log with a single trade should not raise., TestPlotDistributionAndEquity
 
 ### Community 106 - "baselines.py"
-Cohesion: 0.28
-Nodes (15): _compact(), _drop_one_condition_variants(), _equal_weight(), _evaluate(), evaluate_baselines(), _feature_shuffle(), _fixed_exit(), Any (+7 more)
+Cohesion: 0.24
+Nodes (17): compute_entry_time_priority(), Map each row to a timestamp priority code (evaluator_v5 parity)., _compact(), _drop_one_condition_variants(), _equal_weight(), _evaluate(), evaluate_baselines(), _feature_shuffle() (+9 more)
 
-### Community 107 - "_normalize_for_association"
-Cohesion: 0.21
-Nodes (8): _normalize_for_association(), Rank-based normalization (robust to outliers like trade_penalty=50)., Verify rank normalization does not crash on degenerate inputs., All-equal objective values should produce valid normalised output with no NaN,…, Single-row input should not crash., Two objectives, all-equal values, should produce valid output. After rank…, Mixed values (not all equal) should still work., TestNormalizeForAssociation
+### Community 107 - "Rule_Pool_Generator"
+Cohesion: 0.13
+Nodes (9): Phase 2: GPU-accelerated multi-objective evolutionary rule pool generation.…, Inject guarded migration seeds for the next epoch., Build the selected Phase 2 backend for the sampled train frame., Return whether this generator should avoid allocating a JAX engine.…, Attach optional island metadata; safe when *owner* is a partial mock., Build an engine on *df* using the same backend selection logic., Rule_Pool_Generator, TestRulePoolGeneratorInit (+1 more)
 
 ### Community 108 - "_jax_compute_trade_outcomes"
 Cohesion: 0.24
@@ -684,20 +690,20 @@ Cohesion: 0.29
 Nodes (9): Break the epoch when a plateau restart yields no improvement. Independent of…, _should_post_restart_early_stop_phase2(), Unit tests for post-restart no-improvement early stop (Phase 2 runtime)., test_global_disabled_no_stop(), test_global_uses_global_knobs(), test_island_disabled_no_stop(), test_island_streak_at_patience_stops(), test_island_streak_below_patience_no_stop() (+1 more)
 
 ### Community 110 - "_build_pool_from_archive"
-Cohesion: 0.16
-Nodes (17): _archive_direction(), attach_cv_fold_returns_batch(), _build_cpu_archive_engine(), _build_pool_from_archive(), _chromosome_batch(), CvFoldValEvaluator, _evaluate_chromosome(), Evaluate a single chromosome and return (objectives, metrics). objectives =… (+9 more)
+Cohesion: 0.09
+Nodes (30): _archive_direction(), _archive_objective_vector(), attach_cv_fold_returns_batch(), _build_cpu_archive_engine(), _build_pool_from_archive(), _chromosome_batch(), CvFoldValEvaluator, _evaluate_chromosome() (+22 more)
 
 ### Community 111 - "TestExecutionHealthInGate"
 Cohesion: 0.25
 Nodes (5): Verify that ``gate_positive_good`` calls ``execution_ok`` when flagged., When require_execution_health=True and execution_ok fails, gate returns False., When require_execution_health=True and execution_ok passes, gate still returns…, When require_execution_health=False, gate ignores raw_signal_count., TestExecutionHealthInGate
 
-### Community 112 - "_make_df"
-Cohesion: 0.17
-Nodes (10): _make_df(), _make_rule_set(), prepare_test_data should return a DataFrame., When no trades are executed, account_ruined must be False., When no trades are executed, total_return_pct must be 0.0., Create a minimal valid rule set dict., Returned and saved OOS metrics come from the locked strategy., Create a minimal DataFrame with all required columns. (+2 more)
+### Community 112 - "test_phase5_oos.py"
+Cohesion: 0.18
+Nodes (10): _make_df(), _make_rule_set(), Unit tests for gpu_fuzzy_trader.phases.phase5_oos.OOS_Evaluator Tests cover: -…, prepare_test_data should return a DataFrame., When no trades are executed, account_ruined must be False., When no trades are executed, total_return_pct must be 0.0., Create a minimal valid rule set dict., Create a minimal DataFrame with all required columns. (+2 more)
 
-### Community 113 - "TestDeriveValSampleSeed"
+### Community 113 - "compute_phase2_objectives_from_metrics"
 Cohesion: 0.12
-Nodes (9): AC: Train and validation sampling use distinct RNG seeds by default., _derive_val_sample_seed returns a value different from the input., Same train seed always produces same val seed., Result is in [0, 2**31) so it is a valid random seed., Rule_Pool_Generator stores distinct _sample_seed and _val_sample_seed., When seed=None, val seed is derived from PHASE2_SEED., Using val seed for validation sampling produces a different slice than using…, divmod distribution must still work correctly with val seed. (+1 more)
+Nodes (13): effective_phase2_val_return_floor_pct(), Direction-aware Phase 2 validation return floor for fitness penalties., compute_phase2_objectives_from_metrics(), Penalty for weak cross-symbol robustness on one split., Build Phase 2 minimisation objectives from precomputed train/val metrics.…, _symbol_robustness_penalty(), True when val-derived feasibility penalties belong in NSGA-III fitness., _val_terms_in_fitness() (+5 more)
 
 ### Community 114 - "TestHammingThresholdAutoScale"
 Cohesion: 0.15
@@ -708,32 +714,32 @@ Cohesion: 0.20
 Nodes (10): C6: Val-derived penalties must be gated behind JOINT_TRAIN_VAL or…, Return standard monkeypatching for clean baseline metrics., Apply base settings with optional overrides., Metrics that trigger no train-side penalties., Val metrics that WOULD trigger penalties if the gate were open., When both JOINT_TRAIN_VAL and VAL_IN_FITNESS_PENALTY are False, val-derived…, Bad val must not set feasibility_violation when gate is closed., When VAL_IN_FITNESS_PENALTY=True, val-derived penalties DO enter objectives. (+2 more)
 
 ### Community 116 - "DataFrame"
-Cohesion: 0.15
-Nodes (6): _make_trade_log(), DataFrame, Dataset with only 1 non-NaN paired row → NaN., Rows must be sorted by abs(train_spearman) descending., Create a minimal trade log DataFrame with Equity_After column., TestPlotEquityCurve
+Cohesion: 0.13
+Nodes (7): _make_trade_log(), DataFrame, A fuzzy value that no trade maps to should produce a row with all zeros., Out-of-bounds Entry_Index values should be skipped without error., Verify total_return_pct, win_rate, num_trades for a known stratum., Create a minimal trade log DataFrame with Equity_After column., TestPlotEquityCurve
 
 ### Community 117 - "_jax_compute_rule_signals"
-Cohesion: 0.15
-Nodes (11): _jax_compute_rule_signals(), _maybe_jit(), JAX-jitted vectorized rule matching (single chromosome)., Apply ``jit`` if JAX is available, otherwise return *fn* unchanged., Vectorized rule matching: returns (N,) boolean mask of matching rows., All rows match when chromosome equals data_matrix values., No rows match when chromosome differs from data_matrix., Only rows where all active conditions match. (+3 more)
+Cohesion: 0.17
+Nodes (9): _jax_compute_rule_signals(), JAX-jitted vectorized rule matching (single chromosome)., Vectorized rule matching: returns (N,) boolean mask of matching rows., All rows match when chromosome equals data_matrix values., No rows match when chromosome differs from data_matrix., Only rows where all active conditions match., Columns where chromosome == dont_care are ignored., All dont_care chromosome matches every row. (+1 more)
 
 ### Community 118 - "TestParetoCollapseWarningGate"
 Cohesion: 0.15
 Nodes (10): _FakeEngine, AC 4: The default value of the config flag is 5., AC 5: min_pareto_size=0 → warning fires even with small pareto (size=4)., The log message includes 'pareto_size=N' suffix., Fake engine that returns metrics producing a tradeoff between f1 (-sortino) and…, AC 1–5: warning gated on len(pareto_indices) >= config threshold., Run 2-gen evolution and return count of 'Pareto collapse risk' warnings., AC 2: pareto_size=4 < min_pareto_size=5 → no warning fires. (+2 more)
 
-### Community 119 - "CPUBacktestEngine"
-Cohesion: 0.06
-Nodes (55): CPUBacktestEngine, CPU backtest engine that exactly mirrors evaluator_v5.ipynb's…, CandidateRecord, _diversification_beam(), _eval_cv_fold_returns(), _evaluate_ruleset(), _make_walk_forward_fold_engines(), _monthly_selection_certificate() (+47 more)
+### Community 119 - "test_rb_governor_tail_holdout.py"
+Cohesion: 0.21
+Nodes (11): _MockEngine, Unit tests for RB Governor tail-holdout path in risk grid. Covers: -…, Verify _optimize_risk with tail_holdout_engine adds tail fields to final…, When tail_holdout_engine is provided, the final history entry contains…, When tail_holdout_engine=None, NO tail fields in history., Composition may use the reserved validation tail, never Phase 5 data., Minimal mock that mimics CPUBacktestEngine for testing _optimize_risk., test_tail_selection_gate_requires_positive_return_and_support() (+3 more)
 
 ### Community 120 - "_compute_stability"
 Cohesion: 0.17
 Nodes (9): _compute_stability(), Compute cross-symbol stability score. stability = 1 - (std / mean) If mean is 0…, All symbols have same score → std=0 → stability=1., Mean is 0 → stability=0., Single symbol with positive score → stability=1., Single symbol with zero score → stability=0., Very high variance → stability could be negative → clipped to 0., Stability should always be in [0, 1]. (+1 more)
 
 ### Community 121 - "phase2_support.py"
-Cohesion: 0.14
-Nodes (13): effective_min_trade_pool_floor(), effective_pool_min_val_trades(), compute_robust_score(), _evolution_feasibility_floors(), _passes_pool_admission_impl(), _pool_admission_floors(), phase2_support.py — Trade support penalties for Phase 2., Return (train_trade_floor, train_ret_min, val_ret_min, pf_floor,… (+5 more)
+Cohesion: 0.18
+Nodes (15): effective_min_trade_pool_floor(), effective_pool_min_val_trades(), IslandHyperparams, Resolved Phase 2 knobs for cluster or orphan slices., _evolution_feasibility_floors(), _passes_pool_admission_impl(), passes_pool_entry_admission(), passes_pool_trade_floor() (+7 more)
 
 ### Community 122 - "MonthlyWindowSummary"
-Cohesion: 0.06
-Nodes (40): _profit_amp_monthly_summary(), Evaluate a ruleset on validation-only chronological windows for the amplifier…, build_monthly_windows(), _datetime_series(), evaluate_rule_set_monthly(), monthly_penalty(), monthly_return_counts_as_good(), MonthlyWindowSummary (+32 more)
+Cohesion: 0.07
+Nodes (36): build_monthly_windows(), _datetime_series(), evaluate_rule_set_monthly(), monthly_penalty(), MonthlyWindowSummary, DataFrame, Series, Monthly rolling-window validation for rule sets. Exports -------… (+28 more)
 
 ### Community 123 - "._engine"
 Cohesion: 0.20
@@ -748,12 +754,12 @@ Cohesion: 0.23
 Nodes (13): _clean_violation(), constrained_dominates(), constrained_non_dominated_sort(), _pareto_dominates(), ndarray, Constraint-aware Pareto ordering for Phase 2 evolution. Objectives alone are…, Return whether *left* Pareto-dominates *right* (minimisation)., Return whether the left candidate dominates the right candidate. (+5 more)
 
 ### Community 126 - "test_feature_selector.py"
-Cohesion: 0.15
-Nodes (9): _mutual_info_discrete_mask(), Return the set of feature names that PASS both stationarity checks. A feature…, Per-column ``discrete_features`` flags for ``mutual_info_classif``. Only…, _stationarity_filter(), Unit tests for gpu_fuzzy_trader.features.selector.Feature_Selector Tests cover:…, TestAlignFeatureArray, TestMutualInfoDiscreteMask, TestReduceOverlap (+1 more)
+Cohesion: 0.18
+Nodes (8): _mutual_info_discrete_mask(), Return the set of feature names that PASS both stationarity checks. A feature…, Per-column ``discrete_features`` flags for ``mutual_info_classif``. Only…, _stationarity_filter(), Unit tests for gpu_fuzzy_trader.features.selector.Feature_Selector Tests cover:…, TestMutualInfoDiscreteMask, TestReduceOverlap, TestStationarityFilter
 
 ### Community 127 - ".run"
-Cohesion: 0.13
-Nodes (10): DataFrame, Run out-of-sample evaluation. Parameters ---------- allowed_directions :…, Prepare test data using Data_Loader.load_dataset(). Applies the same…, Load prepared train, validation, and test datasets., Load and validate a strictly newer, untouched forward period., Load selected features for a direction when available., Remove only known Phase 5 artifacts from the active report root., Evaluate a single strategy on the test DataFrame. Returns ------- metrics :… (+2 more)
+Cohesion: 0.10
+Nodes (12): DataFrame, Run out-of-sample evaluation. Parameters ---------- allowed_directions :…, Prepare test data using Data_Loader.load_dataset(). Applies the same…, Load prepared train, validation, and test datasets., Load and validate a strictly newer, untouched forward period., Load selected features for a direction when available., Remove only known Phase 5 artifacts from the active report root., Evaluate a single strategy on the test DataFrame. Returns ------- metrics :… (+4 more)
 
 ### Community 128 - "stratification_scenario_strategy"
 Cohesion: 0.24
@@ -763,13 +769,13 @@ Nodes (15): dataset_with_features_strategy(), metrics_strategy(), composite, Dat
 Cohesion: 0.18
 Nodes (9): ndarray, Tests for _check_spearman_sign_consistency, including the val_df check., Build a minimal DataFrame without 'symbol' to avoid symbol-based folding., AC1: Train all positive, val negative → feature blacklisted., AC2: Train all positive, val positive → feature still kept., AC3: Train all positive, tiny |val_rho| < min_abs_corr → feature still kept., AC4: val_df=None → pre-task-8 behavior (mixed train signs still blacklisted)., AC5: val_df without label_close_288 column → val check skipped (no crash). (+1 more)
 
-### Community 130 - ".encode_condition"
-Cohesion: 0.18
-Nodes (4): See module-level :func:`encode_condition`., TestEncodeConditionBinary, TestEncodeConditionErrors, TestEncodeConditionTernary
+### Community 130 - ".save_archive"
+Cohesion: 0.20
+Nodes (9): _archive_feature_signature(), Return the ordered feature signature used to validate archive reuse., Read JSON from *path* and return None when the file cannot be loaded., Validate the archive JSON structure and feature compatibility., Load a compatible persistent archive if it exists, otherwise return None.…, Merge the latest pool into a persistent archive and write atomically., _read_json_payload(), _validate_archive_payload() (+1 more)
 
 ### Community 131 - "log_memory_rss"
-Cohesion: 0.19
-Nodes (11): log_memory_rss(), Optional process memory logging (set LOG_MEMORY=1)., Log current process RSS in MiB when LOG_MEMORY=1., Force GC and clear JAX compilation caches between Phase 2 directions. Releases:…, release_phase2_resources(), Release GPU engines and slim in-memory data between island epochs., Drop engine and sampled data to free RAM before the next direction., Tests for optional memory logging helpers. (+3 more)
+Cohesion: 0.22
+Nodes (10): log_memory_rss(), Optional process memory logging (set LOG_MEMORY=1)., Log current process RSS in MiB when LOG_MEMORY=1., Force GC and clear JAX compilation caches between Phase 2 directions. Releases:…, release_phase2_resources(), Release GPU engines and slim in-memory data between island epochs., Tests for optional memory logging helpers., test_log_memory_rss_noop_without_env() (+2 more)
 
 ### Community 132 - "_derive_epoch_seed"
 Cohesion: 0.16
@@ -779,29 +785,29 @@ Nodes (10): _derive_epoch_seed(), Return a deterministic per-epoch seed derived 
 Cohesion: 0.33
 Nodes (6): _apply_colab_gpu_defaults(), is_colab_runtime(), True when running on Google Colab (/content runtime)., Colab T4 optimization for Phase 2 runs., MonkeyPatch, test_colab_defaults_apply_when_content_exists()
 
-### Community 134 - "loader.py"
-Cohesion: 0.20
-Nodes (15): downcast_numeric_df(), prune_train_columns(), DataFrame, df_slim.py — Reduce DataFrame memory for backtest engines. Keeps only columns…, Downcast label and feature columns to float32; symbol to category (inplace)., Return a copy with only meta, label, and requested feature columns. Parameters…, Drop unused feature columns from the full training split after Phase 1., slim_backtest_df() (+7 more)
+### Community 134 - "phase5_oos.py"
+Cohesion: 0.18
+Nodes (16): downcast_numeric_df(), prune_train_columns(), DataFrame, df_slim.py — Reduce DataFrame memory for backtest engines. Keeps only columns…, Downcast label and feature columns to float32; symbol to category (inplace)., Return a copy with only meta, label, and requested feature columns. Parameters…, Drop unused feature columns from the full training split after Phase 1., slim_backtest_df() (+8 more)
 
-### Community 135 - "test_evaluator_health.py"
-Cohesion: 0.17
-Nodes (7): Unit tests for ``evaluator_health_penalty`` and ``execution_ok`` (Task 4).…, Verify that evaluator health penalty is subtracted from combo score., When evaluator_health_penalty returns > 0, the combo score is lower., When evaluator health is fine, no penalty is applied., Both public functions are importable from the module., TestHealthPenaltyWiredIntoRB, TestModuleImportable
+### Community 135 - "TestHealthPenaltyWiredIntoRB"
+Cohesion: 0.33
+Nodes (4): Verify that evaluator health penalty is subtracted from combo score., When evaluator_health_penalty returns > 0, the combo score is lower., When evaluator health is fine, no penalty is applied., TestHealthPenaltyWiredIntoRB
 
 ### Community 136 - "OOS_Evaluator"
 Cohesion: 0.27
 Nodes (4): OOS_Evaluator, Out-of-sample evaluator for Phase 5. Loads the final long/short strategies,…, TestOOSEvaluatorInit, TestSaveReport
 
-### Community 137 - "compute_phase2_objectives_from_metrics"
-Cohesion: 0.04
-Nodes (39): compute_phase2_objectives_from_metrics(), Penalty for weak cross-symbol robustness on one split., Build Phase 2 minimisation objectives from precomputed train/val metrics.…, _symbol_robustness_penalty(), compute_support_penalty_and_specialist(), Support penalty from train metrics. Returns (penalty, False, -1)., True when val-derived feasibility penalties belong in NSGA-III fitness., _val_terms_in_fitness() (+31 more)
+### Community 137 - "TestDecoupledObjectives"
+Cohesion: 0.14
+Nodes (8): Task 3 tests: penalties are not identically added to all objectives., The three objectives should respond differently to the same metrics, proving…, When the trade floor is triggered, only f2 gets the trade_penalty. f1 and f3…, With USE_TOTAL_RETURN_OBJ + JOINT_TRAIN_VAL, f3 uses robust_return_pct., PF floor adds to support_penalty even after decoupling. This ensures the…, Spec scenario: pf=1.10, EVOLUTION=1.05 (new) vs 1.15 (old); the new floor…, PHASE2_PROFIT_FACTOR_FLOOR (deprecated alias) still returns 1.15 by default for…, TestDecoupledObjectives
 
 ### Community 138 - "_raw_feasibility_violation_score"
-Cohesion: 0.18
-Nodes (8): feasibility_violation_score(), Compute violation score using evolution PF floors (1.05) during NSGA-III…, Non-negative violation score; 0 means the rule meets deployability floors. Used…, _raw_feasibility_violation_score(), Regression: train=90%/val=10% (gap=80pp >> 16pp threshold) must produce a non-…, Val terms in _raw_feasibility_violation_score respect include_val flag., TestDeployabilityHelpers, TestTrainOnlyFitnessValGating
+Cohesion: 0.16
+Nodes (9): feasibility_violation_score(), Conservative return used for objectives, plateau, and archive ranking., Compute violation score using evolution PF floors (1.05) during NSGA-III…, Non-negative violation score; 0 means the rule meets deployability floors. Used…, _raw_feasibility_violation_score(), robust_return_pct(), Val terms in _raw_feasibility_violation_score respect include_val flag., TestDeployabilityHelpers (+1 more)
 
 ### Community 139 - ".load_pool"
-Cohesion: 0.12
-Nodes (12): _condition_feature_names(), _filter_compatible_previous_pool(), _pool_entry_passes_admission(), Check stored train/val metrics on a pool JSON entry., Extract feature names from textual conditions like: "[feat] IS Value". Returns…, Keep only previous pool entries compatible with current feature selection.…, Load existing pool if valid, return None if missing., Merge local pool, symbol archive, and shared archive (dominant seeds). (+4 more)
+Cohesion: 0.15
+Nodes (6): Load existing pool if valid, return None if missing., Return loaded pool if valid, None if need to run., Validate the structure of a loaded pool JSON. Raises ValueError if the schema…, _validate_pool_schema(), TestLoadPool, TestValidatePoolSchema
 
 ### Community 140 - "test_phase5_oos_properties.py"
 Cohesion: 0.19
@@ -827,9 +833,9 @@ Nodes (7): Task-10: gate cache refresh on PHASE2_PER_EPOCH_WINDOW_ROTATION. Veri
 Cohesion: 0.22
 Nodes (10): Config, FixtureRequest, Item, _close_matplotlib_figures(), _low_memory_cleanup(), fixture, pytest_collection_modifyitems(), pytest_configure() (+2 more)
 
-### Community 146 - ".get_dont_care"
+### Community 146 - "TestMakeWalkForwardFoldEngines"
 Cohesion: 0.17
-Nodes (7): See module-level :func:`get_dont_care`., **Property 9: Don't-Care Sentinel Correctness — encode_condition raises**…, **Property 9: Don't-Care Sentinel Correctness — all-dont_care → empty output**…, test_property_9b_encode_condition_raises_for_dont_care(), test_property_9f_all_dont_care_chromosome_returns_empty(), Static methods should be callable on the class itself., TestGetDontCare
+Nodes (10): _make_synthetic_df(), DataFrame, Verify _make_walk_forward_fold_engines splits data correctly., 2 splits + tail holdout → 2 fold engines + 1 tail engine., tail_holdout_frac=0 → tail engine is None., Each symbol's data is divided into contiguous chunks across folds., Single symbol without symbol column is handled gracefully., Very small data per symbol (fewer rows than n_splits) does not crash. (+2 more)
 
 ### Community 147 - ".skip_if_valid"
 Cohesion: 0.33
@@ -847,17 +853,17 @@ Nodes (12): _chronological_half_split(), _holdout_embargo_split(), _purged_walk_
 Cohesion: 0.21
 Nodes (7): Compute expected train/val per symbol under holdout+embargo split., floor(N * HOLDOUT_TRAIN_FRACTION) rows go to train., Remaining rows after embargo gap go to validation., For N=101: floor(101 * HOLDOUT_TRAIN_FRACTION) used, not round., train + validation + embargo dropped == total rows., train + val + embargo_dropped == total for each symbol., TestSplitRatio
 
-### Community 151 - "passes_pool_admission_gate"
-Cohesion: 0.23
-Nodes (6): passes_pool_admission_gate(), Hard gate for Phase 2 pool/archive on merged holdout metrics. When…, MonkeyPatch, Multi-gate failure: low trades, low return, low pf, and val_ret <= 0., When PHASE2_JOINT_TRAIN_VAL=True, the f4 gate must use min(train_f4, val_f4) —…, TestPoolAdmissionGate
+### Community 151 - "ValueError"
+Cohesion: 0.20
+Nodes (13): _parse_condition(), Parse '[feature_name] IS Fuzzy Value Name' → (feature_name, value_name)., Return N debug symbols starting at DEBUG_SYMBOL when scope is enabled., resolve_debug_symbols(), _ensure_labels(), DataFrame, Recompute the LWC pullback-reversal triggers and compare row-by-row. A stale or…, Keep supplied labels or derive all labels from raw OHLCV columns. The original… (+5 more)
 
 ### Community 152 - "BFS and DFS Graph Traversal"
 Cohesion: 0.20
 Nodes (10): CLAUDE.md Graphify Integration, Constrained Query Expansion, BFS and DFS Graph Traversal, Graph Work Memory, Existing Graph Fast Path, CLAUDE.md Graphify Integration, Constrained Query Expansion, BFS and DFS Graph Traversal (+2 more)
 
-### Community 153 - "TestGPUCPUNumericalParity"
-Cohesion: 0.10
-Nodes (15): ndarray, simulate_rule_set (delegated to CPU) is exactly identical to CPU engine., GPU backtest engine must handle padded chunking correctly., CPU backtest engine must support simulate_rule_batch with correct metrics., Compare GPU and CPU engine for 10 random chromosomes (Task 2 acceptance…, Build a multi-symbol DataFrame with mixed TP/SL/time-exit outcomes., Generate random chromosomes for binary + signed features., GPU engine results must match CPU engine within specified tolerances for 10… (+7 more)
+### Community 153 - ".run_epoch"
+Cohesion: 0.14
+Nodes (9): extract_deployable_migrants(), Return elite deployable-preview entries suitable for guarded migration., _deployable_archive_pool_entries(), Convert deployable archive rows into pool-shaped entries for Stage B seeding., Build train/val backtest engines., Restore slimmed training data from cache (no re-sampling needed)., Rebuild engines after ``park_engines`` dropped GPU state., Merge local pool, symbol archive, and shared archive (dominant seeds). (+1 more)
 
 ### Community 154 - "load_cached_split_if_fresh"
 Cohesion: 0.31
@@ -871,21 +877,21 @@ Nodes (5): All non-negative, zero_ratio > 0.3 → sparse_positive., All zeros: z
 Cohesion: 0.22
 Nodes (5): Exactly 30% zeros with non-negative values → positive (not sparse_positive)., 31% zeros with non-negative values → sparse_positive., Exactly 30% zeros with negative values → signed (not sparse_signed)., Just above 30% zeros with negative values → sparse_signed., TestZeroRatioBoundary
 
-### Community 157 - "_validate_pool_schema"
-Cohesion: 0.36
-Nodes (3): Validate the structure of a loaded pool JSON. Raises ValueError if the schema…, _validate_pool_schema(), TestValidatePoolSchema
+### Community 157 - "TestF4ReturnConcentration"
+Cohesion: 0.17
+Nodes (7): Tests for the f4 return-concentration objective (Task 2)., A rule with 1 trade = +60 and 79 trades avg -0.5% receives f4 ≈ 1.0., A rule with uniform +1% across 80 trades receives f4 ≈ 0.0125., When PHASE2_F4_ENABLED = False, objectives.shape == (3,) and no f4 in metrics., Low-support rules receive worst-case concentration evidence., When PHASE2_F4_ENABLED is deleted from config (missing attr), both the f4…, TestF4ReturnConcentration
 
 ### Community 158 - "TestGlobalMetricsCacheClearing"
 Cohesion: 0.27
 Nodes (6): When seeded_keys is empty, nothing is removed., When all keys are seeded, cache becomes empty., Verify that only seeded keys are removed from the global cache., Create a deterministic chromosome key., Cache entries matching seeded_keys are removed; non-matching survive., TestGlobalMetricsCacheClearing
 
-### Community 159 - "cpu_engine.py"
-Cohesion: 0.21
-Nodes (9): precompute_release_indices(), cpu_engine.py — CPUBacktestEngine Exact Python/NumPy replication of…, Sort entries for v5 capital allocation (timestamp, rule, symbol, row)., For each row, find the row index where symbol_bar_index + max_hold_candles is…, _sort_entries_by_allocation_priority(), _mini_df(), DataFrame, Parity between standalone release_index precompute and CPUBacktestEngine. (+1 more)
+### Community 159 - "TestSeedDirectionUniqueness"
+Cohesion: 0.20
+Nodes (6): AC: _derive_island_seed produces different seeds for long vs short., Same cluster ID but different direction ⇒ different seed., Same orphan symbol but different direction ⇒ different seed., _derive_island_seed signature must remain (base_seed, island_id) — no direction…, base_seed=None should return None regardless of island_id., TestSeedDirectionUniqueness
 
-### Community 161 - "Phase2StageParams"
+### Community 161 - "_should_plateau_early_stop_phase2"
 Cohesion: 0.05
-Nodes (49): True for cluster/orphan scoped runs rather than the global path., scoped_island_profile(), _diversity_recovery_min_unique_ratio(), Resolve the plateau patience value based on profile and stage. Cluster/orphan…, Earliest gen for plateau stop. Island epochs (~20 gens) and scaled Stage A…, _resolve_plateau_min_generation(), _resolve_plateau_patience(), _should_early_stop_phase2() (+41 more)
+Nodes (45): True for cluster/orphan scoped runs rather than the global path., scoped_island_profile(), Resolve the plateau patience value based on profile and stage. Cluster/orphan…, Earliest gen for plateau stop. Island epochs (~20 gens) and scaled Stage A…, _resolve_plateau_min_generation(), _resolve_plateau_patience(), _should_early_stop_phase2(), _should_plateau_early_stop_phase2() (+37 more)
 
 ### Community 162 - "TestNaNHandling"
 Cohesion: 0.29
@@ -895,41 +901,45 @@ Nodes (4): All-NaN series: unique_vals = [], n_unique = 0 ≤ 2, set() ⊆ {0,1}
 Cohesion: 0.33
 Nodes (3): Has negative values, zero_ratio > 0.3 → sparse_signed., NaN does not count as zero; zero_ratio on full series., TestSparseSignedMode
 
-### Community 164 - "TestPlotPhase2Pnl"
-Cohesion: 0.23
-Nodes (4): _make_pnl_history(), History entries with missing keys should not raise., Create a minimal Phase 2 history list with PnL fields., TestPlotPhase2Pnl
+### Community 164 - "TestMakeFoldEnginesTailHoldout"
+Cohesion: 0.27
+Nodes (6): DataFrame, With tail_holdout_frac=0.25, a tail engine is returned with ~25% of data., With tail_holdout_frac=0.0, no tail engine., Single symbol with tail holdout still works., Verify tail holdout engine is created when fraction > 0., TestMakeFoldEnginesTailHoldout
 
 ### Community 165 - "TestMigrationSeedFraction"
 Cohesion: 0.20
 Nodes (6): Verify that migrant injection uses PHASE2_MIGRATION_SEED_FRACTION, not ARCHIVE., PHASE2_MIGRATION_SEED_FRACTION defaults to 0.10., Ensure the migration fraction is not the same as archive fraction., Simulate the run_epoch migrant path and assert local_cap uses migration…, Simulate the new run_epoch logic: migrant entries are capped by migration…, TestMigrationSeedFraction
 
 ### Community 166 - "test_phase2_rule_pool.py"
-Cohesion: 0.06
-Nodes (28): _crowding_distance(), _dominates(), _non_dominated_sort(), _pareto_sortino_stats(), _phenotype_bucket_key(), Return True if solution *a* dominates *b* (all objectives ≤, at least one <)., NSGA-II non-dominated sorting. Parameters ---------- objectives : np.ndarray…, Compute crowding distance for solutions in *front*. Parameters ----------… (+20 more)
+Cohesion: 0.07
+Nodes (25): _crowding_distance(), _diversity_penalty_blended(), _dominates(), _hamming_distance(), _non_dominated_sort(), _phenotype_bucket_key(), Return True if solution *a* dominates *b* (all objectives ≤, at least one <)., NSGA-II non-dominated sorting. Parameters ---------- objectives : np.ndarray… (+17 more)
 
 ### Community 167 - "strategy_id"
 Cohesion: 0.24
 Nodes (10): context_contract_digest(), Return a stable hash of the static contract and fitted enrichment., feature_conditions_only(), phase2_rule_id(), Any, Stable provenance identifiers for Phase 2 feature rules. The RB Governor may…, Return normalized non-symbol, non-context conditions in order. Symbol scope and…, Hash the immutable Phase 2 feature logic and its discovery scope. (+2 more)
 
-### Community 168 - "TestPoolAdmissionOverfitRatioGate"
-Cohesion: 0.24
-Nodes (7): MonkeyPatch, Tests for the hard overfit ratio gate in pool admission. The ratio gate rejects…, train=15%/val=4% (3.75× ratio, gap=11pp < 16pp) is REJECTED by the ratio gate…, train=15%/val=10% (1.5× ratio) is ADMITTED., train/val ≈2.5× is ADMITTED when under OVERFIT_RATIO_FLOOR and gap gate., With PHASE2_OVERFIT_RATIO_FLOOR=0.0, the ratio gate is disabled and the high-…, TestPoolAdmissionOverfitRatioGate
+### Community 168 - "passes_pool_admission_gate"
+Cohesion: 0.16
+Nodes (11): passes_pool_admission_gate(), Hard gate for Phase 2 pool/archive on merged holdout metrics. When…, MonkeyPatch, Tests for the hard overfit ratio gate in pool admission. The ratio gate rejects…, train=15%/val=4% (3.75× ratio, gap=11pp < 16pp) is REJECTED by the ratio gate…, train=15%/val=10% (1.5× ratio) is ADMITTED., train/val ≈2.5× is ADMITTED when under OVERFIT_RATIO_FLOOR and gap gate., With PHASE2_OVERFIT_RATIO_FLOOR=0.0, the ratio gate is disabled and the high-… (+3 more)
 
-### Community 169 - "test_phase2_batch_evaluator_parity.py"
-Cohesion: 0.40
-Nodes (5): _backtest_df(), DataFrame, Regression tests for evaluator-facing Phase 2 chromosome semantics., Search fitness must use the same fuzzy class as RB/Phase 5 evaluation., test_batch_chromosome_signals_match_decoded_rule_conditions()
+### Community 169 - "._prune_splits_after_phase1"
+Cohesion: 0.25
+Nodes (4): Selected fuzzy features for Phase 2., Drop unused feature columns from train/val splits to reduce RAM., Drop unused feature columns from train split (legacy single-split API)., TestPruneSplitsAfterPhase1
 
-### Community 170 - "_plateau_diversity_restart"
-Cohesion: 0.24
-Nodes (7): _plateau_diversity_restart(), Reinit a fraction of the population on plateau, preserving Pareto elite. Keeps…, Reinitialised slots have objectives=np.inf and metrics_cache={}., Even with large Pareto front, at most 10 elite are preserved., Direct unit tests for the _plateau_diversity_restart helper., Pareto elite chromosomes survive the restart., TestPlateauDiversityRestart
+### Community 170 - "TestPlateauDiversityRestart"
+Cohesion: 0.25
+Nodes (5): Reinitialised slots have objectives=np.inf and metrics_cache={}., Even with large Pareto front, at most 10 elite are preserved., Direct unit tests for the _plateau_diversity_restart helper., Pareto elite chromosomes survive the restart., TestPlateauDiversityRestart
+
+### Community 171 - "TestIslandAwareTradeFloor"
+Cohesion: 0.25
+Nodes (5): Tests for island-aware hard reject floor and config constant usage., When island_hyperparams.min_trade_pool_floor=15 and executed=20, no hard-reject…, When the trade floor is triggered, trade_penalty should equal…, When island_hyperparams is None, trade_floor falls back to…, TestIslandAwareTradeFloor
 
 ### Community 172 - "TestHallOfFameTrim"
 Cohesion: 0.25
 Nodes (5): Verify that hall_of_fame is capped to PHASE2_HOF_EPOCH_CARRYOVER=10., HoF with >10 entries is trimmed to exactly 10 oldest entries., HoF with <=10 entries is left unchanged., Empty HoF does not crash during trim logic., TestHallOfFameTrim
 
-### Community 173 - "trade_support_penalty"
-Cohesion: 0.32
-Nodes (5): Support penalty. Returns ------- penalty : float is_specialist : bool (always…, Legacy graduated penalty., _static_support_penalty(), trade_support_penalty(), TestTradeSupportPenaltyStatic
+### Community 173 - "test_phase2_support.py"
+Cohesion: 0.23
+Nodes (8): compute_support_penalty_and_specialist(), Support penalty. Returns ------- penalty : float is_specialist : bool (always…, Support penalty from train metrics. Returns (penalty, False, -1)., Legacy graduated penalty., _static_support_penalty(), trade_support_penalty(), Unit tests for Phase 2 support penalties., TestTradeSupportPenaltyStatic
 
 ### Community 174 - "TestNClustersDefined"
 Cohesion: 0.33
@@ -947,17 +957,41 @@ Nodes (6): parametrize, Tests for the lazy-JAX failure path in gpu_engine.py. Th
 Cohesion: 0.29
 Nodes (5): parametrize, Tests for JAX / GPU engine availability detection., Package init must not crash when gpu_engine import fails., test_cpu_engine_import_without_jax(), test_get_gpu_backtest_engine_class_returns_none_on_import_error()
 
-### Community 178 - "_downsample_chronological"
-Cohesion: 0.50
-Nodes (4): _downsample_chronological(), Preserve per-symbol time order required by exposure/release simulation., Pick a contiguous chronological slice of *n_rows* from *df*. Critical for…, _sort_chronological()
+### Community 178 - "DataFrame"
+Cohesion: 0.25
+Nodes (9): _downsample_chronological(), _evaluate_rule_on_window(), _monthly_admission_source_df(), DataFrame, Evaluate a single pool rule on a single monthly window. Returns the full window…, Prefer unsampled monthly val; fall back to sampled slim val., Preserve per-symbol time order required by exposure/release simulation., Pick a contiguous chronological slice of *n_rows* from *df*. Critical for… (+1 more)
 
-### Community 179 - "TestMigrationEnabledByDefault"
-Cohesion: 0.50
-Nodes (3): Verify migration default for multi-symbol cluster islands (enabled)., Multi-symbol clusters ship with migration enabled., TestMigrationEnabledByDefault
+### Community 179 - "effective_min_profitable_symbols"
+Cohesion: 0.29
+Nodes (5): _debug_symbol_universe_size(), effective_min_profitable_symbols(), Active symbol count when debug scope is on; None for full-universe runs., Cap cross-symbol profitability gate to the active universe size. With…, test_effective_min_profitable_symbols_caps_debug_universe()
 
 ### Community 180 - "TestEvolutionFeasibilityFloors"
 Cohesion: 0.50
 Nodes (3): Tests for _evolution_feasibility_floors — EVOLUTION PF 1.0 vs ADMISSION PF 1.15., _raw_feasibility_violation_score uses EVOLUTION PF (1.0) so a rule with PF…, TestEvolutionFeasibilityFloors
+
+### Community 181 - "trade_support_penalty"
+Cohesion: 0.38
+Nodes (4): Backward-compatible wrapper returning penalty only., trade_support_penalty(), Between the hard-reject floor and the soft threshold the penalty is graduated., TestTradeSupportPenalty
+
+### Community 182 - "TestRobustReturnObjective"
+Cohesion: 0.29
+Nodes (4): f3 uses robust return = min(train_return, val_return) when…, Blind-spot regression: overfit_gap_penalty must fire when val_ret <= 0., Direct assertion that penalty is strictly positive when val_ret <= 0., TestRobustReturnObjective
+
+### Community 183 - "_pareto_sortino_stats"
+Cohesion: 0.47
+Nodes (3): _pareto_sortino_stats(), Aggregate raw Sortino and return health over the current Pareto front., TestParetoSortinoStats
+
+### Community 184 - "TestEvalCvFoldReturns"
+Cohesion: 0.33
+Nodes (4): Verify the helper handles None / empty fold_engines safely., fold_engines=None returns None without crashing., fold_engines=[] returns None without crashing., TestEvalCvFoldReturns
+
+### Community 185 - "ConfigError"
+Cohesion: 0.60
+Nodes (5): _config_check(), ConfigError, _finite_config_number(), Raised when a configuration violates a cross-parameter contract., _validate_config_grid()
+
+### Community 187 - "TestF3PathResolution"
+Cohesion: 0.40
+Nodes (4): parametrize, Parametrized tests for f3 path resolution (Task 5: audit finding #5). Verifies…, Verify the correct f3 formula runs for each (USE_TOTAL_RETURN_OBJ,…, TestF3PathResolution
 
 ### Community 189 - "opencode.json"
 Cohesion: 0.50
@@ -966,17 +1000,17 @@ Nodes (3): plugin, $schema, .opencode/plugins/graphify.js
 ## Knowledge Gaps
 - **35 isolated node(s):** `$schema`, `.opencode/plugins/graphify.js`, `gpu-fuzzy-trader`, `URL Ingestion`, `Folder Watcher` (+30 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **11 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **10 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `CPUBacktestEngine` connect `CPUBacktestEngine` to `rb_governor.py`, `_make_engine`, `_valid_metrics`, `Rule_Pool_Generator`, `OOS_Evaluator`, `phase2_rule_pool.py`, `_make_df`, `_apply_monthly_admission_gate`, `test_cpu_engine_properties.py`, `TestGPUCPUNumericalParity`, `_compose_ruleset`, `nested_walk_forward.py`, `cpu_engine.py`, `writer.py`, `test_phase2_batch_evaluator_parity.py`, `gpu_engine.py`, `test_certificate_first_selection.py`, `test_jax_compat.py`, `_compute_rule_signal_mask`, `GPUBacktestEngine`, `get_normalized_symbol_array`, `ValueError`, `sample_df_for_phase2`, `_apply_dynamic_rule`, `test_cpu_engine.py`, `run_rb_governor_pipeline`, `test_gpu_engine.py`, `phase2_island_scheduler.py`, `test_gpu_engine_properties.py`, `phase5_oos.py`, `Data_Loader`, `test_phase2_gpu_throughput.py`, `baselines.py`, `_jax_compute_trade_outcomes`, `_build_pool_from_archive`, `_jax_compute_rule_signals`, `MonthlyWindowSummary`, `._engine`, `.run`?**
-  _High betweenness centrality (0.131) - this node is a cross-community bridge._
-- **Why does `Reporter` connect `Reporter` to `.run`, `TestWriteSpearmanCorrelationReport`, `TestPlotPhase2Pnl`, `TestEquityCurveDateAxis`, `prop_settings`, `Rule_Pool_Generator`, `OOS_Evaluator`, `phase2_rule_pool.py`, `TestWriteStrategyEvaluationTable`, `._ensure_dir`, `_build_pool_from_archive`, `TestPlotPerRuleBreakdown`, `DataFrame`, `TestPlotPhase2Metrics`, `test_reporter.py`, `phase5_oos.py`, `Data_Loader`, `.run`?**
-  _High betweenness centrality (0.110) - this node is a cross-community bridge._
-- **Why does `Rule_Pool_Generator` connect `Rule_Pool_Generator` to `.run`, `log_memory_rss`, `_derive_epoch_seed`, `Pipeline_Orchestrator`, `compute_phase2_objectives_from_metrics`, `phase2_rule_pool.py`, `.load_pool`, `test_phase2_island_scheduler.py`, `_apply_monthly_admission_gate`, `TestRefreshObjectivesOnResumeGate`, `_make_train_df`, `TestEndToEndRotation`, `_validate_pool_schema`, `test_phase2_rule_pool.py`, `test_phase2_window_rotation.py`, `TestPoolAdmissionOverfitRatioGate`, `_gpu_runtime.py`, `run_pipeline.py`, `TestNClustersDefined`, `_init_population`, `test_phase2_rule_pool_properties.py`, `sample_df_for_phase2`, `TestRulePoolGeneratorRun`, `test_plateau_state_leak.py`, `test_crash_fix_and_run_logging.py`, `TestDeferredWarmup`, `phase2_island_scheduler.py`, `TestRunLogHandlerLifecycle`, `_derive_island_seed`, `Reporter`, `TestDeriveValSampleSeed`, `TestValLeakGate`, `CPUBacktestEngine`?**
-  _High betweenness centrality (0.108) - this node is a cross-community bridge._
+- **Why does `CPUBacktestEngine` connect `CPUBacktestEngine` to `_make_engine`, `_symbol_specialized_variants`, `phase5_oos.py`, `_score_metrics`, `OOS_Evaluator`, `_make_df`, `phase2_rule_pool.py`, `TestMakeWalkForwardFoldEngines`, `test_cpu_engine_properties.py`, `.run_epoch`, `CandidateRecord`, `nested_walk_forward.py`, `writer.py`, `TestMakeFoldEnginesTailHoldout`, `gpu_engine.py`, `test_jax_compat.py`, `DataFrame`, `_compute_rule_signal_mask`, `trade_support_penalty`, `_build_entries_from_rule_set`, `TestEvalCvFoldReturns`, `GPUBacktestEngine`, `get_normalized_symbol_array`, `ndarray`, `TestContextEntryPaths`, `test_phase2_use_gpu_flag.py`, `cpu_engine.py`, `_apply_dynamic_rule`, `test_cpu_engine.py`, `test_gpu_engine.py`, `_score_rule_on_symbol_val`, `filter_migrants_for_cluster`, `test_gpu_engine_properties.py`, `test_output_writer_properties.py`, `Data_Loader`, `test_phase2_gpu_throughput.py`, `.decode_chromosome`, `phase2_island_scheduler.py`, `baselines.py`, `Rule_Pool_Generator`, `_jax_compute_trade_outcomes`, `_build_pool_from_archive`, `_jax_compute_rule_signals`, `test_rb_governor_tail_holdout.py`, `MonthlyWindowSummary`, `._engine`, `.run`?**
+  _High betweenness centrality (0.126) - this node is a cross-community bridge._
+- **Why does `Reporter` connect `Reporter` to `.run`, `_make_selected_features`, `TestEquityCurveDateAxis`, `phase5_oos.py`, `prop_settings`, `OOS_Evaluator`, `TestPlotDistributionAndEquity`, `phase2_rule_pool.py`, `Rule_Pool_Generator`, `._ensure_dir`, `TestWriteStrategyEvaluationTable`, `_build_pool_from_archive`, `TestPlotPerRuleBreakdown`, `DataFrame`, `test_reporter.py`, `Data_Loader`, `.run`?**
+  _High betweenness centrality (0.109) - this node is a cross-community bridge._
+- **Why does `Rule_Pool_Generator` connect `Rule_Pool_Generator` to `.run`, `CPUBacktestEngine`, `.save_archive`, `log_memory_rss`, `_derive_epoch_seed`, `.run`, `_get_dont_cares`, `TestDecoupledObjectives`, `phase2_rule_pool.py`, `.load_pool`, `test_phase2_island_scheduler.py`, `Pipeline_Orchestrator`, `_apply_monthly_admission_gate`, `TestRefreshObjectivesOnResumeGate`, `_make_train_df`, `TestEndToEndRotation`, `Reporter`, `.run_epoch`, `TestF4ReturnConcentration`, `TestSeedDirectionUniqueness`, `test_phase2_rule_pool.py`, `_make_multi_sym_df`, `passes_pool_admission_gate`, `_gpu_runtime.py`, `TestIslandAwareTradeFloor`, `run_pipeline.py`, `TestNClustersDefined`, `test_phase2_rule_pool_properties.py`, `TestRobustReturnObjective`, `_pareto_sortino_stats`, `TestF3PathResolution`, `test_phase2_use_gpu_flag.py`, `TestRulePoolGeneratorRun`, `test_plateau_state_leak.py`, `test_crash_fix_and_run_logging.py`, `TestDeferredWarmup`, `filter_migrants_for_cluster`, `TestRunLogHandlerLifecycle`, `phase2_island_scheduler.py`, `_build_pool_from_archive`, `compute_phase2_objectives_from_metrics`, `TestValLeakGate`?**
+  _High betweenness centrality (0.104) - this node is a cross-community bridge._
 - **Are the 15 inferred relationships involving `Reporter` (e.g. with `CvFoldValEvaluator` and `Rule_Pool_Generator`) actually correct?**
   _`Reporter` has 15 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 64 inferred relationships involving `CPUBacktestEngine` (e.g. with `GPUBacktestEngine` and `JointPortfolioEngine`) actually correct?**

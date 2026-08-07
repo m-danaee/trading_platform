@@ -1014,6 +1014,35 @@ def _should_post_restart_early_stop_phase2(
     return post_restart_streak >= patience
 
 
+def _should_abort_zero_deployable_collapse(
+    *,
+    deployable_count: int,
+    restart_count: int,
+    max_restarts: int,
+    viability_collapse_streak: int,
+    island_profile: str = "global",
+    stage_params: Phase2StageParams | None = None,
+) -> bool:
+    """Stop burning gens when the feasible set is empty and restarts are spent.
+
+    Sparse context islands often keep ``deployable=0`` forever; without this
+    abort, Stage A window-rotates through the full island budget for nothing.
+    """
+    if not bool(getattr(_cfg, "PHASE2_ABORT_ZERO_DEPLOYABLE_EPOCHS", True)):
+        return False
+    if int(deployable_count) > 0:
+        return False
+    if int(restart_count) < int(max_restarts):
+        return False
+    patience = int(getattr(_cfg, "PHASE2_VIABILITY_COLLAPSE_STREAK", 3))
+    if int(viability_collapse_streak) < patience:
+        return False
+    # Prefer aborting Stage A / island exploration; Stage B may still polish.
+    if stage_params is not None and stage_params.stage == "B":
+        return False
+    return True
+
+
 def _should_viability_recovery(
     stage_params: Phase2StageParams | None,
     *,
@@ -2457,6 +2486,22 @@ def _run_nsga2_fallback(
                 tag, gen + 1, n_generations, val_count, breakdown,
             )
 
+        if _should_abort_zero_deployable_collapse(
+            deployable_count=deployable_count,
+            restart_count=restart_count,
+            max_restarts=max_restarts,
+            viability_collapse_streak=viability_collapse_streak,
+            island_profile=island_profile,
+            stage_params=stage_params,
+        ):
+            logger.warning(
+                "Phase 2 [%s]: aborting epoch at gen %d — deployable=0 after "
+                "exhausted viability-collapse restarts (%d/%d); sparse context "
+                "feasible set is empty",
+                tag, gen + 1, restart_count, max_restarts,
+            )
+            break
+
         pareto_ret = _pareto_return_pct_for_early_stop(
             pareto_indices, metrics_cache,
         )
@@ -3246,6 +3291,22 @@ def _run_nsga3(
                 "(valid_rules=%d < 10): %s",
                 tag, gen + 1, n_generations, val_count, breakdown,
             )
+
+        if _should_abort_zero_deployable_collapse(
+            deployable_count=deployable_count,
+            restart_count=restart_count,
+            max_restarts=max_restarts,
+            viability_collapse_streak=viability_collapse_streak,
+            island_profile=island_profile,
+            stage_params=stage_params,
+        ):
+            logger.warning(
+                "Phase 2 [%s]: aborting epoch at gen %d — deployable=0 after "
+                "exhausted viability-collapse restarts (%d/%d); sparse context "
+                "feasible set is empty",
+                tag, gen + 1, restart_count, max_restarts,
+            )
+            break
 
         pareto_ret = _pareto_return_pct_for_early_stop(
             pareto_indices, metrics_cache,

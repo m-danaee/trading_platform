@@ -487,9 +487,11 @@ def compute_permissions_and_triggers(
     - ``tf_permission_long``  = hwc Bullish AND (mwc Bullish OR Range)
     - ``tf_permission_short`` = hwc Bearish AND (mwc Bearish OR Range)
     - ``lwc_pullback_reversal_long``  = current LWC Bullish AND a completed
-      LWC Bearish print occurred within the previous ``lookback`` bars.
+      LWC Bearish (or Range, when enabled) print occurred within the previous
+      ``lookback`` bars.
     - ``lwc_pullback_reversal_short`` = current LWC Bearish AND a completed
-      LWC Bullish print occurred within the previous ``lookback`` bars.
+      LWC Bullish (or Range, when enabled) print occurred within the previous
+      ``lookback`` bars.
 
     The trigger is a pure LTF-timing signal: it is intentionally NOT ANDed
     with the current-row permission, so ``permission_only``/``trigger_only``
@@ -527,6 +529,7 @@ def compute_permissions_and_triggers(
     perm_long = ((hwc_np == STATE_BULLISH) & mwc_long).astype(np.int8)
     perm_short = ((hwc_np == STATE_BEARISH) & mwc_short).astype(np.int8)
     gate_pullback = bool(_cfg.CONTEXT_REQUIRE_PERMISSION_ON_PULLBACK_PRINT)
+    include_range = bool(getattr(_cfg, "CONTEXT_PULLBACK_INCLUDE_RANGE", True))
 
     block = pd.DataFrame(
         {
@@ -541,18 +544,24 @@ def compute_permissions_and_triggers(
         lw = g["lwc"].to_numpy()
         pl = g["long"].to_numpy()
         ps = g["short"].to_numpy()
-        prior_bear = (lw == STATE_BEARISH)
-        prior_bull = (lw == STATE_BULLISH)
+        # Long pullback print: Bearish, optionally also Range consolidation.
+        prior_pull_long = (lw == STATE_BEARISH)
+        if include_range:
+            prior_pull_long = prior_pull_long | (lw == STATE_RANGE)
+        # Short pullback print: Bullish, optionally also Range consolidation.
+        prior_pull_short = (lw == STATE_BULLISH)
+        if include_range:
+            prior_pull_short = prior_pull_short | (lw == STATE_RANGE)
         if gate_pullback:
-            prior_bear = prior_bear & pl
-            prior_bull = prior_bull & ps
-        prior_bear_count = _prior_window_count(prior_bear, lookback)
-        prior_bull_count = _prior_window_count(prior_bull, lookback)
+            prior_pull_long = prior_pull_long & pl
+            prior_pull_short = prior_pull_short & ps
+        prior_long_count = _prior_window_count(prior_pull_long, lookback)
+        prior_short_count = _prior_window_count(prior_pull_short, lookback)
         trig_long[idxs] = (
-            (lw == STATE_BULLISH) & (prior_bear_count > 0)
+            (lw == STATE_BULLISH) & (prior_long_count > 0)
         ).astype(np.int8)
         trig_short[idxs] = (
-            (lw == STATE_BEARISH) & (prior_bull_count > 0)
+            (lw == STATE_BEARISH) & (prior_short_count > 0)
         ).astype(np.int8)
 
     return pd.DataFrame(
