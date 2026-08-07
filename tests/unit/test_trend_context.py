@@ -44,8 +44,11 @@ class TestContextContract:
 
         assert cfg.LWC_PULLBACK_LOOKBACK == 24
         assert contract["lwc_pullback_lookback"] == 24
-        assert contract["algorithm_version"] == "regime_v5_per_tf_train_prefix"
+        assert contract["algorithm_version"] == "regime_v6_ungated_pullback_print"
         assert contract["permission_policy"]["mwc_range_allowed"] is True
+        assert contract["trigger_policy"][
+            "require_permission_on_pullback_print"
+        ] is False
         assert contract["efficiency_trend_threshold_quantile"] == 0.60
         assert contract["ema_spread_trend_threshold_quantile"] == 0.60
         assert contract["volatility_compression_quantile"] == 0.40
@@ -178,14 +181,28 @@ class TestIncompleteBoundaryBars:
 
 
 class TestPermissionGatedPullback:
-    def test_pullback_requires_permission_at_the_historical_bar(self):
+    def test_default_allows_pullback_without_historical_permission(self):
+        """Default v6: opposite LWC print counts even if permission was off."""
+        idx = pd.RangeIndex(3)
+        symbols = pd.Series(["AA"] * 3, index=idx)
+        hwc = pd.Series([_B, _U, _U], index=idx)
+        mwc = pd.Series([_B, _U, _U], index=idx)
+        lwc = pd.Series([_B, _R, _U], index=idx)
+        assert cfg.CONTEXT_REQUIRE_PERMISSION_ON_PULLBACK_PRINT is False
+        out = tc.compute_permissions_and_triggers(
+            hwc, mwc, lwc, symbols, lookback=2)
+        assert out["tf_permission_long"].tolist() == [0, 1, 1]
+        assert out["lwc_pullback_reversal_long"].iloc[2] == 1
+
+    def test_gated_mode_requires_permission_at_the_historical_bar(self, monkeypatch):
+        monkeypatch.setattr(
+            cfg, "CONTEXT_REQUIRE_PERMISSION_ON_PULLBACK_PRINT", True)
         idx = pd.RangeIndex(3)
         symbols = pd.Series(["AA"] * 3, index=idx)
 
         # Bearish LWC print occurs while long permission is OFF; permission
         # then turns on; current LWC turns Bullish. The stale bearish print
-        # from before permission was active must not count as an in-trend
-        # pullback.
+        # from before permission was active must not count when gated.
         hwc = pd.Series([_B, _U, _U], index=idx)
         mwc = pd.Series([_B, _U, _U], index=idx)
         lwc = pd.Series([_B, _R, _U], index=idx)
@@ -374,20 +391,29 @@ class TestTriggerPerSymbol:
             hwc, mwc, lwc_s, sym_s, lookback=3)
 
         trig_long = out["lwc_pullback_reversal_long"].to_numpy()
+        trig_short = out["lwc_pullback_reversal_short"].to_numpy()
         # A rows live at global even indices; A's 4th/5th/6th rows are the
         # BULL states preceded by 3 Bearish -> all must trigger.
         a_bull_globals = [2 * i for i in range(3, 6)]
         assert (trig_long[a_bull_globals] == 1).all(), trig_long
-        # B rows (odd globals) must never trigger.
+        # B rows (odd globals) must never fire the long trigger.
         assert (trig_long[1::2] == 0).all()
         assert int(trig_long.sum()) == 3
-        assert int(out["lwc_pullback_reversal_short"].sum()) == 0
+        # Default ungated policy: B's Bearish rows with prior Bullish LWC still
+        # fire the short timing trigger even though short permission is off
+        # (HWC/MWC are Bullish). Tradeable entries still need both columns.
+        b_bear_globals = [2 * i + 1 for i in range(3, 6)]
+        assert (trig_short[b_bear_globals] == 1).all(), trig_short
+        assert (trig_short[0::2] == 0).all()
+        assert int(trig_short.sum()) == 3
         # Per-symbol reference (contiguous layout) matches the interleaved one.
         ref = tc.compute_permissions_and_triggers(
             hwc, mwc, lwc_s, sym_s, lookback=3)
         assert (out["tf_permission_long"].to_numpy() == 1).all()
         assert (out["tf_permission_short"].to_numpy() == 0).all()
         assert ref["lwc_pullback_reversal_long"].tolist() == trig_long.tolist()
+        assert ref["lwc_pullback_reversal_short"].tolist(
+        ) == trig_short.tolist()
 
     def test_pullback_window_does_not_cross_symbol(self):
         # A B-symbol Bearish row adjacent to an A-symbol row must not enter A's

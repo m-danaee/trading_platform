@@ -384,15 +384,13 @@ CONTEXT_STATE_CODES: dict[str, int] = {
     "noisy": 2,
 }
 # Structural classifier formulas and version (part of strategy identity).
-# Version 5 fits thresholds from the train prefix only (never the rows that
-# become validation), fits an independent threshold set per timeframe (LWC
-# 15m thresholds are no longer reused for MWC/HWC bars), decouples the LWC
-# pullback-reversal trigger from permission (a pure LTF-timing signal so
-# permission_only/trigger_only diagnostics are meaningful), requires the
-# historical pullback print to have occurred while the same-direction
-# permission was active, and drops incomplete leading/trailing
-# higher-timeframe boundary bars. Enriched tapes built under v4 are stale.
-CONTEXT_ALGORITHM_VERSION: str = "regime_v5_per_tf_train_prefix"
+# Version 6 keeps v5 train-prefix / per-timeframe threshold fitting and the
+# decoupled LTF trigger, but defaults the historical pullback-print gate OFF
+# (`CONTEXT_REQUIRE_PERMISSION_ON_PULLBACK_PRINT=False`) so opposite LWC prints
+# in the lookback window count even if HTF permission was not yet active on
+# that bar. Tradeable entries still require current-row permission AND trigger.
+# Enriched tapes built under v5 (gated pullback) are stale.
+CONTEXT_ALGORITHM_VERSION: str = "regime_v6_ungated_pullback_print"
 # CSV timestamps are 15m bar-open times.
 CONTEXT_BAR_SECONDS: int = 15 * 60
 # The frozen timeframe hierarchy: HWC = 4h, MWC = 1h, LWC = 15m.
@@ -418,6 +416,12 @@ CONTEXT_VOL_WINDOW: int = 20
 # Noisy MWC states remain excluded.  This policy is part of the enrichment
 # contract and requires full tape re-enrichment when changed.
 CONTEXT_ALLOW_MWC_RANGE_PERMISSION: bool = True
+# When True, an opposite LWC print only counts as a pullback if same-direction
+# HTF permission was already active on that historical bar. When False
+# (default), any opposite LWC print in the lookback window counts; current-row
+# permission still gates tradeable entries via the mandatory conditions.
+# Changing this flag requires a contract version bump and full re-enrichment.
+CONTEXT_REQUIRE_PERMISSION_ON_PULLBACK_PRINT: bool = False
 # The mandatory direction-specific context + LWC trigger conditions.  These
 # are fixed execution conditions, never ordinary NSGA genes.
 CONTEXT_PERMISSION_COLUMNS: tuple[str, str] = (
@@ -520,6 +524,11 @@ def context_contract() -> dict[str, object]:
                 else "hwc_bearish AND mwc_bearish"
             ),
             "mwc_range_allowed": bool(CONTEXT_ALLOW_MWC_RANGE_PERMISSION),
+        },
+        "trigger_policy": {
+            "require_permission_on_pullback_print": bool(
+                CONTEXT_REQUIRE_PERMISSION_ON_PULLBACK_PRINT
+            ),
         },
         "horizon_bars_15m": int(MAX_HOLD_CANDLES),
         "context_columns": list(CONTEXT_COLUMNS),

@@ -32,10 +32,12 @@ The first implementation uses:
   A neutral MWC consolidation is a valid continuation while HWC retains
   direction (`CONTEXT_ALLOW_MWC_RANGE_PERMISSION`); MWC Noisy still blocks.
 - Noisy, opposite, or unavailable HWC/MWC states block entries.
-- LWC must show a pullback followed by a directional reversal, where the
-  pullback print itself occurred while the same-direction permission was
-  already active (a stale opposite print from before permission turned on
-  never counts).
+- LWC must show a pullback followed by a directional reversal (any opposite
+  LWC print in the previous 24 bars counts by default). Optional stricter
+  mode (`CONTEXT_REQUIRE_PERMISSION_ON_PULLBACK_PRINT=True`) also requires
+  that historical print to have occurred while same-direction permission was
+  already active. Tradeable entries still require current-row permission AND
+  trigger.
 - Existing RB Governor capital sizing remains unchanged.
 - HWC reversal trades are deferred.
 - Maximum holding period is 96 15m bars, or 24 hours.
@@ -142,13 +144,15 @@ The deterministic LWC trigger is:
 Long:
   current LWC state is Bullish
   AND at least one of the previous 24 completed LWC states was Bearish
-  AND long HWC/MWC permission was active on that specific Bearish bar
 
 Short:
   current LWC state is Bearish
   AND at least one of the previous 24 completed LWC states was Bullish
-  AND short HWC/MWC permission was active on that specific Bullish bar
 ```
+
+Optional (`CONTEXT_REQUIRE_PERMISSION_ON_PULLBACK_PRINT=True`): the historical
+opposite LWC print must also have occurred while same-direction HWC/MWC
+permission was active on that bar. Default is False.
 
 The trigger is a pure LTF-timing signal and is intentionally not ANDed with
 the *current*-row permission, so `permission_only`/`trigger_only` coverage

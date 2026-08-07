@@ -487,22 +487,21 @@ def compute_permissions_and_triggers(
     - ``tf_permission_long``  = hwc Bullish AND (mwc Bullish OR Range)
     - ``tf_permission_short`` = hwc Bearish AND (mwc Bearish OR Range)
     - ``lwc_pullback_reversal_long``  = current LWC Bullish AND a completed
-      LWC Bearish print occurred, within the previous ``lookback`` bars,
-      while long permission was ALSO active on that historical bar.
+      LWC Bearish print occurred within the previous ``lookback`` bars.
     - ``lwc_pullback_reversal_short`` = current LWC Bearish AND a completed
-      LWC Bullish print occurred, within the previous ``lookback`` bars,
-      while short permission was ALSO active on that historical bar.
+      LWC Bullish print occurred within the previous ``lookback`` bars.
 
     The trigger is a pure LTF-timing signal: it is intentionally NOT ANDed
     with the current-row permission, so ``permission_only``/``trigger_only``
     coverage diagnostics are meaningful rather than structurally impossible.
     Callers requiring a tradeable signal must AND both
     ``tf_permission_<dir>`` and ``lwc_pullback_reversal_<dir>`` (this is the
-    mandatory-condition contract enforced elsewhere).  Requiring the
-    historical pullback print itself to have occurred under the same-direction
-    permission prevents a stale opposite-LWC print from an unrelated regime
-    (recorded before permission ever turned on) from firing an immediate
-    trigger the moment permission activates.
+    mandatory-condition contract enforced elsewhere).
+
+    When ``CONTEXT_REQUIRE_PERMISSION_ON_PULLBACK_PRINT`` is True, the
+    historical opposite-LWC print only counts if same-direction permission was
+    also active on that bar (stricter, can starve Phase 2 coverage). The
+    default is False: any opposite LWC print in the lookback window counts.
 
     A current Noisy state never triggers.  MWC Range is treated as a valid
     consolidation while HWC retains direction; the policy is configurable via
@@ -527,6 +526,7 @@ def compute_permissions_and_triggers(
     )
     perm_long = ((hwc_np == STATE_BULLISH) & mwc_long).astype(np.int8)
     perm_short = ((hwc_np == STATE_BEARISH) & mwc_short).astype(np.int8)
+    gate_pullback = bool(_cfg.CONTEXT_REQUIRE_PERMISSION_ON_PULLBACK_PRINT)
 
     block = pd.DataFrame(
         {
@@ -541,15 +541,18 @@ def compute_permissions_and_triggers(
         lw = g["lwc"].to_numpy()
         pl = g["long"].to_numpy()
         ps = g["short"].to_numpy()
-        prior_bear_in_uptrend = _prior_window_count(
-            (lw == STATE_BEARISH) & pl, lookback)
-        prior_bull_in_downtrend = _prior_window_count(
-            (lw == STATE_BULLISH) & ps, lookback)
+        prior_bear = (lw == STATE_BEARISH)
+        prior_bull = (lw == STATE_BULLISH)
+        if gate_pullback:
+            prior_bear = prior_bear & pl
+            prior_bull = prior_bull & ps
+        prior_bear_count = _prior_window_count(prior_bear, lookback)
+        prior_bull_count = _prior_window_count(prior_bull, lookback)
         trig_long[idxs] = (
-            (lw == STATE_BULLISH) & (prior_bear_in_uptrend > 0)
+            (lw == STATE_BULLISH) & (prior_bear_count > 0)
         ).astype(np.int8)
         trig_short[idxs] = (
-            (lw == STATE_BEARISH) & (prior_bull_in_downtrend > 0)
+            (lw == STATE_BEARISH) & (prior_bull_count > 0)
         ).astype(np.int8)
 
     return pd.DataFrame(
