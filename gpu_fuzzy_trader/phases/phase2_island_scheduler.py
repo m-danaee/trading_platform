@@ -303,18 +303,28 @@ def _context_support_preflight(
     cv_folds: list | None,
     run_id: str | None = None,
 ) -> dict[str, Any]:
-    """Check exact cluster windows before spending the Phase 2 budget."""
+    """Check exact cluster windows before spending the Phase 2 budget.
+
+    When ``PHASE2_SKIP_CONTEXT_STARVED_ISLANDS`` is True, islands that cannot
+    meet context floors are dropped from ``surviving_clusters`` instead of
+    failing the whole direction, as long as at least one island remains.
+    """
     from gpu_fuzzy_trader.validation.rolling_cv import build_forbidden_ranges
 
     base_seed = int(seed if seed is not None else _cfg.PHASE2_SEED)
     forbidden_ranges = (
         build_forbidden_ranges(cv_folds) if cv_folds else []
     )
+    skip_starved = bool(
+        getattr(_cfg, "PHASE2_SKIP_CONTEXT_STARVED_ISLANDS", True)
+    )
     report: dict[str, Any] = {
         "direction": direction,
         "reference_rows": int(reference_rows),
         "islands": {},
         "failures": [],
+        "skipped_islands": {},
+        "surviving_clusters": {},
     }
     for cluster_id, symbols in cluster_map.items():
         scoped_train = _cfg.filter_df_to_symbols(train_df, symbols)
@@ -388,11 +398,12 @@ def _context_support_preflight(
                 {"validation_floor": hp.val_trade_floor},
             ),
         )
+        island_failures: list[str] = []
         for split_name, stats, floors in checks:
             for reason in context_floor_failures(stats, **floors):
-                report["failures"].append(
-                    f"{cluster_id}/{split_name}: {reason}"
-                )
+                detail = f"{cluster_id}/{split_name}: {reason}"
+                island_failures.append(detail)
+                report["failures"].append(detail)
 
         def _pct(value: Any) -> float:
             return float(value) if value is not None else 0.0
@@ -418,6 +429,14 @@ def _context_support_preflight(
             island_report["floors"],
         )
 
+        if island_failures:
+            report["skipped_islands"][str(cluster_id)] = {
+                "symbols": list(symbols),
+                "failures": island_failures,
+            }
+        else:
+            report["surviving_clusters"][str(cluster_id)] = list(symbols)
+
     report["run_id"] = run_id
     report_path = os.path.join(
         _cfg.OUTPUTS_DIR,
@@ -427,13 +446,34 @@ def _context_support_preflight(
     os.makedirs(os.path.dirname(report_path), exist_ok=True)
     with open(report_path, "w", encoding="utf-8") as fh:
         json.dump(report, fh, indent=2, default=str)
-    if report["failures"]:
+
+    if not report["surviving_clusters"]:
         details = "; ".join(str(item) for item in report["failures"])
         raise RuntimeError(
             f"Phase 2 [{direction}] context support preflight failed before "
             f"island evolution: {details}. Mandatory permission/trigger "
             "coverage cannot satisfy the resolved trade floors."
         )
+    if report["skipped_islands"]:
+        skipped = ", ".join(
+            f"{cid}{meta['symbols']}"
+            for cid, meta in report["skipped_islands"].items()
+        )
+        if skip_starved:
+            logger.warning(
+                "Phase 2 [%s]: skipping context-starved islands %s; "
+                "continuing with surviving islands %s",
+                direction,
+                skipped,
+                sorted(report["surviving_clusters"]),
+            )
+        else:
+            details = "; ".join(str(item) for item in report["failures"])
+            raise RuntimeError(
+                f"Phase 2 [{direction}] context support preflight failed before "
+                f"island evolution: {details}. Mandatory permission/trigger "
+                "coverage cannot satisfy the resolved trade floors."
+            )
     return report
 
 
@@ -911,6 +951,16 @@ def run_cluster_phase2(
         cv_folds,
         run_id,
     )
+    surviving = context_support.get("surviving_clusters") or {}
+    if surviving and surviving != cluster_map:
+        cluster_map = {str(k): list(v) for k, v in surviving.items()}
+        cluster_payload = dict(cluster_payload)
+        cluster_payload["clusters"] = cluster_map
+        cluster_payload["n_clusters"] = len(cluster_map)
+        cluster_payload["skipped_context_starved_islands"] = (
+            context_support.get("skipped_islands") or {}
+        )
+        persist_symbol_clusters(SYMBOL_CLUSTERS_PATH, cluster_payload)
 
     logger.info(
         "Phase 2 [%s]: cluster island mode K=%d reference_rows=%d "

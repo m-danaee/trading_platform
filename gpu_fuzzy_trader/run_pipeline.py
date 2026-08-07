@@ -341,6 +341,14 @@ def _context_island_sample_report(
         "sampling_total": int(_cfg.PHASE1_SAMPLING_TOTAL),
         "islands": {},
         "failures": [],
+        "passed_islands_by_direction": {
+            "long": [],
+            "short": [],
+        },
+        "failed_islands_by_direction": {
+            "long": [],
+            "short": [],
+        },
     }
     for island_id, scope_symbols in scopes:
         if scope_symbols:
@@ -411,14 +419,32 @@ def _context_island_sample_report(
                 val_stats,
                 validation_floor=hp.val_trade_floor,
             )
+            island_failures: list[str] = []
             for split_name, split_failures in (
                 ("train_sample", train_failures),
                 ("validation_fitness_sample", val_failures),
             ):
                 for reason in split_failures:
-                    report["failures"].append(
+                    detail = (
                         f"{direction}/{island_id}/{split_name}: {reason}"
                     )
+                    island_failures.append(detail)
+                    report["failures"].append(detail)
+            if island_failures:
+                report["failed_islands_by_direction"][direction].append(
+                    {
+                        "island_id": str(island_id),
+                        "symbols": list(scope_symbols),
+                        "failures": island_failures,
+                    }
+                )
+            else:
+                report["passed_islands_by_direction"][direction].append(
+                    {
+                        "island_id": str(island_id),
+                        "symbols": list(scope_symbols),
+                    }
+                )
         report["islands"][str(island_id)] = island_data
     return report
 
@@ -591,16 +617,43 @@ def _context_coverage_preflight(
                 seed=_cfg.PHASE2_SEED,
             )
             report["island_samples"] = island_report
-            for failure in island_report["failures"]:
-                direction = (
-                    str(failure).split("/", 1)[0]
-                    if "/" in str(failure)
-                    else None
+            skip_starved = bool(
+                getattr(_cfg, "PHASE2_SKIP_CONTEXT_STARVED_ISLANDS", True)
+            )
+            skipped_islands: list[str] = []
+            for direction in ("long", "short"):
+                passed = list(
+                    island_report["passed_islands_by_direction"].get(
+                        direction, [],
+                    )
                 )
-                _record_failure(
-                    direction,
-                    f"island sample: {failure}",
+                failed = list(
+                    island_report["failed_islands_by_direction"].get(
+                        direction, [],
+                    )
                 )
+                if failed and passed and skip_starved:
+                    for item in failed:
+                        detail = (
+                            f"{direction}/{item['island_id']} "
+                            f"symbols={item['symbols']}: "
+                            + "; ".join(item["failures"])
+                        )
+                        skipped_islands.append(detail)
+                        logger.warning(
+                            "Context support: skipping starved island %s "
+                            "(direction still has %d supported island(s))",
+                            detail,
+                            len(passed),
+                        )
+                    continue
+                for item in failed:
+                    for failure in item["failures"]:
+                        _record_failure(
+                            direction,
+                            f"island sample: {failure}",
+                        )
+            report["skipped_context_starved_islands"] = skipped_islands
             for island_id, island in island_report["islands"].items():
                 for direction, direction_data in island["directions"].items():
                     train_stats = direction_data["coverage"]["train_sample"]
@@ -2346,6 +2399,8 @@ class Pipeline_Orchestrator:
         # and specialist islands must remain explicitly symbol-scoped.  Apply
         # these policy overrides only around the canonical pipeline call so
         # small unit/diagnostic callers can still exercise legacy helpers.
+        # Partial specialist coverage stays under the config flag (needed when
+        # PHASE2_SKIP_CONTEXT_STARVED_ISLANDS drops an ETH island).
         rb_policy_attrs = {
             "RB_REQUIRE_SYMBOL_FILTERS": bool(
                 getattr(_cfg, "PHASE2_SYMBOL_SPECIALISTS_ENABLED", False)
@@ -2356,7 +2411,6 @@ class Pipeline_Orchestrator:
             "RB_FULL_VALIDATION_RECOVERY_ENABLED": False,
             "RB_CANDIDATE_RISK_ADMISSION_ENABLED": False,
             "RB_RISK_OPTIMIZE_EXITS": False,
-            "RB_ALLOW_PARTIAL_SPECIALIST_COVERAGE": False,
             "RB_CANONICAL_PIPELINE_ACTIVE": True,
         }
         rb_policy_previous = {

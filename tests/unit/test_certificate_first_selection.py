@@ -81,7 +81,9 @@ def test_partial_specialist_policy_requires_missing_symbol_to_have_no_candidate(
 
     with patch.object(_cfg, "RB_MIN_DISTINCT_SYMBOLS", 2), patch.object(
         _cfg, "PHASE2_SYMBOL_SPECIALISTS_ENABLED", True
-    ), patch.object(_cfg, "RB_ALLOW_PARTIAL_SPECIALIST_COVERAGE", True):
+    ), patch.object(
+        _cfg, "RB_ALLOW_PARTIAL_SPECIALIST_COVERAGE", True
+    ), patch.object(_cfg, "RB_MULTI_SYMBOL_RELEASE", True):
         policy = _symbol_gate_policy([eth], frame, frame)
 
     assert not policy["partial_specialist_coverage"]
@@ -92,6 +94,22 @@ def test_partial_specialist_policy_requires_missing_symbol_to_have_no_candidate(
     assert policy["concentration_max_hhi"] == _cfg.RB_MAX_SYMBOL_HHI
 
 
+def test_partial_specialist_policy_allows_sparse_symbol_when_release_not_multi():
+    eth = _candidate("ETH", 100.0, "ETHUSDT", [True, False])
+    frame = pd.DataFrame({"symbol": ["BTCUSDT", "ETHUSDT"]})
+
+    with patch.object(_cfg, "RB_MIN_DISTINCT_SYMBOLS", 2), patch.object(
+        _cfg, "PHASE2_SYMBOL_SPECIALISTS_ENABLED", True
+    ), patch.object(
+        _cfg, "RB_ALLOW_PARTIAL_SPECIALIST_COVERAGE", True
+    ), patch.object(_cfg, "RB_MULTI_SYMBOL_RELEASE", False):
+        policy = _symbol_gate_policy([eth], frame, frame)
+
+    assert policy["partial_specialist_coverage"]
+    assert policy["effective_min_symbols"] == 1
+    assert policy["candidate_positive_symbols"] == ["ETHUSDT"]
+
+
 def test_partial_specialist_policy_keeps_full_floor_when_both_symbols_exist():
     eth = _candidate("ETH", 100.0, "ETHUSDT", [True, False])
     btc = _candidate("BTC", 70.0, "BTCUSDT", [False, True])
@@ -99,7 +117,9 @@ def test_partial_specialist_policy_keeps_full_floor_when_both_symbols_exist():
 
     with patch.object(_cfg, "RB_MIN_DISTINCT_SYMBOLS", 2), patch.object(
         _cfg, "PHASE2_SYMBOL_SPECIALISTS_ENABLED", True
-    ), patch.object(_cfg, "RB_ALLOW_PARTIAL_SPECIALIST_COVERAGE", True):
+    ), patch.object(
+        _cfg, "RB_ALLOW_PARTIAL_SPECIALIST_COVERAGE", True
+    ), patch.object(_cfg, "RB_MULTI_SYMBOL_RELEASE", True):
         policy = _symbol_gate_policy([eth, btc], frame, frame)
 
     assert not policy["partial_specialist_coverage"]

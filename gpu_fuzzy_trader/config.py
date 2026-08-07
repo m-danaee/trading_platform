@@ -1626,6 +1626,11 @@ PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE: int = 10
 PHASE2_ISLAND_SCALE_TRADE_FLOORS = True
 # 10→8 — one-symbol absolute floor for moderate-support rules.
 PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN = 8
+# When True (default), a specialist/cluster island that cannot meet context
+# trade floors is skipped instead of blocking the whole direction, as long as
+# at least one other island still passes. Needed when LWC×permission conjunction
+# is thick on one symbol (e.g. BTC) and starved on another (e.g. ETH).
+PHASE2_SKIP_CONTEXT_STARVED_ISLANDS: bool = True
 # The two-window holdout geometry is the minimum evidence available by default.
 PHASE2_ISLAND_MONTHLY_MIN_MONTHS = 2
 # Migration — optional exchange of top elites between sequential cluster
@@ -2077,11 +2082,17 @@ RB_MIN_DISTINCT_SYMBOLS: int = 2
 # check, and the remaining symbol still has to pass all return/PF,
 # walk-forward, tail, and Phase 5 gates.  The output/report records the
 # partial book explicitly so it cannot be mistaken for full-universe coverage.
-RB_ALLOW_PARTIAL_SPECIALIST_COVERAGE: bool = False
+# Default True: current BTC/ETH tapes leave ETH context-starved under the
+# mandatory permission∧trigger gate, so specialist discovery must be allowed
+# to proceed on the supported symbol.
+RB_ALLOW_PARTIAL_SPECIALIST_COVERAGE: bool = True
 # A configured two-symbol release is not allowed to silently become a
 # single-symbol release. Single-asset specialists must be exported under an
 # explicit product/artifact identity instead.
-RB_MULTI_SYMBOL_RELEASE: bool = True
+# Default False while PHASE2_SKIP_CONTEXT_STARVED_ISLANDS is needed for the
+# sparse ETH context profile; set True only when every configured symbol can
+# meet island context floors.
+RB_MULTI_SYMBOL_RELEASE: bool = False
 
 # Soft score bonus per extra traded symbol beyond the first (Mode A ranking).
 # 8→15 — stronger preference for multi-symbol traded coverage

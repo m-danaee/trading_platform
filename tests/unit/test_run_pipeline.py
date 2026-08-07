@@ -174,6 +174,71 @@ def test_floor_aware_preflight_rejects_sparse_island_support() -> None:
         )
 
 
+def test_preflight_skips_starved_island_when_sibling_passes(monkeypatch) -> None:
+    frame = _context_frame(rows=200)
+    for column in (
+        "tf_permission_long",
+        "tf_permission_short",
+        "lwc_pullback_reversal_long",
+        "lwc_pullback_reversal_short",
+    ):
+        frame[column] = 1
+
+    monkeypatch.setattr(
+        pipeline._cfg, "phase2_island_mode_enabled", lambda: True,
+    )
+    monkeypatch.setattr(
+        pipeline._cfg, "PHASE2_SKIP_CONTEXT_STARVED_ISLANDS", True,
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_context_island_sample_report",
+        lambda *args, **kwargs: {
+            "mode": "singleton_proxy",
+            "reference_rows": 200,
+            "sampling_total": 200,
+            "islands": {},
+            "failures": [
+                "long/1/train_sample: eligible_rows=1<min_trade_support=30",
+                "short/1/validation_fitness_sample: "
+                "eligible_rows=1<validation_trade_floor=8",
+            ],
+            "passed_islands_by_direction": {
+                "long": [{"island_id": "0", "symbols": ["A"]}],
+                "short": [{"island_id": "0", "symbols": ["A"]}],
+            },
+            "failed_islands_by_direction": {
+                "long": [{
+                    "island_id": "1",
+                    "symbols": ["B"],
+                    "failures": [
+                        "long/1/train_sample: "
+                        "eligible_rows=1<min_trade_support=30",
+                    ],
+                }],
+                "short": [{
+                    "island_id": "1",
+                    "symbols": ["B"],
+                    "failures": [
+                        "short/1/validation_fitness_sample: "
+                        "eligible_rows=1<validation_trade_floor=8",
+                    ],
+                }],
+            },
+        },
+    )
+
+    report = _context_coverage_preflight(
+        frame, frame, frame, floor_aware=True, run_id="test-run",
+    )
+
+    assert report["blocked_directions"] == []
+    assert report["skipped_context_starved_islands"]
+    assert any("symbols=['B']" in item or "symbols=[\"B\"]" in item
+               or "B" in item
+               for item in report["skipped_context_starved_islands"])
+
+
 def test_context_preflight_blocks_only_unsupported_direction(monkeypatch) -> None:
     frame = _context_frame(rows=200)
     frame.loc[:, [
