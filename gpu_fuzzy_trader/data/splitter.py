@@ -3,14 +3,14 @@ data/splitter.py — Data_Splitter
 
 Per-symbol chronological split for Phase 2, RB, and Phase 5 preparation:
 
-- ``holdout``: single holdout split + 288-bar embargo gap (active).
-  Train/val fraction determined by ``HOLDOUT_TRAIN_FRACTION`` (default 65/35).
+- ``holdout``: single holdout split + embargo gap of ``HOLDOUT_EMBARGO_CANDLES``
+  bars (active). Train/val fraction determined by ``HOLDOUT_TRAIN_FRACTION``
+  (default 65/35).
 - ``purged_walk_forward``: expanding CV folds + primary tail holdout with embargo (deprecated).
 """
 
 from __future__ import annotations
 
-import math
 import logging
 import os
 from typing import TYPE_CHECKING
@@ -40,14 +40,13 @@ def _holdout_embargo_split(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame
     Embargo: next ``HOLDOUT_EMBARGO_CANDLES`` bars — DROPPED.
     Validation: remaining bars after embargo.
     """
-    train_frac = float(_cfg.HOLDOUT_TRAIN_FRACTION)
     embargo = int(_cfg.HOLDOUT_EMBARGO_CANDLES)
     train_parts: list[pd.DataFrame] = []
     validation_parts: list[pd.DataFrame] = []
 
     for _, group in df.groupby("symbol", sort=True, observed=False):
         n = len(group)
-        train_end = math.floor(n * train_frac)
+        train_end = _cfg.train_prefix_row_count(n)
         embargo_end = min(train_end + embargo, n)
         train_parts.append(group.iloc[:train_end])
         if embargo_end < n:

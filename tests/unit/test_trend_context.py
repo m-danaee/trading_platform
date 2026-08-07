@@ -34,7 +34,7 @@ def _raw_tape(n=1500, seed=7):
 
 def _enriched():
     raw = _raw_tape()
-    th = tc.fit_thresholds(raw)
+    th = tc.fit_all_thresholds(raw)
     return tc.generate_enriched_frame(raw, th)
 
 
@@ -44,7 +44,7 @@ class TestContextContract:
 
         assert cfg.LWC_PULLBACK_LOOKBACK == 24
         assert contract["lwc_pullback_lookback"] == 24
-        assert contract["algorithm_version"] == "regime_v4_mwc_range_reentry"
+        assert contract["algorithm_version"] == "regime_v5_per_tf_train_prefix"
         assert contract["permission_policy"]["mwc_range_allowed"] is True
         assert contract["efficiency_trend_threshold_quantile"] == 0.60
         assert contract["ema_spread_trend_threshold_quantile"] == 0.60
@@ -105,6 +105,102 @@ class TestThresholdDeterminism:
             assert (both <= 1).all(), "long/short permission must be mutually exclusive"
 
 
+class TestTrainPrefixOnlyFitting:
+    """Regression: thresholds must never see validation-period rows."""
+
+    def test_validation_tail_volatility_does_not_change_thresholds(self):
+        raw = _raw_tape(n=2000)
+        baseline_prefix = tc.build_train_prefix(raw)
+        baseline = tc.fit_all_thresholds(baseline_prefix)
+
+        perturbed = raw.copy()
+        rng = np.random.default_rng(0)
+        for _symbol, g in raw.groupby("symbol", observed=False):
+            n = len(g)
+            train_end = cfg.train_prefix_row_count(n)
+            tail_idx = g.sort_values("datetime").index[train_end:]
+            shock = 1.0 + rng.normal(0, 5.0, len(tail_idx))
+            perturbed.loc[tail_idx, "close"] = perturbed.loc[tail_idx, "close"] * shock
+            perturbed.loc[tail_idx, "high"] = np.maximum(
+                perturbed.loc[tail_idx, "high"], perturbed.loc[tail_idx, "close"])
+            perturbed.loc[tail_idx, "low"] = np.minimum(
+                perturbed.loc[tail_idx, "low"], perturbed.loc[tail_idx, "close"])
+
+        perturbed_prefix = tc.build_train_prefix(perturbed)
+        assert perturbed_prefix.reset_index(drop=True).equals(
+            baseline_prefix.reset_index(drop=True)
+        ), "perturbing only the validation tail must not change the train prefix"
+
+        perturbed_thresholds = tc.fit_all_thresholds(perturbed_prefix)
+        for tf in ("lwc", "mwc", "hwc"):
+            for key in (
+                "efficiency_abs_trend_threshold",
+                "ema_spread_abs_trend_threshold",
+                "volatility_compression_threshold",
+            ):
+                assert baseline[tf][key] == perturbed_thresholds[tf][key], (tf, key)
+
+
+class TestPerTimeframeThresholds:
+    def test_thresholds_are_fitted_independently_per_timeframe(self):
+        raw = _raw_tape(n=3000)
+        thresholds = tc.fit_all_thresholds(raw)
+        assert set(thresholds) == {"lwc", "mwc", "hwc"}
+        # Realized-volatility (and efficiency/spread) distributions shift with
+        # bar duration, so a single 15m-fitted set must not be reused as-is.
+        assert (
+            thresholds["lwc"]["volatility_compression_threshold"]
+            != thresholds["mwc"]["volatility_compression_threshold"]
+        )
+        assert (
+            thresholds["mwc"]["volatility_compression_threshold"]
+            != thresholds["hwc"]["volatility_compression_threshold"]
+        )
+
+
+class TestIncompleteBoundaryBars:
+    def test_build_higher_bars_drops_incomplete_boundary_bucket(self):
+        # Tape starts at 05:00, so the 04:00-08:00 4h bucket only has 12 of
+        # the required 16 15m candles and must never be treated as complete.
+        times = pd.date_range("2024-01-01 05:00", periods=20, freq="15min")
+        df = pd.DataFrame({
+            "datetime": times,
+            "symbol": "X",
+            "open": 100.0, "high": 101.0, "low": 99.0,
+            "close": 100.0, "volume": 1.0,
+        })
+        bars = tc.build_higher_bars(df, 240)
+        assert pd.Timestamp("2024-01-01 04:00") not in set(bars["datetime"])
+        assert pd.Timestamp("2024-01-01 08:00") not in set(bars["datetime"])
+
+        raw_bars = tc.build_higher_bars(df, 240, require_complete=False)
+        assert pd.Timestamp("2024-01-01 04:00") in set(raw_bars["datetime"])
+
+
+class TestPermissionGatedPullback:
+    def test_pullback_requires_permission_at_the_historical_bar(self):
+        idx = pd.RangeIndex(3)
+        symbols = pd.Series(["AA"] * 3, index=idx)
+
+        # Bearish LWC print occurs while long permission is OFF; permission
+        # then turns on; current LWC turns Bullish. The stale bearish print
+        # from before permission was active must not count as an in-trend
+        # pullback.
+        hwc = pd.Series([_B, _U, _U], index=idx)
+        mwc = pd.Series([_B, _U, _U], index=idx)
+        lwc = pd.Series([_B, _R, _U], index=idx)
+        out = tc.compute_permissions_and_triggers(hwc, mwc, lwc, symbols, lookback=2)
+        assert out["tf_permission_long"].tolist() == [0, 1, 1]
+        assert out["lwc_pullback_reversal_long"].iloc[2] == 0
+
+        # Same LWC path, but permission is active throughout: the Bearish
+        # print now occurred during an active uptrend and must trigger.
+        hwc2 = pd.Series([_U, _U, _U], index=idx)
+        mwc2 = pd.Series([_U, _U, _U], index=idx)
+        out2 = tc.compute_permissions_and_triggers(hwc2, mwc2, lwc, symbols, lookback=2)
+        assert out2["lwc_pullback_reversal_long"].iloc[2] == 1
+
+
 class TestLoaderContext:
     def test_loader_keeps_enriched_columns(self, tmp_path):
         from gpu_fuzzy_trader.data.loader import Data_Loader
@@ -127,6 +223,62 @@ class TestLoaderContext:
         
         with pytest.raises(ValueError):
             Data_Loader().load_dataset(str(p), drop_tail=True, include_barrier_outcomes=True)
+
+    def test_loader_accepts_mwc_range_permission(self):
+        """Regression: the loader's truth table must match the actual policy
+        (CONTEXT_ALLOW_MWC_RANGE_PERMISSION), not a stale strict variant."""
+        from gpu_fuzzy_trader.data.loader import validate_context_columns
+
+        n = 30
+        symbols = pd.Series(["AA"] * n)
+        hwc = pd.Series([_U] * n)
+        mwc = pd.Series([_R] * n)
+        lwc = pd.Series(([_B, _U] * ((n // 2) + 1))[:n])
+        exec_cols = tc.compute_permissions_and_triggers(
+            hwc, mwc, lwc, symbols, lookback=5)
+        assert int(exec_cols["tf_permission_long"].sum()) == n
+
+        df = pd.DataFrame({
+            "datetime": pd.date_range("2024-01-01", periods=n, freq="15min"),
+            "symbol": symbols,
+            "hwc_state": hwc, "mwc_state": mwc, "lwc_state": lwc,
+            **{c: exec_cols[c] for c in exec_cols.columns},
+        })
+        validate_context_columns(df)
+
+    def test_loader_rejects_corrupted_trigger(self, tmp_path):
+        from gpu_fuzzy_trader.data.loader import Data_Loader
+
+        lookback = cfg.LWC_PULLBACK_LOOKBACK
+        n = lookback + 10
+        symbols = pd.Series(["AA"] * n)
+        hwc = pd.Series([_U] * n)
+        mwc = pd.Series([_U] * n)
+        # Bearish print at position 0 (permission active throughout), then
+        # Range until the guaranteed trigger row at index == lookback, whose
+        # bar_index (== lookback) is itself checkable by the loader.
+        lwc_vals = [_R] * n
+        lwc_vals[0] = _B
+        lwc_vals[lookback] = _U
+        lwc = pd.Series(lwc_vals)
+        exec_cols = tc.compute_permissions_and_triggers(hwc, mwc, lwc, symbols)
+        assert exec_cols["lwc_pullback_reversal_long"].iloc[lookback] == 1
+
+        out = pd.DataFrame({
+            "datetime": pd.date_range("2024-01-01", periods=n, freq="15min"),
+            "symbol": symbols,
+            "open": 100.0, "high": 101.0, "low": 99.0, "close": 100.0,
+            "volume": 1.0,
+            "hwc_state": hwc, "mwc_state": mwc, "lwc_state": lwc,
+            **{c: exec_cols[c] for c in exec_cols.columns},
+        })
+        trig_col = cfg.context_trigger_column("long")
+        out.loc[lookback, trig_col] = 0  # corrupt the guaranteed trigger
+        p = tmp_path / "corrupt_trigger.csv"
+        out.to_csv(p, index=False)
+        with pytest.raises(ValueError, match="does not match the recomputed"):
+            Data_Loader().load_dataset(
+                str(p), drop_tail=False, include_barrier_outcomes=False)
 
 
 class TestInputAndBoundaryContracts:
@@ -151,7 +303,10 @@ class TestInputAndBoundaryContracts:
             target_parts.append(group.iloc[cut:])
         history = pd.concat(history_parts, ignore_index=True)
         target = pd.concat(target_parts, ignore_index=True)
-        thresholds = tc.fit_thresholds(raw)
+        # Threshold fitting needs enough history to build >CONTEXT_STRUCTURAL_
+        # LOOKBACK complete HWC/MWC bars; use an independent larger tape so
+        # this test stays focused on enrich_tape's target-key contract.
+        thresholds = tc.fit_all_thresholds(_raw_tape(n=2000))
 
         enriched = tc.enrich_tape(target, history, thresholds)
         expected = set(zip(target["datetime"], target["symbol"]))

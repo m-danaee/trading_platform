@@ -60,7 +60,6 @@
   "58": "GPUBacktestEngine",
   "59": ".simulate_rule_set",
   "60": "ValueError",
-  "61": "resolve_phase2_stage_params",
   "62": "TestEquityCurvePlots",
   "63": "splitter.py",
   "64": "test_plateau_state_leak.py",

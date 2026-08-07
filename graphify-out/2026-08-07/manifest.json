@@ -255,8 +255,8 @@
     "semantic_hash": "f4f8b978ff5b2fddb12ef75722693d04"
   },
   "gpu_fuzzy_trader/run_pipeline.py": {
-    "mtime": 1786051542.4710689,
-    "ast_hash": "3eb473b8d574410c0eebf5f63c3a5b74",
+    "mtime": 1786051573.8554797,
+    "ast_hash": "fbd48000af8882327c9acc0dd06f54c0",
     "semantic_hash": ""
   },
   "gpu_fuzzy_trader/scoring/__init__.py": {
@@ -925,8 +925,8 @@
     "semantic_hash": ""
   },
   "outputs/reports/generalization_diagnostics_long.json": {
-    "mtime": 1786050800.9543803,
-    "ast_hash": "2f1b4c9cead28064ab279ef444849434",
+    "mtime": 1786051663.9493454,
+    "ast_hash": "5fd6fb97caf53a05a3f35bfc4901905e",
     "semantic_hash": ""
   },
   "tests/unit/test_trend_context.py": {
@@ -935,47 +935,47 @@
     "semantic_hash": ""
   },
   "outputs/reports/distribution_equity_test_long.png": {
-    "mtime": 1786050800.2555811,
+    "mtime": 1786051663.1810105,
     "ast_hash": "38ac1f399d20f2a7d09fde5aeefa5952",
     "semantic_hash": ""
   },
   "outputs/reports/per_rule_breakdown_long.png": {
-    "mtime": 1786050799.995012,
+    "mtime": 1786051662.9288392,
     "ast_hash": "1d02cb6e131e1d06e540efb6ff56897b",
     "semantic_hash": ""
   },
   "outputs/reports/phase2_long_metrics.png": {
-    "mtime": 1786051543.081808,
-    "ast_hash": "e857b67340c1b49f1f8a82c11ce67437",
+    "mtime": 1786051629.7655373,
+    "ast_hash": "f4008222b459be5d4998e8762fc3b974",
     "semantic_hash": ""
   },
   "outputs/reports/phase2_long_pnl.png": {
-    "mtime": 1786051543.1487923,
-    "ast_hash": "6b29629826eb516bacd8ba89d8994f64",
+    "mtime": 1786051629.8483045,
+    "ast_hash": "5a80cd04d4f70c3c04abd24cf9d88719",
     "semantic_hash": ""
   },
   "outputs/reports/phase2_short_metrics.png": {
-    "mtime": 1786051535.6781466,
-    "ast_hash": "8ce77e2d79f4d3d0c02e7cb88445292c",
+    "mtime": 1786051624.503458,
+    "ast_hash": "0cc21516368982200354c8b4cedcc258",
     "semantic_hash": ""
   },
   "outputs/reports/phase2_short_pnl.png": {
-    "mtime": 1786051535.7411845,
-    "ast_hash": "01bb157a4108d50e7966705ee6ad4bbc",
+    "mtime": 1786051624.5862556,
+    "ast_hash": "a10b590800b159eab85e5c62abb7a3ac",
     "semantic_hash": ""
   },
   "outputs/reports/test_long_equity.png": {
-    "mtime": 1786050799.6357424,
+    "mtime": 1786051662.6057446,
     "ast_hash": "a8854ed538dc97eb89ffcc48dcd3524c",
     "semantic_hash": ""
   },
   "outputs/reports/train_long_equity.png": {
-    "mtime": 1786050799.6989107,
+    "mtime": 1786051662.6648471,
     "ast_hash": "66b453bf0264d9441c73fd16ed9f57cd",
     "semantic_hash": ""
   },
   "outputs/reports/validation_long_equity.png": {
-    "mtime": 1786050799.750235,
+    "mtime": 1786051662.7200098,
     "ast_hash": "3f686aa5f6e84ae83b124fe869b0f5cf",
     "semantic_hash": ""
   },

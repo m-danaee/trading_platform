@@ -27,10 +27,15 @@ The first implementation uses:
 - MWC = 1h.
 - LWC = 15m.
 - CSV timestamps represent 15m bar-open times.
-- Long entries require HWC Bullish and MWC Bullish.
-- Short entries require HWC Bearish and MWC Bearish.
-- Range, Noisy, opposite, or unavailable HWC/MWC states block entries.
-- LWC must show a pullback followed by a directional reversal.
+- Long entries require HWC Bullish and (MWC Bullish or MWC Range).
+- Short entries require HWC Bearish and (MWC Bearish or MWC Range).
+  A neutral MWC consolidation is a valid continuation while HWC retains
+  direction (`CONTEXT_ALLOW_MWC_RANGE_PERMISSION`); MWC Noisy still blocks.
+- Noisy, opposite, or unavailable HWC/MWC states block entries.
+- LWC must show a pullback followed by a directional reversal, where the
+  pullback print itself occurred while the same-direction permission was
+  already active (a stale opposite print from before permission turned on
+  never counts).
 - Existing RB Governor capital sizing remains unchanged.
 - HWC reversal trades are deferred.
 - Maximum holding period is 96 15m bars, or 24 hours.
@@ -100,10 +105,16 @@ overwriting raw tapes. It must:
 - Validate unique `(datetime, symbol)` rows.
 - Validate the 15m grid and reject irregular or ambiguous timestamps.
 - Build 1h and 4h bars independently per symbol.
-- Publish higher-timeframe state only after that bar is complete.
+- Publish higher-timeframe state only after that bar is complete, built only
+  from complete higher-timeframe buckets (drop incomplete leading/trailing
+  buckets caused by a tape that doesn't start/end on an HTF boundary).
 - Align completed states back to 15m rows with backward causal semantics.
-- Fit thresholds only on the training prefix.
-- Support causal historical warm-up without emitting warm-up rows for scoring.
+- Fit thresholds only on the per-symbol training prefix (the exact rows that
+  precede the validation split), never on the full pre-split tape, and fit an
+  independent threshold set per timeframe (LWC/MWC/HWC) since realized
+  volatility and efficiency distributions shift with bar duration.
+- Support causal historical warm-up without emitting warm-up rows for scoring;
+  forward enrichment may chain trailing train AND test history.
 - Write a versioned enrichment manifest with source and history hashes.
 
 With bar-open timestamps and next-bar execution:
@@ -131,13 +142,19 @@ The deterministic LWC trigger is:
 Long:
   current LWC state is Bullish
   AND at least one of the previous 24 completed LWC states was Bearish
-  AND long HWC/MWC permission is active
+  AND long HWC/MWC permission was active on that specific Bearish bar
 
 Short:
   current LWC state is Bearish
   AND at least one of the previous 24 completed LWC states was Bullish
-  AND short HWC/MWC permission is active
+  AND short HWC/MWC permission was active on that specific Bullish bar
 ```
+
+The trigger is a pure LTF-timing signal and is intentionally not ANDed with
+the *current*-row permission, so `permission_only`/`trigger_only` coverage
+diagnostics are meaningful. A tradeable signal always requires both mandatory
+conditions (`tf_permission_<dir>` AND `lwc_pullback_reversal_<dir>`) to be
+active on the same row — see Mandatory Context below.
 
 Range states may occur inside the pullback sequence. A current Noisy state
 never triggers.

@@ -28,6 +28,7 @@ from gpu_fuzzy_trader.config import (
     META_COLUMNS,
     TAIL_DROP_ROWS,
 )
+from gpu_fuzzy_trader.data import trend_context as _trend_context
 from gpu_fuzzy_trader.data.labels import compute_labels
 
 
@@ -86,21 +87,67 @@ def validate_context_columns(df: pd.DataFrame) -> None:
     perm_short = df["tf_permission_short"].to_numpy()
     bullish = _cfg.CONTEXT_STATE_CODES["bullish"]
     bearish = _cfg.CONTEXT_STATE_CODES["bearish"]
+    range_ = _cfg.CONTEXT_STATE_CODES["range"]
 
-    expected_long = ((hwc == bullish) & (mwc == bullish)).astype(np.int8)
-    expected_short = ((hwc == bearish) & (mwc == bearish)).astype(np.int8)
+    # Must mirror the actual enrichment policy (config.CONTEXT_ALLOW_MWC_RANGE_
+    # PERMISSION): a neutral MWC consolidation is a valid, intentional part of
+    # the permission contract when the flag is set, not a stale carryover.
+    mwc_range_allowed = bool(_cfg.CONTEXT_ALLOW_MWC_RANGE_PERMISSION)
+    mwc_long_ok = (mwc == bullish) | (mwc_range_allowed & (mwc == range_))
+    mwc_short_ok = (mwc == bearish) | (mwc_range_allowed & (mwc == range_))
+    expected_long = ((hwc == bullish) & mwc_long_ok).astype(np.int8)
+    expected_short = ((hwc == bearish) & mwc_short_ok).astype(np.int8)
     if np.any(perm_long != expected_long) or np.any(perm_short != expected_short):
+        mwc_clause = (
+            "mwc_state==Bullish-or-Range" if mwc_range_allowed else "mwc_state==Bullish"
+        )
+        mwc_clause_short = (
+            "mwc_state==Bearish-or-Range" if mwc_range_allowed else "mwc_state==Bearish"
+        )
         raise ValueError(
             "Context permission truth table violated: tf_permission_long must "
-            "be 1 iff hwc_state==Bullish AND mwc_state==Bullish, and "
-            "tf_permission_short must be 1 iff hwc_state==Bearish AND "
-            "mwc_state==Bearish."
+            f"be 1 iff hwc_state==Bullish AND {mwc_clause}, and "
+            f"tf_permission_short must be 1 iff hwc_state==Bearish AND "
+            f"{mwc_clause_short}."
         )
     if np.any((perm_long == 1) & (perm_short == 1)):
         raise ValueError(
             "Context permissions must be mutually exclusive: long and short "
             "cannot both be active on the same row."
         )
+
+    _validate_trigger_recomputation(df)
+
+
+def _validate_trigger_recomputation(df: pd.DataFrame) -> None:
+    """Recompute the LWC pullback-reversal triggers and compare row-by-row.
+
+    A stale or corrupted trigger column would otherwise pass every other
+    check above (binary values, permission truth table). Only rows at or
+    past the pullback lookback within each symbol's *own* rows are checked:
+    for those rows the lookback window never reaches before row 0 of this
+    frame, so the recomputation is exact even when this frame is missing
+    leading warm-up history that the original enrichment had access to
+    (e.g. a standalone test/forward tape).
+    """
+    recomputed = _trend_context.compute_permissions_and_triggers(
+        df["hwc_state"], df["mwc_state"], df["lwc_state"], df["symbol"],
+    )
+    bar_index = df.groupby("symbol", observed=False).cumcount().to_numpy()
+    checkable = bar_index >= int(_cfg.LWC_PULLBACK_LOOKBACK)
+    for col in _CONTEXT_TRIGGER_COLUMNS:
+        actual = df[col].to_numpy()
+        expected = recomputed[col].to_numpy()
+        mismatch = checkable & (actual != expected)
+        if np.any(mismatch):
+            first = int(np.flatnonzero(mismatch)[0])
+            raise ValueError(
+                f"Context trigger column {col!r} does not match the "
+                "recomputed LWC pullback-reversal trigger at the first "
+                f"mismatched row (symbol={df['symbol'].iloc[first]!r}, "
+                f"datetime={df['datetime'].iloc[first]!r}); the enriched "
+                "tape may be stale or corrupted."
+            )
 
 
 def _ensure_labels(df: pd.DataFrame) -> pd.DataFrame:

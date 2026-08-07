@@ -222,6 +222,9 @@ __marimo__/
 # CodeLookup dependency graph cache
 .codelookup/
 
-# Local research ablation artifacts are recorded in the ledger but are not
-# source releases. Keep generated experiment directories out of commits.
-/outputs/research_*/
+# Generated run outputs (pipeline results, reports, logs) are not source
+# releases and must not be committed as if they were real run evidence.
+# Keep a curated example under /outputs/examples/ only when documentation
+# needs one.
+/outputs/*
+!/outputs/examples/

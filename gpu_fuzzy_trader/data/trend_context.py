@@ -19,7 +19,9 @@ Semantics
   aligned back to 15m rows with backward-causal semantics.
 - Incomplete higher-timeframe candles never affect an earlier entry.
 
-Thresholds are fitted once from the Phase-0 training prefix only, then frozen.
+Thresholds are fitted once from the Phase-0 training prefix only, then frozen,
+independently per timeframe (LWC/MWC/HWC each get their own threshold set
+fitted from that timeframe's own bar distribution).
 """
 
 from __future__ import annotations
@@ -297,19 +299,66 @@ def fit_thresholds(
     }
 
 
+def build_train_prefix(raw_df: pd.DataFrame) -> pd.DataFrame:
+    """Return only the per-symbol leading rows in the Phase-0 training prefix.
+
+    Uses the exact same per-symbol row boundary as ``Data_Splitter``
+    (``config.train_prefix_row_count``), so trend-context thresholds are
+    fitted strictly before the rows that later become the validation split
+    and never leak validation-period price distributions into the regime
+    classifier.
+    """
+    parts: list[pd.DataFrame] = []
+    for _symbol, g in raw_df.groupby("symbol", sort=True, observed=False):
+        g = g.sort_values("datetime")
+        train_end = _cfg.train_prefix_row_count(len(g))
+        parts.append(g.iloc[:train_end])
+    if not parts:
+        return raw_df.iloc[0:0]
+    return pd.concat(parts, ignore_index=True)
+
+
+def fit_all_thresholds(train_prefix: pd.DataFrame) -> dict[str, dict[str, float]]:
+    """Fit independent, frozen thresholds per timeframe from the train prefix.
+
+    Realized volatility, efficiency, and EMA-spread distributions all shift
+    materially with bar duration, so a single 15m-fitted threshold set must
+    never be reused for 1h/4h classification (it can make higher-timeframe
+    Range nearly impossible or produce badly unbalanced Noisy coverage).
+    Each timeframe is fitted from its own *complete* bars (see
+    :func:`build_higher_bars`) built from the same train-only prefix.
+    """
+    mwc_bars = build_higher_bars(train_prefix, int(_cfg.MWC_TIMEFRAME_MINUTES))
+    hwc_bars = build_higher_bars(train_prefix, int(_cfg.HWC_TIMEFRAME_MINUTES))
+    return {
+        "lwc": fit_thresholds(train_prefix),
+        "mwc": fit_thresholds(mwc_bars),
+        "hwc": fit_thresholds(hwc_bars),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Higher-timeframe bars and causal alignment
 # ---------------------------------------------------------------------------
 
 def build_higher_bars(
-    df: pd.DataFrame, timeframe_minutes: int,
+    df: pd.DataFrame, timeframe_minutes: int, *, require_complete: bool = True,
 ) -> pd.DataFrame:
     """Aggregate 15m rows into independent per-symbol higher-timeframe bars.
 
     Returns a frame with columns ``datetime`` (bar-open time), ``symbol``,
     ``open``, ``high``, ``low``, ``close``, ``volume``.
+
+    When ``require_complete`` (default), a bucket is only kept when it
+    contains exactly ``timeframe_minutes // LWC_TIMEFRAME_MINUTES`` 15m rows.
+    A tape that does not start/end on a higher-timeframe boundary otherwise
+    produces a partial leading or trailing bucket (e.g. a tape starting at
+    05:00 has only 12 of the 16 15m rows needed for the 04:00-08:00 4h
+    bucket); treating it as a complete bar would corrupt the early rolling
+    structural indicators and any threshold fitted from it.
     """
     tf = pd.Timedelta(minutes=int(timeframe_minutes))
+    expected_rows = int(timeframe_minutes) // int(_cfg.LWC_TIMEFRAME_MINUTES)
     parts: list[pd.DataFrame] = []
     for symbol, g in df.sort_values("datetime").groupby(
         "symbol", sort=False, observed=False,
@@ -323,6 +372,9 @@ def build_higher_bars(
             close=("close", "last"),
             volume=("volume", "sum"),
         )
+        if require_complete:
+            complete = bucket.value_counts() == expected_rows
+            agg = agg.loc[agg.index.map(complete).fillna(False)]
         out = agg.reset_index(drop=False)
         out = out.rename(columns={out.columns[0]: "datetime"})
         out["symbol"] = symbol
@@ -412,12 +464,13 @@ def _classify_hf_bars(hf: pd.DataFrame, thresholds: dict[str, float]) -> np.ndar
 # Permissions and LWC pullback-reversal triggers
 # ---------------------------------------------------------------------------
 
-def _prior_window_count(values: np.ndarray, from_state: int, lookback: int) -> np.ndarray:
-    """Count ``from_state`` occurrences strictly before each position within
-    the preceding ``lookback`` completed bars.  Per block, so it never crosses
-    a symbol boundary."""
-    mark = (values == from_state).astype(np.int8)
-    rolled = pd.Series(mark).rolling(lookback, min_periods=1).sum()
+def _prior_window_count(mark: np.ndarray, lookback: int) -> np.ndarray:
+    """Count True occurrences of ``mark`` strictly before each position
+    within the preceding ``lookback`` completed bars.  Per block, so it never
+    crosses a symbol boundary.  ``mark`` is an arbitrary boolean condition
+    supplied by the caller (e.g. "LWC was Bearish AND long permission was
+    active"), not merely a raw state match."""
+    rolled = pd.Series(mark.astype(np.int8)).rolling(lookback, min_periods=1).sum()
     prior = rolled.shift(1).fillna(0).to_numpy()
     return prior
 
@@ -433,10 +486,23 @@ def compute_permissions_and_triggers(
 
     - ``tf_permission_long``  = hwc Bullish AND (mwc Bullish OR Range)
     - ``tf_permission_short`` = hwc Bearish AND (mwc Bearish OR Range)
-    - ``lwc_pullback_reversal_long``  = long permission AND current LWC Bullish
-      AND any of the previous ``lookback`` completed LWC states Bearish
-    - ``lwc_pullback_reversal_short`` = short permission AND current LWC
-      Bearish AND any of the previous ``lookback`` completed LWC states Bullish
+    - ``lwc_pullback_reversal_long``  = current LWC Bullish AND a completed
+      LWC Bearish print occurred, within the previous ``lookback`` bars,
+      while long permission was ALSO active on that historical bar.
+    - ``lwc_pullback_reversal_short`` = current LWC Bearish AND a completed
+      LWC Bullish print occurred, within the previous ``lookback`` bars,
+      while short permission was ALSO active on that historical bar.
+
+    The trigger is a pure LTF-timing signal: it is intentionally NOT ANDed
+    with the current-row permission, so ``permission_only``/``trigger_only``
+    coverage diagnostics are meaningful rather than structurally impossible.
+    Callers requiring a tradeable signal must AND both
+    ``tf_permission_<dir>`` and ``lwc_pullback_reversal_<dir>`` (this is the
+    mandatory-condition contract enforced elsewhere).  Requiring the
+    historical pullback print itself to have occurred under the same-direction
+    permission prevents a stale opposite-LWC print from an unrelated regime
+    (recorded before permission ever turned on) from firing an immediate
+    trigger the moment permission activates.
 
     A current Noisy state never triggers.  MWC Range is treated as a valid
     consolidation while HWC retains direction; the policy is configurable via
@@ -449,8 +515,6 @@ def compute_permissions_and_triggers(
     hwc_np = np.asarray(hwc, dtype=np.int8)
     mwc_np = np.asarray(mwc, dtype=np.int8)
     lwc_np = np.asarray(lwc, dtype=np.int8)
-    perm_long = np.zeros(n, dtype=np.int8)
-    perm_short = np.zeros(n, dtype=np.int8)
     trig_long = np.zeros(n, dtype=np.int8)
     trig_short = np.zeros(n, dtype=np.int8)
 
@@ -461,8 +525,8 @@ def compute_permissions_and_triggers(
     mwc_short = (mwc_np == STATE_BEARISH) | (
         mwc_range_allowed & (mwc_np == STATE_RANGE)
     )
-    perm_long[:] = ((hwc_np == STATE_BULLISH) & mwc_long).astype(np.int8)
-    perm_short[:] = ((hwc_np == STATE_BEARISH) & mwc_short).astype(np.int8)
+    perm_long = ((hwc_np == STATE_BULLISH) & mwc_long).astype(np.int8)
+    perm_short = ((hwc_np == STATE_BEARISH) & mwc_short).astype(np.int8)
 
     block = pd.DataFrame(
         {
@@ -475,13 +539,17 @@ def compute_permissions_and_triggers(
     for _sym, g in block.groupby("symbol", sort=False, observed=False):
         idxs = g.index.to_numpy()
         lw = g["lwc"].to_numpy()
-        prior_bear = _prior_window_count(lw, STATE_BEARISH, lookback)
-        prior_bull = _prior_window_count(lw, STATE_BULLISH, lookback)
+        pl = g["long"].to_numpy()
+        ps = g["short"].to_numpy()
+        prior_bear_in_uptrend = _prior_window_count(
+            (lw == STATE_BEARISH) & pl, lookback)
+        prior_bull_in_downtrend = _prior_window_count(
+            (lw == STATE_BULLISH) & ps, lookback)
         trig_long[idxs] = (
-            g["long"].to_numpy() & (lw == STATE_BULLISH) & (prior_bear > 0)
+            (lw == STATE_BULLISH) & (prior_bear_in_uptrend > 0)
         ).astype(np.int8)
         trig_short[idxs] = (
-            g["short"].to_numpy() & (lw == STATE_BEARISH) & (prior_bull > 0)
+            (lw == STATE_BEARISH) & (prior_bull_in_downtrend > 0)
         ).astype(np.int8)
 
     return pd.DataFrame(
@@ -501,11 +569,16 @@ def compute_permissions_and_triggers(
 
 def generate_enriched_frame(
     raw_df: pd.DataFrame,
-    thresholds: dict[str, float],
+    thresholds: dict[str, dict[str, float]],
     *,
     emit_warmup: bool = False,
 ) -> tuple[pd.DataFrame, pd.Series]:
     """Enrich a raw 15m tape with the full context contract.
+
+    ``thresholds`` must carry one independently fitted threshold set per
+    timeframe: ``{"lwc": {...}, "mwc": {...}, "hwc": {...}}`` (see
+    :func:`fit_all_thresholds`). A single 15m-fitted threshold set must never
+    be reused for 1h/4h classification.
 
     Returns
     -------
@@ -517,24 +590,25 @@ def generate_enriched_frame(
     validate_input_frame(raw_df)
     df = raw_df.sort_values(["datetime", "symbol"]).reset_index(drop=True)
 
+    lwc_th = thresholds["lwc"]
     eff, spread, rv = structural_inputs(df)
     lwc_state = pd.Series(
         classify_regime(
             eff.to_numpy(), spread.to_numpy(), rv.to_numpy(),
-            thresholds["efficiency_abs_trend_threshold"],
-            thresholds["ema_spread_abs_trend_threshold"],
-            thresholds["volatility_compression_threshold"],
+            lwc_th["efficiency_abs_trend_threshold"],
+            lwc_th["ema_spread_abs_trend_threshold"],
+            lwc_th["volatility_compression_threshold"],
         ),
         index=df.index,
     )
 
     mwc_bars = build_higher_bars(df, int(_cfg.MWC_TIMEFRAME_MINUTES))
     mwc_state = align_completed_states_to_rows(
-        df, mwc_bars, thresholds, int(_cfg.MWC_TIMEFRAME_MINUTES))
+        df, mwc_bars, thresholds["mwc"], int(_cfg.MWC_TIMEFRAME_MINUTES))
 
     hwc_bars = build_higher_bars(df, int(_cfg.HWC_TIMEFRAME_MINUTES))
     hwc_state = align_completed_states_to_rows(
-        df, hwc_bars, thresholds, int(_cfg.HWC_TIMEFRAME_MINUTES))
+        df, hwc_bars, thresholds["hwc"], int(_cfg.HWC_TIMEFRAME_MINUTES))
 
     exec_cols = compute_permissions_and_triggers(
         hwc_state, mwc_state, lwc_state, df["symbol"],
@@ -562,7 +636,7 @@ def generate_enriched_frame(
 def enrich_tape(
     target_df: pd.DataFrame,
     history_df: pd.DataFrame | None,
-    thresholds: dict[str, float],
+    thresholds: dict[str, dict[str, float]],
 ) -> pd.DataFrame:
     """Enrich *target_df*, using *history_df* only for causal warm-up.
 
@@ -647,13 +721,21 @@ def _source_meta(path: str | None) -> dict[str, str | int | None] | None:
     }
 
 
+def _floatify(obj: object) -> object:
+    """Recursively cast numeric leaves to plain ``float`` for JSON output."""
+    if isinstance(obj, dict):
+        return {k: _floatify(v) for k, v in obj.items()}
+    return float(obj)
+
+
 def build_manifest(
-    thresholds: dict[str, float],
+    thresholds: dict[str, object],
     *,
     train_source: str | None = None,
     tapes: dict[str, str] | None = None,
     tape_sources: dict[str, str] | None = None,
     history_sources: dict[str, str] | None = None,
+    prefix_fitting_rows: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Build the versioned enrichment manifest.
 
@@ -663,7 +745,10 @@ def build_manifest(
     config so custom CLI ``--train/--test/--forward`` paths are recorded
     faithfully (a ``forward`` enriched tape is attributed to its forward raw
     source, not to the test path).  Enriched output hashes are preserved in the
-    entry's ``sha256`` field.
+    entry's ``sha256`` field.  ``thresholds`` carries one set per timeframe
+    (``{"lwc": {...}, "mwc": {...}, "hwc": {...}}``).  ``prefix_fitting_rows``
+    records the exact per-symbol row count/interval used to fit those
+    thresholds, so the training-prefix boundary is auditable.
     """
     tape_entries: dict[str, object] = {}
     for name, path in (tapes or {}).items():
@@ -683,10 +768,11 @@ def build_manifest(
     return {
         "context_algorithm_version": str(_cfg.CONTEXT_ALGORITHM_VERSION),
         "context_contract": _cfg.context_contract(),
-        "thresholds": {k: float(v) for k, v in thresholds.items()},
+        "thresholds": _floatify(thresholds),
         "threshold_fitting": {
             "source": _source_meta(train_source),
             "train_only": True,
+            "per_symbol": prefix_fitting_rows or {},
         },
         "timeframes_minutes": {
             "hwc": int(_cfg.HWC_TIMEFRAME_MINUTES),
@@ -715,16 +801,21 @@ def write_manifest(payload: dict[str, object], path: str) -> str:
 
 def _write_enriched_csv(
     raw_path: str,
-    thresholds: dict[str, float],
+    thresholds: dict[str, dict[str, float]],
     out_path: str,
-    history_path: str | None = None,
+    history_paths: tuple[str, ...] = (),
 ) -> pd.DataFrame:
     raw = pd.read_csv(raw_path)
     raw["datetime"] = pd.to_datetime(raw["datetime"])
-    history = None
-    if history_path and os.path.exists(history_path):
-        history = pd.read_csv(history_path)
-        history["datetime"] = pd.to_datetime(history["datetime"])
+    history_frames = []
+    for history_path in history_paths:
+        if history_path and os.path.exists(history_path):
+            h = pd.read_csv(history_path)
+            h["datetime"] = pd.to_datetime(h["datetime"])
+            history_frames.append(h)
+    history = (
+        pd.concat(history_frames, ignore_index=True) if history_frames else None
+    )
     enriched = enrich_tape(raw, history, thresholds)
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     enriched.to_csv(out_path, index=False)
@@ -749,21 +840,42 @@ def main(argv: list[str] | None = None) -> int:
 
     raw_train = pd.read_csv(args.train)
     raw_train["datetime"] = pd.to_datetime(raw_train["datetime"])
-    thresholds = fit_thresholds(raw_train)
+    validate_input_frame(raw_train)
+
+    # Thresholds are fitted strictly from the per-symbol training prefix
+    # (never the rows that later become the validation split), with an
+    # independent threshold set per timeframe.
+    train_prefix = build_train_prefix(raw_train)
+    thresholds = fit_all_thresholds(train_prefix)
+    prefix_fitting_rows = {
+        str(symbol): {
+            "rows": int(len(g)),
+            "interval": [
+                g["datetime"].min().isoformat(),
+                g["datetime"].max().isoformat(),
+            ],
+        }
+        for symbol, g in train_prefix.groupby("symbol", observed=False)
+    }
 
     out_dir = args.out_dir or _cfg.ENRICHED_DIR
     train_out = os.path.join(out_dir, "train_new_hwc_mwc_lwc.csv")
     test_out = os.path.join(out_dir, "test_new_hwc_mwc_lwc.csv")
     forward_out = os.path.join(out_dir, "forward_hwc_mwc_lwc.csv")
 
+    has_test = bool(args.test) and os.path.exists(args.test)
     _write_enriched_csv(args.train, thresholds, train_out)
-    if args.test and os.path.exists(args.test):
+    if has_test:
         _write_enriched_csv(
-            args.test, thresholds, test_out, history_path=args.train)
+            args.test, thresholds, test_out, history_paths=(args.train,))
     if args.forward and os.path.exists(args.forward):
+        # Forward enrichment may use trailing train AND test history so a
+        # forward tape starting after the test period never leaves a
+        # timestamp gap that validate_input_frame would reject.
+        forward_history = (args.train, args.test) if has_test else (args.train,)
         _write_enriched_csv(
             args.forward, thresholds, forward_out,
-            history_path=args.train)
+            history_paths=forward_history)
 
     manifest = build_manifest(
         thresholds,
@@ -775,14 +887,27 @@ def main(argv: list[str] | None = None) -> int:
         },
         tape_sources={
             "train": args.train,
-            "test": args.test if args.test and os.path.exists(args.test) else None,
+            "test": args.test if has_test else None,
             "forward": (
                 args.forward
                 if args.forward and os.path.exists(args.forward)
                 else None
             ),
         },
-        history_sources={"train_prefix": args.train},
+        history_sources={
+            "test_history_train": args.train if has_test else None,
+            "forward_history_train": (
+                args.train
+                if args.forward and os.path.exists(args.forward)
+                else None
+            ),
+            "forward_history_test": (
+                args.test
+                if args.forward and os.path.exists(args.forward) and has_test
+                else None
+            ),
+        },
+        prefix_fitting_rows=prefix_fitting_rows,
     )
     manifest_path = os.path.join(out_dir, "trend_context_manifest.json")
     write_manifest(manifest, manifest_path)

@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import logging
 import json
+import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -214,7 +215,8 @@ TAIL_DROP_ROWS = 96
 
 # SPLIT_MODE — how train_new.csv is divided before Phase 2.
 #   holdout             → single per-symbol chronological split with embargo
-#                         (288 bars dropped between train and val).
+#                         (HOLDOUT_EMBARGO_CANDLES bars dropped between train
+#                         and val — 96, not the legacy 288-bar horizon).
 #                         The actual train/val fraction is set by
 #                         HOLDOUT_TRAIN_FRACTION (see below).
 #   purged_walk_forward → expanding CV folds + primary tail holdout with embargo
@@ -230,6 +232,18 @@ HOLDOUT_TRAIN_FRACTION = 0.65
 # Must equal MAX_HOLD_CANDLES so a position opened at the last train bar cannot
 # look into the validation window.
 HOLDOUT_EMBARGO_CANDLES = 96
+
+
+def train_prefix_row_count(n_rows: int, train_frac: float | None = None) -> int:
+    """Number of leading per-symbol rows belonging to the training prefix.
+
+    Shared by ``Data_Splitter`` (Phase-0 train/validation split) and
+    ``trend_context`` (threshold fitting) so both always agree on exactly
+    which rows are "train": trend-context thresholds must never be fitted on
+    rows that later become the validation split.
+    """
+    frac = float(HOLDOUT_TRAIN_FRACTION) if train_frac is None else float(train_frac)
+    return math.floor(int(n_rows) * frac)
 
 
 def holdout_train_val_label(frac: float = HOLDOUT_TRAIN_FRACTION) -> str:
@@ -370,9 +384,15 @@ CONTEXT_STATE_CODES: dict[str, int] = {
     "noisy": 2,
 }
 # Structural classifier formulas and version (part of strategy identity).
-# Version 4 allows a neutral MWC consolidation while HWC retains direction,
-# so enriched tapes generated under the strict v3 permission policy are stale.
-CONTEXT_ALGORITHM_VERSION: str = "regime_v4_mwc_range_reentry"
+# Version 5 fits thresholds from the train prefix only (never the rows that
+# become validation), fits an independent threshold set per timeframe (LWC
+# 15m thresholds are no longer reused for MWC/HWC bars), decouples the LWC
+# pullback-reversal trigger from permission (a pure LTF-timing signal so
+# permission_only/trigger_only diagnostics are meaningful), requires the
+# historical pullback print to have occurred while the same-direction
+# permission was active, and drops incomplete leading/trailing
+# higher-timeframe boundary bars. Enriched tapes built under v4 are stale.
+CONTEXT_ALGORITHM_VERSION: str = "regime_v5_per_tf_train_prefix"
 # CSV timestamps are 15m bar-open times.
 CONTEXT_BAR_SECONDS: int = 15 * 60
 # The frozen timeframe hierarchy: HWC = 4h, MWC = 1h, LWC = 15m.

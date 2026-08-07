@@ -1,11 +1,11 @@
 # Graph Report - trading_platform  (2026-08-07)
 
 ## Corpus Check
-- 211 files · ~308,090 words
+- 211 files · ~308,846 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 4830 nodes · 10947 edges · 172 communities (162 shown, 10 thin omitted)
+- 4830 nodes · 10947 edges · 171 communities (161 shown, 10 thin omitted)
 - Extraction: 95% EXTRACTED · 5% INFERRED · 0% AMBIGUOUS · INFERRED: 550 edges (avg confidence: 0.57)
 - Token cost: 0 input · 0 output
 
@@ -76,7 +76,6 @@
 - GPUBacktestEngine
 - .simulate_rule_set
 - ValueError
-- resolve_phase2_stage_params
 - TestEquityCurvePlots
 - splitter.py
 - test_plateau_state_leak.py
@@ -220,7 +219,7 @@
 - **Fail-closed research boundary** — readme_configuration_contract, readme_symbol_specialist_islands, readme_rb_governor, readme_holdout_acceptance_contract, readme_fail_closed_deployment [INFERRED 0.95]
 - **Hardware-aware execution flow** — run_rtx4050_execution_policy, run_colab_t4_path, run_pipeline_orchestrator, readme_hybrid_execution_policy [INFERRED 0.95]
 
-## Communities (172 total, 10 thin omitted)
+## Communities (171 total, 10 thin omitted)
 
 ### Community 0 - "evox_runner.py"
 Cohesion: 0.04
@@ -465,10 +464,6 @@ Nodes (6): _batch_eval_rule_set_pickled(), Simulate a rule set and return perfor
 ### Community 60 - "ValueError"
 Cohesion: 0.06
 Nodes (31): _append_allocated_entries(), _build_rule_signal_mask(), compute_entry_time_priority(), _expectancy_lcb_pct(), _expected_shortfall_pct(), _normalize_direction(), _parse_condition(), precompute_release_indices() (+23 more)
-
-### Community 61 - "resolve_phase2_stage_params"
-Cohesion: 0.13
-Nodes (16): True when Stage A viability is critically low and search has plateaued., _should_viability_recovery(), island_stage_budgets(), IslandStagePlan, StageLabel, Phase 2 two-stage search hyperparameter profiles (exploration vs refinement)., Resolved stage and remaining generation budget for one symbol island., Split an island's total generation budget into Stage A / Stage B portions. Uses… (+8 more)
 
 ### Community 62 - "TestEquityCurvePlots"
 Cohesion: 0.13
@@ -767,8 +762,8 @@ Cohesion: 0.50
 Nodes (3): Verify migration default for multi-symbol cluster islands (enabled)., Multi-symbol clusters ship with migration enabled., TestMigrationEnabledByDefault
 
 ### Community 137 - "compute_phase2_objectives_from_metrics"
-Cohesion: 0.05
-Nodes (33): compute_phase2_objectives_from_metrics(), Build Phase 2 minimisation objectives from precomputed train/val metrics.…, tanh-saturated Sortino so the best-front member moves with progress. The…, _saturating_sortino(), True when val-derived feasibility penalties belong in NSGA-III fitness., _val_terms_in_fitness(), f3 uses robust return = min(train_return, val_return) when…, Blind-spot regression: overfit_gap_penalty must fire when val_ret <= 0. (+25 more)
+Cohesion: 0.04
+Nodes (49): True when Stage A viability is critically low and search has plateaued., _should_viability_recovery(), compute_phase2_objectives_from_metrics(), Build Phase 2 minimisation objectives from precomputed train/val metrics.…, tanh-saturated Sortino so the best-front member moves with progress. The…, _saturating_sortino(), island_stage_budgets(), IslandStagePlan (+41 more)
 
 ### Community 139 - ".load_pool"
 Cohesion: 0.15
