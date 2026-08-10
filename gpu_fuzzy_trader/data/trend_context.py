@@ -302,16 +302,17 @@ def fit_thresholds(
 def build_train_prefix(raw_df: pd.DataFrame) -> pd.DataFrame:
     """Return only the per-symbol leading rows in the Phase-0 training prefix.
 
-    Uses the exact same per-symbol row boundary as ``Data_Splitter``
-    (``config.train_prefix_row_count``), so trend-context thresholds are
-    fitted strictly before the rows that later become the validation split
-    and never leak validation-period price distributions into the regime
-    classifier.
+    ``Data_Loader`` removes the final ``TAIL_DROP_ROWS`` before
+    ``Data_Splitter`` computes its per-symbol boundary.  Apply that same trim
+    to the row count here so threshold fitting ends at the exact Phase-0
+    training boundary rather than extending into the later embargo/validation
+    period.
     """
     parts: list[pd.DataFrame] = []
     for _symbol, g in raw_df.groupby("symbol", sort=True, observed=False):
         g = g.sort_values("datetime")
-        train_end = _cfg.train_prefix_row_count(len(g))
+        eligible_rows = max(0, len(g) - int(_cfg.TAIL_DROP_ROWS))
+        train_end = _cfg.train_prefix_row_count(eligible_rows)
         parts.append(g.iloc[:train_end])
     if not parts:
         return raw_df.iloc[0:0]
