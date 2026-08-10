@@ -100,7 +100,7 @@ Install the matching JAX GPU stack separately on CUDA hosts:
 Use the repository virtual environment for every command.
 
 The active context contract uses a 24-bar LWC pullback lookback and frozen
-train-only classifier quantiles of 60th/60th/40th percentile. Changing this
+train-only classifier quantiles of 55th/55th/45th percentile. Changing this
 contract changes dataset and strategy identity: re-enrich every train, test, and
 forward tape, then rebuild splits and Phase 1/Phase 2 artifacts. Do not reuse
 enriched CSVs or derived artifacts from the previous contract.
@@ -125,8 +125,9 @@ data/enriched/forward_hwc_mwc_lwc.csv
 data/enriched/trend_context_manifest.json
 ```
 
-Point the normal pipeline paths at those enriched tapes. Phase 5 explicitly
-rejects a raw, non-enriched test or forward tape:
+The normal pipeline uses those enriched train/test tapes by default. Override
+paths only for a controlled experiment; Phase 5 explicitly rejects a raw,
+non-enriched test or forward tape:
 
 ```bash
 TRAIN_CSV_PATH=data/enriched/train_new_hwc_mwc_lwc.csv \

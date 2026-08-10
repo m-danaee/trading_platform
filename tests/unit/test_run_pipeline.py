@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import inspect
 import json
 import logging
 from unittest.mock import MagicMock, patch
@@ -297,7 +296,37 @@ def test_stale_enriched_context_contract_is_rejected(tmp_path, monkeypatch) -> N
         str(manifest_path),
     )
 
-    with pytest.raises(RuntimeError, match="uses context contract"):
+    with pytest.raises(RuntimeError, match="use context contract"):
+        _validate_enriched_context_contract()
+
+
+def test_enriched_context_contract_rejects_tape_hash_mismatch(
+    tmp_path, monkeypatch,
+) -> None:
+    train_path = tmp_path / "train_new_hwc_mwc_lwc.csv"
+    test_path = tmp_path / "test_new_hwc_mwc_lwc.csv"
+    train_path.write_text("train-current", encoding="utf-8")
+    test_path.write_text("test-current", encoding="utf-8")
+    manifest_path = tmp_path / "trend_context_manifest.json"
+    manifest_path.write_text(
+        json.dumps({
+            "context_algorithm_version": pipeline._cfg.CONTEXT_ALGORITHM_VERSION,
+            "tapes": {
+                "train": {"sha256": "stale-train-hash"},
+                "test": {"sha256": "stale-test-hash"},
+            },
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(pipeline._cfg, "TRAIN_CSV_PATH", str(train_path))
+    monkeypatch.setattr(pipeline._cfg, "TEST_CSV_PATH", str(test_path))
+    monkeypatch.setattr(
+        pipeline._cfg,
+        "ENRICHED_MANIFEST_PATH",
+        str(manifest_path),
+    )
+
+    with pytest.raises(RuntimeError, match="does not match the hash"):
         _validate_enriched_context_contract()
 
 
@@ -447,9 +476,3 @@ def test_temporary_output_paths_rebind_and_restore(tmp_path) -> None:
         assert pipeline._cfg.REPORTS_DIR == str(tmp_path / "run" / "reports")
     assert pipeline._cfg.OUTPUTS_DIR == old_output
     assert pipeline._cfg.REPORTS_DIR == old_reports
-
-
-def test_pipeline_source_has_no_legacy_selection_or_risk_classes() -> None:
-    source = inspect.getsource(Pipeline_Orchestrator)
-    assert "Rule_Set_Selector" not in source
-    assert "WalkForwardRiskOptimizer" not in source

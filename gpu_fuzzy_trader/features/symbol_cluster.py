@@ -271,11 +271,3 @@ def persist_symbol_clusters(path: str, payload: dict[str, Any]) -> str:
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, indent=2)
     return path
-
-
-def load_symbol_clusters(path: str | None = None) -> dict[str, Any] | None:
-    p = path or SYMBOL_CLUSTERS_PATH
-    if not os.path.exists(p):
-        return None
-    with open(p, encoding="utf-8") as fh:
-        return json.load(fh)

@@ -41,7 +41,10 @@ Tuning cheat-sheet (symptom → knob)
                                    (must match evaluator_v5.ipynb)
   RB Governor too strict           RB_MIN_* ↓, RB_KEEP_TOP_RULES ↑
 
-Environment overrides: DATA_ROOT, TRAIN_CSV_PATH, TEST_CSV_PATH, FORWARD_CSV_PATH,
+Environment overrides: DATA_ROOT, RAW_TRAIN_CSV_PATH, RAW_TEST_CSV_PATH,
+                       ENRICHED_DIR, ENRICHED_TRAIN_PATH, ENRICHED_TEST_PATH,
+                       ENRICHED_MANIFEST_PATH, TRAIN_CSV_PATH, TEST_CSV_PATH,
+                       FORWARD_CSV_PATH,
                        PHASE2_GPU_BATCH_SIZE, PHASE2_GPU_BATCH_SIZE_AUTO
 """
 
@@ -105,23 +108,17 @@ def _env_str(name: str, default: str) -> str:
 # run_pipeline.py may rewrite OUTPUTS_DIR and Phase 2 pool paths per --output.
 
 DATA_ROOT = os.environ.get("DATA_ROOT", "").strip()
-# Market data files (only these CSVs):
-#   train_new.csv — OHLCV + ff_* features (Phase 1, Phase 2, RB Governor)
-#   test_new.csv  — consumed diagnostic OHLCV + ff_* holdout
-#   forward.csv   — optional untouched future tape used only for acceptance
-TRAIN_CSV_PATH = _env_str(
-    "TRAIN_CSV_PATH",
-    os.path.join(
-        DATA_ROOT, "train_new.csv") if DATA_ROOT else "data/train_new.csv",
+# Raw market data is the source for causal enrichment only.  The production
+# pipeline consumes the derived enriched tapes below, so a plain default run
+# cannot silently skip the mandatory HWC/MWC/LWC entry contract.
+RAW_TRAIN_CSV_PATH = _env_str(
+    "RAW_TRAIN_CSV_PATH",
+    os.path.join(DATA_ROOT, "train_new.csv") if DATA_ROOT else "data/train_new.csv",
 )
-TEST_CSV_PATH = _env_str(
-    "TEST_CSV_PATH",
+RAW_TEST_CSV_PATH = _env_str(
+    "RAW_TEST_CSV_PATH",
     os.path.join(DATA_ROOT, "test_new.csv") if DATA_ROOT else "data/test_new.csv",
 )
-# The checked-in test_new.csv is a consumed diagnostic holdout.  A strategy is
-# never marked deployment-accepted from it; provide a new, untouched future
-# file through FORWARD_CSV_PATH when a real acceptance check is available.
-FORWARD_CSV_PATH = os.environ.get("FORWARD_CSV_PATH", "").strip() or None
 
 # ---------------------------------------------------------------------------
 # Multi-timeframe trend-context enrichment outputs (HWC/MWC/LWC).
@@ -130,13 +127,33 @@ FORWARD_CSV_PATH = os.environ.get("FORWARD_CSV_PATH", "").strip() or None
 # overwritten; hashes of source, training-history, and enriched output are
 # recorded in the versioned enrichment manifest.
 # ---------------------------------------------------------------------------
-ENRICHED_DIR = os.path.join(DATA_ROOT, "enriched") if DATA_ROOT else "data/enriched"
-ENRICHED_TRAIN_PATH = os.path.join(ENRICHED_DIR, "train_new_hwc_mwc_lwc.csv")
-ENRICHED_TEST_PATH = os.path.join(ENRICHED_DIR, "test_new_hwc_mwc_lwc.csv")
-ENRICHED_FORWARD_PATH = os.path.join(ENRICHED_DIR, "forward_hwc_mwc_lwc.csv")
-ENRICHED_MANIFEST_PATH = os.path.join(ENRICHED_DIR, "trend_context_manifest.json")
-# Multiple research tapes may share one training-history prefix for warm-up.
-ENRICHED_HISTORY_PATH = os.path.join(ENRICHED_DIR, "history_prefix_hwc_mwc_lwc.csv")
+ENRICHED_DIR = _env_str(
+    "ENRICHED_DIR",
+    os.path.join(DATA_ROOT, "enriched") if DATA_ROOT else "data/enriched",
+)
+ENRICHED_TRAIN_PATH = _env_str(
+    "ENRICHED_TRAIN_PATH",
+    os.path.join(ENRICHED_DIR, "train_new_hwc_mwc_lwc.csv"),
+)
+ENRICHED_TEST_PATH = _env_str(
+    "ENRICHED_TEST_PATH",
+    os.path.join(ENRICHED_DIR, "test_new_hwc_mwc_lwc.csv"),
+)
+ENRICHED_MANIFEST_PATH = _env_str(
+    "ENRICHED_MANIFEST_PATH",
+    os.path.join(ENRICHED_DIR, "trend_context_manifest.json"),
+)
+
+# Production inputs.  Explicit TRAIN_CSV_PATH / TEST_CSV_PATH overrides are for
+# a controlled *enriched* pair and must be accompanied by its manifest override.
+# The normal path is always the causally enriched tape whose context contract is
+# checked by the orchestrator.
+TRAIN_CSV_PATH = _env_str("TRAIN_CSV_PATH", ENRICHED_TRAIN_PATH)
+TEST_CSV_PATH = _env_str("TEST_CSV_PATH", ENRICHED_TEST_PATH)
+# The checked-in test tape is a consumed diagnostic holdout.  A strategy is
+# never marked deployment-accepted from it; provide a new, untouched enriched
+# future tape through FORWARD_CSV_PATH when a real acceptance check is available.
+FORWARD_CSV_PATH = os.environ.get("FORWARD_CSV_PATH", "").strip() or None
 
 # Research-integrity artifacts.  The consumed test tape is never a selection
 # input; these files make dataset lineage and adaptive trial counts auditable.
@@ -445,8 +462,9 @@ CONTEXT_COLUMNS: tuple[str, ...] = (
     "lwc_pullback_reversal_long",
     "lwc_pullback_reversal_short",
 )
-# When True the loader rejects any input missing the full context contract
-# (fails closed).  Enriched research tapes are the standard pipeline inputs.
+# Generic loader callers may explicitly work with raw fixture data.  The
+# canonical Pipeline_Orchestrator always requests context and therefore fails
+# closed irrespective of this compatibility default.
 REQUIRE_CONTEXT_COLUMNS: bool = False
 # When True Output_Writer requires every rule to carry the two mandatory
 # direction-specific context conditions even for strategies that declare no
@@ -861,13 +879,14 @@ PHASE2_SUPPORT_PENALTY_WEIGHT_F2 = 0.6  # drawdown objective
 PHASE2_SUPPORT_PENALTY_WEIGHT_F3 = 0.6  # return / win-rate objective
 
 # PHASE2_USE_TOTAL_RETURN_OBJ — f3 uses robust return (min train, val) instead
-# of profit_factor or win rate.
+# of the configured profit-factor or win-rate objective.
 #   True  → f3 = -robust_return_pct (min of train/val return); aligns with OOS PnL.
 #   False → f3 uses PHASE2_F3_OBJECTIVE (profit_factor or win_rate).
 # With PHASE2_JOINT_TRAIN_VAL=False, "robust" return collapses to train-only and
 # f1 (Sortino) ≈ f3 (return) → objective_corr_f1_f3≈1.0 (Pareto collapse in run.log).
-# Use profit_factor for f3 so the front stays multi-objective.
-PHASE2_USE_TOTAL_RETURN_OBJ = True
+# Keep this False: the configured profit_factor f3 is materially different from
+# Sortino and preserves a useful third exploration axis.
+PHASE2_USE_TOTAL_RETURN_OBJ = False
 
 # --- Task 2: Return-concentration 4th NSGA objective -------------------------
 # PHASE2_F4_ENABLED — adds f4 = max_single_trade_pnl / max(sum_positive_trade_pnl, ε)
@@ -892,7 +911,6 @@ PHASE2_EXPECTANCY_LCB_WEIGHT = 8.0
 PHASE2_RANK_USE_LCB_EXPECTANCY: bool = True
 PHASE2_EXPECTED_SHORTFALL_Q: float = 0.10
 PHASE2_EXPECTED_SHORTFALL_WEIGHT: float = 1.5
-PHASE2_COST_STRESS_MULTIPLIERS: tuple[float, ...] = (1.0, 1.5)
 PHASE2_BEHAVIORAL_ARCHIVE_ENABLED: bool = True
 
 # PHASE2_F3_OBJECTIVE — third objective: "profit_factor" (default when
@@ -902,9 +920,8 @@ PHASE2_BEHAVIORAL_ARCHIVE_ENABLED: bool = True
 #   cv_fold_min  → f3 = -min(CV fold returns); requires CvFoldValEvaluator
 #                  which is too expensive for NSGA-III inner loop — disabled.
 #   win_rate     → f3 = -win_rate (degenerate, not recommended).
-# NOTE: PHASE2_USE_TOTAL_RETURN_OBJ=False by default, so f3 uses
-# PHASE2_F3_OBJECTIVE.  If explicitly enabled, robust_return_pct takes
-# precedence over PHASE2_F3_OBJECTIVE.
+# With the default PHASE2_USE_TOTAL_RETURN_OBJ=False, f3 uses this setting.
+# If total-return mode is explicitly enabled, robust_return_pct takes precedence.
 # CV-fold robustness is enforced at the pool-admission gate and RB Governor
 # scoring stages instead.
 PHASE2_F3_OBJECTIVE = "profit_factor"
@@ -918,8 +935,8 @@ PHASE2_MIN_PROFITABLE_SYMBOLS_PENALTY = 1
 
 # PHASE2_SYMBOL_GENE_DONT_CARE_PROB — probability of forcing a symbol gene to
 #   dont_care during mutation. Higher → more cross-symbol rules; prevents
-#   symbol-locked evolution. The current two-symbol default uses global Phase 2
-#   evolution, so prefer generalists; cluster users can lower this explicitly.
+#   symbol-locked evolution. Singleton specialist islands cap the effective
+#   symbol scope; generic global/cluster experiments can lower this explicitly.
 PHASE2_SYMBOL_GENE_DONT_CARE_PROB = 0.75
 
 # PHASE2_USE_ROBUST_RETURN_OBJ — store min(train_return, val_return) as
@@ -961,14 +978,9 @@ PHASE2_VAL_RETURN_FLOOR_PCT_SHORT = 0.25
 PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION = 1.0
 
 # PHASE2_PROFIT_FACTOR_FLOOR_ADMISSION — hard gate at pool admission.
-#   The original PHASE2_PROFIT_FACTOR_FLOOR=1.15; kept for the hard gate.
+#   This is intentionally stricter than the evolution floor.
 #   → fixes audit finding #9
 PHASE2_PROFIT_FACTOR_FLOOR_ADMISSION = 1.15
-
-# PHASE2_PROFIT_FACTOR_FLOOR — DEPRECATED alias for PHASE2_PROFIT_FACTOR_FLOOR_ADMISSION.
-#   Kept for backward compat; do not use in new code. Tracks ADMISSION automatically.
-#   → fixes audit finding #9: split into EVOLUTION (soft penalty) and ADMISSION (hard gate).
-PHASE2_PROFIT_FACTOR_FLOOR = PHASE2_PROFIT_FACTOR_FLOOR_ADMISSION
 
 # PHASE2_SYMBOL_MEDIAN_RETURN_FLOOR_PCT — min median return across symbols.
 #   Higher → rules must work on typical symbols, not one outlier.
@@ -1394,18 +1406,21 @@ PHASE2_DIVERSITY_RECOVERY_INJECT_FRACTION = 0.30
 #   Lower  → gentler nudge away from local niche.
 PHASE2_DIVERSITY_RECOVERY_MUTATION_BOOST = 1.75
 
-# --- Two-stage evolution: wide exploration → val-robust refinement ---
+# --- Two-stage evolution: wide exploration → lower-mutation refinement ---
+# With PHASE2_JOINT_TRAIN_VAL=False and PHASE2_VAL_IN_FITNESS_PENALTY=False,
+# both stages optimize train-space fitness. Validation is an admission screen,
+# not a Stage-B objective; do not describe this schedule as val refinement.
 
 PHASE2_TWO_STAGE_ENABLED = True
 
 # PHASE2_STAGE_A_GENERATIONS — Stage A (exploration) generation budget.
-#   Higher → more diverse initial Pareto before val-focused Stage B.
+#   Higher → more diverse initial Pareto before lower-mutation Stage B.
 #   Lower  → quicker handoff; Stage B may miss good regions.
 # Scaled to PHASE2_GENERATIONS=100 (A:B = 65:35).
 PHASE2_STAGE_A_GENERATIONS = 65
 
 # PHASE2_STAGE_B_GENERATIONS — Stage B (refinement) generation budget.
-#   Higher → more val-robust polishing; total time = A + B gens.
+#   Higher → more polishing after exploration; total time = A + B gens.
 #   Lower  → less refinement after exploration.
 # Matched to 100-gen budget (A:B = 65:35).
 PHASE2_STAGE_B_GENERATIONS = 35
@@ -1469,7 +1484,8 @@ PHASE2_STAGE_A_RETURN_FLOOR_PCT = 0.0
 # 15→8 — sparse context (permission∧trigger) needs a reachable exploration floor.
 PHASE2_STAGE_A_MIN_TRADE_SUPPORT = 8
 
-# PHASE2_STAGE_A_USE_ROBUST_RETURN_OBJ — Stage A f3 uses train return instead of min(train,val).
+# PHASE2_STAGE_A_USE_ROBUST_RETURN_OBJ — applies only when the optional
+# total-return f3 objective is enabled; the default profit-factor f3 ignores it.
 PHASE2_STAGE_A_USE_ROBUST_RETURN_OBJ = True
 
 # PHASE2_STAGE_A_SOFT_FEASIBILITY — Stage A uses soft penalties instead of hard infeasible block.
@@ -1565,9 +1581,10 @@ PHASE2_SEED: int = get_seed()
 # Phase 2 — Island / cluster mode (scoped evolution)
 # =============================================================================
 # When scoped-island mode is active, Phase 2 runs symbol or hybrid clusters.
-# Each island receives the configured generation budget and is processed
-# sequentially to keep GPU memory bounded. Global knobs below stay as universe
-# bases; runtime scaling uses resolve_island_hyperparams().
+# Islands are processed sequentially to keep GPU memory bounded. Their budget
+# is either a share of PHASE2_ISLAND_TOTAL_GENERATIONS (the production default)
+# or a full per-island budget when sharing is explicitly disabled. Global knobs
+# below stay as universe bases; runtime scaling uses resolve_island_hyperparams().
 
 # PHASE2_ISLAND_MODE — scoped evolution layout.
 #   "global"  → single universe-wide NSGA-III run (legacy/diagnostic mode).
@@ -1579,9 +1596,9 @@ PHASE2_ISLAND_MODE = "global"  # "global" | "cluster"
 # available for compatibility experiments and unit-sized runs.
 PHASE2_SYMBOL_SPECIALISTS_ENABLED: bool = True
 # PHASE2_ONE_SYMBOL_ISLANDS — when True, skip KMeans/corr clustering and give
-#   each symbol its own island. Generation budget is per-island full
-#   PHASE2_ISLAND_TOTAL_GENERATIONS for both one-symbol and multi-symbol
-#   cluster modes; each additional island increases total runtime.
+#   each symbol its own island. With the production shared-budget setting, the
+#   total generation budget is divided across those islands; disabling sharing
+#   instead gives every island the full configured budget.
 # For the current two-symbol dataset, cluster mode with K>1 creates singleton
 # islands and is therefore not the default. Keep this switch available for
 # larger universes where per-symbol exploration is intentional.
@@ -1595,16 +1612,17 @@ PHASE2_N_CLUSTERS = 1
 #   groups symbols with similar return patterns.  Set False for legacy
 #   feature-mean-only clustering.
 #   Default True (feasible-search item 3): islands should group co-movers.
-# Unused when PHASE2_ONE_SYMBOL_ISLANDS=True.
+# Unused while the production specialist switch or PHASE2_ONE_SYMBOL_ISLANDS
+# skips generic clustering.
 PHASE2_CLUSTER_USE_RETURN_CORR = True
 # PHASE2_CLUSTER_FEATURE_WEIGHT / CORR_WEIGHT — blend weights for the
 #   feature-mean block and the return-correlation embedding.  Normalised to
 #   sum=1 internally.  Corr-heavy so co-movement dominates; features break ties.
 PHASE2_CLUSTER_FEATURE_WEIGHT = 0.3
 PHASE2_CLUSTER_CORR_WEIGHT = 0.7
-# PHASE2_ISLAND_TOTAL_GENERATIONS — full generation budget for each active
-#   cluster island. The scheduler processes islands sequentially; it does not
-#   divide this budget across clusters.
+# PHASE2_ISLAND_TOTAL_GENERATIONS — total scoped-island generation budget.
+#   PHASE2_SHARED_ISLAND_GENERATION_BUDGET=True divides it across active
+#   islands; False gives every island this full amount.
 PHASE2_ISLAND_TOTAL_GENERATIONS = PHASE2_GENERATIONS
 # Share the configured total across active islands for cooperative searches.
 # The legacy budget helper remains available to compatibility tests, while the
@@ -1618,7 +1636,7 @@ PHASE2_ISLAND_EPOCH_GENERATIONS = 10
 # than this threshold (engine rebuild ~30s with negligible benefit for <5 gens).
 PHASE2_ISLAND_MIN_EPOCH_GENERATIONS = 4
 # Island overrides — two-stage exploration then refinement in cluster mode.
-# Stage A soft floors (RETURN_FLOOR_PCT=0, SOFT_FEASIBILITY, support=15) apply
+# Stage A soft floors (RETURN_FLOOR_PCT=0, SOFT_FEASIBILITY, support=8) apply
 # when PHASE2_ISLAND_TWO_STAGE_ENABLED=True; Stage B uses global floors.
 PHASE2_ISLAND_TWO_STAGE_ENABLED = True
 PHASE2_ISLAND_EARLY_STOP_ENABLED = False
@@ -1630,14 +1648,20 @@ PHASE2_ISLAND_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO: bool = False
 PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE: int = 5
 # PHASE2_ISLAND_SCALE_TRADE_FLOORS — scale support floors to island row count.
 PHASE2_ISLAND_SCALE_TRADE_FLOORS = True
-# 8→5 — reachable pool floor under sparse permission∧trigger coverage.
-PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN = 5
+# Multi-symbol islands need enough completed trades to distinguish a real edge
+# from a single-symbol coincidence.  Singleton specialists use their own cap
+# below, so do not lower this shared floor for every cluster.
+PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN = 8
 # Cap singleton-island support so Stage A can explore before features thin
 # the already-sparse context mask further (was scaling to ~30 on 29.6k rows).
 PHASE2_SPARSE_ISLAND_MAX_TRADE_SUPPORT: int = 12
+# A singleton specialist may use a smaller pool floor than a multi-symbol
+# cluster, but that relaxation must not leak into clustered exploration.
+PHASE2_SPARSE_ISLAND_MAX_TRADE_POOL_FLOOR: int = 5
 PHASE2_SPARSE_ISLAND_MAX_VAL_TRADE_FLOOR: int = 5
-# Abort remaining island Stage A epochs after an epoch ends with deployable=0
-# and viability-collapse restarts already exhausted.
+# Abort an island epoch only after its internal viability-collapse restarts are
+# exhausted. The evolution runner owns those counters; the scheduler must not
+# preemptively discard a remaining Stage A/B budget after one empty epoch.
 PHASE2_ABORT_ZERO_DEPLOYABLE_EPOCHS: bool = True
 # When True (default), a specialist/cluster island that cannot meet context
 # trade floors is skipped instead of blocking the whole direction, as long as
@@ -1647,8 +1671,8 @@ PHASE2_SKIP_CONTEXT_STARVED_ISLANDS: bool = True
 # The two-window holdout geometry is the minimum evidence available by default.
 PHASE2_ISLAND_MONTHLY_MIN_MONTHS = 2
 # Migration — optional exchange of top elites between sequential cluster
-# islands. Production symbol-specialist mode disables this to keep discovery
-# islands independent; retain the knobs for controlled migration experiments.
+# islands. The default specialist profile uses recipient-validated exchange;
+# set PHASE2_MIGRATION_ENABLED=False for a strictly independent-island ablation.
 # PHASE2_MIGRATION_ENABLED — master switch for inter-island elite exchange.
 PHASE2_MIGRATION_ENABLED: bool = True
 PHASE2_MIGRATION_TOP_K = 5
@@ -1985,7 +2009,6 @@ RB_MIN_SL: float = 1.0
 # False means RB may size capital but cannot silently rewrite TP/SL discovered
 # by Phase 2. An exit experiment must create a new strategy family.
 RB_RISK_OPTIMIZE_EXITS: bool = False
-RB_EXPECTANCY_LCB_Z: float = 1.645
 RB_EXPECTANCY_LCB_MARGIN_PCT: float = 0.0
 RB_COST_STRESS_MULTIPLIERS: tuple[float, ...] = (1.0, 1.5)
 RB_COST_STRESS_ENABLED: bool = True
@@ -2314,16 +2337,6 @@ def phase2_should_enrich_symbol_metrics(
     return True
 
 
-def phase2_cluster_archive_path(direction: str, cluster_id: str) -> str:
-    """Persistent archive for one cluster island."""
-    return os.path.join(
-        PHASE2_ARCHIVE_DIR,
-        direction,
-        f"cluster_{cluster_id}",
-        "archive.json",
-    )
-
-
 def phase2_shared_archive_path(direction: str) -> str:
     """Cross-cluster shared archive for migration warm-start."""
     return os.path.join(PHASE2_ARCHIVE_DIR, direction, "shared_archive.json")
@@ -2339,12 +2352,6 @@ def set_purged_wf_reference_rows(n_rows: int) -> None:
     """Store full train_new.csv row count after loader prep (split time)."""
     global _PURGED_WF_REFERENCE_ROWS
     _PURGED_WF_REFERENCE_ROWS = max(0, int(n_rows))
-
-
-
-def get_purged_wf_reference_rows() -> int | None:
-    """Return reference row count for trade-floor scaling, if set."""
-    return _PURGED_WF_REFERENCE_ROWS
 
 
 
@@ -2381,14 +2388,6 @@ def effective_min_trade_support(n_rows: int | None = None) -> int:
 
 def effective_min_trade_pool_floor(n_rows: int | None = None) -> int:
     base = int(MIN_TRADE_POOL_FLOOR)
-    if n_rows is None:
-        return base
-    return scale_trade_floor(base, n_rows)
-
-
-
-def effective_sortino_min_trade_threshold(n_rows: int | None = None) -> int:
-    base = int(PHASE2_SORTINO_MIN_TRADE_THRESHOLD)
     if n_rows is None:
         return base
     return scale_trade_floor(base, n_rows)
@@ -2514,7 +2513,7 @@ def resolve_island_hyperparams(
         )
         pool_floor = min(
             int(pool_floor),
-            int(PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN),
+            int(PHASE2_SPARSE_ISLAND_MAX_TRADE_POOL_FLOOR),
         )
         val_floor = min(
             int(val_floor),
@@ -2890,6 +2889,11 @@ def validate_config(
     _config_check(int(PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN) >= 1,
                   "PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN must be positive")
     _config_check(
+        1 <= int(PHASE2_SPARSE_ISLAND_MAX_TRADE_POOL_FLOOR)
+        <= int(PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN),
+        "PHASE2_SPARSE_ISLAND_MAX_TRADE_POOL_FLOOR must be in [1, island floor]",
+    )
+    _config_check(
         int(PHASE2_MONTHLY_ADMISSION_MIN_MONTHS) >= 2,
         "PHASE2_MONTHLY_ADMISSION_MIN_MONTHS must support the two-window holdout",
     )
@@ -2991,8 +2995,6 @@ def validate_config(
                   "RB_RISK_MIN_IMPROVEMENT must be non-negative")
     _config_check(int(RB_RISK_GRID_WF_SPLITS) >= 1,
                   "RB_RISK_GRID_WF_SPLITS must be >= 1")
-    _config_check(float(RB_EXPECTANCY_LCB_Z) > 0.0,
-                  "RB_EXPECTANCY_LCB_Z must be positive")
     _config_check(float(RB_EXPECTANCY_LCB_MARGIN_PCT) >= -100.0,
                   "RB_EXPECTANCY_LCB_MARGIN_PCT is invalid")
     _config_check(
@@ -3113,6 +3115,41 @@ def effective_config_snapshot(
         effective_cluster_count = min(effective_cluster_count, active_symbol_count)
     effective_rb_symbol_floor = effective_rb_min_distinct_symbols(active_symbol_count)
     min_capital = min(float(value) for value in RB_CAPITAL_GRID)
+    if specialist_mode and active_symbol_count is None:
+        effective_island_budgets: list[int] | None = None
+        effective_island_stage_budgets: list[dict[str, int]] | None = None
+    else:
+        island_count = max(1, int(effective_cluster_count))
+        island_total = int(PHASE2_ISLAND_TOTAL_GENERATIONS)
+        if bool(PHASE2_SHARED_ISLAND_GENERATION_BUDGET):
+            base, remainder = divmod(island_total, island_count)
+            effective_island_budgets = [
+                max(1, base + (1 if index < remainder else 0))
+                for index in range(island_count)
+            ]
+        else:
+            effective_island_budgets = [island_total] * island_count
+
+        if island_two_stage_enabled():
+            stage_total = int(PHASE2_STAGE_A_GENERATIONS) + int(
+                PHASE2_STAGE_B_GENERATIONS
+            )
+            effective_island_stage_budgets = []
+            for budget in effective_island_budgets:
+                stage_a = max(
+                    1,
+                    int(round(budget * int(PHASE2_STAGE_A_GENERATIONS) / stage_total)),
+                )
+                effective_island_stage_budgets.append({
+                    "total": int(budget),
+                    "stage_a": stage_a,
+                    "stage_b": int(budget - stage_a),
+                })
+        else:
+            effective_island_stage_budgets = [
+                {"total": int(budget), "stage_a": int(budget), "stage_b": 0}
+                for budget in effective_island_budgets
+            ]
     return {
         "active_universe": {
             "n_rows": int(n_rows) if n_rows is not None else None,
@@ -3154,10 +3191,21 @@ def effective_config_snapshot(
             "generations": int(PHASE2_GENERATIONS),
             "stage_a_generations": int(PHASE2_STAGE_A_GENERATIONS),
             "stage_b_generations": int(PHASE2_STAGE_B_GENERATIONS),
+            "two_stage_enabled": bool(PHASE2_TWO_STAGE_ENABLED),
+            "island_two_stage_enabled": bool(island_two_stage_enabled()),
             "sampling_total": int(PHASE1_SAMPLING_TOTAL),
             "estimated_effective_rows": estimated_rows,
             "min_trade_support": int(MIN_TRADE_SUPPORT),
             "min_trade_pool_floor": int(MIN_TRADE_POOL_FLOOR),
+            "joint_train_val": bool(PHASE2_JOINT_TRAIN_VAL),
+            "val_in_fitness_penalty": bool(PHASE2_VAL_IN_FITNESS_PENALTY),
+            "use_total_return_objective": bool(PHASE2_USE_TOTAL_RETURN_OBJ),
+            "f3_objective": str(PHASE2_F3_OBJECTIVE),
+            "effective_f3_objective": (
+                "total_return"
+                if bool(PHASE2_USE_TOTAL_RETURN_OBJ)
+                else str(PHASE2_F3_OBJECTIVE)
+            ),
             "island_mode": str(PHASE2_ISLAND_MODE),
             "symbol_specialists_enabled": bool(
                 globals().get("PHASE2_SYMBOL_SPECIALISTS_ENABLED", False)
@@ -3181,13 +3229,26 @@ def effective_config_snapshot(
             ),
             "configured_n_clusters": configured_cluster_count,
             "effective_n_clusters": effective_cluster_count,
+            "effective_island_generation_budgets": effective_island_budgets,
+            "effective_island_stage_budgets": effective_island_stage_budgets,
             "effective_min_profitable_symbols": effective_min_profitable_symbols(n_symbols),
             "min_profitable_symbols_required": int(PHASE2_MIN_PROFITABLE_SYMBOLS),
             "symbol_gene_dont_care_prob": float(PHASE2_SYMBOL_GENE_DONT_CARE_PROB),
-            "val_in_fitness_penalty": bool(PHASE2_VAL_IN_FITNESS_PENALTY),
+            "island_plateau_early_stop_enabled": bool(
+                PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED
+            ),
+            "abort_zero_deployable_epochs": bool(
+                PHASE2_ABORT_ZERO_DEPLOYABLE_EPOCHS
+            ),
             "expectancy_lcb_z": float(PHASE2_EXPECTANCY_LCB_Z),
             "expected_shortfall_q": float(PHASE2_EXPECTED_SHORTFALL_Q),
+            "phase1_disabled": bool(PHASE1_DISABLED),
             "phase1_symbol_union": bool(PHASE1_SYMBOL_UNION_ENABLED),
+            "effective_phase1_symbol_union": bool(
+                not PHASE1_DISABLED
+                and PHASE1_SYMBOL_UNION_ENABLED
+                and specialist_mode
+            ),
             "phase1_symbol_top_k": int(PHASE1_SYMBOL_TOP_K),
             "island_monthly_min_months": int(PHASE2_ISLAND_MONTHLY_MIN_MONTHS),
             "monthly_min_trades": int(PHASE2_MONTHLY_MIN_TRADES),

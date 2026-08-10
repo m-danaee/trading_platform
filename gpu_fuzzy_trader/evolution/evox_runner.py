@@ -2684,13 +2684,9 @@ def _run_nsga2_fallback(
         )
         off_obj = np.full((pop_size, N_OBJ), np.inf)
         off_metrics: list[dict] = [{} for _ in range(pop_size)]
-        # Batched offspring eval: a single simulate_rule_batch over all
-        # pop_size offspring (vs pop_size batch=1 dispatches). Reuses the same
-        # helper as the initial-population eval path. NOTE: this path does not
-        # compute CV fold returns; with PHASE2_F3_OBJECTIVE="profit_factor"
-        # (active config) this matches the existing initial-pop behaviour.
-        # cv_fold_min would need separate batched CV handling (pre-existing
-        # limitation).
+        # Batched offspring evaluation uses the same helper as the initial
+        # population. Pass the CV evaluator too so cv_fold_min never changes
+        # objective semantics midway through a NumPy-fallback run.
         _evaluate_population_indices(
             offspring,
             list(range(pop_size)),
@@ -2707,6 +2703,7 @@ def _run_nsga2_fallback(
             ),
             generation=gen + 1,
             is_last_gen=gen + 1 == n_generations - 1,
+            cv_fold_evaluator=cv_fold_evaluator,
         )
 
         merge_pop = np.vstack([population, offspring])
@@ -3204,13 +3201,9 @@ def _run_nsga3(
             )
             off_obj = np.full((pop_size, N_OBJ), np.inf)
             off_metrics: list[dict] = [{} for _ in range(pop_size)]
-            # Batched offspring eval: a single simulate_rule_batch over all
-            # pop_size offspring (vs pop_size batch=1 dispatches). Reuses the
-            # same helper as the initial-population eval path. NOTE: this path
-            # does not compute CV fold returns; with
-            # PHASE2_F3_OBJECTIVE="profit_factor" (active config) this matches
-            # the existing initial-pop behaviour. cv_fold_min would need
-            # separate batched CV handling (pre-existing limitation).
+            # Batched offspring evaluation uses the same helper as the initial
+            # population, including CV-return attachment when cv_fold_min is
+            # explicitly selected.
             off_stats = _evaluate_population_indices(
                 offspring,
                 list(range(pop_size)),

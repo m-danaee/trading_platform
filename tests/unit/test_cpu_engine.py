@@ -72,6 +72,29 @@ def _make_engine(df: pd.DataFrame, direction: str = "long", **kw) -> CPUBacktest
     return CPUBacktestEngine(df, feature_modes={}, direction=direction, **kw)
 
 
+def test_rule_set_batch_avoids_process_fork_when_jax_is_loaded(monkeypatch) -> None:
+    import gpu_fuzzy_trader.backtest.cpu_engine as cpu_module
+
+    engine = _make_engine(_make_df(n=4))
+    rule = {
+        "conditions": ["[feat_a] IS Very High"],
+        "tp": 4.0,
+        "sl": 2.0,
+        "capital_pct": 10.0,
+    }
+
+    class ForbiddenProcessPool:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("JAX-loaded batch evaluation must not fork")
+
+    monkeypatch.setattr(cpu_module, "_jax_runtime_loaded", lambda: True)
+    monkeypatch.setattr(cpu_module, "ProcessPoolExecutor", ForbiddenProcessPool)
+
+    result = engine.simulate_rule_set_batch([[rule], [rule]], max_workers=2)
+
+    assert len(result) == 2
+
+
 class TestContextEntryPaths:
     @staticmethod
     def _context_df() -> pd.DataFrame:

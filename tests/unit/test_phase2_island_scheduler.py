@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import logging
+from types import SimpleNamespace
 
+import pandas as pd
 import pytest
 
 from gpu_fuzzy_trader import config as cfg
@@ -84,69 +85,68 @@ class TestMinEpochGuard:
         """Verify _should_skip_epoch returns correct value."""
         assert _should_skip_epoch(remaining) is expected
 
-    def test_skip_epoch_logs_and_marks_done(self, monkeypatch):
-        """Integration test: when _should_skip_epoch returns True, the
-        _run_cluster_islands loop skips run_epoch and marks the generator done.
+def test_empty_epoch_does_not_discard_remaining_island_budget(monkeypatch):
+    """Only the evolution runner may abort after its guarded collapse logic."""
+    import gpu_fuzzy_trader.evolution.evox_runner as evox_runner
+    import gpu_fuzzy_trader.phases.phase2_island_scheduler as scheduler
+    import gpu_fuzzy_trader._gpu_runtime as gpu_runtime
 
-        This test patches _run_cluster_islands' internal loop logic to
-        verify the guard path fires correctly with production code."""
-        from gpu_fuzzy_trader.phases.phase2_island_scheduler import _run_cluster_islands
-        import inspect
+    epoch_calls: list[int] = []
 
-        source = inspect.getsource(_run_cluster_islands)
-        # Ensure the guard uses the config-based helper
-        assert "_should_skip_epoch(remaining)" in source
-        assert "PHASE2_ISLAND_MIN_EPOCH_GENERATIONS" in source
-        assert "gen._island_generations_done = gens_per_cluster" in source
+    class FakeGenerator:
+        def __init__(self, *args, n_generations, **kwargs):
+            self._island_generations_done = 0
+            self.n_generations = n_generations
+            self._engine = None
+            self._val_engine = None
+            self._evolution_state = SimpleNamespace(
+                deployable_archive={}, global_metrics_cache={},
+            )
 
+        def run_epoch(self, n_generations):
+            epoch_calls.append(n_generations)
+            self._island_generations_done += n_generations
 
-class _MockGenerator:
-    """Minimal mock for Rule_Pool_Generator used in epoch guard tests."""
+        def resample_train_for_epoch(self, _round):
+            return None
 
-    def __init__(self, gens_done: int):
-        self._island_generations_done = gens_done
-        self.run_epoch_called = False
-        self.park_engines_called = False
+        def park_engines(self):
+            return None
 
-    def run_epoch(self, n_generations: int) -> None:
-        self.run_epoch_called = True
-        self._island_generations_done += n_generations
+        def finalize_island(self):
+            return []
 
-    def park_engines(self) -> None:
-        self.park_engines_called = True
+        @staticmethod
+        def _annotate_archive_entries(entries, **kwargs):
+            return entries
 
+    monkeypatch.setattr(scheduler, "Rule_Pool_Generator", FakeGenerator)
+    monkeypatch.setattr(scheduler, "sample_df_for_phase2", lambda df, **kwargs: df)
+    monkeypatch.setattr(gpu_runtime, "warmup_phase2_gpu_kernels", lambda *args, **kwargs: None)
+    monkeypatch.setattr(gpu_runtime, "evict_cluster_signatures", lambda **kwargs: 0)
+    monkeypatch.setattr(evox_runner, "clear_global_metrics_cache", lambda cache: None)
+    monkeypatch.setattr(cfg, "PHASE2_ISLAND_TOTAL_GENERATIONS", 12)
+    monkeypatch.setattr(cfg, "PHASE2_ISLAND_EPOCH_GENERATIONS", 6)
+    monkeypatch.setattr(cfg, "PHASE2_ISLAND_MIN_EPOCH_GENERATIONS", 1)
+    monkeypatch.setattr(cfg, "PHASE2_MIGRATION_ENABLED", False)
+    monkeypatch.setattr(cfg, "PHASE2_ABORT_ZERO_DEPLOYABLE_EPOCHS", True)
 
-class TestMinEpochGuardWithMocks:
-    """Test the epoch guard loop logic using mocked generators."""
+    frame = pd.DataFrame({
+        "datetime": pd.date_range("2024-01-01", periods=12, freq="15min"),
+        "symbol": ["A"] * 12,
+    })
+    scheduler._run_cluster_islands(
+        frame,
+        frame,
+        feature_infos=[],
+        direction="long",
+        cluster_map={"0": ["A"]},
+        reference_rows=len(frame),
+        seed=7,
+        cv_folds=None,
+    )
 
-    def test_skip_epoch_when_remaining_below_threshold(self, monkeypatch, caplog):
-        """The guard fires when remaining < PHASE2_ISLAND_MIN_EPOCH_GENERATIONS.
-        The generator is marked done and run_epoch is never called."""
-        monkeypatch.setattr(cfg, "PHASE2_ISLAND_MIN_EPOCH_GENERATIONS", 5)
-        gens_per_cluster = 10
-
-        gen = _MockGenerator(gens_done=8)  # remaining = 2
-        assert _should_skip_epoch(gens_per_cluster - gen._island_generations_done)
-
-        # Simulate the guard path from _run_cluster_islands
-        with caplog.at_level(logging.INFO):
-            gen._island_generations_done = gens_per_cluster
-
-        assert gen._island_generations_done == gens_per_cluster
-        assert not gen.run_epoch_called
-
-    def test_do_not_skip_epoch_when_remaining_meets_threshold(self):
-        """The guard does NOT fire when remaining >= PHASE2_ISLAND_MIN_EPOCH_GENERATIONS."""
-        gens_per_cluster = 10
-
-        gen = _MockGenerator(gens_done=3)  # remaining = 7
-        assert not _should_skip_epoch(gens_per_cluster - gen._island_generations_done)
-
-        # Normal path: run_epoch is called
-        epoch_gens = min(5, gens_per_cluster - gen._island_generations_done)
-        gen.run_epoch(n_generations=epoch_gens)
-        assert gen.run_epoch_called
-        assert gen._island_generations_done == 8
+    assert epoch_calls == [6, 6]
 
 
 # ============================================================================
@@ -188,52 +188,6 @@ class TestSeedDirectionUniqueness:
         """base_seed=None should return None regardless of island_id."""
         assert _derive_island_seed(None, "long_0") is None
         assert _derive_island_seed(None, "short_0") is None
-
-
-# ============================================================================
-# Regression: _should_migrate_this_round was removed (task-9, audit fix #6)
-# ============================================================================
-
-
-def test_should_migrate_this_round_removed():
-    """The dead migration helper _should_migrate_this_round has been deleted.
-    Verify it is no longer importable."""
-    with pytest.raises(ImportError):
-        from gpu_fuzzy_trader.phases.phase2_island_scheduler import (  # type: ignore[import-unused]
-            _should_migrate_this_round,
-        )
-
-
-# ============================================================================
-# n_clusters NameError regression guard (spec review Item 7 fix)
-# ============================================================================
-
-
-class TestNClustersDefined:
-    """AC: n_clusters is assigned inside _run_cluster_islands so the migration
-    guard condition 'and n_clusters > 1' does not raise NameError."""
-
-    def test_n_clusters_assigned_in_function(self):
-        """n_clusters must be assigned in _run_cluster_islands
-        for the migration guard at line ~468 to work."""
-        from gpu_fuzzy_trader.phases.phase2_island_scheduler import _run_cluster_islands
-        import inspect
-
-        source = inspect.getsource(_run_cluster_islands)
-        assert "n_clusters = len(cluster_ids)" in source, (
-            "n_clusters must be assigned in _run_cluster_islands "
-            "for the migration guard to work"
-        )
-
-    def test_n_clusters_referenced_in_migration_guard(self):
-        """The migration guard must reference n_clusters."""
-        from gpu_fuzzy_trader.phases.phase2_island_scheduler import _run_cluster_islands
-        import inspect
-
-        source = inspect.getsource(_run_cluster_islands)
-        assert "n_clusters > 1" in source, (
-            "Migration guard must reference n_clusters > 1"
-        )
 
 
 # ============================================================================

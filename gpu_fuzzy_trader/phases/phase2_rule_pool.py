@@ -931,10 +931,9 @@ def compute_phase2_objectives_from_metrics(
                 else:
                     f3_val = min(win_rate, val_wr)
 
-    # PHASE2_USE_TOTAL_RETURN_OBJ=True (default): f3 uses robust return
-    # (min train/val return) — overrides the PHASE2_F3_OBJECTIVE setting.
-    # Set USE_TOTAL_RETURN_OBJ=False to opt into the legacy
-    # profit_factor / cv_fold_min / win_rate path.
+    # PHASE2_USE_TOTAL_RETURN_OBJ=True: f3 uses robust return (min train/val
+    # return) and overrides PHASE2_F3_OBJECTIVE. The default keeps the
+    # profit_factor / cv_fold_min / win_rate path so f3 is distinct from f1.
     # (fixes audit finding #5)
     if _cfg.PHASE2_USE_TOTAL_RETURN_OBJ:
         joint_return = (
@@ -960,15 +959,16 @@ def compute_phase2_objectives_from_metrics(
             merged_refs.append(ref)
         diversity_refs = merged_refs
     diversity_hamming_threshold: int
-    if bool(getattr(_cfg, "PHASE2_DIVERSITY_HAMMING_THRESHOLD_AUTO", True)):
+    # A stage profile is an explicit search-policy override.  Its tighter
+    # Stage-B threshold must not be hidden by the global single-stage auto
+    # heuristic, otherwise refinement keeps the exploration threshold.
+    if stage_params is not None:
+        diversity_hamming_threshold = int(stage_params.diversity_hamming_threshold)
+    elif bool(getattr(_cfg, "PHASE2_DIVERSITY_HAMMING_THRESHOLD_AUTO", True)):
         k_active = _count_active_conditions(chromosome, dont_cares)
         diversity_hamming_threshold = max(3, k_active // 5)
     else:
-        diversity_hamming_threshold = (
-            int(stage_params.diversity_hamming_threshold)
-            if stage_params is not None
-            else int(_cfg.PHASE2_DIVERSITY_HAMMING_THRESHOLD)
-        )
+        diversity_hamming_threshold = int(_cfg.PHASE2_DIVERSITY_HAMMING_THRESHOLD)
     diversity_penalty_weight = (
         float(stage_params.diversity_penalty)
         if stage_params is not None
@@ -1104,7 +1104,9 @@ def compute_phase2_objectives_from_metrics(
             max_tr_v = float(val_metrics.get("max_single_trade_pnl", 0.0))
             sum_pos_v = float(val_metrics.get("sum_positive_trade_pnl", 0.0))
             f4_v = max_tr_v / max(sum_pos_v, _f4_eps)
-            f4_concentration = min(f4_concentration, f4_v)
+            # Concentration is a loss objective: a rule is only robust when
+            # both splits avoid an outlier-driven edge.
+            f4_concentration = max(f4_concentration, f4_v)
 
         if executed < trade_floor:
             # A low-support rule is not concentration-safe.  Zero used to

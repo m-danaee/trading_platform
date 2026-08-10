@@ -21,6 +21,13 @@ def test_default_config_snapshot_is_valid_and_reports_effective_budgets() -> Non
     assert snapshot["phase2"]["effective_min_profitable_symbols"] == 2
     assert snapshot["phase2"]["island_mode"] == cfg.PHASE2_ISLAND_MODE
     assert snapshot["phase2"]["effective_n_clusters"] == 4
+    assert snapshot["phase2"]["effective_f3_objective"] == "profit_factor"
+    assert snapshot["phase2"]["joint_train_val"] is False
+    assert snapshot["phase2"]["island_two_stage_enabled"] is True
+    assert snapshot["phase2"]["phase1_disabled"] is True
+    assert snapshot["phase2"]["effective_phase1_symbol_union"] is False
+    assert sum(snapshot["phase2"]["effective_island_generation_budgets"]) == 100
+    assert len(snapshot["phase2"]["effective_island_stage_budgets"]) == 4
     assert snapshot["gates"]["rb_min_valid_trades"] <= snapshot["gates"]["rb_ruleset_min_valid_trades"]
 
 

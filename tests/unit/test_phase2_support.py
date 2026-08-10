@@ -293,7 +293,7 @@ class TestDeployabilityHelpersTail:
         monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 1)
         monkeypatch.setattr(_cfg, "PHASE2_RETURN_FLOOR_PCT", -100.0)
         monkeypatch.setattr(_cfg, "PHASE2_VAL_RETURN_FLOOR_PCT", -100.0)
-        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR", 0.0)
+        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION", 0.0)
         monkeypatch.setattr(_cfg, "PHASE2_MAX_TRAIN_VAL_GAP_PCT", 16.0)
 
         train = {
@@ -610,14 +610,14 @@ class TestFeasibilityGateFailures:
         assert result["overfit_ratio"] == 0
         assert len(result) == 11
 
-    def test_f4_gate_uses_joint_min_when_joint_train_val_enabled(
+    def test_f4_gate_uses_joint_worst_split_when_joint_train_val_enabled(
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """When PHASE2_JOINT_TRAIN_VAL=True, the f4 gate must use
-        min(train_f4, val_f4) — matching the objective computation exactly.
+        max(train_f4, val_f4), because concentration is a loss metric.
 
         Train f4 is high (0.9 > 0.5 floor), but val f4 is low (0.2).
-        Without joint-min the gate would reject; with joint-min it passes.
+        The rule must be rejected because either split can be outlier-driven.
         """
         monkeypatch.setattr(_cfg, "PHASE2_F4_ENABLED", True)
         monkeypatch.setattr(_cfg, "PHASE2_JOINT_TRAIN_VAL", True)
@@ -640,12 +640,10 @@ class TestFeasibilityGateFailures:
             "sum_positive_trade_pnl": 50.0,  # f4 = 0.2
         }
         result = _feasibility_gate_failures(train, val)
-        # Train-only f4 would be 0.9 > 0.5 → gate would fail.
-        # Joint min(train=0.9, val=0.2) = 0.2 ≤ 0.5 → gate passes.
-        assert result["f4_concentration"] == 0, (
-            f"Expected f4 gate to pass (joint min=0.2 ≤ 0.5), "
-            f"but got f4_concentration={result['f4_concentration']}"
-        )
+        # Joint max(train=0.9, val=0.2) = 0.9 > 0.5 → both evolution
+        # diagnostics and the hard pool gate must reject it.
+        assert result["f4_concentration"] == 1
+        assert passes_pool_admission_gate(train, val) is False
 
     def test_overfit_ratio_fires_when_high_ratio(
         self, monkeypatch: pytest.MonkeyPatch,

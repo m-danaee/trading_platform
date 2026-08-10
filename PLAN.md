@@ -80,9 +80,9 @@ Noisy:
 
 Initial train-only pooled thresholds:
 
-- Absolute efficiency trend threshold: 60th percentile.
-- Absolute normalized EMA spread threshold: 60th percentile.
-- Realized-volatility compression threshold: 40th percentile.
+- Absolute efficiency trend threshold: 55th percentile.
+- Absolute normalized EMA spread threshold: 55th percentile.
+- Realized-volatility compression threshold: 45th percentile.
 - Common initial structural lookback: 20 bars per cycle.
 - LWC pullback lookback: 24 completed 15m states.
 - Warm-up or unavailable context is Noisy, never Range.

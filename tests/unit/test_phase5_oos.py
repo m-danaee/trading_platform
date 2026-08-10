@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import contextmanager
 from unittest.mock import patch
 
 import numpy as np
@@ -772,16 +773,39 @@ class TestSavePerSymbolCsv:
 # Tests: OOS_Evaluator.run() — integration
 # ---------------------------------------------------------------------------
 
-def _write_synthetic_test_csv(tmp_path: "Path", n_rows: int = 600) -> str:
+def _write_synthetic_test_csv(
+    tmp_path: "Path",
+    n_rows: int = 600,
+    *,
+    filename: str = "synthetic_test.csv",
+) -> str:
     """
     Write a synthetic test CSV with all required columns (including feat_0..4)
     to a temp file and return its path.  n_rows must be > 288 per symbol so
     the tail-drop leaves data to evaluate.
     """
     df = _make_df(n_rows=n_rows, symbols=["SYM_A", "SYM_B"])
-    csv_path = str(tmp_path / "synthetic_test.csv")
+    csv_path = str(tmp_path / filename)
     df.to_csv(csv_path, index=False)
     return csv_path
+
+
+@contextmanager
+def _temporary_oos_train_input(tmp_path: "Path"):
+    """Give integration tests an isolated, valid enriched train/split pair."""
+    from tests.unit.test_data_splitter import _patch_split_paths
+
+    train_csv = _write_synthetic_test_csv(
+        tmp_path,
+        n_rows=1200,
+        filename="synthetic_train.csv",
+    )
+    split_dir = tmp_path / "split_cache"
+    split_dir.mkdir(exist_ok=True)
+    with _patch_split_paths(str(split_dir))(), patch.object(
+        _cfg, "TRAIN_CSV_PATH", train_csv,
+    ):
+        yield train_csv
 
 
 class TestOOSEvaluatorRun:
@@ -827,8 +851,9 @@ class TestOOSEvaluatorRun:
         csv_path = _write_synthetic_test_csv(tmp_path)
 
         try:
-            ev = OOS_Evaluator(test_csv_path=csv_path)
-            result = ev.run()
+            with _temporary_oos_train_input(tmp_path):
+                ev = OOS_Evaluator(test_csv_path=csv_path)
+                result = ev.run()
         finally:
             m._STRATEGY_PATHS.update(orig_strategy)
             m._REPORT_PATHS.update(orig_report)
@@ -876,8 +901,9 @@ class TestOOSEvaluatorRun:
         orig_s, orig_r = self._setup_paths(m, tmp_path, directions=())
         csv_path = _write_synthetic_test_csv(tmp_path)
         try:
-            ev = OOS_Evaluator(test_csv_path=csv_path)
-            result = ev.run()
+            with _temporary_oos_train_input(tmp_path):
+                ev = OOS_Evaluator(test_csv_path=csv_path)
+                result = ev.run()
             assert result == {}
         finally:
             self._restore_paths(m, orig_s, orig_r)
@@ -896,8 +922,9 @@ class TestOOSEvaluatorRun:
             m, tmp_path, directions=("long", "short"))
         csv_path = _write_synthetic_test_csv(tmp_path)
         try:
-            ev = OOS_Evaluator(test_csv_path=csv_path)
-            result = ev.run()
+            with _temporary_oos_train_input(tmp_path):
+                ev = OOS_Evaluator(test_csv_path=csv_path)
+                result = ev.run()
             assert "long" in result
             assert "short" in result
         finally:
@@ -1024,8 +1051,9 @@ class TestOOSEvaluatorRun:
         reporter_module._REPORTS_DIR = str(tmp_path / "reports")
 
         try:
-            ev = OOS_Evaluator(test_csv_path=csv_path)
-            ev.run()
+            with _temporary_oos_train_input(tmp_path):
+                ev = OOS_Evaluator(test_csv_path=csv_path)
+                ev.run()
 
             expected_paths = [
                 m._REPORT_PATHS["long"],

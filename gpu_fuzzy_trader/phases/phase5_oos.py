@@ -39,7 +39,7 @@ from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
 from gpu_fuzzy_trader.backtest.df_slim import downcast_numeric_df
 from gpu_fuzzy_trader.backtest.joint_engine import JointPortfolioEngine
-from gpu_fuzzy_trader.data.loader import Data_Loader
+from gpu_fuzzy_trader.data.loader import Data_Loader, validate_context_columns
 from gpu_fuzzy_trader.features.fuzzy_scaling import (
     apply_fuzzy_feature_scaling,
     fit_fuzzy_feature_scaling,
@@ -590,6 +590,10 @@ class OOS_Evaluator:
         cached = load_cached_split_if_fresh()
         if cached is not None:
             train_df, val_df, _, _, _ = cached
+            # Cached splits are an optimization, never an exemption from the
+            # same context contract required for Phase 2 and OOS scoring.
+            validate_context_columns(train_df)
+            validate_context_columns(val_df)
             datasets["train"] = train_df
             datasets["validation"] = val_df
             datasets["test"] = self.prepare_test_data(self.test_csv_path)
@@ -613,6 +617,7 @@ class OOS_Evaluator:
             _cfg.TRAIN_CSV_PATH,
             drop_tail=False,
             include_barrier_outcomes=True,
+            require_context=True,
         )
         train_df, val_df, _cv_folds = splitter.split_and_persist(train_full)
         test_df = self.prepare_test_data(self.test_csv_path)

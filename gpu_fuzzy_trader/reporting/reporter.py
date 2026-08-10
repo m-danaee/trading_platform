@@ -367,7 +367,14 @@ class Reporter:
                 label="mean_f1 (−Sortino)", color="tab:blue")
         ax.plot(generations, mean_f2,
                 label="mean_f2 (drawdown)", color="tab:orange")
-        f3_label = "mean_f3 (−total_return)" if _cfg.PHASE2_USE_TOTAL_RETURN_OBJ else "mean_f3 (−win_rate)"
+        if _cfg.PHASE2_USE_TOTAL_RETURN_OBJ:
+            f3_label = "mean_f3 (−total_return)"
+        elif _cfg.PHASE2_F3_OBJECTIVE == "profit_factor":
+            f3_label = "mean_f3 (−profit_factor)"
+        elif _cfg.PHASE2_F3_OBJECTIVE == "cv_fold_min":
+            f3_label = "mean_f3 (−worst_fold_return)"
+        else:
+            f3_label = "mean_f3 (−win_rate)"
         ax.plot(generations, mean_f3,
                 label=f3_label, color="tab:green")
         if any(v != 0.0 for v in mean_raw_train):

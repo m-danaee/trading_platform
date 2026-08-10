@@ -1,0 +1,13 @@
+{
+  "split_mode": "holdout",
+  "config_fingerprint": "720631af69e3c8fe",
+  "reference_rows": 2387,
+  "n_folds": 0,
+  "config": {
+    "PURGED_WF_N_SPLITS": 2,
+    "PURGED_WF_HOLDOUT_FRACTION": 0.3,
+    "PURGED_WF_EMBARGO_CANDLES": 96,
+    "VALIDATION_HALF_PURGE_CANDLES": 96
+  },
+  "folds": []
+}

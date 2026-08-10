@@ -1,0 +1,149 @@
+{
+  "bar_open_timestamps": true,
+  "context_algorithm_version": "regime_v7_range_pullback_coverage",
+  "context_contract": {
+    "algorithm_version": "regime_v7_range_pullback_coverage",
+    "bar_open_seconds": 900,
+    "context_columns": [
+      "hwc_state",
+      "mwc_state",
+      "lwc_state",
+      "tf_permission_long",
+      "tf_permission_short",
+      "lwc_pullback_reversal_long",
+      "lwc_pullback_reversal_short"
+    ],
+    "efficiency_trend_threshold_quantile": 0.55,
+    "ema_spread_trend_threshold_quantile": 0.55,
+    "horizon_bars_15m": 96,
+    "lwc_pullback_lookback": 24,
+    "permission_policy": {
+      "long": "hwc_bullish AND mwc_bullish_or_range",
+      "mwc_range_allowed": true,
+      "short": "hwc_bearish AND mwc_bearish_or_range"
+    },
+    "state_codes": {
+      "bearish": -1,
+      "bullish": 1,
+      "noisy": 2,
+      "range": 0
+    },
+    "structural_lookback": 20,
+    "timeframes_minutes": {
+      "hwc": 240,
+      "lwc": 15,
+      "mwc": 60
+    },
+    "trigger_policy": {
+      "pullback_include_range": true,
+      "require_permission_on_pullback_print": false
+    },
+    "volatility_compression_quantile": 0.45
+  },
+  "history_sources": {
+    "test_history_train": {
+      "interval": [
+        "2024-01-01T00:00:00",
+        "2025-12-31T23:45:00"
+      ],
+      "path": "data/train_new.csv",
+      "rows": 140352,
+      "sha256": "2345051b9313fb7bc0e74b2ea50c82d7c047110ec912357a439f6aaa963d6f82"
+    }
+  },
+  "horizon_bars_15m": 96,
+  "lwc_pullback_lookback": 24,
+  "state_codes": {
+    "bearish": -1,
+    "bullish": 1,
+    "noisy": 2,
+    "range": 0
+  },
+  "tapes": {
+    "test": {
+      "path": "data/enriched/test_new_hwc_mwc_lwc.csv",
+      "sha256": "d27ff110c0d6bbfcd12b5e4eb419c0ec35456e14edb8ddd325e642713c83ba57",
+      "source": {
+        "interval": [
+          "2026-01-01T00:00:00",
+          "2026-07-23T21:45:00"
+        ],
+        "path": "data/test_new.csv",
+        "rows": 39152,
+        "sha256": "6e98ed2ec236950f91e4b8df1ef7139ebfe2c3282dd8ae5505daa84967e222e8"
+      }
+    },
+    "train": {
+      "path": "data/enriched/train_new_hwc_mwc_lwc.csv",
+      "sha256": "e0dac5e58a1f3c04ce077fdfdc88a13d1d38300d626d55c3d9709f6c4d5ece54",
+      "source": {
+        "interval": [
+          "2024-01-01T00:00:00",
+          "2025-12-31T23:45:00"
+        ],
+        "path": "data/train_new.csv",
+        "rows": 140352,
+        "sha256": "2345051b9313fb7bc0e74b2ea50c82d7c047110ec912357a439f6aaa963d6f82"
+      }
+    }
+  },
+  "threshold_fitting": {
+    "per_symbol": {
+      "BTCUSDT": {
+        "interval": [
+          "2024-01-01T00:00:00",
+          "2025-04-20T03:15:00"
+        ],
+        "rows": 45614
+      },
+      "ETHUSDT": {
+        "interval": [
+          "2024-01-01T00:00:00",
+          "2025-04-20T03:15:00"
+        ],
+        "rows": 45614
+      }
+    },
+    "source": {
+      "interval": [
+        "2024-01-01T00:00:00",
+        "2025-12-31T23:45:00"
+      ],
+      "path": "data/train_new.csv",
+      "rows": 140352,
+      "sha256": "2345051b9313fb7bc0e74b2ea50c82d7c047110ec912357a439f6aaa963d6f82"
+    },
+    "train_only": true
+  },
+  "thresholds": {
+    "hwc": {
+      "eff_quantile": 0.55,
+      "efficiency_abs_trend_threshold": 0.23481616855125192,
+      "ema_spread_abs_trend_threshold": 0.4367282963497485,
+      "rv_quantile": 0.45,
+      "spread_quantile": 0.55,
+      "volatility_compression_threshold": 0.010133238630640381
+    },
+    "lwc": {
+      "eff_quantile": 0.55,
+      "efficiency_abs_trend_threshold": 0.20480071156729251,
+      "ema_spread_abs_trend_threshold": 0.4066421828554713,
+      "rv_quantile": 0.45,
+      "spread_quantile": 0.55,
+      "volatility_compression_threshold": 0.0021939060756876066
+    },
+    "mwc": {
+      "eff_quantile": 0.55,
+      "efficiency_abs_trend_threshold": 0.22123273774041857,
+      "ema_spread_abs_trend_threshold": 0.40247288614959187,
+      "rv_quantile": 0.45,
+      "spread_quantile": 0.55,
+      "volatility_compression_threshold": 0.004844422517635713
+    }
+  },
+  "timeframes_minutes": {
+    "hwc": 240,
+    "lwc": 15,
+    "mwc": 60
+  }
+}

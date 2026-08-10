@@ -141,20 +141,6 @@ def sparse_hamming(a: np.ndarray, b: np.ndarray) -> int:
     return sum(1 for k in keys if dict_a.get(k) != dict_b.get(k))
 
 
-def compute_rule_signals_numpy(
-    data_matrix: np.ndarray,
-    slots: np.ndarray,
-) -> np.ndarray:
-    """CPU rule matching for one sparse chromosome. Returns (N,) bool."""
-    signals = np.ones(len(data_matrix), dtype=bool)
-    for feat_idx, gene in np.asarray(slots, dtype=np.int32).reshape(-1, 2):
-        fi = int(feat_idx)
-        if fi < 0:
-            break
-        signals &= data_matrix[:, fi] == int(gene)
-    return signals
-
-
 def _clamp_slot_gene(
     feat_idx: int,
     gene: int,

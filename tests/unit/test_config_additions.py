@@ -31,3 +31,10 @@ def test_new_config_parameters_exist():
     assert not hasattr(c, "PHASE2_MIGRATION_EPOCH_INTERVAL")
     assert not hasattr(c, "MONTHLY_VALIDATION_ENABLED")
     assert not hasattr(c, "RB_PROFIT_AMP_MAX_RULES")
+
+
+def test_default_pipeline_inputs_are_enriched_and_enrichment_uses_raw_sources():
+    assert c.TRAIN_CSV_PATH == c.ENRICHED_TRAIN_PATH
+    assert c.TEST_CSV_PATH == c.ENRICHED_TEST_PATH
+    assert c.RAW_TRAIN_CSV_PATH.endswith("train_new.csv")
+    assert c.RAW_TEST_CSV_PATH.endswith("test_new.csv")

@@ -59,6 +59,46 @@ class TestResolvePhase2StageParams:
 
 
 class TestStageObjectivePenalties:
+    def test_stage_threshold_overrides_global_auto_heuristic(self, monkeypatch):
+        """Stage B must be able to relax Hamming crowding below auto=3."""
+        monkeypatch.setattr(_cfg, "PHASE2_DIVERSITY_HAMMING_THRESHOLD_AUTO", True)
+        monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", False)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 1)
+
+        chromosome = np.array([0, 1, 2, 3], dtype=np.int32)
+        dont_cares = np.full(4, 5, dtype=np.int32)
+        # Hamming distance 3: Stage A threshold=3 penalizes it; Stage B=2
+        # deliberately permits it. The global auto heuristic would be 3.
+        ref = np.array([0, 5, 5, 5], dtype=np.int32)
+        metrics = {
+            "sortino_ratio": 2.0,
+            "total_return_pct": 5.0,
+            "profit_factor": 1.5,
+            "max_drawdown_pct": 4.0,
+            "win_rate": 55.0,
+            "executed_trades": 200,
+        }
+
+        stage_a = resolve_phase2_stage_params("A")
+        stage_b = resolve_phase2_stage_params("B")
+        obj_a, _ = compute_phase2_objectives_from_metrics(
+            chromosome, dont_cares, dict(metrics), [ref], stage_params=stage_a,
+        )
+        obj_b, _ = compute_phase2_objectives_from_metrics(
+            chromosome, dont_cares, dict(metrics), [ref], stage_params=stage_b,
+        )
+        base_b, _ = compute_phase2_objectives_from_metrics(
+            chromosome, dont_cares, dict(metrics), [], stage_params=stage_b,
+        )
+
+        if bool(getattr(_cfg, "PHASE2_DIVERSITY_ON_F4", True)):
+            assert obj_a[3] > obj_b[3]
+            assert np.isclose(obj_b[3], base_b[3])
+        else:
+            assert obj_a[0] > obj_b[0]
+            assert np.isclose(obj_b[0], base_b[0])
+
     def test_stage_a_applies_stronger_diversity_penalty(self, monkeypatch):
         # Avoid missing-val feasibility (+5) on Stage B when no val_metrics;
         # this test isolates diversity routing across stages.

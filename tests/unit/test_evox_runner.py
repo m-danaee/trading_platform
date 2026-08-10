@@ -198,6 +198,52 @@ class TestRunPhase2EvolutionFallback:
 
         assert np.array_equal(captured["seed_chromosomes"], seeds)
 
+    def test_fallback_attaches_cv_returns_to_offspring(self, monkeypatch):
+        """The fallback must not switch f3 from CV return to PF after gen 0."""
+        feature_infos = [
+            {"name": "feat_0", "mode": "binary", "score": 0.5},
+            {"name": "feat_1", "mode": "binary", "score": 0.5},
+        ]
+
+        class FakeEngine:
+            def simulate_rule_batch(
+                self, chromosomes, tp, sl, capital_pct, **kwargs,
+            ):
+                return [
+                    {
+                        "sortino_ratio": 1.0,
+                        "total_return_pct": 1.0,
+                        "max_drawdown_pct": 2.0,
+                        "win_rate": 50.0,
+                        "profit_factor": 1.2,
+                        "executed_trades": 25,
+                    }
+                    for _ in range(len(chromosomes))
+                ]
+
+        class FakeCvEvaluator:
+            def __init__(self):
+                self.calls = 0
+
+            def _ensure_fold_engines(self):
+                self.calls += 1
+                return [FakeEngine()]
+
+        cv = FakeCvEvaluator()
+        monkeypatch.setattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ", False)
+        monkeypatch.setattr(_cfg, "PHASE2_F3_OBJECTIVE", "cv_fold_min")
+        with mock.patch("gpu_fuzzy_trader.evolution.evox_runner._EVOX_AVAILABLE", False):
+            run_phase2_evolution(
+                feature_infos=feature_infos,
+                engine=FakeEngine(),
+                pop_size=6,
+                n_generations=2,
+                rng=np.random.default_rng(3),
+                cv_fold_evaluator=cv,
+            )
+
+        assert cv.calls >= 2
+
 
 def test_low_trade_drawdown_penalty():
     # Set trade floor to 25

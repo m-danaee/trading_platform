@@ -840,8 +840,10 @@ def main(argv: list[str] | None = None) -> int:
         prog="python -m gpu_fuzzy_trader.data.trend_context",
         description="Deterministic causal HWC/MWC/LWC enrichment.",
     )
-    parser.add_argument("--train", default=_cfg.TRAIN_CSV_PATH)
-    parser.add_argument("--test", default=_cfg.TEST_CSV_PATH)
+    # Enrichment must start from raw sources, never from the pipeline's
+    # enriched defaults.  Explicit CLI paths still support ad-hoc tapes.
+    parser.add_argument("--train", default=_cfg.RAW_TRAIN_CSV_PATH)
+    parser.add_argument("--test", default=_cfg.RAW_TEST_CSV_PATH)
     parser.add_argument("--forward", default=None)
     parser.add_argument("--out-dir", default=None)
     args = parser.parse_args(argv)

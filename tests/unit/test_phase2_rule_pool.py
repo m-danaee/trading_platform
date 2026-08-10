@@ -1885,7 +1885,7 @@ class TestRobustReturnObjective:
         monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
         monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 1)
         monkeypatch.setattr(_cfg, "PHASE2_RETURN_FLOOR_PCT", -100.0)
-        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR", 0.0)
+        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION", 0.0)
         monkeypatch.setattr(_cfg, "PHASE2_VAL_RETURN_FLOOR_PCT", -100.0)
         monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
 
@@ -1934,7 +1934,7 @@ class TestRobustReturnObjective:
         monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
         monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 1)
         monkeypatch.setattr(_cfg, "PHASE2_RETURN_FLOOR_PCT", -100.0)
-        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR", 0.0)
+        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION", 0.0)
         monkeypatch.setattr(_cfg, "PHASE2_VAL_RETURN_FLOOR_PCT", -100.0)
         monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
 
@@ -2002,7 +2002,7 @@ class TestRobustReturnObjective:
         monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
         monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 1)
         monkeypatch.setattr(_cfg, "PHASE2_RETURN_FLOOR_PCT", -100.0)
-        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR", 0.0)
+        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION", 0.0)
         monkeypatch.setattr(_cfg, "PHASE2_VAL_RETURN_FLOOR_PCT", -100.0)
         monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
         # Disable diversity & trade penalties to isolate overfit_gap_penalty.
@@ -2063,7 +2063,7 @@ class TestDecoupledObjectives:
         monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
         monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 1)
         monkeypatch.setattr(_cfg, "PHASE2_RETURN_FLOOR_PCT", -100.0)
-        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR", 0.0)
+        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION", 0.0)
         monkeypatch.setattr(_cfg, "PHASE2_VAL_RETURN_FLOOR_PCT", -100.0)
         monkeypatch.setattr(_cfg, "PHASE2_MAX_DRAWDOWN_GATE", 200.0)
         monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
@@ -2116,7 +2116,7 @@ class TestDecoupledObjectives:
         monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
         monkeypatch.setattr(_cfg, "PHASE2_INFEASIBLE_OBJECTIVE_PENALTY", 99.9)
         monkeypatch.setattr(_cfg, "PHASE2_RETURN_FLOOR_PCT", -100.0)
-        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR", 0.0)
+        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION", 0.0)
         monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", False)
         monkeypatch.setattr(_cfg, "PHASE2_MAX_DRAWDOWN_GATE", 200.0)
         monkeypatch.setattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ", False)
@@ -2168,7 +2168,7 @@ class TestDecoupledObjectives:
         monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
         monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 1)
         monkeypatch.setattr(_cfg, "PHASE2_RETURN_FLOOR_PCT", -100.0)
-        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR", 0.0)
+        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION", 0.0)
         monkeypatch.setattr(_cfg, "PHASE2_VAL_RETURN_FLOOR_PCT", -100.0)
         monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
 
@@ -2213,7 +2213,7 @@ class TestDecoupledObjectives:
 
         monkeypatch.setattr(_cfg, "PHASE2_JOINT_TRAIN_VAL", False)
         monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", False)
-        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR", 2.0)  # high floor
+        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION", 2.0)  # high floor
         monkeypatch.setattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ", False)
         monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
         monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 1)
@@ -2329,15 +2329,6 @@ class TestDecoupledObjectives:
                 f"floor=1.15 gave {objectives_high_floor[i]:.4f}"
             )
 
-    def test_deprecated_pf_floor_alias_returns_115(self):
-        """PHASE2_PROFIT_FACTOR_FLOOR (deprecated alias) still returns
-        1.15 by default for backward compat."""
-        assert _cfg.PHASE2_PROFIT_FACTOR_FLOOR == 1.15, (
-            f"Expected deprecated alias PHASE2_PROFIT_FACTOR_FLOOR=1.15, "
-            f"got {_cfg.PHASE2_PROFIT_FACTOR_FLOOR}"
-        )
-
-
 class TestPhenotypeDiversityPenalty:
     def test_phenotype_penalty_same_bucket_different_genes(self, monkeypatch):
         from gpu_fuzzy_trader.phases.phase2_rule_pool import (
@@ -2411,7 +2402,7 @@ class TestInfeasiblePenaltyRemoved:
         monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
         monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 1)
         monkeypatch.setattr(_cfg, "PHASE2_RETURN_FLOOR_PCT", 0.0)
-        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR", 1.0)
+        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION", 1.0)
         monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
 
         dont_cares = np.full(4, 5, dtype=np.int32)
@@ -2598,6 +2589,50 @@ class TestF4ReturnConcentration:
         assert np.isclose(objectives[3], 0.0125), f"Expected f4≈0.0125, got {objectives[3]}"
         assert np.isclose(out_metrics["f4_concentration"], 0.0125)
 
+    def test_joint_f4_uses_worst_split(self, monkeypatch):
+        """Joint concentration must retain the outlier-heavy split."""
+        from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+            compute_phase2_objectives_from_metrics,
+        )
+
+        monkeypatch.setattr(_cfg, "PHASE2_F4_ENABLED", True)
+        monkeypatch.setattr(_cfg, "PHASE2_F4_EPSILON", 1e-6)
+        monkeypatch.setattr(_cfg, "PHASE2_JOINT_TRAIN_VAL", True)
+        monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", False)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
+        monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 1)
+
+        dont_cares = np.full(4, 5, dtype=np.int32)
+        chrom = np.array([0, 1, 2, 3], dtype=np.int32)
+        train_metrics = {
+            "executed_trades": 80,
+            "total_return_pct": 5.0,
+            "sortino_ratio": 0.5,
+            "max_drawdown_pct": 10.0,
+            "win_rate": 55.0,
+            "profit_factor": 1.5,
+            "per_symbol_metrics": {},
+            "sum_positive_trade_pnl": 100.0,
+            "max_single_trade_pnl": 20.0,
+        }
+        val_metrics = {
+            "executed_trades": 40,
+            "total_return_pct": 3.0,
+            "sortino_ratio": 0.4,
+            "max_drawdown_pct": 8.0,
+            "win_rate": 50.0,
+            "profit_factor": 1.3,
+            "sum_positive_trade_pnl": 100.0,
+            "max_single_trade_pnl": 90.0,
+        }
+
+        objectives, out_metrics = compute_phase2_objectives_from_metrics(
+            chrom, dont_cares, train_metrics, [], val_metrics=val_metrics,
+        )
+
+        assert np.isclose(out_metrics["f4_concentration"], 0.9)
+        assert np.isclose(objectives[3], 0.9)
+
     def test_f4_disabled_returns_three_objectives(self, monkeypatch):
         """When PHASE2_F4_ENABLED = False, objectives.shape == (3,) and no f4 in metrics."""
         from gpu_fuzzy_trader.phases.phase2_rule_pool import (
@@ -2743,7 +2778,7 @@ class TestF3PathResolution:
         monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
         monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 1)
         monkeypatch.setattr(_cfg, "PHASE2_RETURN_FLOOR_PCT", -100.0)
-        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR", 0.0)
+        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION", 0.0)
         monkeypatch.setattr(_cfg, "PHASE2_VAL_RETURN_FLOOR_PCT", -100.0)
         monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
 
@@ -2972,7 +3007,7 @@ class TestIslandAwareTradeFloor:
         monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
         monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
         monkeypatch.setattr(_cfg, "PHASE2_RETURN_FLOOR_PCT", -100.0)
-        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR", 0.0)
+        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION", 0.0)
         monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", False)
         monkeypatch.setattr(_cfg, "PHASE2_MAX_DRAWDOWN_GATE", 200.0)
         monkeypatch.setattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ", False)
@@ -3039,7 +3074,7 @@ class TestIslandAwareTradeFloor:
         monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
         monkeypatch.setattr(_cfg, "PHASE2_INFEASIBLE_OBJECTIVE_PENALTY", 99.9)
         monkeypatch.setattr(_cfg, "PHASE2_RETURN_FLOOR_PCT", -100.0)
-        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR", 0.0)
+        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION", 0.0)
         monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", False)
         monkeypatch.setattr(_cfg, "PHASE2_MAX_DRAWDOWN_GATE", 200.0)
         monkeypatch.setattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ", False)
@@ -3085,7 +3120,7 @@ class TestIslandAwareTradeFloor:
         monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
         monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
         monkeypatch.setattr(_cfg, "PHASE2_RETURN_FLOOR_PCT", -100.0)
-        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR", 0.0)
+        monkeypatch.setattr(_cfg, "PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION", 0.0)
         monkeypatch.setattr(_cfg, "PHASE2_POOL_REQUIRE_POSITIVE_SPLITS", False)
         monkeypatch.setattr(_cfg, "PHASE2_MAX_DRAWDOWN_GATE", 200.0)
         monkeypatch.setattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ", False)
@@ -3319,7 +3354,7 @@ class TestValLeakGate:
             "MIN_TRADE_SUPPORT": 1,
             "MIN_TRADE_POOL_FLOOR": 1,
             "PHASE2_RETURN_FLOOR_PCT": -100.0,
-            "PHASE2_PROFIT_FACTOR_FLOOR": 0.0,
+            "PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION": 0.0,
             "PHASE2_VAL_RETURN_FLOOR_PCT": -100.0,
             "PHASE2_MAX_DRAWDOWN_GATE": 200.0,
             "PHASE2_MIN_PROFITABLE_SYMBOLS_PENALTY": 1,
@@ -3357,7 +3392,7 @@ class TestValLeakGate:
             "sortino_ratio": -1.0,
             "max_drawdown_pct": 25.0,
             "win_rate": 20.0,
-            "profit_factor": 0.3,  # below PROFIT_FACTOR_FLOOR (0.0→falls through anyway)
+            "profit_factor": 0.3,  # below the evolution PF floor when enabled
             # Note: symbol_robustness uses per_symbol_metrics which bad val doesn't have → 0
         }
 
@@ -3373,7 +3408,7 @@ class TestValLeakGate:
             PHASE2_VAL_IN_FITNESS_PENALTY=False,
             # Set tight val floors to trigger penalties
             PHASE2_VAL_RETURN_FLOOR_PCT=0.0,
-            PHASE2_PROFIT_FACTOR_FLOOR=1.0,
+            PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION=1.0,
         )
 
         dont_cares = np.full(4, 5, dtype=np.int32)
@@ -3436,7 +3471,7 @@ class TestValLeakGate:
             PHASE2_VAL_IN_FITNESS_PENALTY=True,
             # Set tight val floors to trigger penalties
             PHASE2_VAL_RETURN_FLOOR_PCT=0.0,
-            PHASE2_PROFIT_FACTOR_FLOOR=1.0,
+            PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION=1.0,
         )
 
         dont_cares = np.full(4, 5, dtype=np.int32)
@@ -3484,7 +3519,7 @@ class TestValLeakGate:
             PHASE2_JOINT_TRAIN_VAL=False,
             PHASE2_VAL_IN_FITNESS_PENALTY=False,
             PHASE2_VAL_RETURN_FLOOR_PCT=0.0,
-            PHASE2_PROFIT_FACTOR_FLOOR=1.0,
+            PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION=1.0,
         )
 
         dont_cares = np.full(4, 5, dtype=np.int32)

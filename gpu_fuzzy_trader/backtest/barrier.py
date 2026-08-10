@@ -279,4 +279,6 @@ def attach_barrier_outcomes(
             barrier_columns[off_name] = off_column
 
     barrier_frame = pd.DataFrame(barrier_columns, index=out.index)
-    return pd.concat([out, barrier_frame], axis=1, copy=False)
+    # pandas 3 ignores the concat ``copy`` hint under Copy-on-Write and warns
+    # that the argument is going away.  The default preserves the same result.
+    return pd.concat([out, barrier_frame], axis=1)

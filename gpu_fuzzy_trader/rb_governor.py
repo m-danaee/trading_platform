@@ -4283,9 +4283,3 @@ def evaluate_strategy_governor(train_df: pd.DataFrame, val_df: pd.DataFrame, str
         min_valid_trades=int(getattr(_cfg, "RB_RULESET_MIN_VALID_TRADES", getattr(_cfg, "RB_MIN_VALID_TRADES", 15))),
     )
     return {"direction": direction, "rules": len(rules), "internal_score": score, "train_metrics": train_m, "valid_metrics": valid_m}
-
-def evaluate_strategy_file_governor(train_df: pd.DataFrame, val_df: pd.DataFrame, strategy_path: str | os.PathLike[str]) -> dict[str, Any]:
-    """Evaluate a saved strategy file."""
-    with Path(strategy_path).open("r", encoding="utf-8") as fh:
-        strategy = json.load(fh)
-    return evaluate_strategy_governor(train_df, val_df, strategy, strategy.get("direction"))

@@ -32,8 +32,9 @@ from gpu_fuzzy_trader.phases import phase2_rule_pool as _phase2_module
 from gpu_fuzzy_trader import rb_governor as _rb_governor_module
 from gpu_fuzzy_trader.features import selector as _selector_module
 from gpu_fuzzy_trader import config as _cfg
-from gpu_fuzzy_trader.data.loader import Data_Loader
+from gpu_fuzzy_trader.data.loader import Data_Loader, validate_context_columns
 from gpu_fuzzy_trader.data.splitter import Data_Splitter, load_cached_split_if_fresh
+from gpu_fuzzy_trader.data.trend_context import sha256_file
 from gpu_fuzzy_trader.features.selector import Feature_Selector
 from gpu_fuzzy_trader.features.fuzzy_scaling import (
     apply_fuzzy_feature_scaling,
@@ -258,15 +259,35 @@ def _context_coverage_report(
 
 
 def _validate_enriched_context_contract() -> None:
-    """Reject enriched tapes generated under a different context contract."""
-    input_path = Path(_cfg.TRAIN_CSV_PATH)
-    if not input_path.name.endswith("_hwc_mwc_lwc.csv"):
+    """Reject a mixed, stale, or altered enriched train/test input pair."""
+    input_paths = {
+        "train": Path(_cfg.TRAIN_CSV_PATH),
+        "test": Path(_cfg.TEST_CSV_PATH),
+    }
+    enriched_tapes = {
+        name: path
+        for name, path in input_paths.items()
+        if path.name.endswith("_hwc_mwc_lwc.csv")
+    }
+    if not enriched_tapes:
         return
+
+    raw_tapes = [
+        f"{name}={path}"
+        for name, path in input_paths.items()
+        if name not in enriched_tapes
+    ]
+    if raw_tapes:
+        raise RuntimeError(
+            "The canonical pipeline requires an enriched train/test pair; "
+            f"non-enriched input(s): {', '.join(raw_tapes)}. Re-enrich the "
+            "raw tapes or supply a matching enriched pair and manifest."
+        )
 
     manifest_path = Path(_cfg.ENRICHED_MANIFEST_PATH)
     if not manifest_path.exists():
         raise RuntimeError(
-            f"Enriched training tape {input_path} has no context manifest at "
+            f"Enriched inputs have no context manifest at "
             f"{manifest_path}. Re-enrich the raw train_new.csv before running "
             "the pipeline."
         )
@@ -286,11 +307,38 @@ def _validate_enriched_context_contract() -> None:
     expected_version = str(_cfg.CONTEXT_ALGORITHM_VERSION)
     if str(actual_version) != expected_version:
         raise RuntimeError(
-            f"Enriched training tape {input_path} uses context contract "
+            f"Enriched inputs use context contract "
             f"{actual_version!r}, but the pipeline requires "
             f"{expected_version!r}. Re-enrich raw train_new.csv and rebuild "
             "the cached splits before running."
         )
+
+    tapes = manifest.get("tapes")
+    if not isinstance(tapes, dict):
+        raise RuntimeError(
+            f"Enriched context manifest {manifest_path} has no tape hashes. "
+            "Re-enrich the raw train/test pair before running the pipeline."
+        )
+    for name, input_path in input_paths.items():
+        tape = tapes.get(name)
+        expected_hash = tape.get("sha256") if isinstance(tape, dict) else None
+        if not isinstance(expected_hash, str) or not expected_hash:
+            raise RuntimeError(
+                f"Enriched context manifest {manifest_path} has no {name} "
+                "tape hash. Re-enrich the raw train/test pair before running "
+                "the pipeline."
+            )
+        if not input_path.exists():
+            raise RuntimeError(
+                f"Configured enriched {name} tape is missing: {input_path}."
+            )
+        actual_hash = sha256_file(input_path)
+        if actual_hash != expected_hash:
+            raise RuntimeError(
+                f"Configured enriched {name} tape {input_path} does not match "
+                f"the hash recorded in {manifest_path}. Re-enrich the raw "
+                "train/test pair and rebuild cached splits before running."
+            )
 
 
 def _context_island_sample_report(
@@ -1817,6 +1865,10 @@ class Pipeline_Orchestrator:
         cached_split = load_cached_split_if_fresh()
         if cached_split is not None:
             train_df, val_df, val_fitness, val_selection, cv_folds = cached_split
+            # A cache predating the enriched-input contract must never let the
+            # canonical pipeline bypass the loader's fail-closed validation.
+            for frame in (train_df, val_df, val_fitness, val_selection):
+                validate_context_columns(frame)
             scaling = fit_fuzzy_feature_scaling(train_df)
             for frame in (train_df, val_df, val_fitness, val_selection):
                 apply_fuzzy_feature_scaling(frame, scaling)
@@ -1844,6 +1896,7 @@ class Pipeline_Orchestrator:
             _cfg.TRAIN_CSV_PATH,
             drop_tail=False,
             include_barrier_outcomes=True,
+            require_context=True,
         )
         logger.info(
             "Loaded %d rows, %d symbols",
@@ -1852,44 +1905,24 @@ class Pipeline_Orchestrator:
             if "symbol" in train_full.columns
             else 0,
         )
-        from gpu_fuzzy_trader.config import CONTEXT_COLUMNS as _CTX_COLS
-        if any(c in train_full.columns for c in _CTX_COLS):
-            for _dir, _perm, _trig in [
-                ("long", _cfg.context_permission_column("long"),
-                 _cfg.context_trigger_column("long")),
-                ("short", _cfg.context_permission_column("short"),
-                 _cfg.context_trigger_column("short")),
-            ]:
-                if _perm in train_full.columns and _trig in train_full.columns:
-                    _mask = (
-                        (train_full[_perm].to_numpy() == 1)
-                        & (train_full[_trig].to_numpy() == 1)
-                    )
-                    _pct = _mask.sum() / max(len(_mask), 1)
-                    _log = logger.warning if _pct < 0.03 else logger.info
-                    _log(
-                        "Context mask [%s]: %.2f%% of rows active "
-                        "(%d / %d); perm=%s trig=%s",
-                        _dir, _pct * 100, int(_mask.sum()),
-                        len(_mask), _perm, _trig,
-                    )
-        else:
-            # Fail-closed: production pipeline requires enriched tapes carrying
-            # the mandatory permission+trigger contract. Raw tapes must be
-            # enriched first via `python -m gpu_fuzzy_trader.data.trend_context`.
-            logger.warning(
-                "Pipeline input %s has no context columns (%s) — "
-                "mandatory HWC/MWC permission + LWC trigger gates are "
-                "inactive. Enrich the tape first.",
-                _cfg.TRAIN_CSV_PATH, list(_CTX_COLS),
+        for _dir, _perm, _trig in [
+            ("long", _cfg.context_permission_column("long"),
+             _cfg.context_trigger_column("long")),
+            ("short", _cfg.context_permission_column("short"),
+             _cfg.context_trigger_column("short")),
+        ]:
+            _mask = (
+                (train_full[_perm].to_numpy() == 1)
+                & (train_full[_trig].to_numpy() == 1)
             )
-            if bool(getattr(_cfg, "REQUIRE_CONTEXT_COLUMNS", False)):
-                raise RuntimeError(
-                    f"REQUIRE_CONTEXT_COLUMNS=True but { _cfg.TRAIN_CSV_PATH } "
-                    f"has no context columns {list(_CTX_COLS)} — "
-                    "run `python -m gpu_fuzzy_trader.data.trend_context --train "
-                    f"{ _cfg.TRAIN_CSV_PATH }` first."
-                )
+            _pct = _mask.sum() / max(len(_mask), 1)
+            _log = logger.warning if _pct < 0.03 else logger.info
+            _log(
+                "Context mask [%s]: %.2f%% of rows active "
+                "(%d / %d); perm=%s trig=%s",
+                _dir, _pct * 100, int(_mask.sum()),
+                len(_mask), _perm, _trig,
+            )
 
         splitter = Data_Splitter()
         split_label = (

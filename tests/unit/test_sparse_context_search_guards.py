@@ -14,7 +14,7 @@ def test_singleton_island_floors_are_capped_for_sparse_context() -> None:
         "cluster", n_rows=29600, reference_rows=59200, n_symbols=1,
     )
     assert hp.min_trade_support <= cfg.PHASE2_SPARSE_ISLAND_MAX_TRADE_SUPPORT
-    assert hp.min_trade_pool_floor <= cfg.PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN
+    assert hp.min_trade_pool_floor <= cfg.PHASE2_SPARSE_ISLAND_MAX_TRADE_POOL_FLOOR
     assert hp.val_trade_floor <= cfg.PHASE2_SPARSE_ISLAND_MAX_VAL_TRADE_FLOOR
 
 

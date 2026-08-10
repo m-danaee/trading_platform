@@ -11,6 +11,7 @@ exactly as the evaluator does for exported strategies.
 from __future__ import annotations
 
 import logging
+import sys
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 
 import numpy as np
@@ -36,6 +37,11 @@ def _batch_eval_rule_set_pickled(
     """Top-level worker for ProcessPoolExecutor (must be picklable)."""
     engine, rule_set = payload
     return engine.simulate_rule_set(rule_set)
+
+
+def _jax_runtime_loaded() -> bool:
+    """Return whether forking would inherit an already multithreaded JAX runtime."""
+    return any(name == "jax" or name.startswith("jax.") for name in sys.modules)
 
 
 # ---------------------------------------------------------------------------
@@ -1125,7 +1131,7 @@ class CPUBacktestEngine:
         cache=None,
         split: str | None = None,
     ) -> list[dict]:
-        """Evaluate multiple rule sets in parallel (ProcessPool, thread fallback)."""
+        """Evaluate multiple rule sets without forking an active JAX runtime."""
         if not rule_sets:
             return []
         if len(rule_sets) == 1:
@@ -1137,6 +1143,7 @@ class CPUBacktestEngine:
         workers = max_workers
         if workers is None:
             workers = int(_cfg.BACKTEST_BATCH_WORKERS)
+        workers = max(1, min(int(workers), len(rule_sets)))
 
         if cache is not None and split is not None:
             def _eval_one(rs: list[dict]) -> dict:
@@ -1146,6 +1153,15 @@ class CPUBacktestEngine:
                 return list(pool.map(_eval_one, rule_sets))
 
         payloads = [(self, rs) for rs in rule_sets]
+        if _jax_runtime_loaded():
+            # JAX starts worker threads. Forking after that can deadlock and
+            # duplicates a large prepared DataFrame on low-RAM machines.
+            logger.debug(
+                "JAX is loaded; using thread rule-set batch evaluation instead "
+                "of ProcessPoolExecutor."
+            )
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                return list(pool.map(_batch_eval_rule_set_pickled, payloads))
         try:
             with ProcessPoolExecutor(max_workers=workers) as pool:
                 return list(pool.map(_batch_eval_rule_set_pickled, payloads))

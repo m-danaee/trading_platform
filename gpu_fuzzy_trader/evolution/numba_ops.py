@@ -208,26 +208,6 @@ if _NUMBA_AVAILABLE:
                 ) / obj_range
         return distances
 
-    @njit(cache=True)
-    def _batch_static_penalties_numba(executed, min_support, pool_floor, penalty_max, exponent):
-        n = len(executed)
-        out = np.empty(n, dtype=np.float64)
-        for i in range(n):
-            ex = int(executed[i])
-            if ex >= min_support:
-                out[i] = 0.0
-            elif ex < pool_floor:
-                out[i] = 2.0 * penalty_max
-            else:
-                shortfall = (min_support - ex) / min_support
-                val = shortfall ** exponent * penalty_max
-                if val > penalty_max:
-                    out[i] = penalty_max
-                else:
-                    out[i] = val
-        return out
-
-
 def non_dominated_sort(objectives: np.ndarray) -> list[list[int]]:
     """Non-dominated sorting with optional Numba acceleration."""
     obj = np.asarray(objectives, dtype=np.float64)
@@ -249,32 +229,6 @@ def crowding_distance(objectives: np.ndarray, front: list[int]) -> np.ndarray:
     if numba_enabled():
         return _crowding_distance_numba(front_obj)  # type: ignore[misc]
     return _crowding_distance_py(objectives, front)
-
-
-def batch_static_support_penalties(executed: np.ndarray) -> np.ndarray:
-    """Batch static support penalties when regime arrays are unavailable."""
-    ex = np.asarray(executed, dtype=np.int64)
-    if numba_enabled():
-        return _batch_static_penalties_numba(  # type: ignore[misc]
-            ex,
-            _cfg.MIN_TRADE_SUPPORT,
-            _cfg.MIN_TRADE_POOL_FLOOR,
-            _cfg.SUPPORT_PENALTY_MAX,
-            _cfg.TRADE_SUPPORT_PENALTY_EXPONENT,
-        )
-    return np.array(
-        [_static_penalty_py(int(v)) for v in ex],
-        dtype=np.float64,
-    )
-
-
-def _static_penalty_py(executed: int) -> float:
-    if executed >= _cfg.MIN_TRADE_SUPPORT:
-        return 0.0
-    if executed < _cfg.MIN_TRADE_POOL_FLOOR:
-        return 2.0 * _cfg.SUPPORT_PENALTY_MAX
-    shortfall = (_cfg.MIN_TRADE_SUPPORT - executed) / _cfg.MIN_TRADE_SUPPORT
-    return min(shortfall ** float(_cfg.TRADE_SUPPORT_PENALTY_EXPONENT) * _cfg.SUPPORT_PENALTY_MAX, _cfg.SUPPORT_PENALTY_MAX)
 
 
 def batch_hamming_min(
