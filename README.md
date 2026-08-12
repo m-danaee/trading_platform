@@ -25,10 +25,7 @@ gpu_fuzzy_trader/   Core pipeline package
 tests/              Unit, property, and benchmark tests
 RUN.md              Detailed runbook (setup, CLI, tests, troubleshooting)
 evaluator_v5.ipynb  Canonical evaluator notebook for rule-set evaluation
-PLAN.md             Frozen multi-timeframe trading and research policy
-requirements.lock   Reproducible research dependency baseline
-requirements.txt    Base dependency ranges
-requirements-gpu.txt GPU JAX plugin dependencies
+requirements.txt    Shared dependency contract; main.ipynb selects the CUDA extra
 ```
 
 ## Pipeline
@@ -85,14 +82,14 @@ python3 -m venv .venv
 .venv/bin/python -c "from gpu_fuzzy_trader.run_pipeline import Pipeline_Orchestrator; print('OK')"
 ```
 
-Install the matching JAX GPU stack separately on CUDA hosts:
+`main.ipynb` installs the hardware-specific JAX extra after the shared base:
 
 ```bash
 # Colab T4 / CUDA 12
 .venv/bin/pip install -U "jax[cuda12]==0.10.1"
 
-# Local WSL/Linux with CUDA 13 (e.g. RTX 3080 Ti)
-.venv/bin/pip install -r requirements-gpu.txt
+# Local WSL/Linux with CUDA 13
+.venv/bin/pip install -U "jax[cuda13]==0.10.1"
 ```
 
 ## Run

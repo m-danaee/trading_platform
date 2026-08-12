@@ -884,30 +884,20 @@
     "ast_hash": "1ec13451b7c874599e25b2376228d23c",
     "semantic_hash": ""
   },
-  "PLAN.md": {
-    "mtime": 1786378803.656299,
-    "ast_hash": "c4cfca5c5023c4b9f7abee6abdb92b73",
-    "semantic_hash": ""
-  },
   "README.md": {
-    "mtime": 1786378803.5249517,
-    "ast_hash": "dcadcf4d2034b01c6149331e585bcdd5",
+    "mtime": 1786537383.7893565,
+    "ast_hash": "ae4f8809d76228961efcce6d046b70b7",
     "semantic_hash": ""
   },
   "RUN.md": {
-    "mtime": 1786016877.2835689,
-    "ast_hash": "490b2f95265fe814d93b34f2ad4cfd4f",
-    "semantic_hash": "490b2f95265fe814d93b34f2ad4cfd4f"
-  },
-  "requirements-gpu.txt": {
-    "mtime": 1785613291.9905899,
-    "ast_hash": "0177426fd7dbd906dec81639de59a267",
-    "semantic_hash": "0177426fd7dbd906dec81639de59a267"
+    "mtime": 1786537373.8186207,
+    "ast_hash": "3e7312fe420656f5f9d1a7da4ac537c5",
+    "semantic_hash": ""
   },
   "requirements.txt": {
-    "mtime": 1785613291.9905899,
-    "ast_hash": "6781a2e245f692f821c0cc59ecaf590d",
-    "semantic_hash": "6781a2e245f692f821c0cc59ecaf590d"
+    "mtime": 1786537390.3567567,
+    "ast_hash": "0ed3d7522fea463597a5696aa563fb3c",
+    "semantic_hash": ""
   },
   "gpu_fuzzy_trader/data/trend_context.py": {
     "mtime": 1786536342.6528451,
@@ -937,11 +927,6 @@
   "tests/unit/test_sparse_context_search_guards.py": {
     "mtime": 1786381109.8302438,
     "ast_hash": "cc85084c77610fb672795b08ecf55b3d",
-    "semantic_hash": ""
-  },
-  "BUG_HUNT_REPORT.md": {
-    "mtime": 1786536445.795099,
-    "ast_hash": "88d273764ac936063b24080e56965e58",
     "semantic_hash": ""
   }
 }

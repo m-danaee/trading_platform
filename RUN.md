@@ -12,7 +12,9 @@ python3 -m venv .venv
 .venv/bin/python -c "from gpu_fuzzy_trader.run_pipeline import Pipeline_Orchestrator; print('OK')"
 ```
 
-Install the appropriate JAX GPU package separately when using a CUDA host.
+`main.ipynb` installs the appropriate JAX CUDA extra after the shared
+requirements: `jax[cuda12]==0.10.1` on Colab T4 and
+`jax[cuda13]==0.10.1` on local CUDA 13 hosts.
 
 ## RTX 4050 + 8-core CPU execution policy
 

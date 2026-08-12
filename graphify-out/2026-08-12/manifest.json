@@ -910,13 +910,13 @@
     "semantic_hash": "6781a2e245f692f821c0cc59ecaf590d"
   },
   "gpu_fuzzy_trader/data/trend_context.py": {
-    "mtime": 1786378802.462179,
-    "ast_hash": "d3893bcbf7439df6af34cc4c431fdfd7",
+    "mtime": 1786536342.6528451,
+    "ast_hash": "fb55ae2bd829cee896ef8e15cb6e9f4d",
     "semantic_hash": ""
   },
   "tests/unit/test_trend_context.py": {
-    "mtime": 1786530325.9728203,
-    "ast_hash": "8dced20f2e8e252d006aee34b1429884",
+    "mtime": 1786536342.6568282,
+    "ast_hash": "ae6ba430f03dd0b9af0e2ca2adbabb90",
     "semantic_hash": ""
   },
   "scripts/diagnose_context_mask.py": {
@@ -940,8 +940,8 @@
     "semantic_hash": ""
   },
   "BUG_HUNT_REPORT.md": {
-    "mtime": 1786534452.68167,
-    "ast_hash": "8e5c636cb78aeb05986eb6773f9780a3",
+    "mtime": 1786536445.795099,
+    "ast_hash": "88d273764ac936063b24080e56965e58",
     "semantic_hash": ""
   }
 }

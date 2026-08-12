@@ -2,30 +2,30 @@
 # Install from project root:
 #   pip install -r requirements.txt
 #
-# JAX: generic CPU wheels below. For Phase 2 GPU backtests on NVIDIA hardware,
-# install a matching CUDA build AFTER this file (plugin versions must align):
-#   pip install -r requirements-gpu.txt
-# Colab T4:  pip install -U "jax[cuda12]==0.10.1"
-# Local WSL/Linux (CUDA 13 / RTX 3080 Ti): pip install -r requirements-gpu.txt
-# See https://jax.readthedocs.io/en/latest/installation.html
+# This is the shared CPU-compatible base. main.ipynb installs the matching
+# hardware-specific JAX extra after this file:
+#   Colab T4:       jax[cuda12]==0.10.1
+#   Local CUDA 13:  jax[cuda13]==0.10.1
+# Do not put CUDA 12 and CUDA 13 plugins in this file together: both target
+# Linux, but they are mutually exclusive JAX plugin stacks.
 
 # --- Core (required) ---
-pandas>=2.0
+pandas>=2.0,<3
 # NumPy 2.4+ manylinux wheels require x86-64-v2 (SSE4.2+). Older VPS/VM CPUs need <2.4.
-numpy>=1.26,<2.4
-numba>=0.58
-scikit-learn>=1.3
-matplotlib>=3.7
+numpy>=2.0,<2.4
+numba>=0.60,<0.66
+scikit-learn>=1.3,<2
+matplotlib>=3.7,<4
 pyarrow>=14.0
 
 # --- Phase 2: GPU backtest + evolutionary search (CPU fallbacks if omitted) ---
-jax>=0.4.20
-jaxlib>=0.4.20
-evox>=1.0.0,<2
-torch>=2.0
+jax==0.10.1
+jaxlib==0.10.1
+evox==1.3.0
+torch>=2.6.0,<3
 
 # --- RB validation-only hyperparameter search (required) ---
-optuna>=3.5.0
+optuna>=3.5.0,<5
 
 # --- Development / testing ---
 pytest>=7.4.0
