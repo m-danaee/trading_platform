@@ -114,6 +114,17 @@ class TestThresholdDeterminism:
 class TestTrainPrefixOnlyFitting:
     """Regression: thresholds must never see validation-period rows."""
 
+    def test_prefix_matches_the_tail_trimmed_phase0_split(self):
+        raw = _raw_tape(n=1000)
+
+        prefix = tc.build_train_prefix(raw)
+
+        expected_rows = cfg.train_prefix_row_count(1000 - cfg.TAIL_DROP_ROWS)
+        assert prefix.groupby("symbol", observed=False).size().to_dict() == {
+            "AA": expected_rows,
+            "BB": expected_rows,
+        }
+
     def test_validation_tail_volatility_does_not_change_thresholds(self):
         raw = _raw_tape(n=2000)
         baseline_prefix = tc.build_train_prefix(raw)
@@ -123,7 +134,7 @@ class TestTrainPrefixOnlyFitting:
         rng = np.random.default_rng(0)
         for _symbol, g in raw.groupby("symbol", observed=False):
             n = len(g)
-            train_end = cfg.train_prefix_row_count(n)
+            train_end = cfg.train_prefix_row_count(n - cfg.TAIL_DROP_ROWS)
             tail_idx = g.sort_values("datetime").index[train_end:]
             shock = 1.0 + rng.normal(0, 5.0, len(tail_idx))
             perturbed.loc[tail_idx, "close"] = perturbed.loc[tail_idx, "close"] * shock
