@@ -592,10 +592,13 @@ class CPUBacktestEngine:
                 f"Bad rows: {bad}"
             )
 
-        self.entry_price = entry.astype(np.float32)
-        self.max_ret = ((df["label_max_288"].values - entry) / entry * 100.0).astype(np.float32)
-        self.min_ret = ((df["label_min_288"].values - entry) / entry * 100.0).astype(np.float32)
-        self.close_ret = ((df["label_close_288"].values - entry) / entry * 100.0).astype(np.float32)
+        # Keep CPU reference arithmetic at float64 precision.  The canonical
+        # evaluator promotes source values to Python/NumPy float before PnL
+        # arithmetic, so retaining float32 here changes cumulative equity.
+        self.entry_price = entry
+        self.max_ret = (df["label_max_288"].values - entry) / entry * 100.0
+        self.min_ret = (df["label_min_288"].values - entry) / entry * 100.0
+        self.close_ret = (df["label_close_288"].values - entry) / entry * 100.0
         self.max_before_min = df["label_max_before_min"].values.astype(np.int32)
 
         if "symbol" in df.columns:
@@ -726,7 +729,7 @@ class CPUBacktestEngine:
             self.trade_direction, float(tp), float(sl),
         )
         if ret_name in self.df.columns and off_name in self.df.columns:
-            returns = self.df[ret_name].to_numpy(dtype=np.float32)
+            returns = self.df[ret_name].to_numpy(dtype=float)
             offsets = self.df[off_name].to_numpy(dtype=np.int64)
             release = precompute_release_indices_from_offsets(
                 self.symbols,
@@ -766,7 +769,7 @@ class CPUBacktestEngine:
                         tp_f,
                         np.where(hit_sl, -sl_f, self.close_ret),
                     ),
-                ).astype(np.float32, copy=False)
+                ).astype(float, copy=False)
             else:
                 hit_tp = min_ret <= -tp_f
                 hit_sl = max_ret >= sl_f
@@ -782,7 +785,7 @@ class CPUBacktestEngine:
                         tp_f,
                         np.where(hit_sl, -sl_f, -self.close_ret),
                     ),
-                ).astype(np.float32, copy=False)
+                ).astype(float, copy=False)
             self._trade_outcomes_cache[cache_key] = out
         bundle = (
             self._trade_outcomes_cache[cache_key],
@@ -1297,10 +1300,18 @@ class CPUBacktestEngine:
             price_returns, _offsets, release_indices = self._get_trade_bundle(
                 tp, sl,
             )
-            price_return_pct = price_returns[idx]
-            exit_reason = None
-            if return_logs:
+            price_return_pct = float(price_returns[idx])
+            ret_name, off_name = barrier_column_names(
+                self.trade_direction, tp, sl,
+            )
+            if return_logs or ret_name not in self.df.columns or off_name not in self.df.columns:
                 _, exit_reason = self._build_trade_outcome_single(idx, tp, sl)
+            elif abs(float(price_return_pct) - tp) <= 1e-5:
+                exit_reason = "TP"
+            elif abs(float(price_return_pct) + sl) <= 1e-5:
+                exit_reason = "SL"
+            else:
+                exit_reason = f"Time_{self.max_hold_candles}"
             price_return_rate = price_return_pct / 100.0
 
             gross_pnl = position_notional * price_return_rate

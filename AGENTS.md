@@ -3,6 +3,7 @@
 - After changing sections of my code, remove additional(wasted) parts from old implementation to get clean my project.
 - Do not run all tests without `PYTEST_LOW_MEMORY=1` on local / WSL because it can hit OOM.
 - Use graphify when you want to edit and need relationships between sections and knowledge graph.
+- Don't run all tests together because I'm not have enough memory for it and get OOM error!
 
 ## graphify
 
@@ -11,7 +12,6 @@ This project has a knowledge graph at graphify-out/ with god nodes, community st
 When the user types `/graphify`, use the installed graphify skill or instructions before doing anything else.
 
 Rules:
-
 - For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
 - Dirty graphify-out/ files are expected after hooks or incremental updates; dirty graph files are not a reason to skip graphify. Only skip graphify if the task is about stale or incorrect graph output, or the user explicitly says not to use it.
 - If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.

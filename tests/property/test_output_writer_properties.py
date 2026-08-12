@@ -16,8 +16,7 @@ Property 23: JSON Output Schema Validity
   For any rule set with > RB_MAX_RULES rules, the output must be truncated to
   RB_MAX_RULES rules.
 
-  For any rule set with all-zero tp/sl/capital_pct in any rule, write() must raise
-  ValidationError.
+  Non-finite or non-positive TP, SL, and capital values must be rejected.
 """
 
 from __future__ import annotations
@@ -92,14 +91,12 @@ def valid_condition_st(draw: st.DrawFn) -> str:
 def valid_rule_st(draw: st.DrawFn) -> dict:
     """
     Generate a valid rule dict with:
-      - tp, sl, capital_pct: floats where at least one is non-zero
+      - finite, strictly positive tp, sl, and capital_pct values
       - conditions: 1-5 valid condition strings + mandatory context
     """
-    tp = draw(st.floats(min_value=0.0, max_value=10.0, allow_nan=False, allow_infinity=False))
-    sl = draw(st.floats(min_value=0.0, max_value=5.0, allow_nan=False, allow_infinity=False))
-    capital_pct = draw(st.floats(min_value=0.0, max_value=100.0, allow_nan=False, allow_infinity=False))
-    if tp == 0.0 and sl == 0.0 and capital_pct == 0.0:
-        tp = draw(st.floats(min_value=0.1, max_value=10.0, allow_nan=False, allow_infinity=False))
+    tp = draw(st.floats(min_value=0.1, max_value=10.0, allow_nan=False, allow_infinity=False))
+    sl = draw(st.floats(min_value=0.1, max_value=5.0, allow_nan=False, allow_infinity=False))
+    capital_pct = draw(st.floats(min_value=0.1, max_value=100.0, allow_nan=False, allow_infinity=False))
     n_conditions = draw(st.integers(min_value=1, max_value=5))
     conditions = draw(
         st.lists(valid_condition_st(), min_size=n_conditions, max_size=n_conditions)
@@ -258,9 +255,9 @@ def test_property_23a_valid_rule_set_schema(rule_set: dict) -> None:
                 f"Rule {i}: 'capital_pct' must be a number, got {type(rule['capital_pct']).__name__}"
             )
 
-            # Requirement 12.9: not all three zero
-            assert not (rule["tp"] == 0.0 and rule["sl"] == 0.0 and rule["capital_pct"] == 0.0), (
-                f"Rule {i}: all of tp/sl/capital_pct are zero — should have been rejected."
+            # Risk and sizing must be finite, non-degenerate inputs.
+            assert rule["tp"] > 0.0 and rule["sl"] > 0.0 and rule["capital_pct"] > 0.0, (
+                f"Rule {i}: tp/sl/capital_pct must all be positive."
             )
 
             # Requirement 12.6: conditions is a non-empty list of strings

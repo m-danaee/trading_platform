@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import os
+import hashlib
 from typing import TYPE_CHECKING
 
 import pandas as pd
@@ -31,6 +32,15 @@ if TYPE_CHECKING:
     from gpu_fuzzy_trader.validation.rolling_cv import PurgedFold
 
 logger = logging.getLogger(__name__)
+
+
+def _file_sha256(path: str) -> str:
+    """Return the content digest used to bind a split cache to its source."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _holdout_embargo_split(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -192,8 +202,9 @@ def load_cached_split_if_fresh() -> (
 ):
     """Load cached split parquets when they are newer than the source CSV.
 
-    Validates manifest ``split_mode``, ``config_fingerprint``, all four parquet
-    mtimes, and (purged mode) ``reference_rows`` against a fresh CSV load.
+    Validates manifest ``split_mode``, ``config_fingerprint``, source content
+    hash, all four parquet mtimes, and (purged mode) ``reference_rows`` against
+    a fresh CSV load.
 
     Returns
     -------
@@ -241,6 +252,13 @@ def load_cached_split_if_fresh() -> (
         if manifest.get("split_mode") != _cfg.SPLIT_MODE:
             return None
         if manifest.get("config_fingerprint") != purged_config_fingerprint():
+            return None
+        source_sha256 = manifest.get("source_sha256")
+        if not isinstance(source_sha256, str) or not source_sha256:
+            logger.warning("Rejecting split cache: manifest has no source hash")
+            return None
+        if _file_sha256(csv_path) != source_sha256:
+            logger.warning("Rejecting split cache: source CSV content changed")
             return None
     except OSError:
         return None
@@ -412,9 +430,19 @@ class Data_Splitter:
         val_fitness_df.to_parquet(VALIDATION_FITNESS_PATH, index=False)
         val_selection_df.to_parquet(VALIDATION_SELECTION_PATH, index=False)
 
+        try:
+            source_sha256 = _file_sha256(_cfg.TRAIN_CSV_PATH)
+        except OSError:
+            source_sha256 = None
+            logger.warning(
+                "Could not hash split source %s; cache will not be reusable",
+                _cfg.TRAIN_CSV_PATH,
+            )
+
         manifest_path = write_cv_folds_manifest(
             cv_folds,
             reference_rows=len(df),
+            source_sha256=source_sha256,
         )
         logger.info(
             "Persisted train/validation splits and manifest=%s (mode=%s)",

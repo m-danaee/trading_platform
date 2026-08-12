@@ -32,6 +32,7 @@ Static risk parameters during Phase 2:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -132,6 +133,7 @@ _HISTORY_PATHS: dict = {
 }
 # Archive stays persistent in project root (not run-specific)
 _ARCHIVE_PATHS = dict(_cfg.PHASE2_ARCHIVE_PATHS)
+_POOL_RESUME_IDENTITY_VERSION = 1
 
 
 def _pool_path_key(direction: str):
@@ -150,6 +152,24 @@ def _resolve_history_path(direction: str) -> str:
     if key in _HISTORY_PATHS:
         return _HISTORY_PATHS[key]
     return _cfg.PHASE2_HISTORY_PATHS[direction]
+
+
+def _resolve_pool_identity_path(direction: str) -> str:
+    """Return the sidecar that binds a reusable pool to its inputs."""
+    if direction not in ("long", "short"):
+        raise ValueError(
+            f"direction must be 'long' or 'short', got {direction!r}"
+        )
+    return f"{_resolve_pool_path(direction)}.identity.json"
+
+
+def _sha256_path(path: str) -> str:
+    """Hash an artifact without loading it all into RAM."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -4465,14 +4485,100 @@ class Rule_Pool_Generator:
         return pool
 
     @staticmethod
+    def write_pool_resume_identity(direction: str, identity: str) -> None:
+        """Atomically bind the current pool bytes to a Phase 2 input identity."""
+        if not isinstance(identity, str) or not identity:
+            raise ValueError("Phase 2 resume identity must be a non-empty string")
+        if direction not in ("long", "short"):
+            raise ValueError(
+                f"direction must be 'long' or 'short', got {direction!r}"
+            )
+
+        pool_path = _resolve_pool_path(direction)
+        if not os.path.isfile(pool_path):
+            raise ValueError(
+                "Cannot bind a missing Phase 2 pool to a resume identity: "
+                f"{pool_path}"
+            )
+
+        identity_path = _resolve_pool_identity_path(direction)
+        parent = os.path.dirname(identity_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        payload = {
+            "version": _POOL_RESUME_IDENTITY_VERSION,
+            "direction": direction,
+            "identity": identity,
+            "pool_sha256": _sha256_path(pool_path),
+        }
+        temporary_path = (
+            f"{identity_path}.{os.getpid()}.{time.time_ns()}.tmp"
+        )
+        try:
+            with open(temporary_path, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, indent=2, sort_keys=True)
+                handle.write("\n")
+            os.replace(temporary_path, identity_path)
+        finally:
+            if os.path.exists(temporary_path):
+                os.unlink(temporary_path)
+
+    @staticmethod
+    def discard_cached_pool(direction: str) -> None:
+        """Remove a stale direction cache before a fresh Phase 2 run."""
+        if direction not in ("long", "short"):
+            raise ValueError(
+                f"direction must be 'long' or 'short', got {direction!r}"
+            )
+        for path in (
+            _resolve_pool_path(direction),
+            _resolve_history_path(direction),
+            _resolve_pool_identity_path(direction),
+        ):
+            try:
+                os.unlink(path)
+            except FileNotFoundError:
+                continue
+
+    @staticmethod
     def skip_if_valid(
         direction: str,
+        *,
+        expected_identity: str | None = None,
     ) -> Optional[list[dict]]:
-        """Return loaded pool if valid, None if need to run."""
-        try:
-            return Rule_Pool_Generator.load_pool(direction)
-        except ValueError:
+        """Return a schema-valid pool proven to match this run's inputs.
+
+        Bare historical pool JSONs deliberately do not qualify.  The sidecar
+        also records a hash of the pool bytes, so a manually or concurrently
+        changed pool cannot be resumed under an old identity.
+        """
+        if not isinstance(expected_identity, str) or not expected_identity:
             return None
+        try:
+            pool = Rule_Pool_Generator.load_pool(direction)
+        except (OSError, ValueError):
+            return None
+        if pool is None:
+            return None
+
+        identity_path = _resolve_pool_identity_path(direction)
+        try:
+            with open(identity_path, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+            pool_hash = _sha256_path(_resolve_pool_path(direction))
+        except (OSError, json.JSONDecodeError):
+            return None
+
+        if not isinstance(payload, dict):
+            return None
+        if (
+            payload.get("version") != _POOL_RESUME_IDENTITY_VERSION
+            or payload.get("direction") != direction
+            or payload.get("identity") != expected_identity
+            or payload.get("pool_sha256") != pool_hash
+        ):
+            return None
+        return pool
 
 
 # ---------------------------------------------------------------------------

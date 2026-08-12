@@ -493,6 +493,7 @@ class TestLoadCachedSplitIfFresh:
 
         csv_path = tmp_path / "train.csv"
         csv_path.write_text("x\n1\n", encoding="utf-8")
+        monkeypatch.setattr(config_mod, "TRAIN_CSV_PATH", str(csv_path))
 
         n = 4000  # large enough for both purged validation halves
         with _patch_split_paths(str(tmp_path))(split_mode) as paths:
@@ -546,6 +547,22 @@ class TestLoadCachedSplitIfFresh:
         os.utime(config_mod.TRAIN_CSV_PATH, (3, 3))
         assert load_cached_split_if_fresh() is None
 
+    def test_cache_rejected_when_csv_content_changes_without_mtime_change(
+        self, tmp_path, monkeypatch,
+    ):
+        self._write_holdout_cache(tmp_path, monkeypatch)
+        import gpu_fuzzy_trader.config as config_mod
+
+        before = os.stat(config_mod.TRAIN_CSV_PATH)
+        with open(config_mod.TRAIN_CSV_PATH, "w", encoding="utf-8") as fh:
+            fh.write("x\n2\n")
+        os.utime(
+            config_mod.TRAIN_CSV_PATH,
+            ns=(before.st_atime_ns, before.st_mtime_ns),
+        )
+
+        assert load_cached_split_if_fresh() is None
+
     def test_cache_rejected_when_fitness_parquet_missing(self, tmp_path, monkeypatch):
         paths = self._write_holdout_cache(tmp_path, monkeypatch)
         os.remove(paths["fitness"])
@@ -560,6 +577,7 @@ class TestLoadCachedSplitIfFresh:
 
         csv_path = tmp_path / "train.csv"
         csv_path.write_text("x\n1\n", encoding="utf-8")
+        monkeypatch.setattr(config_mod, "TRAIN_CSV_PATH", str(csv_path))
         df = _make_df({1: 6000, 2: 6000})
 
         with _patch_split_paths(str(tmp_path))("purged_walk_forward") as paths:
@@ -601,6 +619,7 @@ class TestLoadCachedSplitIfFresh:
 
         csv_path = tmp_path / "train.csv"
         csv_path.write_text("x\n1\n", encoding="utf-8")
+        monkeypatch.setattr(config_mod, "TRAIN_CSV_PATH", str(csv_path))
         df = _make_df({1: 6000, 2: 6000})
 
         with _patch_split_paths(str(tmp_path))("purged_walk_forward") as paths:

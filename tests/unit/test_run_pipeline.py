@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -279,6 +280,202 @@ def test_phase2_skips_context_blocked_direction(tmp_path) -> None:
     )
 
 
+def test_phase2_regenerates_legacy_pool_before_generator_can_merge_it(
+    tmp_path, monkeypatch,
+) -> None:
+    """A schema-valid pool without an input identity is never a resume hit."""
+    stale_pool_path = tmp_path / "phase2_long_pool.json"
+    stale_history_path = tmp_path / "phase2_long_history.json"
+    stale_pool_path.write_text(
+        json.dumps([{
+            "chromosome": [2],
+            "conditions": [],
+            "objectives": {
+                "sortino_ratio": 1.0,
+                "max_drawdown_pct": 1.0,
+                "win_rate": 50.0,
+            },
+            "executed_trades": 1,
+        }]),
+        encoding="utf-8",
+    )
+    stale_history_path.write_text("[]", encoding="utf-8")
+    frame = _context_frame(rows=200)
+    actual_generator = pipeline._phase2_module.Rule_Pool_Generator
+    seen = {"run": False}
+
+    class FakeGenerator:
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        def run(self) -> list[dict]:
+            seen["run"] = True
+            assert not stale_pool_path.exists()
+            assert not stale_history_path.exists()
+            return []
+
+        skip_if_valid = staticmethod(actual_generator.skip_if_valid)
+        discard_cached_pool = staticmethod(actual_generator.discard_cached_pool)
+        write_pool_resume_identity = staticmethod(
+            actual_generator.write_pool_resume_identity
+        )
+
+    monkeypatch.setattr(
+        pipeline._cfg, "phase2_island_mode_enabled", lambda: False,
+    )
+    monkeypatch.setattr(pipeline, "Rule_Pool_Generator", FakeGenerator)
+    orch = Pipeline_Orchestrator(output_dir=str(tmp_path))
+
+    with pipeline._temporary_output_paths(str(tmp_path)):
+        pools = orch._run_phase2(
+            frame,
+            {"long": [{"name": "feature", "mode": "positive"}], "short": []},
+            force=False,
+            val_df=frame,
+        )
+
+    assert seen["run"]
+    assert pools == {"long": [], "short": []}
+    assert not stale_pool_path.exists()
+    assert not stale_history_path.exists()
+
+
+def test_full_run_cleanup_removes_phase2_resume_sidecars(tmp_path) -> None:
+    orch = Pipeline_Orchestrator(output_dir=str(tmp_path))
+    sidecars = (
+        tmp_path / "phase2_long_pool.json.identity.json",
+        tmp_path / "phase2_short_pool.json.identity.json",
+    )
+    with pipeline._temporary_output_paths(str(tmp_path)):
+        tmp_path.mkdir(parents=True, exist_ok=True)
+        for path in sidecars:
+            path.write_text("stale", encoding="utf-8")
+        orch._begin_run("full", clear_derived=False, clear_phase2=True)
+
+    assert all(not path.exists() for path in sidecars)
+
+
+def test_standalone_phase1_loader_rejects_unproven_artifacts(tmp_path) -> None:
+    """A disk artifact is not a Phase 2 prerequisite without current inputs."""
+    stale = _frame()
+    stale.loc[0, "feature"] += 1.0
+    orch = Pipeline_Orchestrator(output_dir=str(tmp_path))
+
+    with pipeline._temporary_output_paths(str(tmp_path)):
+        for direction, path in pipeline._selector_module._DIRECTION_PATHS.items():
+            artifact_path = Path(path)
+            artifact_path.parent.mkdir(parents=True, exist_ok=True)
+            artifact_path.write_text(
+                json.dumps({
+                    "direction": direction,
+                    "features": [{
+                        "name": "feature",
+                        "mode": "positive",
+                        "score": 0.5,
+                    }],
+                    "phase1_disabled": bool(pipeline._cfg.PHASE1_DISABLED),
+                    "phase1_input_identity": (
+                        pipeline._selector_module._phase1_input_identity(stale)
+                    ),
+                }),
+                encoding="utf-8",
+            )
+
+        with pytest.raises(FileNotFoundError, match="matching current Phase 1 input"):
+            orch._load_phase1_outputs()
+        with pytest.raises(FileNotFoundError, match="matching current Phase 1 input"):
+            orch._load_phase1_outputs(_frame())
+
+        current_identity = pipeline._selector_module._phase1_input_identity(
+            _frame())
+        for direction, path in pipeline._selector_module._DIRECTION_PATHS.items():
+            Path(path).write_text(
+                json.dumps({
+                    "direction": direction,
+                    "features": [{
+                        "name": "feature",
+                        "mode": "positive",
+                        "score": 0.5,
+                    }],
+                    "phase1_disabled": bool(pipeline._cfg.PHASE1_DISABLED),
+                    "phase1_input_identity": current_identity,
+                }),
+                encoding="utf-8",
+            )
+
+        assert orch._load_phase1_outputs(_frame()) == {
+            "long": [{"name": "feature", "mode": "positive", "score": 0.5}],
+            "short": [{"name": "feature", "mode": "positive", "score": 0.5}],
+        }
+
+
+def test_standalone_phase2_loader_rejects_unproven_artifacts(tmp_path) -> None:
+    """A schema-valid pool is not an RB prerequisite without its identity."""
+    pool = [{
+        "chromosome": [2],
+        "conditions": [],
+        "objectives": {
+            "sortino_ratio": 1.0,
+            "max_drawdown_pct": 1.0,
+            "win_rate": 50.0,
+        },
+        "executed_trades": 1,
+    }]
+    orch = Pipeline_Orchestrator(output_dir=str(tmp_path))
+
+    with pipeline._temporary_output_paths(str(tmp_path)):
+        for path in pipeline._phase2_module._POOL_PATHS.values():
+            artifact_path = Path(path)
+            artifact_path.parent.mkdir(parents=True, exist_ok=True)
+            artifact_path.write_text(json.dumps(pool), encoding="utf-8")
+
+        pools = orch._load_phase2_outputs()
+        assert pools == {"long": [], "short": []}
+        assert {
+            direction: status["reason"]
+            for direction, status in orch._phase2_status.items()
+        } == {
+            "long": "phase2_identity_unavailable",
+            "short": "phase2_identity_unavailable",
+        }
+
+        pools = orch._load_phase2_outputs(
+            _frame(), _frame(), {"long": [], "short": []},
+        )
+        assert pools == {"long": [], "short": []}
+        assert {
+            direction: status["reason"]
+            for direction, status in orch._phase2_status.items()
+        } == {
+            "long": "missing_phase2_output",
+            "short": "missing_phase2_output",
+        }
+
+        current = _frame()
+        phase1_result = {"long": [], "short": []}
+        for direction in ("long", "short"):
+            identity = pipeline._phase2_resume_identity(
+                current,
+                current,
+                phase1_result[direction],
+                direction,
+                orch._cv_folds,
+            )
+            pipeline.Rule_Pool_Generator.write_pool_resume_identity(
+                direction, identity,
+            )
+        pools = orch._load_phase2_outputs(current, current, phase1_result)
+
+    assert pools == {"long": pool, "short": pool}
+    assert {
+        direction: status["reason"]
+        for direction, status in orch._phase2_status.items()
+    } == {
+        "long": "loaded_pool",
+        "short": "loaded_pool",
+    }
+
+
 def test_stale_enriched_context_contract_is_rejected(tmp_path, monkeypatch) -> None:
     enriched_path = tmp_path / "train_new_hwc_mwc_lwc.csv"
     enriched_path.write_text("datetime,symbol\n", encoding="utf-8")
@@ -397,6 +594,7 @@ def test_phase3_and_phase4_are_rb_compatibility_aliases(tmp_path) -> None:
     orch._load_and_split_data = MagicMock(return_value=(frame, frame))
     orch._validate_active_configuration = MagicMock()
     orch._validation_scoring_frames = MagicMock(return_value=(frame, frame))
+    orch._load_phase1_outputs = MagicMock(return_value={"long": [], "short": []})
     orch._load_phase2_outputs = MagicMock(return_value={"long": [], "short": []})
     orch._release_between_phases = MagicMock()
     orch._run_rb_governor = MagicMock(return_value=rb_result)
@@ -415,6 +613,7 @@ def test_phase3_and_phase4_are_rb_compatibility_aliases(tmp_path) -> None:
 
 def test_missing_phase2_outputs_are_recorded_for_rb_failure_reason(tmp_path) -> None:
     orch = Pipeline_Orchestrator(output_dir=str(tmp_path))
+    frame = _frame()
     orch._phase2_status = {
         "short": {
             "status": "error",
@@ -422,8 +621,12 @@ def test_missing_phase2_outputs_are_recorded_for_rb_failure_reason(tmp_path) -> 
             "pool_size": 0,
         }
     }
-    with patch.object(pipeline._phase2_module.Rule_Pool_Generator, "load_pool", return_value=None):
-        pools = orch._load_phase2_outputs()
+    with patch.object(
+        pipeline.Rule_Pool_Generator, "skip_if_valid", return_value=None,
+    ):
+        pools = orch._load_phase2_outputs(
+            frame, frame, {"long": [], "short": []},
+        )
 
     assert pools["long"] == []
     assert pools["short"] == []

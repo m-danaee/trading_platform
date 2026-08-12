@@ -322,15 +322,13 @@ def _expected_outcome(
       engine_ret  = (label_price - entry) / entry * 100
     This round-trip is applied so both sides see identical float values.
     """
-    import numpy as np
-
-    def _roundtrip(pct: float) -> np.float32:
+    def _roundtrip(pct: float) -> float:
         label_price = entry * (1.0 + pct / 100.0)
-        return np.float32((label_price - entry) / entry * 100.0)
+        return float((label_price - entry) / entry * 100.0)
 
-    s_max = float(_roundtrip(max_ret_pct))
-    s_min = float(_roundtrip(min_ret_pct))
-    s_close = float(_roundtrip(close_ret_pct))
+    s_max = _roundtrip(max_ret_pct)
+    s_min = _roundtrip(min_ret_pct)
+    s_close = _roundtrip(close_ret_pct)
 
     if direction == "long":
         hit_tp = s_max >= tp

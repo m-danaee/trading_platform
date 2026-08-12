@@ -507,12 +507,15 @@ class TestSkipIfValid:
         direction: str,
         *,
         phase1_disabled: bool = False,
+        input_identity: str | None = None,
     ):
         data = {
             "direction": direction,
             "features": [{"name": "feat_a", "mode": "positive", "score": 0.5}],
             "phase1_disabled": phase1_disabled,
         }
+        if input_identity is not None:
+            data["phase1_input_identity"] = input_identity
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as fh:
             json.dump(data, fh)
@@ -557,6 +560,52 @@ class TestSkipIfValid:
     def test_returns_dict_when_both_valid(self, tmp_path, monkeypatch):
         long_path = str(tmp_path / "selected_features_long.json")
         short_path = str(tmp_path / "selected_features_short.json")
+        from gpu_fuzzy_trader.features import selector as selector_module
+
+        train_df = _make_train_df()
+        input_identity = selector_module._phase1_input_identity(train_df)
+        self._write_valid_file(long_path, "long", input_identity=input_identity)
+        self._write_valid_file(short_path, "short", input_identity=input_identity)
+
+        monkeypatch.setattr("gpu_fuzzy_trader.features.selector._LONG_PATH", long_path)
+        monkeypatch.setattr("gpu_fuzzy_trader.features.selector._SHORT_PATH", short_path)
+        monkeypatch.setattr(
+            "gpu_fuzzy_trader.features.selector._DIRECTION_PATHS",
+            {"long": long_path, "short": short_path},
+        )
+        result = Feature_Selector.skip_if_valid(train_df)
+        assert result is not None
+        assert "long" in result
+        assert "short" in result
+
+    def test_input_content_change_invalidates_cache(self, tmp_path, monkeypatch):
+        long_path = str(tmp_path / "selected_features_long.json")
+        short_path = str(tmp_path / "selected_features_short.json")
+        from gpu_fuzzy_trader.features import selector as selector_module
+
+        train_df = _make_train_df()
+        input_identity = selector_module._phase1_input_identity(train_df)
+        self._write_valid_file(long_path, "long", input_identity=input_identity)
+        self._write_valid_file(short_path, "short", input_identity=input_identity)
+
+        monkeypatch.setattr("gpu_fuzzy_trader.features.selector._LONG_PATH", long_path)
+        monkeypatch.setattr("gpu_fuzzy_trader.features.selector._SHORT_PATH", short_path)
+        monkeypatch.setattr(
+            "gpu_fuzzy_trader.features.selector._DIRECTION_PATHS",
+            {"long": long_path, "short": short_path},
+        )
+
+        changed = train_df.copy()
+        changed.loc[changed.index[0], "feat_0"] += 1.0
+        assert Feature_Selector.skip_if_valid(changed) is None
+
+    def test_legacy_schema_valid_files_are_not_reused_without_identity(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        long_path = str(tmp_path / "selected_features_long.json")
+        short_path = str(tmp_path / "selected_features_short.json")
         self._write_valid_file(long_path, "long")
         self._write_valid_file(short_path, "short")
 
@@ -566,10 +615,8 @@ class TestSkipIfValid:
             "gpu_fuzzy_trader.features.selector._DIRECTION_PATHS",
             {"long": long_path, "short": short_path},
         )
-        result = Feature_Selector.skip_if_valid()
-        assert result is not None
-        assert "long" in result
-        assert "short" in result
+
+        assert Feature_Selector.skip_if_valid() is None
 
     def test_raises_on_corrupted_file(self, tmp_path, monkeypatch):
         long_path = str(tmp_path / "selected_features_long.json")

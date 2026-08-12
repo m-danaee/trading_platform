@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
@@ -998,8 +999,66 @@ class TestLoadPool:
         original = m._POOL_PATHS.copy()
         m._POOL_PATHS["long"] = path
         try:
-            result = Rule_Pool_Generator.skip_if_valid("long")
+            Rule_Pool_Generator.write_pool_resume_identity(
+                "long", "current-input"
+            )
+            result = Rule_Pool_Generator.skip_if_valid(
+                "long", expected_identity="current-input"
+            )
             assert result is not None
+        finally:
+            m._POOL_PATHS.update(original)
+
+    def test_skip_if_valid_rejects_legacy_pool_without_identity(self, tmp_path):
+        import gpu_fuzzy_trader.phases.phase2_rule_pool as m
+
+        path = str(tmp_path / "phase2_long_pool.json")
+        self._write_valid_pool(path)
+        original = m._POOL_PATHS.copy()
+        m._POOL_PATHS["long"] = path
+        try:
+            assert Rule_Pool_Generator.skip_if_valid(
+                "long", expected_identity="current-input"
+            ) is None
+        finally:
+            m._POOL_PATHS.update(original)
+
+    def test_skip_if_valid_rejects_mismatched_identity(self, tmp_path):
+        import gpu_fuzzy_trader.phases.phase2_rule_pool as m
+
+        path = str(tmp_path / "phase2_long_pool.json")
+        self._write_valid_pool(path)
+        original = m._POOL_PATHS.copy()
+        m._POOL_PATHS["long"] = path
+        try:
+            Rule_Pool_Generator.write_pool_resume_identity(
+                "long", "old-input"
+            )
+            assert Rule_Pool_Generator.skip_if_valid(
+                "long", expected_identity="new-input"
+            ) is None
+        finally:
+            m._POOL_PATHS.update(original)
+
+    def test_skip_if_valid_rejects_pool_changed_after_identity_write(
+        self, tmp_path,
+    ):
+        import gpu_fuzzy_trader.phases.phase2_rule_pool as m
+
+        path = str(tmp_path / "phase2_long_pool.json")
+        self._write_valid_pool(path)
+        original = m._POOL_PATHS.copy()
+        m._POOL_PATHS["long"] = path
+        try:
+            Rule_Pool_Generator.write_pool_resume_identity(
+                "long", "current-input"
+            )
+            pool = json.loads(Path(path).read_text(encoding="utf-8"))
+            pool[0]["executed_trades"] = 31
+            Path(path).write_text(json.dumps(pool), encoding="utf-8")
+            assert Rule_Pool_Generator.skip_if_valid(
+                "long", expected_identity="current-input"
+            ) is None
         finally:
             m._POOL_PATHS.update(original)
 

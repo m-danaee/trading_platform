@@ -28,8 +28,7 @@ Constraints (Requirements 12.1–12.9):
       - Truncates rules_set to RB_MAX_RULES if needed (log WARNING).
       - Rules must already be score-ranked (RB Governor sorts before write).
   - Each rule must have exactly: tp, sl, capital_pct, conditions
-  - tp, sl, capital_pct must be floats
-  - If all three of tp/sl/capital_pct are zero → reject rule (log ERROR, raise ValidationError)
+  - tp, sl, capital_pct must be finite positive floats
   - conditions must be a non-empty list of strings: feature conditions match
     [feature_name] IS Fuzzy Value Name; optional symbol filters match
     symbol is X or [symbol] IS X (evaluator_v5 parity)
@@ -39,6 +38,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from pathlib import Path
 
@@ -246,15 +246,15 @@ def _validate_rule(rule: object, rule_index: int) -> dict:
             f"Rule {rule_index}: 'capital_pct' must be a number, got {rule['capital_pct']!r}."
         ) from exc
 
-    # Requirement 12.9: reject if all three are zero
-    if tp == 0.0 and sl == 0.0 and capital_pct == 0.0:
-        logger.error(
-            "Rule %d has all-zero tp/sl/capital_pct — rejecting rule set.", rule_index
-        )
-        raise ValidationError(
-            f"Rule {rule_index}: all of tp, sl, and capital_pct are zero. "
-            "At least one must be non-zero."
-        )
+    for field_name, value in (
+        ("tp", tp),
+        ("sl", sl),
+        ("capital_pct", capital_pct),
+    ):
+        if not math.isfinite(value) or value <= 0.0:
+            raise ValidationError(
+                f"Rule {rule_index}: '{field_name}' must be finite and positive."
+            )
 
     # Validate conditions
     conditions = rule.get("conditions")

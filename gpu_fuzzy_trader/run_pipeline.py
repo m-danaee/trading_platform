@@ -71,6 +71,7 @@ from contextlib import contextmanager
 import pandas as pd
 from typing import Any
 from datetime import datetime, timezone
+import hashlib
 import uuid
 import time
 import sys
@@ -227,6 +228,135 @@ def _temporary_output_paths(output_dir: str | None):
 def _now_iso() -> str:
     """Return current UTC time as ISO 8601 string."""
     return datetime.now(timezone.utc).isoformat()
+
+
+_PHASE2_RESUME_IDENTITY_VERSION = 1
+_PHASE2_RESUME_CODE_PATHS = (
+    "run_pipeline.py",
+    "backtest/cpu_engine.py",
+    "backtest/gpu_engine.py",
+    "evolution/evox_runner.py",
+    "phases/phase2_island_scheduler.py",
+    "phases/phase2_rule_pool.py",
+    "phases/phase2_sparse_encoding.py",
+    "phases/phase2_support.py",
+    "phases/rule_identity.py",
+    "validation/monthly_windows.py",
+)
+
+
+def _identity_value(value: Any) -> Any:
+    """Convert configuration values to a stable, JSON-safe identity form."""
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, (float, np.floating)):
+        numeric = float(value)
+        return numeric if np.isfinite(numeric) else repr(numeric)
+    if isinstance(value, np.integer):
+        return int(value)
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, dict):
+        return {
+            str(key): _identity_value(item)
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+        }
+    if isinstance(value, (list, tuple)):
+        return [_identity_value(item) for item in value]
+    if isinstance(value, (set, frozenset)):
+        items = [_identity_value(item) for item in value]
+        return sorted(items, key=lambda item: json.dumps(item, sort_keys=True))
+    if isinstance(value, np.ndarray):
+        return _identity_value(value.tolist())
+    return str(value)
+
+
+def _phase2_frame_identity(frame: pd.DataFrame | None) -> str | None:
+    """Return a canonical content hash for a Phase 2 split frame."""
+    if frame is None:
+        return None
+    sort_columns = [
+        column for column in ("datetime", "symbol") if column in frame.columns
+    ]
+    canonical = (
+        frame.sort_values(sort_columns, kind="mergesort").reset_index(drop=True)
+        if sort_columns
+        else frame.reset_index(drop=True)
+    )
+    schema = {
+        "columns": [str(column) for column in canonical.columns],
+        "dtypes": [str(dtype) for dtype in canonical.dtypes],
+        "rows": int(len(canonical)),
+    }
+    digest = hashlib.sha256(
+        json.dumps(schema, sort_keys=True).encode("utf-8")
+    )
+    row_hashes = pd.util.hash_pandas_object(
+        canonical,
+        index=False,
+        categorize=True,
+    ).to_numpy(dtype=np.uint64, copy=False)
+    digest.update(row_hashes.tobytes())
+    return digest.hexdigest()
+
+
+def _phase2_cv_structure(cv_folds: list | None) -> list[dict[str, Any]]:
+    """Capture CV boundaries without duplicating full frame contents in RAM."""
+    if not cv_folds:
+        return []
+    fields = (
+        "fold_id",
+        "train_end_bar",
+        "valid_start_bar",
+        "valid_end_bar",
+        "n_train_rows",
+        "n_valid_rows",
+        "is_holdout",
+    )
+    return [
+        {
+            field: _identity_value(
+                fold.get(field) if isinstance(fold, dict) else getattr(fold, field)
+            )
+            for field in fields
+        }
+        for fold in cv_folds
+    ]
+
+
+def _phase2_resume_identity(
+    train_df: pd.DataFrame,
+    val_df: pd.DataFrame | None,
+    feature_infos: list[dict],
+    direction: str,
+    cv_folds: list | None,
+) -> str:
+    """Bind reusable Phase 2 pools to data, selection, config, and code."""
+    package_root = Path(__file__).resolve().parent
+    config_snapshot = {
+        name: _identity_value(getattr(_cfg, name))
+        for name in sorted(dir(_cfg))
+        if name.isupper() and not name.startswith("_")
+        and not callable(getattr(_cfg, name))
+    }
+    payload = {
+        "version": _PHASE2_RESUME_IDENTITY_VERSION,
+        "direction": direction,
+        "train": _phase2_frame_identity(train_df),
+        "validation": _phase2_frame_identity(val_df),
+        "feature_infos": _identity_value(feature_infos),
+        "cv_structure": _phase2_cv_structure(cv_folds),
+        "context_contract_digest": _cfg.context_contract_digest(),
+        "config": config_snapshot,
+        "code": {
+            relative_path: sha256_file(package_root / relative_path)
+            for relative_path in _PHASE2_RESUME_CODE_PATHS
+        },
+    }
+    encoded = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 _CONTEXT_COVERAGE_SPLITS = (
@@ -1068,6 +1198,8 @@ class Pipeline_Orchestrator:
                 "phase2_short_pool.json",
                 "phase2_long_history.json",
                 "phase2_short_history.json",
+                "phase2_long_pool.json.identity.json",
+                "phase2_short_pool.json.identity.json",
                 "long.json",
                 "short.json",
             ):
@@ -1301,8 +1433,9 @@ class Pipeline_Orchestrator:
         already on disk.
 
         Expects ``selected_features_{long,short}.json`` under this run's output
-        directory (copy from a baseline run before calling). Does not re-run
-        feature selection.
+        directory.  The artifacts must match the current masked training input
+        and Phase 1 contract; stale or copied artifacts fail closed.  Does not
+        re-run feature selection.
 
         Parameters
         ----------
@@ -1361,7 +1494,8 @@ class Pipeline_Orchestrator:
                     context_report.get("blocked_directions", [])
                 )
 
-                phase1_result = self._load_phase1_outputs()
+                phase1_train_df = self._mask_train_df_for_phase1(train_df)
+                phase1_result = self._load_phase1_outputs(phase1_train_df)
                 results["phase1"] = phase1_result
                 train_df, val_df = self._prune_splits_after_phase1(
                     train_df, val_df, phase1_result)
@@ -1438,7 +1572,7 @@ class Pipeline_Orchestrator:
 
     def run_phase(self, phase: int) -> dict:
         """
-        Run a single pipeline phase from disk-backed prerequisites.
+        Run a single pipeline phase from identity-validated disk prerequisites.
 
         The selected phase is forced to re-run even if its outputs already
         exist. Earlier phases are not auto-run.
@@ -1500,7 +1634,8 @@ class Pipeline_Orchestrator:
                 blocked_directions = frozenset(
                     context_report.get("blocked_directions", [])
                 )
-                phase1_result = self._load_phase1_outputs()
+                phase1_train_df = self._mask_train_df_for_phase1(train_df)
+                phase1_result = self._load_phase1_outputs(phase1_train_df)
                 train_df, val_df = self._prune_splits_after_phase1(
                     train_df, val_df, phase1_result)
                 val_fitness_df, val_selection_df = self._prune_splits_after_phase1(
@@ -1518,12 +1653,23 @@ class Pipeline_Orchestrator:
             elif phase in {3, 4}:
                 train_df, val_df = self._load_and_split_data()
                 self._validate_active_configuration(train_df)
-                _, val_selection_df = self._validation_scoring_frames(val_df)
+                val_fitness_df, val_selection_df = self._validation_scoring_frames(
+                    val_df)
                 results["data"] = {
                     "train_rows": len(train_df),
                     "val_rows": len(val_df),
                 }
-                phase2_result = self._load_phase2_outputs()
+                phase1_train_df = self._mask_train_df_for_phase1(train_df)
+                phase1_result = self._load_phase1_outputs(phase1_train_df)
+                train_df, val_df = self._prune_splits_after_phase1(
+                    train_df, val_df, phase1_result)
+                val_fitness_df, val_selection_df = self._prune_splits_after_phase1(
+                    val_fitness_df, val_selection_df, phase1_result)
+                self._cv_folds = self._prune_cv_folds_after_phase1(
+                    self._cv_folds, phase1_result)
+                phase2_result = self._load_phase2_outputs(
+                    train_df, val_fitness_df, phase1_result,
+                )
                 self._release_between_phases("RB Governor")
                 rb_result = self._run_rb_governor(
                     train_df,
@@ -1771,43 +1917,79 @@ class Pipeline_Orchestrator:
             }
         return summary
 
-    def _load_phase1_outputs(self) -> dict[str, list[dict]]:
-        """Load Phase 1 feature selection outputs for both directions."""
-        result: dict[str, list[dict]] = {}
-        missing: list[str] = []
-
-        for direction, path in _selector_module._DIRECTION_PATHS.items():
-            try:
-                result[direction] = Feature_Selector.load_and_validate(path)
-            except ValueError as exc:
-                missing.append(f"{direction}: {path} ({exc})")
-
-        if missing:
+    def _load_phase1_outputs(
+        self,
+        train_df: pd.DataFrame | None = None,
+        val_df: pd.DataFrame | None = None,
+    ) -> dict[str, list[dict]]:
+        """Load Phase 1 outputs only when they match current inputs."""
+        if train_df is None:
             raise FileNotFoundError(
-                "Phase 2 requires Phase 1 outputs for both directions. "
-                f"Missing or invalid: {', '.join(missing)}"
+                "Phase 2 requires Phase 1 outputs matching current Phase 1 input; "
+                "rerun Phase 1."
             )
 
+        try:
+            result = Feature_Selector.skip_if_valid(train_df, val_df=val_df)
+        except ValueError as exc:
+            raise FileNotFoundError(
+                "Phase 2 requires valid Phase 1 outputs matching current "
+                "Phase 1 input; rerun Phase 1."
+            ) from exc
+
+        if result is None:
+            raise FileNotFoundError(
+                "Phase 2 requires Phase 1 outputs matching current Phase 1 input; "
+                "rerun Phase 1."
+            )
         return result
 
-    def _load_phase2_outputs(self) -> dict[str, list[dict]]:
-        """Load Phase 2 pools for both directions from the persistent cache."""
+    def _load_phase2_outputs(
+        self,
+        train_df: pd.DataFrame | None = None,
+        val_df: pd.DataFrame | None = None,
+        phase1_result: dict[str, list[dict]] | None = None,
+    ) -> dict[str, list[dict]]:
+        """Load Phase 2 pools only when they match current prerequisites."""
         result: dict[str, list[dict]] = {}
         missing: list[str] = []
         self._phase2_status = {}
 
+        if train_df is None or phase1_result is None:
+            logger.warning(
+                "RB Governor will fail closed: Phase 2 input identity is unavailable"
+            )
+            for direction in ("long", "short"):
+                result[direction] = []
+                self._phase2_status[direction] = {
+                    "status": "error",
+                    "reason": "phase2_identity_unavailable",
+                    "detail": (
+                        "Phase 3/4 requires current Phase 1 outputs and "
+                        "current Phase 2 input frames"
+                    ),
+                    "pool_size": 0,
+                }
+            return result
+
         for direction in ("long", "short"):
-            try:
-                pool = Rule_Pool_Generator.load_pool(direction)
-            except Exception as exc:
-                missing.append(
-                    f"{direction}: {type(exc).__name__}: {exc}"
-                )
-                continue
+            expected_identity = _phase2_resume_identity(
+                train_df,
+                val_df,
+                phase1_result.get(direction, []),
+                direction,
+                self._cv_folds,
+            )
+            pool = Rule_Pool_Generator.skip_if_valid(
+                direction,
+                expected_identity=expected_identity,
+            )
 
             if pool is None:
                 missing.append(
-                    f"{direction}: {_phase2_module._POOL_PATHS[direction]}")
+                    f"{direction}: {_phase2_module._POOL_PATHS[direction]} "
+                    "(missing, invalid, or identity mismatch)"
+                )
                 continue
 
             result[direction] = pool
@@ -2161,7 +2343,7 @@ class Pipeline_Orchestrator:
         t0 = time.monotonic()
 
         if not force:
-            existing = Feature_Selector.skip_if_valid()
+            existing = Feature_Selector.skip_if_valid(train_df, val_df=val_df)
             if existing is not None:
                 long_path = os.path.join(
                     _cfg.OUTPUTS_DIR, "selected_features_long.json")
@@ -2262,8 +2444,22 @@ class Pipeline_Orchestrator:
                 )
                 continue
 
+            # Bind a resumed pool to the exact selected features, split data,
+            # CV boundaries, configuration, and evaluator code used today.
+            feature_infos = phase1_result.get(direction, [])
+            resume_identity = _phase2_resume_identity(
+                train_df,
+                val_df,
+                feature_infos,
+                direction,
+                self._cv_folds,
+            )
+
             if not force:
-                existing_pool = Rule_Pool_Generator.skip_if_valid(direction)
+                existing_pool = Rule_Pool_Generator.skip_if_valid(
+                    direction,
+                    expected_identity=resume_identity,
+                )
                 if (
                     existing_pool
                     and bool(getattr(_cfg, "PHASE2_SYMBOL_SPECIALISTS_ENABLED", False))
@@ -2301,8 +2497,28 @@ class Pipeline_Orchestrator:
                     }
                     continue
 
-            # Get feature infos for this direction
-            feature_infos = phase1_result.get(direction, [])
+                # A stale pool may otherwise be merged back into the new
+                # population by Rule_Pool_Generator.run().  Remove only the
+                # cache artifacts that failed this run's identity contract.
+                pool_path = _phase2_module._POOL_PATHS[direction]
+                identity_path = f"{pool_path}.identity.json"
+                if os.path.exists(pool_path) or os.path.exists(identity_path):
+                    logger.info(
+                        "Discarding stale Phase 2 %s cache before regeneration",
+                        direction,
+                    )
+                    Rule_Pool_Generator.discard_cached_pool(direction)
+
+            if force:
+                pool_path = _phase2_module._POOL_PATHS[direction]
+                identity_path = f"{pool_path}.identity.json"
+                if os.path.exists(pool_path) or os.path.exists(identity_path):
+                    logger.info(
+                        "Discarding Phase 2 %s cache for a forced regeneration",
+                        direction,
+                    )
+                    Rule_Pool_Generator.discard_cached_pool(direction)
+
             if not feature_infos:
                 logger.warning(
                     "Phase 2 [%s]: no features from Phase 1; skipping direction.",
@@ -2364,6 +2580,27 @@ class Pipeline_Orchestrator:
                     "reason": "generated" if pool else "empty_pool",
                     "pool_size": len(pool),
                 }
+                pool_path = _phase2_module._POOL_PATHS[direction]
+                if os.path.isfile(pool_path):
+                    try:
+                        Rule_Pool_Generator.write_pool_resume_identity(
+                            direction,
+                            resume_identity,
+                        )
+                    except (OSError, ValueError) as exc:
+                        logger.warning(
+                            "Phase 2 [%s]: pool was generated but cannot be "
+                            "resumed safely: %s",
+                            direction,
+                            exc,
+                        )
+                else:
+                    logger.warning(
+                        "Phase 2 [%s]: generator returned without writing %s; "
+                        "the result will not be resumable",
+                        direction,
+                        pool_path,
+                    )
 
             dir_elapsed = time.monotonic() - dir_t0
             _log_phase_entry(

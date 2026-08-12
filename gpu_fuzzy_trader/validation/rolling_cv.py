@@ -478,6 +478,7 @@ def write_cv_folds_manifest(
     folds: list[PurgedFold] | None,
     *,
     reference_rows: int,
+    source_sha256: str | None = None,
     path: str | None = None,
 ) -> str:
     """Persist split/fold metadata JSON; returns the path written."""
@@ -489,6 +490,7 @@ def write_cv_folds_manifest(
     payload: dict[str, Any] = {
         "split_mode": getattr(_cfg, "SPLIT_MODE", "holdout"),
         "config_fingerprint": purged_config_fingerprint(),
+        "source_sha256": source_sha256,
         "reference_rows": int(reference_rows),
         "n_folds": len(fold_list),
         "config": {

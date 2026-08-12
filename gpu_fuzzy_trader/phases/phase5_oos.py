@@ -527,6 +527,18 @@ class OOS_Evaluator:
                 )
                 continue
             try:
+                with open(path, encoding="utf-8") as fh:
+                    raw_data = json.load(fh)
+                if (
+                    isinstance(raw_data, dict)
+                    and raw_data.get("deployment_accepted") is False
+                ):
+                    logger.warning(
+                        "Strategy explicitly rejected by RB, skipping %s direction: %s",
+                        direction,
+                        path,
+                    )
+                    continue
                 data = writer.load_and_validate(path)
                 declared_direction = str(data.get("direction", "")).strip().lower()
                 if declared_direction != direction:
@@ -536,7 +548,7 @@ class OOS_Evaluator:
                     )
                 strategies[direction] = data
                 logger.info("Loaded %s strategy from %s", direction, path)
-            except ValidationError as exc:
+            except (OSError, json.JSONDecodeError, ValidationError) as exc:
                 logger.warning(
                     "Strategy file failed validation, skipping %s direction: %s — %s",
                     direction,

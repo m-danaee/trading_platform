@@ -521,6 +521,85 @@ class TestCausalPublicationTiming:
         assert row_at[pd.Timestamp("2024-01-01 11:45")] == _B
         assert row_at[pd.Timestamp("2024-01-01 12:00")] == _B
         assert row_at[pd.Timestamp("2024-01-01 13:00")] == _B
+
+    def test_appending_shocked_future_rows_does_not_change_prior_context(self):
+        # 640 bars ends exactly on a 4h boundary, so every higher-timeframe
+        # bar visible to the base tape is complete.  The appended tail is
+        # deliberately extreme: any forward-looking aggregate would alter the
+        # already-emitted context values.
+        full = _raw_tape(n=768)
+        base = full.groupby("symbol", sort=False, observed=False).head(640)
+        extended = full.copy()
+        future_mask = extended.groupby(
+            "symbol", sort=False, observed=False,
+        ).cumcount() >= 640
+        extended.loc[future_mask, "close"] *= 10.0
+        extended.loc[future_mask, "high"] = np.maximum(
+            extended.loc[future_mask, "high"],
+            extended.loc[future_mask, "close"],
+        )
+        extended.loc[future_mask, "low"] = np.minimum(
+            extended.loc[future_mask, "low"],
+            extended.loc[future_mask, "close"],
+        )
+
+        thresholds = tc.fit_all_thresholds(base)
+        base_context, _ = tc.generate_enriched_frame(base, thresholds)
+        extended_context, _ = tc.generate_enriched_frame(extended, thresholds)
+        columns = list(cfg.CONTEXT_COLUMNS)
+        base_values = base_context.set_index(
+            ["datetime", "symbol"],
+        )[columns].sort_index()
+        extended_values = extended_context.set_index(
+            ["datetime", "symbol"],
+        )[columns].sort_index().loc[base_values.index]
+
+        pd.testing.assert_frame_equal(base_values, extended_values)
+
+    def test_higher_timeframe_state_isolated_by_symbol(self, monkeypatch):
+        rows = pd.concat(
+            [
+                self._rows().assign(symbol="A"),
+                self._rows().assign(symbol="B"),
+            ],
+            ignore_index=True,
+        )
+        hf = pd.DataFrame(
+            {
+                "datetime": pd.to_datetime([
+                    "2024-01-01 10:00",
+                    "2024-01-01 10:00",
+                ]),
+                "symbol": ["A", "B"],
+            },
+        )
+        monkeypatch.setattr(
+            tc,
+            "_classify_hf_bars",
+            lambda g, th: np.full(
+                len(g),
+                _U if g["symbol"].iloc[0] == "A" else _B,
+                dtype=np.int8,
+            ),
+        )
+
+        aligned = tc.align_completed_states_to_rows(
+            rows,
+            hf,
+            {},
+            int(cfg.MWC_TIMEFRAME_MINUTES),
+        )
+        aligned_frame = pd.DataFrame(
+            {"symbol": rows["symbol"], "datetime": rows["datetime"], "state": aligned},
+        )
+        published = aligned_frame.loc[
+            aligned_frame["datetime"] == pd.Timestamp("2024-01-01 10:45"),
+        ]
+        assert published.set_index("symbol")["state"].to_dict() == {
+            "A": _U,
+            "B": _B,
+        }
+
     def test_cpu_mask_gates_every_rule(self, tmp_path):
         from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
         from gpu_fuzzy_trader.data.loader import Data_Loader

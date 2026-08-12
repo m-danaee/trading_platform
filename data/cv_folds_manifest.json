@@ -1,7 +1,8 @@
 {
   "split_mode": "holdout",
   "config_fingerprint": "720631af69e3c8fe",
-  "reference_rows": 2387,
+  "source_sha256": "e0dac5e58a1f3c04ce077fdfdc88a13d1d38300d626d55c3d9709f6c4d5ece54",
+  "reference_rows": 3326,
   "n_folds": 0,
   "config": {
     "PURGED_WF_N_SPLITS": 2,

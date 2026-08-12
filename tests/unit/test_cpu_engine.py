@@ -16,11 +16,15 @@ Tests verify exact evaluator_v5.ipynb semantics:
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
 
 from gpu_fuzzy_trader import config as _cfg
+from gpu_fuzzy_trader.backtest.barrier import barrier_column_names
 from gpu_fuzzy_trader.backtest.cpu_engine import (
     CPUBacktestEngine,
     _apply_dynamic_rule,
@@ -615,6 +619,106 @@ class TestTradeOutcomeLong:
         ret, reason = eng._build_trade_outcome_single(0, tp=4.0, sl=2.0)
         assert ret == pytest.approx(1.5)
         assert reason == "Time_96"
+
+    def test_time_closed_count_does_not_depend_on_return_logs(self):
+        df = _make_df(
+            n=3,
+            label_max=101.0,
+            label_min=99.0,
+            label_close=101.5,
+            feature_val=0.5,
+        )
+        df.loc[0, "feat_a"] = 0.9
+        rule_set = [{
+            "conditions": ["[feat_a] IS Very High"],
+            "tp": 4.0,
+            "sl": 2.0,
+            "capital_pct": 10.0,
+        }]
+
+        metrics = _make_engine(
+            df, max_hold_candles=2,
+        ).simulate_rule_set(rule_set, return_logs=False)
+
+        assert metrics["executed_trades"] == 1
+        assert metrics["time_closed_count"] == 1
+
+
+class TestCanonicalNotebookPrecision:
+    def test_exact_barrier_metrics_match_canonical_notebook(self):
+        notebook = json.loads(
+            (Path(__file__).parents[2] / "evaluator_v5.ipynb").read_text(
+                encoding="utf-8",
+            ),
+        )
+        namespace: dict[str, object] = {}
+        for cell_index in (1, 2, 3, 5, 6, 7, 8):
+            exec("".join(notebook["cells"][cell_index]["source"]), namespace)
+
+        n_rows = 8
+        df = _make_df(n=n_rows, feature_val=0.9)
+        df["tf_permission_long"] = 1
+        df["lwc_pullback_reversal_long"] = 1
+        returns = np.array(
+            [2.0, -1.0, 0.5, 2.0, -1.0, 2.0, -1.0, 0.5],
+            dtype=float,
+        )
+        offsets = np.array([1, 1, 2, 1, 1, 1, 1, 2], dtype=int)
+        return_col, offset_col = barrier_column_names("long", 2.0, 1.0)
+        df[return_col] = returns
+        df[offset_col] = offsets
+        rule_set = [{
+            "tp": 2.0,
+            "sl": 1.0,
+            "capital_pct": 10.0,
+            "conditions": [
+                "[feat_a] IS Very High",
+                "[tf_permission_long] IS Active (1)",
+                "[lwc_pullback_reversal_long] IS Active (1)",
+            ],
+        }]
+
+        cpu_metrics, cpu_logs = _make_engine(
+            df,
+            direction="long",
+            max_hold_candles=2,
+        ).simulate_rule_set(rule_set, return_logs=True)
+        strategy = {"direction": "long", "rules_set": rule_set}
+        parsed = namespace["strategy_dict_to_rule_set"](strategy, df)
+        fuzzy = namespace["AdaptiveFuzzyEngine"](
+            df,
+            ["feat_a"],
+            {"feat_a": "continuous"},
+        )
+        canonical = namespace["CapitalManagedTradeSimulator"](
+            df,
+            fuzzy,
+            trade_direction="long",
+            max_hold_candles=2,
+        )
+        notebook_metrics, notebook_logs = canonical.simulate_rule_set(
+            parsed["rule_set"],
+            return_logs=True,
+        )
+
+        for key in (
+            "total_return_pct",
+            "max_drawdown_pct",
+            "profit_factor",
+            "final_equity",
+            "avg_position_notional",
+        ):
+            assert float(cpu_metrics[key]) == pytest.approx(
+                float(notebook_metrics[key]),
+                abs=1e-12,
+            )
+        assert cpu_metrics["executed_trades"] == notebook_metrics["executed_trades"]
+        assert cpu_metrics["time_closed_count"] == notebook_metrics["time_closed_count"]
+        assert cpu_logs["Exit_Reason"].tolist() == notebook_logs["Exit_Reason"].tolist()
+        assert cpu_logs["Net_PnL"].tolist() == pytest.approx(
+            notebook_logs["Net_PnL"].tolist(),
+            abs=1e-12,
+        )
 
 
 class TestTradeOutcomeShort:

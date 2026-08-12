@@ -168,6 +168,27 @@ class TestLoadStrategies:
         finally:
             m._STRATEGY_PATHS.update(original)
 
+    def test_skips_explicitly_rejected_strategy_even_when_rules_are_valid(
+        self, tmp_path,
+    ):
+        import gpu_fuzzy_trader.phases.phase5_oos as m
+
+        long_path = tmp_path / "long.json"
+        rejected = _make_rule_set("long")
+        rejected.update({
+            "deployment_accepted": False,
+            "fail_closed": False,
+            "reason": "validation_gate",
+        })
+        long_path.write_text(json.dumps(rejected), encoding="utf-8")
+        original = m._STRATEGY_PATHS.copy()
+        m._STRATEGY_PATHS["long"] = str(long_path)
+        m._STRATEGY_PATHS["short"] = str(tmp_path / "short.json")
+        try:
+            assert OOS_Evaluator.load_strategies() == {}
+        finally:
+            m._STRATEGY_PATHS.update(original)
+
     def test_loads_strategy_with_symbol_filters(self, tmp_path):
         import gpu_fuzzy_trader.phases.phase5_oos as m
 

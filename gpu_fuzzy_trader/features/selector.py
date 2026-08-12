@@ -16,7 +16,7 @@ Algorithm:
   10. Persist to outputs/selected_features_long.json and outputs/selected_features_short.json
 
 Skip logic:
-  - If output files exist and are valid JSON with required schema → skip (return loaded)
+  - Reuse only files bound to the current Phase 1 input and configuration.
   - If files are missing → return None (need to run)
   - If files exist but are corrupted/invalid → raise ValueError immediately
 """
@@ -24,9 +24,11 @@ Skip logic:
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -77,6 +79,81 @@ _REQUIRED_FEATURE_KEYS = {"name", "mode", "score"}
 _VALID_DIRECTIONS = {"long", "short"}
 # Modes with small integer codewords — use discrete MI; others are continuous.
 _DISCRETE_FEATURE_MODES = frozenset({"binary", "ternary"})
+_PHASE1_IDENTITY_VERSION = 1
+_PHASE1_IDENTITY_CONFIG_KEYS = (
+    "PHASE1_DISABLED",
+    "PHASE1_EXCLUDE_RAW_OHLCV",
+    "PHASE1_DISPERSION_THRESHOLD",
+    "PHASE1_TOP_K_FEATURES",
+    "PHASE1_ASYMMETRIC_TARGET",
+    "PHASE1_SYMBOL_UNION_ENABLED",
+    "PHASE1_SYMBOL_TOP_K",
+    "PHASE1_SYMBOL_UNION_MAX_FEATURES",
+    "PHASE1_REQUIRE_SIGN_CONSISTENCY",
+    "PHASE1_SIGN_CONSISTENCY_MIN_FOLDS",
+    "PHASE1_SIGN_CONSISTENCY_MIN_ABS_CORR",
+    "PHASE1_STATIONARITY_FOLDS",
+    "PHASE1_STATIONARITY_CV_MAX",
+    "PHASE1_STATIONARITY_RANK_DRIFT_MAX",
+    "PHASE1_MAX_FEATURE_OVERLAP",
+    "PHASE2_TP",
+    "PHASE2_SL",
+    "MAX_HOLD_CANDLES",
+)
+
+
+def _frame_identity(frame: pd.DataFrame) -> str:
+    """Return a canonical content hash for a Phase 1 input frame."""
+    sort_columns = [
+        column for column in ("datetime", "symbol") if column in frame.columns
+    ]
+    canonical = (
+        frame.sort_values(sort_columns, kind="mergesort").reset_index(drop=True)
+        if sort_columns
+        else frame.reset_index(drop=True)
+    )
+    digest = hashlib.sha256()
+    schema = {
+        "columns": [str(column) for column in canonical.columns],
+        "dtypes": [str(dtype) for dtype in canonical.dtypes],
+        "rows": int(len(canonical)),
+    }
+    digest.update(json.dumps(schema, sort_keys=True).encode("utf-8"))
+    row_hashes = pd.util.hash_pandas_object(
+        canonical,
+        index=False,
+        categorize=True,
+    ).to_numpy(dtype=np.uint64, copy=False)
+    digest.update(row_hashes.tobytes())
+    return digest.hexdigest()
+
+
+def _phase1_input_identity(
+    train_df: pd.DataFrame,
+    val_df: pd.DataFrame | None = None,
+) -> str:
+    """Bind reusable Phase 1 artifacts to their actual research inputs."""
+    source_files = (Path(__file__), Path(__file__).with_name("detector.py"))
+    payload = {
+        "version": _PHASE1_IDENTITY_VERSION,
+        "train": _frame_identity(train_df),
+        "validation": _frame_identity(val_df) if val_df is not None else None,
+        "config": {
+            key: getattr(config, key)
+            for key in _PHASE1_IDENTITY_CONFIG_KEYS
+        },
+        "config_seed": config.get_seed(),
+        "label_columns": list(config.LABEL_COLUMNS),
+        "meta_columns": list(config.META_COLUMNS),
+        "internal_columns": list(config.INTERNAL_COLUMNS),
+        "context_contract_digest": config.context_contract_digest(),
+        "code": {
+            str(path.name): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in source_files
+        },
+    }
+    encoded = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 @dataclass
@@ -562,6 +639,7 @@ class Feature_Selector:
             {"long": [...], "short": [...]}
             Also persists results to outputs/selected_features_{direction}.json.
         """
+        input_identity = _phase1_input_identity(train_df, val_df)
         phase1_disabled = bool(getattr(config, "PHASE1_DISABLED", False))
         if phase1_disabled:
             shared = build_phase1_shared_context(train_df)
@@ -574,7 +652,11 @@ class Feature_Selector:
                 for col in shared.feature_cols
             ]
             results = {"long": list(all_infos), "short": list(all_infos)}
-            _persist_phase1_results(results, phase1_disabled=True)
+            _persist_phase1_results(
+                results,
+                phase1_disabled=True,
+                input_identity=input_identity,
+            )
             logger.info(
                 "Phase 1 [disabled]: using all %d features (post-dispersion) "
                 "for both directions",
@@ -687,6 +769,7 @@ class Feature_Selector:
             _persist_phase1_results(
                 {direction: features},
                 phase1_disabled=False,
+                input_identity=input_identity,
             )
 
         return results
@@ -730,14 +813,19 @@ class Feature_Selector:
         return data["features"]
 
     @staticmethod
-    def skip_if_valid() -> Optional[dict[str, list[dict]]]:
+    def skip_if_valid(
+        train_df: pd.DataFrame | None = None,
+        val_df: pd.DataFrame | None = None,
+    ) -> Optional[dict[str, list[dict]]]:
         """
         Check if output files exist and are valid.
 
         Returns
         -------
         dict[str, list[dict]] | None
-            Loaded results if both files are valid, None if either is missing.
+            Loaded results only when both files match the current Phase 1
+            inputs. ``train_df`` is required for reuse; without it, returns
+            ``None`` fail-closed.
 
         Raises
         ------
@@ -754,7 +842,12 @@ class Feature_Selector:
         # If one exists but not the other → validate the existing one
         # (it may be corrupted); if valid, still return None to force re-run
         # because both are required.
-        results: dict[str, list[dict]] = {}
+        payloads: dict[str, dict] = {}
+        expected_identity = (
+            _phase1_input_identity(train_df, val_df)
+            if train_df is not None
+            else None
+        )
 
         for direction, path in _DIRECTION_PATHS.items():
             if not os.path.exists(path):
@@ -768,6 +861,10 @@ class Feature_Selector:
                     f"Feature selection file is unreadable or corrupted: {path}"
                 ) from exc
             _validate_schema(data, path)
+            payloads[direction] = data
+
+        results: dict[str, list[dict]] = {}
+        for direction, data in payloads.items():
             cached_disabled = bool(data.get("phase1_disabled", False))
             current_disabled = bool(getattr(config, "PHASE1_DISABLED", False))
             if cached_disabled != current_disabled:
@@ -776,6 +873,18 @@ class Feature_Selector:
                     "current config is %s; forcing re-run",
                     cached_disabled,
                     current_disabled,
+                )
+                return None
+            if expected_identity is None:
+                logger.info(
+                    "Phase 1: current input identity was not supplied; "
+                    "not reusing cached output",
+                )
+                return None
+            if data.get("phase1_input_identity") != expected_identity:
+                logger.info(
+                    "Phase 1: cached input identity differs from the current "
+                    "train/validation/configuration contract; forcing re-run",
                 )
                 return None
             results[direction] = data["features"]
@@ -792,6 +901,7 @@ def _persist_phase1_results(
     results: dict[str, list[dict]],
     *,
     phase1_disabled: bool,
+    input_identity: str,
 ) -> None:
     """Write Phase 1 feature JSON for each direction in *results*."""
     for direction, features in results.items():
@@ -801,6 +911,7 @@ def _persist_phase1_results(
             "direction": direction,
             "features": features,
             "phase1_disabled": bool(phase1_disabled),
+            "phase1_input_identity": input_identity,
         }
         with open(out_path, "w", encoding="utf-8") as fh:
             json.dump(payload, fh, indent=2)

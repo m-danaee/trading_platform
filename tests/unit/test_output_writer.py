@@ -254,10 +254,10 @@ class TestWriteRulesSetSize:
 
 
 # ---------------------------------------------------------------------------
-# Tests: write() — all-zero tp/sl/capital_pct rejection
+# Tests: write() — evaluator-compatible risk parameter validation
 # ---------------------------------------------------------------------------
 
-class TestWriteAllZeroRejection:
+class TestWriteRiskParameterValidation:
     def test_all_zero_rule_raises_validation_error(self):
         bad_rule = _make_rule(tp=0.0, sl=0.0, capital_pct=0.0)
         rule_set = {"direction": "long", "rules_set": [bad_rule, _make_rule()]}
@@ -271,24 +271,35 @@ class TestWriteAllZeroRejection:
             if Path(tmp_path).exists():
                 os.unlink(tmp_path)
 
-    def test_nonzero_tp_only_is_accepted(self):
-        """A rule with only tp non-zero should be accepted."""
-        rule = _make_rule(tp=1.0, sl=0.0, capital_pct=0.0)
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("tp", 0.0),
+            ("sl", 0.0),
+            ("capital_pct", 0.0),
+            ("tp", -1.0),
+            ("sl", -1.0),
+            ("capital_pct", -1.0),
+            ("tp", float("nan")),
+            ("sl", float("inf")),
+            ("capital_pct", float("-inf")),
+        ],
+    )
+    def test_nonfinite_or_nonpositive_value_raises_validation_error(
+        self, field, value,
+    ):
+        rule = _make_rule()
+        rule[field] = value
         rule_set = {"direction": "long", "rules_set": [rule, rule]}
-        data = _write_and_reload(rule_set)
-        assert len(data["rules_set"]) == 2
-
-    def test_nonzero_sl_only_is_accepted(self):
-        rule = _make_rule(tp=0.0, sl=1.0, capital_pct=0.0)
-        rule_set = {"direction": "long", "rules_set": [rule, rule]}
-        data = _write_and_reload(rule_set)
-        assert len(data["rules_set"]) == 2
-
-    def test_nonzero_capital_pct_only_is_accepted(self):
-        rule = _make_rule(tp=0.0, sl=0.0, capital_pct=50.0)
-        rule_set = {"direction": "long", "rules_set": [rule, rule]}
-        data = _write_and_reload(rule_set)
-        assert len(data["rules_set"]) == 2
+        writer = Output_Writer()
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            tmp_path = f.name
+        try:
+            with pytest.raises(ValidationError):
+                writer.write(rule_set, tmp_path)
+        finally:
+            if Path(tmp_path).exists():
+                os.unlink(tmp_path)
 
 
 # ---------------------------------------------------------------------------
