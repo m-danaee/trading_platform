@@ -2,10 +2,33 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from gpu_fuzzy_trader import config as cfg
 from gpu_fuzzy_trader._gpu_runtime import _ram_batch_cap, _vram_batch_cap
+
+
+def test_main_notebook_pins_triton_for_torch_26() -> None:
+    notebook_path = Path(__file__).resolve().parents[2] / "main.ipynb"
+    notebook = json.loads(notebook_path.read_text(encoding="utf-8"))
+    dependency_source = "\n".join(
+        "".join(cell.get("source", []))
+        for cell in notebook["cells"]
+        if cell.get("cell_type") == "code"
+        and "COLAB_TORCH_CPU" in "".join(cell.get("source", []))
+    )
+
+    assert 'COLAB_TRITON = "triton==3.2.0"' in dependency_source
+    assert (
+        'subprocess.check_call(PIP + ["-U", COLAB_TRITON])'
+        in dependency_source
+    )
+    assert dependency_source.index("COLAB_TORCH_CPU") < dependency_source.index(
+        "COLAB_TRITON"
+    )
 
 
 def test_phase2_should_enrich_without_symbol_scope() -> None:

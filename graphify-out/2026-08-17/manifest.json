@@ -1,7 +1,7 @@
 {
   ".codex/hooks.json": {
-    "mtime": 1786440002.649213,
-    "ast_hash": "d4f2772271f7940900d3d28c717e5d20",
+    "mtime": 1785950632.4616165,
+    "ast_hash": "",
     "semantic_hash": ""
   },
   ".opencode/opencode.json": {
@@ -405,9 +405,9 @@
     "semantic_hash": ""
   },
   "tests/unit/test_colab_gpu_defaults.py": {
-    "mtime": 1786976886.0769546,
-    "ast_hash": "92aa8d1745e049b1ad03bae72025bd22",
-    "semantic_hash": ""
+    "mtime": 1785619383.169616,
+    "ast_hash": "fea794d6e523235ac85e49b4c7dead74",
+    "semantic_hash": "fea794d6e523235ac85e49b4c7dead74"
   },
   "tests/unit/test_condition_cache.py": {
     "mtime": 1785613075.5153518,
@@ -921,22 +921,12 @@
   },
   "tests/fixtures/context_preflight/synthetic_two_symbol_example.json": {
     "mtime": 1786113984.8687863,
-    "ast_hash": "00f8b7722420dd4bb0a6d14cc47c070d",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "tests/unit/test_sparse_context_search_guards.py": {
     "mtime": 1786381109.8302438,
     "ast_hash": "cc85084c77610fb672795b08ecf55b3d",
-    "semantic_hash": ""
-  },
-  "data/cv_folds_manifest.json": {
-    "mtime": 1786533411.8027472,
-    "ast_hash": "11922f3e4842a30e1b6a43334e06a291",
-    "semantic_hash": ""
-  },
-  "data/enriched/trend_context_manifest.json": {
-    "mtime": 1786382814.357545,
-    "ast_hash": "ef194ae92b1781331424e51f328d009c",
     "semantic_hash": ""
   }
 }
