@@ -469,14 +469,9 @@ def _assert_capital_budget(rules: list[dict], *, max_total: float | None = None)
 
 
 def _assert_mandatory_context(direction: str, rules: list[dict]) -> None:
-    """Fail closed if the fixed trend-context conditions were lost.
-
-    The mandatory direction + LWC-trigger conditions must survive candidate
-    copying, ruleset composition, risk-grid evaluation, profit amplification,
-    and final strategy writing.  Enforcement mirrors Output_Writer: strict when
-    the strategy declares any context condition (or the strict flag is on),
-    and always rejects opposite-direction / duplicate context.
-    """
+    """Fail closed if the fixed trend-context conditions were lost (legacy only)."""
+    if not bool(getattr(_cfg, "REQUIRE_CONTEXT_IN_STRATEGY", False)):
+        return
     mandatory = _cfg.mandatory_context_conditions(direction)
     ctx_cols = set(_cfg.CONTEXT_COLUMNS)
 

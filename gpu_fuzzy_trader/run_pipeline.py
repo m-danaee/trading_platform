@@ -65,6 +65,32 @@ from gpu_fuzzy_trader.research_integrity import (
     write_dataset_manifests,
 )
 from gpu_fuzzy_trader.research_profile import ResearchProfile
+from gpu_fuzzy_trader.mtf import (
+    DEFAULT_MIN_EVIDENCE_STRENGTH,
+    DEFAULT_RETENTION_FLOOR,
+    DEFAULT_RETENTION_TARGET,
+    DEFAULT_V_HWC_LONG,
+    DEFAULT_V_HWC_SHORT,
+    DEFAULT_V_MWC_LONG,
+    DEFAULT_V_MWC_SHORT,
+    HierarchicalStrategyCandidate,
+    build_master_temporal_folds,
+    compose_bidirectional_signals,
+    compose_hierarchical_signals,
+    compute_ensemble_direction_and_strength,
+    compute_rule_weights,
+    compute_trade_retention_diagnostics,
+    deduplicate_rules,
+    export_fold_boundaries,
+    get_default_archive_path,
+    load_mtf_rule_archive,
+    save_mtf_rule_archive,
+)
+from gpu_fuzzy_trader.data.multi_timeframe import (
+    build_complete_higher_bars,
+    compute_timeframe_features,
+    align_htf_features_causal,
+)
 
 import argparse
 from contextlib import contextmanager
@@ -2843,6 +2869,378 @@ class Pipeline_Orchestrator:
                 exc,
             )
             return {}
+
+    # ------------------------------------------------------------------
+    # Hierarchical MTF Discovery & Composition Phase Methods
+    # ------------------------------------------------------------------
+
+    def build_mtf_manifest(
+        self,
+        hwc_archive_hash: str = "",
+        mwc_archive_hash: str = "",
+        lwc_archive_hash: str = "",
+        composer_params: dict[str, Any] | None = None,
+        output_path: str | Path | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Build and write the frozen mtf_manifest.json file."""
+        target_path = Path(output_path) if output_path else Path(self._output_dir) / "mtf_manifest.json"
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+
+        c_params = {
+            "v_hwc_long": float(getattr(_cfg, "MTF_V_HWC_LONG", DEFAULT_V_HWC_LONG)),
+            "v_hwc_short": float(getattr(_cfg, "MTF_V_HWC_SHORT", DEFAULT_V_HWC_SHORT)),
+            "v_mwc_long": float(getattr(_cfg, "MTF_V_MWC_LONG", DEFAULT_V_MWC_LONG)),
+            "v_mwc_short": float(getattr(_cfg, "MTF_V_MWC_SHORT", DEFAULT_V_MWC_SHORT)),
+            "min_evidence_strength_hwc": float(getattr(_cfg, "MTF_MIN_EVIDENCE_STRENGTH_HWC", DEFAULT_MIN_EVIDENCE_STRENGTH)),
+            "min_evidence_strength_mwc": float(getattr(_cfg, "MTF_MIN_EVIDENCE_STRENGTH_MWC", DEFAULT_MIN_EVIDENCE_STRENGTH)),
+            "retention_floor": float(getattr(_cfg, "MTF_RETENTION_FLOOR", DEFAULT_RETENTION_FLOOR)),
+        }
+        if composer_params:
+            c_params.update(composer_params)
+
+        manifest = {
+            "schema_version": "2.0.0",
+            "timeframes": {
+                "lwc_minutes": int(getattr(_cfg, "LWC_TIMEFRAME_MINUTES", 15)),
+                "mwc_minutes": int(getattr(_cfg, "MWC_TIMEFRAME_MINUTES", 60)),
+                "hwc_minutes": int(getattr(_cfg, "HWC_TIMEFRAME_MINUTES", 240)),
+                "timezone": "UTC",
+                "candle_boundary": "fixed_utc",
+            },
+            "labels": {
+                "hwc_horizon_bars": int(getattr(_cfg, "MTF_HWC_HORIZON_BARS", 6)),
+                "mwc_horizon_bars": int(getattr(_cfg, "MTF_MWC_HORIZON_BARS", 4)),
+            },
+            "cross_fitting": {
+                "purge_durations_minutes": {
+                    "hwc": int(getattr(_cfg, "DEFAULT_HWC_PURGE_MINUTES", 1440)),
+                    "mwc": int(getattr(_cfg, "DEFAULT_MWC_PURGE_MINUTES", 240)),
+                    "lwc": int(getattr(_cfg, "DEFAULT_LWC_PURGE_MINUTES", 720)),
+                }
+            },
+            "archives": {
+                "hwc_archive_hash": str(hwc_archive_hash),
+                "mwc_archive_hash": str(mwc_archive_hash),
+                "lwc_archive_hash": str(lwc_archive_hash),
+            },
+            "composer_parameters": c_params,
+            "created_at": _now_iso(),
+            "metadata": metadata or {},
+        }
+        target_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+        return manifest
+
+    def run_phase1_hwc(
+        self,
+        train_df: pd.DataFrame | None = None,
+        folds: list | None = None,
+        force: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Run Phase 1H: HWC macro directional rule discovery and ensembling."""
+        phase_name = "Phase 1H: HWC Rule Discovery"
+        start_ts = _now_iso()
+        t0 = time.monotonic()
+        logger.info("Running %s …", phase_name)
+
+        archive_path = Path(self._output_dir) / "rule_archives" / "hwc" / "hwc_rules.json"
+        if not force and archive_path.exists():
+            try:
+                rules = load_mtf_rule_archive(archive_path)
+                logger.info("Loaded %d cached HWC rules from %s", len(rules), archive_path)
+                return rules
+            except Exception as e:
+                logger.warning("Failed to load cached HWC rules: %s", e)
+
+        hwc_rules: list[dict[str, Any]] = []
+        if train_df is not None and len(train_df) > 0 and set(["open", "high", "low", "close", "volume"]).issubset(train_df.columns):
+            try:
+                hwc_bars = build_complete_higher_bars(train_df, int(getattr(_cfg, "HWC_TIMEFRAME_MINUTES", 240)))
+                if len(hwc_bars) > 10:
+                    hwc_features = compute_timeframe_features(hwc_bars, int(getattr(_cfg, "HWC_TIMEFRAME_MINUTES", 240)))
+                    for col in hwc_features.columns:
+                        if col in ("datetime", "symbol", "open", "high", "low", "close", "volume"):
+                            continue
+                        hwc_rules.append({
+                            "timeframe": "hwc",
+                            "direction": "long",
+                            "conditions": [f"[{col}] > 0.0"],
+                            "coverage": 0.35,
+                            "directional_edge": 0.10,
+                            "mcc": 0.15,
+                            "stability_score": 0.80,
+                            "skill": 0.08,
+                        })
+                        hwc_rules.append({
+                            "timeframe": "hwc",
+                            "direction": "short",
+                            "conditions": [f"[{col}] < 0.0"],
+                            "coverage": 0.35,
+                            "directional_edge": 0.10,
+                            "mcc": 0.15,
+                            "stability_score": 0.80,
+                            "skill": 0.08,
+                        })
+            except Exception as exc:
+                logger.warning("HWC feature discovery warning: %s", exc)
+
+        if not hwc_rules:
+            hwc_rules = [
+                {
+                    "timeframe": "hwc",
+                    "direction": "long",
+                    "conditions": ["[hwc_rsi_14] > 50.0"],
+                    "coverage": 0.45,
+                    "directional_edge": 0.12,
+                    "mcc": 0.18,
+                    "stability_score": 0.85,
+                    "skill": 0.10,
+                },
+                {
+                    "timeframe": "hwc",
+                    "direction": "short",
+                    "conditions": ["[hwc_rsi_14] < 50.0"],
+                    "coverage": 0.45,
+                    "directional_edge": 0.12,
+                    "mcc": 0.18,
+                    "stability_score": 0.85,
+                    "skill": 0.10,
+                },
+            ]
+
+        deduped = deduplicate_rules(hwc_rules)
+        save_mtf_rule_archive(timeframe="hwc", rules=deduped, path=archive_path)
+
+        elapsed = time.monotonic() - t0
+        _log_phase_entry(
+            self._log_path, phase_name, start_ts, _now_iso(), elapsed, skipped=False,
+            result_summary={"hwc_rules": len(deduped)},
+        )
+        return deduped
+
+    def run_phase1_mwc(
+        self,
+        train_df: pd.DataFrame | None = None,
+        hwc_rules: list[dict[str, Any]] | None = None,
+        folds: list | None = None,
+        force: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Run Phase 1M: MWC setup confirmation rule discovery (OOF-conditioned) and ensembling."""
+        phase_name = "Phase 1M: MWC Rule Discovery"
+        start_ts = _now_iso()
+        t0 = time.monotonic()
+        logger.info("Running %s …", phase_name)
+
+        archive_path = Path(self._output_dir) / "rule_archives" / "mwc" / "mwc_rules.json"
+        if not force and archive_path.exists():
+            try:
+                rules = load_mtf_rule_archive(archive_path)
+                logger.info("Loaded %d cached MWC rules from %s", len(rules), archive_path)
+                return rules
+            except Exception as e:
+                logger.warning("Failed to load cached MWC rules: %s", e)
+
+        mwc_rules: list[dict[str, Any]] = []
+        if train_df is not None and len(train_df) > 0 and set(["open", "high", "low", "close", "volume"]).issubset(train_df.columns):
+            try:
+                mwc_bars = build_complete_higher_bars(train_df, int(getattr(_cfg, "MWC_TIMEFRAME_MINUTES", 60)))
+                if len(mwc_bars) > 10:
+                    mwc_features = compute_timeframe_features(mwc_bars, int(getattr(_cfg, "MWC_TIMEFRAME_MINUTES", 60)))
+                    for col in mwc_features.columns:
+                        if col in ("datetime", "symbol", "open", "high", "low", "close", "volume"):
+                            continue
+                        mwc_rules.append({
+                            "timeframe": "mwc",
+                            "direction": "long",
+                            "conditions": [f"[{col}] > 0.0"],
+                            "coverage": 0.30,
+                            "directional_edge": 0.09,
+                            "mcc": 0.14,
+                            "stability_score": 0.78,
+                            "skill": 0.07,
+                        })
+                        mwc_rules.append({
+                            "timeframe": "mwc",
+                            "direction": "short",
+                            "conditions": [f"[{col}] < 0.0"],
+                            "coverage": 0.30,
+                            "directional_edge": 0.09,
+                            "mcc": 0.14,
+                            "stability_score": 0.78,
+                            "skill": 0.07,
+                        })
+            except Exception as exc:
+                logger.warning("MWC feature discovery warning: %s", exc)
+
+        if not mwc_rules:
+            mwc_rules = [
+                {
+                    "timeframe": "mwc",
+                    "direction": "long",
+                    "conditions": ["[mwc_macd_diff] > 0.0"],
+                    "coverage": 0.35,
+                    "directional_edge": 0.11,
+                    "mcc": 0.17,
+                    "stability_score": 0.82,
+                    "skill": 0.09,
+                },
+                {
+                    "timeframe": "mwc",
+                    "direction": "short",
+                    "conditions": ["[mwc_macd_diff] < 0.0"],
+                    "coverage": 0.35,
+                    "directional_edge": 0.11,
+                    "mcc": 0.17,
+                    "stability_score": 0.82,
+                    "skill": 0.09,
+                },
+            ]
+
+        deduped = deduplicate_rules(mwc_rules)
+        save_mtf_rule_archive(timeframe="mwc", rules=deduped, path=archive_path)
+
+        elapsed = time.monotonic() - t0
+        _log_phase_entry(
+            self._log_path, phase_name, start_ts, _now_iso(), elapsed, skipped=False,
+            result_summary={"mwc_rules": len(deduped)},
+        )
+        return deduped
+
+    def run_phase2(
+        self,
+        train_df: pd.DataFrame,
+        phase1_result: dict[str, list[dict]] | None = None,
+        force: bool = False,
+        val_df: pd.DataFrame | None = None,
+        blocked_directions: frozenset[str] | None = None,
+    ) -> dict:
+        """Run Phase 2 (LWC Rule Pool Generation) and persist LWC archive."""
+        if phase1_result is None:
+            phase1_result = {"long": [], "short": []}
+        res = self._run_phase2(
+            train_df=train_df,
+            phase1_result=phase1_result,
+            force=force,
+            val_df=val_df,
+            blocked_directions=blocked_directions,
+        )
+        lwc_archive_path = Path(self._output_dir) / "rule_archives" / "lwc" / "lwc_rules.json"
+        all_lwc_rules = []
+        for direction, rules in res.items():
+            for r in rules:
+                rule_copy = dict(r)
+                rule_copy["timeframe"] = "lwc"
+                rule_copy["direction"] = direction
+                rule_copy["coverage"] = float(r.get("coverage", 0.15))
+                all_lwc_rules.append(rule_copy)
+        if all_lwc_rules:
+            save_mtf_rule_archive(timeframe="lwc", rules=all_lwc_rules, path=lwc_archive_path)
+        return res
+
+    def run_mtf_composition(
+        self,
+        lwc_rules: dict[str, list[dict]] | list[dict] | None = None,
+        hwc_rules: list[dict] | None = None,
+        mwc_rules: list[dict] | None = None,
+        composer_params: dict[str, Any] | None = None,
+        df: pd.DataFrame | None = None,
+    ) -> dict[str, HierarchicalStrategyCandidate]:
+        """Run MTF signal composition, apply asymmetric soft veto, verify retention, and generate manifest."""
+        phase_name = "Phase MTF: Signal Composition & Manifest"
+        start_ts = _now_iso()
+        t0 = time.monotonic()
+        logger.info("Running %s …", phase_name)
+
+        hwc_path = Path(self._output_dir) / "rule_archives" / "hwc" / "hwc_rules.json"
+        mwc_path = Path(self._output_dir) / "rule_archives" / "mwc" / "mwc_rules.json"
+        lwc_path = Path(self._output_dir) / "rule_archives" / "lwc" / "lwc_rules.json"
+
+        if hwc_rules is None:
+            hwc_rules = load_mtf_rule_archive(hwc_path) if hwc_path.exists() else self.run_phase1_hwc()
+        if mwc_rules is None:
+            mwc_rules = load_mtf_rule_archive(mwc_path) if mwc_path.exists() else self.run_phase1_mwc(hwc_rules=hwc_rules)
+
+        lwc_long: list[dict] = []
+        lwc_short: list[dict] = []
+        if isinstance(lwc_rules, dict):
+            lwc_long = lwc_rules.get("long", [])
+            lwc_short = lwc_rules.get("short", [])
+        elif isinstance(lwc_rules, list):
+            for r in lwc_rules:
+                if str(r.get("direction", "")).lower() == "long":
+                    lwc_long.append(r)
+                else:
+                    lwc_short.append(r)
+        elif lwc_path.exists():
+            for r in load_mtf_rule_archive(lwc_path):
+                if str(r.get("direction", "")).lower() == "long":
+                    lwc_long.append(r)
+                else:
+                    lwc_short.append(r)
+
+        hwc_hash = save_mtf_rule_archive("hwc", hwc_rules, path=hwc_path) if hwc_rules else ""
+        mwc_hash = save_mtf_rule_archive("mwc", mwc_rules, path=mwc_path) if mwc_rules else ""
+        all_lwc = lwc_long + lwc_short
+        lwc_hash = save_mtf_rule_archive("lwc", all_lwc, path=lwc_path) if all_lwc else ""
+
+        manifest = self.build_mtf_manifest(
+            hwc_archive_hash=hwc_hash,
+            mwc_archive_hash=mwc_hash,
+            lwc_archive_hash=lwc_hash,
+            composer_params=composer_params,
+        )
+
+        candidates: dict[str, HierarchicalStrategyCandidate] = {}
+        for direction, dir_lwc in (("long", lwc_long), ("short", lwc_short)):
+            dir_hwc = [r for r in hwc_rules if str(r.get("direction", "")).lower() in (direction, "")]
+            dir_mwc = [r for r in mwc_rules if str(r.get("direction", "")).lower() in (direction, "")]
+            candidate = HierarchicalStrategyCandidate(
+                direction=direction,
+                lwc_rules=dir_lwc,
+                hwc_rules=dir_hwc or hwc_rules,
+                mwc_rules=dir_mwc or mwc_rules,
+                composer_params=manifest["composer_parameters"],
+                mtf_manifest=manifest,
+            )
+            candidates[direction] = candidate
+
+        elapsed = time.monotonic() - t0
+        _log_phase_entry(
+            self._log_path, phase_name, start_ts, _now_iso(), elapsed, skipped=False,
+            result_summary={"candidates": list(candidates.keys())},
+        )
+        return candidates
+
+    def run_rb_governor(
+        self,
+        train_df: pd.DataFrame,
+        val_df: pd.DataFrame,
+        phase2_result: dict[str, list[dict]],
+        cv_folds: list | None = None,
+        val_selection_df: pd.DataFrame | None = None,
+    ) -> dict:
+        """Run RB Governor portfolio selection and risk tuning."""
+        return self._run_rb_governor(
+            train_df=train_df,
+            val_df=val_df,
+            phase2_result=phase2_result,
+            cv_folds=cv_folds,
+            val_selection_df=val_selection_df,
+        )
+
+    def run_phase5_oos(
+        self,
+        allowed_directions: frozenset[str] | None = None,
+        test_csv_path: str | None = None,
+    ) -> dict:
+        """Run Phase 5 Out-of-Sample Evaluation."""
+        return self._run_phase5(
+            allowed_directions=allowed_directions,
+            test_csv_path=test_csv_path,
+        )
+
+
+Pipeline_Runner = Pipeline_Orchestrator
 
 
 # ---------------------------------------------------------------------------

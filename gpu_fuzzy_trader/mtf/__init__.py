@@ -14,6 +14,7 @@ from gpu_fuzzy_trader.mtf.archives import (
     validate_archive_schema,
     validate_rule_schema,
 )
+from gpu_fuzzy_trader.mtf.candidate import HierarchicalStrategyCandidate
 from gpu_fuzzy_trader.mtf.composer import (
     DEFAULT_MIN_EVIDENCE_STRENGTH,
     DEFAULT_V_HWC_LONG,
@@ -63,6 +64,7 @@ __all__ = [
     "DEFAULT_V_HWC_SHORT",
     "DEFAULT_V_MWC_LONG",
     "DEFAULT_V_MWC_SHORT",
+    "HierarchicalStrategyCandidate",
     "MIN_RETENTION_SAMPLE",
     "TemporalFold",
     "TradeRetentionDiagnostics",

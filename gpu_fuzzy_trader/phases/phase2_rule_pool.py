@@ -2312,12 +2312,8 @@ def _build_pool_from_archive(
             )
             continue
 
-        # Mandatory trend-context conditions are injected after chromosome
-        # decoding and are never part of the chromosome / evolved feature set.
-        # MIN_CONDITIONS / MAX_CONDITIONS count only the evolved conditions
-        # above; the fixed context contract is policy, not discovery.
         n_evolved_conditions = len(conditions)
-        if direction in ("long", "short"):
+        if _cfg.REQUIRE_CONTEXT_IN_STRATEGY and direction in ("long", "short"):
             evolved_set = set(conditions)
             for ctx_condition in _cfg.mandatory_context_conditions(direction):
                 if ctx_condition not in evolved_set:

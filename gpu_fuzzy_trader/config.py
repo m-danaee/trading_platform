@@ -191,6 +191,15 @@ PHASE2_ARCHIVE_PATHS = {
     "short": os.path.join(PHASE2_ARCHIVE_DIR, "phase2_short_archive.json"),
 }
 
+# Multi-timeframe rule archives & manifest
+MTF_ARCHIVE_DIR = os.path.join(OUTPUTS_DIR, "rule_archives")
+MTF_ARCHIVE_PATHS = {
+    "hwc": os.path.join(MTF_ARCHIVE_DIR, "hwc", "hwc_rules.json"),
+    "mwc": os.path.join(MTF_ARCHIVE_DIR, "mwc", "mwc_rules.json"),
+    "lwc": os.path.join(MTF_ARCHIVE_DIR, "lwc", "lwc_rules.json"),
+}
+MTF_MANIFEST_PATH = os.path.join(OUTPUTS_DIR, "mtf_manifest.json")
+
 # Debug: scope pipeline to N symbols starting at DEBUG_SYMBOL (sorted universe).
 DEBUG_SYMBOL_SCOPE_ENABLED = False
 DEBUG_SYMBOL = "BTCUSDT"
@@ -462,16 +471,25 @@ CONTEXT_COLUMNS: tuple[str, ...] = (
     "lwc_pullback_reversal_long",
     "lwc_pullback_reversal_short",
 )
-# Generic loader callers may explicitly work with raw fixture data.  The
-# canonical Pipeline_Orchestrator always requests context and therefore fails
-# closed irrespective of this compatibility default.
+# ---------------------------------------------------------------------------
+# Hierarchical Multi-Timeframe (MTF) System Parameters
+# ---------------------------------------------------------------------------
+MTF_HWC_HORIZON_BARS: int = 6
+MTF_MWC_HORIZON_BARS: int = 4
+MTF_V_HWC_LONG: float = 0.65
+MTF_V_HWC_SHORT: float = 0.60
+MTF_V_MWC_LONG: float = 0.60
+MTF_V_MWC_SHORT: float = 0.55
+MTF_MIN_EVIDENCE_STRENGTH: float = 0.15
+MTF_MIN_EVIDENCE_STRENGTH_HWC: float = 0.15
+MTF_MIN_EVIDENCE_STRENGTH_MWC: float = 0.15
+MTF_RETENTION_FLOOR: float = 0.50
+MTF_RETENTION_TARGET: float = 0.60
+
+# Generic loader callers may explicitly work with raw fixture data.
 REQUIRE_CONTEXT_COLUMNS: bool = False
-# When True Output_Writer requires every rule to carry the two mandatory
-# direction-specific context conditions even for strategies that declare no
-# context (strict fails-closed mode).  When False the writer still rejects
-# opposite-direction context and duplicate mandatory conditions, and enforces
-# the full contract for any strategy that declares context conditions.
-REQUIRE_CONTEXT_IN_STRATEGY: bool = True
+# Legacy hardcoded context requirement is disabled for the new MTF architecture.
+REQUIRE_CONTEXT_IN_STRATEGY: bool = False
 # Mandatory, fixed conditions injected into every exported rule per direction.
 # MIN_CONDITIONS / MAX_CONDITIONS count evolved confirmations, NOT these.
 CONTEXT_MANDATORY_CONDITIONS: dict[str, tuple[str, ...]] = {    "long": (

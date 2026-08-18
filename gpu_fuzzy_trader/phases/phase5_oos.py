@@ -582,10 +582,8 @@ class OOS_Evaluator:
             Prepared test DataFrame.
         """
         loader = Data_Loader()
-        # require_context=None defaults to True (enriched). Pass False only
-        # for synthetic fixtures without context columns (test-only).
         if require_context is None:
-            require_context = True
+            require_context = bool(getattr(_cfg, "REQUIRE_CONTEXT_COLUMNS", False))
         return loader.load_dataset(
             test_csv_path,
             drop_tail=True,
@@ -629,7 +627,7 @@ class OOS_Evaluator:
             _cfg.TRAIN_CSV_PATH,
             drop_tail=False,
             include_barrier_outcomes=True,
-            require_context=True,
+            require_context=bool(getattr(_cfg, "REQUIRE_CONTEXT_COLUMNS", False)),
         )
         train_df, val_df, _cv_folds = splitter.split_and_persist(train_full)
         test_df = self.prepare_test_data(self.test_csv_path)
@@ -758,23 +756,20 @@ class OOS_Evaluator:
         """
         rule_set = strategy.get("rules_set", [])
 
-        # Fail closed: when the evaluated tape is enriched (carries context
-        # columns), the strategy must declare the mandatory direction-specific
-        # context conditions.  Phase 5 never fits thresholds, selects rules,
-        # prunes, or rewrites strategies — it validates and evaluates.
-        ctx_columns = set(getattr(_cfg, "CONTEXT_COLUMNS", ()))
-        if any(c in test_df.columns for c in ctx_columns):
-            mandatory = _cfg.mandatory_context_conditions(direction)
-            for rule in rule_set:
-                present = [str(c).strip() for c in rule.get("conditions", [])]
-                missing = [m for m in mandatory if m not in present]
-                if missing:
-                    raise ValueError(
-                        f"Phase 5 [{direction}]: strategy rule is missing "
-                        f"mandatory context conditions {missing} on an "
-                        f"enriched tape. Refusing to evaluate an incomplete "
-                        "strategy contract."
-                    )
+        if bool(getattr(_cfg, "REQUIRE_CONTEXT_IN_STRATEGY", False)):
+            ctx_columns = set(getattr(_cfg, "CONTEXT_COLUMNS", ()))
+            if any(c in test_df.columns for c in ctx_columns):
+                mandatory = _cfg.mandatory_context_conditions(direction)
+                for rule in rule_set:
+                    present = [str(c).strip() for c in rule.get("conditions", [])]
+                    missing = [m for m in mandatory if m not in present]
+                    if missing:
+                        raise ValueError(
+                            f"Phase 5 [{direction}]: strategy rule is missing "
+                            f"mandatory context conditions {missing} on an "
+                            f"enriched tape. Refusing to evaluate an incomplete "
+                            "strategy contract."
+                        )
 
         # feature_modes is not used for rule matching (threshold-based),
         # but the engine interface requires it.

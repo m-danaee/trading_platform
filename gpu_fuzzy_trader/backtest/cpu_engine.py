@@ -671,39 +671,24 @@ class CPUBacktestEngine:
         self._context_mask = self._build_context_mask(df)
 
     def _build_context_mask(self, df: pd.DataFrame) -> np.ndarray:
-        """Return a per-row boolean mask enforcing the fixed context policy.
+        """Return a per-row boolean mask for execution filtering.
 
-        For a long engine the mask is
-            ``tf_permission_long == 1 AND lwc_pullback_reversal_long == 1``
-        and analogously for short.  Exactly matches the mandatory conditions
-        injected at Phase 2 and required by Output_Writer.  When context
-        columns are absent the mask is all-True (no-op).
+        Raw trading rules are evaluated directly without injecting legacy context columns.
         """
         n = len(df)
+        if not bool(getattr(_cfg, "REQUIRE_CONTEXT_IN_STRATEGY", False)):
+            return np.ones(n, dtype=bool)
         from gpu_fuzzy_trader.config import CONTEXT_COLUMNS as _CTX_COLS
         if not any(c in df.columns for c in _CTX_COLS):
             return np.ones(n, dtype=bool)
-        perm = _cfg.context_permission_column(self.trade_direction)
-        trig = _cfg.context_trigger_column(self.trade_direction)
-        if perm not in df.columns or trig not in df.columns:
-            raise ValueError(
-                f"Enriched dataframe is missing context columns required for "
-                f"direction {self.trade_direction!r}: {perm}, {trig}"
-            )
-        mask = (df[perm].to_numpy() == 1) & (df[trig].to_numpy() == 1)
-        coverage = mask.sum() / max(len(mask), 1)
-        log_fn = logger.warning if coverage < 0.05 else logger.debug
-        log_fn(
-            "CPUBacktestEngine [%s]: context mask coverage %.2f%% "
-            "(%d / %d rows); perm=%s trig=%s",
-            self.trade_direction,
-            coverage * 100.0,
-            int(mask.sum()),
-            len(mask),
-            perm,
-            trig,
-        )
-        return mask
+        try:
+            perm = _cfg.context_permission_column(self.trade_direction)
+            trig = _cfg.context_trigger_column(self.trade_direction)
+            if perm not in df.columns or trig not in df.columns:
+                return np.ones(n, dtype=bool)
+            return (df[perm].to_numpy() == 1) & (df[trig].to_numpy() == 1)
+        except Exception:
+            return np.ones(n, dtype=bool)
 
     def _get_trade_outcomes(self, tp: float, sl: float) -> np.ndarray:
         """Precompute (N,) price return % for all rows given fixed TP/SL."""

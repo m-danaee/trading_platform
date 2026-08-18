@@ -44,20 +44,20 @@ _VALID_STATE_CODES = frozenset(_cfg.CONTEXT_STATE_CODES.values())
 
 
 def validate_context_columns(df: pd.DataFrame) -> None:
-    """Validate the mandatory trend-context contract on an enriched frame.
+    """Validate the trend-context contract on an enriched frame if present.
 
-    Fails closed on any violation: missing columns, missing values, invalid
-    state codes, non-binary permissions/triggers, permission truth-table
-    violations, or mutually active long+short permissions.  Missing context is
-    never silently converted to zero or Range.
+    Fails closed on violations if required, or returns gracefully if context
+    columns are not present on raw/clean OHLCV frames.
     """
     missing = [c for c in CONTEXT_COLUMNS if c not in df.columns]
     if missing:
-        raise ValueError(
-            "Enriched input is missing required context columns: "
-            f"{missing}. Raw tapes must be enriched by "
-            "gpu_fuzzy_trader.data.trend_context first."
-        )
+        if bool(getattr(_cfg, "REQUIRE_CONTEXT_COLUMNS", False)):
+            raise ValueError(
+                "Enriched input is missing required context columns: "
+                f"{missing}. Raw tapes must be enriched by "
+                "gpu_fuzzy_trader.data.trend_context first."
+            )
+        return
 
     if df[list(CONTEXT_COLUMNS)].isna().any().any():
         raise ValueError(
@@ -268,15 +268,15 @@ class Data_Loader:
         df = df.sort_values(["datetime", "symbol"]).reset_index(drop=True)
 
         # ------------------------------------------------------------------
-        # 4b. Validate mandatory trend-context contract.
+        # 4b. Validate mandatory trend-context contract if requested.
         # ------------------------------------------------------------------
-        context_present = any(c in df.columns for c in CONTEXT_COLUMNS)
+        context_present = all(c in df.columns for c in CONTEXT_COLUMNS)
         enforce = (
             bool(getattr(_cfg, "REQUIRE_CONTEXT_COLUMNS", False))
             if require_context is None
             else bool(require_context)
         )
-        if context_present or enforce:
+        if enforce or (context_present and require_context is not False):
             validate_context_columns(df)
 
         # ------------------------------------------------------------------
