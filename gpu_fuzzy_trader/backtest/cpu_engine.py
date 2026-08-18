@@ -1136,11 +1136,13 @@ class CPUBacktestEngine:
             rule_symbols=[],
             normalized_symbols=None,
         )
+        _sort_entries_by_allocation_priority(entries)
         return self._simulate_rule_set_entries(
             entries,
             return_logs=return_logs,
             initial_capital=self.initial_capital,
         )
+
 
     def simulate_rule_set_from_cache(
         self,

@@ -54,9 +54,13 @@ def compute_rule_hash(rule: dict[str, Any]) -> str:
     canonical_obj["timeframe"] = normalize_timeframe(tf) if tf else ""
     canonical_obj.pop("tf", None)
     canonical_obj["direction"] = str(canonical_obj.get("direction", "")).strip().lower()
+    canonical_obj["complexity"] = int(
+        canonical_obj.get("complexity", len(canonical_obj.get("conditions", [])))
+    )
     canonical_obj["conditions"] = sorted(
         str(c).strip() for c in canonical_obj.get("conditions", [])
     )
+
     encoded = json.dumps(
         canonical_obj, sort_keys=True, separators=(",", ":"), default=str
     ).encode("utf-8")

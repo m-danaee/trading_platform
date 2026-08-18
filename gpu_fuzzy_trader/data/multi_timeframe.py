@@ -219,6 +219,7 @@ def compute_timeframe_features(
         return df_bars.copy()
 
     df_work = df_bars.copy()
+    df_work["_orig_order"] = np.arange(len(df_bars))
     df_work["datetime"] = _as_utc_datetime(df_work["datetime"])
 
     parts: list[pd.DataFrame] = []
@@ -280,8 +281,10 @@ def compute_timeframe_features(
         parts.append(g)
 
     result = pd.concat(parts, ignore_index=True)
-    # Restore original index mapping / order
-    return result.sort_values(["datetime", "symbol"]).reset_index(drop=True)
+    result = result.sort_values("_orig_order").drop(columns=["_orig_order"])
+    result.index = df_bars.index
+    return result
+
 
 
 def align_htf_features_causal(

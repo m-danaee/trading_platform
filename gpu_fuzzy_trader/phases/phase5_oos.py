@@ -604,13 +604,17 @@ class OOS_Evaluator:
                         raise ValidationError(
                             "MTF strategy manifest hash is missing or does not match"
                         )
-                    from gpu_fuzzy_trader.mtf.archives import load_mtf_archive_payload
+                    from gpu_fuzzy_trader.mtf.archives import (
+                        compute_rule_hash,
+                        load_mtf_archive_payload,
+                    )
 
                     declared_archives = manifest.get("archives", {})
                     if not isinstance(declared_archives, dict):
                         raise ValidationError(
                             "MTF frozen manifest has an invalid archives mapping"
                         )
+                    loaded_payloads: dict[str, dict[str, Any]] = {}
                     for timeframe in ("hwc", "mwc", "lwc"):
                         expected_hash = str(
                             declared_archives.get(f"{timeframe}_archive_hash", "")
@@ -629,6 +633,71 @@ class OOS_Evaluator:
                             raise ValidationError(
                                 f"MTF {timeframe} archive hash does not match frozen manifest"
                             )
+                        loaded_payloads[timeframe] = payload
+
+                    # Strictly bind serialized candidate rules to verified archive contents
+                    candidate_hwc_hashes = [
+                        compute_rule_hash(r) for r in candidate_payload.get("hwc_rules", [])
+                    ]
+                    archive_hwc_hashes = [
+                        compute_rule_hash(r) for r in loaded_payloads["hwc"].get("rules", [])
+                    ]
+                    if candidate_hwc_hashes != archive_hwc_hashes:
+                        raise ValidationError(
+                            "Candidate HWC rules do not match the frozen HWC archive payload"
+                        )
+
+                    candidate_mwc_hashes = [
+                        compute_rule_hash(r) for r in candidate_payload.get("mwc_rules", [])
+                    ]
+                    archive_mwc_hashes = [
+                        compute_rule_hash(r) for r in loaded_payloads["mwc"].get("rules", [])
+                    ]
+                    if candidate_mwc_hashes != archive_mwc_hashes:
+                        raise ValidationError(
+                            "Candidate MWC rules do not match the frozen MWC archive payload"
+                        )
+
+                    from collections import Counter
+
+                    candidate_lwc_rules = candidate_payload.get(
+                        "lwc_rules", [])
+                    if not candidate_lwc_rules:
+                        raise ValidationError(
+                            "MTF candidate is missing LWC rules")
+                    candidate_lwc_hashes = [
+                        compute_rule_hash(r) for r in candidate_lwc_rules
+                    ]
+                    strategy_rules_hashes = [
+                        compute_rule_hash(r) for r in raw_data.get("rules_set", [])
+                    ]
+                    if candidate_lwc_hashes != strategy_rules_hashes:
+                        raise ValidationError(
+                            "Candidate LWC rules do not match the strategy rules_set"
+                        )
+
+                    archive_lwc_rules = loaded_payloads["lwc"].get("rules", [])
+                    archive_directional_rules = [
+                        r for r in archive_lwc_rules
+                        if str(r.get("direction", "")).lower() == direction.lower()
+                    ]
+                    matching_archive_rules = (
+                        archive_directional_rules
+                        if archive_directional_rules
+                        else archive_lwc_rules
+                    )
+                    archive_lwc_hashes = [
+                        compute_rule_hash(r) for r in matching_archive_rules
+                    ]
+                    candidate_counter = Counter(candidate_lwc_hashes)
+                    archive_counter = Counter(archive_lwc_hashes)
+                    for rule_hash, count in candidate_counter.items():
+                        if archive_counter[rule_hash] < count:
+                            raise ValidationError(
+                                f"Candidate LWC rule multiset count ({count}) exceeds frozen LWC archive count ({archive_counter[rule_hash]}) for rule {rule_hash}"
+                            )
+
+
                 strategies[direction] = data
                 logger.info("Loaded %s strategy from %s", direction, path)
             except (OSError, json.JSONDecodeError, ValidationError) as exc:

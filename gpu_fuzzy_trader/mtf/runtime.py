@@ -247,11 +247,8 @@ def prepare_causal_mtf_frame(
     if raw_df.empty:
         return raw_df.copy()
 
-    # Work on a stable chronological copy.  The output remains in this order,
-    # which is also the order consumed by CPUBacktestEngine.
     lwc = raw_df.copy()
     lwc["datetime"] = pd.to_datetime(lwc["datetime"], errors="raise", utc=True).dt.tz_localize(None)
-    lwc = lwc.sort_values(["datetime", "symbol"], kind="mergesort").reset_index(drop=True)
 
     for timeframe, prefix in ((mwc_minutes, "mwc_"), (hwc_minutes, "hwc_")):
         bars = build_complete_higher_bars(lwc, timeframe)
@@ -267,10 +264,11 @@ def prepare_causal_mtf_frame(
     )
     for column in lwc_features.columns:
         if column not in lwc.columns:
-            lwc[column] = lwc_features[column].to_numpy()
+            lwc[column] = lwc_features[column]
     lwc_feature_columns = [
         column for column in lwc.columns if str(column).startswith("lwc_")
     ]
+
     if lwc_feature_columns:
         # Match the repository's established feature warm-up convention while
         # keeping the imputation local to the causal LWC feature family. No

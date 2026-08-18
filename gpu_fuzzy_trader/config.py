@@ -483,6 +483,7 @@ MTF_RETENTION_TARGET: float = 0.60
 MTF_PIPELINE_ENABLED: bool = True
 MTF_N_FOLDS: int = 4
 MTF_DISCOVERY_MAX_RULES_PER_LAYER: int = 8
+MTF_MIN_FOLD_SUPPORT: int = 2
 
 # Generic loader callers may explicitly work with raw fixture data.
 REQUIRE_CONTEXT_COLUMNS: bool = False

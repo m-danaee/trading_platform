@@ -1528,7 +1528,22 @@ class Pipeline_Orchestrator:
             try:
                 train_df, val_df = self._load_and_split_data()
                 self._validate_active_configuration(train_df)
-                val_fitness_df, val_selection_df = self._validation_scoring_frames(val_df)
+                if self._should_use_mtf_pipeline(train_df):
+                    mtf_results = self._run_mtf_from_phase2(
+                        train_df=train_df,
+                        val_df=val_df,
+                        force=force,
+                    )
+                    results.update(mtf_results)
+                    total_elapsed = time.monotonic() - pipeline_start
+                    self._record_research_integrity(results, total_elapsed)
+                    self._finish_run("completed")
+                    logger.info(
+                        "Hierarchical MTF pipeline (from phase 2) complete in %.2fs", total_elapsed)
+                    return results
+                val_fitness_df, val_selection_df = self._validation_scoring_frames(
+                    val_df)
+
                 context_report = _context_coverage_preflight(
                     train_df,
                     val_fitness_df,
@@ -1661,83 +1676,176 @@ class Pipeline_Orchestrator:
                     "train_rows": len(train_df),
                     "val_rows": len(val_df),
                 }
-                phase1_train_df = self._mask_train_df_for_phase1(train_df)
-                results["phase1"] = self._run_phase1(
-                    phase1_train_df, force=True, val_df=None,
-                )
+                if self._should_use_mtf_pipeline(train_df):
+                    mtf_folds = build_master_temporal_folds(
+                        train_df,
+                        n_folds=int(getattr(_cfg, "MTF_N_FOLDS", 4)),
+                        embargo_minutes=DEFAULT_HWC_PURGE_MINUTES,
+                    )
+                    hwc_rules = self.run_phase1_hwc(
+                        train_df, folds=mtf_folds, force=True)
+                    mwc_rules = self.run_phase1_mwc(
+                        train_df, hwc_rules=hwc_rules, folds=mtf_folds, force=True)
+                    hwc_discovery = getattr(self, "_mtf_hwc_discovery", None)
+                    mwc_discovery = getattr(self, "_mtf_mwc_discovery", None)
+                    lwc_train_scored = self._build_mtf_lwc_training_frame(
+                        train_df, hwc_discovery, mwc_discovery)
+                    oof_avail = lwc_train_scored["_mtf_oof_available"].fillna(
+                        False).astype(bool)
+                    lwc_train_df = lwc_train_scored.loc[oof_avail].reset_index(
+                        drop=True)
+                    phase1_train_df = self._mask_train_df_for_phase1(
+                        lwc_train_df)
+                    results["phase1"] = self._run_phase1(
+                        phase1_train_df, force=True, val_df=None)
+                    results["mtf_hwc"] = hwc_rules
+                    results["mtf_mwc"] = mwc_rules
+                else:
+                    phase1_train_df = self._mask_train_df_for_phase1(train_df)
+                    results["phase1"] = self._run_phase1(
+                        phase1_train_df, force=True, val_df=None,
+                    )
 
             elif phase == 2:
                 train_df, val_df = self._load_and_split_data()
                 self._validate_active_configuration(train_df)
-                val_fitness_df, val_selection_df = self._validation_scoring_frames(val_df)
-                context_report = _context_coverage_preflight(
-                    train_df,
-                    val_fitness_df,
-                    val_selection_df,
-                    cv_folds=self._cv_folds,
-                    floor_aware=True,
-                    run_id=self._run_id,
-                )
-                results["data"] = {
-                    "train_rows": len(train_df),
-                    "val_rows": len(val_df),
-                    "val_fitness_rows": len(val_fitness_df),
-                    "val_selection_rows": len(val_selection_df),
-                    "context_coverage": context_report,
-                }
-                blocked_directions = frozenset(
-                    context_report.get("blocked_directions", [])
-                )
-                phase1_train_df = self._mask_train_df_for_phase1(train_df)
-                phase1_result = self._load_phase1_outputs(phase1_train_df)
-                train_df, val_df = self._prune_splits_after_phase1(
-                    train_df, val_df, phase1_result)
-                val_fitness_df, val_selection_df = self._prune_splits_after_phase1(
-                    val_fitness_df, val_selection_df, phase1_result)
-                self._cv_folds = self._prune_cv_folds_after_phase1(
-                    self._cv_folds, phase1_result)
-                results["phase2"] = self._run_phase2(
-                    train_df,
-                    phase1_result,
-                    force=True,
-                    val_df=val_fitness_df,
-                    blocked_directions=blocked_directions,
-                )
+                if self._should_use_mtf_pipeline(train_df):
+                    mtf_folds = build_master_temporal_folds(
+                        train_df,
+                        n_folds=int(getattr(_cfg, "MTF_N_FOLDS", 4)),
+                        embargo_minutes=DEFAULT_HWC_PURGE_MINUTES,
+                    )
+                    hwc_rules = self.run_phase1_hwc(
+                        train_df, folds=mtf_folds, force=False)
+                    mwc_rules = self.run_phase1_mwc(
+                        train_df, hwc_rules=hwc_rules, folds=mtf_folds, force=False)
+                    hwc_discovery = getattr(self, "_mtf_hwc_discovery", None)
+                    mwc_discovery = getattr(self, "_mtf_mwc_discovery", None)
+                    lwc_train_scored_all = self._build_mtf_lwc_training_frame(
+                        train_df, hwc_discovery, mwc_discovery)
+                    lwc_validation_scored = self._build_mtf_lwc_validation_frame(
+                        val_df, hwc_rules, mwc_rules, history_df=train_df)
+                    oof_available = lwc_train_scored_all["_mtf_oof_available"].fillna(
+                        False).astype(bool)
+                    lwc_train_scored = lwc_train_scored_all.loc[oof_available].reset_index(
+                        drop=True)
+                    phase1_train_df = self._mask_train_df_for_phase1(
+                        lwc_train_scored)
+                    try:
+                        phase1_result = self._load_phase1_outputs(
+                            phase1_train_df)
+                    except Exception:
+                        phase1_result = self._run_phase1(
+                            phase1_train_df, force=False, val_df=lwc_validation_scored)
+                    results["phase2"] = self._run_phase2(
+                        phase1_train_df,
+                        phase1_result,
+                        force=True,
+                        val_df=lwc_validation_scored,
+                        blocked_directions=frozenset(),
+                    )
+                else:
+                    val_fitness_df, val_selection_df = self._validation_scoring_frames(
+                        val_df)
+                    context_report = _context_coverage_preflight(
+                        train_df,
+                        val_fitness_df,
+                        val_selection_df,
+                        cv_folds=self._cv_folds,
+                        floor_aware=True,
+                        run_id=self._run_id,
+                    )
+                    results["data"] = {
+                        "train_rows": len(train_df),
+                        "val_rows": len(val_df),
+                        "val_fitness_rows": len(val_fitness_df),
+                        "val_selection_rows": len(val_selection_df),
+                        "context_coverage": context_report,
+                    }
+                    blocked_directions = frozenset(
+                        context_report.get("blocked_directions", [])
+                    )
+                    phase1_train_df = self._mask_train_df_for_phase1(train_df)
+                    phase1_result = self._load_phase1_outputs(phase1_train_df)
+                    train_df, val_df = self._prune_splits_after_phase1(
+                        train_df, val_df, phase1_result)
+                    val_fitness_df, val_selection_df = self._prune_splits_after_phase1(
+                        val_fitness_df, val_selection_df, phase1_result)
+                    self._cv_folds = self._prune_cv_folds_after_phase1(
+                        self._cv_folds, phase1_result)
+                    results["phase2"] = self._run_phase2(
+                        train_df,
+                        phase1_result,
+                        force=True,
+                        val_df=val_fitness_df,
+                        blocked_directions=blocked_directions,
+                    )
 
             elif phase in {3, 4}:
                 train_df, val_df = self._load_and_split_data()
                 self._validate_active_configuration(train_df)
-                val_fitness_df, val_selection_df = self._validation_scoring_frames(
-                    val_df)
                 results["data"] = {
                     "train_rows": len(train_df),
                     "val_rows": len(val_df),
                 }
-                phase1_train_df = self._mask_train_df_for_phase1(train_df)
-                phase1_result = self._load_phase1_outputs(phase1_train_df)
-                train_df, val_df = self._prune_splits_after_phase1(
-                    train_df, val_df, phase1_result)
-                val_fitness_df, val_selection_df = self._prune_splits_after_phase1(
-                    val_fitness_df, val_selection_df, phase1_result)
-                self._cv_folds = self._prune_cv_folds_after_phase1(
-                    self._cv_folds, phase1_result)
-                phase2_result = self._load_phase2_outputs(
-                    train_df, val_fitness_df, phase1_result,
-                )
-                self._release_between_phases("RB Governor")
-                rb_result = self._run_rb_governor(
-                    train_df,
-                    val_df,
-                    phase2_result,
-                    cv_folds=self._cv_folds,
-                    val_selection_df=val_selection_df,
-                )
-                results["rb_governor"] = rb_result
-                results["phase3"] = rb_result
-                results["phase4"] = rb_result
+                if self._should_use_mtf_pipeline(train_df):
+                    mtf_folds = build_master_temporal_folds(
+                        train_df,
+                        n_folds=int(getattr(_cfg, "MTF_N_FOLDS", 4)),
+                        embargo_minutes=DEFAULT_HWC_PURGE_MINUTES,
+                    )
+                    hwc_rules = self.run_phase1_hwc(
+                        train_df, folds=mtf_folds, force=False)
+                    mwc_rules = self.run_phase1_mwc(
+                        train_df, hwc_rules=hwc_rules, folds=mtf_folds, force=False)
+                    lwc_path = Path(self._output_dir) / \
+                        "rule_archives" / "lwc" / "lwc_rules.json"
+                    from gpu_fuzzy_trader.mtf.archives import load_mtf_rule_archive
+                    lwc_rules = load_mtf_rule_archive(
+                        lwc_path) if lwc_path.exists() else []
+                    candidates = self.run_mtf_composition(
+                        lwc_rules=lwc_rules,
+                        hwc_rules=hwc_rules,
+                        mwc_rules=mwc_rules,
+                        df=train_df,
+                        folds=mtf_folds,
+                    )
+                    rb_result = self._run_mtf_rb_governor(
+                        train_df=train_df,
+                        val_df=val_df,
+                        candidates=candidates,
+                    )
+                    results["rb_governor"] = rb_result
+                    results["phase3"] = rb_result
+                    results["phase4"] = rb_result
+                else:
+                    val_fitness_df, val_selection_df = self._validation_scoring_frames(
+                        val_df)
+                    phase1_train_df = self._mask_train_df_for_phase1(train_df)
+                    phase1_result = self._load_phase1_outputs(phase1_train_df)
+                    train_df, val_df = self._prune_splits_after_phase1(
+                        train_df, val_df, phase1_result)
+                    val_fitness_df, val_selection_df = self._prune_splits_after_phase1(
+                        val_fitness_df, val_selection_df, phase1_result)
+                    self._cv_folds = self._prune_cv_folds_after_phase1(
+                        self._cv_folds, phase1_result)
+                    phase2_result = self._load_phase2_outputs(
+                        train_df, val_fitness_df, phase1_result,
+                    )
+                    self._release_between_phases("RB Governor")
+                    rb_result = self._run_rb_governor(
+                        train_df,
+                        val_df,
+                        phase2_result,
+                        cv_folds=self._cv_folds,
+                        val_selection_df=val_selection_df,
+                    )
+                    results["rb_governor"] = rb_result
+                    results["phase3"] = rb_result
+                    results["phase4"] = rb_result
                 results["phase_status"] = {
                     "phase2": self._phase2_status,
-                    "rb_governor": self._rb_status_summary(rb_result),
+                    "rb_governor": self._rb_status_summary(results.get("rb_governor", {})),
                 }
 
             else:
@@ -1940,7 +2048,8 @@ class Pipeline_Orchestrator:
     @staticmethod
     def _should_use_mtf_pipeline(train_df: pd.DataFrame) -> bool:
         """Select the canonical MTF path only for real OHLCV tapes."""
-        required = {"datetime", "symbol", "open", "high", "low", "close", "volume"}
+        required = {"datetime", "symbol", "open",
+                    "high", "low", "close", "volume"}
         return bool(
             getattr(_cfg, "MTF_PIPELINE_ENABLED", False)
             and required.issubset(train_df.columns)
@@ -1988,17 +2097,23 @@ class Pipeline_Orchestrator:
 
         updated = []
         for fold in self._cv_folds:
-            fold_train = _merge_mtf_lwc_runtime_columns(fold.train_df, train_oof_df)
+            fold_train = _merge_mtf_lwc_runtime_columns(
+                fold.train_df, train_oof_df)
             fold_source = (
                 validation_frozen_df if bool(getattr(fold, "is_holdout", False))
                 else train_oof_df
             )
-            fold_valid = _merge_mtf_lwc_runtime_columns(fold.valid_df, fold_source)
+            fold_valid = _merge_mtf_lwc_runtime_columns(
+                fold.valid_df, fold_source)
             if not bool(getattr(fold, "is_holdout", False)):
-                available_train = fold_train["_mtf_oof_available"].fillna(False).astype(bool)
-                available_valid = fold_valid["_mtf_oof_available"].fillna(False).astype(bool)
-                fold_train = fold_train.loc[available_train].reset_index(drop=True)
-                fold_valid = fold_valid.loc[available_valid].reset_index(drop=True)
+                available_train = fold_train["_mtf_oof_available"].fillna(
+                    False).astype(bool)
+                available_valid = fold_valid["_mtf_oof_available"].fillna(
+                    False).astype(bool)
+                fold_train = fold_train.loc[available_train].reset_index(
+                    drop=True)
+                fold_valid = fold_valid.loc[available_valid].reset_index(
+                    drop=True)
             if fold_train.empty or fold_valid.empty:
                 logger.warning(
                     "Dropping LWC CV fold %s after OOF score support filtering",
@@ -2024,7 +2139,8 @@ class Pipeline_Orchestrator:
         force: bool,
     ) -> dict[str, Any]:
         """Run the connected HWC -> OOF -> MWC -> LWC -> RB -> OOS path."""
-        logger.info("Canonical input is raw OHLCV; running hierarchical MTF pipeline")
+        logger.info(
+            "Canonical input is raw OHLCV; running hierarchical MTF pipeline")
         mtf_folds = build_master_temporal_folds(
             train_df,
             n_folds=int(getattr(_cfg, "MTF_N_FOLDS", 4)),
@@ -2051,7 +2167,8 @@ class Pipeline_Orchestrator:
         hwc_discovery = getattr(self, "_mtf_hwc_discovery", None)
         mwc_discovery = getattr(self, "_mtf_mwc_discovery", None)
         if hwc_discovery is None or mwc_discovery is None:
-            raise RuntimeError("MTF discovery did not produce HWC and MWC OOF artifacts")
+            raise RuntimeError(
+                "MTF discovery did not produce HWC and MWC OOF artifacts")
 
         # LWC discovery is restricted to rows carrying both upstream OOF
         # scores. Validation receives the final full-train ensembles only
@@ -2062,8 +2179,10 @@ class Pipeline_Orchestrator:
         lwc_validation_scored = self._build_mtf_lwc_validation_frame(
             val_df, hwc_rules, mwc_rules, history_df=train_df
         )
-        oof_available = lwc_train_scored_all["_mtf_oof_available"].fillna(False).astype(bool)
-        lwc_train_scored = lwc_train_scored_all.loc[oof_available].reset_index(drop=True)
+        oof_available = lwc_train_scored_all["_mtf_oof_available"].fillna(
+            False).astype(bool)
+        lwc_train_scored = lwc_train_scored_all.loc[oof_available].reset_index(
+            drop=True)
         if lwc_train_scored.empty:
             raise RuntimeError(
                 "MTF LWC discovery has no rows with both HWC and MWC OOF scores"
@@ -2185,7 +2304,166 @@ class Pipeline_Orchestrator:
             "phase5": phase5_result,
         }
 
+    def _run_mtf_from_phase2(
+        self,
+        *,
+        train_df: pd.DataFrame,
+        val_df: pd.DataFrame,
+        force: bool,
+    ) -> dict[str, Any]:
+        """Run Phase 2 onwards in MTF mode using existing or generated HWC/MWC artifacts."""
+        logger.info("Running hierarchical MTF pipeline from Phase 2")
+        mtf_folds = build_master_temporal_folds(
+            train_df,
+            n_folds=int(getattr(_cfg, "MTF_N_FOLDS", 4)),
+            embargo_minutes=DEFAULT_HWC_PURGE_MINUTES,
+        )
+        self._mtf_folds = mtf_folds
+
+        hwc_rules = self.run_phase1_hwc(train_df, folds=mtf_folds, force=False)
+        mwc_rules = self.run_phase1_mwc(
+            train_df, hwc_rules=hwc_rules, folds=mtf_folds, force=False)
+        hwc_discovery = getattr(self, "_mtf_hwc_discovery", None)
+        mwc_discovery = getattr(self, "_mtf_mwc_discovery", None)
+        if hwc_discovery is None or mwc_discovery is None:
+            raise RuntimeError(
+                "MTF discovery did not produce HWC and MWC artifacts")
+
+        lwc_train_scored_all = self._build_mtf_lwc_training_frame(
+            train_df, hwc_discovery, mwc_discovery
+        )
+        lwc_validation_scored = self._build_mtf_lwc_validation_frame(
+            val_df, hwc_rules, mwc_rules, history_df=train_df
+        )
+        oof_available = lwc_train_scored_all["_mtf_oof_available"].fillna(
+            False).astype(bool)
+        lwc_train_scored = lwc_train_scored_all.loc[oof_available].reset_index(
+            drop=True)
+        if lwc_train_scored.empty:
+            raise RuntimeError(
+                "MTF LWC discovery has no rows with both HWC and MWC OOF scores"
+            )
+        self._attach_mtf_scores_to_cv_folds(
+            lwc_train_scored_all,
+            lwc_validation_scored,
+        )
+
+        phase1_train_df = self._mask_train_df_for_phase1(lwc_train_scored)
+        try:
+            lwc_phase1 = self._load_phase1_outputs(phase1_train_df)
+        except Exception:
+            lwc_phase1 = self._run_phase1(
+                phase1_train_df,
+                force=False,
+                val_df=lwc_validation_scored,
+            )
+        self._mtf_lwc_phase1 = lwc_phase1
+
+        lwc_rules = self._run_phase2(
+            phase1_train_df,
+            lwc_phase1,
+            force=force,
+            val_df=lwc_validation_scored,
+            blocked_directions=frozenset(),
+        )
+
+        candidates = self.run_mtf_composition(
+            lwc_rules=lwc_rules,
+            hwc_rules=hwc_rules,
+            mwc_rules=mwc_rules,
+            df=train_df,
+            folds=mtf_folds,
+            metadata={
+                "dataset_hashes": {
+                    "train": _dataframe_sha256(train_df),
+                    "validation": _dataframe_sha256(val_df),
+                    "oos": sha256_file(_cfg.TEST_CSV_PATH)
+                    if Path(_cfg.TEST_CSV_PATH).exists()
+                    else "",
+                },
+                "fold_boundaries": export_fold_boundaries(mtf_folds),
+                "labels": {
+                    "theta_per_oof_fold": {
+                        "hwc": hwc_discovery.theta_per_oof_fold,
+                        "mwc": mwc_discovery.theta_per_oof_fold,
+                    },
+                    "theta_final_train": {
+                        "hwc": hwc_discovery.theta_final_train,
+                        "mwc": mwc_discovery.theta_final_train,
+                    },
+                },
+                "features": {
+                    "hwc": {
+                        "schema_hash": hwc_discovery.feature_schema_hash,
+                        "data_hash": hwc_discovery.data_hash,
+                    },
+                    "mwc": {
+                        "schema_hash": mwc_discovery.feature_schema_hash,
+                        "data_hash": mwc_discovery.data_hash,
+                    },
+                    "lwc": {
+                        "schema_hash": _dataframe_schema_sha256(lwc_train_scored),
+                        "data_hash": _dataframe_sha256(lwc_train_scored),
+                        "oof_score_columns": [
+                            "mtf_hwc_direction", "mtf_hwc_strength",
+                            "mtf_mwc_direction", "mtf_mwc_strength",
+                        ],
+                        "source": "causal_upstream_oof_only",
+                    },
+                },
+                "search": {
+                    "hwc": hwc_discovery.search_metadata,
+                    "mwc": mwc_discovery.search_metadata,
+                    "lwc": {
+                        "algorithm": "existing_phase2_nsga3_with_plateau_restarts",
+                        "source": "legacy_lwc_rule_pool_generator",
+                    },
+                },
+                "release_policy": {
+                    "fit": "train_only",
+                    "validation": "frozen_candidate_only",
+                    "oos": "one_shot_no_refit",
+                },
+            },
+        )
+        rb_result = self._run_mtf_rb_governor(
+            train_df=train_df,
+            val_df=val_df,
+            candidates=candidates,
+        )
+        self._release_between_phases("Phase 5")
+        accepted = frozenset(
+            direction
+            for direction, strategy in rb_result.items()
+            if strategy.get("rules_set")
+            and strategy.get("deployment_accepted") is True
+        )
+        phase5_result = self._run_phase5(allowed_directions=accepted)
+        return {
+            "data": {
+                "train_rows": len(train_df),
+                "val_rows": len(val_df),
+                "source_contract": "raw_ohlcv_15m",
+                "timezone": "UTC",
+            },
+            "phase1": lwc_phase1,
+            "phase2": lwc_rules,
+            "mtf_hwc": hwc_rules,
+            "mtf_mwc": mwc_rules,
+            "mtf_candidates": candidates,
+            "rb_governor": rb_result,
+            "phase3": rb_result,
+            "phase4": rb_result,
+            "phase_status": {"mtf": "completed", "rb_governor": self._rb_status_summary(rb_result)},
+            "nested_validation": {
+                "status": "not_run",
+                "reason": "mtf_candidate_requires_composed_signal_validation",
+            },
+            "phase5": phase5_result,
+        }
+
     def _run_mtf_rb_governor(
+
         self,
         *,
         train_df: pd.DataFrame,
@@ -2213,8 +2491,10 @@ class Pipeline_Orchestrator:
                 continue
 
             first_rule = candidate.lwc_rules[0]
-            tp = float(first_rule.get("tp", getattr(_cfg, "RB_DEFAULT_TP", 2.0)))
-            sl = float(first_rule.get("sl", getattr(_cfg, "RB_DEFAULT_SL", 1.2)))
+            tp = float(first_rule.get(
+                "tp", getattr(_cfg, "RB_DEFAULT_TP", 2.0)))
+            sl = float(first_rule.get(
+                "sl", getattr(_cfg, "RB_DEFAULT_SL", 1.2)))
             capital_pct = float(first_rule.get(
                 "capital_pct", getattr(_cfg, "RB_DEFAULT_CAPITAL_PCT", 18.0)
             ))
@@ -2265,7 +2545,8 @@ class Pipeline_Orchestrator:
                     ),
                 )
             )
-            accepted = bool(retention_ok and performance_ok and candidate.lwc_rules)
+            accepted = bool(
+                retention_ok and performance_ok and candidate.lwc_rules)
             strategy = {
                 "direction": direction,
                 "rules_set": [dict(rule) for rule in candidate.lwc_rules],
@@ -2297,7 +2578,8 @@ class Pipeline_Orchestrator:
                 },
                 "provenance": {
                     "mtf_manifest_hash": hashlib.sha256(
-                        json.dumps(candidate.mtf_manifest or {}, sort_keys=True).encode("utf-8")
+                        json.dumps(candidate.mtf_manifest or {},
+                                   sort_keys=True).encode("utf-8")
                     ).hexdigest(),
                 },
             }
@@ -2341,7 +2623,8 @@ class Pipeline_Orchestrator:
                     str(strategy.get("reason"))
                     if strategy.get("reason")
                     else str(
-                        strategy.get("deployment_reason", "accepted" if accepted else "no_strategy")
+                        strategy.get("deployment_reason",
+                                     "accepted" if accepted else "no_strategy")
                     )
                 ),
             }
@@ -2595,7 +2878,8 @@ class Pipeline_Orchestrator:
             val_selection = getattr(self, "_preloaded_val_selection", None)
 
         if val_fitness is None or val_selection is None:
-            val_fitness, val_selection = split_validation_fitness_selection(val_df)
+            val_fitness, val_selection = split_validation_fitness_selection(
+                val_df)
         else:
             val_fitness = downcast_numeric_df(val_fitness)
             val_selection = downcast_numeric_df(val_selection)
@@ -3261,8 +3545,10 @@ class Pipeline_Orchestrator:
     @staticmethod
     def _load_mtf_source_tape(path: str | None = None) -> pd.DataFrame:
         """Load only raw OHLCV columns for standalone MTF discovery calls."""
-        source_path = path or getattr(_cfg, "RAW_TRAIN_CSV_PATH", _cfg.TRAIN_CSV_PATH)
-        columns = ["datetime", "symbol", "open", "high", "low", "close", "volume"]
+        source_path = path or getattr(
+            _cfg, "RAW_TRAIN_CSV_PATH", _cfg.TRAIN_CSV_PATH)
+        columns = ["datetime", "symbol", "open",
+                   "high", "low", "close", "volume"]
         return pd.read_csv(source_path, usecols=columns)
 
     def build_mtf_manifest(
@@ -3275,7 +3561,8 @@ class Pipeline_Orchestrator:
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Build and write the frozen mtf_manifest.json file."""
-        target_path = Path(output_path) if output_path else Path(self._output_dir) / "mtf_manifest.json"
+        target_path = Path(output_path) if output_path else Path(
+            self._output_dir) / "mtf_manifest.json"
         target_path.parent.mkdir(parents=True, exist_ok=True)
 
         c_params = {
@@ -3306,13 +3593,17 @@ class Pipeline_Orchestrator:
             {"lwc": "causal_indicator_nan_to_zero", "mwc": "none", "hwc": "none"},
         )
         if "fold_boundaries" in raw_metadata:
-            cross_metadata["fold_boundaries"] = raw_metadata.pop("fold_boundaries")
+            cross_metadata["fold_boundaries"] = raw_metadata.pop(
+                "fold_boundaries")
         if "theta_per_oof_fold" in raw_metadata:
-            labels_metadata["theta_per_oof_fold"] = raw_metadata.pop("theta_per_oof_fold")
+            labels_metadata["theta_per_oof_fold"] = raw_metadata.pop(
+                "theta_per_oof_fold")
         if "theta_final_train" in raw_metadata:
-            labels_metadata["theta_final_train"] = raw_metadata.pop("theta_final_train")
+            labels_metadata["theta_final_train"] = raw_metadata.pop(
+                "theta_final_train")
         if "feature_schema_hash" in raw_metadata:
-            feature_metadata["schema_hash"] = raw_metadata.pop("feature_schema_hash")
+            feature_metadata["schema_hash"] = raw_metadata.pop(
+                "feature_schema_hash")
         config_fields = {
             name: getattr(_cfg, name)
             for name in (
@@ -3328,7 +3619,8 @@ class Pipeline_Orchestrator:
             if hasattr(_cfg, name)
         }
         config_hash = hashlib.sha256(
-            json.dumps(config_fields, sort_keys=True, default=str).encode("utf-8")
+            json.dumps(config_fields, sort_keys=True,
+                       default=str).encode("utf-8")
         ).hexdigest()
         manifest = {
             "schema_version": "2.0.0",
@@ -3426,9 +3718,78 @@ class Pipeline_Orchestrator:
                 n_folds=int(getattr(_cfg, "MTF_N_FOLDS", 4)),
                 embargo_minutes=DEFAULT_HWC_PURGE_MINUTES,
             )
+        archive_path = Path(self._output_dir) / \
+            "rule_archives" / "hwc" / "hwc_rules.json"
+        oof_path = archive_path.with_name("hwc_oof_scores.json")
+        if not force and archive_path.exists() and oof_path.exists():
+            try:
+                from gpu_fuzzy_trader.mtf.archives import load_mtf_archive_payload
+                from gpu_fuzzy_trader.mtf.discovery import (
+                    _build_layer_frame,
+                    _frame_hash,
+                    _schema_hash,
+                    canonicalize_oof_scores,
+                    hash_oof_scores,
+                )
+                payload = load_mtf_archive_payload(archive_path)
+                meta = payload.get("metadata", {})
+                bars = _build_layer_frame(source, 240, "hwc")
+                current_data_hash = _frame_hash(
+                    bars.drop(columns=["_move"], errors="ignore"))
+                current_schema_hash = _schema_hash(
+                    bars.drop(columns=["_move"], errors="ignore"))
+                current_fold_boundaries = export_fold_boundaries(folds)
+                if meta.get("dataset_hash") != current_data_hash:
+                    raise ValueError(
+                        f"Archive dataset_hash mismatch: expected {current_data_hash}, got {meta.get('dataset_hash')}"
+                    )
+                if meta.get("feature_schema_hash") != current_schema_hash:
+                    raise ValueError(
+                        f"Archive feature_schema_hash mismatch: expected {current_schema_hash}, got {meta.get('feature_schema_hash')}"
+                    )
+                if meta.get("fold_boundaries") != current_fold_boundaries:
+                    raise ValueError(
+                        "Archive fold_boundaries do not match current temporal folds")
+
+                oof_records = json.loads(oof_path.read_text(encoding="utf-8"))
+                oof_scores = canonicalize_oof_scores(
+                    pd.DataFrame.from_records(oof_records))
+                current_oof_hash = hash_oof_scores(oof_scores)
+                if meta.get("oof_score_hash") != current_oof_hash:
+                    raise ValueError(
+                        f"Archive oof_score_hash mismatch: expected {current_oof_hash}, got {meta.get('oof_score_hash')}"
+                    )
+
+                discovery = LayerDiscoveryResult(
+                    timeframe="hwc",
+                    rules=payload.get("rules", []),
+                    oof_scores=oof_scores,
+                    bars=bars,
+                    feature_schema_hash=current_schema_hash,
+                    data_hash=current_data_hash,
+                    theta_per_oof_fold=meta.get("theta_per_oof_fold", {}),
+                    theta_final_train=float(
+                        meta.get("theta_final_train", 0.0)),
+                    fold_rules={},
+                    search_metadata=meta.get("search", {}),
+                    oof_score_hash=current_oof_hash,
+                )
+                self._mtf_hwc_discovery = discovery
+                logger.info("Reusing verified HWC rule archive from %s (%d rules)",
+                            archive_path, len(discovery.rules))
+                elapsed = time.monotonic() - t0
+                _log_phase_entry(
+                    self._log_path, phase_name, start_ts, _now_iso(), elapsed, skipped=True,
+                    result_summary={"hwc_rules": len(
+                        discovery.rules), "archive_hash": payload.get("archive_hash", "")},
+                )
+                return discovery.rules
+            except Exception as exc:
+                logger.warning(
+                    "Failed to validate and resume HWC archive from %s (%s); running discovery", archive_path, exc)
+
         discovery = discover_directional_layer(source, role="hwc", folds=folds)
         self._mtf_hwc_discovery = discovery
-        archive_path = Path(self._output_dir) / "rule_archives" / "hwc" / "hwc_rules.json"
         metadata = {
             "role": "hwc",
             "dataset_hash": discovery.data_hash,
@@ -3461,7 +3822,8 @@ class Pipeline_Orchestrator:
         elapsed = time.monotonic() - t0
         _log_phase_entry(
             self._log_path, phase_name, start_ts, _now_iso(), elapsed, skipped=False,
-            result_summary={"hwc_rules": len(discovery.rules), "archive_hash": archive_hash},
+            result_summary={"hwc_rules": len(
+                discovery.rules), "archive_hash": archive_hash},
         )
         return discovery.rules
 
@@ -3485,12 +3847,83 @@ class Pipeline_Orchestrator:
                 n_folds=int(getattr(_cfg, "MTF_N_FOLDS", 4)),
                 embargo_minutes=DEFAULT_HWC_PURGE_MINUTES,
             )
+        archive_path = Path(self._output_dir) / \
+            "rule_archives" / "mwc" / "mwc_rules.json"
+        oof_path = archive_path.with_name("mwc_oof_scores.json")
+        if not force and archive_path.exists() and oof_path.exists():
+            try:
+                from gpu_fuzzy_trader.mtf.archives import load_mtf_archive_payload
+                from gpu_fuzzy_trader.mtf.discovery import (
+                    _build_layer_frame,
+                    _frame_hash,
+                    _schema_hash,
+                    canonicalize_oof_scores,
+                    hash_oof_scores,
+                )
+                payload = load_mtf_archive_payload(archive_path)
+                meta = payload.get("metadata", {})
+                bars = _build_layer_frame(source, 60, "mwc")
+                current_data_hash = _frame_hash(
+                    bars.drop(columns=["_move"], errors="ignore"))
+                current_schema_hash = _schema_hash(
+                    bars.drop(columns=["_move"], errors="ignore"))
+                current_fold_boundaries = export_fold_boundaries(folds)
+                if meta.get("dataset_hash") != current_data_hash:
+                    raise ValueError(
+                        f"Archive dataset_hash mismatch: expected {current_data_hash}, got {meta.get('dataset_hash')}"
+                    )
+                if meta.get("feature_schema_hash") != current_schema_hash:
+                    raise ValueError(
+                        f"Archive feature_schema_hash mismatch: expected {current_schema_hash}, got {meta.get('feature_schema_hash')}"
+                    )
+                if meta.get("fold_boundaries") != current_fold_boundaries:
+                    raise ValueError(
+                        "Archive fold_boundaries do not match current temporal folds")
+
+                oof_records = json.loads(oof_path.read_text(encoding="utf-8"))
+                oof_scores = canonicalize_oof_scores(
+                    pd.DataFrame.from_records(oof_records))
+                current_oof_hash = hash_oof_scores(oof_scores)
+                if meta.get("oof_score_hash") != current_oof_hash:
+                    raise ValueError(
+                        f"Archive oof_score_hash mismatch: expected {current_oof_hash}, got {meta.get('oof_score_hash')}"
+                    )
+
+                discovery = LayerDiscoveryResult(
+                    timeframe="mwc",
+                    rules=payload.get("rules", []),
+                    oof_scores=oof_scores,
+                    bars=bars,
+                    feature_schema_hash=current_schema_hash,
+                    data_hash=current_data_hash,
+                    theta_per_oof_fold=meta.get("theta_per_oof_fold", {}),
+                    theta_final_train=float(
+                        meta.get("theta_final_train", 0.0)),
+                    fold_rules={},
+                    search_metadata=meta.get("search", {}),
+                    oof_score_hash=current_oof_hash,
+                )
+                self._mtf_mwc_discovery = discovery
+                logger.info("Reusing verified MWC rule archive from %s (%d rules)",
+                            archive_path, len(discovery.rules))
+                elapsed = time.monotonic() - t0
+                _log_phase_entry(
+                    self._log_path, phase_name, start_ts, _now_iso(), elapsed, skipped=True,
+                    result_summary={"mwc_rules": len(
+                        discovery.rules), "archive_hash": payload.get("archive_hash", "")},
+                )
+                return discovery.rules
+            except Exception as exc:
+                logger.warning(
+                    "Failed to validate and resume MWC archive from %s (%s); running discovery", archive_path, exc)
+
         upstream = getattr(self, "_mtf_hwc_discovery", None)
+
         if upstream is None and hwc_rules is not None:
             logger.warning(
                 "MWC discovery has no HWC OOF sidecar; rebuilding HWC OOF scores first"
             )
-            self.run_phase1_hwc(source, folds=list(folds), force=True)
+            self.run_phase1_hwc(source, folds=list(folds), force=force)
             upstream = getattr(self, "_mtf_hwc_discovery", None)
         discovery = discover_directional_layer(
             source,
@@ -3499,7 +3932,6 @@ class Pipeline_Orchestrator:
             upstream_oof_scores=upstream.oof_scores if upstream is not None else None,
         )
         self._mtf_mwc_discovery = discovery
-        archive_path = Path(self._output_dir) / "rule_archives" / "mwc" / "mwc_rules.json"
         metadata = {
             "role": "mwc",
             "conditioned_on": "hwc_oof_scores_only",
@@ -3535,6 +3967,7 @@ class Pipeline_Orchestrator:
             result_summary={"mwc_rules": len(discovery.rules), "archive_hash": archive_hash},
         )
         return discovery.rules
+
 
     def run_phase2(
         self,

@@ -16,6 +16,8 @@ from typing import Any, Sequence
 import numpy as np
 import pandas as pd
 
+from gpu_fuzzy_trader import config as _cfg
+
 from gpu_fuzzy_trader.data.multi_timeframe import (
     build_complete_higher_bars,
     compute_timeframe_features,
@@ -60,6 +62,44 @@ def _frame_hash(frame: pd.DataFrame) -> str:
     return hashlib.sha256(
         json.dumps(columns, separators=(",", ":")).encode("utf-8") + hashed
     ).hexdigest()
+
+
+def canonicalize_oof_scores(frame: pd.DataFrame) -> pd.DataFrame:
+    """Restore a stable in-memory OOF frame after JSON sidecar roundtrip."""
+    out = frame.copy()
+    if out.empty:
+        return out
+    if "datetime" in out.columns:
+        out["datetime"] = pd.to_datetime(
+            out["datetime"], utc=True).dt.tz_localize(None)
+    return out
+
+
+def hash_oof_scores(frame: pd.DataFrame) -> str:
+    """Hash OOF scores after datetime canonicalization so disk reload matches save."""
+    return _frame_hash(canonicalize_oof_scores(frame))
+
+
+def _passes_cross_symbol_mcc_admission(
+    metrics_list: Sequence[dict[str, Any]],
+    required_symbols: Sequence[str],
+) -> bool:
+    """Return True only when every required symbol has strictly positive OOF MCC."""
+    symbols = [str(symbol) for symbol in required_symbols]
+    if len(symbols) <= 1:
+        return True
+    for symbol in symbols:
+        scores = [
+            float(item["test_symbol_mccs"][symbol])
+            for item in metrics_list
+            if symbol in item.get("test_symbol_mccs", {})
+        ]
+        if not scores:
+            return False
+        mean_mcc = float(np.mean(scores))
+        if not np.isfinite(mean_mcc) or mean_mcc <= 0.0:
+            return False
+    return True
 
 
 def _schema_hash(frame: pd.DataFrame) -> str:
@@ -206,18 +246,25 @@ def _directional_pareto_front(
         return []
 
     def vector(item: dict[str, Any]) -> np.ndarray:
-        metrics = item.get("metrics") if isinstance(item.get("metrics"), dict) else {}
         oof = item.get("oof_metrics") if isinstance(item.get("oof_metrics"), dict) else {}
-        edge = metrics.get("test_directional_edge", oof.get("directional_edge", item.get("directional_edge", 0.0)))
-        mcc = metrics.get("test_mcc", oof.get("mcc", item.get("mcc", 0.0)))
+        metrics = item.get("metrics") if isinstance(
+            item.get("metrics"), dict) else {}
+        # OOF metrics take precedence for final frozen rule selection across folds;
+        # in-sample fold training metrics take precedence for fold candidate search.
+        edge = oof.get("directional_edge", metrics.get(
+            "directional_edge", item.get("directional_edge", 0.0)))
+        mcc = oof.get("mcc", metrics.get("mcc", item.get("mcc", 0.0)))
         stability = item.get("stability", oof.get("stability", 1.0))
-        penalty = metrics.get(
-            "test_coverage_penalty",
-            oof.get("coverage_penalty", item.get("coverage_penalty", 0.0)),
+        penalty = oof.get(
+            "coverage_penalty",
+            metrics.get("coverage_penalty", item.get("coverage_penalty", 0.0)),
         )
-        false_confirmation = metrics.get(
-            "test_false_confirmation_penalty",
-            oof.get("false_confirmation_penalty", item.get("false_confirmation_penalty", 0.0)),
+        false_confirmation = oof.get(
+            "false_confirmation_penalty",
+            metrics.get(
+                "false_confirmation_penalty",
+                item.get("false_confirmation_penalty", 0.0),
+            ),
         )
         values = np.asarray(
             [edge, mcc, stability, -penalty, -false_confirmation],
@@ -270,17 +317,11 @@ def _fit_fold_candidates(
             for operator in (">=", "<="):
                 condition = f"[{feature}] {operator} {threshold:.12g}"
                 train_mask = condition_mask(train, condition)
-                test_mask = condition_mask(test, condition)
                 fold_metrics: dict[str, dict[str, float]] = {}
                 for direction in ("long", "short"):
                     if role == "mwc":
                         if upstream_train is None:
                             continue
-                        upstream_test_values = (
-                            upstream_test
-                            if upstream_test is not None
-                            else np.full(len(test), np.nan)
-                        )
                         edge, mcc, coverage_penalty = evaluate_conditional_directional_rule(
                             train_mask,
                             train_moves,
@@ -290,23 +331,12 @@ def _fit_fold_candidates(
                             support_threshold=profile.support_threshold,
                             target_coverage=target_coverage,
                         )
-                        test_edge, test_mcc, test_penalty = evaluate_conditional_directional_rule(
-                            test_mask,
-                            test_moves,
-                            upstream_test_values,
-                            theta,
-                            direction=direction,
-                            support_threshold=profile.support_threshold,
-                            target_coverage=target_coverage,
-                        )
-                        support_train = np.isfinite(upstream_train) & np.isfinite(train_moves)
-                        support_test = np.isfinite(upstream_test_values) & np.isfinite(test_moves)
+                        support_train = np.isfinite(
+                            upstream_train) & np.isfinite(train_moves)
                         if direction == "long":
                             support_train &= upstream_train >= profile.support_threshold
-                            support_test &= upstream_test_values >= profile.support_threshold
                         else:
                             support_train &= upstream_train <= -profile.support_threshold
-                            support_test &= upstream_test_values <= -profile.support_threshold
                     else:
                         edge, mcc, coverage_penalty = evaluate_directional_rule(
                             train_mask,
@@ -314,14 +344,7 @@ def _fit_fold_candidates(
                             direction=direction,
                             target_coverage=target_coverage,
                         )
-                        test_edge, test_mcc, test_penalty = evaluate_directional_rule(
-                            test_mask,
-                            test_labels,
-                            direction=direction,
-                            target_coverage=target_coverage,
-                        )
                         support_train = np.ones(len(train), dtype=bool)
-                        support_test = np.ones(len(test), dtype=bool)
                     fold_metrics[direction] = {
                         "directional_edge": float(edge),
                         "mcc": float(mcc),
@@ -331,14 +354,6 @@ def _fit_fold_candidates(
                         ),
                         "coverage": float(np.mean(train_mask[support_train]))
                         if np.any(support_train) else 0.0,
-                        "test_directional_edge": float(test_edge),
-                        "test_mcc": float(test_mcc),
-                        "test_coverage_penalty": float(test_penalty),
-                        "test_false_confirmation_penalty": float(
-                            max(0.0, -float(test_edge)) if role == "mwc" else 0.0
-                        ),
-                        "test_coverage": float(np.mean(test_mask[support_test]))
-                        if np.any(support_test) else 0.0,
                     }
                 for direction, metrics in fold_metrics.items():
                     score = (
@@ -356,7 +371,6 @@ def _fit_fold_candidates(
                         "condition": condition,
                         "metrics": metrics,
                         "score": float(score),
-                        "test_mask": test_mask,
                     })
     pareto_candidates = _directional_pareto_front(candidates)
     selected = _select_balanced_candidates(
@@ -365,26 +379,108 @@ def _fit_fold_candidates(
     if not selected:
         return [], np.zeros(len(test)), np.zeros(len(test)), theta
 
+    # Evaluate ONLY selected candidates on the held-out test split for true OOF metrics
+    symbols = sorted(test["symbol"].unique()
+                     ) if "symbol" in test.columns else []
     rules = []
     for item in selected:
-        metrics = item["metrics"]
+        condition = item["condition"]
+        direction = item["direction"]
+        test_mask = condition_mask(test, condition)
+        if role == "mwc":
+            upstream_test_values = (
+                upstream_test
+                if upstream_test is not None
+                else np.full(len(test), np.nan)
+            )
+            test_edge, test_mcc, test_penalty = evaluate_conditional_directional_rule(
+                test_mask,
+                test_moves,
+                upstream_test_values,
+                theta,
+                direction=direction,
+                support_threshold=profile.support_threshold,
+                target_coverage=target_coverage,
+            )
+            support_test = np.isfinite(
+                upstream_test_values) & np.isfinite(test_moves)
+            if direction == "long":
+                support_test &= upstream_test_values >= profile.support_threshold
+            else:
+                support_test &= upstream_test_values <= -profile.support_threshold
+        else:
+            test_edge, test_mcc, test_penalty = evaluate_directional_rule(
+                test_mask,
+                test_labels,
+                direction=direction,
+                target_coverage=target_coverage,
+            )
+            support_test = np.ones(len(test), dtype=bool)
+
+        test_cov = float(np.mean(test_mask[support_test])) if np.any(
+            support_test) else 0.0
+
+        # Evaluate per-symbol test metrics for multi-symbol cross-validation
+        test_symbol_mccs: dict[str, float] = {}
+        test_symbol_edges: dict[str, float] = {}
+        if len(symbols) > 1:
+            for sym in symbols:
+                sym_rows = (test["symbol"] == sym).to_numpy()
+                sym_mask = test_mask[sym_rows]
+                sym_moves = test_moves[sym_rows]
+                if role == "mwc":
+                    sym_upstream = upstream_test_values[sym_rows]
+                    s_edge, s_mcc, _ = evaluate_conditional_directional_rule(
+                        sym_mask,
+                        sym_moves,
+                        sym_upstream,
+                        theta,
+                        direction=direction,
+                        support_threshold=profile.support_threshold,
+                        target_coverage=target_coverage,
+                    )
+                else:
+                    sym_labels = test_labels[sym_rows]
+                    s_edge, s_mcc, _ = evaluate_directional_rule(
+                        sym_mask,
+                        sym_labels,
+                        direction=direction,
+                        target_coverage=target_coverage,
+                    )
+
+                test_symbol_mccs[str(sym)] = float(s_mcc)
+                test_symbol_edges[str(sym)] = float(s_edge)
+
+        test_metrics = {
+            "test_directional_edge": float(test_edge),
+            "test_mcc": float(test_mcc),
+            "test_coverage_penalty": float(test_penalty),
+            "test_false_confirmation_penalty": float(
+                max(0.0, -float(test_edge)) if role == "mwc" else 0.0
+            ),
+            "test_coverage": test_cov,
+            "test_symbol_mccs": test_symbol_mccs,
+            "test_symbol_edges": test_symbol_edges,
+        }
+
+        train_metrics = item["metrics"]
         rules.append({
             "timeframe": role,
             "direction": item["direction"],
-            "conditions": [item["condition"]],
-            "coverage": metrics["coverage"],
-            "directional_edge": metrics["directional_edge"],
-            "mcc": metrics["mcc"],
+            "conditions": [condition],
+            "coverage": train_metrics["coverage"],
+            "directional_edge": train_metrics["directional_edge"],
+            "mcc": train_metrics["mcc"],
             "stability": 1.0,
             "stability_score": 1.0,
-            "skill": metrics["directional_edge"],
+            "skill": train_metrics["directional_edge"],
             "threshold_quantile": item["quantile"],
             "threshold": item["threshold"],
             "_key": _candidate_key(
                 item["feature"], item["direction"], item["operator"], item["quantile"]
             ),
-            "_test_mask": item["test_mask"],
-            "_test_metrics": metrics,
+            "_test_mask": test_mask,
+            "_test_metrics": test_metrics,
         })
     active = np.column_stack([rule["_test_mask"] for rule in rules]).astype(bool)
     if role == "mwc":
@@ -439,6 +535,7 @@ def discover_directional_layer(
     fold_metrics: dict[tuple, list[dict[str, Any]]] = {}
     oof_parts: list[pd.DataFrame] = []
     theta_per_fold: dict[str, float] = {}
+    valid_folds = [f for f in folds if not f.is_seed]
     for index, fold in enumerate(folds):
         if fold.is_seed:
             continue
@@ -478,6 +575,11 @@ def discover_directional_layer(
             "is_seed": False,
         }))
 
+    min_fold_support = max(
+        1, min(int(getattr(_cfg, "MTF_MIN_FOLD_SUPPORT", 2)), len(valid_folds)))
+    all_symbols = sorted(
+        str(s) for s in bars["symbol"].unique()) if "symbol" in bars.columns else []
+
     full_moves = bars["_move"].to_numpy(dtype=float)
     theta_final = fit_directional_threshold(full_moves, profile.quantile)
     frozen_rules: list[dict[str, Any]] = []
@@ -485,7 +587,8 @@ def discover_directional_layer(
     data_hash = _frame_hash(bars.drop(columns=["_move"], errors="ignore"))
     for key, metrics_list in fold_metrics.items():
         feature, direction, operator, quantile = key
-        if len(metrics_list) < 1:
+        # Hard admission constraint 1: minimum fold support
+        if len(metrics_list) < min_fold_support:
             continue
         full_values = pd.to_numeric(bars[feature], errors="coerce")
         threshold = float(full_values[np.isfinite(full_values)].quantile(quantile))
@@ -497,6 +600,11 @@ def discover_directional_layer(
         mean_coverage = float(np.mean([m["test_coverage"] for m in metrics_list]))
         if mean_edge <= 0.0 or mean_mcc <= 0.0:
             continue
+
+        # Hard admission constraint 2: MCC > 0 on every required symbol.
+        if not _passes_cross_symbol_mcc_admission(metrics_list, all_symbols):
+            continue
+
         condition = f"[{feature}] {operator} {threshold:.12g}"
         frozen_rules.append({
             "timeframe": role,
@@ -529,7 +637,9 @@ def discover_directional_layer(
     ensemble_weights = compute_rule_weights(frozen_rules)
     for rule, weight in zip(frozen_rules, ensemble_weights):
         rule["ensemble_weight"] = float(weight)
-    oof_scores = pd.concat(oof_parts, ignore_index=True) if oof_parts else pd.DataFrame()
+    oof_scores = canonicalize_oof_scores(
+        pd.concat(oof_parts, ignore_index=True) if oof_parts else pd.DataFrame()
+    )
     return LayerDiscoveryResult(
         timeframe=role,
         rules=frozen_rules,
@@ -554,5 +664,5 @@ def discover_directional_layer(
             "plateau_metric": "directional_pareto_quality",
             "plateau_restarts": 0,
         },
-        oof_score_hash=_frame_hash(oof_scores),
+        oof_score_hash=hash_oof_scores(oof_scores),
     )
