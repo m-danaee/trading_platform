@@ -34,7 +34,6 @@ from gpu_fuzzy_trader.features import selector as _selector_module
 from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.data.loader import Data_Loader, validate_context_columns
 from gpu_fuzzy_trader.data.splitter import Data_Splitter, load_cached_split_if_fresh
-from gpu_fuzzy_trader.data.trend_context import sha256_file
 from gpu_fuzzy_trader.features.selector import Feature_Selector
 from gpu_fuzzy_trader.features.fuzzy_scaling import (
     apply_fuzzy_feature_scaling,
@@ -53,15 +52,11 @@ from gpu_fuzzy_trader.phases.phase2_island_scheduler import (
     compute_cluster_generation_budgets,
     _derive_island_seed,
 )
-from gpu_fuzzy_trader.context_diagnostics import (
-    context_coverage_for_direction,
-    context_coverage_report,
-    context_floor_failures,
-)
 from gpu_fuzzy_trader.phases.phase5_oos import OOS_Evaluator
 from gpu_fuzzy_trader.research_integrity import (
     ExperimentLedger,
     count_trials,
+    sha256_file,
     write_dataset_manifests,
 )
 from gpu_fuzzy_trader.research_profile import ResearchProfile
@@ -398,7 +393,83 @@ def _context_coverage_for_direction(
     direction: str,
 ) -> dict[str, object]:
     """Return shared permission/trigger/conjunction coverage diagnostics."""
-    return context_coverage_for_direction(frame, direction)
+    perm = _cfg.context_permission_column(direction)
+    trig = _cfg.context_trigger_column(direction)
+    missing = [c for c in (perm, trig) if c not in frame.columns]
+    if missing:
+        return {
+            "eligible_rows": None,
+            "total_rows": int(len(frame)),
+            "coverage_pct": None,
+            "permission_rows": None,
+            "trigger_rows": None,
+            "permission_only_rows": None,
+            "trigger_only_rows": None,
+            "neither_rows": None,
+            "by_symbol": {},
+            "by_symbol_detail": {},
+            "missing_columns": missing,
+        }
+    perm_mask = frame[perm].to_numpy() == 1
+    trig_mask = frame[trig].to_numpy() == 1
+    eligible = perm_mask & trig_mask
+    permission_only = perm_mask & ~trig_mask
+    trigger_only = ~perm_mask & trig_mask
+    neither = ~perm_mask & ~trig_mask
+
+    by_symbol: dict[str, int] = {}
+    by_symbol_detail: dict[str, dict[str, Any]] = {}
+    if "symbol" in frame.columns:
+        grouped = frame.groupby("symbol", sort=True, observed=False)
+        for symbol, group in grouped:
+            symbol_permission = group[perm].to_numpy() == 1
+            symbol_trigger = group[trig].to_numpy() == 1
+            symbol_eligible = symbol_permission & symbol_trigger
+            symbol_name = str(symbol)
+            by_symbol[symbol_name] = int(symbol_eligible.sum())
+            by_symbol_detail[symbol_name] = {
+                "total_rows": int(len(group)),
+                "permission_rows": int(symbol_permission.sum()),
+                "trigger_rows": int(symbol_trigger.sum()),
+                "eligible_rows": int(symbol_eligible.sum()),
+                "permission_only_rows": int(
+                    (symbol_permission & ~symbol_trigger).sum()
+                ),
+                "trigger_only_rows": int(
+                    (~symbol_permission & symbol_trigger).sum()
+                ),
+                "coverage_pct": (
+                    int(symbol_eligible.sum()) / max(len(group), 1) * 100.0
+                ),
+            }
+    else:
+        by_symbol["<all>"] = int(eligible.sum())
+        by_symbol_detail["<all>"] = {
+            "total_rows": int(len(frame)),
+            "permission_rows": int(perm_mask.sum()),
+            "trigger_rows": int(trig_mask.sum()),
+            "eligible_rows": int(eligible.sum()),
+            "permission_only_rows": int(permission_only.sum()),
+            "trigger_only_rows": int(trigger_only.sum()),
+            "coverage_pct": (
+                int(eligible.sum()) / max(len(frame), 1) * 100.0
+            ),
+        }
+
+    eligible_rows = int(eligible.sum())
+    return {
+        "eligible_rows": eligible_rows,
+        "total_rows": int(len(frame)),
+        "coverage_pct": eligible_rows / max(len(frame), 1) * 100.0,
+        "permission_rows": int(perm_mask.sum()),
+        "trigger_rows": int(trig_mask.sum()),
+        "permission_only_rows": int(permission_only.sum()),
+        "trigger_only_rows": int(trigger_only.sum()),
+        "neither_rows": int(neither.sum()),
+        "by_symbol": by_symbol,
+        "by_symbol_detail": by_symbol_detail,
+        "missing_columns": [],
+    }
 
 
 def _context_coverage_report(
@@ -407,11 +478,48 @@ def _context_coverage_report(
     val_selection_df: pd.DataFrame,
 ) -> dict[str, dict[str, dict[str, object]]]:
     """Return split-aware context coverage for both trading directions."""
-    return context_coverage_report({
-        "train": train_df,
-        "validation_fitness": val_fitness_df,
-        "validation_selection": val_selection_df,
-    })
+    return {
+        split_name: {
+            direction: _context_coverage_for_direction(frame, direction)
+            for direction in ("long", "short")
+        }
+        for split_name, frame in {
+            "train": train_df,
+            "validation_fitness": val_fitness_df,
+            "validation_selection": val_selection_df,
+        }.items()
+    }
+
+
+def context_floor_failures(
+    stats: dict[str, Any],
+    *,
+    support_floor: int | None = None,
+    pool_floor: int | None = None,
+    validation_floor: int | None = None,
+) -> list[str]:
+    """Return mathematically impossible trade-floor failures for coverage."""
+    eligible = stats.get("eligible_rows")
+    if eligible is None:
+        return [
+            "missing_context_columns:"
+            + ",".join(str(value) for value in stats.get("missing_columns", []))
+        ]
+    eligible_rows = int(eligible)
+    failures: list[str] = []
+    if support_floor is not None and eligible_rows < int(support_floor):
+        failures.append(
+            f"eligible_rows={eligible_rows}<min_trade_support={int(support_floor)}"
+        )
+    if pool_floor is not None and eligible_rows < int(pool_floor):
+        failures.append(
+            f"eligible_rows={eligible_rows}<min_trade_pool_floor={int(pool_floor)}"
+        )
+    if validation_floor is not None and eligible_rows < int(validation_floor):
+        failures.append(
+            f"eligible_rows={eligible_rows}<validation_trade_floor={int(validation_floor)}"
+        )
+    return failures
 
 
 def _validate_enriched_context_contract() -> None:

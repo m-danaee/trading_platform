@@ -121,7 +121,8 @@ class TestContextEntryPaths:
             "capital_pct": 10.0,
         }
 
-    def test_joint_entries_apply_direction_context_mask(self):
+    def test_joint_entries_apply_direction_context_mask(self, monkeypatch):
+        monkeypatch.setattr(_cfg, "REQUIRE_CONTEXT_IN_STRATEGY", True)
         df = self._context_df()
         engine = _make_engine(df, "long")
         joint = JointPortfolioEngine.__new__(JointPortfolioEngine)
@@ -134,7 +135,8 @@ class TestContextEntryPaths:
             "long", {"direction": "long", "rules_set": [self._rule()]})
         assert [entry["idx"] for entry in entries] == [1]
 
-    def test_cached_entries_are_post_filtered_by_context(self):
+    def test_cached_entries_are_post_filtered_by_context(self, monkeypatch):
+        monkeypatch.setattr(_cfg, "REQUIRE_CONTEXT_IN_STRATEGY", True)
         df = self._context_df()
         engine = _make_engine(df, "long")
         all_entries = _build_entries_from_rule_set(

@@ -34,10 +34,6 @@ from gpu_fuzzy_trader.phases.phase2_support import (
     passes_evolution_deployability_preview,
     passes_pool_admission_gate,
 )
-from gpu_fuzzy_trader.context_diagnostics import (
-    context_coverage_for_direction,
-    context_floor_failures,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -318,6 +314,16 @@ def _context_support_preflight(
     skip_starved = bool(
         getattr(_cfg, "PHASE2_SKIP_CONTEXT_STARVED_ISLANDS", True)
     )
+    if not bool(getattr(_cfg, "REQUIRE_CONTEXT_COLUMNS", False)):
+        return {
+            "direction": direction,
+            "reference_rows": int(reference_rows),
+            "islands": {},
+            "failures": [],
+            "skipped_islands": {},
+            "surviving_clusters": dict(cluster_map),
+        }
+
     report: dict[str, Any] = {
         "direction": direction,
         "reference_rows": int(reference_rows),

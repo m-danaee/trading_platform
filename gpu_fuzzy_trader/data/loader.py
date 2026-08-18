@@ -28,7 +28,6 @@ from gpu_fuzzy_trader.config import (
     META_COLUMNS,
     TAIL_DROP_ROWS,
 )
-from gpu_fuzzy_trader.data import trend_context as _trend_context
 from gpu_fuzzy_trader.data.labels import compute_labels
 
 
@@ -54,8 +53,7 @@ def validate_context_columns(df: pd.DataFrame) -> None:
         if bool(getattr(_cfg, "REQUIRE_CONTEXT_COLUMNS", False)):
             raise ValueError(
                 "Enriched input is missing required context columns: "
-                f"{missing}. Raw tapes must be enriched by "
-                "gpu_fuzzy_trader.data.trend_context first."
+                f"{missing}."
             )
         return
 
@@ -115,39 +113,6 @@ def validate_context_columns(df: pd.DataFrame) -> None:
             "Context permissions must be mutually exclusive: long and short "
             "cannot both be active on the same row."
         )
-
-    _validate_trigger_recomputation(df)
-
-
-def _validate_trigger_recomputation(df: pd.DataFrame) -> None:
-    """Recompute the LWC pullback-reversal triggers and compare row-by-row.
-
-    A stale or corrupted trigger column would otherwise pass every other
-    check above (binary values, permission truth table). Only rows at or
-    past the pullback lookback within each symbol's *own* rows are checked:
-    for those rows the lookback window never reaches before row 0 of this
-    frame, so the recomputation is exact even when this frame is missing
-    leading warm-up history that the original enrichment had access to
-    (e.g. a standalone test/forward tape).
-    """
-    recomputed = _trend_context.compute_permissions_and_triggers(
-        df["hwc_state"], df["mwc_state"], df["lwc_state"], df["symbol"],
-    )
-    bar_index = df.groupby("symbol", observed=False).cumcount().to_numpy()
-    checkable = bar_index >= int(_cfg.LWC_PULLBACK_LOOKBACK)
-    for col in _CONTEXT_TRIGGER_COLUMNS:
-        actual = df[col].to_numpy()
-        expected = recomputed[col].to_numpy()
-        mismatch = checkable & (actual != expected)
-        if np.any(mismatch):
-            first = int(np.flatnonzero(mismatch)[0])
-            raise ValueError(
-                f"Context trigger column {col!r} does not match the "
-                "recomputed LWC pullback-reversal trigger at the first "
-                f"mismatched row (symbol={df['symbol'].iloc[first]!r}, "
-                f"datetime={df['datetime'].iloc[first]!r}); the enriched "
-                "tape may be stale or corrupted."
-            )
 
 
 def _ensure_labels(df: pd.DataFrame) -> pd.DataFrame:

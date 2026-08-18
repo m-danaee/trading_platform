@@ -294,7 +294,7 @@ targeted runs while iterating on a change:
 
 ```bash
 PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q tests/unit/test_config_validation.py
-PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q tests/unit/test_trend_context.py
+PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q tests/unit/test_multi_timeframe.py
 PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q tests/unit/test_cpu_engine.py
 PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q tests/unit/test_rb_fail_closed.py
 PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q tests/unit/test_optuna_search.py
