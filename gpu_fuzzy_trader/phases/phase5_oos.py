@@ -27,6 +27,7 @@ Requirements: 11.1, 11.2, 11.3, 11.4, 11.5, 11.6
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import os
 from pathlib import Path
@@ -253,9 +254,39 @@ class OOS_Evaluator:
             trade_logs_by_split: dict[str, pd.DataFrame] = {}
 
             for split, split_df in datasets_by_split.items():
-                metrics, per_symbol_rows, trade_log = self._evaluate_strategy(
-                    split_df, strategy, direction
-                )
+                history_df = None
+                is_mtf_strategy = "mtf_candidate" in strategy
+                if is_mtf_strategy and split == "validation":
+                    history_df = datasets_by_split.get("train")
+                elif is_mtf_strategy and split == "test":
+                    history_df = pd.concat(
+                        [datasets_by_split["train"], datasets_by_split["validation"]],
+                        ignore_index=True,
+                        sort=False,
+                    )
+                elif is_mtf_strategy and split == "forward":
+                    history_df = pd.concat(
+                        [
+                            datasets_by_split["train"],
+                            datasets_by_split["validation"],
+                            datasets_by_split["test"],
+                        ],
+                        ignore_index=True,
+                        sort=False,
+                    )
+                if is_mtf_strategy:
+                    metrics, per_symbol_rows, trade_log = self._evaluate_strategy(
+                        split_df,
+                        strategy,
+                        direction,
+                        history_df=history_df,
+                    )
+                else:
+                    # Keep the established three-argument call contract for
+                    # legacy evaluators and lightweight test doubles.
+                    metrics, per_symbol_rows, trade_log = self._evaluate_strategy(
+                        split_df, strategy, direction
+                    )
                 metrics_by_split[split] = metrics
                 trade_logs_by_split[split] = trade_log
 
@@ -546,6 +577,58 @@ class OOS_Evaluator:
                         f"strategy direction {declared_direction!r} does not "
                         f"match {direction}.json"
                     )
+                if "mtf_candidate" in data:
+                    manifest = data.get("mtf_manifest")
+                    if not isinstance(manifest, dict) or manifest.get("frozen_runtime") is not True:
+                        raise ValidationError(
+                            "MTF strategy is missing a frozen mtf_manifest contract"
+                        )
+                    candidate_payload = data.get("mtf_candidate")
+                    if not isinstance(candidate_payload, dict):
+                        raise ValidationError(
+                            "MTF strategy is missing its serialized candidate"
+                        )
+                    if candidate_payload.get("mtf_manifest") != manifest:
+                        raise ValidationError(
+                            "MTF candidate manifest does not match strategy manifest"
+                        )
+                    provenance = data.get("provenance")
+                    expected_manifest_hash = hashlib.sha256(
+                        json.dumps(manifest, sort_keys=True).encode("utf-8")
+                    ).hexdigest()
+                    if (
+                        not isinstance(provenance, dict)
+                        or str(provenance.get("mtf_manifest_hash", ""))
+                        != expected_manifest_hash
+                    ):
+                        raise ValidationError(
+                            "MTF strategy manifest hash is missing or does not match"
+                        )
+                    from gpu_fuzzy_trader.mtf.archives import load_mtf_archive_payload
+
+                    declared_archives = manifest.get("archives", {})
+                    if not isinstance(declared_archives, dict):
+                        raise ValidationError(
+                            "MTF frozen manifest has an invalid archives mapping"
+                        )
+                    for timeframe in ("hwc", "mwc", "lwc"):
+                        expected_hash = str(
+                            declared_archives.get(f"{timeframe}_archive_hash", "")
+                        )
+                        if not expected_hash:
+                            raise ValidationError(
+                                f"MTF frozen manifest is missing the {timeframe} archive hash"
+                            )
+                        archive_path = getattr(_cfg, "MTF_ARCHIVE_PATHS", {}).get(timeframe)
+                        if not archive_path or not os.path.exists(archive_path):
+                            raise ValidationError(
+                                f"MTF {timeframe} archive required by frozen manifest is missing"
+                            )
+                        payload = load_mtf_archive_payload(archive_path)
+                        if str(payload.get("archive_hash", "")) != expected_hash:
+                            raise ValidationError(
+                                f"MTF {timeframe} archive hash does not match frozen manifest"
+                            )
                 strategies[direction] = data
                 logger.info("Loaded %s strategy from %s", direction, path)
             except (OSError, json.JSONDecodeError, ValidationError) as exc:
@@ -597,13 +680,23 @@ class OOS_Evaluator:
 
         datasets: dict[str, pd.DataFrame] = {}
 
-        cached = load_cached_split_if_fresh()
+        mtf_mode = bool(getattr(_cfg, "MTF_PIPELINE_ENABLED", False))
+        if mtf_mode and any(
+            Path(path).name.endswith("_hwc_mwc_lwc.csv")
+            for path in (_cfg.TRAIN_CSV_PATH, self.test_csv_path)
+        ):
+            raise RuntimeError(
+                "Frozen MTF OOS evaluation requires raw 15m tapes; enriched "
+                "HWC/MWC/LWC inputs are not valid canonical sources."
+            )
+        cached = None if mtf_mode else load_cached_split_if_fresh()
         if cached is not None:
             train_df, val_df, _, _, _ = cached
             # Cached splits are an optimization, never an exemption from the
             # same context contract required for Phase 2 and OOS scoring.
-            validate_context_columns(train_df)
-            validate_context_columns(val_df)
+            if not mtf_mode:
+                validate_context_columns(train_df)
+                validate_context_columns(val_df)
             datasets["train"] = train_df
             datasets["validation"] = val_df
             datasets["test"] = self.prepare_test_data(self.test_csv_path)
@@ -627,7 +720,11 @@ class OOS_Evaluator:
             _cfg.TRAIN_CSV_PATH,
             drop_tail=False,
             include_barrier_outcomes=True,
-            require_context=bool(getattr(_cfg, "REQUIRE_CONTEXT_COLUMNS", False)),
+            require_context=(
+                False
+                if mtf_mode
+                else bool(getattr(_cfg, "REQUIRE_CONTEXT_COLUMNS", False))
+            ),
         )
         train_df, val_df, _cv_folds = splitter.split_and_persist(train_full)
         test_df = self.prepare_test_data(self.test_csv_path)
@@ -675,8 +772,10 @@ class OOS_Evaluator:
         )
         test_dates = test_meta["datetime"]
         forward_dates = forward_meta["datetime"]
-        test_max = pd.to_datetime(test_dates, errors="raise").max()
-        forward_min = pd.to_datetime(forward_dates, errors="raise").min()
+        test_max = pd.to_datetime(test_dates, errors="raise", utc=True).max()
+        forward_min = pd.to_datetime(
+            forward_dates, errors="raise", utc=True
+        ).min()
         if pd.isna(test_max) or pd.isna(forward_min) or forward_min <= test_max:
             raise ValueError(
                 "FORWARD_CSV_PATH must start strictly after the complete "
@@ -741,6 +840,7 @@ class OOS_Evaluator:
         test_df: pd.DataFrame,
         strategy: dict,
         direction: str,
+        history_df: pd.DataFrame | None = None,
     ) -> tuple[dict, list[dict], pd.DataFrame]:
         """
         Evaluate a single strategy on the test DataFrame.
@@ -755,6 +855,62 @@ class OOS_Evaluator:
             Trade log DataFrame (for equity curve reporting).
         """
         rule_set = strategy.get("rules_set", [])
+
+        if "mtf_candidate" in strategy:
+            from gpu_fuzzy_trader.mtf.candidate import HierarchicalStrategyCandidate
+
+            try:
+                candidate = HierarchicalStrategyCandidate.from_dict(
+                    strategy["mtf_candidate"]
+                )
+                signals, composition_stats, _audit = candidate.evaluate_frame(
+                    test_df,
+                    history_df=history_df,
+                )
+                runtime = strategy.get("mtf_runtime", {})
+                first_rule = candidate.lwc_rules[0] if candidate.lwc_rules else {}
+                tp = float(runtime.get("tp", first_rule.get("tp", getattr(_cfg, "RB_DEFAULT_TP", 2.0))))
+                sl = float(runtime.get("sl", first_rule.get("sl", getattr(_cfg, "RB_DEFAULT_SL", 1.2))))
+                capital_pct = float(runtime.get(
+                    "capital_pct",
+                    first_rule.get("capital_pct", getattr(_cfg, "RB_DEFAULT_CAPITAL_PCT", 18.0)),
+                ))
+                engine = CPUBacktestEngine(
+                    test_df,
+                    feature_modes={},
+                    direction=direction,
+                )
+                metrics, trade_log = engine.simulate_signal_mask(
+                    np.asarray(signals) != 0,
+                    tp=tp,
+                    sl=sl,
+                    capital_pct=capital_pct,
+                    return_logs=True,
+                )
+                metrics["mtf_composition"] = {
+                    "frozen": True,
+                    "retention_diagnostics": composition_stats.get(
+                        "retention_diagnostics", {}
+                    ),
+                    "manifest_hash": strategy.get("provenance", {}).get(
+                        "mtf_manifest_hash", ""
+                    ),
+                }
+                return metrics, self._build_per_symbol_rows(metrics, direction, trade_log), trade_log
+            except Exception as exc:
+                logger.error(
+                    "Phase 5 [%s]: frozen MTF evaluation failed: %s",
+                    direction,
+                    exc,
+                    exc_info=True,
+                )
+                return (
+                    self._evaluation_error_metrics(
+                        direction, f"{type(exc).__name__}: {exc}"
+                    ),
+                    [],
+                    pd.DataFrame(),
+                )
 
         if bool(getattr(_cfg, "REQUIRE_CONTEXT_IN_STRATEGY", False)):
             ctx_columns = set(getattr(_cfg, "CONTEXT_COLUMNS", ()))

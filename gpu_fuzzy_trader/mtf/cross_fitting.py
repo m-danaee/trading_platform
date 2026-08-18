@@ -90,15 +90,15 @@ class TemporalFold:
 def _get_datetime_series(df: pd.DataFrame, datetime_col: str = "datetime") -> pd.Series:
     """Extract and validate datetime Series from column or DatetimeIndex."""
     if df.empty:
-        return pd.Series(dtype="datetime64[ns]")
+        return pd.Series(dtype="datetime64[ns, UTC]")
 
     if datetime_col in df.columns:
         dt = df[datetime_col]
-        if not pd.api.types.is_datetime64_any_dtype(dt):
-            dt = pd.to_datetime(dt)
-        return dt
+        parsed = pd.to_datetime(dt, errors="raise", utc=True)
+        return parsed.dt.tz_localize(None)
     elif isinstance(df.index, pd.DatetimeIndex):
-        return pd.Series(df.index, index=df.index)
+        parsed_index = pd.to_datetime(df.index, errors="raise", utc=True).tz_localize(None)
+        return pd.Series(parsed_index, index=df.index)
     else:
         raise ValueError(
             f"Cannot find datetime column '{datetime_col}' or DatetimeIndex in DataFrame."
@@ -198,7 +198,7 @@ def apply_purge_embargo(
     -------
     pd.DataFrame
         Filtered training DataFrame guaranteed to contain only bars with
-        timestamp <= (test_start - purge_minutes).
+        timestamp < (test_start - purge_minutes).
     """
     if train_df.empty or purge_minutes <= 0:
         return train_df.copy()
@@ -207,17 +207,19 @@ def apply_purge_embargo(
     if start_dt is None:
         raise ValueError("Either pred_start_dt or test_start must be provided.")
 
-    target_dt = pd.to_datetime(start_dt)
+    target_dt = pd.to_datetime(start_dt, errors="raise", utc=True).tz_localize(None)
     cutoff_dt = target_dt - pd.Timedelta(minutes=int(purge_minutes))
 
     if datetime_col in train_df.columns:
         dt_series = train_df[datetime_col]
-        if not pd.api.types.is_datetime64_any_dtype(dt_series):
-            dt_series = pd.to_datetime(dt_series)
-        mask = dt_series <= cutoff_dt
+        dt_series = pd.to_datetime(dt_series, errors="raise", utc=True).dt.tz_localize(None)
+        # A label whose forward horizon closes exactly at the prediction start
+        # still touches the prediction interval and must be purged.
+        mask = dt_series < cutoff_dt
         return train_df.loc[mask].copy()
     elif isinstance(train_df.index, pd.DatetimeIndex):
-        mask = train_df.index <= cutoff_dt
+        index = pd.to_datetime(train_df.index, errors="raise", utc=True).tz_localize(None)
+        mask = index < cutoff_dt
         return train_df.loc[mask].copy()
     else:
         raise ValueError(
@@ -231,7 +233,7 @@ def generate_oof_scores(
     fit_predict_fn: Callable[[pd.DataFrame, pd.DataFrame, TemporalFold], Any],
     purge_minutes: int | None = None,
     datetime_col: str = "datetime",
-    exclude_seed: bool = False,
+    exclude_seed: bool = True,
 ) -> pd.DataFrame:
     """Coordinate fitting on purged training folds and generating out-of-fold predictions.
 
@@ -248,8 +250,9 @@ def generate_oof_scores(
         Override purge minutes for training set. If None, uses fold.purge_minutes.
     datetime_col : str, default "datetime"
         Name of the datetime column.
-    exclude_seed : bool, default False
-        If True, excludes Fold 1 (seed period) predictions from returned DataFrame.
+    exclude_seed : bool, default True
+        Excludes Fold 1 (the seed period without prior OOF history) by default.
+        Set to False only for diagnostics that explicitly need seed predictions.
 
     Returns
     -------

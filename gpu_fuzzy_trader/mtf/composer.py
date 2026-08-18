@@ -123,7 +123,7 @@ def compose_hierarchical_signals(
     trig = np.asarray(lwc_triggers)
     n_samples = len(trig)
     if n_samples == 0:
-        return np.empty(0, dtype=output_dtype), {
+        empty_stats = {
             "raw_triggers": 0,
             "hwc_vetoed": 0,
             "hwc_survived": 0,
@@ -139,12 +139,25 @@ def compose_hierarchical_signals(
             "mwc_veto_mask": np.empty(0, dtype=bool),
             "accepted_mask": np.empty(0, dtype=bool),
         }
+        empty_stats["retention_diagnostics"] = compute_trade_retention_diagnostics(empty_stats)
+        return np.empty(0, dtype=output_dtype), empty_stats
 
     norm_dir = normalize_direction(direction)
     h_dir = np.asarray(hwc_direction, dtype=np.float64)
     h_str = np.asarray(hwc_strength, dtype=np.float64)
     m_dir = np.asarray(mwc_direction, dtype=np.float64)
     m_str = np.asarray(mwc_strength, dtype=np.float64)
+    for name, values in (
+        ("hwc_direction", h_dir),
+        ("hwc_strength", h_str),
+        ("mwc_direction", m_dir),
+        ("mwc_strength", m_str),
+    ):
+        if len(values) != n_samples:
+            raise ValueError(
+                f"{name} length ({len(values)}) does not match "
+                f"lwc_triggers length ({n_samples})"
+            )
 
     # Resolve minimum evidence strength gates
     eff_min_str_hwc = (
@@ -217,6 +230,7 @@ def compose_hierarchical_signals(
         "mwc_veto_mask": mwc_veto_mask,
         "accepted_mask": accepted_mask,
     }
+    stats["retention_diagnostics"] = compute_trade_retention_diagnostics(stats)
 
     return signals, stats
 
@@ -277,7 +291,12 @@ def compose_bidirectional_signals(
         return np.empty(0, dtype=output_dtype), {
             "long": {},
             "short": {},
-            "total": {"raw_triggers": 0, "accepted_trades": 0},
+            "total": {
+                "raw_triggers": 0,
+                "accepted_trades": 0,
+                "retention_diagnostics": compute_trade_retention_diagnostics(0),
+            },
+            "retention_diagnostics": compute_trade_retention_diagnostics(0),
         }
 
     long_trigs = np.where(trig > 0, 1, 0)
@@ -329,9 +348,11 @@ def compose_bidirectional_signals(
         "mwc_vetoed": total_mwc_veto,
         "accepted_trades": total_accepted,
     }
+    total_stats["retention_diagnostics"] = compute_trade_retention_diagnostics(total_stats)
 
     return combined_signals, {
         "long": long_stats,
         "short": short_stats,
         "total": total_stats,
+        "retention_diagnostics": total_stats["retention_diagnostics"],
     }

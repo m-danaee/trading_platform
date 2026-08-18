@@ -220,7 +220,13 @@ class Data_Loader:
         # ------------------------------------------------------------------
         # 2. Parse datetime column
         # ------------------------------------------------------------------
-        df["datetime"] = pd.to_datetime(df["datetime"])
+        # Normalize every input to the repository's UTC-naive storage
+        # convention before labels, splits, or fixed candle boundaries are
+        # computed. This prevents host-local timezone inference from changing
+        # the temporal contract.
+        df["datetime"] = pd.to_datetime(
+            df["datetime"], errors="raise", utc=True
+        ).dt.tz_localize(None)
 
         # ------------------------------------------------------------------
         # 3. Derive labels from raw OHLCV when needed

@@ -23,7 +23,15 @@ from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
 from gpu_fuzzy_trader.data.loader import Data_Loader, validate_context_columns
 from gpu_fuzzy_trader.mtf.archives import save_mtf_rule_archive
 from gpu_fuzzy_trader.mtf.candidate import HierarchicalStrategyCandidate
-from gpu_fuzzy_trader.run_pipeline import Pipeline_Runner, Pipeline_Orchestrator
+from gpu_fuzzy_trader.mtf.runtime import (
+    attach_frozen_layer_scores,
+    attach_oof_layer_scores,
+)
+from gpu_fuzzy_trader.run_pipeline import (
+    Pipeline_Runner,
+    Pipeline_Orchestrator,
+    _merge_mtf_lwc_runtime_columns,
+)
 
 
 def test_pipeline_mtf_phases_contract():
@@ -395,3 +403,145 @@ def test_bidirectional_hierarchical_strategy_candidate():
     assert stats["total"]["raw_triggers"] == 4
     assert stats["total"]["accepted_trades"] == 4
 
+
+def test_bidirectional_candidate_runtime_uses_serialized_strength_aliases():
+    raw = pd.DataFrame({
+        "datetime": pd.date_range("2024-01-01", periods=4, freq="15min"),
+        "symbol": "BTCUSDT",
+        "open": 100.0,
+        "high": 101.0,
+        "low": 99.0,
+        "close": 100.0,
+        "volume": 10.0,
+    })
+    candidate = HierarchicalStrategyCandidate(
+        direction="bidirectional",
+        lwc_rules=[
+            {"timeframe": "lwc", "direction": "long", "conditions": ["[open] >= 0"], "coverage": 0.5},
+            {"timeframe": "lwc", "direction": "short", "conditions": ["[open] >= 0", "symbol is BTCUSDT"], "coverage": 0.5},
+        ],
+        composer_params={
+            "min_evidence_strength_hwc": 0.9,
+            "min_evidence_strength_mwc": 0.9,
+        },
+    )
+    signals, stats, audit = candidate.evaluate_frame(raw)
+    assert len(signals) == len(raw)
+    assert stats["total"]["raw_triggers"] == len(raw)
+    assert len(audit) == len(raw)
+    history = raw.copy()
+    history["datetime"] = history["datetime"] - pd.Timedelta(hours=1)
+    historical_signals, _, historical_audit = candidate.evaluate_frame(
+        raw, history_df=history
+    )
+    assert len(historical_signals) == len(raw)
+    assert historical_audit["datetime"].min() == raw["datetime"].min()
+
+
+def test_lwc_runtime_merge_keeps_own_features_but_not_raw_htf_features():
+    n = 32
+    raw = pd.DataFrame({
+        "datetime": pd.date_range("2024-01-01", periods=n, freq="15min"),
+        "symbol": "BTCUSDT",
+        "open": 100.0,
+        "high": 101.0,
+        "low": 99.0,
+        "close": 100.0,
+        "volume": 10.0,
+        "label_open_next": 100.0,
+        "label_close_288": 100.0,
+        "label_min_288": 99.0,
+        "label_max_288": 101.0,
+        "label_max_before_min": 1,
+        "ff_legacy_lwc": 0.5,
+        "hwc_stale_feature": 0.5,
+    })
+    scores = attach_oof_layer_scores(
+        raw,
+        hwc_scores=pd.DataFrame(columns=["datetime", "symbol", "direction_score", "strength_score"]),
+        mwc_scores=pd.DataFrame(columns=["datetime", "symbol", "direction_score", "strength_score"]),
+    )
+    merged = _merge_mtf_lwc_runtime_columns(raw, scores)
+    assert any(column.startswith("lwc_") for column in merged.columns)
+    assert not any(column.startswith("hwc_") for column in merged.columns)
+    assert not any(column.startswith("mwc_") for column in merged.columns)
+    assert "ff_legacy_lwc" not in merged.columns
+    assert "hwc_stale_feature" not in merged.columns
+    assert "mtf_hwc_direction" in merged.columns
+    assert "mtf_mwc_strength" in merged.columns
+
+
+def test_frozen_mwc_scores_are_conditioned_on_frozen_hwc_direction():
+    raw = pd.DataFrame({
+        "datetime": pd.date_range("2024-01-01", periods=4, freq="15min"),
+        "symbol": "BTCUSDT",
+        "open": 100.0,
+        "high": 101.0,
+        "low": 99.0,
+        "close": 100.0,
+        "volume": 10.0,
+    })
+    common = {
+        "conditions": ["[open] >= 0"],
+        "coverage": 0.5,
+        "directional_edge": 0.2,
+        "mcc": 0.2,
+        "stability": 1.0,
+        "skill": 0.2,
+    }
+    frame = attach_frozen_layer_scores(
+        raw,
+        [{**common, "timeframe": "hwc", "direction": "short"}],
+        [{**common, "timeframe": "mwc", "direction": "long"}],
+    )
+    assert np.all(frame["mtf_hwc_direction"].to_numpy() == -1.0)
+    assert np.all(frame["mtf_mwc_direction"].to_numpy() == 0.0)
+    assert np.all(frame["mtf_mwc_strength"].to_numpy() == 0.0)
+
+
+def test_lwc_oof_score_alignment_is_causal_and_runtime_scores_are_frozen():
+    n = 32
+    raw = pd.DataFrame({
+        "datetime": pd.date_range("2024-01-01", periods=n, freq="15min"),
+        "symbol": "BTCUSDT",
+        "open": 100.0,
+        "high": 101.0,
+        "low": 99.0,
+        "close": 100.0,
+        "volume": 10.0,
+    })
+    hwc_oof = pd.DataFrame({
+        "datetime": [pd.Timestamp("2024-01-01 00:00")],
+        "symbol": ["BTCUSDT"],
+        "direction_score": [-0.8],
+        "strength_score": [0.7],
+    })
+    mwc_oof = pd.DataFrame({
+        "datetime": [pd.Timestamp("2024-01-01 00:00")],
+        "symbol": ["BTCUSDT"],
+        "direction_score": [0.4],
+        "strength_score": [0.5],
+    })
+
+    scored = attach_oof_layer_scores(
+        raw, hwc_scores=hwc_oof, mwc_scores=mwc_oof
+    )
+    assert not bool(scored.loc[scored["datetime"] == "2024-01-01 03:30", "_mtf_oof_available"].iloc[0])
+    row = scored.loc[scored["datetime"] == "2024-01-01 03:45"].iloc[0]
+    assert bool(row["_mtf_oof_available"])
+    assert np.isclose(row["mtf_hwc_direction"], -0.8)
+    assert np.isclose(row["mtf_mwc_direction"], 0.4)
+
+    candidate = HierarchicalStrategyCandidate(
+        direction="long",
+        lwc_rules=[{
+            "timeframe": "lwc",
+            "direction": "long",
+            "conditions": ["[mtf_hwc_direction] IS Exactly Zero"],
+            "coverage": 0.5,
+        }],
+    )
+    signals, stats, audit = candidate.evaluate_frame(raw)
+    assert len(signals) == n
+    assert stats["raw_triggers"] == n
+    assert set(audit["accepted"].unique()) == {1}

@@ -173,7 +173,9 @@ def test_conditional_mwc_evaluation():
     )
     assert edge > 0.0
     assert mcc > 0.0
-    assert cov_penalty == 0.0  # 3/10 = 30% in [10%, 40%]
+    # Conditional coverage is measured only over the five HWC-supported
+    # observations, so 3/5 is above the soft upper target and is penalized.
+    assert np.isclose(cov_penalty, (0.60 - 0.40) / (1.0 - 0.40))
 
 
 def test_rule_search_profiles():

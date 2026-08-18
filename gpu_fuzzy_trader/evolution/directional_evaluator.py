@@ -222,15 +222,41 @@ def evaluate_conditional_directional_rule(
     Returns:
         Tuple of (directional_edge, mcc, coverage_penalty).
     """
+    move_arr = np.asarray(move, dtype=np.float64)
+    hwc_arr = np.asarray(hwc_score, dtype=np.float64)
+    active_arr = np.asarray(active_mask, dtype=bool)
+    if not (len(move_arr) == len(hwc_arr) == len(active_arr)):
+        raise ValueError("active_mask, move, and hwc_score must have equal length")
+
+    is_long = direction.lower() in ("long", "1", "buy")
+    if is_long:
+        eligible = (
+            np.isfinite(move_arr)
+            & np.isfinite(hwc_arr)
+            & (hwc_arr >= float(support_threshold))
+        )
+    else:
+        eligible = (
+            np.isfinite(move_arr)
+            & np.isfinite(hwc_arr)
+            & (hwc_arr <= -float(support_threshold))
+        )
+
+    # Unsupported HWC observations are outside the conditional MWC sample
+    # universe.  Treating them as neutral negatives makes a rule look worse
+    # merely because HWC did not grant it permission.
+    if not np.any(eligible):
+        return 0.0, 0.0, 1.0
+
     cond_labels = compute_conditional_mwc_labels(
-        move=move,
-        hwc_score=hwc_score,
+        move=move_arr[eligible],
+        hwc_score=hwc_arr[eligible],
         theta_mwc=theta_mwc,
         direction=direction,
         support_threshold=support_threshold,
     )
     return evaluate_directional_rule(
-        active_mask=active_mask,
+        active_mask=active_arr[eligible],
         labels=cond_labels,
         direction=direction,
         target_coverage=target_coverage,

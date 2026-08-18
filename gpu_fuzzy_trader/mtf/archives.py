@@ -41,37 +41,57 @@ def normalize_timeframe(timeframe: str) -> str:
 
 
 def compute_rule_hash(rule: dict[str, Any]) -> str:
-    """Compute deterministic SHA-256 hash of canonical rule conditions and direction.
+    """Compute deterministic SHA-256 hash of the complete rule identity.
 
-    Condition list order is normalized (sorted) to ensure permutation invariance.
+    Condition list order is normalized (sorted) to ensure permutation invariance,
+    while validation metrics and provenance fields remain part of the identity.
+    This prevents a stale archive from retaining the same hash after its OOF
+    evidence or data lineage changes.
     """
-    direction = str(rule.get("direction", "")).strip().lower()
-    conditions = sorted(str(c).strip() for c in rule.get("conditions", []))
-    tf = rule.get("timeframe", rule.get("tf", ""))
-    norm_tf = normalize_timeframe(tf) if tf else ""
-
-    canonical_obj = {
-        "timeframe": norm_tf,
-        "direction": direction,
-        "conditions": conditions,
-    }
-    encoded = json.dumps(canonical_obj, sort_keys=True).encode("utf-8")
+    canonical_obj = dict(rule)
+    canonical_obj.pop("rule_hash", None)
+    tf = canonical_obj.get("timeframe", canonical_obj.get("tf", ""))
+    canonical_obj["timeframe"] = normalize_timeframe(tf) if tf else ""
+    canonical_obj.pop("tf", None)
+    canonical_obj["direction"] = str(canonical_obj.get("direction", "")).strip().lower()
+    canonical_obj["conditions"] = sorted(
+        str(c).strip() for c in canonical_obj.get("conditions", [])
+    )
+    encoded = json.dumps(
+        canonical_obj, sort_keys=True, separators=(",", ":"), default=str
+    ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
 
 def compute_archive_hash(rules_or_payload: Union[Sequence[dict[str, Any]], dict[str, Any]]) -> str:
-    """Compute deterministic SHA-256 hash of a collection of rules or archive payload."""
+    """Compute deterministic SHA-256 hash of rules plus stable archive metadata."""
     if isinstance(rules_or_payload, dict) and "rules" in rules_or_payload:
         rules_seq = rules_or_payload["rules"]
+        canonical_obj: Any = {
+            "timeframe": (
+                normalize_timeframe(rules_or_payload["timeframe"])
+                if rules_or_payload.get("timeframe")
+                else ""
+            ),
+            "metadata": rules_or_payload.get("metadata", {}),
+            "rules": sorted(compute_rule_hash(r) for r in rules_seq),
+        }
     else:
         rules_seq = rules_or_payload  # type: ignore
+        canonical_obj = {"rules": sorted(compute_rule_hash(r) for r in rules_seq)}
 
-    rule_hashes = sorted(compute_rule_hash(r) for r in rules_seq)
-    encoded = json.dumps(rule_hashes).encode("utf-8")
+    encoded = json.dumps(
+        canonical_obj, sort_keys=True, separators=(",", ":"), default=str
+    ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
 
-def validate_rule_schema(rule: dict[str, Any], raise_error: bool = True) -> bool:
+def validate_rule_schema(
+    rule: dict[str, Any],
+    raise_error: bool = True,
+    *,
+    require_provenance: bool = False,
+) -> bool:
     """Validate that a rule dictionary conforms to the required MTF rule schema.
 
     Required fields:
@@ -107,6 +127,10 @@ def validate_rule_schema(rule: dict[str, Any], raise_error: bool = True) -> bool
         if raise_error:
             raise ValueError(f"Rule conditions must be a non-empty list: {rule}")
         return False
+    if any(not isinstance(condition, str) or not condition.strip() for condition in conditions):
+        if raise_error:
+            raise ValueError("Rule conditions must contain non-empty strings")
+        return False
 
     # 5. Coverage validation
     try:
@@ -119,6 +143,25 @@ def validate_rule_schema(rule: dict[str, Any], raise_error: bool = True) -> bool
         if raise_error:
             raise ValueError(f"Invalid coverage value '{rule.get('coverage')}'")
         return False
+
+    if require_provenance:
+        oof_metrics = rule.get("oof_metrics")
+        if not isinstance(oof_metrics, dict):
+            if raise_error:
+                raise ValueError("Production MTF rules require an 'oof_metrics' mapping")
+            return False
+        for metric in ("directional_edge", "mcc", "coverage", "stability"):
+            if metric not in oof_metrics:
+                if raise_error:
+                    raise ValueError(
+                        f"Production MTF rule oof_metrics is missing {metric!r}"
+                    )
+                return False
+        for field in ("data_hash", "feature_schema_hash"):
+            if not rule.get(field):
+                if raise_error:
+                    raise ValueError(f"Production MTF rule is missing {field!r}")
+                return False
 
     return True
 
@@ -153,8 +196,41 @@ def validate_archive_schema(payload: dict[str, Any], raise_error: bool = True) -
             raise ValueError(f"Archive rules must be a list, got {type(rules)}")
         return False
 
+    require_provenance = bool(
+        isinstance(payload.get("metadata"), dict)
+        and payload["metadata"].get("provenance_required", False)
+    )
     for rule in rules:
-        if not validate_rule_schema(rule, raise_error=raise_error):
+        if not isinstance(rule, dict):
+            if raise_error:
+                raise ValueError("Archive rules must contain mapping objects")
+            return False
+        if not validate_rule_schema(
+            rule, raise_error=raise_error, require_provenance=require_provenance
+        ):
+            return False
+        declared_rule_hash = rule.get("rule_hash")
+        if declared_rule_hash and str(declared_rule_hash) != compute_rule_hash(rule):
+            if raise_error:
+                raise ValueError("Rule hash does not match the stored rule contents")
+            return False
+
+    try:
+        declared_rule_count = int(payload.get("rule_count", len(rules)))
+    except (TypeError, ValueError):
+        if raise_error:
+            raise ValueError("Archive rule_count must be an integer")
+        return False
+    if declared_rule_count != len(rules):
+        if raise_error:
+            raise ValueError("Archive rule_count does not match the stored rules")
+        return False
+    declared_hash = payload.get("archive_hash")
+    if declared_hash:
+        expected_hash = compute_archive_hash(payload)
+        if str(declared_hash) != expected_hash:
+            if raise_error:
+                raise ValueError("Archive hash does not match its rules and metadata")
             return False
 
     return True
@@ -172,6 +248,7 @@ def save_mtf_rule_archive(
     path: Union[str, Path, None] = None,
     metadata: dict[str, Any] | None = None,
     base_dir: Union[str, Path] = "rule_archives",
+    require_provenance: bool = False,
 ) -> str:
     """Persist discovered MTF rules into a structured, hashed JSON archive atomically.
 
@@ -204,10 +281,22 @@ def save_mtf_rule_archive(
         rule_copy["direction"] = str(rule_copy.get("direction", "")).strip().lower()
         rule_copy["complexity"] = int(rule_copy.get("complexity", len(rule_copy.get("conditions", []))))
         rule_copy["rule_hash"] = compute_rule_hash(rule_copy)
-        validate_rule_schema(rule_copy, raise_error=True)
+        validate_rule_schema(
+            rule_copy,
+            raise_error=True,
+            require_provenance=require_provenance,
+        )
         enriched_rules.append(rule_copy)
 
-    archive_hash = compute_archive_hash(enriched_rules)
+    archive_metadata = dict(metadata or {})
+    if require_provenance:
+        archive_metadata["provenance_required"] = True
+
+    archive_hash = compute_archive_hash({
+        "timeframe": canonical_tf,
+        "metadata": archive_metadata,
+        "rules": enriched_rules,
+    })
 
     payload: dict[str, Any] = {
         "schema_version": ARCHIVE_SCHEMA_VERSION,
@@ -215,7 +304,7 @@ def save_mtf_rule_archive(
         "archive_hash": archive_hash,
         "rule_count": len(enriched_rules),
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "metadata": metadata or {},
+        "metadata": archive_metadata,
         "rules": enriched_rules,
     }
 

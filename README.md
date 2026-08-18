@@ -1,10 +1,11 @@
 # GPU Fuzzy Trader
 
-This project evolves fuzzy trading rules in Phase 2, selects and risk-tunes
-teams with the RB Governor, and evaluates only evaluator-compatible strategy
-JSON with the `evaluator_v5.ipynb` contract. Entries use a causal
-multi-timeframe trend hierarchy: 4h and 1h regimes grant directional
-permission, while a 15m pullback reversal triggers the entry search.
+This project discovers fuzzy trading rules in Phase 2, composes them through a
+causal hierarchical MTF runtime (4h HWC, 1h MWC, 15m LWC), selects and
+risk-tunes candidates with the RB Governor, and evaluates evaluator-compatible
+strategy JSON with the `evaluator_v5.ipynb` contract. HWC and MWC provide
+continuous direction/evidence scores and contradiction vetoes; LWC alone emits
+entry triggers.
 
 Long Phase 2 and RB runs are intended for a CUDA host. The default runtime is
 hybrid-tuned for an 8-core CPU plus a 6-GiB RTX 4050: large-window Phase 2
@@ -30,43 +31,28 @@ requirements.txt    Shared dependency contract; main.ipynb selects the CUDA extr
 
 ## Pipeline
 
-1. Causal enrichment fits regime thresholds from the training tape only and
-   produces separate enriched train, test, and optional forward CSVs.
-2. Data preparation loads the enriched training tape and builds cached
-   train/validation splits.
-3. Phase 1 selects direction-specific 15m `ff_*` confirmations. Fixed context
-   columns are excluded from feature selection and chromosomes.
-4. Phase 2 generates and admits rule pools using island-resolved floors while
-   applying the mandatory context mask to every candidate.
-5. RB Governor is the single production selection and risk path. It preserves
-   the fixed context policy and keeps existing capital sizing behavior.
-6. Phase 5 records diagnostics on the consumed enriched test tape; an optional
-   strictly newer enriched forward tape is the only acceptance tape.
+1. Raw 15m OHLCV is normalized to UTC; incomplete or gapped 1h/4h buckets are
+   discarded and features are computed independently per timeframe.
+2. Purged master folds discover HWC directional rules, then MWC conditional
+   continuation rules using only OOF HWC scores.
+3. LWC discovery receives only OOF HWC and MWC scores; validation and OOS use
+   frozen full-train ensembles.
+4. The MTF composer applies asymmetric HWC/MWC contradiction vetoes to LWC
+   triggers and records retention globally, by direction, symbol, fold, and
+   month.
+5. RB Governor evaluates the composed candidate and freezes its archives,
+   manifest, and execution parameters.
+6. Phase 5 is diagnostic on the consumed test tape; only a strictly newer,
+   untouched forward tape can provide release acceptance.
 
 The RB Governor treats entry conditions, symbol scope, TP/SL, horizon, and cost
 model as one immutable strategy identity. Production RB may size capital, but
 it does not rescue rejected Phase 2 rules by silently searching a new TP/SL
 envelope.
 
-The first release is trend-following only. Long entries require Bullish 4h and
-1h states; short entries require Bearish 4h and 1h states. Range, Noisy,
-opposite, and unavailable states block entries. The current 15m state must also
-reverse in the permitted direction after an opposite state occurred within the
-previous 24 completed 15m states.
-
-These two direction-specific conditions are mandatory execution policy in
-every exported rule:
-
-```text
-Long:  [tf_permission_long] IS Active (1)
-       [lwc_pullback_reversal_long] IS Active (1)
-Short: [tf_permission_short] IS Active (1)
-       [lwc_pullback_reversal_short] IS Active (1)
-```
-
-They are not NSGA-III genes. Mutation, crossover, feature selection, and
-condition-count limits cannot remove them. `MIN_CONDITIONS` and
-`MAX_CONDITIONS` count only evolved 15m confirmations.
+The canonical MTF path has no mandatory legacy context columns. HWC/MWC are
+soft veto layers: neutral or weak evidence is permissive, and only strong
+opposing direction with sufficient evidence can block an LWC trigger.
 
 Existing callers using `--phase 3` or `--phase 4` remain compatible: both
 normalize to the RB Governor and return the historical result keys alongside
@@ -96,40 +82,19 @@ python3 -m venv .venv
 
 Use the repository virtual environment for every command.
 
-The active context contract uses a 24-bar LWC pullback lookback and frozen
-train-only classifier quantiles of 55th/55th/45th percentile. Changing this
-contract changes dataset and strategy identity: re-enrich every train, test, and
-forward tape, then rebuild splits and Phase 1/Phase 2 artifacts. Do not reuse
-enriched CSVs or derived artifacts from the previous contract.
+The canonical pipeline consumes raw tapes directly and builds causal MTF data
+in memory. Dataset and strategy identity includes the raw hashes, fold
+boundaries, feature schemas, fitted thresholds, archive hashes, and frozen
+composer parameters.
 
-Generate enriched tapes before running the multi-timeframe pipeline. Raw tapes
-are never overwritten:
-
-```bash
-.venv/bin/python -m gpu_fuzzy_trader.data.trend_context \
-  --train data/train_new.csv \
-  --test data/test_new.csv \
-  --forward data/forward.csv
-```
-
-Omit `--forward` until a strictly newer untouched tape is available. The
-default outputs are:
-
-```text
-data/enriched/train_new_hwc_mwc_lwc.csv
-data/enriched/test_new_hwc_mwc_lwc.csv
-data/enriched/forward_hwc_mwc_lwc.csv
-data/enriched/trend_context_manifest.json
-```
-
-The normal pipeline uses those enriched train/test tapes by default. Override
-paths only for a controlled experiment; Phase 5 explicitly rejects a raw,
-non-enriched test or forward tape:
+The normal pipeline uses the raw train/test tapes by default. Override paths
+only for a controlled experiment; Phase 5 computes the frozen MTF runtime from
+the raw tape and does not refit on test or forward data:
 
 ```bash
-TRAIN_CSV_PATH=data/enriched/train_new_hwc_mwc_lwc.csv \
-TEST_CSV_PATH=data/enriched/test_new_hwc_mwc_lwc.csv \
-FORWARD_CSV_PATH=data/enriched/forward_hwc_mwc_lwc.csv \
+TRAIN_CSV_PATH=data/train_new.csv \
+TEST_CSV_PATH=data/test_new.csv \
+FORWARD_CSV_PATH=data/forward.csv \
 .venv/bin/python -m gpu_fuzzy_trader.run_pipeline
 ```
 
@@ -156,28 +121,22 @@ thresholds.
 
 ## Data and evaluator
 
-- `data/train_new.csv` is the raw training tape and the only source used to fit
-  pooled regime thresholds. Thresholds are frozen for every later tape.
-- `data/enriched/train_new_hwc_mwc_lwc.csv` feeds Phase 1 and Phase 2 after
-  enrichment. Its OHLCV columns are used to derive forward labels separately
-  within the training research boundary.
+- `data/train_new.csv` is the raw 15m training tape and the only source used
+  for rule discovery, OOF cross-fitting, and train-only threshold fitting.
 - Validation fitness and selection windows feed Phase 2 and RB only.
-- `data/test_new.csv` is the raw consumed diagnostic holdout. Phase 5 loads its
-  enriched counterpart and never fits thresholds, selects rules, or rewrites
-  strategies from test results.
-- `FORWARD_CSV_PATH` must point to an enriched, strictly newer untouched tape.
+- `data/test_new.csv` is the consumed raw diagnostic holdout. Phase 5 computes
+  causal indicators from it but never refits rules, weights, or thresholds.
+- `FORWARD_CSV_PATH` must point to a strictly newer untouched raw tape.
   A run is accepted only when long, short, and the joint portfolio are all
   profitable on that forward period.
 - `evaluator_v5.ipynb` is the canonical evaluator contract. Its constants and
   dynamic time-exit behavior match the 96-bar CPU pipeline contract.
 
-CSV timestamps are timezone-naive 15m bar-open times aligned to
-`:00/:15/:30/:45`. Enrichment rejects duplicate `(datetime, symbol)` keys,
-gaps, off-grid timestamps, and ambiguous history/target overlap. A signal row
-uses the HWC/MWC state available at its next-open execution time: the 10:45
-signal can use a 1h bar closing at 11:00 for an 11:00 entry, and the 11:45
-signal can use the 4h bar closing at 12:00 for a 12:00 entry. Rolling warm-up
-may use preceding research history, but history rows are not emitted or scored.
+CSV timestamps are 15m bar-open times. The MTF layer normalizes them to
+timezone-naive UTC, rejects duplicate keys and missing constituents, and only
+publishes an HTF feature after its candle close is at or before the LWC next
+open. Each timeframe has an independent warm-up; unfinished HTF candles never
+influence an earlier execution row.
 
 The checked-in `train_new.csv` and `test_new.csv` profile contains the balanced
 `BTCUSDT`/`ETHUSDT` universe. Production Phase 2 therefore uses independent
@@ -203,8 +162,8 @@ needed. The evaluator-facing strategy files are `outputs/long.json` and
 matter for results: evaluator fees/capital/leverage/exposure/notional, label
 horizon and embargo geometry, stage budgets, population/archive limits,
 mutation and support floors, monthly windows, RB risk grids, rule-capital
-feasibility, threshold ordering, risk-tail geometry, and the complete trend
-context contract.
+  feasibility, threshold ordering, risk-tail geometry, and the raw MTF/runtime
+  contract.
 
 The maximum holding period is 96 15m bars, or 24 hours. Label generation,
 barrier outcomes, force exits, tail drops, holdout embargo, purged-walk-forward
@@ -213,10 +172,10 @@ column names ending in `_288` remain temporarily for schema compatibility; the
 values and runtime behavior use 96 bars.
 
 Strategy, pool, archive, split, feature-selection, and dataset identities
-include the context algorithm, fitted thresholds, threshold-fitting source and
-interval, raw/history/enriched hashes, timeframes, timestamp semantics, state
-codes, pullback lookback, permission policy, and holding horizon. Resume and
-cache loading reject artifacts when that identity changes.
+include raw dataset hashes, fitted thresholds, OOF fold boundaries, timeframes,
+feature schemas, timestamp semantics, archive hashes, composer parameters, and
+holding horizon. Resume and cache loading reject artifacts when that identity
+changes.
 
 The canonical exposure contract is 100%. RB permits up to 20 rules and starts
 the capital grid at 5%, so the maximum rule count remains feasible before
@@ -241,8 +200,9 @@ the locked strategy without pruning or rewriting it from test-set PnL.
 - `reports/rb_governor_{direction}_report.json`: gate, risk, tail, and
   fail-closed diagnostics.
 - `reports/config_audit.json`: effective configuration snapshot.
-- `data/enriched/trend_context_manifest.json`: context thresholds, source and
-  history lineage, enriched hashes, timeframes, and timestamp policy.
+- `mtf_manifest.json`: raw dataset hashes, feature schemas, OOF fold boundaries,
+  label thresholds, archive hashes, frozen composer parameters, and release
+  policy.
 - `reports/test_*`: consumed-test diagnostics, marked
   `acceptance_status=diagnostic_only`.
 - `reports/forward_*`: optional forward-candidate reports when

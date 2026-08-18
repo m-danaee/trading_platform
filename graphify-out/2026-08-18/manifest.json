@@ -105,8 +105,8 @@
     "semantic_hash": "10b22afa23ec6b0221e4c41f5696fb3d"
   },
   "gpu_fuzzy_trader/data/loader.py": {
-    "mtime": 1787059950.757555,
-    "ast_hash": "687449613aa7fe6ac763019ee414498e",
+    "mtime": 1787060763.3038387,
+    "ast_hash": "606770c9f514b1c0efe199472487eb8e",
     "semantic_hash": ""
   },
   "gpu_fuzzy_trader/data/splitter.py": {
@@ -195,8 +195,8 @@
     "semantic_hash": "bc42ff7da42997a37ac642a3b9497b52"
   },
   "gpu_fuzzy_trader/phases/phase2_island_scheduler.py": {
-    "mtime": 1786379778.4586217,
-    "ast_hash": "beb99296ddfc7aa2c2a59057251b498b",
+    "mtime": 1787060787.9530673,
+    "ast_hash": "cff23a6075b635b8f753f185beb0d989",
     "semantic_hash": ""
   },
   "gpu_fuzzy_trader/phases/phase2_rule_pool.py": {
@@ -255,8 +255,8 @@
     "semantic_hash": ""
   },
   "gpu_fuzzy_trader/run_pipeline.py": {
-    "mtime": 1787060094.1585639,
-    "ast_hash": "b363db5b50d2e8eeb810e87f86474a0b",
+    "mtime": 1787060907.401789,
+    "ast_hash": "970ef26d9fdd30dfed26303ff4ced813",
     "semantic_hash": ""
   },
   "gpu_fuzzy_trader/scoring/__init__.py": {
@@ -435,8 +435,8 @@
     "semantic_hash": "3cf9377c1e7571fe8852bcca7dca4ece"
   },
   "tests/unit/test_cpu_engine.py": {
-    "mtime": 1786530132.8556278,
-    "ast_hash": "c134aa6e2e5916dd762144697a390270",
+    "mtime": 1787060823.4869056,
+    "ast_hash": "9cb9a0b705e54c3bd99b6d7482d8cf76",
     "semantic_hash": ""
   },
   "tests/unit/test_crash_fix_and_run_logging.py": {
@@ -885,8 +885,8 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1786537383.7893565,
-    "ast_hash": "ae4f8809d76228961efcce6d046b70b7",
+    "mtime": 1787060975.665994,
+    "ast_hash": "1ad73fc2aac5fd255739280210d7eb27",
     "semantic_hash": ""
   },
   "RUN.md": {
@@ -899,44 +899,14 @@
     "ast_hash": "0ed3d7522fea463597a5696aa563fb3c",
     "semantic_hash": ""
   },
-  "gpu_fuzzy_trader/data/trend_context.py": {
-    "mtime": 1786536342.6528451,
-    "ast_hash": "fb55ae2bd829cee896ef8e15cb6e9f4d",
-    "semantic_hash": ""
-  },
-  "tests/unit/test_trend_context.py": {
-    "mtime": 1786536342.6568282,
-    "ast_hash": "ae6ba430f03dd0b9af0e2ca2adbabb90",
-    "semantic_hash": ""
-  },
-  "scripts/diagnose_context_mask.py": {
-    "mtime": 1786104274.8978508,
-    "ast_hash": "a26f88d381ccde9f56dd9addd58a158a",
-    "semantic_hash": ""
-  },
-  "gpu_fuzzy_trader/context_diagnostics.py": {
-    "mtime": 1786104274.8359187,
-    "ast_hash": "8485b8c796c62dc706b165c835d9ccba",
-    "semantic_hash": ""
-  },
   "tests/fixtures/context_preflight/synthetic_two_symbol_example.json": {
     "mtime": 1786113984.8687863,
     "ast_hash": "00f8b7722420dd4bb0a6d14cc47c070d",
     "semantic_hash": ""
   },
-  "tests/unit/test_sparse_context_search_guards.py": {
-    "mtime": 1786381109.8302438,
-    "ast_hash": "cc85084c77610fb672795b08ecf55b3d",
-    "semantic_hash": ""
-  },
   "data/cv_folds_manifest.json": {
     "mtime": 1786533411.8027472,
     "ast_hash": "11922f3e4842a30e1b6a43334e06a291",
-    "semantic_hash": ""
-  },
-  "data/enriched/trend_context_manifest.json": {
-    "mtime": 1786382814.357545,
-    "ast_hash": "ef194ae92b1781331424e51f328d009c",
     "semantic_hash": ""
   },
   "gpu_fuzzy_trader/data/multi_timeframe.py": {

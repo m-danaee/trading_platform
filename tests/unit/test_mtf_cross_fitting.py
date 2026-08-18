@@ -199,6 +199,33 @@ def test_generate_oof_scores_callback():
     assert not oof_no_seed["is_seed"].any()
 
 
+def test_generate_oof_scores_excludes_seed_by_default_and_purges_exact_boundary():
+    dt = pd.date_range("2024-01-01", periods=24, freq="1h")
+    df = pd.DataFrame({"datetime": dt, "symbol": "BTCUSDT", "x": 1.0})
+    folds = build_master_temporal_folds(df, n_folds=2, embargo_minutes=2)
+
+    seen_train_sizes = []
+
+    def callback(train_df, test_df, fold):
+        seen_train_sizes.append(len(train_df))
+        return np.zeros(len(test_df))
+
+    oof = generate_oof_scores(df, folds, callback, purge_minutes=2)
+    assert not oof.empty
+    assert not oof["is_seed"].any()
+    assert len(seen_train_sizes) == 1
+
+    cutoff = folds[1].test_start - pd.Timedelta(minutes=2)
+    boundary = df[df["datetime"] == cutoff]
+    if not boundary.empty:
+        purged = apply_purge_embargo(
+            df[df["datetime"] < folds[1].test_start],
+            pred_start_dt=folds[1].test_start,
+            purge_minutes=2,
+        )
+        assert cutoff not in set(purged["datetime"])
+
+
 def test_generate_oof_scores_various_return_types():
     dt = pd.date_range("2024-01-01", "2024-02-28 23:45", freq="1h")
     df = pd.DataFrame({"datetime": dt, "symbol": "ETHUSDT", "x": 1.0})

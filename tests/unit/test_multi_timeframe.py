@@ -72,6 +72,52 @@ def test_missing_constituent_drops_incomplete_bucket():
     assert len(hwc) == 0
 
 
+def test_duplicate_constituent_is_rejected_instead_of_counted_as_complete():
+    dt = pd.date_range("2024-01-01 00:00", periods=4, freq="15min")
+    df = pd.DataFrame({
+        "datetime": dt,
+        "symbol": "BTCUSDT",
+        "open": 100.0, "high": 105.0, "low": 95.0, "close": 102.0, "volume": 10.0,
+    })
+    duplicate = df.copy()
+    duplicate.loc[3, "datetime"] = duplicate.loc[2, "datetime"]
+    with pytest.raises(ValueError, match="duplicate constituent"):
+        build_complete_higher_bars(duplicate, 60)
+
+
+def test_non_utc_offsets_are_normalized_before_bucket_alignment():
+    # These timestamps represent 00:00, 00:15, 00:30, 00:45 UTC despite the
+    # source carrying a +05:30 offset.
+    dt = pd.date_range("2024-01-01 05:30", periods=4, freq="15min", tz="Asia/Kolkata")
+    df = pd.DataFrame({
+        "datetime": dt,
+        "symbol": "BTCUSDT",
+        "open": 100.0, "high": 105.0, "low": 95.0, "close": 102.0, "volume": 10.0,
+    })
+    bars = build_complete_higher_bars(df, 60)
+    assert bars["datetime"].iloc[0] == pd.Timestamp("2024-01-01 00:00")
+    assert bars["datetime"].dt.tz is None
+
+
+def test_htf_ohlcv_cannot_overwrite_lwc_execution_data():
+    dt = pd.date_range("2024-01-01 00:00", periods=8, freq="15min")
+    lwc = pd.DataFrame({
+        "datetime": dt,
+        "symbol": "BTCUSDT",
+        "open": 100.0, "high": 101.0, "low": 99.0, "close": 100.5, "volume": 10.0,
+    })
+    htf = pd.DataFrame({
+        "datetime": [pd.Timestamp("2024-01-01 00:00")],
+        "symbol": ["BTCUSDT"],
+        "open": [200.0], "high": [205.0], "low": [195.0], "close": [202.0],
+        "volume": [40.0], "derived_feature": [7.0],
+    })
+    aligned = align_htf_features_causal(lwc, htf, 60)
+    assert np.allclose(aligned["open"], lwc["open"])
+    assert np.allclose(aligned["close"], lwc["close"])
+    assert aligned.loc[aligned["datetime"] == "2024-01-01 00:45", "derived_feature"].iloc[0] == 7.0
+
+
 def test_compute_timeframe_features():
     # Generate 50 1H bars
     dt = pd.date_range("2024-01-01 00:00", periods=50, freq="1h")

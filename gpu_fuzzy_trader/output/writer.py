@@ -63,8 +63,13 @@ class ValidationError(Exception):
 # Condition string validation
 # ---------------------------------------------------------------------------
 
-# Pattern: starts with '[', contains '] IS ', feature name non-empty, value non-empty
-_CONDITION_RE = re.compile(r"^\[(.+?)\] IS (.+)$")
+# Exported fuzzy conditions plus frozen numeric thresholds emitted by the MTF
+# directional search.
+_CONDITION_RE = re.compile(r"^\s*\[(.+?)\]\s+IS\s+(.+?)\s*$")
+_NUMERIC_CONDITION_RE = re.compile(
+    r"^\s*\[(.+?)\]\s*(>=|<=|==|>|<)\s*"
+    r"([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)\s*$"
+)
 
 
 def _condition_feature(condition: str) -> str | None:
@@ -181,14 +186,19 @@ def _validate_condition(condition: str) -> None:
         return
 
     m = _CONDITION_RE.match(condition)
-    if not m:
+    numeric = _NUMERIC_CONDITION_RE.match(condition)
+    if not m and not numeric:
         raise ValidationError(
             f"Condition {condition!r} does not match the required pattern "
-            "'[feature_name] IS Fuzzy Value Name'. "
-            "Must start with '[', contain '] IS ', and have non-empty feature and value names."
+            "'[feature_name] IS Fuzzy Value Name' or a numeric comparison."
         )
-    feature_name = m.group(1).strip()
-    value_name = m.group(2).strip()
+    if numeric:
+        feature_name = numeric.group(1).strip()
+        value_name = numeric.group(3).strip()
+    else:
+        assert m is not None
+        feature_name = m.group(1).strip()
+        value_name = m.group(2).strip()
     if not feature_name:
         raise ValidationError(
             f"Condition {condition!r} has an empty feature name."
@@ -368,6 +378,13 @@ def _validate_rule_set(rule_set: object) -> dict:
         "strategy_id",
         "strategy_contract",
         "provenance",
+        "deployment_accepted",
+        "deployment_reason",
+        "fail_closed",
+        "reason",
+        "mtf_candidate",
+        "mtf_manifest",
+        "mtf_runtime",
     ):
         if key in rule_set:
             normalized[key] = rule_set[key]

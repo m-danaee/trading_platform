@@ -11,6 +11,7 @@ exactly as the evaluator does for exported strategies.
 from __future__ import annotations
 
 import logging
+import re
 import sys
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 
@@ -231,6 +232,32 @@ def _apply_dynamic_rule(df: pd.DataFrame, condition: str) -> np.ndarray:
     Exactly mirrors evaluator_v5.ipynb's apply_dynamic_rule — mode-independent.
     Returns a boolean NumPy array of length len(df).
     """
+    numeric_match = re.match(
+        r"^\s*\[([^\]]+)\]\s*(>=|<=|==|>|<)\s*"
+        r"([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)\s*$",
+        str(condition),
+    )
+    if numeric_match:
+        feature_name, operator, raw_threshold = numeric_match.groups()
+        if feature_name not in df.columns:
+            raise ValueError(
+                f"Unknown feature in condition: {feature_name!r}. "
+                "Make sure the strategy was created using the same feature set."
+            )
+        values = pd.to_numeric(df[feature_name], errors="coerce").to_numpy(dtype=float)
+        threshold = float(raw_threshold)
+        if operator == ">":
+            mask = values > threshold
+        elif operator == ">=":
+            mask = values >= threshold
+        elif operator == "<":
+            mask = values < threshold
+        elif operator == "<=":
+            mask = values <= threshold
+        else:
+            mask = values == threshold
+        return np.asarray(mask & np.isfinite(values), dtype=bool)
+
     feature_name, value_name = _parse_condition(condition)
 
     if feature_name not in df.columns:
@@ -1067,6 +1094,52 @@ class CPUBacktestEngine:
         )
         return self._simulate_rule_set_entries(
             entries, return_logs=return_logs, initial_capital=self.initial_capital
+        )
+
+    def simulate_signal_mask(
+        self,
+        signal_mask: np.ndarray | pd.Series,
+        *,
+        tp: float,
+        sl: float,
+        capital_pct: float,
+        return_logs: bool = False,
+    ) -> "dict | tuple[dict, pd.DataFrame]":
+        """Simulate a pre-composed causal signal mask.
+
+        Hierarchical candidates do not reduce to a flat list of feature rules:
+        their entry mask is produced by the frozen HWC/MWC composer.  This
+        method reuses the exact CPU barrier/accounting loop after that mask has
+        been built, so MTF OOS evaluation keeps the repository's trade and risk
+        semantics without refitting or injecting legacy context conditions.
+        """
+        mask = np.asarray(signal_mask, dtype=bool)
+        if len(mask) != len(self.df):
+            raise ValueError("signal_mask length does not match the dataset")
+        if not np.isfinite(float(tp)) or float(tp) <= 0:
+            raise ValueError("tp must be a positive finite number")
+        if not np.isfinite(float(sl)) or float(sl) <= 0:
+            raise ValueError("sl must be a positive finite number")
+        if not np.isfinite(float(capital_pct)) or float(capital_pct) <= 0:
+            raise ValueError("capital_pct must be a positive finite number")
+
+        matched = np.flatnonzero(mask & self._context_mask)
+        entries: list[dict] = []
+        _append_allocated_entries(
+            entries,
+            matched,
+            rule_idx=1,
+            tp=float(tp),
+            sl=float(sl),
+            capital_pct=float(capital_pct),
+            row_priority=self.entry_time_priority,
+            rule_symbols=[],
+            normalized_symbols=None,
+        )
+        return self._simulate_rule_set_entries(
+            entries,
+            return_logs=return_logs,
+            initial_capital=self.initial_capital,
         )
 
     def simulate_rule_set_from_cache(

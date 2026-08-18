@@ -162,7 +162,10 @@ class RuleSearchProfile:
             timeframe_minutes=15,
             min_conditions=2,
             max_conditions=4,
-            target_coverage=(0.01, 0.20),
+            # The execution layer is intentionally less sparse than the old
+            # context-gated search: target 10--40% raw trigger coverage before
+            # the higher-timeframe veto funnel.
+            target_coverage=(0.10, 0.40),
             forward_horizon_bars=0,
             quantile=0.0,
             support_threshold=0.0,
@@ -201,4 +204,3 @@ def get_rule_search_profile(role: str) -> RuleSearchProfile:
         raise ValueError(
             f"Unknown rule search profile role: {role!r}. Expected 'hwc', 'mwc', or 'lwc'."
         )
-

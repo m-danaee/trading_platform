@@ -27,9 +27,9 @@ from gpu_fuzzy_trader.mtf.archives import (
 def test_decoupled_direction_and_strength():
     # 2 Long rules, 1 Short rule
     rules = [
-        {"direction": "long", "directional_edge": 0.15, "stability": 0.8},  # w = 0.12
-        {"direction": "long", "directional_edge": 0.10, "stability": 0.6},  # w = 0.06
-        {"direction": "short", "directional_edge": 0.20, "stability": 0.9},  # w = 0.18
+        {"direction": "long", "directional_edge": 0.15, "stability": 0.8, "mcc": 0.20},  # w = 0.12
+        {"direction": "long", "directional_edge": 0.10, "stability": 0.6, "mcc": 0.15},  # w = 0.06
+        {"direction": "short", "directional_edge": 0.20, "stability": 0.9, "mcc": 0.25},  # w = 0.18
     ]
     weights = compute_rule_weights(rules)
     assert (weights >= 0).all()
@@ -89,6 +89,15 @@ def test_rule_weight_admission_and_edge_cases():
     empty_weights = compute_rule_weights([])
     assert isinstance(empty_weights, np.ndarray)
     assert len(empty_weights) == 0
+
+
+def test_missing_oof_mcc_cannot_admit_a_positive_rule():
+    weights = compute_rule_weights([{
+        "direction": "long",
+        "directional_edge": 0.20,
+        "stability": 0.80,
+    }])
+    assert np.isclose(weights[0], 0.0)
 
 
 def test_ensemble_scoring_edge_cases():

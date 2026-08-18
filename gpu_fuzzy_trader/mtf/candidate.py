@@ -146,6 +146,20 @@ class HierarchicalStrategyCandidate:
                 output_dtype=output_dtype,
             )
 
+    def evaluate_frame(
+        self,
+        raw_df,
+        history_df=None,
+    ) -> tuple[np.ndarray, dict[str, Any], "pd.DataFrame"]:
+        """Evaluate this frozen candidate on raw OHLCV rows.
+
+        No thresholds, weights, features, or composer parameters are fitted by
+        this method.  It is the runtime entry point used by Phase 5 OOS.
+        """
+        from gpu_fuzzy_trader.mtf.runtime import evaluate_candidate_frame
+
+        return evaluate_candidate_frame(self, raw_df, history_df=history_df)
+
     def to_dict(self) -> dict[str, Any]:
         """Convert candidate to a JSON-serializable dictionary."""
         return {

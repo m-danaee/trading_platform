@@ -51,6 +51,16 @@ from gpu_fuzzy_trader.mtf.ensembler import (
     compute_rule_weights,
     deduplicate_rules,
 )
+from gpu_fuzzy_trader.mtf.discovery import (
+    LayerDiscoveryResult,
+    discover_directional_layer,
+)
+from gpu_fuzzy_trader.mtf.runtime import (
+    attach_frozen_layer_scores,
+    attach_oof_layer_scores,
+    evaluate_candidate_frame,
+    prepare_causal_mtf_frame,
+)
 
 __all__ = [
     "ARCHIVE_SCHEMA_VERSION",
@@ -65,10 +75,13 @@ __all__ = [
     "DEFAULT_V_MWC_LONG",
     "DEFAULT_V_MWC_SHORT",
     "HierarchicalStrategyCandidate",
+    "LayerDiscoveryResult",
     "MIN_RETENTION_SAMPLE",
     "TemporalFold",
     "TradeRetentionDiagnostics",
     "apply_purge_embargo",
+    "attach_frozen_layer_scores",
+    "attach_oof_layer_scores",
     "build_master_temporal_folds",
     "compose_bidirectional_signals",
     "compose_hierarchical_signals",
@@ -79,6 +92,8 @@ __all__ = [
     "compute_rule_weights",
     "compute_trade_retention_diagnostics",
     "deduplicate_rules",
+    "discover_directional_layer",
+    "evaluate_candidate_frame",
     "export_fold_boundaries",
     "format_retention_report",
     "generate_oof_predictions",
@@ -88,10 +103,9 @@ __all__ = [
     "load_mtf_rule_archive",
     "normalize_direction",
     "normalize_timeframe",
+    "prepare_causal_mtf_frame",
     "save_mtf_rule_archive",
     "validate_archive_schema",
     "validate_master_temporal_folds",
     "validate_rule_schema",
 ]
-
-

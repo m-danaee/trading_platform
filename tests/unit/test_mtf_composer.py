@@ -57,6 +57,18 @@ def test_asymmetric_soft_veto_and_retention():
     assert np.isclose(diag["mwc_incremental_veto_rate"], 1 / 3)
 
 
+def test_composer_rejects_mismatched_score_lengths():
+    with pytest.raises(ValueError, match="does not match"):
+        compose_hierarchical_signals(
+            lwc_triggers=np.ones(3, dtype=np.int8),
+            direction="long",
+            hwc_direction=np.zeros(2),
+            hwc_strength=np.zeros(3),
+            mwc_direction=np.zeros(3),
+            mwc_strength=np.zeros(3),
+        )
+
+
 def test_short_direction_soft_veto():
     # 4 raw LWC short triggers
     lwc_triggers = np.array([1, 1, 1, 1, 0], dtype=np.int8)

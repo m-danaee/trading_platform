@@ -254,10 +254,23 @@ def compute_granular_retention_diagnostics(
             )
 
         trig_df = subset.loc[trig_mask]
-        n_hwc_veto = int((trig_df[hwc_veto_col] != 0).sum()) if hwc_veto_col in trig_df.columns else 0
-        n_mwc_veto = int((trig_df[mwc_veto_col] != 0).sum()) if mwc_veto_col in trig_df.columns else 0
+        hwc_mask = (
+            (trig_df[hwc_veto_col] != 0)
+            if hwc_veto_col in trig_df.columns
+            else pd.Series(False, index=trig_df.index)
+        )
+        # MWC is an incremental stage: a row already vetoed by HWC is not in
+        # the MWC candidate universe and must not inflate its veto rate.
+        mwc_mask = (
+            (trig_df[mwc_veto_col] != 0)
+            if mwc_veto_col in trig_df.columns
+            else pd.Series(False, index=trig_df.index)
+        ) & ~hwc_mask
+        n_hwc_veto = int(hwc_mask.sum())
+        n_mwc_veto = int(mwc_mask.sum())
         if accepted_col in trig_df.columns:
-            n_accepted = int((trig_df[accepted_col] != 0).sum())
+            accepted_mask = (trig_df[accepted_col] != 0) & ~hwc_mask & ~mwc_mask
+            n_accepted = int(accepted_mask.sum())
         else:
             n_accepted = max(0, raw - n_hwc_veto - n_mwc_veto)
 

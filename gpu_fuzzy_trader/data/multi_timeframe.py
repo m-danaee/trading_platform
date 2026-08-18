@@ -18,6 +18,17 @@ logger = logging.getLogger(__name__)
 _OHLCV_COLUMNS = ("open", "high", "low", "close", "volume")
 
 
+def _as_utc_datetime(values: pd.Series | pd.Index) -> pd.Series | pd.DatetimeIndex:
+    """Parse timestamps as UTC without accepting a local-time interpretation."""
+    parsed = pd.to_datetime(values, errors="raise", utc=True)
+    # The repository's persisted tapes use timezone-naive timestamps.  Keep
+    # that storage convention while making the values unambiguously UTC after
+    # conversion (including inputs carrying a non-UTC offset).
+    if isinstance(parsed, pd.Series):
+        return parsed.dt.tz_localize(None)
+    return parsed.tz_localize(None)
+
+
 def build_complete_higher_bars(
     df: pd.DataFrame,
     timeframe_minutes: int,
@@ -58,30 +69,52 @@ def build_complete_higher_bars(
     if missing_cols:
         raise ValueError(f"Input DataFrame is missing required columns: {missing_cols}")
 
-    df_work = df.copy()
-    if not pd.api.types.is_datetime64_any_dtype(df_work["datetime"]):
-        df_work["datetime"] = pd.to_datetime(df_work["datetime"])
+    timeframe_minutes = int(timeframe_minutes)
+    base_timeframe_minutes = int(base_timeframe_minutes)
+    if timeframe_minutes <= 0 or base_timeframe_minutes <= 0:
+        raise ValueError("timeframe_minutes and base_timeframe_minutes must be positive")
+    if timeframe_minutes % base_timeframe_minutes != 0:
+        raise ValueError(
+            "timeframe_minutes must be an integer multiple of base_timeframe_minutes"
+        )
 
-    tf = pd.Timedelta(minutes=int(timeframe_minutes))
-    expected_rows = int(timeframe_minutes) // int(base_timeframe_minutes)
+    df_work = df.copy()
+    df_work["datetime"] = _as_utc_datetime(df_work["datetime"])
+    if df_work.duplicated(["datetime", "symbol"]).any():
+        duplicate_count = int(df_work.duplicated(["datetime", "symbol"]).sum())
+        raise ValueError(
+            "Input contains duplicate constituent bars for the same symbol and "
+            f"timestamp ({duplicate_count} duplicates)."
+        )
+
+    tf = pd.Timedelta(minutes=timeframe_minutes)
+    base_tf = pd.Timedelta(minutes=base_timeframe_minutes)
+    expected_rows = timeframe_minutes // base_timeframe_minutes
 
     parts: list[pd.DataFrame] = []
     for symbol, g in df_work.sort_values("datetime").groupby(
         "symbol", sort=False, observed=False
     ):
         g = g.sort_values("datetime")
-        # Fixed UTC anchoring via dt.floor
+        # ``floor`` is safe only after timestamps have been normalized to UTC.
+        # Row counts alone are not continuity validation: a duplicate row can
+        # otherwise replace a missing constituent and create a false bar.
         bucket = g["datetime"].dt.floor(tf)
-        
-        # Verify completeness: bucket must contain exactly expected_rows
-        counts = bucket.value_counts()
-        complete_buckets = counts[counts == expected_rows].index
+        complete_bucket_values: list[pd.Timestamp] = []
+        for bucket_start, bucket_rows in g.groupby(bucket, sort=True, observed=False):
+            expected = pd.DatetimeIndex(
+                bucket_start + np.arange(expected_rows) * base_tf
+            )
+            actual = pd.DatetimeIndex(bucket_rows["datetime"].sort_values())
+            if len(actual) == expected_rows and actual.equals(expected):
+                complete_bucket_values.append(bucket_start)
 
-        if complete_buckets.empty:
+        if not complete_bucket_values:
             continue
 
-        g_complete = g[bucket.isin(complete_buckets)]
-        bucket_complete = bucket[bucket.isin(complete_buckets)]
+        complete_index = pd.Index(complete_bucket_values)
+        g_complete = g[bucket.isin(complete_index)]
+        bucket_complete = bucket[bucket.isin(complete_index)]
 
         agg = g_complete.groupby(bucket_complete, sort=True).agg(
             open=("open", "first"),
@@ -186,8 +219,7 @@ def compute_timeframe_features(
         return df_bars.copy()
 
     df_work = df_bars.copy()
-    if not pd.api.types.is_datetime64_any_dtype(df_work["datetime"]):
-        df_work["datetime"] = pd.to_datetime(df_work["datetime"])
+    df_work["datetime"] = _as_utc_datetime(df_work["datetime"])
 
     parts: list[pd.DataFrame] = []
     for symbol, g in df_work.sort_values("datetime").groupby(
@@ -289,29 +321,41 @@ def align_htf_features_causal(
     if lwc_df.empty:
         return lwc_df.copy()
 
-    if not pd.api.types.is_datetime64_any_dtype(lwc_df["datetime"]):
-        lwc_work = lwc_df.copy()
-        lwc_work["datetime"] = pd.to_datetime(lwc_work["datetime"])
-    else:
-        lwc_work = lwc_df.copy()
+    lwc_work = lwc_df.copy()
+    lwc_work["datetime"] = _as_utc_datetime(lwc_work["datetime"])
+    if lwc_work.duplicated(["datetime", "symbol"]).any():
+        raise ValueError("LWC data contains duplicate (datetime, symbol) rows.")
+    htf_work = htf_features.copy()
+    missing_htf = [c for c in ("datetime", "symbol") if c not in htf_work.columns]
+    if missing_htf:
+        raise ValueError(f"HTF features are missing required columns: {missing_htf}")
+    htf_work["datetime"] = _as_utc_datetime(htf_work["datetime"])
+    if htf_work.duplicated(["datetime", "symbol"]).any():
+        raise ValueError("HTF features contain duplicate (datetime, symbol) rows.")
 
-    if not pd.api.types.is_datetime64_any_dtype(htf_features["datetime"]):
-        htf_work = htf_features.copy()
-        htf_work["datetime"] = pd.to_datetime(htf_work["datetime"])
-    else:
-        htf_work = htf_features.copy()
+    # Only derived features are aligned.  HTF OHLCV must never overwrite the
+    # execution tape's OHLCV columns, and an existing LWC column is preserved.
+    feature_cols = [
+        c
+        for c in htf_work.columns
+        if c not in ("datetime", "symbol", *_OHLCV_COLUMNS)
+        and c not in lwc_work.columns
+    ]
 
-    # Identify feature columns to align (all columns except datetime and symbol)
-    feature_cols = [c for c in htf_work.columns if c not in ("datetime", "symbol")]
-
-    tf = pd.Timedelta(minutes=int(timeframe_minutes))
-    base_tf = pd.Timedelta(minutes=int(base_timeframe_minutes))
+    timeframe_minutes = int(timeframe_minutes)
+    base_timeframe_minutes = int(base_timeframe_minutes)
+    if timeframe_minutes <= 0 or base_timeframe_minutes <= 0:
+        raise ValueError("timeframe_minutes and base_timeframe_minutes must be positive")
+    tf = pd.Timedelta(minutes=timeframe_minutes)
+    base_tf = pd.Timedelta(minutes=base_timeframe_minutes)
 
     # Pre-calculate HTF close timestamps
     htf_work["_htf_close"] = htf_work["datetime"] + tf
 
     # Prepare output container matching lwc_df index
-    aligned_df = lwc_df.copy()
+    # Persist the normalized UTC-naive timestamps used for the match.  An
+    # offset-aware input must not remain in local time downstream.
+    aligned_df = lwc_work.copy()
     for col in feature_cols:
         if col not in aligned_df.columns:
             aligned_df[col] = np.nan

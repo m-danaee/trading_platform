@@ -55,8 +55,8 @@
     "semantic_hash": "f344368c01a28a56e859351a255594dd"
   },
   "gpu_fuzzy_trader/backtest/cpu_engine.py": {
-    "mtime": 1787059975.660915,
-    "ast_hash": "fc416c11a3c356d58897a3b29bc9b80e",
+    "mtime": 1787063369.220856,
+    "ast_hash": "9aebd449b0999ca0a0c8c2269368e9cc",
     "semantic_hash": ""
   },
   "gpu_fuzzy_trader/backtest/df_slim.py": {
@@ -85,8 +85,8 @@
     "semantic_hash": "149367b7fb6376cfed93b898ffd7396c"
   },
   "gpu_fuzzy_trader/config.py": {
-    "mtime": 1787059917.645591,
-    "ast_hash": "e0853e4057aabb71da73bd2ccaaeedf1",
+    "mtime": 1787066396.8926466,
+    "ast_hash": "d7cab1af9697e9669cc2a6dfe61e3d7d",
     "semantic_hash": ""
   },
   "gpu_fuzzy_trader/dashboard.py": {
@@ -105,8 +105,8 @@
     "semantic_hash": "10b22afa23ec6b0221e4c41f5696fb3d"
   },
   "gpu_fuzzy_trader/data/loader.py": {
-    "mtime": 1787060763.3038387,
-    "ast_hash": "606770c9f514b1c0efe199472487eb8e",
+    "mtime": 1787065949.6593177,
+    "ast_hash": "cdce45e7bd21a3a5ea5c5fdfb4ff6bb6",
     "semantic_hash": ""
   },
   "gpu_fuzzy_trader/data/splitter.py": {
@@ -180,8 +180,8 @@
     "semantic_hash": "71a8c2b31001d9df600f15e002c1c906"
   },
   "gpu_fuzzy_trader/output/writer.py": {
-    "mtime": 1786529729.802321,
-    "ast_hash": "22b9ca7689632b5d220a318c3082a650",
+    "mtime": 1787063447.3935316,
+    "ast_hash": "31c5194922a9e93ef6bc21a25dafe9fc",
     "semantic_hash": ""
   },
   "gpu_fuzzy_trader/phases/__init__.py": {
@@ -195,8 +195,8 @@
     "semantic_hash": "bc42ff7da42997a37ac642a3b9497b52"
   },
   "gpu_fuzzy_trader/phases/phase2_island_scheduler.py": {
-    "mtime": 1787060787.9530673,
-    "ast_hash": "cff23a6075b635b8f753f185beb0d989",
+    "mtime": 1787061181.3484657,
+    "ast_hash": "adb21781bd35ce6e6d3673cf75496fa1",
     "semantic_hash": ""
   },
   "gpu_fuzzy_trader/phases/phase2_rule_pool.py": {
@@ -220,8 +220,8 @@
     "semantic_hash": ""
   },
   "gpu_fuzzy_trader/phases/phase5_oos.py": {
-    "mtime": 1787060033.3974552,
-    "ast_hash": "474f107938661123a8f67d58423225eb",
+    "mtime": 1787067152.859472,
+    "ast_hash": "8570f0d9b8c3c1af0555bf5fa576b466",
     "semantic_hash": ""
   },
   "gpu_fuzzy_trader/phases/rule_identity.py": {
@@ -250,13 +250,13 @@
     "semantic_hash": ""
   },
   "gpu_fuzzy_trader/research_profile.py": {
-    "mtime": 1787058339.676714,
-    "ast_hash": "9b5557ffd7b4ff2c5fed1ab9c7e4ef76",
+    "mtime": 1787062962.8489614,
+    "ast_hash": "5fda708c79c50a69c93ad18695771990",
     "semantic_hash": ""
   },
   "gpu_fuzzy_trader/run_pipeline.py": {
-    "mtime": 1787060907.401789,
-    "ast_hash": "970ef26d9fdd30dfed26303ff4ced813",
+    "mtime": 1787067266.4859974,
+    "ast_hash": "18bfc33ce227003b5b3649fa5a531fc3",
     "semantic_hash": ""
   },
   "gpu_fuzzy_trader/scoring/__init__.py": {
@@ -885,8 +885,8 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1787060975.665994,
-    "ast_hash": "1ad73fc2aac5fd255739280210d7eb27",
+    "mtime": 1787065409.3746328,
+    "ast_hash": "720240df649443cef6bd49011e41ea04",
     "semantic_hash": ""
   },
   "RUN.md": {
@@ -910,8 +910,8 @@
     "semantic_hash": ""
   },
   "gpu_fuzzy_trader/data/multi_timeframe.py": {
-    "mtime": 1787057997.7931676,
-    "ast_hash": "e2f6096da0f6f5286008845938cc069e",
+    "mtime": 1787064430.6598332,
+    "ast_hash": "f56c820b142ab51bdd6bc9d7dd66084b",
     "semantic_hash": ""
   },
   "phase2_rule_archive/phase2_long_archive.json": {
@@ -925,8 +925,8 @@
     "semantic_hash": ""
   },
   "tests/unit/test_multi_timeframe.py": {
-    "mtime": 1787058019.5456066,
-    "ast_hash": "c071b494adc06a8274ac493c5339bf42",
+    "mtime": 1787064703.6138694,
+    "ast_hash": "87287bb47561f98315022054706a184c",
     "semantic_hash": ""
   },
   "docs/superpowers/plans/2026-08-18-hierarchical-mtf-rule-discovery.md": {
@@ -940,68 +940,78 @@
     "semantic_hash": ""
   },
   "gpu_fuzzy_trader/evolution/directional_evaluator.py": {
-    "mtime": 1787058327.7058096,
-    "ast_hash": "2ad5dbdff792a2c300fe6d56d27ab300",
+    "mtime": 1787062958.7095926,
+    "ast_hash": "d0b9263c53aa1f9e2cd15617b00a0f69",
     "semantic_hash": ""
   },
   "gpu_fuzzy_trader/mtf/__init__.py": {
-    "mtime": 1787059889.41961,
-    "ast_hash": "b6de761c3918e91718392166e21af5a2",
+    "mtime": 1787064488.3343437,
+    "ast_hash": "25b4b0cf8a151726366ba22f231c253d",
     "semantic_hash": ""
   },
   "gpu_fuzzy_trader/mtf/cross_fitting.py": {
-    "mtime": 1787058786.1865602,
-    "ast_hash": "d8e78c551e959e7ea749d787cd38e65e",
+    "mtime": 1787063095.260174,
+    "ast_hash": "be968368ac0eea27ba5946b38baffe48",
     "semantic_hash": ""
   },
   "tests/unit/test_directional_evaluator.py": {
-    "mtime": 1787058283.8355508,
-    "ast_hash": "94ef9252a1e74377e954329bc64f8cbb",
+    "mtime": 1787064703.8480933,
+    "ast_hash": "aff10432da2b47bcbbdb7d9747eabc56",
     "semantic_hash": ""
   },
   "tests/unit/test_mtf_cross_fitting.py": {
-    "mtime": 1787058809.012858,
-    "ast_hash": "c586f80fceec7bf8a03f4c39530a2d9a",
+    "mtime": 1787064703.7329013,
+    "ast_hash": "aca1c45a0b0e8c0d7bfb5701ae332d10",
     "semantic_hash": ""
   },
   "gpu_fuzzy_trader/mtf/archives.py": {
-    "mtime": 1787059097.2122118,
-    "ast_hash": "2c627161617450895dc95c16c7e8f2c8",
+    "mtime": 1787066370.2806656,
+    "ast_hash": "9bc25e7e9b2a04d42115db2c8b15accb",
     "semantic_hash": ""
   },
   "gpu_fuzzy_trader/mtf/ensembler.py": {
-    "mtime": 1787059057.9964552,
-    "ast_hash": "64f6d4831632197b19b71f60e7f28749",
+    "mtime": 1787064420.9779766,
+    "ast_hash": "0cc2504812748eb12ec46051e1787728",
     "semantic_hash": ""
   },
   "tests/unit/test_mtf_ensembler.py": {
-    "mtime": 1787059010.9662125,
-    "ast_hash": "2f0cdc3fca890cff76ee777a86abe4d6",
+    "mtime": 1787064771.1988149,
+    "ast_hash": "12bd48a28de6efdf7819a0923758c623",
     "semantic_hash": ""
   },
   "gpu_fuzzy_trader/mtf/composer.py": {
-    "mtime": 1787059465.066137,
-    "ast_hash": "a5dc1dfc359a19a9d01720034924c5d1",
+    "mtime": 1787065132.5928276,
+    "ast_hash": "d3aae8c26a517c3be2ecd1d10a576192",
     "semantic_hash": ""
   },
   "gpu_fuzzy_trader/mtf/diagnostics.py": {
-    "mtime": 1787059451.0245035,
-    "ast_hash": "c6a38bd84c95b8de7a19ae8c6399a110",
+    "mtime": 1787063034.9618757,
+    "ast_hash": "01f8d3d04bcfe9bf93188af786cfc3c8",
     "semantic_hash": ""
   },
   "tests/unit/test_mtf_composer.py": {
-    "mtime": 1787059415.1586602,
-    "ast_hash": "8a95d346bae63e900e24e0d85b1e0036",
+    "mtime": 1787064704.082317,
+    "ast_hash": "f88de813b6b7256a8703f751e77aa844",
     "semantic_hash": ""
   },
   "gpu_fuzzy_trader/mtf/candidate.py": {
-    "mtime": 1787059839.9525335,
-    "ast_hash": "59bec47f33853a21d2cf0283559f784c",
+    "mtime": 1787067062.7619414,
+    "ast_hash": "407bc58295ff84943d849cc87b590f82",
     "semantic_hash": ""
   },
   "tests/unit/test_mtf_pipeline_integration.py": {
-    "mtime": 1787060195.420899,
-    "ast_hash": "681fa1e7c34ff73b2db3e5490f150a3f",
+    "mtime": 1787067180.2496912,
+    "ast_hash": "be6a065754b9e5abfb66ba76db044a20",
+    "semantic_hash": ""
+  },
+  "gpu_fuzzy_trader/mtf/discovery.py": {
+    "mtime": 1787066903.636345,
+    "ast_hash": "626d28a4b9bbe8834e97ce0fc24794be",
+    "semantic_hash": ""
+  },
+  "gpu_fuzzy_trader/mtf/runtime.py": {
+    "mtime": 1787067053.8808243,
+    "ast_hash": "5b26a2ca65d726c8ccfde778b5217e66",
     "semantic_hash": ""
   }
 }

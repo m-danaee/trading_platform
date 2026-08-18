@@ -61,6 +61,8 @@ from gpu_fuzzy_trader.research_integrity import (
 )
 from gpu_fuzzy_trader.research_profile import ResearchProfile
 from gpu_fuzzy_trader.mtf import (
+    DEFAULT_HWC_PURGE_MINUTES,
+    DEFAULT_MWC_PURGE_MINUTES,
     DEFAULT_MIN_EVIDENCE_STRENGTH,
     DEFAULT_RETENTION_FLOOR,
     DEFAULT_RETENTION_TARGET,
@@ -70,21 +72,18 @@ from gpu_fuzzy_trader.mtf import (
     DEFAULT_V_MWC_SHORT,
     HierarchicalStrategyCandidate,
     build_master_temporal_folds,
-    compose_bidirectional_signals,
-    compose_hierarchical_signals,
-    compute_ensemble_direction_and_strength,
-    compute_rule_weights,
-    compute_trade_retention_diagnostics,
-    deduplicate_rules,
     export_fold_boundaries,
-    get_default_archive_path,
     load_mtf_rule_archive,
     save_mtf_rule_archive,
 )
-from gpu_fuzzy_trader.data.multi_timeframe import (
-    build_complete_higher_bars,
-    compute_timeframe_features,
-    align_htf_features_causal,
+from gpu_fuzzy_trader.mtf.discovery import (
+    LayerDiscoveryResult,
+    discover_directional_layer,
+)
+from gpu_fuzzy_trader.mtf.runtime import (
+    attach_frozen_layer_scores,
+    attach_oof_layer_scores,
+    evaluate_candidate_frame,
 )
 
 import argparse
@@ -100,11 +99,166 @@ import os
 import logging
 import json
 import numpy as np
+import subprocess
 from pathlib import Path
 
 from gpu_fuzzy_trader._jax_env import configure_jax_env
 
 configure_jax_env()
+
+
+def _dataframe_sha256(frame: pd.DataFrame | None) -> str:
+    """Return a stable hash of a dataframe's schema and values."""
+    if frame is None:
+        return ""
+    columns = sorted(str(column) for column in frame.columns)
+    canonical = frame.loc[:, columns]
+    payload = pd.util.hash_pandas_object(canonical, index=True).to_numpy().tobytes()
+    schema = [(column, str(canonical[column].dtype)) for column in columns]
+    return hashlib.sha256(
+        json.dumps(schema, sort_keys=True).encode("utf-8") + payload
+    ).hexdigest()
+
+
+def _dataframe_schema_sha256(frame: pd.DataFrame | None) -> str:
+    """Hash column names and dtypes without including row values."""
+    if frame is None:
+        return ""
+    schema = [
+        (str(column), str(frame[column].dtype))
+        for column in frame.columns
+    ]
+    return hashlib.sha256(
+        json.dumps(schema, sort_keys=False, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _git_commit_id() -> str:
+    """Read the current commit without making git state part of execution."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=Path(__file__).resolve().parents[1],
+        )
+        return result.stdout.strip()
+    except Exception:
+        return "unknown"
+
+
+_MTF_SCORE_COLUMNS = (
+    "mtf_hwc_direction",
+    "mtf_hwc_strength",
+    "mtf_mwc_direction",
+    "mtf_mwc_strength",
+    "_mtf_oof_available",
+)
+
+
+def _merge_mtf_score_columns(
+    base: pd.DataFrame,
+    scored: pd.DataFrame,
+) -> pd.DataFrame:
+    """Merge computed MTF score columns by normalized (symbol, datetime) keys."""
+    required = {"datetime", "symbol", *_MTF_SCORE_COLUMNS}
+    missing = sorted(required - set(scored.columns))
+    if missing:
+        raise ValueError(f"MTF score frame is missing columns: {missing}")
+    if base.empty:
+        return base.copy()
+
+    left = base.copy()
+    right = scored.loc[:, ["datetime", "symbol", *_MTF_SCORE_COLUMNS]].copy()
+    for frame in (left, right):
+        frame["datetime"] = pd.to_datetime(
+            frame["datetime"], errors="raise", utc=True
+        ).dt.tz_localize(None)
+    if left.duplicated(["datetime", "symbol"]).any():
+        raise ValueError("MTF input contains duplicate (datetime, symbol) rows")
+    if right.duplicated(["datetime", "symbol"]).any():
+        raise ValueError("MTF score frame contains duplicate (datetime, symbol) rows")
+
+    left["_mtf_original_order"] = np.arange(len(left), dtype=np.int64)
+    left = left.drop(columns=list(_MTF_SCORE_COLUMNS), errors="ignore")
+    merged = left.merge(
+        right,
+        on=["datetime", "symbol"],
+        how="left",
+        sort=False,
+        validate="one_to_one",
+    )
+    return (
+        merged.sort_values("_mtf_original_order", kind="mergesort")
+        .drop(columns=["_mtf_original_order"])
+        .reset_index(drop=True)
+    )
+
+
+def _merge_mtf_lwc_runtime_columns(
+    base: pd.DataFrame,
+    scored: pd.DataFrame,
+) -> pd.DataFrame:
+    """Merge causal LWC features and MTF scores into a raw research frame.
+
+    The runtime builder also computes HWC/MWC feature columns for applying
+    their frozen rules. Those raw higher-timeframe features must not leak into
+    LWC discovery; LWC receives its own causal features plus upstream scores.
+    """
+    required = {"datetime", "symbol", *_MTF_SCORE_COLUMNS}
+    missing = sorted(required - set(scored.columns))
+    if missing:
+        raise ValueError(f"MTF runtime frame is missing columns: {missing}")
+    if base.empty:
+        return base.copy()
+
+    left = base.copy()
+    # Discard precomputed feature columns from legacy/enriched loaders. The
+    # canonical MTF path derives the LWC feature family below from raw OHLCV,
+    # while labels, exact barrier outcomes, and loader internals remain
+    # available to the backtest and split contracts.
+    base_columns = [
+        column
+        for column in left.columns
+        if column in {"datetime", "symbol", "open", "high", "low", "close", "volume"}
+        or str(column).startswith("label_")
+        or str(column).startswith("_")
+    ]
+    left = left.loc[:, base_columns].copy()
+    right_columns = [
+        column
+        for column in scored.columns
+        if column in _MTF_SCORE_COLUMNS or str(column).startswith("lwc_")
+    ]
+    right = scored.loc[:, ["datetime", "symbol", *right_columns]].copy()
+    for frame in (left, right):
+        frame["datetime"] = pd.to_datetime(
+            frame["datetime"], errors="raise", utc=True
+        ).dt.tz_localize(None)
+    if left.duplicated(["datetime", "symbol"]).any():
+        raise ValueError("MTF input contains duplicate (datetime, symbol) rows")
+    if right.duplicated(["datetime", "symbol"]).any():
+        raise ValueError("MTF runtime frame contains duplicate (datetime, symbol) rows")
+
+    runtime_columns = list(dict.fromkeys(
+        list(_MTF_SCORE_COLUMNS)
+        + [column for column in right_columns if str(column).startswith("lwc_")]
+    ))
+    left = left.drop(columns=runtime_columns, errors="ignore")
+    left["_mtf_original_order"] = np.arange(len(left), dtype=np.int64)
+    merged = left.merge(
+        right,
+        on=["datetime", "symbol"],
+        how="left",
+        sort=False,
+        validate="one_to_one",
+    )
+    return (
+        merged.sort_values("_mtf_original_order", kind="mergesort")
+        .drop(columns=["_mtf_original_order"])
+        .reset_index(drop=True)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -150,6 +304,9 @@ def _temporary_output_paths(output_dir: str | None):
         "cfg_run_log_path": _cfg.RUN_LOG_PATH,
         "cfg_phase2_pool_paths": _cfg.PHASE2_POOL_PATHS.copy(),
         "cfg_phase2_history_paths": _cfg.PHASE2_HISTORY_PATHS.copy(),
+        "cfg_mtf_archive_dir": _cfg.MTF_ARCHIVE_DIR,
+        "cfg_mtf_archive_paths": _cfg.MTF_ARCHIVE_PATHS.copy(),
+        "cfg_mtf_manifest_path": _cfg.MTF_MANIFEST_PATH,
         "pipeline_log_path": _PIPELINE_LOG_PATH,
         "selector_long": _selector_module._LONG_PATH,
         "selector_short": _selector_module._SHORT_PATH,
@@ -177,6 +334,14 @@ def _temporary_output_paths(output_dir: str | None):
             "long": os.path.join(output_root, "phase2_long_history.json"),
             "short": os.path.join(output_root, "phase2_short_history.json"),
         }
+        _cfg.MTF_ARCHIVE_DIR = os.path.join(output_root, "rule_archives")
+        _cfg.MTF_ARCHIVE_PATHS = {
+            timeframe: os.path.join(
+                _cfg.MTF_ARCHIVE_DIR, timeframe, f"{timeframe}_rules.json"
+            )
+            for timeframe in ("hwc", "mwc", "lwc")
+        }
+        _cfg.MTF_MANIFEST_PATH = os.path.join(output_root, "mtf_manifest.json")
 
         _selector_module._LONG_PATH = os.path.join(
             output_root, "selected_features_long.json"
@@ -230,6 +395,9 @@ def _temporary_output_paths(output_dir: str | None):
         _cfg.RUN_LOG_PATH = previous_state["cfg_run_log_path"]
         _cfg.PHASE2_POOL_PATHS = previous_state["cfg_phase2_pool_paths"]
         _cfg.PHASE2_HISTORY_PATHS = previous_state["cfg_phase2_history_paths"]
+        _cfg.MTF_ARCHIVE_DIR = previous_state["cfg_mtf_archive_dir"]
+        _cfg.MTF_ARCHIVE_PATHS = previous_state["cfg_mtf_archive_paths"]
+        _cfg.MTF_MANIFEST_PATH = previous_state["cfg_mtf_manifest_path"]
         _PIPELINE_LOG_PATH = previous_state["pipeline_log_path"]
         _selector_module._LONG_PATH = previous_state["selector_long"]
         _selector_module._SHORT_PATH = previous_state["selector_short"]
@@ -543,7 +711,8 @@ def _validate_enriched_context_contract() -> None:
     ]
     if raw_tapes:
         raise RuntimeError(
-            "The canonical pipeline requires an enriched train/test pair; "
+            "The legacy path must use context contract with an enriched "
+            "train/test pair; "
             f"non-enriched input(s): {', '.join(raw_tapes)}. Re-enrich the "
             "raw tapes or supply a matching enriched pair and manifest."
         )
@@ -1342,6 +1511,13 @@ class Pipeline_Orchestrator:
                 "rb_governor_*_report.json"
             ):
                 path.unlink(missing_ok=True)
+            for timeframe in ("hwc", "mwc", "lwc"):
+                archive_path = (
+                    output_root / "rule_archives" / timeframe
+                    / f"{timeframe}_rules.json"
+                )
+                archive_path.unlink(missing_ok=True)
+            (output_root / "mtf_manifest.json").unlink(missing_ok=True)
             if mode == "full":
                 for name in (
                     "selected_features_long.json",
@@ -1451,6 +1627,18 @@ class Pipeline_Orchestrator:
                 # ------------------------------------------------------------------
                 train_df, val_df = self._load_and_split_data()
                 self._validate_active_configuration(train_df)
+                if self._should_use_mtf_pipeline(train_df):
+                    mtf_results = self._run_mtf_pipeline(
+                        train_df=train_df,
+                        val_df=val_df,
+                        force=force,
+                    )
+                    results.update(mtf_results)
+                    total_elapsed = time.monotonic() - pipeline_start
+                    self._record_research_integrity(results, total_elapsed)
+                    self._finish_run("completed")
+                    logger.info("Hierarchical MTF pipeline complete in %.2fs", total_elapsed)
+                    return results
                 val_fitness_df, val_selection_df = self._validation_scoring_frames(val_df)
                 context_report = _context_coverage_preflight(
                     train_df,
@@ -2017,6 +2205,381 @@ class Pipeline_Orchestrator:
             )
 
     @staticmethod
+    def _should_use_mtf_pipeline(train_df: pd.DataFrame) -> bool:
+        """Select the canonical MTF path only for real OHLCV tapes."""
+        required = {"datetime", "symbol", "open", "high", "low", "close", "volume"}
+        return bool(
+            getattr(_cfg, "MTF_PIPELINE_ENABLED", False)
+            and required.issubset(train_df.columns)
+        )
+
+    @staticmethod
+    def _build_mtf_lwc_training_frame(
+        train_df: pd.DataFrame,
+        hwc_discovery: LayerDiscoveryResult,
+        mwc_discovery: LayerDiscoveryResult,
+    ) -> pd.DataFrame:
+        """Attach only causal HWC/MWC OOF scores to the LWC train tape."""
+        scored = attach_oof_layer_scores(
+            train_df,
+            hwc_scores=hwc_discovery.oof_scores,
+            mwc_scores=mwc_discovery.oof_scores,
+        )
+        return _merge_mtf_lwc_runtime_columns(train_df, scored)
+
+    @staticmethod
+    def _build_mtf_lwc_validation_frame(
+        val_df: pd.DataFrame,
+        hwc_rules: list[dict[str, Any]],
+        mwc_rules: list[dict[str, Any]],
+        history_df: pd.DataFrame | None = None,
+    ) -> pd.DataFrame:
+        """Attach final full-train HWC/MWC scores to validation only."""
+        scored = attach_frozen_layer_scores(
+            val_df,
+            hwc_rules,
+            mwc_rules,
+            history_df=history_df,
+        )
+        return _merge_mtf_lwc_runtime_columns(val_df, scored)
+
+    def _attach_mtf_scores_to_cv_folds(
+        self,
+        train_oof_df: pd.DataFrame,
+        validation_frozen_df: pd.DataFrame,
+    ) -> None:
+        """Bind OOF score columns to legacy LWC CV folds by timestamp keys."""
+        if not self._cv_folds:
+            return
+        from dataclasses import replace
+
+        updated = []
+        for fold in self._cv_folds:
+            fold_train = _merge_mtf_lwc_runtime_columns(fold.train_df, train_oof_df)
+            fold_source = (
+                validation_frozen_df if bool(getattr(fold, "is_holdout", False))
+                else train_oof_df
+            )
+            fold_valid = _merge_mtf_lwc_runtime_columns(fold.valid_df, fold_source)
+            if not bool(getattr(fold, "is_holdout", False)):
+                available_train = fold_train["_mtf_oof_available"].fillna(False).astype(bool)
+                available_valid = fold_valid["_mtf_oof_available"].fillna(False).astype(bool)
+                fold_train = fold_train.loc[available_train].reset_index(drop=True)
+                fold_valid = fold_valid.loc[available_valid].reset_index(drop=True)
+            if fold_train.empty or fold_valid.empty:
+                logger.warning(
+                    "Dropping LWC CV fold %s after OOF score support filtering",
+                    getattr(fold, "fold_id", "unknown"),
+                )
+                continue
+            updated.append(
+                replace(
+                    fold,
+                    train_df=fold_train,
+                    valid_df=fold_valid,
+                    n_train_rows=len(fold_train),
+                    n_valid_rows=len(fold_valid),
+                )
+            )
+        self._cv_folds = updated or None
+
+    def _run_mtf_pipeline(
+        self,
+        *,
+        train_df: pd.DataFrame,
+        val_df: pd.DataFrame,
+        force: bool,
+    ) -> dict[str, Any]:
+        """Run the connected HWC -> OOF -> MWC -> LWC -> RB -> OOS path."""
+        logger.info("Canonical input is raw OHLCV; running hierarchical MTF pipeline")
+        mtf_folds = build_master_temporal_folds(
+            train_df,
+            n_folds=int(getattr(_cfg, "MTF_N_FOLDS", 4)),
+            embargo_minutes=DEFAULT_HWC_PURGE_MINUTES,
+        )
+        self._mtf_folds = mtf_folds
+
+        hwc_rules = self.run_phase1_hwc(train_df, folds=mtf_folds, force=force)
+        if not hwc_rules:
+            raise RuntimeError(
+                "MTF HWC discovery produced no admissible OOF-backed rules"
+            )
+        mwc_rules = self.run_phase1_mwc(
+            train_df,
+            hwc_rules=hwc_rules,
+            folds=mtf_folds,
+            force=force,
+        )
+        if not mwc_rules:
+            raise RuntimeError(
+                "MTF MWC discovery produced no admissible HWC-conditioned rules"
+            )
+
+        hwc_discovery = getattr(self, "_mtf_hwc_discovery", None)
+        mwc_discovery = getattr(self, "_mtf_mwc_discovery", None)
+        if hwc_discovery is None or mwc_discovery is None:
+            raise RuntimeError("MTF discovery did not produce HWC and MWC OOF artifacts")
+
+        # LWC discovery is restricted to rows carrying both upstream OOF
+        # scores. Validation receives the final full-train ensembles only
+        # after discovery, so no OOF value is replaced by an in-sample score.
+        lwc_train_scored_all = self._build_mtf_lwc_training_frame(
+            train_df, hwc_discovery, mwc_discovery
+        )
+        lwc_validation_scored = self._build_mtf_lwc_validation_frame(
+            val_df, hwc_rules, mwc_rules, history_df=train_df
+        )
+        oof_available = lwc_train_scored_all["_mtf_oof_available"].fillna(False).astype(bool)
+        lwc_train_scored = lwc_train_scored_all.loc[oof_available].reset_index(drop=True)
+        if lwc_train_scored.empty:
+            raise RuntimeError(
+                "MTF LWC discovery has no rows with both HWC and MWC OOF scores"
+            )
+        self._attach_mtf_scores_to_cv_folds(
+            lwc_train_scored_all,
+            lwc_validation_scored,
+        )
+
+        # Keep the existing NSGA-III/plateau LWC search as the execution-rule
+        # generator. It receives only causal OOF HWC/MWC score features.
+        phase1_train_df = self._mask_train_df_for_phase1(lwc_train_scored)
+        lwc_phase1 = self._run_phase1(
+            phase1_train_df,
+            force=force,
+            val_df=lwc_validation_scored,
+        )
+        lwc_rules = self._run_phase2(
+            phase1_train_df,
+            lwc_phase1,
+            force=force,
+            val_df=lwc_validation_scored,
+            blocked_directions=frozenset(),
+        )
+        self._mtf_lwc_phase1 = lwc_phase1
+
+        candidates = self.run_mtf_composition(
+            lwc_rules=lwc_rules,
+            hwc_rules=hwc_rules,
+            mwc_rules=mwc_rules,
+            df=train_df,
+            folds=mtf_folds,
+            metadata={
+                "dataset_hashes": {
+                    "train": _dataframe_sha256(train_df),
+                    "validation": _dataframe_sha256(val_df),
+                    "oos": sha256_file(_cfg.TEST_CSV_PATH)
+                    if Path(_cfg.TEST_CSV_PATH).exists()
+                    else "",
+                },
+                "fold_boundaries": export_fold_boundaries(mtf_folds),
+                "labels": {
+                    "theta_per_oof_fold": {
+                        "hwc": hwc_discovery.theta_per_oof_fold,
+                        "mwc": mwc_discovery.theta_per_oof_fold,
+                    },
+                    "theta_final_train": {
+                        "hwc": hwc_discovery.theta_final_train,
+                        "mwc": mwc_discovery.theta_final_train,
+                    },
+                },
+                "features": {
+                    "hwc": {
+                        "schema_hash": hwc_discovery.feature_schema_hash,
+                        "data_hash": hwc_discovery.data_hash,
+                    },
+                    "mwc": {
+                        "schema_hash": mwc_discovery.feature_schema_hash,
+                        "data_hash": mwc_discovery.data_hash,
+                    },
+                    "lwc": {
+                        "schema_hash": _dataframe_schema_sha256(lwc_train_scored),
+                        "data_hash": _dataframe_sha256(lwc_train_scored),
+                        "oof_score_columns": [
+                            "mtf_hwc_direction", "mtf_hwc_strength",
+                            "mtf_mwc_direction", "mtf_mwc_strength",
+                        ],
+                        "source": "causal_upstream_oof_only",
+                    },
+                },
+                "search": {
+                    "hwc": hwc_discovery.search_metadata,
+                    "mwc": mwc_discovery.search_metadata,
+                    "lwc": {
+                        "algorithm": "existing_phase2_nsga3_with_plateau_restarts",
+                        "source": "legacy_lwc_rule_pool_generator",
+                    },
+                },
+                "release_policy": {
+                    "fit": "train_only",
+                    "validation": "frozen_candidate_only",
+                    "oos": "one_shot_no_refit",
+                },
+            },
+        )
+        rb_result = self._run_mtf_rb_governor(
+            train_df=train_df,
+            val_df=val_df,
+            candidates=candidates,
+        )
+        self._release_between_phases("Phase 5")
+        accepted = frozenset(
+            direction
+            for direction, strategy in rb_result.items()
+            if strategy.get("rules_set")
+            and strategy.get("deployment_accepted") is True
+        )
+        phase5_result = self._run_phase5(allowed_directions=accepted)
+        return {
+            "data": {
+                "train_rows": len(train_df),
+                "val_rows": len(val_df),
+                "source_contract": "raw_ohlcv_15m",
+                "timezone": "UTC",
+            },
+            "phase1": lwc_phase1,
+            "phase2": lwc_rules,
+            "mtf_hwc": hwc_rules,
+            "mtf_mwc": mwc_rules,
+            "mtf_candidates": candidates,
+            "rb_governor": rb_result,
+            "phase3": rb_result,
+            "phase4": rb_result,
+            "phase_status": {"mtf": "completed", "rb_governor": self._rb_status_summary(rb_result)},
+            "nested_validation": {
+                "status": "not_run",
+                "reason": "mtf_candidate_requires_composed_signal_validation",
+            },
+            "phase5": phase5_result,
+        }
+
+    def _run_mtf_rb_governor(
+        self,
+        *,
+        train_df: pd.DataFrame,
+        val_df: pd.DataFrame,
+        candidates: dict[str, HierarchicalStrategyCandidate],
+    ) -> dict[str, dict[str, Any]]:
+        """Validate frozen composed signals and write MTF-aware strategy packages."""
+        from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
+
+        output_root = Path(_cfg.OUTPUTS_DIR)
+        output_root.mkdir(parents=True, exist_ok=True)
+        reports_root = Path(_cfg.REPORTS_DIR)
+        reports_root.mkdir(parents=True, exist_ok=True)
+        results: dict[str, dict[str, Any]] = {}
+        for direction in ("long", "short"):
+            candidate = candidates.get(direction)
+            if candidate is None or not candidate.lwc_rules:
+                results[direction] = {
+                    "direction": direction,
+                    "rules_set": [],
+                    "deployment_accepted": False,
+                    "fail_closed": True,
+                    "reason": "empty_mtf_lwc_pool",
+                }
+                continue
+
+            first_rule = candidate.lwc_rules[0]
+            tp = float(first_rule.get("tp", getattr(_cfg, "RB_DEFAULT_TP", 2.0)))
+            sl = float(first_rule.get("sl", getattr(_cfg, "RB_DEFAULT_SL", 1.2)))
+            capital_pct = float(first_rule.get(
+                "capital_pct", getattr(_cfg, "RB_DEFAULT_CAPITAL_PCT", 18.0)
+            ))
+
+            split_metrics: dict[str, dict[str, Any]] = {}
+            retention: dict[str, Any] = {}
+            for split_name, split_df in (("train", train_df), ("validation", val_df)):
+                signals, stats, audit = evaluate_candidate_frame(
+                    candidate,
+                    split_df,
+                    history_df=train_df if split_name == "validation" else None,
+                )
+                retention[split_name] = stats.get("retention_diagnostics", {})
+                engine = CPUBacktestEngine(split_df, {}, direction)
+                metrics = engine.simulate_signal_mask(
+                    signals != 0,
+                    tp=tp,
+                    sl=sl,
+                    capital_pct=capital_pct,
+                )
+                split_metrics[split_name] = metrics
+
+            retention_ok = all(
+                bool(value.get("passes_floor", False))
+                for value in retention.values()
+            )
+            train_metrics = split_metrics.get("train", {})
+            validation_metrics = split_metrics.get("validation", {})
+            performance_ok = all(
+                float(metrics.get("total_return_pct", 0.0))
+                >= float(getattr(_cfg, threshold_name, 0.0))
+                and float(metrics.get("profit_factor", 0.0))
+                >= float(getattr(_cfg, pf_name, 0.0))
+                and int(metrics.get("executed_trades", 0))
+                >= int(getattr(_cfg, trades_name, 0))
+                for metrics, threshold_name, pf_name, trades_name in (
+                    (
+                        train_metrics,
+                        "RB_MIN_TRAIN_RETURN",
+                        "RB_MIN_TRAIN_PF",
+                        "RB_MIN_TRAIN_TRADES",
+                    ),
+                    (
+                        validation_metrics,
+                        "RB_MIN_VALID_RETURN",
+                        "RB_MIN_VALID_PF",
+                        "RB_MIN_VALID_TRADES",
+                    ),
+                )
+            )
+            accepted = bool(retention_ok and performance_ok and candidate.lwc_rules)
+            strategy = {
+                "direction": direction,
+                "rules_set": [dict(rule) for rule in candidate.lwc_rules],
+                "deployment_accepted": accepted,
+                "fail_closed": not accepted,
+                "reason": (
+                    "mtf_retention_floor"
+                    if not retention_ok
+                    else (
+                        "mtf_train_validation_gate"
+                        if not performance_ok
+                        else "mtf_candidate_accepted"
+                    )
+                ),
+                "strategy_id": candidate.strategy_id,
+                "mtf_candidate": candidate.to_dict(),
+                "mtf_manifest": candidate.mtf_manifest,
+                "mtf_runtime": {
+                    "frozen": True,
+                    "split_metrics": split_metrics,
+                    "retention": retention,
+                    "tp": tp,
+                    "sl": sl,
+                    "capital_pct": capital_pct,
+                    "acceptance_gates": {
+                        "retention_floor": retention_ok,
+                        "train_validation_performance": performance_ok,
+                    },
+                },
+                "provenance": {
+                    "mtf_manifest_hash": hashlib.sha256(
+                        json.dumps(candidate.mtf_manifest or {}, sort_keys=True).encode("utf-8")
+                    ).hexdigest(),
+                },
+            }
+            (output_root / f"{direction}.json").write_text(
+                json.dumps(strategy, indent=2, sort_keys=True, default=str),
+                encoding="utf-8",
+            )
+            (reports_root / f"mtf_{direction}_retention.json").write_text(
+                json.dumps(retention, indent=2, sort_keys=True, default=str),
+                encoding="utf-8",
+            )
+            results[direction] = strategy
+        return results
+
+    @staticmethod
     def _validate_active_configuration(train_df: pd.DataFrame) -> None:
         """Validate data-dependent configuration before any expensive phase."""
         n_symbols = (
@@ -2177,14 +2740,28 @@ class Pipeline_Orchestrator:
         When ``SPLIT_MODE`` is ``purged_walk_forward``, also rebuilds CV folds
         (stored on ``self._cv_folds``) for Phase 2 and RB.
         """
-        _validate_enriched_context_contract()
-        cached_split = load_cached_split_if_fresh()
+        mtf_mode = bool(getattr(_cfg, "MTF_PIPELINE_ENABLED", False))
+        if not mtf_mode:
+            _validate_enriched_context_contract()
+        elif any(
+            Path(path).name.endswith("_hwc_mwc_lwc.csv")
+            for path in (_cfg.TRAIN_CSV_PATH, _cfg.TEST_CSV_PATH)
+        ):
+            raise RuntimeError(
+                "The canonical MTF pipeline requires raw 15m tapes; enriched "
+                "HWC/MWC/LWC inputs are supported only with MTF_PIPELINE_ENABLED=False."
+            )
+        # Cached parquet splits created by the removed context pipeline are not
+        # valid MTF inputs.  Rebuild the split from the raw tape so its identity
+        # and feature schema are tied to this run's source data.
+        cached_split = None if mtf_mode else load_cached_split_if_fresh()
         if cached_split is not None:
             train_df, val_df, val_fitness, val_selection, cv_folds = cached_split
             # A cache predating the enriched-input contract must never let the
             # canonical pipeline bypass the loader's fail-closed validation.
-            for frame in (train_df, val_df, val_fitness, val_selection):
-                validate_context_columns(frame)
+            if not mtf_mode:
+                for frame in (train_df, val_df, val_fitness, val_selection):
+                    validate_context_columns(frame)
             scaling = fit_fuzzy_feature_scaling(train_df)
             for frame in (train_df, val_df, val_fitness, val_selection):
                 apply_fuzzy_feature_scaling(frame, scaling)
@@ -2212,7 +2789,7 @@ class Pipeline_Orchestrator:
             _cfg.TRAIN_CSV_PATH,
             drop_tail=False,
             include_barrier_outcomes=True,
-            require_context=True,
+            require_context=False if mtf_mode else True,
         )
         logger.info(
             "Loaded %d rows, %d symbols",
@@ -2221,24 +2798,25 @@ class Pipeline_Orchestrator:
             if "symbol" in train_full.columns
             else 0,
         )
-        for _dir, _perm, _trig in [
-            ("long", _cfg.context_permission_column("long"),
-             _cfg.context_trigger_column("long")),
-            ("short", _cfg.context_permission_column("short"),
-             _cfg.context_trigger_column("short")),
-        ]:
-            _mask = (
-                (train_full[_perm].to_numpy() == 1)
-                & (train_full[_trig].to_numpy() == 1)
-            )
-            _pct = _mask.sum() / max(len(_mask), 1)
-            _log = logger.warning if _pct < 0.03 else logger.info
-            _log(
-                "Context mask [%s]: %.2f%% of rows active "
-                "(%d / %d); perm=%s trig=%s",
-                _dir, _pct * 100, int(_mask.sum()),
-                len(_mask), _perm, _trig,
-            )
+        if not mtf_mode:
+            for _dir, _perm, _trig in [
+                ("long", _cfg.context_permission_column("long"),
+                 _cfg.context_trigger_column("long")),
+                ("short", _cfg.context_permission_column("short"),
+                 _cfg.context_trigger_column("short")),
+            ]:
+                _mask = (
+                    (train_full[_perm].to_numpy() == 1)
+                    & (train_full[_trig].to_numpy() == 1)
+                )
+                _pct = _mask.sum() / max(len(_mask), 1)
+                _log = logger.warning if _pct < 0.03 else logger.info
+                _log(
+                    "Context mask [%s]: %.2f%% of rows active "
+                    "(%d / %d); perm=%s trig=%s",
+                    _dir, _pct * 100, int(_mask.sum()),
+                    len(_mask), _perm, _trig,
+                )
 
         splitter = Data_Splitter()
         split_label = (
@@ -2982,6 +3560,13 @@ class Pipeline_Orchestrator:
     # Hierarchical MTF Discovery & Composition Phase Methods
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _load_mtf_source_tape(path: str | None = None) -> pd.DataFrame:
+        """Load only raw OHLCV columns for standalone MTF discovery calls."""
+        source_path = path or getattr(_cfg, "RAW_TRAIN_CSV_PATH", _cfg.TRAIN_CSV_PATH)
+        columns = ["datetime", "symbol", "open", "high", "low", "close", "volume"]
+        return pd.read_csv(source_path, usecols=columns)
+
     def build_mtf_manifest(
         self,
         hwc_archive_hash: str = "",
@@ -3003,40 +3588,125 @@ class Pipeline_Orchestrator:
             "min_evidence_strength_hwc": float(getattr(_cfg, "MTF_MIN_EVIDENCE_STRENGTH_HWC", DEFAULT_MIN_EVIDENCE_STRENGTH)),
             "min_evidence_strength_mwc": float(getattr(_cfg, "MTF_MIN_EVIDENCE_STRENGTH_MWC", DEFAULT_MIN_EVIDENCE_STRENGTH)),
             "retention_floor": float(getattr(_cfg, "MTF_RETENTION_FLOOR", DEFAULT_RETENTION_FLOOR)),
+            "retention_target": float(getattr(_cfg, "MTF_RETENTION_TARGET", DEFAULT_RETENTION_TARGET)),
         }
         if composer_params:
             c_params.update(composer_params)
 
+        raw_metadata = dict(metadata or {})
+        dataset_hashes = dict(raw_metadata.pop("dataset_hashes", {}))
+        labels_metadata = dict(raw_metadata.pop("labels", {}))
+        cross_metadata = dict(raw_metadata.pop("cross_fitting", {}))
+        feature_metadata = dict(raw_metadata.pop("features", {}))
+        search_metadata = dict(raw_metadata.pop("search", {}))
+        feature_metadata.setdefault(
+            "warmup_bars",
+            {"lwc": 20, "mwc": 20, "hwc": 20},
+        )
+        feature_metadata.setdefault(
+            "frozen_transforms",
+            {"lwc": "causal_indicator_nan_to_zero", "mwc": "none", "hwc": "none"},
+        )
+        if "fold_boundaries" in raw_metadata:
+            cross_metadata["fold_boundaries"] = raw_metadata.pop("fold_boundaries")
+        if "theta_per_oof_fold" in raw_metadata:
+            labels_metadata["theta_per_oof_fold"] = raw_metadata.pop("theta_per_oof_fold")
+        if "theta_final_train" in raw_metadata:
+            labels_metadata["theta_final_train"] = raw_metadata.pop("theta_final_train")
+        if "feature_schema_hash" in raw_metadata:
+            feature_metadata["schema_hash"] = raw_metadata.pop("feature_schema_hash")
+        config_fields = {
+            name: getattr(_cfg, name)
+            for name in (
+                "MTF_PIPELINE_ENABLED", "MTF_N_FOLDS",
+                "LWC_TIMEFRAME_MINUTES", "MWC_TIMEFRAME_MINUTES",
+                "HWC_TIMEFRAME_MINUTES", "MTF_DISCOVERY_MAX_RULES_PER_LAYER",
+                "MTF_HWC_HORIZON_BARS", "MTF_MWC_HORIZON_BARS",
+                "MTF_V_HWC_LONG", "MTF_V_HWC_SHORT",
+                "MTF_V_MWC_LONG", "MTF_V_MWC_SHORT",
+                "MTF_MIN_EVIDENCE_STRENGTH_HWC", "MTF_MIN_EVIDENCE_STRENGTH_MWC",
+                "MTF_RETENTION_FLOOR", "MTF_RETENTION_TARGET",
+            )
+            if hasattr(_cfg, name)
+        }
+        config_hash = hashlib.sha256(
+            json.dumps(config_fields, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()
         manifest = {
             "schema_version": "2.0.0",
+            "dataset_hashes": dataset_hashes,
             "timeframes": {
                 "lwc_minutes": int(getattr(_cfg, "LWC_TIMEFRAME_MINUTES", 15)),
                 "mwc_minutes": int(getattr(_cfg, "MWC_TIMEFRAME_MINUTES", 60)),
                 "hwc_minutes": int(getattr(_cfg, "HWC_TIMEFRAME_MINUTES", 240)),
                 "timezone": "UTC",
                 "candle_boundary": "fixed_utc",
+                "missing_bar_policy": "invalidate_htf_bucket",
+                "partial_candle_policy": "drop_unclosed_bucket",
+                "release_time_policy": "htf_close_at_or_before_lwc_execution",
+                "warmup_policy": {
+                    "lwc": "causal_indicator_nan_to_zero",
+                    "mwc": "feature_nan_remains_unavailable",
+                    "hwc": "feature_nan_remains_unavailable",
+                },
             },
             "labels": {
                 "hwc_horizon_bars": int(getattr(_cfg, "MTF_HWC_HORIZON_BARS", 6)),
                 "mwc_horizon_bars": int(getattr(_cfg, "MTF_MWC_HORIZON_BARS", 4)),
+                "mwc_hwc_support_threshold": 0.20,
+                **labels_metadata,
             },
             "cross_fitting": {
                 "purge_durations_minutes": {
                     "hwc": int(getattr(_cfg, "DEFAULT_HWC_PURGE_MINUTES", 1440)),
                     "mwc": int(getattr(_cfg, "DEFAULT_MWC_PURGE_MINUTES", 240)),
                     "lwc": int(getattr(_cfg, "DEFAULT_LWC_PURGE_MINUTES", 720)),
-                }
+                },
+                "embargo_policy": "strict_label_or_trade_horizon_before_prediction_start",
+                **cross_metadata,
             },
+            "features": feature_metadata,
+            "search": search_metadata,
             "archives": {
                 "hwc_archive_hash": str(hwc_archive_hash),
                 "mwc_archive_hash": str(mwc_archive_hash),
                 "lwc_archive_hash": str(lwc_archive_hash),
             },
             "composer_parameters": c_params,
+            "composer": c_params,
+            "execution": {
+                "fee_pct_round_trip": float(getattr(_cfg, "FEE_PCT", 0.0)),
+                "slippage_bps_per_side": float(
+                    getattr(_cfg, "SLIPPAGE_BPS_PER_SIDE", 0.0)
+                ),
+                "default_tp": float(getattr(_cfg, "RB_DEFAULT_TP", 2.0)),
+                "default_sl": float(getattr(_cfg, "RB_DEFAULT_SL", 1.2)),
+                "same_bar_ambiguity": "stop_first_conservative",
+            },
+            "frozen_runtime": True,
+            "release_policy": raw_metadata.pop(
+                "release_policy",
+                {
+                    "oos": "one_shot_no_refit",
+                    "weights": "frozen",
+                    "thresholds": "frozen",
+                },
+            ),
+            "reproducibility": {
+                "git_commit": _git_commit_id(),
+                "config_hash": config_hash,
+                "global_seed": getattr(_cfg, "GLOBAL_SEED", None),
+                "phase2_seed": getattr(_cfg, "PHASE2_SEED", None),
+            },
             "created_at": _now_iso(),
-            "metadata": metadata or {},
+            "metadata": raw_metadata,
         }
-        target_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+        temp_path = target_path.with_suffix(target_path.suffix + ".tmp")
+        temp_path.write_text(
+            json.dumps(manifest, indent=2, sort_keys=True, default=str),
+            encoding="utf-8",
+        )
+        temp_path.replace(target_path)
         return manifest
 
     def run_phase1_hwc(
@@ -3051,80 +3721,51 @@ class Pipeline_Orchestrator:
         t0 = time.monotonic()
         logger.info("Running %s …", phase_name)
 
+        source = train_df if train_df is not None else self._load_mtf_source_tape()
+        if folds is None:
+            folds = build_master_temporal_folds(
+                source,
+                n_folds=int(getattr(_cfg, "MTF_N_FOLDS", 4)),
+                embargo_minutes=DEFAULT_HWC_PURGE_MINUTES,
+            )
+        discovery = discover_directional_layer(source, role="hwc", folds=folds)
+        self._mtf_hwc_discovery = discovery
         archive_path = Path(self._output_dir) / "rule_archives" / "hwc" / "hwc_rules.json"
-        if not force and archive_path.exists():
-            try:
-                rules = load_mtf_rule_archive(archive_path)
-                logger.info("Loaded %d cached HWC rules from %s", len(rules), archive_path)
-                return rules
-            except Exception as e:
-                logger.warning("Failed to load cached HWC rules: %s", e)
-
-        hwc_rules: list[dict[str, Any]] = []
-        if train_df is not None and len(train_df) > 0 and set(["open", "high", "low", "close", "volume"]).issubset(train_df.columns):
-            try:
-                hwc_bars = build_complete_higher_bars(train_df, int(getattr(_cfg, "HWC_TIMEFRAME_MINUTES", 240)))
-                if len(hwc_bars) > 10:
-                    hwc_features = compute_timeframe_features(hwc_bars, int(getattr(_cfg, "HWC_TIMEFRAME_MINUTES", 240)))
-                    for col in hwc_features.columns:
-                        if col in ("datetime", "symbol", "open", "high", "low", "close", "volume"):
-                            continue
-                        hwc_rules.append({
-                            "timeframe": "hwc",
-                            "direction": "long",
-                            "conditions": [f"[{col}] > 0.0"],
-                            "coverage": 0.35,
-                            "directional_edge": 0.10,
-                            "mcc": 0.15,
-                            "stability_score": 0.80,
-                            "skill": 0.08,
-                        })
-                        hwc_rules.append({
-                            "timeframe": "hwc",
-                            "direction": "short",
-                            "conditions": [f"[{col}] < 0.0"],
-                            "coverage": 0.35,
-                            "directional_edge": 0.10,
-                            "mcc": 0.15,
-                            "stability_score": 0.80,
-                            "skill": 0.08,
-                        })
-            except Exception as exc:
-                logger.warning("HWC feature discovery warning: %s", exc)
-
-        if not hwc_rules:
-            hwc_rules = [
-                {
-                    "timeframe": "hwc",
-                    "direction": "long",
-                    "conditions": ["[hwc_rsi_14] > 50.0"],
-                    "coverage": 0.45,
-                    "directional_edge": 0.12,
-                    "mcc": 0.18,
-                    "stability_score": 0.85,
-                    "skill": 0.10,
-                },
-                {
-                    "timeframe": "hwc",
-                    "direction": "short",
-                    "conditions": ["[hwc_rsi_14] < 50.0"],
-                    "coverage": 0.45,
-                    "directional_edge": 0.12,
-                    "mcc": 0.18,
-                    "stability_score": 0.85,
-                    "skill": 0.10,
-                },
-            ]
-
-        deduped = deduplicate_rules(hwc_rules)
-        save_mtf_rule_archive(timeframe="hwc", rules=deduped, path=archive_path)
+        metadata = {
+            "role": "hwc",
+            "dataset_hash": discovery.data_hash,
+            "feature_schema_hash": discovery.feature_schema_hash,
+            "fold_boundaries": export_fold_boundaries(folds),
+            "theta_per_oof_fold": discovery.theta_per_oof_fold,
+            "theta_final_train": discovery.theta_final_train,
+            "oof_score_hash": discovery.oof_score_hash,
+            "purge_minutes": DEFAULT_HWC_PURGE_MINUTES,
+            "search": discovery.search_metadata,
+        }
+        archive_hash = save_mtf_rule_archive(
+            timeframe="hwc",
+            rules=discovery.rules,
+            path=archive_path,
+            metadata=metadata,
+            require_provenance=True,
+        )
+        oof_path = archive_path.with_name("hwc_oof_scores.json")
+        oof_path.write_text(
+            json.dumps(
+                discovery.oof_scores.to_dict(orient="records"),
+                indent=2,
+                sort_keys=True,
+                default=str,
+            ),
+            encoding="utf-8",
+        )
 
         elapsed = time.monotonic() - t0
         _log_phase_entry(
             self._log_path, phase_name, start_ts, _now_iso(), elapsed, skipped=False,
-            result_summary={"hwc_rules": len(deduped)},
+            result_summary={"hwc_rules": len(discovery.rules), "archive_hash": archive_hash},
         )
-        return deduped
+        return discovery.rules
 
     def run_phase1_mwc(
         self,
@@ -3139,80 +3780,63 @@ class Pipeline_Orchestrator:
         t0 = time.monotonic()
         logger.info("Running %s …", phase_name)
 
+        source = train_df if train_df is not None else self._load_mtf_source_tape()
+        if folds is None:
+            folds = build_master_temporal_folds(
+                source,
+                n_folds=int(getattr(_cfg, "MTF_N_FOLDS", 4)),
+                embargo_minutes=DEFAULT_HWC_PURGE_MINUTES,
+            )
+        upstream = getattr(self, "_mtf_hwc_discovery", None)
+        if upstream is None and hwc_rules is not None:
+            logger.warning(
+                "MWC discovery has no HWC OOF sidecar; rebuilding HWC OOF scores first"
+            )
+            self.run_phase1_hwc(source, folds=list(folds), force=True)
+            upstream = getattr(self, "_mtf_hwc_discovery", None)
+        discovery = discover_directional_layer(
+            source,
+            role="mwc",
+            folds=folds,
+            upstream_oof_scores=upstream.oof_scores if upstream is not None else None,
+        )
+        self._mtf_mwc_discovery = discovery
         archive_path = Path(self._output_dir) / "rule_archives" / "mwc" / "mwc_rules.json"
-        if not force and archive_path.exists():
-            try:
-                rules = load_mtf_rule_archive(archive_path)
-                logger.info("Loaded %d cached MWC rules from %s", len(rules), archive_path)
-                return rules
-            except Exception as e:
-                logger.warning("Failed to load cached MWC rules: %s", e)
-
-        mwc_rules: list[dict[str, Any]] = []
-        if train_df is not None and len(train_df) > 0 and set(["open", "high", "low", "close", "volume"]).issubset(train_df.columns):
-            try:
-                mwc_bars = build_complete_higher_bars(train_df, int(getattr(_cfg, "MWC_TIMEFRAME_MINUTES", 60)))
-                if len(mwc_bars) > 10:
-                    mwc_features = compute_timeframe_features(mwc_bars, int(getattr(_cfg, "MWC_TIMEFRAME_MINUTES", 60)))
-                    for col in mwc_features.columns:
-                        if col in ("datetime", "symbol", "open", "high", "low", "close", "volume"):
-                            continue
-                        mwc_rules.append({
-                            "timeframe": "mwc",
-                            "direction": "long",
-                            "conditions": [f"[{col}] > 0.0"],
-                            "coverage": 0.30,
-                            "directional_edge": 0.09,
-                            "mcc": 0.14,
-                            "stability_score": 0.78,
-                            "skill": 0.07,
-                        })
-                        mwc_rules.append({
-                            "timeframe": "mwc",
-                            "direction": "short",
-                            "conditions": [f"[{col}] < 0.0"],
-                            "coverage": 0.30,
-                            "directional_edge": 0.09,
-                            "mcc": 0.14,
-                            "stability_score": 0.78,
-                            "skill": 0.07,
-                        })
-            except Exception as exc:
-                logger.warning("MWC feature discovery warning: %s", exc)
-
-        if not mwc_rules:
-            mwc_rules = [
-                {
-                    "timeframe": "mwc",
-                    "direction": "long",
-                    "conditions": ["[mwc_macd_diff] > 0.0"],
-                    "coverage": 0.35,
-                    "directional_edge": 0.11,
-                    "mcc": 0.17,
-                    "stability_score": 0.82,
-                    "skill": 0.09,
-                },
-                {
-                    "timeframe": "mwc",
-                    "direction": "short",
-                    "conditions": ["[mwc_macd_diff] < 0.0"],
-                    "coverage": 0.35,
-                    "directional_edge": 0.11,
-                    "mcc": 0.17,
-                    "stability_score": 0.82,
-                    "skill": 0.09,
-                },
-            ]
-
-        deduped = deduplicate_rules(mwc_rules)
-        save_mtf_rule_archive(timeframe="mwc", rules=deduped, path=archive_path)
+        metadata = {
+            "role": "mwc",
+            "conditioned_on": "hwc_oof_scores_only",
+            "dataset_hash": discovery.data_hash,
+            "feature_schema_hash": discovery.feature_schema_hash,
+            "fold_boundaries": export_fold_boundaries(folds),
+            "theta_per_oof_fold": discovery.theta_per_oof_fold,
+            "theta_final_train": discovery.theta_final_train,
+            "oof_score_hash": discovery.oof_score_hash,
+            "purge_minutes": DEFAULT_MWC_PURGE_MINUTES,
+            "search": discovery.search_metadata,
+        }
+        archive_hash = save_mtf_rule_archive(
+            timeframe="mwc",
+            rules=discovery.rules,
+            path=archive_path,
+            metadata=metadata,
+            require_provenance=True,
+        )
+        archive_path.with_name("mwc_oof_scores.json").write_text(
+            json.dumps(
+                discovery.oof_scores.to_dict(orient="records"),
+                indent=2,
+                sort_keys=True,
+                default=str,
+            ),
+            encoding="utf-8",
+        )
 
         elapsed = time.monotonic() - t0
         _log_phase_entry(
             self._log_path, phase_name, start_ts, _now_iso(), elapsed, skipped=False,
-            result_summary={"mwc_rules": len(deduped)},
+            result_summary={"mwc_rules": len(discovery.rules), "archive_hash": archive_hash},
         )
-        return deduped
+        return discovery.rules
 
     def run_phase2(
         self,
@@ -3252,6 +3876,8 @@ class Pipeline_Orchestrator:
         mwc_rules: list[dict] | None = None,
         composer_params: dict[str, Any] | None = None,
         df: pd.DataFrame | None = None,
+        folds: list | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, HierarchicalStrategyCandidate]:
         """Run MTF signal composition, apply asymmetric soft veto, verify retention, and generate manifest."""
         phase_name = "Phase MTF: Signal Composition & Manifest"
@@ -3275,42 +3901,131 @@ class Pipeline_Orchestrator:
             lwc_short = lwc_rules.get("short", [])
         elif isinstance(lwc_rules, list):
             for r in lwc_rules:
-                if str(r.get("direction", "")).lower() == "long":
+                rule_direction = str(r.get("direction", "")).strip().lower()
+                if rule_direction == "long":
                     lwc_long.append(r)
-                else:
+                elif rule_direction == "short":
                     lwc_short.append(r)
+                else:
+                    raise ValueError(
+                        f"LWC rule has invalid direction {r.get('direction')!r}"
+                    )
         elif lwc_path.exists():
             for r in load_mtf_rule_archive(lwc_path):
-                if str(r.get("direction", "")).lower() == "long":
+                rule_direction = str(r.get("direction", "")).strip().lower()
+                if rule_direction == "long":
                     lwc_long.append(r)
-                else:
+                elif rule_direction == "short":
                     lwc_short.append(r)
+                else:
+                    raise ValueError(
+                        f"LWC archive rule has invalid direction {r.get('direction')!r}"
+                    )
 
-        hwc_hash = save_mtf_rule_archive("hwc", hwc_rules, path=hwc_path) if hwc_rules else ""
-        mwc_hash = save_mtf_rule_archive("mwc", mwc_rules, path=mwc_path) if mwc_rules else ""
+        hwc_discovery = getattr(self, "_mtf_hwc_discovery", None)
+        mwc_discovery = getattr(self, "_mtf_mwc_discovery", None)
+        hwc_hash = save_mtf_rule_archive(
+            "hwc",
+            hwc_rules,
+            path=hwc_path,
+            metadata=(
+                {"role": "hwc", "dataset_hash": hwc_discovery.data_hash,
+                 "feature_schema_hash": hwc_discovery.feature_schema_hash,
+                 "fold_boundaries": export_fold_boundaries(folds or []),
+                 "theta_per_oof_fold": hwc_discovery.theta_per_oof_fold,
+                 "theta_final_train": hwc_discovery.theta_final_train,
+                 "oof_score_hash": hwc_discovery.oof_score_hash,
+                 "purge_minutes": DEFAULT_HWC_PURGE_MINUTES,
+                 "search": hwc_discovery.search_metadata}
+                if hwc_discovery is not None else None
+            ),
+            require_provenance=hwc_discovery is not None,
+        ) if hwc_rules else ""
+        mwc_hash = save_mtf_rule_archive(
+            "mwc",
+            mwc_rules,
+            path=mwc_path,
+            metadata=(
+                {"role": "mwc", "conditioned_on": "hwc_oof_scores_only",
+                 "dataset_hash": mwc_discovery.data_hash,
+                 "feature_schema_hash": mwc_discovery.feature_schema_hash,
+                 "fold_boundaries": export_fold_boundaries(folds or []),
+                 "theta_per_oof_fold": mwc_discovery.theta_per_oof_fold,
+                 "theta_final_train": mwc_discovery.theta_final_train,
+                 "oof_score_hash": mwc_discovery.oof_score_hash,
+                 "purge_minutes": DEFAULT_MWC_PURGE_MINUTES,
+                 "search": mwc_discovery.search_metadata}
+                if mwc_discovery is not None else None
+            ),
+            require_provenance=mwc_discovery is not None,
+        ) if mwc_rules else ""
         all_lwc = lwc_long + lwc_short
         lwc_hash = save_mtf_rule_archive("lwc", all_lwc, path=lwc_path) if all_lwc else ""
 
+        candidates: dict[str, HierarchicalStrategyCandidate] = {}
+        for direction, dir_lwc in (("long", lwc_long), ("short", lwc_short)):
+            candidate = HierarchicalStrategyCandidate(
+                direction=direction,
+                lwc_rules=dir_lwc,
+                # Both directions must remain in the ensemble so Direction
+                # and Evidence Strength are computed from the complete archive.
+                hwc_rules=hwc_rules,
+                mwc_rules=mwc_rules,
+                composer_params=composer_params,
+            )
+            candidates[direction] = candidate
+
+        runtime_retention: dict[str, Any] = {}
+        if df is not None:
+            from gpu_fuzzy_trader.mtf.diagnostics import compute_granular_retention_diagnostics
+
+            for direction, candidate in candidates.items():
+                try:
+                    _, stats, audit = evaluate_candidate_frame(candidate, df)
+                    if folds:
+                        fold_starts = np.asarray(
+                            [pd.Timestamp(fold.test_start).value for fold in folds],
+                            dtype=np.int64,
+                        )
+                        audit_times = pd.to_datetime(
+                            audit["datetime"], errors="raise", utc=True
+                        ).astype("int64").to_numpy()
+                        audit["fold_id"] = np.maximum(
+                            1,
+                            np.searchsorted(
+                                fold_starts, audit_times, side="right"
+                            ),
+                        )
+                    else:
+                        audit["fold_id"] = 0
+                    runtime_retention[direction] = {
+                        "funnel": stats.get("retention_diagnostics", {}),
+                        "granular": compute_granular_retention_diagnostics(audit),
+                    }
+                    candidate.metadata.update({
+                        "retention_diagnostics": runtime_retention[direction],
+                        "runtime_evaluated": True,
+                    })
+                except Exception as exc:
+                    logger.error("MTF composition evaluation failed for %s: %s", direction, exc)
+                    runtime_retention[direction] = {
+                        "status": "ERROR",
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+
+        manifest_metadata = dict(metadata or {})
+        manifest_metadata["retention_diagnostics"] = runtime_retention
         manifest = self.build_mtf_manifest(
             hwc_archive_hash=hwc_hash,
             mwc_archive_hash=mwc_hash,
             lwc_archive_hash=lwc_hash,
             composer_params=composer_params,
+            metadata=manifest_metadata,
         )
-
-        candidates: dict[str, HierarchicalStrategyCandidate] = {}
-        for direction, dir_lwc in (("long", lwc_long), ("short", lwc_short)):
-            dir_hwc = [r for r in hwc_rules if str(r.get("direction", "")).lower() in (direction, "")]
-            dir_mwc = [r for r in mwc_rules if str(r.get("direction", "")).lower() in (direction, "")]
-            candidate = HierarchicalStrategyCandidate(
-                direction=direction,
-                lwc_rules=dir_lwc,
-                hwc_rules=dir_hwc or hwc_rules,
-                mwc_rules=dir_mwc or mwc_rules,
-                composer_params=manifest["composer_parameters"],
-                mtf_manifest=manifest,
-            )
-            candidates[direction] = candidate
+        for candidate in candidates.values():
+            candidate.mtf_manifest = manifest
+        self._mtf_candidates = candidates
+        self._mtf_manifest = manifest
 
         elapsed = time.monotonic() - t0
         _log_phase_entry(

@@ -39,22 +39,34 @@ def compute_rule_weights(rules: Sequence[dict[str, Any]]) -> np.ndarray:
     weights = np.zeros(n_rules, dtype=np.float64)
 
     for i, r in enumerate(rules):
+        oof = r.get("oof_metrics") if isinstance(r.get("oof_metrics"), dict) else {}
         # Extract directional edge with alias fallbacks
-        edge = float(r.get("directional_edge", r.get("edge", 0.0)))
+        edge = float(
+            r.get("directional_edge", r.get("edge", oof.get("directional_edge", 0.0)))
+        )
 
         # Extract stability score with alias fallbacks
         stability = float(
-            r.get("stability", r.get("stability_score", r.get("temporal_stability", 1.0)))
+            r.get(
+                "stability",
+                r.get(
+                    "stability_score",
+                    r.get("temporal_stability", oof.get("stability", 0.0)),
+                ),
+            )
         )
 
-        # Extract MCC with alias fallbacks (defaults to 1.0 if omitted)
-        mcc = float(r.get("mcc", r.get("oof_mcc", 1.0)))
-
-        # Extract skill with alias fallbacks (defaults to 1.0 if omitted)
-        skill = float(r.get("skill", 1.0))
+        # Missing OOF validation evidence is not an admission.  A positive
+        # edge without MCC must never receive trading weight. ``skill`` is an
+        # optional alias used by some archives; when absent, directional edge
+        # is the documented skill measure.
+        mcc = float(r.get("mcc", r.get("oof_mcc", oof.get("mcc", 0.0))))
+        skill = float(r.get("skill", oof.get("skill", edge)))
 
         # Check hard admission constraints
-        if mcc <= 0.0 or skill <= 0.0 or edge <= 0.0 or stability <= 0.0:
+        if not all(np.isfinite(v) for v in (mcc, skill, edge, stability)):
+            weights[i] = 0.0
+        elif mcc <= 0.0 or skill <= 0.0 or edge <= 0.0 or stability <= 0.0:
             weights[i] = 0.0
         else:
             weights[i] = max(0.0, edge) * max(0.0, stability)
@@ -103,7 +115,8 @@ def compute_ensemble_direction_and_strength(
     if n_rules == 0 or len(directions) == 0 or len(weights) == 0:
         return np.zeros(n_samples, dtype=np.float64), np.zeros(n_samples, dtype=np.float64)
 
-    w = np.maximum(np.asarray(weights, dtype=np.float64), 0.0)
+    w = np.asarray(weights, dtype=np.float64)
+    w = np.where(np.isfinite(w), np.maximum(w, 0.0), 0.0)
     if len(w) != n_rules:
         raise ValueError(f"Length of weights ({len(w)}) does not match n_rules ({n_rules})")
     if len(directions) != n_rules:
