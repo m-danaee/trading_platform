@@ -332,7 +332,7 @@ class TestMonthlyGateDataSource:
         return [{"name": f"feat_{i}", "mode": m, "score": 0.5}
                 for i, m in enumerate(modes)]
 
-    def test_gate_uses_cached_monthly_val(self, monkeypatch):
+    def test_gate_uses_cached_monthly_val(self, monkeypatch, tmp_path):
         """``build_monthly_windows`` receives unsampled monthly val
         (``_cached_monthly_val``), not the train DataFrame.
 
@@ -398,7 +398,7 @@ class TestMonthlyGateDataSource:
         # locally inside finalize_island — patch at their source modules
         monkeypatch.setattr(
             "gpu_fuzzy_trader.evolution.evox_runner.run_phase2_evolution",
-            lambda **kw: ([POOL_THREE], {"metrics": {}}),
+            lambda **kw: (POOL_THREE, {"metrics": {}}),
         )
         monkeypatch.setattr(
             "gpu_fuzzy_trader.phases.phase2_init.build_feature_sampling_probs",
@@ -416,8 +416,25 @@ class TestMonthlyGateDataSource:
             "gpu_fuzzy_trader.phases.phase2_rule_pool.Rule_Pool_Generator._release_resources",
             lambda self: None,
         )
+        monkeypatch.setattr(
+            "gpu_fuzzy_trader.phases.phase2_rule_pool.Rule_Pool_Generator.load_pool",
+            staticmethod(lambda direction: []),
+        )
+        monkeypatch.setattr(
+            "gpu_fuzzy_trader.phases.phase2_rule_pool.Rule_Pool_Generator.save_archive",
+            staticmethod(lambda *args, **kwargs: []),
+        )
+        monkeypatch.setattr(
+            "gpu_fuzzy_trader.phases.phase2_rule_pool._POOL_PATHS",
+            {"long": str(tmp_path / "phase2_long_pool.json"),
+             "short": str(tmp_path / "phase2_short_pool.json")},
+        )
+        monkeypatch.setattr(
+            "gpu_fuzzy_trader.phases.phase2_rule_pool._HISTORY_PATHS",
+            {"long": str(tmp_path / "phase2_long_history.json"),
+             "short": str(tmp_path / "phase2_short_history.json")},
+        )
 
-        gen.island_id = "test_island"
         gen._evolution_state = {"dummy": "state"}
         gen.finalize_island()
 
@@ -445,7 +462,7 @@ class TestMonthlyGateDataSource:
     # Test B: gate is skipped when _cached_slim_val is None
     # ------------------------------------------------------------------
 
-    def test_gate_skipped_when_cached_slim_val_none(self, monkeypatch, caplog):
+    def test_gate_skipped_when_cached_slim_val_none(self, monkeypatch, caplog, tmp_path):
         """When no val_df was provided, ``_cached_slim_val`` is None and the
         gate is skipped with a warning (no crash)."""
         train_df = self._make_train_df(n_rows=200)
@@ -485,17 +502,13 @@ class TestMonthlyGateDataSource:
         gen._train_df = train_df
         gen._engine = None
         gen._val_engine = None
-        gen.island_id = "test_island"
         gen._evolution_state = {"dummy": "state"}
         gen.island_hyperparams = None
-        gen.island_profile = "test"
         gen._feature_signature = []
         gen.feature_infos = fi
         gen._feature_modes = {}
         gen._feature_names = []
         gen._rng = np.random.default_rng(42)
-        gen.source_symbols = []
-        gen._pending_migrant_seeds = []
         gen._island_history = []
         gen._island_generations_done = 0
         gen._cv_folds = None
@@ -508,7 +521,7 @@ class TestMonthlyGateDataSource:
         )
         monkeypatch.setattr(
             "gpu_fuzzy_trader.evolution.evox_runner.run_phase2_evolution",
-            lambda **kw: ([POOL_THREE], {"metrics": {}}),
+            lambda **kw: (POOL_THREE, {"metrics": {}}),
         )
         monkeypatch.setattr(
             "gpu_fuzzy_trader.phases.phase2_init.build_feature_sampling_probs",
@@ -525,6 +538,24 @@ class TestMonthlyGateDataSource:
         monkeypatch.setattr(
             "gpu_fuzzy_trader.phases.phase2_rule_pool.Rule_Pool_Generator._release_resources",
             lambda self: None,
+        )
+        monkeypatch.setattr(
+            "gpu_fuzzy_trader.phases.phase2_rule_pool.Rule_Pool_Generator.load_pool",
+            staticmethod(lambda direction: []),
+        )
+        monkeypatch.setattr(
+            "gpu_fuzzy_trader.phases.phase2_rule_pool.Rule_Pool_Generator.save_archive",
+            staticmethod(lambda *args, **kwargs: []),
+        )
+        monkeypatch.setattr(
+            "gpu_fuzzy_trader.phases.phase2_rule_pool._POOL_PATHS",
+            {"long": str(tmp_path / "phase2_long_pool.json"),
+             "short": str(tmp_path / "phase2_short_pool.json")},
+        )
+        monkeypatch.setattr(
+            "gpu_fuzzy_trader.phases.phase2_rule_pool._HISTORY_PATHS",
+            {"long": str(tmp_path / "phase2_long_history.json"),
+             "short": str(tmp_path / "phase2_short_history.json")},
         )
 
         with caplog.at_level(logging.WARNING):

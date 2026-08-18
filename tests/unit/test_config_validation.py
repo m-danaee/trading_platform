@@ -19,15 +19,9 @@ def test_default_config_snapshot_is_valid_and_reports_effective_budgets() -> Non
     assert snapshot["rb"]["max_total_capital"] == 100.0
     assert snapshot["rb"]["max_feasible_rules_at_min_capital"] >= cfg.RB_MAX_RULES
     assert snapshot["phase2"]["effective_min_profitable_symbols"] == 2
-    assert snapshot["phase2"]["island_mode"] == cfg.PHASE2_ISLAND_MODE
-    assert snapshot["phase2"]["effective_n_clusters"] == 4
     assert snapshot["phase2"]["effective_f3_objective"] == "profit_factor"
     assert snapshot["phase2"]["joint_train_val"] is False
-    assert snapshot["phase2"]["island_two_stage_enabled"] is True
     assert snapshot["phase2"]["phase1_disabled"] is True
-    assert snapshot["phase2"]["effective_phase1_symbol_union"] is False
-    assert sum(snapshot["phase2"]["effective_island_generation_budgets"]) == 100
-    assert len(snapshot["phase2"]["effective_island_stage_budgets"]) == 4
     assert snapshot["gates"]["rb_min_valid_trades"] <= snapshot["gates"]["rb_ruleset_min_valid_trades"]
 
 
@@ -41,31 +35,23 @@ def test_debug_scope_caps_data_dependent_requirements(
 ) -> None:
     monkeypatch.setattr(cfg, "DEBUG_SYMBOL_SCOPE_ENABLED", True)
     monkeypatch.setattr(cfg, "DEBUG_SYMBOL_COUNT", 1)
-    monkeypatch.setattr(cfg, "PHASE2_ISLAND_MODE", "cluster")
-    monkeypatch.setattr(cfg, "PHASE2_N_CLUSTERS", 2)
     monkeypatch.setattr(cfg, "PHASE2_MIN_PROFITABLE_SYMBOLS", 2)
     monkeypatch.setattr(cfg, "RB_MIN_DISTINCT_SYMBOLS", 2)
 
     cfg.validate_config(n_rows=1000, n_symbols=1)
     snapshot = cfg.effective_config_snapshot(n_rows=1000, n_symbols=1)
     assert snapshot["phase2"]["effective_min_profitable_symbols"] == 1
-    assert snapshot["phase2"]["effective_n_clusters"] == 1
     assert snapshot["rb"]["effective_min_distinct_symbols"] == 1
 
 
-def test_cluster_and_rb_symbol_requirements_are_validated(
+def test_rb_symbol_requirements_are_validated(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(cfg, "PHASE2_ISLAND_MODE", "cluster")
     monkeypatch.setattr(cfg, "PHASE2_MIN_PROFITABLE_SYMBOLS", 2)
-    monkeypatch.setattr(cfg, "PHASE2_N_CLUSTERS", 3)
-    with pytest.raises(cfg.ConfigError, match="PHASE2_N_CLUSTERS"):
-        cfg.validate_config(n_rows=1000, n_symbols=2)
-
-    monkeypatch.setattr(cfg, "PHASE2_N_CLUSTERS", 2)
     monkeypatch.setattr(cfg, "RB_MIN_DISTINCT_SYMBOLS", 3)
     with pytest.raises(cfg.ConfigError, match="RB_MIN_DISTINCT_SYMBOLS"):
         cfg.validate_config(n_rows=1000, n_symbols=2)
+
 
 
 def test_evaluator_constants_match_read_only_notebook() -> None:

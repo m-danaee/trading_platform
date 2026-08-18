@@ -34,7 +34,7 @@ def test_config_defaults():
     """New config keys have correct defaults."""
     assert cfg.PHASE2_PLATEAU_DIVERSITY_RESTART_ENABLED is True
     assert cfg.PHASE2_PLATEAU_DIVERSITY_RESTART_FRACTION == 0.35
-    assert cfg.PHASE2_PLATEAU_MAX_RESTARTS == 1
+    assert cfg.PHASE2_PLATEAU_MAX_RESTARTS == 3
     assert cfg.PHASE2_PLATEAU_EARLY_STOP_MIN_DELTA_PCT == 1.0
     assert cfg.PHASE2_PLATEAU_POST_RESTART_MUTATION_BOOST == 0.45
     assert cfg.PHASE2_PLATEAU_POST_RESTART_BOOST_GENS == 4
@@ -490,18 +490,3 @@ class TestPlateauBranchDecision:
             f"got {restart_count[0]}"
         )
 
-
-# ---------------------------------------------------------------------------
-# Extension of test_island_early_stop: verify plateau restart respects
-# island_profile scoping
-# ---------------------------------------------------------------------------
-
-def test_plateau_restart_respects_island_profile(monkeypatch):
-    """Plateau restart respects island_profile scoping (early stop disabled)."""
-    monkeypatch.setattr(cfg, "PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED", False)
-    monkeypatch.setattr(cfg, "PHASE2_ISLAND_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO", False)
-    monkeypatch.setattr(cfg, "PHASE2_PLATEAU_EARLY_STOP_ENABLED", False)
-    # Even with high streak, should not trigger for island profile
-    assert not _should_plateau_early_stop_phase2(
-        9, 10, deployable_count=0, island_profile="cluster_0",
-    )

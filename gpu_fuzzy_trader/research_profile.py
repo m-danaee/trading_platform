@@ -24,10 +24,6 @@ class ResearchProfile:
     phase2_max_conditions: int
     phase2_population_size: int
     phase2_generations: int
-    phase2_symbol_specialists: bool
-    phase2_shared_generation_budget: bool
-    phase2_migration_enabled: bool
-    phase2_migration_topology: str
     phase2_val_in_fitness_penalty: bool
     rb_risk_optimize_exits: bool
     rb_candidate_risk_admission: bool
@@ -42,27 +38,18 @@ class ResearchProfile:
     phase1_top_k_features: int
     phase1_stationarity_folds: int
     phase1_min_abs_corr: float
-    phase1_symbol_union: bool
-    effective_phase1_symbol_union: bool
+    rb_multi_symbol_release: bool
 
     @classmethod
     def from_config(cls, config: Any) -> "ResearchProfile":
         return cls(
-            schema_version=2,
+            schema_version=4,
             phase2_tp=float(config.PHASE2_TP),
             phase2_sl=float(config.PHASE2_SL),
             phase2_min_conditions=int(config.MIN_CONDITIONS),
             phase2_max_conditions=int(config.MAX_CONDITIONS),
             phase2_population_size=int(config.PHASE2_POPULATION_SIZE),
             phase2_generations=int(config.PHASE2_GENERATIONS),
-            phase2_symbol_specialists=bool(
-                config.PHASE2_SYMBOL_SPECIALISTS_ENABLED
-            ),
-            phase2_shared_generation_budget=bool(
-                config.PHASE2_SHARED_ISLAND_GENERATION_BUDGET
-            ),
-            phase2_migration_enabled=bool(config.PHASE2_MIGRATION_ENABLED),
-            phase2_migration_topology=str(config.PHASE2_MIGRATION_TOPOLOGY),
             phase2_val_in_fitness_penalty=bool(
                 config.PHASE2_VAL_IN_FITNESS_PENALTY
             ),
@@ -89,13 +76,9 @@ class ResearchProfile:
             phase1_min_abs_corr=float(
                 config.PHASE1_SIGN_CONSISTENCY_MIN_ABS_CORR
             ),
-            phase1_symbol_union=bool(config.PHASE1_SYMBOL_UNION_ENABLED),
-            effective_phase1_symbol_union=bool(
-                not config.PHASE1_DISABLED
-                and config.PHASE1_SYMBOL_UNION_ENABLED
-                and config.PHASE2_SYMBOL_SPECIALISTS_ENABLED
-            ),
+            rb_multi_symbol_release=bool(config.RB_MULTI_SYMBOL_RELEASE),
         )
+
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)

@@ -1293,16 +1293,13 @@ def _symbol_gate_policy(
                 continue
         candidate_symbols |= scoped_symbols
 
-    specialist_mode = bool(
-        getattr(_cfg, "PHASE2_SYMBOL_SPECIALISTS_ENABLED", False)
-        or getattr(_cfg, "RB_REQUIRE_SYMBOL_FILTERS", False)
-    )
+    specialist_mode = bool(getattr(_cfg, "RB_REQUIRE_SYMBOL_FILTERS", False))
     allow_partial = bool(
         getattr(_cfg, "RB_ALLOW_PARTIAL_SPECIALIST_COVERAGE", False)
     )
     # A multi-symbol release is a product contract, not a soft preference.
     # Never lower its required universe or concentration limits just because
-    # one island failed to produce a candidate.
+    # one symbol failed to produce a candidate.
     if (
         bool(getattr(_cfg, "RB_MULTI_SYMBOL_RELEASE", True))
         and len(active_symbols) > 1

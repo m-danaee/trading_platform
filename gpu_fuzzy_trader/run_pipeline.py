@@ -48,11 +48,8 @@ from gpu_fuzzy_trader.phases.phase2_rule_pool import (
     _derive_val_sample_seed,
     sample_df_for_phase2,
 )
-from gpu_fuzzy_trader.phases.phase2_island_scheduler import (
-    compute_cluster_generation_budgets,
-    _derive_island_seed,
-)
 from gpu_fuzzy_trader.phases.phase5_oos import OOS_Evaluator
+
 from gpu_fuzzy_trader.research_integrity import (
     ExperimentLedger,
     count_trials,
@@ -425,13 +422,13 @@ _PHASE2_RESUME_CODE_PATHS = (
     "backtest/cpu_engine.py",
     "backtest/gpu_engine.py",
     "evolution/evox_runner.py",
-    "phases/phase2_island_scheduler.py",
     "phases/phase2_rule_pool.py",
     "phases/phase2_sparse_encoding.py",
     "phases/phase2_support.py",
     "phases/rule_identity.py",
-    "validation/monthly_windows.py",
+    "validation/rolling_cv.py",
 )
+
 
 
 def _identity_value(value: Any) -> Any:
@@ -774,160 +771,7 @@ def _validate_enriched_context_contract() -> None:
             )
 
 
-def _context_island_sample_report(
-    train_df: pd.DataFrame,
-    val_fitness_df: pd.DataFrame,
-    *,
-    cv_folds: list | None = None,
-    seed: int | None = None,
-) -> dict[str, Any]:
-    """Report context support on the windows Phase 2 islands actually sample.
 
-    The production default uses singleton specialist islands.  For a generic
-    clustered configuration this is a conservative per-universe proxy; the
-    scheduler repeats the same check after it has resolved the exact cluster
-    map.
-    """
-    base_seed = int(seed if seed is not None else _cfg.PHASE2_SEED)
-    forbidden_ranges = (
-        build_forbidden_ranges(cv_folds) if cv_folds else []
-    )
-    reference_sample = sample_df_for_phase2(
-        train_df,
-        random_state=base_seed,
-    )
-    reference_rows = len(reference_sample)
-
-    if "symbol" in train_df.columns:
-        symbols = sorted(
-            {str(value) for value in train_df["symbol"].dropna().unique()}
-        )
-    else:
-        symbols = []
-    singleton_mode = bool(
-        getattr(_cfg, "PHASE2_SYMBOL_SPECIALISTS_ENABLED", False)
-        or getattr(_cfg, "PHASE2_ONE_SYMBOL_ISLANDS", False)
-    )
-    if symbols and singleton_mode:
-        scopes = [
-            (str(index), [symbol])
-            for index, symbol in enumerate(symbols)
-        ]
-    else:
-        scopes = [("universe", symbols)]
-
-    report: dict[str, Any] = {
-        "mode": "singleton_proxy" if singleton_mode else "universe_proxy",
-        "reference_rows": int(reference_rows),
-        "sampling_total": int(_cfg.PHASE1_SAMPLING_TOTAL),
-        "islands": {},
-        "failures": [],
-        "passed_islands_by_direction": {
-            "long": [],
-            "short": [],
-        },
-        "failed_islands_by_direction": {
-            "long": [],
-            "short": [],
-        },
-    }
-    for island_id, scope_symbols in scopes:
-        if scope_symbols:
-            train_scope = train_df[
-                train_df["symbol"].astype(str).isin(scope_symbols)
-            ]
-            val_scope = val_fitness_df[
-                val_fitness_df["symbol"].astype(str).isin(scope_symbols)
-            ]
-        else:
-            train_scope = train_df
-            val_scope = val_fitness_df
-
-        island_data: dict[str, Any] = {
-            "island_id": str(island_id),
-            "symbols": list(scope_symbols),
-            "directions": {},
-        }
-        for direction in ("long", "short"):
-            island_seed = _derive_island_seed(
-                base_seed,
-                f"{direction}_{island_id}",
-            )
-            if island_seed is None:
-                island_seed = base_seed
-            train_sample = sample_df_for_phase2(
-                train_scope,
-                random_state=island_seed,
-                forbidden_ranges=forbidden_ranges,
-            )
-            val_sample = sample_df_for_phase2(
-                val_scope,
-                random_state=_derive_val_sample_seed(island_seed),
-            )
-            hp = _cfg.resolve_island_hyperparams(
-                "cluster",
-                len(train_sample),
-                max(1, reference_rows),
-                n_symbols=max(1, len(scope_symbols)),
-            )
-            train_stats = _context_coverage_for_direction(
-                train_sample, direction,
-            )
-            val_stats = _context_coverage_for_direction(
-                val_sample, direction,
-            )
-            direction_data: dict[str, Any] = {
-                "seed": int(island_seed),
-                "train_rows": int(len(train_sample)),
-                "validation_fitness_rows": int(len(val_sample)),
-                "floors": {
-                    "min_trade_support": int(hp.min_trade_support),
-                    "min_trade_pool_floor": int(hp.min_trade_pool_floor),
-                    "validation_trade_floor": int(hp.val_trade_floor),
-                },
-                "coverage": {
-                    "train_sample": train_stats,
-                    "validation_fitness_sample": val_stats,
-                },
-            }
-            island_data["directions"][direction] = direction_data
-            train_failures = context_floor_failures(
-                train_stats,
-                support_floor=hp.min_trade_support,
-                pool_floor=hp.min_trade_pool_floor,
-            )
-            val_failures = context_floor_failures(
-                val_stats,
-                validation_floor=hp.val_trade_floor,
-            )
-            island_failures: list[str] = []
-            for split_name, split_failures in (
-                ("train_sample", train_failures),
-                ("validation_fitness_sample", val_failures),
-            ):
-                for reason in split_failures:
-                    detail = (
-                        f"{direction}/{island_id}/{split_name}: {reason}"
-                    )
-                    island_failures.append(detail)
-                    report["failures"].append(detail)
-            if island_failures:
-                report["failed_islands_by_direction"][direction].append(
-                    {
-                        "island_id": str(island_id),
-                        "symbols": list(scope_symbols),
-                        "failures": island_failures,
-                    }
-                )
-            else:
-                report["passed_islands_by_direction"][direction].append(
-                    {
-                        "island_id": str(island_id),
-                        "symbols": list(scope_symbols),
-                    }
-                )
-        report["islands"][str(island_id)] = island_data
-    return report
 
 
 def _write_context_preflight_report(
@@ -1090,85 +934,8 @@ def _context_coverage_preflight(
                     )
         report["floor_requirements"] = floor_requirements
 
-        if _cfg.phase2_island_mode_enabled():
-            island_report = _context_island_sample_report(
-                train_df,
-                val_fitness_df,
-                cv_folds=cv_folds,
-                seed=_cfg.PHASE2_SEED,
-            )
-            report["island_samples"] = island_report
-            skip_starved = bool(
-                getattr(_cfg, "PHASE2_SKIP_CONTEXT_STARVED_ISLANDS", True)
-            )
-            skipped_islands: list[str] = []
-            for direction in ("long", "short"):
-                passed = list(
-                    island_report["passed_islands_by_direction"].get(
-                        direction, [],
-                    )
-                )
-                failed = list(
-                    island_report["failed_islands_by_direction"].get(
-                        direction, [],
-                    )
-                )
-                if failed and passed and skip_starved:
-                    for item in failed:
-                        detail = (
-                            f"{direction}/{item['island_id']} "
-                            f"symbols={item['symbols']}: "
-                            + "; ".join(item["failures"])
-                        )
-                        skipped_islands.append(detail)
-                        logger.warning(
-                            "Context support: skipping starved island %s "
-                            "(direction still has %d supported island(s))",
-                            detail,
-                            len(passed),
-                        )
-                    continue
-                for item in failed:
-                    for failure in item["failures"]:
-                        _record_failure(
-                            direction,
-                            f"island sample: {failure}",
-                        )
-            report["skipped_context_starved_islands"] = skipped_islands
-            for island_id, island in island_report["islands"].items():
-                for direction, direction_data in island["directions"].items():
-                    train_stats = direction_data["coverage"]["train_sample"]
-                    val_stats = direction_data[
-                        "coverage"
-                    ]["validation_fitness_sample"]
-                    if (
-                        train_stats["eligible_rows"] is None
-                        or val_stats["eligible_rows"] is None
-                    ):
-                        logger.warning(
-                            "Context support [%s/%s] unavailable; "
-                            "missing train=%s validation=%s",
-                            direction,
-                            island_id,
-                            train_stats.get("missing_columns", []),
-                            val_stats.get("missing_columns", []),
-                        )
-                        continue
-                    logger.info(
-                        "Context support [%s/%s]: train %.2f%% (%d/%d), "
-                        "validation fitness %.2f%% (%d/%d), floors=%s",
-                        direction,
-                        island_id,
-                        train_stats["coverage_pct"],
-                        train_stats["eligible_rows"],
-                        train_stats["total_rows"],
-                        val_stats["coverage_pct"],
-                        val_stats["eligible_rows"],
-                        val_stats["total_rows"],
-                        direction_data["floors"],
-                    )
-
     blocked_directions = sorted(
+
         direction
         for direction, direction_reasons in direction_failures.items()
         if direction_reasons
@@ -1206,48 +973,14 @@ def _log_pipeline_config() -> None:
             f" | DEBUG start={_cfg.DEBUG_SYMBOL!r} "
             f"count={_cfg.DEBUG_SYMBOL_COUNT}"
         )
-    if _cfg.phase2_island_mode_enabled():
-        specialists_enabled = bool(
-            getattr(_cfg, "PHASE2_SYMBOL_SPECIALISTS_ENABLED", False)
-        )
-        migration_effective = bool(
-            _cfg.PHASE2_MIGRATION_ENABLED
-        )
-        total_gens = int(_cfg.PHASE2_ISLAND_TOTAL_GENERATIONS)
-        cluster_ids = [str(i) for i in range(max(1, int(_cfg.PHASE2_N_CLUSTERS)))]
-        budgets = compute_cluster_generation_budgets(
-            total_gens,
-            cluster_ids,
-            shared_budget=bool(
-                getattr(_cfg, "PHASE2_SHARED_ISLAND_GENERATION_BUDGET", False)
-            ),
-        )
-        gens_per_cluster = budgets[cluster_ids[0]]
-        epoch_gens = int(_cfg.PHASE2_ISLAND_EPOCH_GENERATIONS)
-        phase2_fmt = (
-            "PHASE2 algo=%s pop=%d island_total=%d configured_cluster_gens=%d "
-            "epoch=%d shared_budget=%s joint_train_val=%s migration=%s "
-            "specialists=%s"
-        )
-        phase2_args = (
-            _cfg.PHASE2_ALGORITHM,
-            _cfg.PHASE2_POPULATION_SIZE,
-            total_gens,
-            gens_per_cluster,
-            epoch_gens,
-            _cfg.PHASE2_SHARED_ISLAND_GENERATION_BUDGET,
-            _cfg.PHASE2_JOINT_TRAIN_VAL,
-            migration_effective,
-            specialists_enabled,
-        )
-    else:
-        phase2_fmt = "PHASE2 algo=%s pop=%d gen=%d joint_train_val=%s"
-        phase2_args = (
-            _cfg.PHASE2_ALGORITHM,
-            _cfg.PHASE2_POPULATION_SIZE,
-            _cfg.PHASE2_GENERATIONS,
-            _cfg.PHASE2_JOINT_TRAIN_VAL,
-        )
+    phase2_fmt = "PHASE2 algo=%s pop=%d gen=%d joint_train_val=%s"
+    phase2_args = (
+        _cfg.PHASE2_ALGORITHM,
+        _cfg.PHASE2_POPULATION_SIZE,
+        _cfg.PHASE2_GENERATIONS,
+        _cfg.PHASE2_JOINT_TRAIN_VAL,
+    )
+
     logger.info(
         "Pipeline config: PHASE1 top_k=%d | "
         + phase2_fmt
@@ -1488,7 +1221,6 @@ class Pipeline_Orchestrator:
             report_root = Path(_cfg.REPORTS_DIR)
             for pattern in (
                 "phase2_*_coverage.json",
-                "phase2_*_island_*_coverage.json",
                 "phase2_*_context_support.json",
                 "phase2_context_preflight.json",
             ):
@@ -2132,6 +1864,7 @@ class Pipeline_Orchestrator:
             "RB_CANDIDATE_RISK_ADMISSION_ENABLED",
             "RB_PHASE2_PROVENANCE_ONLY",
             "RB_ALLOW_PARTIAL_SPECIALIST_COVERAGE",
+            "RB_MULTI_SYMBOL_RELEASE",
             "PHASE2_VAL_IN_FITNESS_PENALTY",
         )
         config_delta = {
@@ -3172,23 +2905,6 @@ class Pipeline_Orchestrator:
                     direction,
                     expected_identity=resume_identity,
                 )
-                if (
-                    existing_pool
-                    and bool(getattr(_cfg, "PHASE2_SYMBOL_SPECIALISTS_ENABLED", False))
-                    and any(
-                        not list(entry.get("source_symbols", []))
-                        or not entry.get("phase2_rule_id")
-                        or not list(entry.get("feature_conditions", []))
-                        for entry in existing_pool
-                        if isinstance(entry, dict)
-                    )
-                ):
-                    logger.info(
-                        "Discarding legacy global Phase 2 %s pool: "
-                        "specialist provenance is required",
-                        direction,
-                    )
-                    existing_pool = None
                 if existing_pool is not None:
                     pool_path = _phase2_module._POOL_PATHS[direction]
                     logger.info(
@@ -3250,30 +2966,17 @@ class Pipeline_Orchestrator:
                 dir_phase_name, len(feature_infos),
             )
             try:
-                if _cfg.phase2_island_mode_enabled():
-                    from gpu_fuzzy_trader.phases.phase2_island_scheduler import (
-                        run_cluster_phase2,
-                    )
-                    pool = run_cluster_phase2(
-                        train_df=train_df,
-                        val_df=val_df,
-                        feature_infos=feature_infos,
-                        direction=direction,
-                        cv_folds=self._cv_folds,
-                        seed=_cfg.PHASE2_SEED,
-                        run_id=self._run_id,
-                    )
-                else:
-                    generator = Rule_Pool_Generator(
-                        train_df=train_df,
-                        feature_infos=feature_infos,
-                        direction=direction,
-                        val_df=val_df,
-                        cv_folds=self._cv_folds,
-                        seed=_cfg.PHASE2_SEED,
-                        run_id=self._run_id,
-                    )
-                    pool = generator.run()
+                generator = Rule_Pool_Generator(
+                    train_df=train_df,
+                    feature_infos=feature_infos,
+                    direction=direction,
+                    val_df=val_df,
+                    cv_folds=self._cv_folds,
+                    seed=_cfg.PHASE2_SEED,
+                    run_id=self._run_id,
+                )
+                pool = generator.run()
+
             except Exception as exc:
                 logger.error(
                     "Phase 2 [%s] failed: %s", direction, exc, exc_info=True
@@ -3376,17 +3079,12 @@ class Pipeline_Orchestrator:
             if "symbol" in train_df.columns
             else None
         )
-        # The production contract is deliberately narrower than the legacy
-        # compatibility API: RB may only select/compose Phase 2 discoveries,
-        # and specialist islands must remain explicitly symbol-scoped.  Apply
-        # these policy overrides only around the canonical pipeline call so
-        # small unit/diagnostic callers can still exercise legacy helpers.
-        # Partial specialist coverage stays under the config flag (needed when
-        # PHASE2_SKIP_CONTEXT_STARVED_ISLANDS drops an ETH island).
+        # Canonical RB may only select/compose Phase 2 discoveries. Mode A
+        # (no required symbol filters) is the global two-symbol contract.
         rb_policy_attrs = {
-            "RB_REQUIRE_SYMBOL_FILTERS": bool(
-                getattr(_cfg, "PHASE2_SYMBOL_SPECIALISTS_ENABLED", False)
-            ),
+            "RB_REQUIRE_SYMBOL_FILTERS": False,
+            "RB_ALLOW_PARTIAL_SPECIALIST_COVERAGE": False,
+            "RB_MULTI_SYMBOL_RELEASE": True,
             "RB_UNIVARIATE_BASELINE_ENABLED": False,
             "RB_PHASE2_PROVENANCE_ONLY": True,
             "RB_RECENCY_RESCUE_ENABLED": False,

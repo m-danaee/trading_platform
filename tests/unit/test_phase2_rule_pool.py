@@ -3072,7 +3072,6 @@ class TestIslandAwareTradeFloor:
         monkeypatch.setattr(_cfg, "PHASE2_USE_TOTAL_RETURN_OBJ", False)
 
         island = _cfg.IslandHyperparams(
-            profile="cluster",
             min_trade_support=10,
             min_trade_pool_floor=15,
             sortino_min_trade_threshold=10,
@@ -3080,7 +3079,6 @@ class TestIslandAwareTradeFloor:
             min_profitable_symbols=2,
             monthly_admission_min_months=3,
             monthly_admission_min_profitable_ratio=0.5,
-            skip_symbol_robustness_penalty=True,
             n_rows=1000,
             n_symbols=5,
         )
@@ -3693,66 +3691,6 @@ class TestRulePoolGeneratorRng:
 
 
 # ---------------------------------------------------------------------------
-# Tests: _derive_island_seed
-# ---------------------------------------------------------------------------
-
-def test_derive_island_seed_distinct_for_distinct_ids():
-    """_derive_island_seed must produce different seeds for different island IDs."""
-    from gpu_fuzzy_trader.phases.phase2_island_scheduler import (
-        _derive_island_seed,
-    )
-
-    base = 42
-    s1 = _derive_island_seed(base, "cluster_0")
-    s2 = _derive_island_seed(base, "cluster_1")
-    s3 = _derive_island_seed(base, "orphan_AAPL")
-
-    ids = [s1, s2, s3]
-    assert len(set(ids)) == 3, (
-        f"Expected 3 distinct seeds for different island IDs, got {ids}"
-    )
-
-
-def test_derive_island_seed_deterministic():
-    """_derive_island_seed must return the same value for same inputs."""
-    from gpu_fuzzy_trader.phases.phase2_island_scheduler import (
-        _derive_island_seed,
-    )
-
-    s1 = _derive_island_seed(42, "cluster_0")
-    s2 = _derive_island_seed(42, "cluster_0")
-    assert s1 == s2, (
-        f"Same inputs should produce same seed, got {s1} vs {s2}"
-    )
-
-
-def test_derive_island_seed_none_base():
-    """_derive_island_seed should return None when base_seed is None."""
-    from gpu_fuzzy_trader.phases.phase2_island_scheduler import (
-        _derive_island_seed,
-    )
-
-    result = _derive_island_seed(None, "cluster_0")
-    assert result is None, (
-        f"Expected None when base_seed is None, got {result}"
-    )
-
-
-def test_derive_island_seed_different_base_differs():
-    """Different base seeds must produce different derived seeds for same ID."""
-    from gpu_fuzzy_trader.phases.phase2_island_scheduler import (
-        _derive_island_seed,
-    )
-
-    s1 = _derive_island_seed(42, "cluster_0")
-    s2 = _derive_island_seed(99, "cluster_0")
-    assert s1 != s2, (
-        f"Different base seeds should give different derived seeds, "
-        f"got {s1} == {s2}"
-    )
-
-
-# ---------------------------------------------------------------------------
 # Overfit ratio gate tests (Task 6)
 # ---------------------------------------------------------------------------
 
@@ -3958,11 +3896,9 @@ def test_finalize_island_passes_full_admission_context(
     generator._cached_monthly_val = pd.DataFrame({"value": np.arange(42)})
     generator._holdout_n_valid_rows = 7
     generator._train_df = pd.DataFrame({"value": np.arange(99)})
-    generator.island_id = "cluster_0"
-    generator.source_symbols = ["BTCUSDT"]
     generator.island_hyperparams = None
-    generator.island_profile = "cluster"
     generator.run_id = "run-123"
+    generator._island_history = []
 
     monkeypatch.setattr(
         module.Rule_Pool_Generator,
@@ -3997,6 +3933,16 @@ def test_finalize_island_passes_full_admission_context(
         "_release_resources",
         lambda self: None,
     )
+    monkeypatch.setattr(
+        module.Rule_Pool_Generator,
+        "load_pool",
+        staticmethod(lambda direction: []),
+    )
+    monkeypatch.setattr(
+        module.Rule_Pool_Generator,
+        "save_archive",
+        staticmethod(lambda *args, **kwargs: []),
+    )
 
     try:
         assert generator.finalize_island() == []
@@ -4007,9 +3953,7 @@ def test_finalize_island_passes_full_admission_context(
     assert captured["holdout_n_valid_rows"] == 42
     assert captured["train_n_rows"] == 99
     assert captured["cv_fold_evaluator"] is generator._cv_val_evaluator
-    report_path = tmp_path / "reports" / (
-        "phase2_long_island_cluster_0_coverage.json"
-    )
+    report_path = tmp_path / "reports" / "phase2_long_coverage.json"
     report = json.loads(report_path.read_text())
     assert report["run_id"] == "run-123"
     assert report["admission_evidence"]["pool_validation_rows"] == 42

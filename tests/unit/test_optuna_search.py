@@ -28,10 +28,10 @@ def test_trial_sampling_derives_coherent_stage_budgets() -> None:
         trial = study.ask()
         params = search.sample_trial_params(trial)
         assert params["PHASE2_STAGE_A_GENERATIONS"] + params["PHASE2_STAGE_B_GENERATIONS"] == params["PHASE2_GENERATIONS"]
-        assert params["PHASE2_ISLAND_TOTAL_GENERATIONS"] == params["PHASE2_GENERATIONS"]
         assert params["PHASE2_STAGE_A_MUTATION_RATE"] >= params["PHASE2_STAGE_B_MUTATION_RATE"]
         assert "PHASE2_STAGE_B_GENERATIONS" not in search.SEARCH_SPACE
     finally:
+
         search._fast_mode = previous
 
 

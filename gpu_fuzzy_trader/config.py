@@ -8,11 +8,11 @@ File layout
   1. Global randomness (``GLOBAL_SEED``, ``get_seed``)
   2. Phase 0 — paths, schema, train/val split (holdout+embargo), backtest, logging
   3. Phase 1 — feature selection + GPU row budget (Phase 1→2 bridge)
-  4. Phase 2 — rule evolution (NSGA-III): risk, genome, gates, islands
+  4. Phase 2 — rule evolution (NSGA-III): risk, genome, gates
   5. RB Governor — unified rule selection + risk tuning
   6. Monthly windows — shared validation penalties
   7. Phase 5 — consumed test diagnostics plus optional untouched forward acceptance
-  8. Helpers — path resolvers, trade-floor scaling, island hyperparams
+  8. Helpers — path resolvers, trade-floor scaling, Phase 2 floors
   9. Configuration validation + Colab runtime defaults
 
 Pipeline phases
@@ -57,7 +57,6 @@ import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
 
 import pandas as pd
 
@@ -641,13 +640,6 @@ PHASE1_MAX_FEATURE_OVERLAP = 0.8
 #   True  → direction-specific feature rankings (recommended).
 #   False → shared target; long/short pools share more structure.
 PHASE1_ASYMMETRIC_TARGET = True
-# When specialist islands are active, retain a bounded union of per-symbol
-# feature rankings. A globally averaged MI ranking can erase a valid
-# symbol-specific relationship before Phase 2 ever sees it.
-PHASE1_SYMBOL_UNION_ENABLED: bool = True
-PHASE1_SYMBOL_TOP_K: int = 8
-PHASE1_SYMBOL_UNION_MAX_FEATURES: int = 24
-
 # --- Sign consistency across stationarity folds ---
 
 # PHASE1_REQUIRE_SIGN_CONSISTENCY — drop features whose Spearman sign flips.
@@ -695,19 +687,16 @@ PHASE1_SAMPLING_TOTAL = 701_000
 # PHASE2_PER_EPOCH_WINDOW_ROTATION — rotate train-window start per epoch
 #   True  → each epoch samples a different contiguous sub-window from the
 #           training data, using a deterministic per-epoch seed derived
-#           from (island_seed, epoch_idx). The per-sym request is capped
+#           from (sample_seed, epoch_idx). The per-sym request is capped
 #           to fit within the largest safe range so the RNG start bar
 #           branch in _sample_df fires.
-#   False → preserve pre-task-1 behavior: sample once at cluster init
-#           (useful for A/B comparison / regression guard).
-#   → fixes audit finding #1 (per-epoch window resampling is dead),
-#     implements N2
+#   False → sample once at generator init (A/B comparison / regression guard).
 PHASE2_PER_EPOCH_WINDOW_ROTATION = True
 
 # PHASE2_PER_EPOCH_WINDOW_SEED_MODE — how to derive the per-epoch seed.
-#   "hash_island_epoch" → hash(island_seed, epoch_idx) via SHA-256,
-#                          deterministic, no RNG state leak.
-PHASE2_PER_EPOCH_WINDOW_SEED_MODE = "hash_island_epoch"
+#   "hash_epoch" → hash(sample_seed, epoch_idx) via SHA-256,
+#                  deterministic, no RNG state leak.
+PHASE2_PER_EPOCH_WINDOW_SEED_MODE = "hash_epoch"
 
 # PHASE2_SAMPLE_MAX_BARS_PER_SYMBOL — hard cap on per-symbol bars in Phase 2
 # sampling.  Keeps windows rotatable (n_per_sym < safe_len) on long histories.
@@ -861,11 +850,9 @@ PHASE2_FEATURE_SET_CROSSOVER: bool = True
 # MIN_TRADE_SUPPORT — target executed trades before support penalty vanishes.
 #   Higher → penalize low-frequency rules harder; pool favors robust sample size.
 #   Lower  → allow rare-pattern rules; noisier Sortino/return estimates.
-# 200→120 — island runs (180k–240k rows) were failing train_trade_floor
-# for ~70%+ of the pop; softer support target lifts viable / trading rules.
-# 120→60 — prefer many moderate-support rules over few fat specialists
-# (portfolio support via larger rule sets; one-symbol islands scale further down).
-MIN_TRADE_SUPPORT = 60
+# Global BTC/ETH search uses the pooled-universe target (not the old
+# singleton-island 60-trade relaxation).
+MIN_TRADE_SUPPORT = 120
 
 # SUPPORT_PENALTY_MAX — cap on quadratic support shortfall penalty.
 #   Higher → stronger push away from under-supported rules on all objectives.
@@ -880,9 +867,7 @@ TRADE_SUPPORT_PENALTY_EXPONENT = 3.0
 # MIN_TRADE_POOL_FLOOR — hard reject below this executed trade count.
 #   Higher → archive/pool never keeps very rare rules.
 #   Lower  → extremely sparse rules can survive if other metrics excel.
-# 35→25 — fewer hard kills of thin-but-real island rules.
-# 25→15 — one-symbol islands + many-moderate-rules package.
-MIN_TRADE_POOL_FLOOR = 15
+MIN_TRADE_POOL_FLOOR = 25
 
 # PHASE2_SUPPORT_PENALTY_WEIGHT_F1/F2/F3 — per-objective support penalty scale.
 #   Higher → that objective punishes low support more (steer Sortino vs DD vs return).
@@ -946,14 +931,12 @@ PHASE2_F3_OBJECTIVE = "profit_factor"
 # PHASE2_MIN_PROFITABLE_SYMBOLS_PENALTY — min profitable symbols before penalty.
 #   Soft evolution nudge: adds to support_penalty when
 #   n_profitable_symbols < this during fitness. The target is capped by the
-#   measured symbol universe; cluster/orphan islands use their own scaled
-#   island_hyperparams target.
+#   measured symbol universe.
 PHASE2_MIN_PROFITABLE_SYMBOLS_PENALTY = 1
 
 # PHASE2_SYMBOL_GENE_DONT_CARE_PROB — probability of forcing a symbol gene to
 #   dont_care during mutation. Higher → more cross-symbol rules; prevents
-#   symbol-locked evolution. Singleton specialist islands cap the effective
-#   symbol scope; generic global/cluster experiments can lower this explicitly.
+#   symbol-locked evolution.
 PHASE2_SYMBOL_GENE_DONT_CARE_PROB = 0.75
 
 # PHASE2_USE_ROBUST_RETURN_OBJ — store min(train_return, val_return) as
@@ -966,7 +949,6 @@ PHASE2_USE_ROBUST_RETURN_OBJ = True
 
 # PHASE2_SORTINO_MIN_TRADE_THRESHOLD — trade count below which Sortino is scaled down.
 #   Used in Approach 2 to penalize low-trade-count rules.
-# 50→20 — one-symbol windows + moderate-support package.
 PHASE2_SORTINO_MIN_TRADE_THRESHOLD = 20
 
 # --- Return / quality floors (evolution + pool filtering) ---
@@ -1123,11 +1105,9 @@ PHASE2_MONTHLY_ADMISSION_FAIL_CLOSED = True
 PHASE2_MONTHLY_GOOD_RETURN_MIN_PCT = 0.0
 
 # PHASE2_MONTHLY_ADMISSION_MIN_RATIO — fraction of monthly windows that must
-# be profitable for a rule to be admitted (non-island path; island uses
-# island_hyperparams.monthly_admission_min_profitable_ratio from this value).
+# be profitable for a rule to be admitted.
 #   0.500 → minimum feasible evidence on the short validation calendar while
 #           still requiring half the windows to be non-loss.
-#   Higher → stronger stability but a thinner specialist pool.
 PHASE2_MONTHLY_ADMISSION_MIN_RATIO = 0.50
 
 # PHASE2_MONTHLY_ADMISSION_MIN_MONTHS — minimum number of monthly windows
@@ -1347,15 +1327,10 @@ PHASE2_PLATEAU_POST_RESTART_STOP_ENABLED = False
 # restart could recover (was < boost_gens=4 now > boost_gens).
 PHASE2_PLATEAU_POST_RESTART_STOP_PATIENCE = 5
 
-# Island-scoped variants (mirror PHASE2_ISLAND_PLATEAU_EARLY_STOP_* scoping).
-PHASE2_ISLAND_PLATEAU_POST_RESTART_STOP_ENABLED = False
-PHASE2_ISLAND_PLATEAU_POST_RESTART_STOP_PATIENCE = 8
-
 # PHASE2_PLATEAU_MAX_RESTARTS — restarts per epoch before final break.
 #   3       → up to 3 diversity restarts, then break on the next plateau.
 #   0       → immediately break (disables restart regardless of ENABLED flag).
-# 3→1 — 20-gen one-symbol islands cannot afford triple restarts.
-PHASE2_PLATEAU_MAX_RESTARTS = 1
+PHASE2_PLATEAU_MAX_RESTARTS = 3
 
 # PHASE2_VIABILITY_COLLAPSE_THRESHOLD — pop_viable fraction below which viability
 #   is considered collapsed (triggers forced restart after streak).
@@ -1569,13 +1544,9 @@ PHASE2_ENRICH_SYMBOL_METRICS_EVERY_N_GENS = 20
 # PHASE2_POPULATION_SIZE — individuals per generation.
 #   Higher → better Pareto coverage, ~linear GPU cost per generation.
 #   Lower  → faster gens, risk of premature convergence.
-# Larger pop for broader Pareto coverage on multi-symbol clusters.
 PHASE2_POPULATION_SIZE = 500
 
-# PHASE2_GENERATIONS — generation budget for the global run and each active
-# cluster island. Cluster islands are processed sequentially, so wall-clock
-# scales with the number of active islands.
-# 20→40 — more search budget with early stop disabled.
+# PHASE2_GENERATIONS — generation budget for the global Phase 2 search.
 PHASE2_GENERATIONS = 100
 
 PHASE2_ALGORITHM = "NSGA3"
@@ -1595,129 +1566,10 @@ PHASE2_SEED: int = get_seed()
 
 
 # =============================================================================
-# Phase 2 — Island / cluster mode (scoped evolution)
+# Phase 2 — Search topology
 # =============================================================================
-# When scoped-island mode is active, Phase 2 runs symbol or hybrid clusters.
-# Islands are processed sequentially to keep GPU memory bounded. Their budget
-# is either a share of PHASE2_ISLAND_TOTAL_GENERATIONS (the production default)
-# or a full per-island budget when sharing is explicitly disabled. Global knobs
-# below stay as universe bases; runtime scaling uses resolve_island_hyperparams().
+# Global Phase 2: unified multi-objective evolutionary search across all symbols.
 
-# PHASE2_ISLAND_MODE — scoped evolution layout.
-#   "global"  → single universe-wide NSGA-III run (legacy/diagnostic mode).
-#   "cluster" → K symbol clusters evolved as separate islands.
-PHASE2_ISLAND_MODE = "global"  # "global" | "cluster"
-# Production search policy: discover BTCUSDT and ETHUSDT rules in independent
-# symbol islands, then let the portfolio governor compose the specialists.
-# The legacy PHASE2_ISLAND_MODE/PHASE2_ONE_SYMBOL_ISLANDS switches remain
-# available for compatibility experiments and unit-sized runs.
-PHASE2_SYMBOL_SPECIALISTS_ENABLED: bool = True
-# PHASE2_ONE_SYMBOL_ISLANDS — when True, skip KMeans/corr clustering and give
-#   each symbol its own island. With the production shared-budget setting, the
-#   total generation budget is divided across those islands; disabling sharing
-#   instead gives every island the full configured budget.
-# For the current two-symbol dataset, cluster mode with K>1 creates singleton
-# islands and is therefore not the default. Keep this switch available for
-# larger universes where per-symbol exploration is intentional.
-PHASE2_ONE_SYMBOL_ISLANDS = False
-# PHASE2_N_CLUSTERS — number of hybrid symbol clusters when clustered mode is
-#   active and PHASE2_ONE_SYMBOL_ISLANDS is False. It is ignored by the
-#   production singleton-specialist switch.
-PHASE2_N_CLUSTERS = 1
-# PHASE2_CLUSTER_USE_RETURN_CORR — when True, build return-correlation embedding
-#   and blend with feature-means (weights below) for a hybrid clustering that
-#   groups symbols with similar return patterns.  Set False for legacy
-#   feature-mean-only clustering.
-#   Default True (feasible-search item 3): islands should group co-movers.
-# Unused while the production specialist switch or PHASE2_ONE_SYMBOL_ISLANDS
-# skips generic clustering.
-PHASE2_CLUSTER_USE_RETURN_CORR = True
-# PHASE2_CLUSTER_FEATURE_WEIGHT / CORR_WEIGHT — blend weights for the
-#   feature-mean block and the return-correlation embedding.  Normalised to
-#   sum=1 internally.  Corr-heavy so co-movement dominates; features break ties.
-PHASE2_CLUSTER_FEATURE_WEIGHT = 0.3
-PHASE2_CLUSTER_CORR_WEIGHT = 0.7
-# PHASE2_ISLAND_TOTAL_GENERATIONS — total scoped-island generation budget.
-#   PHASE2_SHARED_ISLAND_GENERATION_BUDGET=True divides it across active
-#   islands; False gives every island this full amount.
-PHASE2_ISLAND_TOTAL_GENERATIONS = PHASE2_GENERATIONS
-# Share the configured total across active islands for cooperative searches.
-# The legacy budget helper remains available to compatibility tests, while the
-# production scheduler uses this flag to keep wall time comparable to global
-# evolution.
-PHASE2_SHARED_ISLAND_GENERATION_BUDGET: bool = True
-# PHASE2_ISLAND_EPOCH_GENERATIONS — generations per island engine epoch/window.
-#   Migration occurs after a completed cluster, not at this epoch boundary.
-PHASE2_ISLAND_EPOCH_GENERATIONS = 10
-# PHASE2_ISLAND_MIN_EPOCH_GENERATIONS — skip epochs with fewer remaining gens
-# than this threshold (engine rebuild ~30s with negligible benefit for <5 gens).
-PHASE2_ISLAND_MIN_EPOCH_GENERATIONS = 4
-# Island overrides — two-stage exploration then refinement in cluster mode.
-# Stage A soft floors (RETURN_FLOOR_PCT=0, SOFT_FEASIBILITY, support=8) apply
-# when PHASE2_ISLAND_TWO_STAGE_ENABLED=True; Stage B uses global floors.
-PHASE2_ISLAND_TWO_STAGE_ENABLED = True
-PHASE2_ISLAND_EARLY_STOP_ENABLED = False
-# True — stop grinding empty feasible sets on sparse-context islands.
-PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED = True
-# False — allow plateau stop even when deployable=0 (otherwise sparse islands
-# never stop and burn the full generation budget).
-PHASE2_ISLAND_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO: bool = False
-PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE: int = 5
-# PHASE2_ISLAND_SCALE_TRADE_FLOORS — scale support floors to island row count.
-PHASE2_ISLAND_SCALE_TRADE_FLOORS = True
-# Multi-symbol islands need enough completed trades to distinguish a real edge
-# from a single-symbol coincidence.  Singleton specialists use their own cap
-# below, so do not lower this shared floor for every cluster.
-PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN = 8
-# Cap singleton-island support so Stage A can explore before features thin
-# the already-sparse context mask further (was scaling to ~30 on 29.6k rows).
-PHASE2_SPARSE_ISLAND_MAX_TRADE_SUPPORT: int = 12
-# A singleton specialist may use a smaller pool floor than a multi-symbol
-# cluster, but that relaxation must not leak into clustered exploration.
-PHASE2_SPARSE_ISLAND_MAX_TRADE_POOL_FLOOR: int = 5
-PHASE2_SPARSE_ISLAND_MAX_VAL_TRADE_FLOOR: int = 5
-# Abort an island epoch only after its internal viability-collapse restarts are
-# exhausted. The evolution runner owns those counters; the scheduler must not
-# preemptively discard a remaining Stage A/B budget after one empty epoch.
-PHASE2_ABORT_ZERO_DEPLOYABLE_EPOCHS: bool = True
-# When True (default), a specialist/cluster island that cannot meet context
-# trade floors is skipped instead of blocking the whole direction, as long as
-# at least one other island still passes. Needed when LWC×permission conjunction
-# is thick on one symbol (e.g. BTC) and starved on another (e.g. ETH).
-PHASE2_SKIP_CONTEXT_STARVED_ISLANDS: bool = True
-# The two-window holdout geometry is the minimum evidence available by default.
-PHASE2_ISLAND_MONTHLY_MIN_MONTHS = 2
-# Migration — optional exchange of top elites between sequential cluster
-# islands. The default specialist profile uses recipient-validated exchange;
-# set PHASE2_MIGRATION_ENABLED=False for a strictly independent-island ablation.
-# PHASE2_MIGRATION_ENABLED — master switch for inter-island elite exchange.
-PHASE2_MIGRATION_ENABLED: bool = True
-PHASE2_MIGRATION_TOP_K = 5
-PHASE2_MIGRATION_REQUIRE_DEPLOYABILITY = True
-PHASE2_MIGRATION_MIN_VAL_RETURN_PCT = 1.0
-PHASE2_MIGRATION_MIN_VAL_TRADES = None          # None = use island trade floor
-
-# PHASE2_MIGRATION_SEED_FRACTION — fraction of the live population overwritten by
-# migrants at a sequential cluster handoff. Decoupled from
-# PHASE2_ARCHIVE_SEED_FRACTION (which
-# governs cross-run warm-start and stays 0.25). 0.10 = 20 of 200 slots, so
-# migrants displace ≤10% of converged locals.
-PHASE2_MIGRATION_SEED_FRACTION: float = 0.10
-PHASE2_MIGRATION_INTERVAL_GENERATIONS: int = PHASE2_ISLAND_EPOCH_GENERATIONS
-PHASE2_MIGRATION_TOPOLOGY: str = "all_to_all"
-
-# PHASE2_ORPHAN_* — relaxed hyperparams for low-row symbol slices left out of clusters.
-# Disabled True→False: consistently fails with viability collapse; Symbol '7'
-# orphan run hit 3 viability collapses in 10 gens, wasting ~180s.
-PHASE2_ORPHAN_ENABLED = False
-PHASE2_ORPHAN_GENERATIONS = 18
-PHASE2_ORPHAN_POPULATION_SIZE = 150
-PHASE2_ORPHAN_MIN_TRADE_SUPPORT = 20
-PHASE2_ORPHAN_MIN_TRADE_POOL_FLOOR = 8
-PHASE2_ORPHAN_SORTINO_MIN_TRADE_THRESHOLD = 8
-PHASE2_ORPHAN_MIN_VAL_TRADES = 6
-PHASE2_ORPHAN_MIN_VAL_RETURN_PCT = 0.0
-PHASE2_ORPHAN_MONTHLY_MIN_PROFITABLE_RATIO = 0.5
 # =============================================================================
 # Phase 2 — Engine, initialization & mutation
 # =============================================================================
@@ -2101,22 +1953,13 @@ RB_MAX_SYMBOL_HHI: float = 0.60
 #
 # Mode A — multi-symbol TEAM (recommended / current):
 #   RB_REQUIRE_SYMBOL_FILTERS=False
-#   The checked-in two-symbol profile uses global Phase 2 rules. When cluster
-#   mode is explicitly enabled for a larger universe, RB attaches each rule's
-#   ``source_symbols`` as OR filters (cluster scope), then composes rules from
-#   different islands into a team covering the book.
-#   Compose diversity uses **traded** symbols from metrics (not OR filters):
-#   island filters alone must not satisfy RB_MIN_DISTINCT_SYMBOLS.
-#   Bare generalists can destroy island rules on full train + val_selection;
-#   the traded-symbol coverage and concentration gates remain active.
+#   Global Phase 2 rules are scored on pooled BTC/ETH data. Compose uses
+#   **traded** symbols from metrics, not discovery-time symbol partitions.
 #
 # Mode B — per-symbol SPECIALISTS (compatibility path; avoid unless intentional):
 #   RB_REQUIRE_SYMBOL_FILTERS=True
 #   Each rule locks to ``symbol is X``; compose many specialists for coverage.
 #   Tends to jagged single-symbol equity; needs thick per-symbol pools.
-#
-# Mixing A+B (filters off but compose counting only ``symbol is X``) blocks
-# team growth — that was a real bug with MIN_DISTINCT>0.
 
 # RB_REQUIRE_SYMBOL_FILTERS — Mode B when True; Mode A when False.
 RB_REQUIRE_SYMBOL_FILTERS: bool = False
@@ -2126,26 +1969,13 @@ RB_REQUIRE_SYMBOL_FILTERS: bool = False
 #   Mode B: distinct ``symbol is X`` filters on final rules (hard gate).
 RB_MIN_DISTINCT_SYMBOLS: int = 2
 
-# RB_ALLOW_PARTIAL_SPECIALIST_COVERAGE — in symbol-specialist mode, a
-# direction may be deployed with the symbols that actually have a positive
-# train + validation-selection candidate when another symbol has no such
-# candidate.  This is deliberately narrower than changing
-# RB_MIN_DISTINCT_SYMBOLS globally: the missing symbol must be absent from the
-# post-admission candidates that also survive the reserved validation-tail
-# check, and the remaining symbol still has to pass all return/PF,
-# walk-forward, tail, and Phase 5 gates.  The output/report records the
-# partial book explicitly so it cannot be mistaken for full-universe coverage.
-# Default True: current BTC/ETH tapes leave ETH context-starved under the
-# mandatory permission∧trigger gate, so specialist discovery must be allowed
-# to proceed on the supported symbol.
-RB_ALLOW_PARTIAL_SPECIALIST_COVERAGE: bool = True
-# A configured two-symbol release is not allowed to silently become a
-# single-symbol release. Single-asset specialists must be exported under an
-# explicit product/artifact identity instead.
-# Default False while PHASE2_SKIP_CONTEXT_STARVED_ISLANDS is needed for the
-# sparse ETH context profile; set True only when every configured symbol can
-# meet island context floors.
-RB_MULTI_SYMBOL_RELEASE: bool = False
+# RB_ALLOW_PARTIAL_SPECIALIST_COVERAGE — Mode B only. When True, a direction
+# may deploy with fewer symbols than RB_MIN_DISTINCT_SYMBOLS if a missing
+# symbol has no positive candidate. Kept False for the global two-symbol
+# product: a BTC+ETH release must not silently become BTC-only.
+RB_ALLOW_PARTIAL_SPECIALIST_COVERAGE: bool = False
+# A configured two-symbol release must cover the configured universe.
+RB_MULTI_SYMBOL_RELEASE: bool = True
 
 # Soft score bonus per extra traded symbol beyond the first (Mode A ranking).
 # 8→15 — stronger preference for multi-symbol traded coverage
@@ -2216,7 +2046,7 @@ RB_PROFIT_AMP_KEEP_BASELINE_UNLESS_BETTER: bool = True
 # Helpers & resolvers
 # =============================================================================
 # Pure functions and dataclasses. Constants live in the sections above; these
-# resolve paths, scale trade floors, and adapt gates to debug / island scope.
+# resolve paths, scale trade floors, and adapt gates to debug symbol scope.
 
 
 def filter_df_to_symbols(df: pd.DataFrame, symbols: list[str]) -> pd.DataFrame:
@@ -2355,7 +2185,7 @@ def phase2_should_enrich_symbol_metrics(
 
 
 def phase2_shared_archive_path(direction: str) -> str:
-    """Cross-cluster shared archive for migration warm-start."""
+    """Shared Phase 2 archive path (warm-start across runs)."""
     return os.path.join(PHASE2_ARCHIVE_DIR, direction, "shared_archive.json")
 
 
@@ -2447,16 +2277,15 @@ def scale_trade_floor_by_universe(
     if ref <= 0:
         return int(base)
     floor_min = int(
-        absolute_min if absolute_min is not None else PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN
+        absolute_min if absolute_min is not None else 8
     )
     scaled = int(round(int(base) * int(n_rows) / ref))
     return max(floor_min, scaled)
 
 @dataclass(frozen=True)
 class IslandHyperparams:
-    """Resolved Phase 2 knobs for cluster or orphan slices."""
+    """Optional Phase 2 floor overrides (tests and diagnostics)."""
 
-    profile: Literal["cluster", "orphan"]
     min_trade_support: int
     min_trade_pool_floor: int
     sortino_min_trade_threshold: int
@@ -2464,128 +2293,8 @@ class IslandHyperparams:
     min_profitable_symbols: int
     monthly_admission_min_months: int
     monthly_admission_min_profitable_ratio: float
-    skip_symbol_robustness_penalty: bool
     n_rows: int
     n_symbols: int
-
-
-
-def resolve_island_hyperparams(
-    profile: Literal["cluster", "orphan"],
-    n_rows: int,
-    reference_rows: int,
-    n_symbols: int,
-) -> IslandHyperparams:
-    """Resolve scaled trade floors and relaxed cross-symbol gates."""
-    ref = max(1, int(reference_rows))
-    rows = max(1, int(n_rows))
-    sym_n = max(1, int(n_symbols))
-
-    if profile == "orphan":
-        min_support = int(PHASE2_ORPHAN_MIN_TRADE_SUPPORT)
-        pool_floor = int(PHASE2_ORPHAN_MIN_TRADE_POOL_FLOOR)
-        sortino_thr = int(PHASE2_ORPHAN_SORTINO_MIN_TRADE_THRESHOLD)
-        min_profitable = 1
-        monthly_months = max(2, int(PHASE2_ISLAND_MONTHLY_MIN_MONTHS) - 1)
-        monthly_ratio = float(PHASE2_ORPHAN_MONTHLY_MIN_PROFITABLE_RATIO)
-    else:
-        if PHASE2_ISLAND_SCALE_TRADE_FLOORS:
-            abs_min = int(PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN)
-            min_support = scale_trade_floor_by_universe(
-                MIN_TRADE_SUPPORT, rows, ref, absolute_min=abs_min,
-            )
-            pool_floor = scale_trade_floor_by_universe(
-                MIN_TRADE_POOL_FLOOR, rows, ref, absolute_min=abs_min,
-            )
-            sortino_thr = scale_trade_floor_by_universe(
-                PHASE2_SORTINO_MIN_TRADE_THRESHOLD, rows, ref, absolute_min=abs_min,
-            )
-        else:
-            min_support = int(MIN_TRADE_SUPPORT)
-            pool_floor = int(MIN_TRADE_POOL_FLOOR)
-            sortino_thr = int(PHASE2_SORTINO_MIN_TRADE_THRESHOLD)
-        if sym_n >= 3:
-            scaled = max(2, (sym_n + 1) // 2)  # 3-sym → 2, 4-sym → 2, 5-sym → 3
-        else:
-            scaled = max(1, (sym_n + 1) // 2)
-        min_profitable = min(
-            int(PHASE2_MIN_PROFITABLE_SYMBOLS),
-            scaled,
-        )
-        monthly_months = int(PHASE2_ISLAND_MONTHLY_MIN_MONTHS)
-        monthly_ratio = float(PHASE2_MONTHLY_ADMISSION_MIN_RATIO)
-
-    val_floor = scale_trade_floor_by_universe(
-        max(int(MIN_TRADE_POOL_FLOOR) // 4, 10), rows, ref,
-        absolute_min=int(PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN),
-    )
-
-    # Singleton specialist islands under sparse context need reachable floors;
-    # uncapped scaling (e.g. support=30 on 29.6k rows) makes Stage A explore
-    # an empty feasible set when permission∧trigger coverage is ~0.3%.
-    if profile != "orphan" and sym_n <= 1:
-        min_support = min(
-            int(min_support),
-            int(PHASE2_SPARSE_ISLAND_MAX_TRADE_SUPPORT),
-        )
-        pool_floor = min(
-            int(pool_floor),
-            int(PHASE2_SPARSE_ISLAND_MAX_TRADE_POOL_FLOOR),
-        )
-        val_floor = min(
-            int(val_floor),
-            int(PHASE2_SPARSE_ISLAND_MAX_VAL_TRADE_FLOOR),
-        )
-        sortino_thr = min(int(sortino_thr), int(min_support))
-
-    return IslandHyperparams(
-        profile=profile,
-        min_trade_support=int(min_support),
-        min_trade_pool_floor=int(pool_floor),
-        sortino_min_trade_threshold=int(sortino_thr),
-        val_trade_floor=int(val_floor),
-        min_profitable_symbols=int(min_profitable),
-        monthly_admission_min_months=int(monthly_months),
-        monthly_admission_min_profitable_ratio=float(monthly_ratio),
-        skip_symbol_robustness_penalty=(profile == "orphan"),
-        n_rows=int(rows),
-        n_symbols=int(sym_n),
-    )
-
-
-
-def island_early_stop_enabled() -> bool:
-    if phase2_island_mode_enabled():
-        return bool(PHASE2_ISLAND_EARLY_STOP_ENABLED)
-    return bool(PHASE2_EARLY_STOP_ENABLED)
-
-
-
-def island_plateau_early_stop_enabled() -> bool:
-    if phase2_island_mode_enabled():
-        return bool(PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED)
-    return bool(PHASE2_PLATEAU_EARLY_STOP_ENABLED)
-
-
-
-def scoped_island_profile(island_profile: str) -> bool:
-    """True for cluster/orphan scoped runs rather than the global path."""
-    return str(island_profile) != "global"
-
-
-
-def island_two_stage_enabled() -> bool:
-    if phase2_island_mode_enabled():
-        return bool(PHASE2_ISLAND_TWO_STAGE_ENABLED)
-    return bool(PHASE2_TWO_STAGE_ENABLED)
-
-
-def phase2_island_mode_enabled() -> bool:
-    """Whether the production Phase 2 scheduler should use scoped islands."""
-    return bool(
-        str(PHASE2_ISLAND_MODE).strip().lower() == "cluster"
-        or bool(globals().get("PHASE2_SYMBOL_SPECIALISTS_ENABLED", False))
-    )
 
 
 # =============================================================================
@@ -2681,10 +2390,6 @@ def validate_config(
 
     _config_check(str(SPLIT_MODE).lower() in {"holdout", "purged_walk_forward"},
                   f"Unsupported SPLIT_MODE={SPLIT_MODE!r}")
-    _config_check(str(PHASE2_ISLAND_MODE).lower() in {"global", "cluster"},
-                  f"Unsupported PHASE2_ISLAND_MODE={PHASE2_ISLAND_MODE!r}")
-    _config_check(int(PHASE2_N_CLUSTERS) >= 1,
-                  "PHASE2_N_CLUSTERS must be positive")
     _config_check(int(PHASE2_MIN_PROFITABLE_SYMBOLS) >= 1,
                   "PHASE2_MIN_PROFITABLE_SYMBOLS must be positive")
     _config_check(int(DEBUG_SYMBOL_COUNT) >= 1,
@@ -2796,15 +2501,6 @@ def validate_config(
                   "PHASE2_GENERATIONS must be at least 2")
     _config_check(int(PHASE2_ARCHIVE_MAX_SIZE) >= int(PHASE2_POPULATION_SIZE),
                   "PHASE2_ARCHIVE_MAX_SIZE must be >= PHASE2_POPULATION_SIZE")
-    _config_check(
-        int(PHASE2_ISLAND_TOTAL_GENERATIONS) == int(PHASE2_GENERATIONS),
-        "PHASE2_ISLAND_TOTAL_GENERATIONS must equal PHASE2_GENERATIONS",
-    )
-    _config_check(
-        1 <= int(PHASE2_ISLAND_EPOCH_GENERATIONS)
-        <= int(PHASE2_ISLAND_TOTAL_GENERATIONS),
-        "PHASE2_ISLAND_EPOCH_GENERATIONS must fit the island generation budget",
-    )
     _config_check(int(PHASE2_STAGE_A_GENERATIONS) > 0
                   and int(PHASE2_STAGE_B_GENERATIONS) > 0,
                   "Phase 2 stage generation budgets must be positive")
@@ -2842,20 +2538,14 @@ def validate_config(
     )
     _config_check(
         0.0 <= float(PHASE2_ARCHIVE_SEED_FRACTION) <= 1.0
-        and 0.0 <= float(PHASE2_STAGE_A_ARCHIVE_SEED_FRACTION) <= 1.0
-        and 0.0 <= float(PHASE2_MIGRATION_SEED_FRACTION) <= 1.0,
-        "Phase 2 archive and migration seed fractions must be in [0, 1]",
+        and 0.0 <= float(PHASE2_STAGE_A_ARCHIVE_SEED_FRACTION) <= 1.0,
+        "Phase 2 archive seed fractions must be in [0, 1]",
     )
     _config_check(
         len(PHASE2_INIT_STRATUM_FRACTIONS) == 2
         and all(0.0 <= float(value) <= 1.0 for value in PHASE2_INIT_STRATUM_FRACTIONS)
         and abs(sum(float(value) for value in PHASE2_INIT_STRATUM_FRACTIONS) - 1.0) <= 1e-9,
         "PHASE2_INIT_STRATUM_FRACTIONS must contain two values summing to 1",
-    )
-    _config_check(
-        1 <= int(PHASE2_ISLAND_MIN_EPOCH_GENERATIONS)
-        <= int(PHASE2_ISLAND_EPOCH_GENERATIONS),
-        "PHASE2_ISLAND_MIN_EPOCH_GENERATIONS must fit the island epoch",
     )
     for name, value, budget in (
         ("PHASE2_STAGE_A_PLATEAU_EARLY_STOP_MIN_GENERATION",
@@ -2903,25 +2593,9 @@ def validate_config(
                   "MIN_TRADE_POOL_FLOOR must be <= MIN_TRADE_SUPPORT")
     _config_check(int(MIN_TRADE_SUPPORT) > 0,
                   "MIN_TRADE_SUPPORT must be positive")
-    _config_check(int(PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN) >= 1,
-                  "PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN must be positive")
-    _config_check(
-        1 <= int(PHASE2_SPARSE_ISLAND_MAX_TRADE_POOL_FLOOR)
-        <= int(PHASE2_ISLAND_TRADE_FLOOR_ABSOLUTE_MIN),
-        "PHASE2_SPARSE_ISLAND_MAX_TRADE_POOL_FLOOR must be in [1, island floor]",
-    )
     _config_check(
         int(PHASE2_MONTHLY_ADMISSION_MIN_MONTHS) >= 2,
         "PHASE2_MONTHLY_ADMISSION_MIN_MONTHS must support the two-window holdout",
-    )
-    _config_check(
-        int(PHASE2_ISLAND_MONTHLY_MIN_MONTHS) >= 2,
-        "PHASE2_ISLAND_MONTHLY_MIN_MONTHS must support the two-window holdout",
-    )
-    _config_check(
-        int(PHASE2_ISLAND_MONTHLY_MIN_MONTHS)
-        <= int(MONTHLY_WINDOW_MAX_WINDOWS),
-        "PHASE2_ISLAND_MONTHLY_MIN_MONTHS must fit MONTHLY_WINDOW_MAX_WINDOWS",
     )
     _config_check(int(MONTHLY_WINDOW_MIN_ROWS) > 0,
                   "MONTHLY_WINDOW_MIN_ROWS must be positive")
@@ -3018,8 +2692,6 @@ def validate_config(
         all(float(value) >= 1.0 for value in RB_COST_STRESS_MULTIPLIERS),
         "RB_COST_STRESS_MULTIPLIERS must be >= 1",
     )
-    _config_check(int(PHASE2_MIGRATION_INTERVAL_GENERATIONS) >= 1,
-                  "PHASE2_MIGRATION_INTERVAL_GENERATIONS must be positive")
     _config_check(int(NESTED_VALIDATION_OUTER_FOLDS) >= 1,
                   "NESTED_VALIDATION_OUTER_FOLDS must be positive")
     _config_check(0.0 < float(RB_TAIL_HOLDOUT_FRACTION) < 1.0,
@@ -3048,11 +2720,7 @@ def validate_config(
         _config_check(active_symbols >= 1, "n_symbols must be positive")
         debug_scope = bool(DEBUG_SYMBOL_SCOPE_ENABLED)
         if debug_scope:
-            # A debug run deliberately narrows the data after splitting. Its
-            # cross-symbol floors remain the full-run contract, but the active
-            # values must be capped so diagnostics can run on one symbol.
             effective_symbol_floor = effective_min_profitable_symbols(active_symbols)
-            effective_cluster_count = min(int(PHASE2_N_CLUSTERS), active_symbols)
             effective_rb_symbol_floor = effective_rb_min_distinct_symbols(active_symbols)
         else:
             _config_check(
@@ -3060,22 +2728,11 @@ def validate_config(
                 "PHASE2_MIN_PROFITABLE_SYMBOLS exceeds the active universe",
             )
             effective_symbol_floor = int(PHASE2_MIN_PROFITABLE_SYMBOLS)
-            effective_cluster_count = int(PHASE2_N_CLUSTERS)
             effective_rb_symbol_floor = int(RB_MIN_DISTINCT_SYMBOLS)
-            if str(PHASE2_ISLAND_MODE).lower() == "cluster":
-                _config_check(
-                    int(PHASE2_N_CLUSTERS) <= active_symbols,
-                    "PHASE2_N_CLUSTERS exceeds the active symbol universe",
-                )
         _config_check(
             effective_symbol_floor <= active_symbols,
             "effective Phase 2 profitable-symbol floor exceeds the active universe",
         )
-        if str(PHASE2_ISLAND_MODE).lower() == "cluster":
-            _config_check(
-                effective_cluster_count <= active_symbols,
-                "effective PHASE2_N_CLUSTERS exceeds the active universe",
-            )
         _config_check(
             effective_rb_symbol_floor <= active_symbols,
             "effective RB_MIN_DISTINCT_SYMBOLS exceeds the active universe",
@@ -3114,59 +2771,8 @@ def effective_config_snapshot(
             int(PHASE2_SAMPLE_MAX_BARS_PER_SYMBOL) * int(n_symbols),
         )
     active_symbol_count = int(n_symbols) if n_symbols is not None else None
-    configured_cluster_count = int(PHASE2_N_CLUSTERS)
-    specialist_mode = bool(
-        globals().get("PHASE2_SYMBOL_SPECIALISTS_ENABLED", False)
-        or PHASE2_ONE_SYMBOL_ISLANDS
-    )
-    effective_cluster_count = (
-        active_symbol_count
-        if specialist_mode and active_symbol_count is not None
-        else (
-            1
-            if str(PHASE2_ISLAND_MODE).lower() == "global"
-            else configured_cluster_count
-        )
-    )
-    if active_symbol_count is not None and bool(DEBUG_SYMBOL_SCOPE_ENABLED):
-        effective_cluster_count = min(effective_cluster_count, active_symbol_count)
     effective_rb_symbol_floor = effective_rb_min_distinct_symbols(active_symbol_count)
     min_capital = min(float(value) for value in RB_CAPITAL_GRID)
-    if specialist_mode and active_symbol_count is None:
-        effective_island_budgets: list[int] | None = None
-        effective_island_stage_budgets: list[dict[str, int]] | None = None
-    else:
-        island_count = max(1, int(effective_cluster_count))
-        island_total = int(PHASE2_ISLAND_TOTAL_GENERATIONS)
-        if bool(PHASE2_SHARED_ISLAND_GENERATION_BUDGET):
-            base, remainder = divmod(island_total, island_count)
-            effective_island_budgets = [
-                max(1, base + (1 if index < remainder else 0))
-                for index in range(island_count)
-            ]
-        else:
-            effective_island_budgets = [island_total] * island_count
-
-        if island_two_stage_enabled():
-            stage_total = int(PHASE2_STAGE_A_GENERATIONS) + int(
-                PHASE2_STAGE_B_GENERATIONS
-            )
-            effective_island_stage_budgets = []
-            for budget in effective_island_budgets:
-                stage_a = max(
-                    1,
-                    int(round(budget * int(PHASE2_STAGE_A_GENERATIONS) / stage_total)),
-                )
-                effective_island_stage_budgets.append({
-                    "total": int(budget),
-                    "stage_a": stage_a,
-                    "stage_b": int(budget - stage_a),
-                })
-        else:
-            effective_island_stage_budgets = [
-                {"total": int(budget), "stage_a": int(budget), "stage_b": 0}
-                for budget in effective_island_budgets
-            ]
     return {
         "active_universe": {
             "n_rows": int(n_rows) if n_rows is not None else None,
@@ -3209,7 +2815,6 @@ def effective_config_snapshot(
             "stage_a_generations": int(PHASE2_STAGE_A_GENERATIONS),
             "stage_b_generations": int(PHASE2_STAGE_B_GENERATIONS),
             "two_stage_enabled": bool(PHASE2_TWO_STAGE_ENABLED),
-            "island_two_stage_enabled": bool(island_two_stage_enabled()),
             "sampling_total": int(PHASE1_SAMPLING_TOTAL),
             "estimated_effective_rows": estimated_rows,
             "min_trade_support": int(MIN_TRADE_SUPPORT),
@@ -3223,51 +2828,12 @@ def effective_config_snapshot(
                 if bool(PHASE2_USE_TOTAL_RETURN_OBJ)
                 else str(PHASE2_F3_OBJECTIVE)
             ),
-            "island_mode": str(PHASE2_ISLAND_MODE),
-            "symbol_specialists_enabled": bool(
-                globals().get("PHASE2_SYMBOL_SPECIALISTS_ENABLED", False)
-            ),
-            "configured_migration_enabled": bool(PHASE2_MIGRATION_ENABLED),
-            "effective_migration_enabled": bool(
-                PHASE2_MIGRATION_ENABLED and phase2_island_mode_enabled()
-            ),
-            "shared_generation_budget": bool(
-                PHASE2_SHARED_ISLAND_GENERATION_BUDGET
-            ),
-            "migration_interval_generations": int(
-                PHASE2_MIGRATION_INTERVAL_GENERATIONS
-            ),
-            "migration_topology": str(PHASE2_MIGRATION_TOPOLOGY),
-            "effective_symbol_island_count": (
-                int(active_symbol_count)
-                if bool(globals().get("PHASE2_SYMBOL_SPECIALISTS_ENABLED", False))
-                and active_symbol_count is not None
-                else None
-            ),
-            "configured_n_clusters": configured_cluster_count,
-            "effective_n_clusters": effective_cluster_count,
-            "effective_island_generation_budgets": effective_island_budgets,
-            "effective_island_stage_budgets": effective_island_stage_budgets,
             "effective_min_profitable_symbols": effective_min_profitable_symbols(n_symbols),
             "min_profitable_symbols_required": int(PHASE2_MIN_PROFITABLE_SYMBOLS),
             "symbol_gene_dont_care_prob": float(PHASE2_SYMBOL_GENE_DONT_CARE_PROB),
-            "island_plateau_early_stop_enabled": bool(
-                PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED
-            ),
-            "abort_zero_deployable_epochs": bool(
-                PHASE2_ABORT_ZERO_DEPLOYABLE_EPOCHS
-            ),
             "expectancy_lcb_z": float(PHASE2_EXPECTANCY_LCB_Z),
             "expected_shortfall_q": float(PHASE2_EXPECTED_SHORTFALL_Q),
             "phase1_disabled": bool(PHASE1_DISABLED),
-            "phase1_symbol_union": bool(PHASE1_SYMBOL_UNION_ENABLED),
-            "effective_phase1_symbol_union": bool(
-                not PHASE1_DISABLED
-                and PHASE1_SYMBOL_UNION_ENABLED
-                and specialist_mode
-            ),
-            "phase1_symbol_top_k": int(PHASE1_SYMBOL_TOP_K),
-            "island_monthly_min_months": int(PHASE2_ISLAND_MONTHLY_MIN_MONTHS),
             "monthly_min_trades": int(PHASE2_MONTHLY_MIN_TRADES),
             "monthly_min_active_ratio": float(PHASE2_MONTHLY_MIN_ACTIVE_RATIO),
             "monthly_max_bearish_ratio": float(PHASE2_MONTHLY_MAX_BEARISH_RATIO),
@@ -3305,6 +2871,7 @@ def effective_config_snapshot(
             "allow_partial_specialist_coverage": bool(
                 RB_ALLOW_PARTIAL_SPECIALIST_COVERAGE
             ),
+            "multi_symbol_release": bool(RB_MULTI_SYMBOL_RELEASE),
             "phase2_provenance_only": bool(
                 globals().get("RB_PHASE2_PROVENANCE_ONLY", False)
             ),

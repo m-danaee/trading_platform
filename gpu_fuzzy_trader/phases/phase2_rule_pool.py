@@ -116,6 +116,17 @@ def _derive_val_sample_seed(train_sample_seed: int) -> int:
     return (train_sample_seed + offset) % (2**31)
 
 
+def _derive_epoch_seed(base_seed: int | None, epoch_idx: int) -> int | None:
+    """Return a deterministic per-epoch seed derived from base_seed + epoch."""
+    if base_seed is None:
+        return None
+    mode = getattr(_cfg, "PHASE2_PER_EPOCH_WINDOW_SEED_MODE", "hash_epoch")
+    if mode in {"hash_epoch", "hash_island_epoch"}:
+        h = hashlib.sha256(f"{base_seed}:epoch_{epoch_idx}".encode()).digest()
+        return int.from_bytes(h[:4], "big") % (2**31)
+    raise ValueError(f"Unknown PHASE2_PER_EPOCH_WINDOW_SEED_MODE={mode!r}")
+
+
 # ---------------------------------------------------------------------------
 # Output paths
 # ---------------------------------------------------------------------------
@@ -889,8 +900,6 @@ def compute_phase2_objectives_from_metrics(
         support_penalty += (_cfg.PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION - profit_factor) * 5.0
 
     # C5: Symbol-spread penalty — penalize when few symbols are profitable.
-    # One-symbol islands must use island-scaled targets (else every rule is
-    # permanently penalised for failing a 3-symbol bar it can never clear).
     if bool(metrics.get(
         "per_symbol_metrics_available",
         "per_symbol_metrics" in metrics,
@@ -908,12 +917,10 @@ def compute_phase2_objectives_from_metrics(
         if n_profitable_symbols < min_symbols:
             support_penalty += float(min_symbols - n_profitable_symbols) * 2.0
 
-    if not (island_hyperparams is not None and island_hyperparams.skip_symbol_robustness_penalty):
-        support_penalty += _symbol_robustness_penalty(metrics)
-        if val_metrics is not None:
-            # C6: Gate val symbol_robustness behind JOINT_TRAIN_VAL or VAL_IN_FITNESS_PENALTY
-            if _cfg.PHASE2_JOINT_TRAIN_VAL or getattr(_cfg, "PHASE2_VAL_IN_FITNESS_PENALTY", False):
-                support_penalty += _symbol_robustness_penalty(val_metrics)
+    support_penalty += _symbol_robustness_penalty(metrics)
+    if val_metrics is not None:
+        if _cfg.PHASE2_JOINT_TRAIN_VAL or getattr(_cfg, "PHASE2_VAL_IN_FITNESS_PENALTY", False):
+            support_penalty += _symbol_robustness_penalty(val_metrics)
     support_penalty += val_floor_penalty
 
     dd_gate = getattr(_cfg, "PHASE2_MAX_DRAWDOWN_GATE", 20.0)
@@ -2509,19 +2516,11 @@ def _merge_archive_entries(
         return []
 
     deduped: dict[tuple, dict] = {}
-    preserve_scope = bool(
-        getattr(_cfg, "PHASE2_SYMBOL_SPECIALISTS_ENABLED", False)
-    )
     for entry in entries:
         chromosome_key = tuple(
             int(v) for v in np.asarray(entry["chromosome"], dtype=np.int32).ravel().tolist()
         )
-        scope_key = (
-            tuple(sorted(str(s) for s in entry.get("source_symbols", [])))
-            if preserve_scope
-            else ()
-        )
-        key = (chromosome_key, scope_key)
+        key = chromosome_key
         current = deduped.get(key)
         if current is None or _is_better_archive_entry(entry, current):
             deduped[key] = entry
@@ -3116,12 +3115,8 @@ class Rule_Pool_Generator:
         seed: int | None = None,
         val_df: pd.DataFrame | None = None,
         cv_folds: list | None = None,
-        island_id: str | None = None,
-        source_symbols: list[str] | None = None,
         island_hyperparams: _cfg.IslandHyperparams | None = None,
-        island_profile: str = "global",
         reference_rows: int | None = None,
-        pending_migrant_seeds: list[dict] | None = None,
         defer_warmup: bool = False,
         run_id: str | None = None,
     ) -> None:
@@ -3141,12 +3136,8 @@ class Rule_Pool_Generator:
         self._evolution_state = None
         self._island_history: list[dict] = []
         self._island_generations_done = 0
-        self.island_id = island_id
-        self.source_symbols = list(source_symbols or [])
         self.island_hyperparams = island_hyperparams
-        self.island_profile = str(island_profile)
         self.reference_rows = reference_rows
-        self._pending_migrant_seeds = list(pending_migrant_seeds or [])
         self._defer_warmup = defer_warmup
         self.run_id = str(run_id) if run_id else None
 
@@ -3229,23 +3220,15 @@ class Rule_Pool_Generator:
 
         if self.island_hyperparams is not None:
             hp = self.island_hyperparams
-            tag = f"{self.direction}"
-            if self.island_id is not None:
-                tag += f" cluster_{self.island_id}"
             logger.info(
-                "Phase 2 [%s]: island hyperparams profile=%s rows=%d "
+                "Phase 2 [%s]: floor overrides rows=%d "
                 "min_trade_support=%d pool_floor=%d min_profitable_symbols=%d",
-                tag,
-                hp.profile,
+                self.direction,
                 hp.n_rows,
                 hp.min_trade_support,
                 hp.min_trade_pool_floor,
                 hp.min_profitable_symbols,
             )
-
-    def set_pending_migrant_seeds(self, seeds: list[dict]) -> None:
-        """Inject guarded migration seeds for the next epoch."""
-        self._pending_migrant_seeds = list(seeds)
 
     # ------------------------------------------------------------------
     # Engine construction
@@ -3357,7 +3340,6 @@ class Rule_Pool_Generator:
             configure_phase2_gpu_runtime(
                 self._engine,
                 val_engine=self._val_engine,
-                cluster_id=self.island_id,
             )
         log_memory_rss(f"Phase2 [{self.direction}] engine init")
 
@@ -3380,7 +3362,7 @@ class Rule_Pool_Generator:
         .. note::
            The first epoch (epoch_idx=0) uses the sample taken during
            ``__init__``; this method is intended for *subsequent* epochs
-           (called from the scheduler loop between ``run_epoch`` calls).
+           (called between ``run_epoch`` calls).
         """
         if not _cfg.PHASE2_PER_EPOCH_WINDOW_ROTATION:
             return
@@ -3392,12 +3374,10 @@ class Rule_Pool_Generator:
             )
             return
 
-        from gpu_fuzzy_trader.phases.phase2_island_scheduler import (
-            _derive_epoch_seed,
-        )
         from gpu_fuzzy_trader.backtest.df_slim import slim_backtest_df
 
         epoch_seed = _derive_epoch_seed(self._sample_seed, epoch_idx)
+
         sampled = sample_df_for_phase2(
             self._cached_scoped_train_df,
             random_state=epoch_seed,
@@ -3458,8 +3438,6 @@ class Rule_Pool_Generator:
         return {
             "run_id": getattr(self, "run_id", None),
             "direction": self.direction,
-            "island_id": getattr(self, "island_id", None),
-            "source_symbols": list(getattr(self, "source_symbols", [])),
             "train_rows": context["train_n_rows"],
             "fitness_validation_rows": _frame_rows(
                 getattr(self, "_val_engine", None)
@@ -3493,16 +3471,7 @@ class Rule_Pool_Generator:
             os.path.dirname(_resolve_pool_path(self.direction))
             or _cfg.OUTPUTS_DIR
         ) / "reports"
-        island_id = getattr(self, "island_id", None)
-        if island_id is None:
-            suffix = "coverage"
-        else:
-            safe_island = "".join(
-                char if char.isalnum() or char in "-_" else "_"
-                for char in str(island_id)
-            )
-            suffix = f"island_{safe_island}_coverage"
-        path = report_root / f"phase2_{self.direction}_{suffix}.json"
+        path = report_root / f"phase2_{self.direction}_coverage.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
             json.dumps(coverage_report, indent=2, default=str),
@@ -3511,7 +3480,7 @@ class Rule_Pool_Generator:
         return str(path)
 
     def park_engines(self) -> None:
-        """Release GPU engines and slim in-memory data between island epochs."""
+        """Release GPU engines and slim in-memory data between epochs."""
         self._engine = None
         self._val_engine = None
         self._pool_val_engine = None
@@ -3566,11 +3535,10 @@ class Rule_Pool_Generator:
 
     @staticmethod
     def _set_island_engine_context(engine, owner) -> None:
-        """Attach optional island metadata; safe when *owner* is a partial mock."""
+        """Attach optional floor overrides; safe when *owner* is a partial mock."""
         hp = getattr(owner, "island_hyperparams", None)
         if hp is not None:
             engine._island_hyperparams = hp
-        engine._island_profile = getattr(owner, "island_profile", "global")
 
     def _build_engine_for_df(self, df: pd.DataFrame):
         """Build an engine on *df* using the same backend selection logic."""
@@ -3673,21 +3641,17 @@ class Rule_Pool_Generator:
         )
 
         previous_pool: list[dict] = []
-        if not (
-            self.island_id is not None
-            and bool(getattr(_cfg, "PHASE2_SYMBOL_SPECIALISTS_ENABLED", False))
-        ):
-            try:
-                loaded_pool = Rule_Pool_Generator.load_pool(
-                    self.direction,
-                )
-                if loaded_pool:
-                    previous_pool = loaded_pool
-            except ValueError:
-                logger.warning(
-                    "Phase 2 [%s]: existing pool file invalid; starting without seeds",
-                    self.direction,
-                )
+        try:
+            loaded_pool = Rule_Pool_Generator.load_pool(
+                self.direction,
+            )
+            if loaded_pool:
+                previous_pool = loaded_pool
+        except ValueError:
+            logger.warning(
+                "Phase 2 [%s]: existing pool file invalid; starting without seeds",
+                self.direction,
+            )
 
         if previous_pool:
             compatible_pool = _filter_compatible_previous_pool(
@@ -3733,7 +3697,6 @@ class Rule_Pool_Generator:
         progress_tag = "Phase 2 [%s] NSGA-III" % self.direction
         use_two_stage = (
             bool(getattr(_cfg, "PHASE2_TWO_STAGE_ENABLED", False))
-            and self.island_profile == "global"
             and self.n_generations == _cfg.PHASE2_GENERATIONS
             and self.pop_size == _cfg.PHASE2_POPULATION_SIZE
         )
@@ -3760,7 +3723,7 @@ class Rule_Pool_Generator:
             feature_probs=feature_probs,
             init_strategy=_cfg.PHASE2_INIT_STRATEGY,
             stratum_fractions=_cfg.PHASE2_INIT_STRATUM_FRACTIONS,
-            island_profile=self.island_profile,
+            island_profile="global",
             island_hyperparams=self.island_hyperparams,
             coverage_report=coverage_report,
         )
@@ -3898,34 +3861,6 @@ class Rule_Pool_Generator:
             coverage_report=coverage_report,
         )
         coverage_report["retained_rules"] = len(pool)
-
-        if self.island_id is not None:
-            pre_final_filter_count = len(pool)
-            pool = _filter_pool_by_admission(
-                list(pool),
-                island_hyperparams=self.island_hyperparams,
-            )
-            pool = Rule_Pool_Generator._annotate_archive_entries(
-                pool,
-                source_symbols=self.source_symbols or None,
-                direction=self.direction,
-            )
-            coverage_report["final_filter_input_rules"] = (
-                pre_final_filter_count
-            )
-            coverage_report["final_filter_output_rules"] = len(pool)
-            report_path = self._write_admission_report(
-                coverage_report,
-                final_pool_size=len(pool),
-            )
-            logger.info(
-                "Phase 2 [%s %s]: admission evidence saved to %s",
-                self.direction,
-                self.island_id,
-                report_path,
-            )
-            self._release_resources()
-            return pool
 
         pool_path = _resolve_pool_path(self.direction)
         history_path = _resolve_history_path(self.direction)
@@ -4190,15 +4125,7 @@ class Rule_Pool_Generator:
         return merged
 
     def _assemble_epoch_seed_entries(self) -> list[dict]:
-        """Merge local pool, symbol archive, and shared archive (dominant seeds)."""
-        # Singleton specialist islands must not seed from the direction-level
-        # pool written by a previous island.  That would silently turn an
-        # independent BTC/ETH search back into a cross-symbol warm start.
-        if (
-            self.source_symbols
-            and bool(getattr(_cfg, "PHASE2_SYMBOL_SPECIALISTS_ENABLED", False))
-        ):
-            return []
+        """Merge local pool seeds for the next epoch."""
         seeds: list[dict] = []
         local_pool = Rule_Pool_Generator.load_pool(
             self.direction,
@@ -4210,104 +4137,46 @@ class Rule_Pool_Generator:
         self,
         n_generations: int | None = None,
     ) -> list[dict]:
-        """Evolve this island for one scheduler epoch."""
+        """Evolve for one execution epoch."""
         self._ensure_engines()
         from gpu_fuzzy_trader.evolution.evox_runner import (
             extract_deployable_migrants,
             run_phase2_evolution_epoch,
         )
         from gpu_fuzzy_trader.phases.phase2_init import build_feature_sampling_probs
-        from gpu_fuzzy_trader.phases.phase2_stage import resolve_island_stage
 
         requested_epoch_gens = int(
             n_generations if n_generations is not None
-            else _cfg.PHASE2_ISLAND_EPOCH_GENERATIONS
+            else 10
         )
-        stage_plan = resolve_island_stage(
-            self._island_generations_done,
-            self.n_generations,
-        )
-        if stage_plan.remaining_in_stage <= 0:
+        remaining = max(0, self.n_generations - self._island_generations_done)
+        if remaining <= 0:
             if self._evolution_state is None:
                 return []
             return extract_deployable_migrants(self._evolution_state)
 
-        epoch_gens = requested_epoch_gens
-        if stage_plan.two_stage_active:
-            epoch_gens = min(requested_epoch_gens,
-                             stage_plan.remaining_in_stage)
+        epoch_gens = min(requested_epoch_gens, remaining)
 
         dont_cares = _get_dont_cares(self.feature_infos)
         first_epoch = self._evolution_state is None
-        entering_stage_b = stage_plan.entering_stage_b
-        apply_seeds = first_epoch or entering_stage_b
-        # Each island epoch is a fresh plateau context: carrying the prior
-        # epoch's best/streak makes every subsequent epoch instantly plateau
-        # at min_gen because the streak is already 5-17 from epoch 1.
-        # Reset unconditionally — Stage B seeding (below) is independent.
-        # NOTE: a global "island fully converged" kill-switch, if ever needed,
-        # should be a SEPARATE counter, NOT the per-epoch streak.
+        apply_seeds = first_epoch
         reset_plateau = True
 
         seed_chromosomes = None
         seed_fraction = None
-        if entering_stage_b and self._evolution_state is not None:
-            stage_a_pool = _deployable_archive_pool_entries(
-                self._evolution_state.deployable_archive,
-            )
-            seed_chromosomes = _stage_b_seed_chromosomes(
-                stage_a_pool,
-                None,
-                dont_cares,
-                int(_cfg.PHASE2_STAGE_B_SEED_TOP_K),
-            )
-            seed_fraction = float(_cfg.PHASE2_STAGE_B_SEED_FRACTION)
-            logger.info(
-                "Phase 2 [%s]: entering Stage B (%d gen remaining, %d seeds)",
-                self.direction,
-                stage_plan.remaining_in_stage,
-                0 if seed_chromosomes is None else len(seed_chromosomes),
-            )
-        elif apply_seeds or self._pending_migrant_seeds:
+        if apply_seeds:
             seed_entries: list[dict] = []
             if first_epoch:
                 seed_entries.extend(self._assemble_epoch_seed_entries())
-            migrant_seeds_present = bool(self._pending_migrant_seeds)
-            if self._pending_migrant_seeds:
-                seed_entries.extend(self._pending_migrant_seeds)
-                self._pending_migrant_seeds = []
             if seed_entries:
-                if migrant_seeds_present:
-                    migrant_cap = max(
-                        1,
-                        int(round(self.pop_size * float(_cfg.PHASE2_MIGRATION_SEED_FRACTION))),
-                    )
-                    migrant_entries = [
-                        e for e in seed_entries
-                        if e.get("migrant_rank_score") is not None
-                    ]
-                    archive_entries = [
-                        e for e in seed_entries
-                        if e.get("migrant_rank_score") is None
-                    ]
-                    local_seeds = _merge_archive_entries(
-                        migrant_entries[:migrant_cap] + archive_entries,
-                    )
-                    seed_chromosomes = _pool_seed_chromosomes(local_seeds, dont_cares)
-                    seed_fraction = float(_cfg.PHASE2_MIGRATION_SEED_FRACTION)
-                else:
-                    local_cap = max(
-                        1,
-                        int(round(self.pop_size * float(_cfg.PHASE2_ARCHIVE_SEED_FRACTION))),
-                    )
-                    local_seeds = _merge_archive_entries(seed_entries)[:local_cap]
-                    seed_chromosomes = _pool_seed_chromosomes(
-                        local_seeds, dont_cares)
-                    seed_fraction = (
-                        float(_cfg.PHASE2_STAGE_A_ARCHIVE_SEED_FRACTION)
-                        if stage_plan.two_stage_active
-                        else float(_cfg.PHASE2_ARCHIVE_SEED_FRACTION)
-                    )
+                local_cap = max(
+                    1,
+                    int(round(self.pop_size * float(_cfg.PHASE2_ARCHIVE_SEED_FRACTION))),
+                )
+                local_seeds = _merge_archive_entries(seed_entries)[:local_cap]
+                seed_chromosomes = _pool_seed_chromosomes(
+                    local_seeds, dont_cares)
+                seed_fraction = float(_cfg.PHASE2_ARCHIVE_SEED_FRACTION)
                 apply_seeds = True
 
         # --- H5: Clear global_metrics_cache for seeded keys; cap HoF carry-over ---
@@ -4330,15 +4199,7 @@ class Rule_Pool_Generator:
         rng = self._rng
         feature_probs = build_feature_sampling_probs(self.feature_infos)
         tag = f"Phase 2 [{self.direction}]"
-        if stage_plan.two_stage_active and stage_plan.stage is not None:
-            tag += f" Stage {stage_plan.stage}"
 
-        # --- Task 2: Refresh objectives on island resume to prevent stale fitness ---
-        # Refresh on resume only when the train window changes per epoch
-        # (PHASE2_PER_EPOCH_WINDOW_ROTATION=True, the default after task-1).
-        # When rotation is off (legacy fixed-window), the cache is valid and
-        # the wipe is wasteful — cache_hit_rate drops to 0.
-        # → fixes audit finding #8 (cache refresh was wasteful in fixed-window mode)
         refresh_objectives_on_resume = (
             not first_epoch
             and bool(getattr(_cfg, "PHASE2_PER_EPOCH_WINDOW_ROTATION", True))
@@ -4359,25 +4220,20 @@ class Rule_Pool_Generator:
             init_strategy=_cfg.PHASE2_INIT_STRATEGY,
             stratum_fractions=_cfg.PHASE2_INIT_STRATUM_FRACTIONS,
             seed_fraction=seed_fraction,
-            stage=stage_plan.stage if stage_plan.two_stage_active else None,
+            stage=None,
             apply_seed_chromosomes=apply_seeds,
             reset_plateau=reset_plateau,
-            island_profile=self.island_profile,
+            island_profile="global",
             island_hyperparams=self.island_hyperparams,
             refresh_objectives_on_resume=refresh_objectives_on_resume,
         )
-        for entry in epoch_history:
-            if stage_plan.two_stage_active and stage_plan.stage is not None:
-                entry["stage"] = stage_plan.stage
         self._island_history.extend(epoch_history)
-        # Charge actual generations run (epoch_history length), not the
-        # requested epoch_gens, because the evolution loop may early-stop
-        # before exhausting the full budget.
         self._island_generations_done += len(epoch_history)
         return extract_deployable_migrants(self._evolution_state)
 
+
     def finalize_island(self) -> list[dict]:
-        """Build, filter, and persist the final pool for this island."""
+        """Build, filter, and persist the final pool."""
         from gpu_fuzzy_trader.evolution.evox_runner import run_phase2_evolution
         from gpu_fuzzy_trader.phases.phase2_init import build_feature_sampling_probs
 
@@ -4404,50 +4260,11 @@ class Rule_Pool_Generator:
             val_engine=self._val_engine,
             **admission_context,
             feature_probs=feature_probs,
-            island_profile=self.island_profile,
+            island_profile="global",
             island_hyperparams=self.island_hyperparams,
             coverage_report=coverage_report,
         )
         new_pool = result[0] if isinstance(result, tuple) else []
-        if self.island_id is not None:
-            pre_admission_count = len(new_pool)
-            pool = _filter_pool_by_admission(
-                list(new_pool),
-                island_hyperparams=self.island_hyperparams,
-            )
-            post_admission_count = len(pool)
-            logger.info(
-                "Phase 2 [%s %s]: final admission %d -> %d rules",
-                self.direction,
-                self.island_id,
-                pre_admission_count,
-                post_admission_count,
-            )
-
-            # --- Monthly-window gate for islands ---
-            pool = _run_monthly_admission_on_pool(pool, self)
-
-            pool = Rule_Pool_Generator._annotate_archive_entries(
-                pool,
-                source_symbols=self.source_symbols or None,
-                direction=self.direction,
-            )
-            coverage_report["pre_admission_rules"] = pre_admission_count
-            coverage_report["monthly_gate_input_rules"] = post_admission_count
-            coverage_report["final_filter_output_rules"] = len(pool)
-            report_path = self._write_admission_report(
-                coverage_report,
-                final_pool_size=len(pool),
-            )
-            logger.info(
-                "Phase 2 [%s %s]: admission evidence saved to %s",
-                self.direction,
-                self.island_id,
-                report_path,
-            )
-            self._release_resources()
-            return pool
-
         previous_pool = Rule_Pool_Generator.load_pool(
             self.direction,
         ) or []
@@ -4456,9 +4273,15 @@ class Rule_Pool_Generator:
             pool,
             island_hyperparams=self.island_hyperparams,
         )
+        pool = _run_monthly_admission_on_pool(pool, self)
         pool = Rule_Pool_Generator._annotate_archive_entries(
             pool,
             direction=self.direction,
+        )
+        coverage_report["final_filter_output_rules"] = len(pool)
+        self._write_admission_report(
+            coverage_report,
+            final_pool_size=len(pool),
         )
 
         pool_path = _resolve_pool_path(self.direction)

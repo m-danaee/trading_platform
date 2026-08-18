@@ -840,18 +840,7 @@ def _should_early_stop_phase2(
     *,
     island_profile: str = "global",
 ) -> bool:
-    if _cfg.scoped_island_profile(island_profile):
-        # The explicit profile is authoritative for an island epoch.  Do not
-        # consult PHASE2_ISLAND_MODE here: helper-level callers and scheduled
-        # cluster/orphan epochs may pass a scoped profile while global config
-        # remains in ``global`` mode.
-        if not bool(getattr(
-            _cfg,
-            "PHASE2_ISLAND_EARLY_STOP_ENABLED",
-            _cfg.island_early_stop_enabled(),
-        )):
-            return False
-    elif not _cfg.PHASE2_EARLY_STOP_ENABLED:
+    if not _cfg.PHASE2_EARLY_STOP_ENABLED:
         return False
     min_gen = (
         int(stage_params.early_stop_min_generation)
@@ -903,19 +892,9 @@ def _update_max_return_plateau(
 
 def _resolve_plateau_patience(
     stage_params: Phase2StageParams | None,
-    island_profile: str,
+    island_profile: str = "global",
 ) -> int:
-    """Resolve the plateau patience value based on profile and stage.
-
-    Cluster/orphan islands always use PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE
-    even when two-stage Stage A/B params are active (stage budgets are short
-    relative to Stage A patience=28). Global two-stage uses stage_params.
-    """
-    if _cfg.scoped_island_profile(island_profile):
-        return int(getattr(
-            _cfg, "PHASE2_ISLAND_PLATEAU_EARLY_STOP_PATIENCE",
-            _cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE,
-        ))
+    """Resolve the plateau patience value based on stage params or config."""
     if stage_params is not None:
         return int(stage_params.plateau_early_stop_patience)
     return int(_cfg.PHASE2_PLATEAU_EARLY_STOP_PATIENCE)
@@ -923,15 +902,9 @@ def _resolve_plateau_patience(
 
 def _resolve_plateau_min_generation(
     stage_params: Phase2StageParams | None,
-    island_profile: str,
+    island_profile: str = "global",
 ) -> int:
-    """Earliest gen for plateau stop.
-
-    Island epochs (~20 gens) and scaled Stage A budgets (~20 gens) are shorter
-    than Stage A min_gen=30; using stage min_gen would disable island plateau.
-    """
-    if _cfg.scoped_island_profile(island_profile):
-        return int(_cfg.PHASE2_PLATEAU_EARLY_STOP_MIN_GENERATION)
+    """Earliest gen for plateau stop."""
     if stage_params is not None:
         return int(stage_params.plateau_early_stop_min_generation)
     return int(_cfg.PHASE2_PLATEAU_EARLY_STOP_MIN_GENERATION)
@@ -947,27 +920,12 @@ def _should_plateau_early_stop_phase2(
     stage_params: Phase2StageParams | None = None,
     island_profile: str = "global",
 ) -> bool:
-    if _cfg.scoped_island_profile(island_profile):
-        # The caller's profile is authoritative for an island epoch.  Do not
-        # let the global PHASE2_ISLAND_MODE switch hide the island-specific
-        # test/configuration knobs when an epoch explicitly passes
-        # ``cluster`` or ``orphan``.
-        if not bool(getattr(
-            _cfg,
-            "PHASE2_ISLAND_PLATEAU_EARLY_STOP_ENABLED",
-            _cfg.island_plateau_early_stop_enabled(),
-        )):
-            return False
-    elif not _cfg.PHASE2_PLATEAU_EARLY_STOP_ENABLED:
+    if not _cfg.PHASE2_PLATEAU_EARLY_STOP_ENABLED:
         return False
     min_gen = _resolve_plateau_min_generation(stage_params, island_profile)
     if gen + 1 < min_gen:
         return False
-    if _cfg.scoped_island_profile(island_profile):
-        if bool(getattr(_cfg, "PHASE2_ISLAND_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO", False)):
-            if deployable_count <= 0:
-                return False
-    elif bool(getattr(_cfg, "PHASE2_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO", True)):
+    if bool(getattr(_cfg, "PHASE2_PLATEAU_BLOCK_WHEN_DEPLOYABLE_ZERO", True)):
         if deployable_count <= 0:
             return False
     if bool(getattr(_cfg, "PHASE2_PLATEAU_BLOCK_WHEN_DIVERSITY_LOW", True)):
@@ -988,29 +946,14 @@ def _should_post_restart_early_stop_phase2(
     island_profile: str = "global",
     stage_params: Phase2StageParams | None = None,
 ) -> bool:
-    """Break the epoch when a plateau restart yields no improvement.
-
-    Independent of the main plateau streak/patience so it never interferes
-    with the restart decision itself — it only fires on generations AFTER a
-    restart, measuring whether the restart produced any progress.
-    """
-    if _cfg.scoped_island_profile(island_profile):
-        if not bool(getattr(
-            _cfg, "PHASE2_ISLAND_PLATEAU_POST_RESTART_STOP_ENABLED", True,
-        )):
-            return False
-        patience = int(getattr(
-            _cfg, "PHASE2_ISLAND_PLATEAU_POST_RESTART_STOP_PATIENCE",
-            getattr(_cfg, "PHASE2_PLATEAU_POST_RESTART_STOP_PATIENCE", 3),
-        ))
-    else:
-        if not bool(getattr(
-            _cfg, "PHASE2_PLATEAU_POST_RESTART_STOP_ENABLED", True,
-        )):
-            return False
-        patience = int(getattr(
-            _cfg, "PHASE2_PLATEAU_POST_RESTART_STOP_PATIENCE", 3,
-        ))
+    """Break the run when a plateau restart yields no improvement."""
+    if not bool(getattr(
+        _cfg, "PHASE2_PLATEAU_POST_RESTART_STOP_ENABLED", True,
+    )):
+        return False
+    patience = int(getattr(
+        _cfg, "PHASE2_PLATEAU_POST_RESTART_STOP_PATIENCE", 3,
+    ))
     return post_restart_streak >= patience
 
 
@@ -1023,13 +966,7 @@ def _should_abort_zero_deployable_collapse(
     island_profile: str = "global",
     stage_params: Phase2StageParams | None = None,
 ) -> bool:
-    """Stop burning gens when the feasible set is empty and restarts are spent.
-
-    Sparse context islands often keep ``deployable=0`` forever; without this
-    abort, Stage A window-rotates through the full island budget for nothing.
-    """
-    if not bool(getattr(_cfg, "PHASE2_ABORT_ZERO_DEPLOYABLE_EPOCHS", True)):
-        return False
+    """Stop burning gens when the feasible set is empty and restarts are spent."""
     if int(deployable_count) > 0:
         return False
     if int(restart_count) < int(max_restarts):
@@ -1037,7 +974,6 @@ def _should_abort_zero_deployable_collapse(
     patience = int(getattr(_cfg, "PHASE2_VIABILITY_COLLAPSE_STREAK", 3))
     if int(viability_collapse_streak) < patience:
         return False
-    # Prefer aborting Stage A / island exploration; Stage B may still polish.
     if stage_params is not None and stage_params.stage == "B":
         return False
     return True

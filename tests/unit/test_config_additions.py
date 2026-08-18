@@ -13,13 +13,6 @@ def test_new_config_parameters_exist():
     assert hasattr(c, 'DEBUG_SYMBOL_SCOPE_ENABLED')
     assert c.DEBUG_SYMBOL == "BTCUSDT"
     assert hasattr(c, 'DEBUG_SYMBOL_COUNT')
-    assert hasattr(c, 'PHASE2_ISLAND_EPOCH_GENERATIONS')
-    assert c.PHASE2_ISLAND_EPOCH_GENERATIONS == 10
-    assert c.PHASE2_ISLAND_MODE == "global"
-    assert c.PHASE2_N_CLUSTERS == 1
-    assert hasattr(c, 'PHASE2_MIGRATION_SEED_FRACTION')
-    assert c.PHASE2_MIGRATION_SEED_FRACTION == 0.10
-    assert hasattr(c, 'PHASE2_SHARED_ARCHIVE_MIN_SYMBOLS') is False or 'PHASE2_SHARED_ARCHIVE_MIN_SYMBOLS' not in dir(c)
     assert c.PHASE1_REQUIRE_SIGN_CONSISTENCY is True
     assert c.PHASE1_SIGN_CONSISTENCY_MIN_FOLDS == 4
     assert c.PHASE2_REQUIRE_LAST_FOLD_POSITIVE is False
@@ -33,8 +26,10 @@ def test_new_config_parameters_exist():
     assert not hasattr(c, "RB_PROFIT_AMP_MAX_RULES")
 
 
-def test_default_pipeline_inputs_are_enriched_and_enrichment_uses_raw_sources():
-    assert c.TRAIN_CSV_PATH == c.ENRICHED_TRAIN_PATH
-    assert c.TEST_CSV_PATH == c.ENRICHED_TEST_PATH
+
+def test_default_pipeline_inputs_are_raw_sources():
+    assert c.TRAIN_CSV_PATH == c.RAW_TRAIN_CSV_PATH
+    assert c.TEST_CSV_PATH == c.RAW_TEST_CSV_PATH
     assert c.RAW_TRAIN_CSV_PATH.endswith("train_new.csv")
     assert c.RAW_TEST_CSV_PATH.endswith("test_new.csv")
+

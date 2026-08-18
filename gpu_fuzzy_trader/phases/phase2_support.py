@@ -41,9 +41,8 @@ def resolve_evolution_floors(
 ) -> EvolutionFloors:
     """Return stage-aware fitness floors; defaults to global strict knobs.
 
-    When both *stage_params* and *island_hyperparams* are set (cluster
-    two-stage), Stage A keeps soft exploration floors; Stage B uses
-    island-scaled support with strict feasibility.
+    When both *stage_params* and *island_hyperparams* are set, Stage A keeps
+    soft exploration floors; Stage B uses the override support target.
     """
     if stage_params is not None:
         min_support = int(stage_params.min_trade_support)

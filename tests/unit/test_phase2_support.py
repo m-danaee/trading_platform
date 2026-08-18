@@ -180,13 +180,12 @@ class TestDeployabilityHelpers:
         ) > 0.0
 
 
-class TestResolveEvolutionFloorsIslandTwoStage:
-    """Stage A soft floors must survive island_hyperparams (cluster two-stage)."""
+class TestResolveEvolutionFloorsWithOverrides:
+    """Stage A soft floors must survive optional floor overrides."""
 
     @staticmethod
     def _island_hp(*, support: int = 80, pool_floor: int = 25):
         return _cfg.IslandHyperparams(
-            profile="cluster",
             min_trade_support=support,
             min_trade_pool_floor=pool_floor,
             sortino_min_trade_threshold=20,
@@ -194,7 +193,6 @@ class TestResolveEvolutionFloorsIslandTwoStage:
             min_profitable_symbols=2,
             monthly_admission_min_months=3,
             monthly_admission_min_profitable_ratio=0.4,
-            skip_symbol_robustness_penalty=False,
             n_rows=200_000,
             n_symbols=3,
         )
@@ -318,7 +316,7 @@ class TestDeployabilityHelpersTail:
 
 class TestPoolAdmissionScaledFloors:
     def test_island_resolved_trade_floors_override_global_floors(self) -> None:
-        island = TestResolveEvolutionFloorsIslandTwoStage._island_hp(
+        island = TestResolveEvolutionFloorsWithOverrides._island_hp(
             support=12,
             pool_floor=8,
         )

@@ -35,12 +35,8 @@ def _make_minimal_gen() -> Rule_Pool_Generator:
     gen._evolution_state = None
     gen._island_history = []
     gen._island_generations_done = 0
-    gen.island_id = "test_island"
-    gen.source_symbols = []
     gen.island_hyperparams = None
-    gen.island_profile = "cluster_0"
     gen.reference_rows = None
-    gen._pending_migrant_seeds = []
     gen._feature_names = ["feat_0"]
     gen._feature_modes = {"feat_0": "discrete"}
     gen._engine = None
@@ -78,24 +74,6 @@ def _mock_evolution_state(
     return state
 
 
-def _mock_stage_plan(
-    remaining_in_stage: int = 100,
-    entering_stage_b: bool = False,
-    two_stage_active: bool = False,
-    stage: str | None = None,
-) -> object:
-    """Build a minimal IslandStagePlan-like object."""
-    return type(
-        "StagePlan",
-        (),
-        {
-            "remaining_in_stage": remaining_in_stage,
-            "entering_stage_b": entering_stage_b,
-            "two_stage_active": two_stage_active,
-            "stage": stage,
-        },
-    )()
-
 
 # ---------------------------------------------------------------------------
 # Fix A - reset_plateau is always True
@@ -118,10 +96,6 @@ class TestResetPlateau:
         monkeypatch.setattr(
             "gpu_fuzzy_trader.evolution.evox_runner.run_phase2_evolution_epoch",
             mock_evolution,
-        )
-        monkeypatch.setattr(
-            "gpu_fuzzy_trader.phases.phase2_stage.resolve_island_stage",
-            lambda *a, **kw: _mock_stage_plan(),
         )
         monkeypatch.setattr(
             "gpu_fuzzy_trader.phases.phase2_init.build_feature_sampling_probs",
@@ -151,10 +125,6 @@ class TestResetPlateau:
             mock_evolution,
         )
         monkeypatch.setattr(
-            "gpu_fuzzy_trader.phases.phase2_stage.resolve_island_stage",
-            lambda *a, **kw: _mock_stage_plan(remaining_in_stage=90),
-        )
-        monkeypatch.setattr(
             "gpu_fuzzy_trader.phases.phase2_init.build_feature_sampling_probs",
             lambda *a, **kw: np.array([0.5, 0.5]),
         )
@@ -172,8 +142,7 @@ class TestResetPlateau:
         )
 
     def test_reset_plateau_true_overrides_two_stage_disabled(self, monkeypatch):
-        """Even when PHASE2_ISLAND_TWO_STAGE_ENABLED=False, reset_plateau=True."""
-        monkeypatch.setattr(cfg, "PHASE2_ISLAND_TWO_STAGE_ENABLED", False)
+        """Even when two-stage is disabled, reset_plateau=True."""
         gen = _make_minimal_gen()
         captured = {}
 
@@ -187,17 +156,13 @@ class TestResetPlateau:
             mock_evolution,
         )
         monkeypatch.setattr(
-            "gpu_fuzzy_trader.phases.phase2_stage.resolve_island_stage",
-            lambda *a, **kw: _mock_stage_plan(),
-        )
-        monkeypatch.setattr(
             "gpu_fuzzy_trader.phases.phase2_init.build_feature_sampling_probs",
             lambda *a, **kw: np.array([0.5, 0.5]),
         )
 
         gen.run_epoch(n_generations=10)
         assert captured.get("reset_plateau") is True, (
-            f"Expected reset_plateau=True even with two-stage disabled, got "
+            f"Expected reset_plateau=True, got "
             f"{captured.get('reset_plateau')}"
         )
 
@@ -223,10 +188,6 @@ class TestIslandGenerationsDone:
             mock_evolution,
         )
         monkeypatch.setattr(
-            "gpu_fuzzy_trader.phases.phase2_stage.resolve_island_stage",
-            lambda *a, **kw: _mock_stage_plan(),
-        )
-        monkeypatch.setattr(
             "gpu_fuzzy_trader.phases.phase2_init.build_feature_sampling_probs",
             lambda *a, **kw: np.array([0.5, 0.5]),
         )
@@ -248,10 +209,6 @@ class TestIslandGenerationsDone:
         monkeypatch.setattr(
             "gpu_fuzzy_trader.evolution.evox_runner.run_phase2_evolution_epoch",
             mock_evolution,
-        )
-        monkeypatch.setattr(
-            "gpu_fuzzy_trader.phases.phase2_stage.resolve_island_stage",
-            lambda *a, **kw: _mock_stage_plan(),
         )
         monkeypatch.setattr(
             "gpu_fuzzy_trader.phases.phase2_init.build_feature_sampling_probs",
@@ -280,10 +237,6 @@ class TestIslandGenerationsDone:
             mock_evolution,
         )
         monkeypatch.setattr(
-            "gpu_fuzzy_trader.phases.phase2_stage.resolve_island_stage",
-            lambda *a, **kw: _mock_stage_plan(remaining_in_stage=90),
-        )
-        monkeypatch.setattr(
             "gpu_fuzzy_trader.phases.phase2_init.build_feature_sampling_probs",
             lambda *a, **kw: np.array([0.5, 0.5]),
         )
@@ -299,67 +252,6 @@ class TestIslandGenerationsDone:
             f"{gen._island_generations_done}"
         )
 
-
-# ---------------------------------------------------------------------------
-# AC-4: Stage B seeding / migration unchanged
-# ---------------------------------------------------------------------------
-
-
-def test_stage_b_seeding_still_uses_entering_stage_b(monkeypatch):
-    """The entering_stage_b variable still controls seed logic (not reset_plateau).
-
-    Verifies that reset_plateau=True does NOT break the existing
-    entering_stage_b seeding path.
-    """
-    gen = _make_minimal_gen()
-    # Need a non-None _evolution_state for entering_stage_b seed logic
-    gen._evolution_state = _mock_evolution_state(gen)
-
-    monkeypatch.setattr(
-        "gpu_fuzzy_trader.phases.phase2_stage.resolve_island_stage",
-        lambda *a, **kw: _mock_stage_plan(
-            remaining_in_stage=50,
-            entering_stage_b=True,
-            two_stage_active=True,
-            stage="B",
-        ),
-    )
-    monkeypatch.setattr(
-        "gpu_fuzzy_trader.phases.phase2_init.build_feature_sampling_probs",
-        lambda *a, **kw: np.array([0.5, 0.5]),
-    )
-
-    # Dont-care mask with all 0s so seeds pass through
-    monkeypatch.setattr(
-        "gpu_fuzzy_trader.phases.phase2_rule_pool._get_dont_cares",
-        lambda *a, **kw: np.array([0, 0], dtype=np.int32),
-    )
-    monkeypatch.setattr(
-        "gpu_fuzzy_trader.phases.phase2_rule_pool._deployable_archive_pool_entries",
-        lambda *a, **kw: [],
-    )
-    monkeypatch.setattr(
-        "gpu_fuzzy_trader.phases.phase2_rule_pool._stage_b_seed_chromosomes",
-        lambda *a, **kw: np.array([[0, 0], [1, 1]], dtype=np.int32),
-    )
-
-    def mock_evolution(*args, **kwargs):
-        state = _mock_evolution_state(gen, plateau_streak=0, plateau_best_progress=-np.inf)
-        return state, [{"gen": i} for i in range(3)]
-
-    monkeypatch.setattr(
-        "gpu_fuzzy_trader.evolution.evox_runner.run_phase2_evolution_epoch",
-        mock_evolution,
-    )
-    monkeypatch.setattr(
-        "gpu_fuzzy_trader.evolution.evox_runner.extract_deployable_migrants",
-        lambda *a, **kw: [],
-    )
-
-    try:
-        gen.run_epoch(n_generations=10)
-    except Exception as e:
-        pytest.fail(f"run_epoch raised unexpectedly with Stage B: {e}")
 
 
 # ---------------------------------------------------------------------------

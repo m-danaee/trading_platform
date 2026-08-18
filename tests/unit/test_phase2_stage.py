@@ -9,10 +9,9 @@ from gpu_fuzzy_trader.evolution.evox_runner import (
 )
 from gpu_fuzzy_trader.phases.phase2_rule_pool import compute_phase2_objectives_from_metrics
 from gpu_fuzzy_trader.phases.phase2_stage import (
-    island_stage_budgets,
-    resolve_island_stage,
     resolve_phase2_stage_params,
 )
+
 
 
 class TestResolvePhase2StageParams:
@@ -176,7 +175,6 @@ class TestStageObjectivePenalties:
         stage_a = resolve_phase2_stage_params("A")
         stage_b = resolve_phase2_stage_params("B")
         island = _cfg.IslandHyperparams(
-            profile="cluster",
             min_trade_support=80,
             min_trade_pool_floor=25,
             sortino_min_trade_threshold=20,
@@ -184,7 +182,6 @@ class TestStageObjectivePenalties:
             min_profitable_symbols=2,
             monthly_admission_min_months=3,
             monthly_admission_min_profitable_ratio=0.4,
-            skip_symbol_robustness_penalty=False,
             n_rows=200_000,
             n_symbols=3,
         )
@@ -222,7 +219,6 @@ class TestStageObjectivePenalties:
         }
         stage_a = resolve_phase2_stage_params("A")
         island = _cfg.IslandHyperparams(
-            profile="cluster",
             min_trade_support=80,
             min_trade_pool_floor=25,
             sortino_min_trade_threshold=20,
@@ -230,7 +226,6 @@ class TestStageObjectivePenalties:
             min_profitable_symbols=2,
             monthly_admission_min_months=3,
             monthly_admission_min_profitable_ratio=0.4,
-            skip_symbol_robustness_penalty=False,
             n_rows=200_000,
             n_symbols=3,
         )
@@ -249,67 +244,7 @@ class TestStageObjectivePenalties:
         assert obj_b[1] >= 50.0
 
 
-class TestIslandStageBudgets:
-    def test_island_budgets_scale_total_generations(self, monkeypatch):
-        monkeypatch.setattr(_cfg, "PHASE2_ISLAND_MODE", "global")
-        monkeypatch.setattr(_cfg, "PHASE2_TWO_STAGE_ENABLED", True)
-        monkeypatch.setattr(_cfg, "PHASE2_STAGE_A_GENERATIONS", 80)
-        monkeypatch.setattr(_cfg, "PHASE2_STAGE_B_GENERATIONS", 40)
 
-        stage_a, stage_b = island_stage_budgets(80)
-        assert stage_a + stage_b == 80
-        assert stage_a > stage_b
-
-    def test_resolve_island_stage_transitions_to_b(self, monkeypatch):
-        monkeypatch.setattr(_cfg, "PHASE2_ISLAND_MODE", "global")
-        monkeypatch.setattr(_cfg, "PHASE2_TWO_STAGE_ENABLED", True)
-        monkeypatch.setattr(_cfg, "PHASE2_STAGE_A_GENERATIONS", 80)
-        monkeypatch.setattr(_cfg, "PHASE2_STAGE_B_GENERATIONS", 40)
-
-        stage_a, stage_b = island_stage_budgets(80)
-        plan_a = resolve_island_stage(0, 80)
-        assert plan_a.stage == "A"
-        assert plan_a.entering_stage_b is False
-
-        plan_b = resolve_island_stage(stage_a, 80)
-        assert plan_b.stage == "B"
-        assert plan_b.entering_stage_b is True
-        assert plan_b.remaining_in_stage == stage_b
-
-    def test_cluster_mode_disables_two_stage(self, monkeypatch):
-        monkeypatch.setattr(_cfg, "PHASE2_ISLAND_MODE", "cluster")
-        monkeypatch.setattr(_cfg, "PHASE2_TWO_STAGE_ENABLED", True)
-        monkeypatch.setattr(_cfg, "PHASE2_ISLAND_TWO_STAGE_ENABLED", False)
-
-        stage_a, stage_b = island_stage_budgets(43)
-        assert stage_a == 43
-        assert stage_b == 0
-
-        plan = resolve_island_stage(0, 43)
-        assert plan.stage is None
-        assert plan.two_stage_active is False
-        assert plan.remaining_in_stage == 43
-
-    def test_cluster_mode_enables_island_two_stage(self, monkeypatch):
-        monkeypatch.setattr(_cfg, "PHASE2_ISLAND_MODE", "cluster")
-        monkeypatch.setattr(_cfg, "PHASE2_TWO_STAGE_ENABLED", False)
-        monkeypatch.setattr(_cfg, "PHASE2_ISLAND_TWO_STAGE_ENABLED", True)
-        monkeypatch.setattr(_cfg, "PHASE2_STAGE_A_GENERATIONS", 60)
-        monkeypatch.setattr(_cfg, "PHASE2_STAGE_B_GENERATIONS", 36)
-
-        stage_a, stage_b = island_stage_budgets(32)
-        assert stage_a + stage_b == 32
-        assert stage_a > 0 and stage_b > 0
-
-        plan_a = resolve_island_stage(0, 32)
-        assert plan_a.stage == "A"
-        assert plan_a.two_stage_active is True
-        assert plan_a.remaining_in_stage == stage_a
-
-        plan_b = resolve_island_stage(stage_a, 32)
-        assert plan_b.stage == "B"
-        assert plan_b.entering_stage_b is True
-        assert plan_b.remaining_in_stage == stage_b
 
 
 class TestParetoCollapseDiversityRecovery:

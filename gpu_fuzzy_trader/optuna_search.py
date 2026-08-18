@@ -24,7 +24,7 @@ from optuna.samplers import TPESampler
 from gpu_fuzzy_trader import config as _cfg
 
 
-# Independent, live configuration parameters.  Stage B and island totals are
+# Independent, live configuration parameters.  Stage B totals are
 # derived in sample_trial_params() so every trial satisfies validate_config().
 SEARCH_SPACE: dict[str, list[Any]] = {
     "PHASE1_TOP_K_FEATURES": [10, 15, 20, 25, 30],
@@ -97,8 +97,8 @@ def sample_trial_params(trial: optuna.Trial) -> dict[str, Any]:
         )
         params["PHASE2_STAGE_A_GENERATIONS"] = stage_a
         params["PHASE2_STAGE_B_GENERATIONS"] = total - stage_a
-        params["PHASE2_ISLAND_TOTAL_GENERATIONS"] = total
         # Stage A is the exploration stage; derive a non-increasing Stage B
+
         # rate so independent sampling can never violate that contract.
         params["PHASE2_STAGE_B_MUTATION_RATE"] = min(
             0.20,
@@ -208,8 +208,8 @@ _FAST_MODE_COPY_FILES: tuple[str, ...] = (
     "phase2_short_pool.json",
     "phase2_long_history.json",
     "phase2_short_history.json",
-    "symbol_clusters.json",
 )
+
 
 
 def _copy_phase1_2_outputs(src_dir: str, dst_dir: str) -> None:

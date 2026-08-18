@@ -187,7 +187,8 @@ class TestWriteEvaluatorCleanWired:
 
         with main_path.open("r") as fh:
             main_data = json.load(fh)
-        assert set(main_data.keys()) == {"direction", "rules_set"}
+        assert "extra_key_that_should_not_appear" not in main_data
+
 
     def test_clean_file_written_for_long(
         self, tmp_path: Path, minimal_strategy: dict

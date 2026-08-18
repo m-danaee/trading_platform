@@ -9,12 +9,13 @@ import pandas as pd
 import pytest
 
 from gpu_fuzzy_trader import config as cfg
-from gpu_fuzzy_trader.phases.phase2_island_scheduler import _derive_epoch_seed
 from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+    _derive_epoch_seed,
     _resolve_sample_total_rows,
     _sample_df,
     sample_df_for_phase2,
 )
+
 
 
 # ---------------------------------------------------------------------------
@@ -89,11 +90,11 @@ class TestDeriveEpochSeed:
         """None base seed returns None."""
         assert _derive_epoch_seed(None, 0) is None
 
-    def test_seed_mode_hash_island_epoch_deterministic(self, monkeypatch):
-        """PHASE2_PER_EPOCH_WINDOW_SEED_MODE='hash_island_epoch' produces
+    def test_seed_mode_hash_epoch_deterministic(self, monkeypatch):
+        """PHASE2_PER_EPOCH_WINDOW_SEED_MODE='hash_epoch' produces
         deterministic seeds."""
         monkeypatch.setattr(
-            cfg, "PHASE2_PER_EPOCH_WINDOW_SEED_MODE", "hash_island_epoch"
+            cfg, "PHASE2_PER_EPOCH_WINDOW_SEED_MODE", "hash_epoch"
         )
         s1 = _derive_epoch_seed(12345, 0)
         s2 = _derive_epoch_seed(12345, 0)
@@ -309,9 +310,6 @@ class TestEndToEndRotation:
             direction="long",
             n_generations=10,
             seed=42,
-            source_symbols=["SYM_0", "SYM_1", "SYM_2", "SYM_3"],
-            island_id="0",
-            island_profile="cluster",
             defer_warmup=True,
         )
         return gen
@@ -360,9 +358,6 @@ class TestEndToEndRotation:
             direction="long",
             n_generations=10,
             seed=42,
-            source_symbols=["SYM_0", "SYM_1", "SYM_2", "SYM_3"],
-            island_id="0",
-            island_profile="cluster",
             defer_warmup=True,
         )
         gen2.resample_train_for_epoch(3)

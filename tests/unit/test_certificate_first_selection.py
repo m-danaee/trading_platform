@@ -80,7 +80,7 @@ def test_partial_specialist_policy_requires_missing_symbol_to_have_no_candidate(
     frame = pd.DataFrame({"symbol": ["BTCUSDT", "ETHUSDT"]})
 
     with patch.object(_cfg, "RB_MIN_DISTINCT_SYMBOLS", 2), patch.object(
-        _cfg, "PHASE2_SYMBOL_SPECIALISTS_ENABLED", True
+        _cfg, "RB_REQUIRE_SYMBOL_FILTERS", True
     ), patch.object(
         _cfg, "RB_ALLOW_PARTIAL_SPECIALIST_COVERAGE", True
     ), patch.object(_cfg, "RB_MULTI_SYMBOL_RELEASE", True):
@@ -99,7 +99,7 @@ def test_partial_specialist_policy_allows_sparse_symbol_when_release_not_multi()
     frame = pd.DataFrame({"symbol": ["BTCUSDT", "ETHUSDT"]})
 
     with patch.object(_cfg, "RB_MIN_DISTINCT_SYMBOLS", 2), patch.object(
-        _cfg, "PHASE2_SYMBOL_SPECIALISTS_ENABLED", True
+        _cfg, "RB_REQUIRE_SYMBOL_FILTERS", True
     ), patch.object(
         _cfg, "RB_ALLOW_PARTIAL_SPECIALIST_COVERAGE", True
     ), patch.object(_cfg, "RB_MULTI_SYMBOL_RELEASE", False):
@@ -116,7 +116,7 @@ def test_partial_specialist_policy_keeps_full_floor_when_both_symbols_exist():
     frame = pd.DataFrame({"symbol": ["BTCUSDT", "ETHUSDT"]})
 
     with patch.object(_cfg, "RB_MIN_DISTINCT_SYMBOLS", 2), patch.object(
-        _cfg, "PHASE2_SYMBOL_SPECIALISTS_ENABLED", True
+        _cfg, "RB_REQUIRE_SYMBOL_FILTERS", True
     ), patch.object(
         _cfg, "RB_ALLOW_PARTIAL_SPECIALIST_COVERAGE", True
     ), patch.object(_cfg, "RB_MULTI_SYMBOL_RELEASE", True):
@@ -125,6 +125,7 @@ def test_partial_specialist_policy_keeps_full_floor_when_both_symbols_exist():
     assert not policy["partial_specialist_coverage"]
     assert policy["effective_min_symbols"] == 2
     assert policy["concentration_max_share"] == _cfg.RB_MAX_SYMBOL_SHARE_ABS_PNL
+
 
 
 def test_compose_uses_balanced_beam_seed_instead_of_eth_leader():
