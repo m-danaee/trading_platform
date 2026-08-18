@@ -108,3 +108,97 @@ class ResearchProfile:
             separators=(",", ":"),
         ).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()[:20]
+
+
+@dataclass(frozen=True)
+class RuleSearchProfile:
+    """Configuration contract for evolutionary rule search at a specific timeframe layer.
+
+    Defines search constraints and evaluation targets for HWC (4H), MWC (1H), and LWC (15m).
+    """
+
+    role: str
+    timeframe_minutes: int
+    min_conditions: int
+    max_conditions: int
+    target_coverage: tuple[float, float]
+    forward_horizon_bars: int
+    quantile: float = 0.60
+    support_threshold: float = 0.20
+
+    @classmethod
+    def hwc(cls) -> "RuleSearchProfile":
+        """Standard profile for 4H Macro Directional Bias rules."""
+        return cls(
+            role="hwc",
+            timeframe_minutes=240,
+            min_conditions=1,
+            max_conditions=2,
+            target_coverage=(0.20, 0.60),
+            forward_horizon_bars=6,
+            quantile=0.60,
+            support_threshold=0.20,
+        )
+
+    @classmethod
+    def mwc(cls) -> "RuleSearchProfile":
+        """Standard profile for 1H Conditional Setup / Continuation rules."""
+        return cls(
+            role="mwc",
+            timeframe_minutes=60,
+            min_conditions=1,
+            max_conditions=3,
+            target_coverage=(0.10, 0.40),
+            forward_horizon_bars=4,
+            quantile=0.60,
+            support_threshold=0.20,
+        )
+
+    @classmethod
+    def lwc(cls) -> "RuleSearchProfile":
+        """Standard profile for 15m Execution Trigger rules."""
+        return cls(
+            role="lwc",
+            timeframe_minutes=15,
+            min_conditions=2,
+            max_conditions=4,
+            target_coverage=(0.01, 0.20),
+            forward_horizon_bars=0,
+            quantile=0.0,
+            support_threshold=0.0,
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @property
+    def profile_id(self) -> str:
+        encoded = json.dumps(
+            self.as_dict(),
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()[:20]
+
+
+def get_rule_search_profile(role: str) -> RuleSearchProfile:
+    """Retrieve standard RuleSearchProfile by layer role or timeframe name.
+
+    Args:
+        role: "hwc" / "4h", "mwc" / "1h", or "lwc" / "15m".
+
+    Returns:
+        RuleSearchProfile instance.
+    """
+    role_lower = role.strip().lower()
+    if role_lower in ("hwc", "4h", "240m", "macro"):
+        return RuleSearchProfile.hwc()
+    elif role_lower in ("mwc", "1h", "60m", "setup"):
+        return RuleSearchProfile.mwc()
+    elif role_lower in ("lwc", "15m", "trigger", "execution"):
+        return RuleSearchProfile.lwc()
+    else:
+        raise ValueError(
+            f"Unknown rule search profile role: {role!r}. Expected 'hwc', 'mwc', or 'lwc'."
+        )
+
