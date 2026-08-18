@@ -324,6 +324,11 @@ def _context_support_preflight(
             "surviving_clusters": dict(cluster_map),
         }
 
+    from gpu_fuzzy_trader.run_pipeline import (
+        _context_coverage_for_direction as context_coverage_for_direction,
+        _context_floor_failures as context_floor_failures,
+    )
+
     report: dict[str, Any] = {
         "direction": direction,
         "reference_rows": int(reference_rows),
