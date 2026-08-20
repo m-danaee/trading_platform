@@ -349,6 +349,10 @@ LEVERAGE = 1.0
 #   Higher → penalizes high-turnover rules; net return and PF drop for active rules.
 #   Lower  → optimistic backtest; must match evaluator_v5.ipynb for valid OOS.
 FEE_PCT = 0.20
+# SPREAD_BPS — bid-ask spread cost in basis points (1 bp = 0.01% = 0.0001).
+SPREAD_BPS = 0.0
+# SLIPPAGE_BPS — execution slippage in basis points (1 bp = 0.01% = 0.0001).
+SLIPPAGE_BPS = 0.0
 # Identifier included in strategy packages so a fee/execution-model change
 # cannot silently reuse an old economic strategy identity.
 COST_MODEL_ID: str = "crypto_bar_v2"
@@ -2471,6 +2475,8 @@ def validate_config(
         "PHASE2_MONTHLY_MAX_BEARISH_RATIO must be in [0, 1]",
     )
     fee_pct = _finite_config_number("FEE_PCT", FEE_PCT)
+    spread_bps = _finite_config_number("SPREAD_BPS", SPREAD_BPS)
+    slippage_bps = _finite_config_number("SLIPPAGE_BPS", SLIPPAGE_BPS)
     initial_capital = _finite_config_number("INITIAL_CAPITAL", INITIAL_CAPITAL)
     leverage = _finite_config_number("LEVERAGE", LEVERAGE)
     max_exposure = _finite_config_number(
@@ -2480,6 +2486,8 @@ def validate_config(
         "MIN_POSITION_NOTIONAL", MIN_POSITION_NOTIONAL
     )
     _config_check(fee_pct >= 0.0, "FEE_PCT must be non-negative")
+    _config_check(spread_bps >= 0.0, "SPREAD_BPS must be non-negative")
+    _config_check(slippage_bps >= 0.0, "SLIPPAGE_BPS must be non-negative")
     _config_check(initial_capital > 0.0, "INITIAL_CAPITAL must be positive")
     _config_check(leverage > 0.0, "LEVERAGE must be positive")
     _config_check(max_exposure > 0.0,

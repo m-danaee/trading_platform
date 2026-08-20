@@ -1270,3 +1270,70 @@ class TestTradeSupportPenalty:
         executed = (_cfg.MIN_TRADE_POOL_FLOOR + _cfg.MIN_TRADE_SUPPORT) // 2
         pen = trade_support_penalty(executed)
         assert 0.0 <= pen <= _cfg.SUPPORT_PENALTY_MAX
+
+
+class TestCostModelAndReliabilityAuditFixes:
+    """Tests covering the 5 reliability audit fixes."""
+
+    def test_cost_model_spread_slippage(self):
+        df = _make_df(n=5)
+        # Entry at 100, label_max=105 -> price return = 5.0%
+        # Capital = 1000, 10% notional = 100. Gross pnl = 5.0.
+        # fee_pct = 0.20% (0.0020), spread_bps = 10 (0.0010), slippage_bps = 10 (0.0010)
+        # effective_fee_rate = 0.0040. Fee on 100 notional = 0.40.
+        # Net pnl = 5.0 - 0.40 = 4.60.
+        engine = CPUBacktestEngine(
+            df,
+            {},
+            direction="long",
+            fee_pct=0.20,
+            spread_bps=10.0,
+            slippage_bps=10.0,
+        )
+        assert engine.effective_fee_rate == pytest.approx(0.0040)
+        rule = {"conditions": ["[feat_a] IS Very High"], "tp": 5.0, "sl": 2.0, "capital_pct": 10.0}
+        metrics, logs = engine.simulate_rule_set([rule], return_logs=True)
+        assert logs.iloc[0]["Fee"] == pytest.approx(0.40)
+        assert logs.iloc[0]["Net_PnL"] == pytest.approx(4.60)
+
+    def test_exact_barrier_missing_pair_fails_closed(self):
+        df = _make_df(n=5)
+        # Add exact barrier columns for one pair (2.0, 1.0) but NOT for (3.0, 1.0)
+        ret_col, off_col = barrier_column_names("long", 2.0, 1.0)
+        df[ret_col] = 2.0
+        df[off_col] = 1
+        engine = CPUBacktestEngine(df, {}, direction="long")
+        assert engine._exact_barrier_available is True
+        # Requesting a missing barrier pair when _exact_barrier_available is True must fail closed
+        with pytest.raises(KeyError, match="Missing exact barrier columns"):
+            engine._get_trade_bundle(3.0, 1.0)
+
+    def test_context_mask_fails_closed_when_required_and_missing(self, monkeypatch):
+        monkeypatch.setattr(_cfg, "REQUIRE_CONTEXT_IN_STRATEGY", True)
+        df = _make_df(n=5)
+        # df does not have context columns
+        engine = CPUBacktestEngine(df, {}, direction="long")
+        # Mask must fail closed (all zeros), not fail open (all ones)
+        assert not np.any(engine._context_mask)
+
+    def test_symbol_order_invariance_and_timestamp_priority_release(self):
+        """Portfolio metrics must be invariant to symbol ordering across interleaved timestamps."""
+        def run_sim(s1: str, s2: str) -> dict:
+            rows = [
+                {'datetime': '2024-01-01 00:00:00', 'symbol': s1, '_symbol_bar_index': 0, 'label_open_next': 100.0, 'label_max_288': 100.0, 'label_min_288': 100.0, 'label_close_288': 100.0, 'label_max_before_min': 0, 'feat_a': 1.0},
+                {'datetime': '2024-01-01 00:00:00', 'symbol': s2, '_symbol_bar_index': 0, 'label_open_next': 100.0, 'label_max_288': 100.0, 'label_min_288': 100.0, 'label_close_288': 100.0, 'label_max_before_min': 0, 'feat_a': 0.0},
+                {'datetime': '2024-01-01 00:15:00', 'symbol': s2, '_symbol_bar_index': 1, 'label_open_next': 100.0, 'label_max_288': 100.0, 'label_min_288': 100.0, 'label_close_288': 100.0, 'label_max_before_min': 0, 'feat_a': 1.0},
+                {'datetime': '2024-01-01 00:15:00', 'symbol': s1, '_symbol_bar_index': 1, 'label_open_next': 100.0, 'label_max_288': 100.0, 'label_min_288': 100.0, 'label_close_288': 100.0, 'label_max_before_min': 0, 'feat_a': 0.0},
+            ]
+            df = pd.DataFrame(rows)
+            eng = CPUBacktestEngine(df, {}, 'long', max_hold_candles=1, max_total_exposure_pct=100.0)
+            rule = {'conditions': ['[feat_a] IS Very High'], 'tp': 5.0, 'sl': 5.0, 'capital_pct': 100.0}
+            return eng.simulate_rule_set([rule])
+
+        res_ab = run_sim('BTC', 'ETH')
+        res_ba = run_sim('ETH', 'BTC')
+        assert res_ab['executed_trades'] == 2
+        assert res_ba['executed_trades'] == 2
+        assert res_ab['executed_trades'] == res_ba['executed_trades']
+        assert res_ab['final_equity'] == pytest.approx(res_ba['final_equity'])
+
