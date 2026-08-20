@@ -2840,6 +2840,12 @@ class Pipeline_Orchestrator:
             include_barrier_outcomes=True,
             require_context=False if mtf_mode else True,
         )
+        # Drop rows where any LABEL_COLUMNS is NaN before splitting (e.g. tail rows
+        # retained by drop_tail=False for exact barrier outcome calculation).
+        # This keeps the full source tape for barrier outcome construction while
+        # ensuring downstream splits and backtest engines receive valid labels.
+        from gpu_fuzzy_trader.config import LABEL_COLUMNS
+        train_full = train_full.dropna(subset=list(LABEL_COLUMNS)).reset_index(drop=True)
         logger.info(
             "Loaded %d rows, %d symbols",
             len(train_full),
