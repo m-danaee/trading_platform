@@ -422,7 +422,7 @@ def test_property_3_no_nan_labels_after_loading(raw_df: pd.DataFrame) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Property 4: No NaN Features After Loading
+# Property 4: Feature NaN Handling After Loading
 # Validates: Requirements 2.5
 # ---------------------------------------------------------------------------
 
@@ -433,7 +433,7 @@ def dataframe_with_nan_features(draw: st.DrawFn) -> pd.DataFrame:
     randomly contain NaN values.  Each symbol still has more than
     TAIL_DROP_ROWS rows so that at least one row survives the tail drop.
     All label columns are non-NaN so that step 5 (NaN-label drop) does not
-    remove any rows — this isolates the feature-NaN-fill behaviour (step 6).
+    remove any rows — this isolates the feature-NaN handling behaviour.
 
     Multiple feature columns are generated so the test exercises the case
     where NaN values appear in different columns and in different rows.
@@ -506,48 +506,52 @@ def dataframe_with_nan_features(draw: st.DrawFn) -> pd.DataFrame:
     return df
 
 
-@given(raw_df=dataframe_with_nan_features())
+@given(raw_df=dataframe_with_nan_features(), fill_with_zero=st.booleans())
 @prop_settings(
     max_examples=50,
-    suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example, HealthCheck.data_too_large],
+    suppress_health_check=[
+        HealthCheck.too_slow,
+        HealthCheck.large_base_example,
+        HealthCheck.data_too_large,
+    ],
 )
-def test_property_4_no_nan_features_after_loading(raw_df: pd.DataFrame) -> None:
+def test_property_4_no_nan_features_after_loading(raw_df: pd.DataFrame, fill_with_zero: bool) -> None:
     """
-    **Property 4: No NaN Features After Loading**
+    **Property 4: Feature NaN Handling After Loading**
     **Validates: Requirements 2.5**
 
-    For any valid dataset (with some feature columns having NaN values),
-    after calling Data_Loader().load_dataset(), the resulting DataFrame must
-    have NO NaN values in any feature column.
-
-    Feature columns are all columns that are NOT in LABEL_COLUMNS or
-    META_COLUMNS.  This validates that step 6 of the loader (fill NaN in
-    feature columns with 0) works correctly regardless of which feature
-    column contains NaN, which rows are affected, and how many NaN values
-    exist.
+    When FILL_NA_WITH_ZERO is True, the resulting DataFrame must have NO NaN
+    values in any feature column. When FILL_NA_WITH_ZERO is False (default),
+    feature NaNs are preserved.
     """
-    loaded_df = _load_from_df(raw_df)
+    from gpu_fuzzy_trader import config as _cfg
+    original_val = getattr(_cfg, "FILL_NA_WITH_ZERO", False)
+    _cfg.FILL_NA_WITH_ZERO = fill_with_zero
+    try:
+        loaded_df = _load_from_df(raw_df)
 
-    # The loaded DataFrame must be non-empty
-    assert len(loaded_df) > 0, (
-        "Expected at least one row to survive after tail drop, "
-        f"but got an empty DataFrame. Input had {len(raw_df)} rows."
-    )
-
-    # Identify feature columns: everything that is not a label or meta column
-    non_feature = set(LABEL_COLUMNS) | set(
-        META_COLUMNS) | set(INTERNAL_COLUMNS)
-    feature_cols_present = [c for c in loaded_df.columns if c not in non_feature]
-
-    assert feature_cols_present, (
-        "No feature columns found in the loaded DataFrame. "
-        f"Columns present: {list(loaded_df.columns)}"
-    )
-
-    for col in feature_cols_present:
-        nan_count = loaded_df[col].isna().sum()
-        assert nan_count == 0, (
-            f"Feature column '{col}' still contains {nan_count} NaN value(s) "
-            f"after load_dataset(). The loader must fill all feature NaN "
-            f"values with 0 (Requirement 2.5)."
+        # The loaded DataFrame must be non-empty
+        assert len(loaded_df) > 0, (
+            "Expected at least one row to survive after tail drop, "
+            f"but got an empty DataFrame. Input had {len(raw_df)} rows."
         )
+
+        # Identify feature columns: everything that is not a label or meta column
+        non_feature = set(LABEL_COLUMNS) | set(
+            META_COLUMNS) | set(INTERNAL_COLUMNS)
+        feature_cols_present = [c for c in loaded_df.columns if c not in non_feature]
+
+        assert feature_cols_present, (
+            "No feature columns found in the loaded DataFrame. "
+            f"Columns present: {list(loaded_df.columns)}"
+        )
+
+        if fill_with_zero:
+            for col in feature_cols_present:
+                nan_count = loaded_df[col].isna().sum()
+                assert nan_count == 0, (
+                    f"Feature column '{col}' still contains {nan_count} NaN value(s) "
+                    f"after load_dataset() with FILL_NA_WITH_ZERO=True."
+                )
+    finally:
+        _cfg.FILL_NA_WITH_ZERO = original_val

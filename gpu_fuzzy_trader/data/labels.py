@@ -33,6 +33,14 @@ def compute_labels(raw: pd.DataFrame) -> pd.DataFrame:
     (the loader drops them via ``TAIL_DROP_ROWS``).
     """
     raw = raw.sort_values(["symbol", "datetime"]).reset_index(drop=True)
+    if raw.empty:
+        return pd.DataFrame(
+            columns=[
+                "datetime",
+                "symbol",
+                *LABEL_COLS,
+            ]
+        )
     parts: list[pd.DataFrame] = []
     for _sym, g in raw.groupby("symbol", sort=True, observed=False):
         g = g.reset_index(drop=True)
@@ -44,10 +52,13 @@ def compute_labels(raw: pd.DataFrame) -> pd.DataFrame:
         c = g["close"].to_numpy()
 
         lab_open = np.full(n, np.nan, dtype=np.float64)
-        lab_open[: n - 1] = o[1:]
+        if n > 1:
+            lab_open[: n - 1] = o[1:]
 
         lab_close = np.full(n, np.nan, dtype=np.float64)
-        lab_close[: n - TAIL_DROP_ROWS] = c[TAIL_DROP_ROWS:]
+        valid_rows = max(0, n - TAIL_DROP_ROWS)
+        if valid_rows > 0:
+            lab_close[:valid_rows] = c[TAIL_DROP_ROWS: TAIL_DROP_ROWS + valid_rows]
 
         lab_min = np.full(n, np.nan, dtype=np.float64)
         if n > TAIL_DROP_ROWS:
@@ -58,7 +69,7 @@ def compute_labels(raw: pd.DataFrame) -> pd.DataFrame:
                 .shift(-TAIL_DROP_ROWS)
                 .to_numpy()
             )
-            lab_min[: n - TAIL_DROP_ROWS] = rolling_min[: n - TAIL_DROP_ROWS]
+            lab_min[:valid_rows] = rolling_min[:valid_rows]
 
         lab_max = np.full(n, np.nan, dtype=np.float64)
         if n > TAIL_DROP_ROWS:
@@ -69,7 +80,7 @@ def compute_labels(raw: pd.DataFrame) -> pd.DataFrame:
                 .shift(-TAIL_DROP_ROWS)
                 .to_numpy()
             )
-            lab_max[: n - TAIL_DROP_ROWS] = rolling_max[: n - TAIL_DROP_ROWS]
+            lab_max[:valid_rows] = rolling_max[:valid_rows]
 
         lab_mbm = np.full(n, np.nan, dtype=np.float64)
         if n > TAIL_DROP_ROWS:
@@ -77,7 +88,6 @@ def compute_labels(raw: pd.DataFrame) -> pd.DataFrame:
 
             hi_windows = sliding_window_view(hi, TAIL_DROP_ROWS)
             lo_windows = sliding_window_view(lo, TAIL_DROP_ROWS)
-            valid_rows = n - TAIL_DROP_ROWS
             hi_fwd = hi_windows[1: valid_rows + 1]
             lo_fwd = lo_windows[1: valid_rows + 1]
             argmax_idx = np.argmax(hi_fwd, axis=1)

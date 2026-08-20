@@ -86,6 +86,7 @@ _PHASE1_IDENTITY_CONFIG_KEYS = (
     "PHASE1_DISPERSION_THRESHOLD",
     "PHASE1_TOP_K_FEATURES",
     "PHASE1_ASYMMETRIC_TARGET",
+    "PHASE1_USE_EXACT_BARRIER",
     "PHASE1_REQUIRE_SIGN_CONSISTENCY",
     "PHASE1_SIGN_CONSISTENCY_MIN_FOLDS",
     "PHASE1_SIGN_CONSISTENCY_MIN_ABS_CORR",
@@ -947,75 +948,75 @@ def _build_target(df: pd.DataFrame, direction: str) -> pd.Series:
     """
     Build a direction-specific target signal.
 
+    When PHASE1_USE_EXACT_BARRIER is True (default) and exact barrier columns
+    exist in df for (direction, PHASE2_TP, PHASE2_SL), the exact first-touch
+    barrier return is used:
+        win:  exact_return == +TP (within float tolerance)
+        loss: exact_return == -SL (within float tolerance)
+
+    Fallback / Legacy:
+        Uses label_max_288, label_min_288, and label_max_before_min.
+
     Default (PHASE1_ASYMMETRIC_TARGET=True):
-        Signed expected-PnL surrogate (3-class, then encoded to int target).
-        Long:
-            +1  TP hit and TP came first (clear win)
-            -1  SL hit and SL came first (clear loss)
-             0  neither side cleanly resolved
-        Short: mirror logic with min_288 instead of max_288.
-        This gives long and short genuinely different targets, addressing the
-        "long and short feature lists nearly identical" issue observed.
-
+        Signed expected-PnL surrogate (3-class: 0=loss, 1=neutral, 2=win).
     Legacy (PHASE1_ASYMMETRIC_TARGET=False):
-        Binary success target — kept for ablation comparisons.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-    direction : str
-        "long" or "short"
-
-    Returns
-    -------
-    pd.Series
-        Integer series with discrete classes (target encoding).
+        Binary success target (1 if win, else 0).
     """
-    tp = config.PHASE2_TP
-    sl = config.PHASE2_SL
+    tp = float(config.PHASE2_TP)
+    sl = float(config.PHASE2_SL)
 
-    open_next = df["label_open_next"]
-    max_288 = df["label_max_288"]
-    min_288 = df["label_min_288"]
-    max_before_min = df["label_max_before_min"]
+    use_exact = bool(getattr(config, "PHASE1_USE_EXACT_BARRIER", True))
+    from gpu_fuzzy_trader.backtest.barrier import barrier_column_names
 
-    tp_level_long = open_next * (1 + tp / 100)
-    sl_level_long = open_next * (1 - sl / 100)
-    tp_level_short = open_next * (1 - tp / 100)
-    sl_level_short = open_next * (1 + sl / 100)
+    ret_col, _ = barrier_column_names(direction, tp, sl)
+    if use_exact and ret_col in df.columns:
+        exact_ret = pd.to_numeric(df[ret_col], errors="coerce").to_numpy(dtype=np.float64)
+        win = np.isclose(exact_ret, tp, atol=1e-4)
+        loss = np.isclose(exact_ret, -sl, atol=1e-4)
+    else:
+        open_next = df["label_open_next"]
+        max_288 = df["label_max_288"]
+        min_288 = df["label_min_288"]
+        max_before_min = df["label_max_before_min"]
 
-    if direction == "long":
-        hit_tp = max_288 >= tp_level_long
-        hit_sl = min_288 <= sl_level_long
-        both_hit = hit_tp & hit_sl
-        tp_first = both_hit & (max_before_min == 1)
-        sl_first = both_hit & (max_before_min == 0)
-        clear_win = hit_tp & ~hit_sl
-        clear_loss = hit_sl & ~hit_tp
-        win = clear_win | tp_first
-        loss = clear_loss | sl_first
-    else:  # short
-        hit_tp = min_288 <= tp_level_short
-        hit_sl = max_288 >= sl_level_short
-        both_hit = hit_tp & hit_sl
-        # For shorts the min must come first to take TP first.
-        tp_first = both_hit & (max_before_min == 0)
-        sl_first = both_hit & (max_before_min == 1)
-        clear_win = hit_tp & ~hit_sl
-        clear_loss = hit_sl & ~hit_tp
-        win = clear_win | tp_first
-        loss = clear_loss | sl_first
+        tp_level_long = open_next * (1 + tp / 100)
+        sl_level_long = open_next * (1 - sl / 100)
+        tp_level_short = open_next * (1 - tp / 100)
+        sl_level_short = open_next * (1 + sl / 100)
+
+        if direction == "long":
+            hit_tp = max_288 >= tp_level_long
+            hit_sl = min_288 <= sl_level_long
+            both_hit = hit_tp & hit_sl
+            tp_first = both_hit & (max_before_min == 1)
+            sl_first = both_hit & (max_before_min == 0)
+            clear_win = hit_tp & ~hit_sl
+            clear_loss = hit_sl & ~hit_tp
+            win = (clear_win | tp_first).to_numpy(dtype=bool)
+            loss = (clear_loss | sl_first).to_numpy(dtype=bool)
+        else:  # short
+            hit_tp = min_288 <= tp_level_short
+            hit_sl = max_288 >= sl_level_short
+            both_hit = hit_tp & hit_sl
+            # For shorts the min must come first to take TP first.
+            tp_first = both_hit & (max_before_min == 0)
+            sl_first = both_hit & (max_before_min == 1)
+            clear_win = hit_tp & ~hit_sl
+            clear_loss = hit_sl & ~hit_tp
+            win = (clear_win | tp_first).to_numpy(dtype=bool)
+            loss = (clear_loss | sl_first).to_numpy(dtype=bool)
 
     if config.PHASE1_ASYMMETRIC_TARGET:
         # Encode -1/0/+1 → 0/1/2 (mutual_info_classif requires non-negative ints).
-        target = pd.Series(np.zeros(len(df), dtype=np.int8), index=df.index)
+        target = pd.Series(np.ones(len(df), dtype=np.int8), index=df.index)
         target[win] = 2
         target[loss] = 0
-        target[~win & ~loss] = 1
         return target
 
     # Legacy binary path: 1 if win, else 0.
-    return win.astype(int)
+    target = pd.Series(np.zeros(len(df), dtype=np.int64), index=df.index)
+    target[win] = 1
+    return target
 
 
 def _compute_stability(sym_scores: list[float]) -> float:

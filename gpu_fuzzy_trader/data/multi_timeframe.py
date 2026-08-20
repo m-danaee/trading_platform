@@ -13,6 +13,8 @@ from typing import Sequence
 import numpy as np
 import pandas as pd
 
+from gpu_fuzzy_trader import config as _cfg
+
 logger = logging.getLogger(__name__)
 
 _OHLCV_COLUMNS = ("open", "high", "low", "close", "volume")
@@ -382,6 +384,17 @@ def align_htf_features_causal(
 
         valid_match_idx = match_idx[valid_mask]
         target_indices = lwc_grp.index[valid_mask]
+
+        # Check staleness: if LWC candle is too far past HTF close timestamp
+        # (e.g. data gaps), discard the match to avoid carrying forward stale context.
+        max_staleness = getattr(_cfg, "MTF_MAX_STALENESS_CANDLES", None)
+        if max_staleness is not None and int(max_staleness) > 0:
+            max_staleness_ns = int(max_staleness) * base_tf.value
+            matched_htf_close_ns = htf_close_ns[valid_match_idx]
+            lwc_matched_exec_ns = lwc_exec_ns[valid_mask]
+            not_stale = (lwc_matched_exec_ns - matched_htf_close_ns) <= max_staleness_ns
+            valid_match_idx = valid_match_idx[not_stale]
+            target_indices = target_indices[not_stale]
 
         for col in feature_cols:
             htf_vals = htf_grp[col].to_numpy()

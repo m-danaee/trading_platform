@@ -15,11 +15,21 @@ import numpy as np
 import pandas as pd
 
 
+from gpu_fuzzy_trader import config as _cfg
+
 _FORMAT_VERSION = 1
 
 
 def fit_fuzzy_feature_scaling(train_df: pd.DataFrame) -> dict[str, Any]:
-    """Build a train-only scaling contract for ordinal ``ff_*`` columns."""
+    """Build a train-only scaling contract for ordinal ``ff_*`` columns.
+    
+    If config.FEATURE_SCALE_MANIFEST is provided, it is used directly.
+    Otherwise the scaling is inferred from the training split.
+    """
+    manifest_override = getattr(_cfg, "FEATURE_SCALE_MANIFEST", None)
+    if isinstance(manifest_override, dict) and "features" in manifest_override:
+        return manifest_override
+
     features: dict[str, dict[str, float | str]] = {}
     for name in train_df.columns:
         if not name.startswith("ff_") or not pd.api.types.is_numeric_dtype(

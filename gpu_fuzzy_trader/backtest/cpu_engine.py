@@ -597,6 +597,13 @@ class CPUBacktestEngine:
         self.leverage = float(constants.get("leverage", _cfg.LEVERAGE))
         self.fee_pct = float(constants.get("fee_pct", _cfg.FEE_PCT))
         self.round_trip_fee_rate = self.fee_pct / 100.0
+        self.spread_bps = float(constants.get("spread_bps", _cfg.SPREAD_BPS))
+        self.slippage_bps = float(constants.get("slippage_bps", _cfg.SLIPPAGE_BPS))
+        self.effective_fee_rate = (
+            self.round_trip_fee_rate
+            + (self.spread_bps / 10000.0)
+            + (self.slippage_bps / 10000.0)
+        )
         self.max_hold_candles = int(
             constants.get("max_hold_candles", _cfg.MAX_HOLD_CANDLES)
         )
@@ -679,12 +686,12 @@ class CPUBacktestEngine:
         # TP/SL grids.  Check that same complete contract here; checking only
         # zipped grid entries would leave valid cross-product pairs in legacy
         # overlapping-position mode.
-        self._exact_barrier_available = any(
-            all(column in df.columns for column in barrier_column_names(
-                self.trade_direction, tp, sl,
-            ))
-            for tp, sl in configured_barrier_pairs()
+        barrier_prefix = f"_barrier_{self.trade_direction}_tp_"
+        exact_barrier_present = any(
+            isinstance(column, str) and column.startswith(barrier_prefix)
+            for column in df.columns
         )
+        self._exact_barrier_available = exact_barrier_present
         # ------------------------------------------------------------------
         # Trend-context fixed execution mask (defense-in-depth).
         #
@@ -707,15 +714,12 @@ class CPUBacktestEngine:
             return np.ones(n, dtype=bool)
         from gpu_fuzzy_trader.config import CONTEXT_COLUMNS as _CTX_COLS
         if not any(c in df.columns for c in _CTX_COLS):
-            return np.ones(n, dtype=bool)
-        try:
-            perm = _cfg.context_permission_column(self.trade_direction)
-            trig = _cfg.context_trigger_column(self.trade_direction)
-            if perm not in df.columns or trig not in df.columns:
-                return np.ones(n, dtype=bool)
-            return (df[perm].to_numpy() == 1) & (df[trig].to_numpy() == 1)
-        except Exception:
-            return np.ones(n, dtype=bool)
+            return np.zeros(n, dtype=bool)
+        perm = _cfg.context_permission_column(self.trade_direction)
+        trig = _cfg.context_trigger_column(self.trade_direction)
+        if perm not in df.columns or trig not in df.columns:
+            return np.zeros(n, dtype=bool)
+        return (df[perm].to_numpy() == 1) & (df[trig].to_numpy() == 1)
 
     def _get_trade_outcomes(self, tp: float, sl: float) -> np.ndarray:
         """Precompute (N,) price return % for all rows given fixed TP/SL."""
@@ -752,6 +756,12 @@ class CPUBacktestEngine:
             self._trade_bundle_cache[cache_key] = bundle
             self._trade_outcomes_cache[cache_key] = returns
             return bundle
+
+        if self._exact_barrier_available:
+            raise KeyError(
+                f"Missing exact barrier columns '{ret_name}' or '{off_name}' "
+                f"for pair ({tp}, {sl}) when exact barrier mode is active."
+            )
 
         if cache_key not in self._trade_outcomes_cache:
             # The scalar helper remains the reference path for trade logs, but
@@ -901,6 +911,9 @@ class CPUBacktestEngine:
         sizing_info = {
             "capital_pct": float(capital_pct),
             "round_trip_fee_rate": self.round_trip_fee_rate,
+            "effective_fee_rate": self.effective_fee_rate,
+            "spread_bps": self.spread_bps,
+            "slippage_bps": self.slippage_bps,
             "target_position_notional": target,
             "open_total_exposure_before": open_total_exposure,
             "remaining_total_capacity": remaining,
@@ -921,16 +934,21 @@ class CPUBacktestEngine:
         logs: list,
         stats: dict,
         sym_wins: dict[str, int] | None = None,
+        current_time_priority: int | None = None,
     ) -> tuple:
         """
-        Release all positions whose release_index <= current_index.
-
-        Mirrors evaluator_v5.ipynb's _release_due_positions exactly.
+        Release all positions whose release_time_priority <= current_time_priority
+        (or release_index <= current_index).
         """
         still_open = []
 
         for pos in open_positions:
-            if pos["release_index"] <= current_index:
+            is_due = (
+                pos["release_time_priority"] <= current_time_priority
+                if current_time_priority is not None and "release_time_priority" in pos
+                else pos["release_index"] <= current_index
+            )
+            if is_due:
                 equity_before_close = equity
                 equity += pos["net_pnl"]
 
@@ -1302,12 +1320,13 @@ class CPUBacktestEngine:
         # --- Main simulation loop ---
         for entry in entries:
             idx = int(entry["idx"])
+            entry_priority = int(entry.get("entry_priority", idx))
             rule_index = int(entry["rule_index"])
             tp = float(entry["tp"])
             sl = float(entry["sl"])
             capital_pct = float(entry["capital_pct"])
 
-            # Release positions due at or before this row
+            # Release positions due at or before this row's time priority
             (
                 open_positions,
                 equity,
@@ -1328,6 +1347,7 @@ class CPUBacktestEngine:
                 logs=logs,
                 stats=stats,
                 sym_wins=sym_wins,
+                current_time_priority=entry_priority,
             )
 
             if stats["account_ruined"]:
@@ -1375,12 +1395,17 @@ class CPUBacktestEngine:
             price_return_rate = price_return_pct / 100.0
 
             gross_pnl = position_notional * price_return_rate
-            fee = position_notional * self.round_trip_fee_rate
+            fee = position_notional * self.effective_fee_rate
             net_pnl = gross_pnl - fee
             trade_returns.append(net_pnl / equity if equity > 0.0 else 0.0)
             margin_used = position_notional / max(self.leverage, 1e-9)
 
             release_idx = int(release_indices[idx])
+            release_time_priority = (
+                int(self.entry_time_priority[release_idx])
+                if release_idx < len(self.entry_time_priority)
+                else int(np.max(self.entry_time_priority) + 1 if len(self.entry_time_priority) else len(self.df))
+            )
 
             log_index = None
             if return_logs:
@@ -1404,6 +1429,7 @@ class CPUBacktestEngine:
                         "Equity_Before_Entry": equity,
                         "Capital_Pct": sizing_info["capital_pct"],
                         "Round_Trip_Fee_Rate": sizing_info["round_trip_fee_rate"],
+                        "Effective_Fee_Rate": sizing_info["effective_fee_rate"],
                         "Target_Position_Notional": sizing_info[
                             "target_position_notional"
                         ],
@@ -1436,6 +1462,7 @@ class CPUBacktestEngine:
                     "symbol": symbol,
                     "entry_index": int(idx),
                     "release_index": release_idx,
+                    "release_time_priority": release_time_priority,
                     "position_notional": position_notional,
                     "margin_used": margin_used,
                     "gross_pnl": gross_pnl,
@@ -1487,6 +1514,11 @@ class CPUBacktestEngine:
             logs=logs,
             stats=stats,
             sym_wins=sym_wins,
+            current_time_priority=int(
+                np.max(self.entry_time_priority) + 1
+                if len(self.entry_time_priority)
+                else len(self.df)
+            ),
         )
 
         # --- Summary metrics ---

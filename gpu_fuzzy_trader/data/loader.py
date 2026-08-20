@@ -278,27 +278,29 @@ class Data_Loader:
             df = df[tail_count >= TAIL_DROP_ROWS].reset_index(drop=True)
 
         # ------------------------------------------------------------------
-        # 7. Drop rows where any LABEL_COLUMNS value is NaN
+        # 7. Drop rows where any LABEL_COLUMNS value is NaN (only when drop_tail=True)
         # ------------------------------------------------------------------
-        df = df.dropna(subset=LABEL_COLUMNS).reset_index(drop=True)
+        if drop_tail:
+            df = df.dropna(subset=LABEL_COLUMNS).reset_index(drop=True)
 
         # ------------------------------------------------------------------
-        # 8. Fill NaN in feature columns with 0
+        # 8. Fill NaN in feature columns with 0 (optional, controlled by config)
         # ------------------------------------------------------------------
-        if feature_cols is None:
-            non_feature = set(LABEL_COLUMNS) | set(META_COLUMNS)
-            non_feature.update(c for c in df.columns if str(c).startswith("_"))
-            if bool(getattr(_cfg, "PHASE1_EXCLUDE_RAW_OHLCV", True)):
-                # Raw price levels are retained for barrier construction, but
-                # are not evaluator feature candidates.  Explicit
-                # ``feature_cols`` still overrides this default for callers
-                # that intentionally need a raw column.
-                non_feature.update(_OHLCV_COLUMNS)
-            feature_cols = [c for c in df.columns if c not in non_feature]
+        if bool(getattr(_cfg, "FILL_NA_WITH_ZERO", False)):
+            if feature_cols is None:
+                non_feature = set(LABEL_COLUMNS) | set(META_COLUMNS)
+                non_feature.update(c for c in df.columns if str(c).startswith("_"))
+                if bool(getattr(_cfg, "PHASE1_EXCLUDE_RAW_OHLCV", True)):
+                    # Raw price levels are retained for barrier construction, but
+                    # are not evaluator feature candidates.  Explicit
+                    # ``feature_cols`` still overrides this default for callers
+                    # that intentionally need a raw column.
+                    non_feature.update(_OHLCV_COLUMNS)
+                feature_cols = [c for c in df.columns if c not in non_feature]
 
-        # Only fill columns that actually exist in the DataFrame
-        existing_feature_cols = [c for c in feature_cols if c in df.columns]
-        df[existing_feature_cols] = df[existing_feature_cols].fillna(0)
+            # Only fill columns that actually exist in the DataFrame
+            existing_feature_cols = [c for c in feature_cols if c in df.columns]
+            df[existing_feature_cols] = df[existing_feature_cols].fillna(0)
 
         # ------------------------------------------------------------------
         # 9. Compute _symbol_bar_index per symbol (after all drops)

@@ -219,6 +219,11 @@ INTERNAL_COLUMNS = ("_symbol_bar_index",)
 # The replacement data provides the bounded ``ff_*`` features for rule search.
 PHASE1_EXCLUDE_RAW_OHLCV = True
 
+# FILL_NA_WITH_ZERO — whether Data_Loader fills NaN feature values with 0.
+# Defaults to False so unavailable warmup periods are preserved as NaN and not
+# converted into artificial neutral/zero signals.
+FILL_NA_WITH_ZERO = False
+
 # TAIL_DROP_ROWS — bars dropped per symbol at dataset tail (label horizon).
 # Must equal MAX_HOLD_CANDLES (96 = 24 h at 15-minute bars).
 # The forward-label window is now 96 bars; the ``_288`` label column names are
@@ -344,6 +349,10 @@ LEVERAGE = 1.0
 #   Higher → penalizes high-turnover rules; net return and PF drop for active rules.
 #   Lower  → optimistic backtest; must match evaluator_v5.ipynb for valid OOS.
 FEE_PCT = 0.20
+# SPREAD_BPS — bid-ask spread cost in basis points (1 bp = 0.01% = 0.0001).
+SPREAD_BPS = 0.0
+# SLIPPAGE_BPS — execution slippage in basis points (1 bp = 0.01% = 0.0001).
+SLIPPAGE_BPS = 0.0
 # Identifier included in strategy packages so a fee/execution-model change
 # cannot silently reuse an old economic strategy identity.
 COST_MODEL_ID: str = "crypto_bar_v2"
@@ -484,6 +493,12 @@ MTF_PIPELINE_ENABLED: bool = True
 MTF_N_FOLDS: int = 4
 MTF_DISCOVERY_MAX_RULES_PER_LAYER: int = 8
 MTF_MIN_FOLD_SUPPORT: int = 2
+
+# Maximum allowed candle staleness for forward-filled HTF features on data gaps
+MTF_MAX_STALENESS_CANDLES: int = 5
+
+# Explicit feature scale manifest configuration (None = infer from train data)
+FEATURE_SCALE_MANIFEST: dict[str, Any] | None = None
 
 # Generic loader callers may explicitly work with raw fixture data.
 REQUIRE_CONTEXT_COLUMNS: bool = False
@@ -641,6 +656,12 @@ PHASE1_MAX_FEATURE_OVERLAP = 0.8
 #   True  → direction-specific feature rankings (recommended).
 #   False → shared target; long/short pools share more structure.
 PHASE1_ASYMMETRIC_TARGET = True
+
+# PHASE1_USE_EXACT_BARRIER — use exact first-touch barrier outcomes for Phase 1 target.
+#   True  → check exact barrier columns (_barrier_{direction}_tp_{tp}_{sl}_return_pct)
+#           matching PHASE2_TP / PHASE2_SL to avoid max_before_min both-hit mislabeling.
+#   False → fallback to legacy label_max_before_min heuristic.
+PHASE1_USE_EXACT_BARRIER: bool = True
 # --- Sign consistency across stationarity folds ---
 
 # PHASE1_REQUIRE_SIGN_CONSISTENCY — drop features whose Spearman sign flips.
@@ -2466,6 +2487,8 @@ def validate_config(
         "PHASE2_MONTHLY_MAX_BEARISH_RATIO must be in [0, 1]",
     )
     fee_pct = _finite_config_number("FEE_PCT", FEE_PCT)
+    spread_bps = _finite_config_number("SPREAD_BPS", SPREAD_BPS)
+    slippage_bps = _finite_config_number("SLIPPAGE_BPS", SLIPPAGE_BPS)
     initial_capital = _finite_config_number("INITIAL_CAPITAL", INITIAL_CAPITAL)
     leverage = _finite_config_number("LEVERAGE", LEVERAGE)
     max_exposure = _finite_config_number(
@@ -2475,6 +2498,8 @@ def validate_config(
         "MIN_POSITION_NOTIONAL", MIN_POSITION_NOTIONAL
     )
     _config_check(fee_pct >= 0.0, "FEE_PCT must be non-negative")
+    _config_check(spread_bps >= 0.0, "SPREAD_BPS must be non-negative")
+    _config_check(slippage_bps >= 0.0, "SLIPPAGE_BPS must be non-negative")
     _config_check(initial_capital > 0.0, "INITIAL_CAPITAL must be positive")
     _config_check(leverage > 0.0, "LEVERAGE must be positive")
     _config_check(max_exposure > 0.0,

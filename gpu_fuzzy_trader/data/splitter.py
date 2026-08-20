@@ -16,6 +16,7 @@ import os
 import hashlib
 from typing import TYPE_CHECKING
 
+import numpy as np
 import pandas as pd
 
 from gpu_fuzzy_trader import config as _cfg
@@ -47,8 +48,11 @@ def _holdout_embargo_split(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame
     """Per-symbol chronological split with embargo gap.
 
     Train: first ``HOLDOUT_TRAIN_FRACTION`` of each symbol's bars.
-    Embargo: next ``HOLDOUT_EMBARGO_CANDLES`` bars — DROPPED.
+    Embargo: next ``HOLDOUT_EMBARGO_CANDLES`` bars — DROPPED from scoring partitions.
     Validation: remaining bars after embargo.
+
+    Note: Feature indicators before validation/testing should be computed on full
+    tape (e.g. Data_Loader with drop_tail=False) to preserve indicator history.
     """
     embargo = int(_cfg.HOLDOUT_EMBARGO_CANDLES)
     train_parts: list[pd.DataFrame] = []
@@ -73,6 +77,42 @@ def _holdout_embargo_split(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame
         else pd.DataFrame(columns=df.columns)
     )
     return train_df, validation_df
+
+
+def _holdout_embargo_split_with_mask(
+    df: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.Series, pd.Series, pd.Series]:
+    """Per-symbol chronological split preserving full tape with boolean scoring masks.
+
+    Returns
+    -------
+    tuple[pd.DataFrame, pd.Series, pd.Series, pd.Series]
+        (full_df, train_mask, embargo_mask, validation_mask)
+    """
+    embargo = int(_cfg.HOLDOUT_EMBARGO_CANDLES)
+    n_total = len(df)
+    train_mask = np.zeros(n_total, dtype=bool)
+    embargo_mask = np.zeros(n_total, dtype=bool)
+    val_mask = np.zeros(n_total, dtype=bool)
+
+    # Use index positions per symbol
+    for _, group in df.groupby("symbol", sort=True, observed=False):
+        indices = group.index.to_numpy()
+        n = len(indices)
+        train_end = _cfg.train_prefix_row_count(n)
+        embargo_end = min(train_end + embargo, n)
+
+        train_mask[indices[:train_end]] = True
+        embargo_mask[indices[train_end:embargo_end]] = True
+        if embargo_end < n:
+            val_mask[indices[embargo_end:]] = True
+
+    return (
+        df.copy(),
+        pd.Series(train_mask, index=df.index, name="_train_mask"),
+        pd.Series(embargo_mask, index=df.index, name="_embargo_mask"),
+        pd.Series(val_mask, index=df.index, name="_val_mask"),
+    )
 
 
 def _purged_walk_forward_split(

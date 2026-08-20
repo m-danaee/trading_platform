@@ -47,6 +47,13 @@ class JointPortfolioEngine:
         )
         self.fee_pct = float(constants.get("fee_pct", _cfg.FEE_PCT))
         self.fee_rate = self.fee_pct / 100.0
+        self.spread_bps = float(constants.get("spread_bps", _cfg.SPREAD_BPS))
+        self.slippage_bps = float(constants.get("slippage_bps", _cfg.SLIPPAGE_BPS))
+        self.effective_fee_rate = (
+            self.fee_rate
+            + (self.spread_bps / 10000.0)
+            + (self.slippage_bps / 10000.0)
+        )
         self.max_hold_candles = int(
             constants.get("max_hold_candles", _cfg.MAX_HOLD_CANDLES)
         )
@@ -244,11 +251,16 @@ class JointPortfolioEngine:
             if pnl > 0:
                 stat["win_count"] += 1
 
-        def release_due(current_index: int):
+        def release_due(current_index: int, current_time_priority: int | None = None):
             nonlocal open_positions
             still_open: list[dict] = []
             for pos in open_positions:
-                if int(pos["release_index"]) <= current_index:
+                is_due = (
+                    pos.get("release_time_priority", pos["release_index"]) <= current_time_priority
+                    if current_time_priority is not None and "release_time_priority" in pos
+                    else int(pos["release_index"]) <= current_index
+                )
+                if is_due:
                     realize(pos)
                     symbol = str(pos["symbol"])
                     by_symbol.pop(symbol, None)
@@ -258,7 +270,8 @@ class JointPortfolioEngine:
 
         for entry in entries:
             idx = int(entry["idx"])
-            release_due(idx)
+            entry_priority = int(entry.get("entry_priority", idx))
+            release_due(idx, current_time_priority=entry_priority)
             symbol = str(self.symbols[idx])
             direction = str(entry["direction"])
             current = by_symbol.get(symbol)
@@ -309,14 +322,21 @@ class JointPortfolioEngine:
                 idx, tp, sl,
             )
             gross = notional * price_return / 100.0
-            fee = notional * self.fee_rate
+            fee = notional * self.effective_fee_rate
             net = gross - fee
+            release_idx = int(releases[idx])
+            release_time_priority = (
+                int(self.entry_time_priority[release_idx])
+                if release_idx < len(self.entry_time_priority)
+                else int(np.max(self.entry_time_priority) + 1 if len(self.entry_time_priority) else len(self.df))
+            )
             position = {
                 "symbol": symbol,
                 "direction": direction,
                 "entry_price": float(self.entry_price[idx]),
                 "entry_index": idx,
-                "release_index": int(releases[idx]),
+                "release_index": release_idx,
+                "release_time_priority": release_time_priority,
                 "position_notional": notional,
                 "price_return_pct": price_return,
                 "exit_reason": exit_reason,
@@ -337,7 +357,7 @@ class JointPortfolioEngine:
                     "Entry_Index": idx,
                     "Symbol_Bar_Index": int(self.symbol_bar_index[idx]),
                     "Entry_Price": float(self.entry_price[idx]),
-                    "Release_Index": int(releases[idx]),
+                    "Release_Index": release_idx,
                     "Close_Time": None,
                     "Exit_Reason": exit_reason,
                     "Price_Return_Pct": price_return,
@@ -363,7 +383,14 @@ class JointPortfolioEngine:
                 sum(float(pos["position_notional"]) for pos in open_positions),
             )
 
-        release_due(len(self.df))
+        release_due(
+            len(self.df),
+            current_time_priority=int(
+                np.max(self.entry_time_priority) + 1
+                if len(self.entry_time_priority)
+                else len(self.df)
+            ),
+        )
         metrics["final_equity"] = equity
         metrics["total_return_pct"] = (
             equity / self.initial_capital - 1.0

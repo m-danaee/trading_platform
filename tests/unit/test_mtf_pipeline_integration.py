@@ -547,3 +547,29 @@ def test_lwc_oof_score_alignment_is_causal_and_runtime_scores_are_frozen():
     assert len(signals) == n
     assert stats["raw_triggers"] == n
     assert set(audit["accepted"].unique()) == {1}
+
+
+def test_mtf_validation_fitness_selection_separation():
+    """Verify MTF pipeline splits validation into fitness and selection halves."""
+    n = 300
+    dates = pd.date_range("2024-01-01 00:00", periods=n, freq="15min")
+    val_df = pd.DataFrame({
+        "datetime": dates,
+        "symbol": ["BTCUSDT"] * n,
+        "open": 100.0 + np.arange(n) * 0.1,
+        "high": 101.0 + np.arange(n) * 0.1,
+        "low": 99.0 + np.arange(n) * 0.1,
+        "close": 100.5 + np.arange(n) * 0.1,
+        "volume": 10.0,
+    })
+    runner = Pipeline_Runner()
+    val_fitness, val_selection = runner._validation_scoring_frames(val_df)
+    
+    # Must be non-empty and disjoint subsets
+    assert not val_fitness.empty
+    assert not val_selection.empty
+    assert len(val_fitness) < len(val_df)
+    assert len(val_selection) < len(val_df)
+    # Chronologically purged: max fitness datetime < min selection datetime
+    assert val_fitness["datetime"].max() < val_selection["datetime"].min()
+
