@@ -236,21 +236,25 @@ class TestNaNLabelDrop:
 
 
 # ---------------------------------------------------------------------------
-# Tests: feature NaN fill
+# Tests: feature NaN preservation / fill
 # ---------------------------------------------------------------------------
 
 class TestFeatureNaNFill:
-    def test_feature_nan_filled_with_zero(self):
+    def test_feature_nan_preserved_by_default(self):
+        """Feature NaNs must be preserved by default (not artificially filled with 0)."""
+        rows = _make_rows(1, TAIL_DROP_ROWS + 3)
+        rows[0]["feature_a"] = float("nan")
+        df = _loader_from_rows(rows)
+        assert pd.isna(df["feature_a"].iloc[0])
+
+    def test_feature_nan_filled_with_zero_when_configured(self, monkeypatch):
+        """When FILL_NA_WITH_ZERO is enabled in config, feature NaNs are filled with 0."""
+        from gpu_fuzzy_trader import config as _cfg
+        monkeypatch.setattr(_cfg, "FILL_NA_WITH_ZERO", True)
         rows = _make_rows(1, TAIL_DROP_ROWS + 3)
         rows[0]["feature_a"] = float("nan")
         df = _loader_from_rows(rows)
         assert df["feature_a"].iloc[0] == 0.0
-
-    def test_no_nan_in_feature_columns_after_load(self):
-        rows = _make_rows(1, TAIL_DROP_ROWS + 3)
-        rows[1]["feature_b"] = float("nan")
-        df = _loader_from_rows(rows)
-        assert not df["feature_b"].isna().any()
 
     def test_label_nan_rows_dropped_not_filled(self):
         """NaN label rows should be dropped, not filled with 0."""
@@ -260,12 +264,13 @@ class TestFeatureNaNFill:
         # 3 rows survive tail drop; 1 has NaN label → 2 remain
         assert len(df) == 2
 
-    def test_explicit_feature_cols_respected(self):
-        """Only specified feature_cols should be filled."""
+    def test_explicit_feature_cols_respected_when_configured(self, monkeypatch):
+        """Only specified feature_cols should be filled when FILL_NA_WITH_ZERO is enabled."""
+        from gpu_fuzzy_trader import config as _cfg
+        monkeypatch.setattr(_cfg, "FILL_NA_WITH_ZERO", True)
         rows = _make_rows(1, TAIL_DROP_ROWS + 3)
         rows[0]["feature_a"] = float("nan")
         rows[0]["feature_b"] = float("nan")
-        # Only fill feature_a; feature_b NaN should also be filled (it's a feature)
         df = _loader_from_rows(rows, feature_cols=["feature_a"])
         assert df["feature_a"].iloc[0] == 0.0
         # feature_b was not in feature_cols, so it should still be NaN

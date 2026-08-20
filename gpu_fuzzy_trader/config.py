@@ -219,6 +219,11 @@ INTERNAL_COLUMNS = ("_symbol_bar_index",)
 # The replacement data provides the bounded ``ff_*`` features for rule search.
 PHASE1_EXCLUDE_RAW_OHLCV = True
 
+# FILL_NA_WITH_ZERO — whether Data_Loader fills NaN feature values with 0.
+# Defaults to False so unavailable warmup periods are preserved as NaN and not
+# converted into artificial neutral/zero signals.
+FILL_NA_WITH_ZERO = False
+
 # TAIL_DROP_ROWS — bars dropped per symbol at dataset tail (label horizon).
 # Must equal MAX_HOLD_CANDLES (96 = 24 h at 15-minute bars).
 # The forward-label window is now 96 bars; the ``_288`` label column names are
