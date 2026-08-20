@@ -494,6 +494,12 @@ MTF_N_FOLDS: int = 4
 MTF_DISCOVERY_MAX_RULES_PER_LAYER: int = 8
 MTF_MIN_FOLD_SUPPORT: int = 2
 
+# Maximum allowed candle staleness for forward-filled HTF features on data gaps
+MTF_MAX_STALENESS_CANDLES: int = 5
+
+# Explicit feature scale manifest configuration (None = infer from train data)
+FEATURE_SCALE_MANIFEST: dict[str, Any] | None = None
+
 # Generic loader callers may explicitly work with raw fixture data.
 REQUIRE_CONTEXT_COLUMNS: bool = False
 # Legacy hardcoded context requirement is disabled for the new MTF architecture.
@@ -650,6 +656,12 @@ PHASE1_MAX_FEATURE_OVERLAP = 0.8
 #   True  → direction-specific feature rankings (recommended).
 #   False → shared target; long/short pools share more structure.
 PHASE1_ASYMMETRIC_TARGET = True
+
+# PHASE1_USE_EXACT_BARRIER — use exact first-touch barrier outcomes for Phase 1 target.
+#   True  → check exact barrier columns (_barrier_{direction}_tp_{tp}_{sl}_return_pct)
+#           matching PHASE2_TP / PHASE2_SL to avoid max_before_min both-hit mislabeling.
+#   False → fallback to legacy label_max_before_min heuristic.
+PHASE1_USE_EXACT_BARRIER: bool = True
 # --- Sign consistency across stationarity folds ---
 
 # PHASE1_REQUIRE_SIGN_CONSISTENCY — drop features whose Spearman sign flips.

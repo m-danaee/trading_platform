@@ -1721,10 +1721,12 @@ class Pipeline_Orchestrator:
                         train_df, hwc_rules=hwc_rules, folds=mtf_folds, force=False)
                     hwc_discovery = getattr(self, "_mtf_hwc_discovery", None)
                     mwc_discovery = getattr(self, "_mtf_mwc_discovery", None)
+                    val_fitness_df, val_selection_df = self._validation_scoring_frames(
+                        val_df)
                     lwc_train_scored_all = self._build_mtf_lwc_training_frame(
                         train_df, hwc_discovery, mwc_discovery)
-                    lwc_validation_scored = self._build_mtf_lwc_validation_frame(
-                        val_df, hwc_rules, mwc_rules, history_df=train_df)
+                    lwc_val_fitness_scored = self._build_mtf_lwc_validation_frame(
+                        val_fitness_df, hwc_rules, mwc_rules, history_df=train_df)
                     oof_available = lwc_train_scored_all["_mtf_oof_available"].fillna(
                         False).astype(bool)
                     lwc_train_scored = lwc_train_scored_all.loc[oof_available].reset_index(
@@ -1736,12 +1738,12 @@ class Pipeline_Orchestrator:
                             phase1_train_df)
                     except Exception:
                         phase1_result = self._run_phase1(
-                            phase1_train_df, force=False, val_df=lwc_validation_scored)
+                            phase1_train_df, force=False, val_df=lwc_val_fitness_scored)
                     results["phase2"] = self._run_phase2(
                         phase1_train_df,
                         phase1_result,
                         force=True,
-                        val_df=lwc_validation_scored,
+                        val_df=lwc_val_fitness_scored,
                         blocked_directions=frozenset(),
                     )
                 else:
@@ -1810,9 +1812,11 @@ class Pipeline_Orchestrator:
                         df=train_df,
                         folds=mtf_folds,
                     )
+                    val_fitness_df, val_selection_df = self._validation_scoring_frames(
+                        val_df)
                     rb_result = self._run_mtf_rb_governor(
                         train_df=train_df,
-                        val_df=val_df,
+                        val_df=val_selection_df,
                         candidates=candidates,
                     )
                     results["rb_governor"] = rb_result
@@ -2170,14 +2174,19 @@ class Pipeline_Orchestrator:
             raise RuntimeError(
                 "MTF discovery did not produce HWC and MWC OOF artifacts")
 
+        val_fitness_df, val_selection_df = self._validation_scoring_frames(val_df)
+
         # LWC discovery is restricted to rows carrying both upstream OOF
-        # scores. Validation receives the final full-train ensembles only
+        # scores. Validation fitness receives the final full-train ensembles only
         # after discovery, so no OOF value is replaced by an in-sample score.
         lwc_train_scored_all = self._build_mtf_lwc_training_frame(
             train_df, hwc_discovery, mwc_discovery
         )
-        lwc_validation_scored = self._build_mtf_lwc_validation_frame(
-            val_df, hwc_rules, mwc_rules, history_df=train_df
+        lwc_val_fitness_scored = self._build_mtf_lwc_validation_frame(
+            val_fitness_df, hwc_rules, mwc_rules, history_df=train_df
+        )
+        lwc_val_selection_scored = self._build_mtf_lwc_validation_frame(
+            val_selection_df, hwc_rules, mwc_rules, history_df=train_df
         )
         oof_available = lwc_train_scored_all["_mtf_oof_available"].fillna(
             False).astype(bool)
@@ -2189,7 +2198,7 @@ class Pipeline_Orchestrator:
             )
         self._attach_mtf_scores_to_cv_folds(
             lwc_train_scored_all,
-            lwc_validation_scored,
+            lwc_val_fitness_scored,
         )
 
         # Keep the existing NSGA-III/plateau LWC search as the execution-rule
@@ -2198,13 +2207,13 @@ class Pipeline_Orchestrator:
         lwc_phase1 = self._run_phase1(
             phase1_train_df,
             force=force,
-            val_df=lwc_validation_scored,
+            val_df=lwc_val_fitness_scored,
         )
         lwc_rules = self._run_phase2(
             phase1_train_df,
             lwc_phase1,
             force=force,
-            val_df=lwc_validation_scored,
+            val_df=lwc_val_fitness_scored,
             blocked_directions=frozenset(),
         )
         self._mtf_lwc_phase1 = lwc_phase1
@@ -2270,7 +2279,7 @@ class Pipeline_Orchestrator:
         )
         rb_result = self._run_mtf_rb_governor(
             train_df=train_df,
-            val_df=val_df,
+            val_df=val_selection_df,
             candidates=candidates,
         )
         self._release_between_phases("Phase 5")
@@ -2281,10 +2290,20 @@ class Pipeline_Orchestrator:
             and strategy.get("deployment_accepted") is True
         )
         phase5_result = self._run_phase5(allowed_directions=accepted)
+        nested_report = self._run_nested_validation(
+            train_df,
+            rb_result,
+            trial_count=count_trials(
+                phase2=lwc_rules,
+                rb=rb_result,
+            ),
+        )
         return {
             "data": {
                 "train_rows": len(train_df),
                 "val_rows": len(val_df),
+                "val_fitness_rows": len(val_fitness_df),
+                "val_selection_rows": len(val_selection_df),
                 "source_contract": "raw_ohlcv_15m",
                 "timezone": "UTC",
             },
@@ -2297,13 +2316,12 @@ class Pipeline_Orchestrator:
             "phase3": rb_result,
             "phase4": rb_result,
             "phase_status": {"mtf": "completed", "rb_governor": self._rb_status_summary(rb_result)},
-            "nested_validation": {
-                "status": "not_run",
-                "reason": "mtf_candidate_requires_composed_signal_validation",
+            "nested_validation": nested_report or {
+                "status": "run" if bool(getattr(_cfg, "NESTED_VALIDATION_ENABLED", True)) else "not_run",
+                "reason": "completed" if bool(getattr(_cfg, "NESTED_VALIDATION_ENABLED", True)) else "disabled",
             },
             "phase5": phase5_result,
         }
-
     def _run_mtf_from_phase2(
         self,
         *,
@@ -2329,11 +2347,16 @@ class Pipeline_Orchestrator:
             raise RuntimeError(
                 "MTF discovery did not produce HWC and MWC artifacts")
 
+        val_fitness_df, val_selection_df = self._validation_scoring_frames(val_df)
+
         lwc_train_scored_all = self._build_mtf_lwc_training_frame(
             train_df, hwc_discovery, mwc_discovery
         )
-        lwc_validation_scored = self._build_mtf_lwc_validation_frame(
-            val_df, hwc_rules, mwc_rules, history_df=train_df
+        lwc_val_fitness_scored = self._build_mtf_lwc_validation_frame(
+            val_fitness_df, hwc_rules, mwc_rules, history_df=train_df
+        )
+        lwc_val_selection_scored = self._build_mtf_lwc_validation_frame(
+            val_selection_df, hwc_rules, mwc_rules, history_df=train_df
         )
         oof_available = lwc_train_scored_all["_mtf_oof_available"].fillna(
             False).astype(bool)
@@ -2345,7 +2368,7 @@ class Pipeline_Orchestrator:
             )
         self._attach_mtf_scores_to_cv_folds(
             lwc_train_scored_all,
-            lwc_validation_scored,
+            lwc_val_fitness_scored,
         )
 
         phase1_train_df = self._mask_train_df_for_phase1(lwc_train_scored)
@@ -2355,7 +2378,7 @@ class Pipeline_Orchestrator:
             lwc_phase1 = self._run_phase1(
                 phase1_train_df,
                 force=False,
-                val_df=lwc_validation_scored,
+                val_df=lwc_val_fitness_scored,
             )
         self._mtf_lwc_phase1 = lwc_phase1
 
@@ -2363,7 +2386,7 @@ class Pipeline_Orchestrator:
             phase1_train_df,
             lwc_phase1,
             force=force,
-            val_df=lwc_validation_scored,
+            val_df=lwc_val_fitness_scored,
             blocked_directions=frozenset(),
         )
 
@@ -2428,7 +2451,7 @@ class Pipeline_Orchestrator:
         )
         rb_result = self._run_mtf_rb_governor(
             train_df=train_df,
-            val_df=val_df,
+            val_df=val_selection_df,
             candidates=candidates,
         )
         self._release_between_phases("Phase 5")
@@ -2439,10 +2462,20 @@ class Pipeline_Orchestrator:
             and strategy.get("deployment_accepted") is True
         )
         phase5_result = self._run_phase5(allowed_directions=accepted)
+        nested_report = self._run_nested_validation(
+            train_df,
+            rb_result,
+            trial_count=count_trials(
+                phase2=lwc_rules,
+                rb=rb_result,
+            ),
+        )
         return {
             "data": {
                 "train_rows": len(train_df),
                 "val_rows": len(val_df),
+                "val_fitness_rows": len(val_fitness_df),
+                "val_selection_rows": len(val_selection_df),
                 "source_contract": "raw_ohlcv_15m",
                 "timezone": "UTC",
             },
@@ -2455,9 +2488,9 @@ class Pipeline_Orchestrator:
             "phase3": rb_result,
             "phase4": rb_result,
             "phase_status": {"mtf": "completed", "rb_governor": self._rb_status_summary(rb_result)},
-            "nested_validation": {
-                "status": "not_run",
-                "reason": "mtf_candidate_requires_composed_signal_validation",
+            "nested_validation": nested_report or {
+                "status": "run" if bool(getattr(_cfg, "NESTED_VALIDATION_ENABLED", True)) else "not_run",
+                "reason": "completed" if bool(getattr(_cfg, "NESTED_VALIDATION_ENABLED", True)) else "disabled",
             },
             "phase5": phase5_result,
         }

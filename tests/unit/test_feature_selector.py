@@ -291,6 +291,37 @@ class TestBuildTarget:
         else:
             assert set(target.unique()).issubset({0, 1})
 
+    def test_exact_barrier_target_alignment(self):
+        """Exact barrier return columns take precedence over max_before_min heuristic."""
+        from gpu_fuzzy_trader.backtest.barrier import barrier_column_names
+        tp = float(config.PHASE2_TP)
+        sl = float(config.PHASE2_SL)
+        ret_long, _ = barrier_column_names("long", tp, sl)
+        ret_short, _ = barrier_column_names("short", tp, sl)
+
+        # Case 1: Long where max_before_min heuristic would say WIN (max_before_min=1),
+        # but exact barrier first-touch shows SL was hit (-SL).
+        df_long_mismatch = pd.DataFrame({
+            "label_open_next": [100.0],
+            "label_max_288": [105.0],
+            "label_min_288": [95.0],
+            "label_max_before_min": [1],
+            ret_long: [-sl],
+        })
+        target_exact = _build_target(df_long_mismatch, "long")
+        assert target_exact.iloc[0] == 0  # LOSS according to exact barrier
+
+        # Case 2: Short where exact barrier shows TP (+tp)
+        df_short = pd.DataFrame({
+            "label_open_next": [100.0],
+            "label_max_288": [105.0],
+            "label_min_288": [95.0],
+            "label_max_before_min": [1],
+            ret_short: [tp],
+        })
+        target_short = _build_target(df_short, "short")
+        assert target_short.iloc[0] == (2 if config.PHASE1_ASYMMETRIC_TARGET else 1)
+
 
 # ---------------------------------------------------------------------------
 # Tests: _compute_stability
