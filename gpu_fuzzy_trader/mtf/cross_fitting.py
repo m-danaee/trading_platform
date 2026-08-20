@@ -7,7 +7,7 @@ and aggregates out-of-fold validation scores.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 import logging
 from typing import Any, Callable, Sequence, Union
 import numpy as np

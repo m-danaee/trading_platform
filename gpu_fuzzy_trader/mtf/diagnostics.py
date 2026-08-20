@@ -9,8 +9,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 import logging
-from typing import Any, Mapping, Sequence, Union
-import numpy as np
+from typing import Any, Mapping, Union
 import pandas as pd
 
 logger = logging.getLogger(__name__)

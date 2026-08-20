@@ -44,10 +44,6 @@ from gpu_fuzzy_trader.validation.rolling_cv import (
     mask_df_to_safe_region,
 )
 from gpu_fuzzy_trader.phases.phase2_rule_pool import Rule_Pool_Generator
-from gpu_fuzzy_trader.phases.phase2_rule_pool import (
-    _derive_val_sample_seed,
-    sample_df_for_phase2,
-)
 from gpu_fuzzy_trader.phases.phase5_oos import OOS_Evaluator
 
 from gpu_fuzzy_trader.research_integrity import (
@@ -2185,9 +2181,6 @@ class Pipeline_Orchestrator:
         lwc_val_fitness_scored = self._build_mtf_lwc_validation_frame(
             val_fitness_df, hwc_rules, mwc_rules, history_df=train_df
         )
-        lwc_val_selection_scored = self._build_mtf_lwc_validation_frame(
-            val_selection_df, hwc_rules, mwc_rules, history_df=train_df
-        )
         oof_available = lwc_train_scored_all["_mtf_oof_available"].fillna(
             False).astype(bool)
         lwc_train_scored = lwc_train_scored_all.loc[oof_available].reset_index(
@@ -2354,9 +2347,6 @@ class Pipeline_Orchestrator:
         )
         lwc_val_fitness_scored = self._build_mtf_lwc_validation_frame(
             val_fitness_df, hwc_rules, mwc_rules, history_df=train_df
-        )
-        lwc_val_selection_scored = self._build_mtf_lwc_validation_frame(
-            val_selection_df, hwc_rules, mwc_rules, history_df=train_df
         )
         oof_available = lwc_train_scored_all["_mtf_oof_available"].fillna(
             False).astype(bool)

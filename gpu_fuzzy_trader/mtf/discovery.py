@@ -35,7 +35,7 @@ from gpu_fuzzy_trader.mtf.ensembler import (
     compute_rule_weights,
 )
 from gpu_fuzzy_trader.mtf.runtime import condition_mask
-from gpu_fuzzy_trader.research_profile import RuleSearchProfile, get_rule_search_profile
+from gpu_fuzzy_trader.research_profile import get_rule_search_profile
 
 _OHLCV_COLUMNS = ("open", "high", "low", "close", "volume")
 
@@ -635,7 +635,7 @@ def discover_directional_layer(
     pareto_rules = _directional_pareto_front(frozen_rules)
     frozen_rules = _select_balanced_candidates(pareto_rules, max_rules)
     ensemble_weights = compute_rule_weights(frozen_rules)
-    for rule, weight in zip(frozen_rules, ensemble_weights):
+    for rule, weight in zip(frozen_rules, ensemble_weights, strict=False):
         rule["ensemble_weight"] = float(weight)
     oof_scores = canonicalize_oof_scores(
         pd.concat(oof_parts, ignore_index=True) if oof_parts else pd.DataFrame()

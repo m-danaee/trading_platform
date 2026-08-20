@@ -248,7 +248,6 @@ def _write_trial_correlation_report(study: optuna.Study, path: str) -> None:
     ]
     report: dict[str, Any] = {"n_trials": len(completed), "score_correlations": {}}
     if len(completed) >= 3:
-        scores = [float(trial.value) for trial in completed]
         all_names = {
             key
             for trial in completed
@@ -307,7 +306,7 @@ def _pearson(a: list[float], b: list[float]) -> float:
         return 0.0
     mean_a = sum(a) / len(a)
     mean_b = sum(b) / len(b)
-    numerator = sum((x - mean_a) * (y - mean_b) for x, y in zip(a, b))
+    numerator = sum((x - mean_a) * (y - mean_b) for x, y in zip(a, b, strict=False))
     denom_a = sum((x - mean_a) ** 2 for x in a) ** 0.5
     denom_b = sum((y - mean_b) ** 2 for y in b) ** 0.5
     return float(numerator / (denom_a * denom_b)) if denom_a and denom_b else 0.0

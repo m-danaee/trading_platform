@@ -31,21 +31,19 @@ import hashlib
 import logging
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Any
 
 import numpy as np
 import pandas as pd
 
 from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
-from gpu_fuzzy_trader.backtest.df_slim import downcast_numeric_df
 from gpu_fuzzy_trader.backtest.joint_engine import JointPortfolioEngine
 from gpu_fuzzy_trader.data.loader import Data_Loader, validate_context_columns
 from gpu_fuzzy_trader.features.fuzzy_scaling import (
     apply_fuzzy_feature_scaling,
     fit_fuzzy_feature_scaling,
 )
-from gpu_fuzzy_trader.data.splitter import Data_Splitter
 from gpu_fuzzy_trader.features.selector import Feature_Selector
 from gpu_fuzzy_trader.output.writer import (
     Output_Writer,
@@ -240,7 +238,6 @@ class OOS_Evaluator:
 
         # 2. Prepare train / validation / test data
         datasets_by_split = self._load_datasets_by_split()
-        test_df = datasets_by_split["test"]
 
         # 3. Evaluate each strategy on all splits and build reports
         results: dict[str, dict] = {}

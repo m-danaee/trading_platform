@@ -15,7 +15,6 @@ from __future__ import annotations
 import numpy as np
 
 from gpu_fuzzy_trader import config as _cfg
-from gpu_fuzzy_trader.features.encoder import get_dont_care
 
 INACTIVE_FEAT_IDX = -1
 
@@ -431,7 +430,7 @@ def repair_chromosome(
             chromosome, feature_infos, dont_cares, rng,
         )
     out = np.asarray(chromosome, dtype=np.int32).copy()
-    for k, fi in enumerate(feature_infos):
+    for k, _fi in enumerate(feature_infos):
         dc = int(dont_cares[k])
         num_classes = dc
         v = int(np.rint(out[k]))

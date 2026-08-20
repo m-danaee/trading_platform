@@ -21,7 +21,6 @@ import pandas as pd
 from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.backtest.barrier import (
     barrier_column_names,
-    configured_barrier_pairs,
 )
 from gpu_fuzzy_trader.backtest.condition_cache import get_or_build_rule_mask
 from gpu_fuzzy_trader.backtest.symbol_conditions import (
@@ -830,7 +829,6 @@ class CPUBacktestEngine:
         )
         if ret_name in self.df.columns and off_name in self.df.columns:
             result = float(self.df[ret_name].iloc[idx])
-            offset = int(self.df[off_name].iloc[idx])
             # A first-touch return is exactly +/- the configured barrier.  A
             # horizon close can coincidentally land on that value, but using
             # the exact return value is the only deterministic OHLC contract
@@ -1551,7 +1549,7 @@ class CPUBacktestEngine:
         if return_logs and logs:
             logs_df_tmp = pd.DataFrame(logs)
             for sym, grp in logs_df_tmp.groupby("Symbol", observed=False):
-                realized = grp[grp["Realized"] == True]
+                realized = grp[grp["Realized"]]
                 s_trades = len(grp)
                 s_wins = int((realized["Net_PnL"] > 0).sum()) if len(
                     realized) > 0 else 0
@@ -1657,7 +1655,6 @@ class CPUBacktestEngine:
                 dtype=np.int32
             )
 
-        price_returns_all = self._get_trade_outcomes(tp, sl)
         results = []
 
         # Sparse gathering briefly materializes ``chunk × bars × slots``.

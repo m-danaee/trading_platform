@@ -15,7 +15,6 @@ from gpu_fuzzy_trader.phases.phase2_rule_pool import (
     _mutate,
 )
 from gpu_fuzzy_trader.evolution.numba_ops import (
-    batch_hamming_min,
     crowding_distance,
     non_dominated_sort,
 )
@@ -230,7 +229,7 @@ def _repair_chromosome(
 ) -> np.ndarray:
     """Clamp each gene to a valid class index or dont_care sentinel."""
     out = chromosome.copy()
-    for k, fi in enumerate(feature_infos):
+    for k, _fi in enumerate(feature_infos):
         dc = int(dont_cares[k])
         num_classes = dc
         v = int(np.rint(out[k]))
@@ -559,7 +558,7 @@ def _refresh_survivor_val_metrics(
     from gpu_fuzzy_trader.phases.phase2_sparse_encoding import chromosome_key
 
     n_valid_rows = (
-        int(getattr(val_engine, "n_valid_rows"))
+        int(getattr(val_engine, "n_valid_rows"))  # noqa: B009
         if getattr(val_engine, "n_valid_rows", None) is not None
         else None
     )
@@ -1693,7 +1692,7 @@ def _evaluate_population_indices(
         return _empty_eval_stats()
 
     n_valid_rows = (
-        int(getattr(val_engine, "n_valid_rows"))
+        int(getattr(val_engine, "n_valid_rows"))  # noqa: B009
         if val_engine is not None and getattr(val_engine, "n_valid_rows", None)
         else None
     )
@@ -2334,7 +2333,7 @@ def _run_nsga2_fallback(
             viability_collapse_streak >= viability_collapse_patience
             and restart_count < max_restarts
         ):
-            n_elite_kept = _plateau_diversity_restart(
+            _plateau_diversity_restart(
                 population, objectives, metrics_cache,
                 feature_infos, rng,
                 pareto_indices=pareto_indices,
@@ -3014,7 +3013,7 @@ def _run_nsga3(
             viability_collapse_streak >= viability_collapse_patience
             and restart_count < max_restarts
         ):
-            n_elite_kept = _plateau_diversity_restart(
+            _plateau_diversity_restart(
                 population, objectives, metrics_cache,
                 feature_infos, rng,
                 pareto_indices=pareto_indices,

@@ -1231,7 +1231,7 @@ def _remove_redundant_features(
 
     kept: list[dict] = []
 
-    for mode, group in mode_groups.items():
+    for _mode, group in mode_groups.items():
         if len(group) <= 1:
             kept.extend(group)
             continue

@@ -201,7 +201,7 @@ def decode_chromosome(
         )
 
     conditions: list[str] = []
-    for gene_val, info in zip(chromosome, feature_infos):
+    for gene_val, info in zip(chromosome, feature_infos, strict=False):
         name = info["name"]
         mode = info["mode"]
 

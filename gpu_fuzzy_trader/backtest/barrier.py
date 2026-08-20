@@ -262,7 +262,7 @@ def attach_barrier_outcomes(
             ret_name, off_name = barrier_column_names(direction, tp, sl)
             ret_column = np.full(len(out), np.nan, dtype=np.float32)
             off_column = np.full(len(out), -1, dtype=np.int16)
-            for symbol, group in symbol_groups:
+            for _symbol, group in symbol_groups:
                 ret, off = _first_touch_for_symbol(
                     group["open"].to_numpy(dtype=np.float64),
                     group["high"].to_numpy(dtype=np.float64),

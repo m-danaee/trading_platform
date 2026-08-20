@@ -143,9 +143,9 @@ def validate_rule_schema(
             if raise_error:
                 raise ValueError(f"Coverage {cov} must be in [0, 1]")
             return False
-    except (ValueError, TypeError):
+    except (ValueError, TypeError) as exc:
         if raise_error:
-            raise ValueError(f"Invalid coverage value '{rule.get('coverage')}'")
+            raise ValueError(f"Invalid coverage value '{rule.get('coverage')}'") from exc
         return False
 
     if require_provenance:
@@ -221,9 +221,9 @@ def validate_archive_schema(payload: dict[str, Any], raise_error: bool = True) -
 
     try:
         declared_rule_count = int(payload.get("rule_count", len(rules)))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
         if raise_error:
-            raise ValueError("Archive rule_count must be an integer")
+            raise ValueError("Archive rule_count must be an integer") from exc
         return False
     if declared_rule_count != len(rules):
         if raise_error:

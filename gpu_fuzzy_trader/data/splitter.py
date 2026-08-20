@@ -11,10 +11,9 @@ Per-symbol chronological split for Phase 2, RB, and Phase 5 preparation:
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
-import hashlib
-from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
@@ -28,9 +27,6 @@ from gpu_fuzzy_trader.config import (
     VALIDATION_FITNESS_PATH,
     VALIDATION_SELECTION_PATH,
 )
-
-if TYPE_CHECKING:
-    from gpu_fuzzy_trader.validation.rolling_cv import PurgedFold
 
 logger = logging.getLogger(__name__)
 

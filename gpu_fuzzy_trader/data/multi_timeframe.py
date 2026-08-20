@@ -9,7 +9,6 @@ point-in-time causality.
 from __future__ import annotations
 
 import logging
-from typing import Sequence
 import numpy as np
 import pandas as pd
 
@@ -225,14 +224,13 @@ def compute_timeframe_features(
     df_work["datetime"] = _as_utc_datetime(df_work["datetime"])
 
     parts: list[pd.DataFrame] = []
-    for symbol, g in df_work.sort_values("datetime").groupby(
+    for _symbol, g in df_work.sort_values("datetime").groupby(
         "symbol", sort=False, observed=False
     ):
         g = g.sort_values("datetime").copy()
         close = g["close"].astype(float)
         high = g["high"].astype(float)
         low = g["low"].astype(float)
-        open_ = g["open"].astype(float)
         volume = g["volume"].astype(float)
 
         # 1. RSI

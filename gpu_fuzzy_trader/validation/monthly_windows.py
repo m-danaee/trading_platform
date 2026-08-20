@@ -270,7 +270,7 @@ def summarize_monthly_metrics(
     min_good_return = float(
         getattr(_cfg, "MONTHLY_GOOD_RETURN_MIN_PCT", 0.0))
     good_count = sum(
-        1 for r, active in zip(returns, active_mask)
+        1 for r, active in zip(returns, active_mask, strict=False)
         if active and monthly_return_counts_as_good(
             float(r), min_good_return, strict_above_zero=False)
     )

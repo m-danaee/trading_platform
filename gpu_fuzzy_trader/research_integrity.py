@@ -13,12 +13,11 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Mapping
 
 import pandas as pd
 
 from gpu_fuzzy_trader import config as _cfg
-from gpu_fuzzy_trader.phases.rule_identity import strategy_id
 
 
 def _utc_now() -> str:

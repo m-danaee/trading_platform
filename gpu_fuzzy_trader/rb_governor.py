@@ -333,9 +333,6 @@ def _train_valid_shape(train_ret: float, valid_ret: float) -> tuple[bool, float,
     high_weight = float(getattr(_cfg, "RB_TRAIN_TOO_HIGH_PENALTY", 220.0))
     bonus_weight = float(getattr(_cfg, "RB_TRAIN_VALID_SHAPE_BONUS", 160.0))
 
-    ratio = train_ret / max(valid_ret, 1e-9)
-    gap = train_ret - valid_ret
-
     lower_ratio_target = valid_ret * min_ratio
     lower_abs_target = valid_ret + min_abs_gap
     min_train_target = max(lower_ratio_target, lower_abs_target)
@@ -4078,7 +4075,6 @@ def run_rb_governor_pipeline(
                 "cost_stress_gate": cost_stress,
                 "monthly_certificate": monthly_certificate,
                 "symbol_coverage_policy": symbol_policy,
-                "symbol_contribution_certificate": portfolio_certificate,
                 "validation_gate": {
                     "return_pct": val_ret,
                     "profit_factor": val_pf,

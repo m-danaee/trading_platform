@@ -11,7 +11,7 @@ import json
 import logging
 import math
 import os
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import Any, Iterable
 
 import numpy as np
@@ -280,7 +280,7 @@ def build_purged_walk_forward_folds(
     for cv_idx in range(n_cv_folds):
         valid_ranges: dict[str, tuple[int, int]] = {}
         train_end = -1
-        for sym, (cv_ranges, holdout_range) in per_sym.items():
+        for sym, (cv_ranges, _holdout_range) in per_sym.items():
             if cv_idx >= len(cv_ranges):
                 continue
             v_start, v_end = cv_ranges[cv_idx]
@@ -290,7 +290,7 @@ def build_purged_walk_forward_folds(
             continue
 
         min_train_bars = 0
-        for sym, group in df.groupby("symbol", sort=True, observed=False):
+        for _sym, group in df.groupby("symbol", sort=True, observed=False):
             n_sym = len(group)
             min_train_bars = max(min_train_bars, int(
                 math.floor(n_sym * min_train_fraction)))

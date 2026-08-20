@@ -56,7 +56,6 @@ from gpu_fuzzy_trader.phases.phase2_sparse_encoding import (
     sparse_to_dense,
     use_sparse_slots,
 )
-from gpu_fuzzy_trader.log_progress import maybe_log_generation
 from gpu_fuzzy_trader.phases.phase2_support import (
     compute_support_penalty_and_specialist,
     passes_pool_admission_gate,
@@ -618,7 +617,7 @@ def _sample_df(
         sizes_to_use = [safe_len] * n_sym
 
     parts = []
-    for sym, target_n in zip(symbols, sizes_to_use):
+    for sym, target_n in zip(symbols, sizes_to_use, strict=False):
         sym_df = sym_groups[sym]
         avail = max(0, len(sym_df) - start)
         take = min(target_n, avail)
@@ -1247,7 +1246,7 @@ def _evaluate_chromosome(
         island_hyperparams = getattr(engine, "_island_hyperparams", None)
 
     n_valid_rows = (
-        int(getattr(val_engine, "n_valid_rows"))
+        int(getattr(val_engine, "n_valid_rows"))  # noqa: B009
         if val_engine is not None and getattr(val_engine, "n_valid_rows", None)
         else None
     )
@@ -1516,13 +1515,13 @@ def _init_population(
             chosen_idx = rng.choice(len(seed_rows), size=pick, replace=False)
             chosen_rows = [seed_rows[int(i)] for i in chosen_idx]
         seed_positions = rng.choice(pop_size, size=pick, replace=False)
-        for position, chrom in zip(seed_positions, chosen_rows):
+        for position, chrom in zip(seed_positions, chosen_rows, strict=False):
             population[int(position)] = chrom
         seeded_mask[seed_positions] = True
 
     if init_strategy == "legacy":
         if not use_sparse_slots():
-            for k, fi in enumerate(feature_infos):
+            for k, _fi in enumerate(feature_infos):
                 dc = dont_cares[k]
                 num_classes = dc
                 for i in np.where(~seeded_mask)[0]:
@@ -1560,7 +1559,7 @@ def _init_population(
         rng,
     )
 
-    for row_idx, stratum in zip(fresh_indices, strata):
+    for row_idx, stratum in zip(fresh_indices, strata, strict=False):
         k_active = pick_active_count(rng)
         if use_sparse_slots():
             from gpu_fuzzy_trader.phases.phase2_sparse_encoding import (
@@ -2935,7 +2934,7 @@ def _apply_monthly_admission_gate(
             getattr(_cfg, "PHASE2_MONTHLY_GOOD_RETURN_MIN_PCT", 0.0))
         active = sum(t >= monthly_trade_floor for t in executed_trades)
         profitable = sum(
-            1 for r, t in zip(ret_pcts, executed_trades)
+            1 for r, t in zip(ret_pcts, executed_trades, strict=False)
             if t >= monthly_trade_floor and monthly_return_counts_as_good(
                 r, min_good_return, strict_above_zero=False)
         )
@@ -3876,7 +3875,7 @@ class Rule_Pool_Generator:
         with open(history_path, "w", encoding="utf-8") as fh:
             json.dump(history, fh, indent=2)
 
-        coverage_path = self._write_admission_report(
+        self._write_admission_report(
             coverage_report,
             final_pool_size=len(pool),
         )

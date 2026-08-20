@@ -7,7 +7,7 @@ evaluate immutable strategy packages without ever consulting ``test_new.csv``.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from typing import Any, Callable, Iterable
 
 import numpy as np

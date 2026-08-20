@@ -25,7 +25,7 @@ def estimate_pbo(
         return None
     misses = 0
     used = 0
-    for is_row, oos_row in zip(in_sample_scores, out_of_sample_scores):
+    for is_row, oos_row in zip(in_sample_scores, out_of_sample_scores, strict=False):
         if len(is_row) != len(oos_row) or len(oos_row) < 2:
             continue
         winner = int(np.argmax(np.asarray(is_row, dtype=float)))
