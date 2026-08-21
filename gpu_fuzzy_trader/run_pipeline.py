@@ -168,6 +168,8 @@ def _merge_mtf_score_columns(
         frame["datetime"] = pd.to_datetime(
             frame["datetime"], errors="raise", utc=True
         ).dt.tz_localize(None)
+        if str(frame["symbol"].dtype) != "category":
+            frame["symbol"] = frame["symbol"].astype("category")
     if left.duplicated(["datetime", "symbol"]).any():
         raise ValueError("MTF input contains duplicate (datetime, symbol) rows")
     if right.duplicated(["datetime", "symbol"]).any():
@@ -229,6 +231,8 @@ def _merge_mtf_lwc_runtime_columns(
         frame["datetime"] = pd.to_datetime(
             frame["datetime"], errors="raise", utc=True
         ).dt.tz_localize(None)
+        if str(frame["symbol"].dtype) != "category":
+            frame["symbol"] = frame["symbol"].astype("category")
     if left.duplicated(["datetime", "symbol"]).any():
         raise ValueError("MTF input contains duplicate (datetime, symbol) rows")
     if right.duplicated(["datetime", "symbol"]).any():

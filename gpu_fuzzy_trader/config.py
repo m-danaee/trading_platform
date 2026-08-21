@@ -778,13 +778,21 @@ PHASE2_EVAL_BATCH_DEDUP = True
 PHASE2_EVAL_GLOBAL_CACHE = True
 
 # PHASE2_EVAL_GLOBAL_CACHE_MAX_SIZE — hard cap on the global eval cache.
-#   200 = 200 (population) × 1 (cache generation) × 1.0.
+#   Adaptive default based on host RAM: 600 if ram <= 13 GiB, else 900.
 #   Higher → more cache hits; less RAM.
 #   Lower  → less RAM; more re-evaluations.
-# Halved twice (1200 → 600 → 200) to reduce Colab RAM footprint (~0.4 GB per cut).
-# Rationale: cache hit rate was observed at 0-4% in a prior Colab log,
-# so successive cuts are near-free — the working set is ~1 gen at 200 pop.
-PHASE2_EVAL_GLOBAL_CACHE_MAX_SIZE = 600
+# Evaluated adaptively to limit Colab / 2-core RAM footprint while maximizing hits.
+def _resolve_global_cache_max_size() -> int:
+    try:
+        from gpu_fuzzy_trader._gpu_runtime import detect_system_ram_gb
+        ram = detect_system_ram_gb()
+        if ram is not None and ram > 13.0:
+            return 900
+    except Exception:
+        pass
+    return 600
+
+PHASE2_EVAL_GLOBAL_CACHE_MAX_SIZE = _resolve_global_cache_max_size()
 
 # PHASE2_SKIP_ZERO_SIGNAL_SCAN — skip equity scan when rule matches 0 bars.
 #   True  → faster; infeasible rules get penalty without full scan.
@@ -2394,19 +2402,9 @@ def _apply_hardware_gpu_defaults() -> None:
     PHASE2_SCAN_UNROLL = min(int(PHASE2_SCAN_UNROLL), 16)
 
 
-def _apply_colab_gpu_defaults() -> None:
-    """
-    Colab T4 optimization for Phase 2 runs (backward-compatibility wrapper).
-    """
-    _apply_hardware_gpu_defaults()
-
-
-def _apply_t4_gpu_defaults() -> None:
-    """
-    T4 GPU hardware defaults (backward-compatibility alias).
-    """
-    _apply_hardware_gpu_defaults()
-
+# Backwards compatibility wrappers
+_apply_colab_gpu_defaults = _apply_hardware_gpu_defaults
+_apply_t4_gpu_defaults = _apply_hardware_gpu_defaults
 
 _apply_hardware_gpu_defaults()
 

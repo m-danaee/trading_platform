@@ -333,6 +333,10 @@ def _warmup_engine(
         hasattr(target, "_should_route_batch_to_cpu")
         and target._should_route_batch_to_cpu(n)
     ):
+        logger.info(
+            "Phase 2 warmup: routing batch %d to CPU (skipped JAX kernel compile).",
+            n,
+        )
         _WARMED_SIGNATURES.add(signature)
         return
 
@@ -375,6 +379,7 @@ def _warmup_engine(
         pass
 
     _WARMED_SIGNATURES.add(signature)
+    logger.debug("Phase 2 JAX warmup done for signature: %s", signature)
 
 
 def _iter_warmup_targets(*engines: object | None) -> list[object]:
@@ -400,7 +405,8 @@ def warmup_phase2_gpu_kernels(
     Compile JAX kernels with representative shapes before evolution.
 
     Warms every fold engine in train (and optional val) CV facades at full
-    production batch size so Generation 1 does not pay lazy JIT costs.
+    production batch size (and half-batch if >32) so Generation 1 does not pay
+    lazy JIT compile costs.
 
     When *cluster_id* is provided the compiled signatures are tagged so
     ``evict_cluster_signatures`` can evict them when the cluster finishes.
@@ -411,15 +417,21 @@ def warmup_phase2_gpu_kernels(
         logger.warning("Phase 2 JAX warmup: no engines to warm")
         return
 
+    # Pre-warm at full batch size and intermediate batch sizes if applicable
+    warmup_batches = [batch_size]
+    if batch_size > 32:
+        warmup_batches.append(batch_size // 2)
+
     warmed = 0
     skipped = 0
-    for target in targets:
-        sig = _warmup_signature(target, batch_size, cluster_id=cluster_id)
-        if sig in _WARMED_SIGNATURES:
-            skipped += 1
-            continue
-        _warmup_engine(target, batch_size=batch_size, cluster_id=cluster_id)
-        warmed += 1
+    for b in warmup_batches:
+        for target in targets:
+            sig = _warmup_signature(target, b, cluster_id=cluster_id)
+            if sig in _WARMED_SIGNATURES:
+                skipped += 1
+                continue
+            _warmup_engine(target, batch_size=b, cluster_id=cluster_id)
+            warmed += 1
 
     used = detect_gpu_memory_used_gb()
     used_str = f"{used:.2f} GiB" if used is not None else "unknown"
