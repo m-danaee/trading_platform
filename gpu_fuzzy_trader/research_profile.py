@@ -9,6 +9,22 @@ from typing import Any
 
 
 @dataclass(frozen=True)
+class HardwareProfile:
+    """Snapshot of execution environment hardware and backend configuration."""
+
+    gpu_name: str | None
+    vram_gb: float | None
+    ram_gb: float | None
+    cpu_count: int
+    jax_backend: str
+    devices: list[str]
+    is_t4: bool
+
+    def as_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class ResearchProfile:
     """Small stable surface for comparing experiments.
 

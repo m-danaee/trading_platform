@@ -2357,7 +2357,16 @@ def _apply_colab_gpu_defaults() -> None:
     PHASE2_SCAN_UNROLL = min(int(PHASE2_SCAN_UNROLL), 16)
 
 
+def _apply_t4_gpu_defaults() -> None:
+    """
+    T4 GPU hardware defaults (skeleton hook for task-1; logs active profile).
+    """
+    # Behavior tuning is deferred to task-2; keep existing runtime defaults intact.
+    pass
+
+
 _apply_colab_gpu_defaults()
+_apply_t4_gpu_defaults()
 
 
 # =============================================================================
