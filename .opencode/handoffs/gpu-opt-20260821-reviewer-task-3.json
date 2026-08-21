@@ -1,0 +1,135 @@
+{
+  "schema_version": "1.1",
+  "run_id": "gpu-opt-20260821",
+  "unit_or_task": "task-3",
+  "agent": "reviewer",
+  "base_commit": "a8c0c70ed82a42f6f5ee4b72e9b439be354a76fc",
+  "created_at": "2026-08-21T17:31:15Z",
+  "reviewed_commit": "0d647a26c0edbd6777d6979b3b87c45d00dc09d7",
+  "branch": "feature/task-3-t4-cpu-contention",
+  "status": "APPROVED",
+  "verdict": "APPROVED",
+  "summary": "Task-3 implemented per plan within its allowed-file scope. All four in-scope acceptance criteria verified empirically on reviewed commit 0d647a2; all runnable verification gates pass (test_cpu_engine + test_rb_fail_closed 105 passed; property tests 9 passed; mocked 2-core BACKTEST_BATCH_WORKERS/resolve checks correct; numba.get_num_threads()==2 with env set pre-import; setdefault preserves user overrides). STOP conditions checked and none triggered (no 0/>cpu_count workers on 2-core mock; ForbiddenProcessPool guard test green). Acceptance item 'RB Governor + island scheduler cap parallelism to 2 and log once' is only partially met: rb_governor.py provably contains no executor usage (sequential loops), so there was nothing to cap there (task evidence line was stale), but the sole remaining concurrent CPU-heavy path (CvFoldValEvaluator fold pool, phases/phase2_rule_pool.py:742, max_workers=len(engines)) is bounded only implicitly by the PURGED_WF_N_SPLITS=2 default and lives in a file excluded from this task's allowed list - recorded as non-blocking MEDIUM F-1 requiring a plan/scope decision (follow-up task or reconcile note), not an implementer fix inside this isolation branch. No HIGH findings.",
+  "acceptance_criteria": [
+    {
+      "criterion": "On cpu_count==2 BACKTEST_BATCH_WORKERS resolves to 2 (or avoids fork when JAX already loaded); RB/Phase2 batch eval max_workers = min(2, BACKTEST_BATCH_WORKERS); no in-scope code path spawns >2 concurrent CPU-heavy workers",
+      "met": true,
+      "evidence": "resolve_backtest_workers (gpu_fuzzy_trader/config.py:382-401): cpus<=2 -> hw_cap=min(2,cpus), requested bounded by hw_cap with floor 1 (never 0, never >cpu_count). Mocked os.cpu_count=2: BACKTEST_BATCH_WORKERS=2, resolve()=2, resolve(16)=2, resolve(1)=1 (verified live). Constant now derives from helper (config.py:404). cpu_engine.simulate_rule_set_batch derives workers from resolve_backtest_workers both for default (cpu_engine.py:1224) and explicit max_workers callers (cpu_engine.py:1226, clamped by hardware cap - semantics change affects no production caller; grep shows zero explicit max_workers call sites outside tests). '(or 1 when JAX loaded)' satisfied in spirit: worker count stays at cap but the pool switches to ThreadPoolExecutor under _jax_runtime_loaded() (cpu_engine.py:1237-1244), eliminating the fork hazard the parenthetical targets."
+    },
+    {
+      "criterion": "Numba respects NUMBA_NUM_THREADS=min(2,cpu_count) set before numba import and enforced via numba.set_num_threads(); numba.get_num_threads()==2",
+      "met": true,
+      "evidence": "_jax_env.configure_jax_env() setdefaults NUMBA_NUM_THREADS=min(2,cpus) (gpu_fuzzy_trader/_jax_env.py:60-69). Production ordering verified: run_pipeline.py:98-100 calls configure_jax_env() before any module-level numba import reaches it (reporter/phase5/phase2/rb_governor/selector module-level chains contain no evolution import; evox_runner->numba_ops is reached only via function-local imports at phases/phase2_rule_pool.py:2534,3488,3635,4141,4236; gpu_engine.py:45 also calls configure_jax_env at module top). Enforcement after import: numba_ops.py:18-28 reads NUMBA_NUM_THREADS and calls numba.set_num_threads (guarded try/except, '' env handled via `or 0`). Verified live: NUMBA_NUM_THREADS=2 -> get_num_threads()==2. Caveat for direct-library entry paths recorded as LOW F-2."
+    },
+    {
+      "criterion": "cpu_engine chooses ThreadPool when jax in sys.modules else ProcessPool, worker count from centralized helper, no ad-hoc os.cpu_count duplication",
+      "met": true,
+      "evidence": "Guard chain intact: cache-path ThreadPool (cpu_engine.py:1233), _jax_runtime_loaded() -> ThreadPool with debug log (cpu_engine.py:1237-1244), else ProcessPoolExecutor with thread-fallback on failure (cpu_engine.py:1247-1252). Worker count exclusively via config.resolve_backtest_workers (cpu_engine.py:1224-1226); no new os.cpu_count() call sites added anywhere in diff. STOP-condition test test_rule_set_batch_avoids_process_fork_when_jax_is_loaded (tests/unit/test_cpu_engine.py:79-99) monkeypatches _jax_runtime_loaded True and swaps ProcessPoolExecutor for a raising ForbiddenProcessPool - passes."
+    },
+    {
+      "criterion": "OMP/MKL/OPENBLAS/NUMEXPR (+NUMBA) default 2 on 2-core via os.environ.setdefault in _jax_env early import, without overwriting user settings",
+      "met": true,
+      "evidence": "Loop over the five env vars with os.environ.setdefault(env_var, str(max(1,min(2,cpus)))) (_jax_env.py:59-69) placed at the top of configure_jax_env(), which both production entries invoke before heavy imports (run_pipeline.py:100, gpu_engine.py:45). Verified live: fresh process -> all five vars = 2; presetting OMP_NUM_THREADS=7 then re-calling configure_jax_env keeps 7 (user settings never overwritten)."
+    },
+    {
+      "criterion": "RB Governor + island scheduler cap parallelism to 2 and log once",
+      "met": false,
+      "partial": true,
+      "evidence": "RB Governor itself spawns nothing concurrent: repo-wide executor grep shows zero ThreadPool/ProcessPool usage in rb_governor.py; every rule-set evaluation is a sequential simulate_rule_set loop (rb_governor.py:852-884, 1107-1108, 1196 list comprehension) - so <=2 holds trivially and the task's evidence bullet about pools in rb_governor.py was stale; no edit needed there. However the only remaining concurrent CPU-heavy path, CvFoldValEvaluator's fold pool (phases/phase2_rule_pool.py:741-743, ThreadPoolExecutor(max_workers=len(engines))), is NOT bounded by resolve_backtest_workers: it equals the 2-core cap only coincidentally via PURGED_WF_N_SPLITS=2 default (config.py:298); an explicit n_splits>2 spawns >2 concurrent heavy backtests on 2-core. That file is explicitly outside this task's allowed list, so the gap is a plan scope-vs-acceptance contradiction (see F-1). The 'log once' observability of resolved caps was not implemented anywhere either (only the pre-existing JAX-threadpool debug log at cpu_engine.py:1240-1243)."
+    }
+  ],
+  "verification_gates": [
+    {
+      "command": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q tests/unit/test_cpu_engine.py tests/unit/test_rb_fail_closed.py",
+      "result": "PASS",
+      "output": "105 passed in 10.37s"
+    },
+    {
+      "command": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q tests/property/test_cpu_engine_properties.py",
+      "result": "PASS",
+      "output": "9 passed in 4.06s"
+    },
+    {
+      "command": ".venv/bin/python -c \"import unittest.mock, os; ... mock os.cpu_count=2 during config import; print(BACKTEST_BATCH_WORKERS, resolve(), resolve(16), resolve(1))\" (gate 3, properly-mocked variant)",
+      "result": "PASS",
+      "output": "BACKTEST_BATCH_WORKERS(2-core mock)=2; resolve()=2; resolve(16)=2; resolve(1)=1 (real host cpus=16)"
+    },
+    {
+      "command": ".venv/bin/python with NUMBA_NUM_THREADS=2: import numba_ops; numba.get_num_threads() + configure_jax_env setdefault/no-overwrite probe",
+      "result": "PASS",
+      "output": "get_num_threads()=2; fresh process sets NUMBA/OMP/MKL/OPENBLAS/NUMEXPR=2; user-preset OMP_NUM_THREADS=7 preserved after re-configure"
+    },
+    {
+      "command": "git diff a8c0c70...0d647a2 --stat (gate 4, task range)",
+      "result": "PASS",
+      "output": "_jax_env.py +14/-1, backtest/cpu_engine.py +4/-2, config.py +21/-4, evolution/numba_ops.py +8/-0, tests/unit/test_cpu_engine.py +26/-0; rb_governor.py untouched (correctly - no pools exist there)"
+    }
+  ],
+  "scope_check": {
+    "diff_stat_command": "git diff a8c0c70..0d647a2 --stat",
+    "files_changed": [
+      "gpu_fuzzy_trader/config.py (+21/-4)",
+      "gpu_fuzzy_trader/backtest/cpu_engine.py (+4/-2)",
+      "gpu_fuzzy_trader/_jax_env.py (+14/-1)",
+      "gpu_fuzzy_trader/evolution/numba_ops.py (+8/-0)",
+      "tests/unit/test_cpu_engine.py (+26/-0, test-only addition implementing gate 3)"
+    ],
+    "within_allowed_files": true,
+    "out_of_scope_untouched": {
+      "backtest/gpu_engine.py JAX kernels": true,
+      "evaluator_v5.ipynb": true,
+      "config validation thresholds": true,
+      "phase2_rule_pool genome logic": true,
+      "rb_governor.py": "untouched - correct outcome, file contains no executor/pool code to cap (task evidence was stale)"
+    },
+    "base_drift": "none (base == task-2 reviewed commit a8c0c70)"
+  },
+  "stop_condition_check": {
+    "workers_never_0_or_gt_cpucount_on_2core_mock": true,
+    "workers_evidence": "resolve_backtest_workers floor max(1,...) and hw_cap=min(2,cpus); mocked resolve(16)=2, resolve(0)->1",
+    "numba_get_num_threads_le_2_after_capped_import": true,
+    "numba_evidence": "get_num_threads()==2 when NUMBA_NUM_THREADS=2 present at import (production path guarantees this via configure_jax_env ordering)",
+    "no_processpool_when_jax_mock_loaded_in_tests": true,
+    "processpool_evidence": "ForbiddenProcessPool assertion class (tests/unit/test_cpu_engine.py:90-95) never triggered; 105 passed",
+    "test_cpu_engine_passes_after_change": true
+  },
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "MEDIUM",
+      "file": "phases/phase2_rule_pool.py",
+      "line": "741-743",
+      "title": "Acceptance item 5 partial: CvFoldValEvaluator fold pool unbounded by resolve_backtest_workers; no 'log once' of resolved caps anywhere",
+      "detail": "ThreadPoolExecutor(max_workers=len(engines)) bounds parallelism by CV fold count, not by the centralized worker cap. Under shipped defaults (PURGED_WF_N_SPLITS=2) this equals 2 and the plan invariant 'no code path spawns >2 concurrent CPU-heavy workers' holds on every path (RB sequential; batch eval capped at 2; fold pool = 2). But an explicit n_splits>2 yields len(folds)>2 concurrent full-backtest evaluations on a 2-core host, contradicting acceptance criterion 1's absolute phrasing and criterion 5's island-scheduler cap. This file is excluded from task-3's allowed list (plan Out-of-scope lists phase2_rule_pool while its own acceptance demands the cap), so the implementer could not close it without an isolation violation. Requires orchestrator/plan decision: follow-up task amending scope, or reconcile note accepting default-config behavior. Non-blocking for THIS commit.",
+      "blocking": false
+    },
+    {
+      "id": "F-2",
+      "severity": "LOW",
+      "file": "gpu_fuzzy_trader/evolution/numba_ops.py",
+      "line": "23-28",
+      "title": "Numba cap is effective only when configure_jax_env() ran before numba import (true for run_pipeline/gpu_engine entries)",
+      "detail": "numba_ops reads NUMBA_NUM_THREADS once at import time; if a consumer imports gpu_fuzzy_trader.evolution.* directly without going through an entry point that calls configure_jax_env() first, neither the setdefault nor the set_num_threads applies and numba defaults to all cores (observed: bare `import numba` -> get_num_threads()=16 on this 16-core host). All production entry paths are covered today (run_pipeline.py:100 precedes lazy evolution imports; gpu_engine.py:45 self-configures). Suggest a future hardening: have numba_ops fall back to min(2, os.cpu_count()) when the env var is absent instead of skipping set_num_threads. Non-blocking.",
+      "blocking": false
+    },
+    {
+      "id": "F-3",
+      "severity": "LOW",
+      "file": "tests/unit/test_cpu_engine.py",
+      "line": "102-127",
+      "title": "Test file touched though not in the task's allowed-files list",
+      "detail": "tests/unit/test_cpu_engine.py (+26) is outside the five listed allowed files but is a test-only addition (test_resolve_backtest_workers_cpu_contention) that implements the plan's own verification gate for the helper across cpu_count in {1,2,4,16} including explicit-request bounding. Benign and consistent with prior tasks' practice (task-1/2 handoffs included their test files in allowed lists); flagging for bookkeeping only. Non-blocking.",
+      "blocking": false
+    }
+  ],
+  "quality_notes": [
+    "Centralization done right: single source of truth resolve_backtest_workers (config.py:382-401) replaces the ad-hoc min(8, os.cpu_count() or 4) constant; behavior for >2-core hosts is byte-for-byte equivalent to the old formula (min(8,cpus)), so no regression for the RTX 4050/8-core dev baseline.",
+    "Explicit max_workers callers are now hardware-clamped (cpu_engine.py:1226) - intentional per acceptance ('no ad-hoc duplication', cap parallelism); audited: zero production callers pass explicit max_workers (only the unit test does, with value 2), so no behavioral surprise.",
+    "numba_ops env parsing handles empty-string edge (`or 0`) and ImportError keeps njit=None contract intact; set_num_threads wrapped in try/except so exotic numba builds cannot break import.",
+    "_jax_env threading defaults use max(1, min(2, cpus)) guarding cpu_count()-None and single-core hosts consistently with resolve_backtest_workers.",
+    "No dead code left behind: old comment block about 8-core scoping replaced; no stale references to the previous constant semantics found in touched files.",
+    "New test covers boundary matrix {1,2,4,16} x {default, over-cap request, under-cap request} - matches STOP-condition guards."
+  ],
+  "high_findings_unresolved": 0,
+  "recommended_next_action": "Proceed to FINAL_VERIFYING for task-3; route F-1 to reconcile/orchestrator as a candidate follow-up task (cap CvFoldValEvaluator fold pool via resolve_backtest_workers + one-time INFO log of resolved parallelism caps) since it requires editing phases/phase2_rule_pool.py which task-3's scope forbids."
+}

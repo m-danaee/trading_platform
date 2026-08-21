@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "package": "@mohammad154/opencode-nexus",
+  "version": "4.2.2",
+  "commands": {
+    "run": "nexus run",
+    "blast": "nexus blast",
+    "classify": "nexus classify",
+    "estimate": "nexus estimate",
+    "project_init": "nexus project-init"
+  },
+  "pkg_root": "/home/danaee/.cache/opencode/packages/@mohammad154/opencode-nexus@4.2.2/node_modules/@mohammad154/opencode-nexus",
+  "initialized_at": "2026-08-21T17:42:10.942Z"
+}

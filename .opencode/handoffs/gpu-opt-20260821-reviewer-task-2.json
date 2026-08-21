@@ -1,0 +1,131 @@
+{
+  "schema_version": "1.1",
+  "run_id": "gpu-opt-20260821",
+  "unit_or_task": "task-2/t4-gpu-tuning",
+  "agent": "reviewer",
+  "base_commit": "41aff8b2879c99cb65c56fcb60eb0dc66ce14696",
+  "created_at": "2026-08-21T17:08:30Z",
+  "reviewed_commit": "a8c0c70ed82a42f6f5ee4b72e9b439be354a76fc",
+  "branch": "feature/task-2-t4-gpu-tuning",
+  "status": "APPROVED",
+  "verdict": "APPROVED",
+  "summary": "Task-2 implemented per plan. All 5 acceptance criteria verified empirically on reviewed commit a8c0c70; all 3 verification gates pass plus an extra regression run over the touched modules' existing tests (test_t4_profile, test_colab_gpu_defaults, test_phase2_use_gpu_flag: 22 passed). Scope locked to exactly the 4 allowed files. STOP conditions checked and not triggered. No HIGH findings.",
+  "acceptance_criteria": [
+    {
+      "criterion": "Generic T4 detection auto-sets PHASE2_GPU_CPU_ROUTE_LARGE_DATA=False, PHASE2_SCAN_UNROLL=16 (capped), PHASE2_GPU_BATCH_SIZE_AUTO=True; env PHASE2_GPU_BATCH_SIZE still overrides",
+      "met": true,
+      "evidence": "Gate 1 printed 'False 16' under GPU_OPT_T4=1 mock. _apply_hardware_gpu_defaults generalizes to is_colab_runtime() or is_t4_runtime() (gpu_fuzzy_trader/config.py:2363-2377) with GPU_OPT_DISABLE=1/true/yes escape hatch (config.py:2363-2365). Env override verified live: PHASE2_GPU_BATCH_SIZE=333 returned verbatim from resolve_phase2_gpu_batch_size() (checked before all heuristics, _gpu_runtime.py:177-179). Unit tests pin defaults-on-T4 and GPU_OPT_DISABLE paths (tests/unit/test_t4_profile.py:143-169)."
+    },
+    {
+      "criterion": "VRAM tier fix: 24 GiB no longer caps at 96 (now min(config,256)); RAM cap for ~13 GiB raised 64->128 when GPU route active; each tier covered by unit test",
+      "met": true,
+      "evidence": "_vram_batch_cap 24 GiB tier returns min(config_default,256) (gpu_fuzzy_trader/_gpu_runtime.py:122-123); >24 GiB still returns config default. _ram_batch_cap gained gpu_route_active kwarg: <=12 GiB ->64, <=13 GiB ->128 if gpu_route_active else 64, <=16 GiB ->256 (gpu_fuzzy_trader/_gpu_runtime.py:127-145); resolve_phase2_gpu_batch_size passes gpu_route_active = not PHASE2_GPU_CPU_ROUTE_LARGE_DATA (_gpu_runtime.py:192-193). Exhaustive tier tests incl. boundary values 8.0/12.0/15.0/16.0/24.0/48.0 VRAM and 8.0/12.0/12.8(False/True)/15.5/32.0 RAM (tests/unit/test_t4_profile.py:118-140). Legacy caller contract preserved: _ram_batch_cap(13.0)==64 with default arg keeps tests/unit/test_colab_gpu_defaults.py:63-67 green."
+    },
+    {
+      "criterion": "configure_jax_env() ensures JAX_COMPILATION_CACHE_DIR exists via os.makedirs, does not overwrite user-provided flags/env, logs chosen config",
+      "met": true,
+      "evidence": "Cache dir selection unified then os.makedirs(cache_path, exist_ok=True) applied for BOTH default and user-provided dirs, failures logged at debug without raising (_jax_env.py:64-76). All user-facing knobs use setdefault: XLA_PYTHON_CLIENT_PREALLOCATE/MEM_FRACTION/JAX_PLATFORMS/JAX_ENABLE_X64 (_jax_env.py:58-62). _append_xla_flag now idempotent per flag-key so user-supplied values are never duplicated or overwritten (_jax_env.py:37-42). Startup log line covers platforms/preallocate/mem_fraction/cache_dir/xla_flags (_jax_env.py:102-109). Test asserts defaults + directory existence under cleared env (tests/unit/test_t4_profile.py:172-180)."
+    },
+    {
+      "criterion": "log_gpu_runtime_config logs gpu_name, batch_resolved, scan_unroll, cpu_route, cache_dir once at startup (no duplicate probe due to lru_cache)",
+      "met": true,
+      "evidence": "Single logger.info emits gpu name, backend/devices, vram, ram, used, cpu_count, workers, is_t4, batch_size=%d (from resolve_phase2_gpu_batch_size), scan_unroll, fp32/int8, large_window_cpu_route (=PHASE2_GPU_CPU_ROUTE_LARGE_DATA), jax_cache (gpu_fuzzy_trader/_gpu_runtime.py:243-272). detect_hardware_profile + resolve_phase2_gpu_batch_size are lru_cached so nvidia-smi/meminfo probe once per process."
+    },
+    {
+      "criterion": "Parity preserved: test_property_16_gpu_cpu_all_metrics_parity passes",
+      "met": true,
+      "evidence": "Gate 2: PYTEST_LOW_MEMORY=1 pytest -q tests/unit/test_t4_profile.py tests/unit/test_config_validation.py tests/property/test_gpu_engine_properties.py -k parity -> '2 passed, 27 deselected in 64.92s'."
+    }
+  ],
+  "verification_gates": [
+    {
+      "command": ".venv/bin/python -c \"import os; os.environ['GPU_OPT_T4']='1'; from gpu_fuzzy_trader.config import PHASE2_GPU_CPU_ROUTE_LARGE_DATA, PHASE2_SCAN_UNROLL; print(PHASE2_GPU_CPU_ROUTE_LARGE_DATA, PHASE2_SCAN_UNROLL)\"",
+      "result": "PASS",
+      "output": "False 16"
+    },
+    {
+      "command": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q tests/unit/test_t4_profile.py tests/unit/test_config_validation.py tests/property/test_gpu_engine_properties.py -k parity",
+      "result": "PASS",
+      "output": "2 passed, 27 deselected in 64.92s"
+    },
+    {
+      "command": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q tests/unit/test_cpu_engine.py",
+      "result": "PASS",
+      "output": "98 passed in 10.06s"
+    },
+    {
+      "command": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q tests/unit/test_t4_profile.py tests/unit/test_colab_gpu_defaults.py tests/unit/test_phase2_use_gpu_flag.py (extra regression over touched modules)",
+      "result": "PASS",
+      "output": "22 passed in 5.77s"
+    },
+    {
+      "command": "Sanity: mock T4 batch bounds + env override precedence",
+      "result": "PASS",
+      "output": "GPU_OPT_T4=1 mock: resolve_phase2_gpu_batch_size()=64 (within [16,512], no STOP); PHASE2_GPU_BATCH_SIZE=333 override returned verbatim"
+    }
+  ],
+  "scope_check": {
+    "diff_stat_command": "git diff 41aff8b...feature/task-2-t4-gpu-tuning --stat",
+    "files_changed": [
+      "gpu_fuzzy_trader/_gpu_runtime.py (+43/-16 region)",
+      "gpu_fuzzy_trader/_jax_env.py (+30/-11 region)",
+      "gpu_fuzzy_trader/config.py (+51/-20 region)",
+      "tests/unit/test_t4_profile.py (+66)"
+    ],
+    "within_allowed_files": true,
+    "out_of_scope_untouched": {
+      "evaluator_v5.ipynb": true,
+      "backtest/gpu_engine.py": true,
+      "backtest/cpu_engine.py": true,
+      "phases/*": true
+    },
+    "base_drift": "none (base == task-1 reviewed commit 41aff8b)"
+  },
+  "stop_condition_check": {
+    "_apply_colab_gpu_defaults_preserved": true,
+    "_apply_colab_gpu_defaults_evidence": "Kept as backward-compat wrapper delegating to _apply_hardware_gpu_defaults (config.py:2380-2384); _apply_t4_gpu_defaults alias kept too (config.py:2387-2391); external caller tests/unit/test_colab_gpu_defaults.py:51 still passes.",
+    "no_broad_trigger_on_8core_4050": true,
+    "no_broad_trigger_evidence": "Detection is name-substring ('t4') / VRAM-window (14.5-16.5 GiB) / GPU_OPT_T4-env based only (_gpu_runtime.py:200-217); no cpu_count term. RTX 4050 Laptop (6 GiB, name lacks t4) -> False, pinned by test_is_t4_runtime_non_t4.",
+    "parity_not_broken": true,
+    "batch_bounds_sane_on_mocked_t4": true
+  },
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "LOW",
+      "file": "gpu_fuzzy_trader/_jax_env.py",
+      "line": "37-42",
+      "title": "_append_xla_flag substring key-match can false-positive skip; redundant literal check",
+      "detail": "Idempotency check is `flag_key in flags` (plain substring). If a user's existing XLA_FLAGS merely CONTAINS the key as a substring of a different flag (e.g. '--xla_gpu_cuda_data_dir_custom'), our canonical flag would be skipped. Also `flag in flags` is redundant since flag_key is always a prefix of flag. Practical risk negligible (keys are long and unusual); suggest token-aware matching if XLA_FLAGS ever grows more flags. Non-blocking.",
+      "blocking": false
+    },
+    {
+      "id": "F-2",
+      "severity": "LOW",
+      "file": "gpu_fuzzy_trader/config.py",
+      "line": "2339-2346",
+      "title": "config.is_t4_runtime broad except silently degrades to env-only detection in circular-import window",
+      "detail": "config.is_t4_runtime lazily imports gpu_fuzzy_trader._gpu_runtime.is_t4_runtime inside try/except Exception with env-var fallback. If any future module starts importing _gpu_runtime BEFORE config finishes initializing, the deferred import raises ImportError (partial module), the except swallows it, and hardware defaults would be silently skipped on a real T4. Audited current graph: safe today — every production importer imports config first (scripts/benchmark_t4.py:25-26, tests/benchmark/test_phase2_gpu_throughput.py:15-22) or defers _gpu_runtime into function bodies (phases/phase2_rule_pool.py:3337, backtest/gpu_engine.py:980); only tests/unit/test_t4_profile.py:11 imports _gpu_runtime first, where fallback False is correct on the non-T4 dev host. Recommend adding a comment documenting this import-order constraint. Non-blocking.",
+      "blocking": false
+    },
+    {
+      "id": "F-3",
+      "severity": "LOW",
+      "file": "gpu_fuzzy_trader/_gpu_runtime.py",
+      "line": "199-217",
+      "title": "Carry-over of task-1 F-3: T4 heuristics now gate behavior but remain loose (T400/T600 name match; 14.5-16.5 GiB window matches named non-T4 16GiB cards)",
+      "detail": "task-2 gates PHASE2_GPU_CPU_ROUTE_LARGE_DATA=False and SCAN_UNROLL<=16 on is_t4_runtime(), but detection was not tightened per task-1 review recommendation: 't4' substring matches small-VRAM workstation cards (T400/T600/T1000) and the VRAM fallback applies even when a non-T4 name is present. Mitigations keep risk low: VRAM tiers independently bound batch (a 4 GiB T400 resolves batch=min(cfg,64)), preallocate=false bounds VRAM growth, and misapplied defaults are conservative GPU-first settings appropriate for most 16 GiB cards. Task-2 STOP condition (no trigger on 8-core+RTX4050) verified satisfied. Suggest tightening (require vram>=14 when name matched, or exact-name regex '\\bT4\\b') in task-3/reconcile. Non-blocking.",
+      "blocking": false
+    }
+  ],
+  "quality_notes": [
+    "No wasted duplicate code: old Colab-only branch collapsed into single _apply_hardware_gpu_defaults call site (config.py:2394); legacy wrappers retained only because the plan's STOP condition mandates preserving them, and they have a live test caller.",
+    "_ram_batch_cap signature change is backward compatible (new kwarg defaulted to False preserves legacy 13 GiB->64 behavior for positional callers).",
+    "resolve_phase2_gpu_batch_size lru_cache reads PHASE2_GPU_CPU_ROUTE_LARGE_DATA at first call; config import-time application guarantees the value is final before any resolve call in pipeline flow — consistent with once-per-process design documented in docstring.",
+    "Docstrings updated in lockstep with tier changes (_gpu_runtime.py:100-108,131-136,161-172) — no stale comments.",
+    "test_configure_jax_env leaves /tmp/jax_cache created on host after run; acceptable side effect of asserting makedirs behavior.",
+    "New tests clear relevant lru_caches before patching detection functions, avoiding cross-test pollution.",
+    "Circular import between config.py <-> _gpu_runtime.py is structurally safe in scenario A (config imported first: deferred import completes fully) and benign in scenario B (see F-2)."
+  ],
+  "high_findings_unresolved": 0
+}
