@@ -113,3 +113,69 @@ def test_research_profile_hardware_snapshot():
     d = hw.as_dict()
     assert d["gpu_name"] == "Tesla T4"
     assert d["is_t4"] is True
+
+
+def test_vram_batch_caps_all_tiers():
+    from gpu_fuzzy_trader._gpu_runtime import _vram_batch_cap
+
+    assert _vram_batch_cap(None, 256) == 64
+    assert _vram_batch_cap(6.0, 256) == 64
+    assert _vram_batch_cap(8.0, 256) == 64
+    assert _vram_batch_cap(12.0, 256) == 256
+    assert _vram_batch_cap(15.0, 256) == 256
+    assert _vram_batch_cap(16.0, 256) == 256
+    assert _vram_batch_cap(24.0, 256) == 256
+    assert _vram_batch_cap(48.0, 512) == 512
+
+
+def test_ram_batch_caps_all_tiers():
+    from gpu_fuzzy_trader._gpu_runtime import _ram_batch_cap
+
+    assert _ram_batch_cap(None) is None
+    assert _ram_batch_cap(8.0) == 64
+    assert _ram_batch_cap(12.0) == 64
+    assert _ram_batch_cap(12.8, gpu_route_active=False) == 64
+    assert _ram_batch_cap(12.8, gpu_route_active=True) == 128
+    assert _ram_batch_cap(15.5) == 256
+    assert _ram_batch_cap(32.0) is None
+
+
+def test_hardware_defaults_applied_for_t4(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(_cfg, "PHASE2_GPU_BATCH_SIZE_AUTO", False)
+    monkeypatch.setattr(_cfg, "PHASE2_GPU_CPU_ROUTE_LARGE_DATA", True)
+    monkeypatch.setattr(_cfg, "PHASE2_SCAN_UNROLL", 32)
+    monkeypatch.setattr(_cfg, "is_t4_runtime", lambda: True)
+    monkeypatch.setattr(_cfg, "is_colab_runtime", lambda: False)
+    monkeypatch.delenv("GPU_OPT_DISABLE", raising=False)
+
+    _cfg._apply_hardware_gpu_defaults()
+
+    assert _cfg.PHASE2_GPU_BATCH_SIZE_AUTO is True
+    assert _cfg.PHASE2_GPU_CPU_ROUTE_LARGE_DATA is False
+    assert _cfg.PHASE2_SCAN_UNROLL == 16
+
+
+def test_hardware_defaults_skipped_when_disabled(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(_cfg, "PHASE2_GPU_BATCH_SIZE_AUTO", False)
+    monkeypatch.setattr(_cfg, "PHASE2_GPU_CPU_ROUTE_LARGE_DATA", True)
+    monkeypatch.setattr(_cfg, "PHASE2_SCAN_UNROLL", 32)
+    monkeypatch.setattr(_cfg, "is_t4_runtime", lambda: True)
+    monkeypatch.setenv("GPU_OPT_DISABLE", "1")
+
+    _cfg._apply_hardware_gpu_defaults()
+
+    assert _cfg.PHASE2_GPU_BATCH_SIZE_AUTO is False
+    assert _cfg.PHASE2_GPU_CPU_ROUTE_LARGE_DATA is True
+    assert _cfg.PHASE2_SCAN_UNROLL == 32
+
+
+def test_configure_jax_env():
+    from gpu_fuzzy_trader import _jax_env
+    with patch.dict("os.environ", {}, clear=True):
+        _jax_env.configure_jax_env()
+        assert os.environ.get("XLA_PYTHON_CLIENT_PREALLOCATE") == "false"
+        assert os.environ.get("XLA_PYTHON_CLIENT_MEM_FRACTION") == "0.8"
+        assert os.environ.get("JAX_PLATFORMS") == "cuda,cpu"
+        assert os.environ.get("JAX_COMPILATION_CACHE_DIR") == "/tmp/jax_cache"
+        assert os.path.isdir(os.environ.get("JAX_COMPILATION_CACHE_DIR"))
+

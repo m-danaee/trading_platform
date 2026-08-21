@@ -97,7 +97,16 @@ def detect_system_ram_gb() -> float | None:
 
 
 def _vram_batch_cap(vram: float | None, config_default: int) -> int:
-    """VRAM-tier cap for Phase 2 GPU vmap chunk size."""
+    """VRAM-tier cap for Phase 2 GPU vmap chunk size.
+
+    Tiers:
+    - unknown: min(config, 64)
+    - <= 8 GiB: min(config, 64)
+    - <= 12 GiB: min(config, 256)
+    - <= 16 GiB: min(config, 256)  (Colab T4 / generic T4)
+    - <= 24 GiB: min(config, 256)  (RTX 3090 / 4090 / A10G — sustain full 256 batch)
+    - > 24 GiB: config default (A100 / H100 / etc.)
+    """
     if vram is None:
         # Unknown GPU: avoid using the full config default (often tuned for
         # desktop cards with more memory).
@@ -111,16 +120,26 @@ def _vram_batch_cap(vram: float | None, config_default: int) -> int:
     if vram <= 16.0:
         return min(config_default, 256)
     if vram <= 24.0:
-        return min(config_default, 96)
+        return min(config_default, 256)
     return config_default
 
 
-def _ram_batch_cap(ram: float | None) -> int | None:
-    """Host-RAM tier cap; JAX compile + CV engines dominate Colab SIGKILL."""
+def _ram_batch_cap(
+    ram: float | None,
+    gpu_route_active: bool = False,
+) -> int | None:
+    """Host-RAM tier cap; JAX compile + CV engines dominate Colab SIGKILL.
+
+    When GPU route is active (PHASE2_GPU_CPU_ROUTE_LARGE_DATA is False),
+    13-16 GiB host RAM is raised from 64 to 128 (or 256) to prevent throttling T4.
+    For small RAM <= 12 GiB, cap at 64 to avoid SIGKILL during XLA compile.
+    """
     if ram is None:
         return None
-    if ram <= 13.0:
+    if ram <= 12.0:
         return 64
+    if ram <= 13.0:
+        return 128 if gpu_route_active else 64
     if ram <= 16.0:
         return 256
     return None
@@ -141,14 +160,15 @@ def resolve_phase2_gpu_batch_size() -> int:
 
     VRAM tiers (applied first):
     - unknown: min(config, 64)
-    - <= 8 GiB: 64
-    - <= 12 GiB: 256
-    - <= 16 GiB: 256  (Colab T4 — raised from 128 to cover full pop in one chunk)
-    - <= 24 GiB: 96
+    - <= 8 GiB: min(config, 64)
+    - <= 12 GiB: min(config, 256)
+    - <= 16 GiB: min(config, 256)  (Colab T4 / generic T4 — covers full pop)
+    - <= 24 GiB: min(config, 256)
     - > 24 GiB: config default
 
     Host RAM tiers (final cap):
-    - <= 13 GiB: 64  (small hosts — avoids SIGKILL during compile)
+    - <= 12 GiB: 64  (small hosts — avoids SIGKILL during compile)
+    - <= 13 GiB: 128 when GPU route active, else 64
     - <= 16 GiB: 256 (desktop 12-GiB GPUs remain throughput-bound)
 
     Note: ``@lru_cache`` ensures nvidia-smi and /proc/meminfo are probed only
@@ -169,7 +189,8 @@ def resolve_phase2_gpu_batch_size() -> int:
 
     config_default = max(1, int(_cfg.PHASE2_GPU_BATCH_SIZE))
     vram_cap = _vram_batch_cap(detect_gpu_vram_gb(), config_default)
-    ram_cap = _ram_batch_cap(detect_system_ram_gb())
+    gpu_route_active = not getattr(_cfg, "PHASE2_GPU_CPU_ROUTE_LARGE_DATA", True)
+    ram_cap = _ram_batch_cap(detect_system_ram_gb(), gpu_route_active=gpu_route_active)
     if ram_cap is not None:
         return min(vram_cap, ram_cap)
     return vram_cap

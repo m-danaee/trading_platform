@@ -8,6 +8,8 @@ import shutil
 import site
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
+
 
 def _cuda_package_root() -> Path | None:
     """Find a pip-installed CUDA toolkit root, if one is available."""
@@ -34,7 +36,10 @@ def _cuda_package_root() -> Path | None:
 
 def _append_xla_flag(flags: str, flag: str) -> str:
     """Append an XLA flag once, preserving explicit user configuration."""
-    return flags if flag in flags else f"{flags} {flag}".strip()
+    flag_key = flag.split("=")[0]
+    if flag_key in flags or flag in flags:
+        return flags
+    return f"{flags} {flag}".strip()
 
 
 def configure_jax_env() -> None:
@@ -55,15 +60,20 @@ def configure_jax_env() -> None:
     os.environ.setdefault("JAX_PLATFORMS", "cuda,cpu")
     # Default off: Phase 2 GPU ranking uses float32; T4 FP64 throughput is poor.
     os.environ.setdefault("JAX_ENABLE_X64", "False")
+
     if "JAX_COMPILATION_CACHE_DIR" not in os.environ:
         if os.path.isdir("/content"):
             cache_dir = "/content/jax_cache"
-            os.makedirs(cache_dir, exist_ok=True)
-            os.environ["JAX_COMPILATION_CACHE_DIR"] = cache_dir
         else:
-            os.environ.setdefault(
-                "JAX_COMPILATION_CACHE_DIR", "/tmp/jax_cache",
-            )
+            cache_dir = "/tmp/jax_cache"
+        os.environ["JAX_COMPILATION_CACHE_DIR"] = cache_dir
+
+    cache_path = os.environ.get("JAX_COMPILATION_CACHE_DIR", "")
+    if cache_path:
+        try:
+            os.makedirs(cache_path, exist_ok=True)
+        except Exception as exc:
+            logger.debug("Failed to create JAX cache directory %s: %s", cache_path, exc)
 
     cuda_root = _cuda_package_root()
     flags = os.environ.get("XLA_FLAGS", "")
@@ -89,3 +99,11 @@ def configure_jax_env() -> None:
     os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
     os.environ.setdefault("ABSL_MIN_LOGLEVEL", "3")
     logging.getLogger("jax._src.xla_bridge").setLevel(logging.WARNING)
+    logger.debug(
+        "JAX env configured: platforms=%s preallocate=%s mem_fraction=%s cache_dir=%s xla_flags=%s",
+        os.environ.get("JAX_PLATFORMS"),
+        os.environ.get("XLA_PYTHON_CLIENT_PREALLOCATE"),
+        os.environ.get("XLA_PYTHON_CLIENT_MEM_FRACTION"),
+        os.environ.get("JAX_COMPILATION_CACHE_DIR"),
+        os.environ.get("XLA_FLAGS", ""),
+    )
