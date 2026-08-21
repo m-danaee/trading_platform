@@ -1613,7 +1613,7 @@ def _store_global_metrics_cache(
         entry["_cached_val_metrics"] = _metrics_snapshot(val_metrics)
     global_metrics_cache[key] = entry
     if _cfg.PHASE2_EVAL_GLOBAL_CACHE:
-        max_cache = int(getattr(_cfg, "PHASE2_EVAL_GLOBAL_CACHE_MAX_SIZE", 575))
+        max_cache = int(getattr(_cfg, "PHASE2_EVAL_GLOBAL_CACHE_MAX_SIZE", 600))
         _trim_global_metrics_cache(global_metrics_cache, max_cache)
 
 
@@ -1729,7 +1729,7 @@ def _evaluate_population_indices(
 
     if not gpu_pending:
         if cache_hits:
-            max_cache = int(getattr(_cfg, "PHASE2_EVAL_GLOBAL_CACHE_MAX_SIZE", 575))
+            max_cache = int(getattr(_cfg, "PHASE2_EVAL_GLOBAL_CACHE_MAX_SIZE", 600))
             cache_hit_rate = cache_hits / max(1, len(pending))
             logger.debug(
                 "Phase 2 eval cache: size=%d capacity=%d (hit_rate this gen: %.3f)",
@@ -1791,7 +1791,7 @@ def _evaluate_population_indices(
                 val_metrics_list = None
 
         unique_count = len(unique_chroms)
-        max_cache = int(getattr(_cfg, "PHASE2_EVAL_GLOBAL_CACHE_MAX_SIZE", 575))
+        max_cache = int(getattr(_cfg, "PHASE2_EVAL_GLOBAL_CACHE_MAX_SIZE", 600))
         cache_hit_rate = cache_hits / max(1, len(pending))
         logger.debug(
             "Phase 2 eval cache: size=%d capacity=%d (hit_rate this gen: %.3f)",
