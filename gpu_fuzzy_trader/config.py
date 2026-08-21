@@ -379,12 +379,29 @@ MAX_TOTAL_EXPOSURE_PCT = 100.0
 #   Lower  → more micro-trades counted toward support metrics.
 MIN_POSITION_NOTIONAL = 1.0
 
+def resolve_backtest_workers(requested: int | None = None) -> int:
+    """Resolve the CPU worker cap for batched rule-set simulations.
+
+    When ``cpu_count <= 2`` (e.g. 2-core cloud/CI environments), workers are capped at 2.
+    Otherwise, capped at min(8, cpu_count).
+    If an explicit worker count is requested, it is respected but bounded by the hardware cap.
+    """
+    cpus = os.cpu_count() or 1
+    if cpus <= 2:
+        hw_cap = min(2, cpus)
+    else:
+        hw_cap = min(8, cpus)
+    
+    if requested is not None:
+        return max(1, min(int(requested), hw_cap))
+    return max(1, hw_cap)
+
+
 # Shared CPU worker cap for batched rule-set simulations used by RB and tests.
 # Exact rule-set/RB evaluation is Python-heavy and each process carries a
-# prepared copy of the scoring arrays.  Capping the default at eight keeps an
-# 8-core host busy without spawning one worker per logical SMT thread (which
-# otherwise increases RAM pressure and process-pool overhead).
-BACKTEST_BATCH_WORKERS = min(8, os.cpu_count() or 4)
+# prepared copy of the scoring arrays. Capping workers prevents SMT thread
+# contention and RAM pressure.
+BACKTEST_BATCH_WORKERS = resolve_backtest_workers()
 
 
 # =============================================================================
@@ -2336,28 +2353,62 @@ def is_colab_runtime() -> bool:
     )
 
 
-def _apply_colab_gpu_defaults() -> None:
+def is_t4_runtime() -> bool:
+    """True when running on an NVIDIA Tesla T4 GPU or explicit T4 env override."""
+    try:
+        from gpu_fuzzy_trader._gpu_runtime import is_t4_runtime as _is_t4
+        return _is_t4()
+    except Exception:
+        env_t4 = os.environ.get("GPU_OPT_T4", "").strip().lower()
+        return env_t4 in ("1", "true", "yes")
+
+
+def _apply_hardware_gpu_defaults() -> None:
     """
-    Colab T4 optimization for Phase 2 runs.
+    Apply hardware-aware GPU defaults for Colab and generic T4 runtimes.
+
+    T4 / Colab path:
+    - PHASE2_GPU_BATCH_SIZE_AUTO = True
+    - PHASE2_GPU_CPU_ROUTE_LARGE_DATA = False (GPU-first ranking path)
+    - PHASE2_SCAN_UNROLL = min(PHASE2_SCAN_UNROLL, 16) (bounds XLA compile memory)
+
+    Gated by GPU_OPT_DISABLE=1 escape hatch.
     """
     global PHASE2_GPU_BATCH_SIZE_AUTO
     global PHASE2_GPU_CPU_ROUTE_LARGE_DATA, PHASE2_SCAN_UNROLL
-    if not is_colab_runtime():
+
+    disable_opt = os.environ.get("GPU_OPT_DISABLE", "").strip().lower()
+    if disable_opt in ("1", "true", "yes"):
         return
 
-    # Colab's T4 has enough VRAM for the JAX ranking path, while the local
+    if not (is_colab_runtime() or is_t4_runtime()):
+        return
+
+    # Colab / generic T4 has enough VRAM for the JAX ranking path, while the local
     # RTX 4050 policy intentionally routes the default long window to CPU.
-    # This function runs in the pipeline subprocess too, unlike notebook-only
-    # Python mutations, so the hardware-specific choice is effective there.
     PHASE2_GPU_BATCH_SIZE_AUTO = True
     PHASE2_GPU_CPU_ROUTE_LARGE_DATA = False
 
-    # Keep XLA's host-side compilation footprint bounded on standard Colab
-    # runtimes.  Respect an even smaller value supplied before config import.
+    # Keep XLA's host-side compilation footprint bounded on T4 / Colab
+    # runtimes. Respect an even smaller value supplied before config import.
     PHASE2_SCAN_UNROLL = min(int(PHASE2_SCAN_UNROLL), 16)
 
 
-_apply_colab_gpu_defaults()
+def _apply_colab_gpu_defaults() -> None:
+    """
+    Colab T4 optimization for Phase 2 runs (backward-compatibility wrapper).
+    """
+    _apply_hardware_gpu_defaults()
+
+
+def _apply_t4_gpu_defaults() -> None:
+    """
+    T4 GPU hardware defaults (backward-compatibility alias).
+    """
+    _apply_hardware_gpu_defaults()
+
+
+_apply_hardware_gpu_defaults()
 
 
 # =============================================================================

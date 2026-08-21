@@ -99,6 +99,32 @@ def test_rule_set_batch_avoids_process_fork_when_jax_is_loaded(monkeypatch) -> N
     assert len(result) == 2
 
 
+def test_resolve_backtest_workers_cpu_contention(monkeypatch) -> None:
+    import os
+    import gpu_fuzzy_trader.config as cfg
+
+    # Test cpu_count <= 2 (capped at 2)
+    monkeypatch.setattr(os, "cpu_count", lambda: 2)
+    assert cfg.resolve_backtest_workers() == 2
+    assert cfg.resolve_backtest_workers(4) == 2
+    assert cfg.resolve_backtest_workers(1) == 1
+
+    monkeypatch.setattr(os, "cpu_count", lambda: 1)
+    assert cfg.resolve_backtest_workers() == 1
+    assert cfg.resolve_backtest_workers(4) == 1
+
+    # Test cpu_count > 2 (capped at min(8, cpu_count))
+    monkeypatch.setattr(os, "cpu_count", lambda: 4)
+    assert cfg.resolve_backtest_workers() == 4
+    assert cfg.resolve_backtest_workers(2) == 2
+    assert cfg.resolve_backtest_workers(8) == 4
+
+    monkeypatch.setattr(os, "cpu_count", lambda: 16)
+    assert cfg.resolve_backtest_workers() == 8
+    assert cfg.resolve_backtest_workers(4) == 4
+    assert cfg.resolve_backtest_workers(12) == 8
+
+
 class TestContextEntryPaths:
     @staticmethod
     def _context_df() -> pd.DataFrame:

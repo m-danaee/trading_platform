@@ -8,6 +8,7 @@ import os
 import subprocess
 
 from gpu_fuzzy_trader import config as _cfg
+from gpu_fuzzy_trader.research_profile import HardwareProfile
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +16,27 @@ logger = logging.getLogger(__name__)
 _WARMED_SIGNATURES: set[tuple] = set()
 
 
+@functools.lru_cache(maxsize=1)
+def detect_gpu_name() -> str | None:
+    """Return GPU product name via nvidia-smi, or None if unavailable."""
+    try:
+        out = subprocess.check_output(
+            [
+                "nvidia-smi",
+                "--query-gpu=name",
+                "--format=csv,noheader",
+            ],
+            text=True,
+            timeout=5,
+            stderr=subprocess.DEVNULL,
+        )
+        first_line = out.strip().splitlines()[0].strip()
+        return first_line if first_line else None
+    except Exception:
+        return None
+
+
+@functools.lru_cache(maxsize=1)
 def detect_gpu_vram_gb() -> float | None:
     """Return total GPU VRAM in GiB via nvidia-smi, or None if unavailable."""
     try:
@@ -55,6 +77,7 @@ def detect_gpu_memory_used_gb() -> float | None:
         return None
 
 
+@functools.lru_cache(maxsize=1)
 def detect_system_ram_gb() -> float | None:
     """Return total system RAM in GiB, or None if unavailable."""
     try:
@@ -74,7 +97,16 @@ def detect_system_ram_gb() -> float | None:
 
 
 def _vram_batch_cap(vram: float | None, config_default: int) -> int:
-    """VRAM-tier cap for Phase 2 GPU vmap chunk size."""
+    """VRAM-tier cap for Phase 2 GPU vmap chunk size.
+
+    Tiers:
+    - unknown: min(config, 64)
+    - <= 8 GiB: min(config, 64)
+    - <= 12 GiB: min(config, 256)
+    - <= 16 GiB: min(config, 256)  (Colab T4 / generic T4)
+    - <= 24 GiB: min(config, 256)  (RTX 3090 / 4090 / A10G — sustain full 256 batch)
+    - > 24 GiB: config default (A100 / H100 / etc.)
+    """
     if vram is None:
         # Unknown GPU: avoid using the full config default (often tuned for
         # desktop cards with more memory).
@@ -88,16 +120,26 @@ def _vram_batch_cap(vram: float | None, config_default: int) -> int:
     if vram <= 16.0:
         return min(config_default, 256)
     if vram <= 24.0:
-        return min(config_default, 96)
+        return min(config_default, 256)
     return config_default
 
 
-def _ram_batch_cap(ram: float | None) -> int | None:
-    """Host-RAM tier cap; JAX compile + CV engines dominate Colab SIGKILL."""
+def _ram_batch_cap(
+    ram: float | None,
+    gpu_route_active: bool = False,
+) -> int | None:
+    """Host-RAM tier cap; JAX compile + CV engines dominate Colab SIGKILL.
+
+    When GPU route is active (PHASE2_GPU_CPU_ROUTE_LARGE_DATA is False),
+    13-16 GiB host RAM is raised from 64 to 128 (or 256) to prevent throttling T4.
+    For small RAM <= 12 GiB, cap at 64 to avoid SIGKILL during XLA compile.
+    """
     if ram is None:
         return None
-    if ram <= 13.0:
+    if ram <= 12.0:
         return 64
+    if ram <= 13.0:
+        return 128 if gpu_route_active else 64
     if ram <= 16.0:
         return 256
     return None
@@ -118,14 +160,15 @@ def resolve_phase2_gpu_batch_size() -> int:
 
     VRAM tiers (applied first):
     - unknown: min(config, 64)
-    - <= 8 GiB: 64
-    - <= 12 GiB: 256
-    - <= 16 GiB: 256  (Colab T4 — raised from 128 to cover full pop in one chunk)
-    - <= 24 GiB: 96
+    - <= 8 GiB: min(config, 64)
+    - <= 12 GiB: min(config, 256)
+    - <= 16 GiB: min(config, 256)  (Colab T4 / generic T4 — covers full pop)
+    - <= 24 GiB: min(config, 256)
     - > 24 GiB: config default
 
     Host RAM tiers (final cap):
-    - <= 13 GiB: 64  (small hosts — avoids SIGKILL during compile)
+    - <= 12 GiB: 64  (small hosts — avoids SIGKILL during compile)
+    - <= 13 GiB: 128 when GPU route active, else 64
     - <= 16 GiB: 256 (desktop 12-GiB GPUs remain throughput-bound)
 
     Note: ``@lru_cache`` ensures nvidia-smi and /proc/meminfo are probed only
@@ -146,40 +189,80 @@ def resolve_phase2_gpu_batch_size() -> int:
 
     config_default = max(1, int(_cfg.PHASE2_GPU_BATCH_SIZE))
     vram_cap = _vram_batch_cap(detect_gpu_vram_gb(), config_default)
-    ram_cap = _ram_batch_cap(detect_system_ram_gb())
+    gpu_route_active = not getattr(_cfg, "PHASE2_GPU_CPU_ROUTE_LARGE_DATA", True)
+    ram_cap = _ram_batch_cap(detect_system_ram_gb(), gpu_route_active=gpu_route_active)
     if ram_cap is not None:
         return min(vram_cap, ram_cap)
     return vram_cap
 
 
-def log_gpu_runtime_config() -> None:
-    """Log resolved Phase 2 GPU knobs once at startup."""
+@functools.lru_cache(maxsize=1)
+def is_t4_runtime() -> bool:
+    """True when running on an NVIDIA Tesla T4 GPU or explicit T4 env override."""
+    env_t4 = os.environ.get("GPU_OPT_T4", "").strip().lower()
+    if env_t4 in ("1", "true", "yes"):
+        return True
+    if env_t4 in ("0", "false", "no"):
+        return False
+
+    gpu_name = detect_gpu_name()
+    if gpu_name and "t4" in gpu_name.lower():
+        return True
+
+    # Fallback heuristic: 14.5 - 16.5 GiB VRAM on Linux without specific name
+    vram = detect_gpu_vram_gb()
+    if vram is not None and 14.5 <= vram <= 16.5:
+        return True
+
+    return False
+
+
+@functools.lru_cache(maxsize=1)
+def detect_hardware_profile() -> HardwareProfile:
+    """Snapshot local host hardware and active JAX backend info."""
     try:
         import jax
 
         backend = jax.default_backend()
-        devices = jax.devices()
+        devices = [str(d) for d in jax.devices()]
     except Exception:
         backend = "unknown"
         devices = []
 
+    return HardwareProfile(
+        gpu_name=detect_gpu_name(),
+        vram_gb=detect_gpu_vram_gb(),
+        ram_gb=detect_system_ram_gb(),
+        cpu_count=os.cpu_count() or 1,
+        jax_backend=backend,
+        devices=devices,
+        is_t4=is_t4_runtime(),
+    )
+
+
+def log_gpu_runtime_config() -> None:
+    """Log resolved Phase 2 GPU knobs once at startup."""
+    hw = detect_hardware_profile()
     batch = resolve_phase2_gpu_batch_size()
-    vram = detect_gpu_vram_gb()
-    vram_str = f"{vram:.1f} GiB" if vram is not None else "unknown"
-    ram = detect_system_ram_gb()
-    ram_str = f"{ram:.1f} GiB" if ram is not None else "unknown"
+    vram_str = f"{hw.vram_gb:.1f} GiB" if hw.vram_gb is not None else "unknown"
+    ram_str = f"{hw.ram_gb:.1f} GiB" if hw.ram_gb is not None else "unknown"
     used = detect_gpu_memory_used_gb()
     used_str = f"{used:.2f} GiB" if used is not None else "unknown"
+    gpu_name_str = hw.gpu_name or "none"
     cache_dir = os.environ.get("JAX_COMPILATION_CACHE_DIR", "")
     logger.info(
-        "Phase 2 runtime: backend=%s devices=%s vram=%s ram=%s used=%s "
-        "batch_size=%d scan_unroll=%d fp32=%s data_int8=%s "
-        "large_window_cpu_route=%s jax_cache=%s",
-        backend,
-        devices,
+        "Phase 2 runtime: gpu=%s backend=%s devices=%s vram=%s ram=%s used=%s "
+        "cpu_count=%d workers=%d is_t4=%s batch_size=%d scan_unroll=%d fp32=%s "
+        "data_int8=%s large_window_cpu_route=%s jax_cache=%s",
+        gpu_name_str,
+        hw.jax_backend,
+        hw.devices,
         vram_str,
         ram_str,
         used_str,
+        hw.cpu_count,
+        getattr(_cfg, "BACKTEST_BATCH_WORKERS", 1),
+        hw.is_t4,
         batch,
         _cfg.PHASE2_SCAN_UNROLL,
         getattr(_cfg, "PHASE2_GPU_USE_FP32", True),
