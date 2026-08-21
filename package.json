@@ -1,0 +1,7 @@
+{
+  "name": "gpu-fuzzy-trader",
+  "private": true,
+  "scripts": {
+    "test": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q tests/unit/test_t4_profile.py tests/unit/test_config_validation.py"
+  }
+}
