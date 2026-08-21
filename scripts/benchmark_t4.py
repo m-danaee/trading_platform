@@ -31,27 +31,52 @@ from gpu_fuzzy_trader._gpu_runtime import (
 logger = logging.getLogger("benchmark_t4")
 
 
-def run_data_loader_benchmark(n_samples: int = 1000) -> dict[str, Any]:
-    """Run a quick micro-benchmark on synthetic feature framing."""
-    t0 = time.perf_counter()
+def run_data_loader_benchmark(n_samples: int = 50000) -> dict[str, Any]:
+    """Run a quick micro-benchmark on synthetic feature framing and Data_Loader."""
+    import tempfile
     import numpy as np
     import pandas as pd
+    from gpu_fuzzy_trader.data.loader import Data_Loader
 
     rng = np.random.default_rng(42)
-    df = pd.DataFrame({
-        "datetime": pd.date_range("2024-01-01", periods=n_samples, freq="15min"),
-        "open": rng.uniform(100, 110, n_samples),
-        "high": rng.uniform(110, 120, n_samples),
-        "low": rng.uniform(90, 100, n_samples),
-        "close": rng.uniform(95, 115, n_samples),
-        "volume": rng.uniform(1000, 5000, n_samples),
-    })
-    elapsed = time.perf_counter() - t0
-    return {
-        "status": "success",
-        "rows": len(df),
-        "elapsed_sec": round(elapsed, 4),
-    }
+    symbols = ["SYM_A", "SYM_B", "SYM_C", "SYM_D"]
+    rows_per_sym = n_samples // len(symbols)
+    dfs = []
+    for sym in symbols:
+        dt = pd.date_range("2024-01-01", periods=rows_per_sym, freq="5min")
+        dfs.append(pd.DataFrame({
+            "datetime": dt.strftime("%Y-%m-%d %H:%M:%S"),
+            "symbol": sym,
+            "open": rng.uniform(100, 110, rows_per_sym),
+            "high": rng.uniform(110, 120, rows_per_sym),
+            "low": rng.uniform(90, 100, rows_per_sym),
+            "close": rng.uniform(95, 115, rows_per_sym),
+            "volume": rng.uniform(1000, 5000, rows_per_sym),
+            "feature_1": rng.uniform(-1.0, 1.0, rows_per_sym),
+            "feature_2": rng.uniform(-1.0, 1.0, rows_per_sym),
+            "feature_3": rng.uniform(-1.0, 1.0, rows_per_sym),
+        }))
+    synth_df = pd.concat(dfs, ignore_index=True)
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+        synth_df.to_csv(f.name, index=False)
+        tmp_path = f.name
+
+    try:
+        t0 = time.perf_counter()
+        loaded = Data_Loader().load_dataset(tmp_path, require_context=False)
+        elapsed = time.perf_counter() - t0
+        loader_ms = elapsed * 1000.0
+        return {
+            "status": "success",
+            "rows": len(loaded),
+            "loader_ms": round(loader_ms, 2),
+            "elapsed_sec": round(elapsed, 4),
+            "symbol_is_category": str(loaded["symbol"].dtype) == "category",
+            "datetime_is_datetime64": pd.api.types.is_datetime64_any_dtype(loaded["datetime"]),
+        }
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
 
 def run_jax_engine_benchmark(batch_size: int | None = None) -> dict[str, Any]:
@@ -129,7 +154,11 @@ def run_jax_engine_benchmark(batch_size: int | None = None) -> dict[str, Any]:
         }
 
 
-def collect_profile_report(skip_bench: bool = False) -> dict[str, Any]:
+def collect_profile_report(
+    skip_bench: bool = False,
+    component: str = "all",
+    rows: int = 50000,
+) -> dict[str, Any]:
     """Collect complete hardware snapshot and benchmark metrics."""
     hw = detect_hardware_profile()
     batch_resolved = resolve_phase2_gpu_batch_size()
@@ -155,8 +184,10 @@ def collect_profile_report(skip_bench: bool = False) -> dict[str, Any]:
     }
 
     if not skip_bench:
-        report["benchmarks"]["data_loader"] = run_data_loader_benchmark()
-        report["benchmarks"]["gpu_engine"] = run_jax_engine_benchmark(batch_resolved)
+        if component in ("all", "loader"):
+            report["benchmarks"]["data_loader"] = run_data_loader_benchmark(n_samples=rows)
+        if component in ("all", "gpu"):
+            report["benchmarks"]["gpu_engine"] = run_jax_engine_benchmark(batch_resolved)
 
     return report
 
@@ -166,9 +197,15 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true", help="Print JSON to stdout without writing file")
     parser.add_argument("--output", type=str, default="", help="Path to write JSON profile")
     parser.add_argument("--skip-micro-bench", action="store_true", help="Skip running synthetic JAX/Loader micro-bench")
+    parser.add_argument("--component", type=str, default="all", choices=["all", "loader", "gpu"], help="Micro-bench component to run")
+    parser.add_argument("--rows", type=int, default=50000, help="Number of rows for data loader benchmark")
     args = parser.parse_args()
 
-    report = collect_profile_report(skip_bench=args.skip_micro_bench)
+    report = collect_profile_report(
+        skip_bench=args.skip_micro_bench,
+        component=args.component,
+        rows=args.rows,
+    )
     rendered = json.dumps(report, indent=2)
 
     if args.dry_run or not args.output:

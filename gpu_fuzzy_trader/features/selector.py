@@ -505,6 +505,7 @@ class Feature_Selector:
         discrete_mask = _mutual_info_discrete_mask(
             feature_cols, feature_modes)
 
+        _n_jobs = min(2, os.cpu_count() or 2)
         for sym in symbols:
             if sym is not None:
                 mask = symbol_masks[str(sym)]
@@ -517,6 +518,14 @@ class Feature_Selector:
 
             X = feature_array[mask]
             try:
+                scores = mutual_info_classif(
+                    X,
+                    sym_target.astype(np.int32, copy=False),
+                    discrete_features=discrete_mask,
+                    random_state=config.get_seed(),
+                    n_jobs=_n_jobs,
+                )
+            except TypeError:
                 scores = mutual_info_classif(
                     X,
                     sym_target.astype(np.int32, copy=False),
@@ -1070,9 +1079,21 @@ def _mi_scores_for_mask(
     if len(np.unique(yf)) < 2:
         return None
     discrete_mask = _mutual_info_discrete_mask(feature_cols, feature_modes)
+    _n_jobs = min(2, os.cpu_count() or 2)
     try:
         scores = mutual_info_classif(
-            Xf, yf, discrete_features=discrete_mask, random_state=config.get_seed(),
+            Xf,
+            yf,
+            discrete_features=discrete_mask,
+            random_state=config.get_seed(),
+            n_jobs=_n_jobs,
+        )
+    except TypeError:
+        scores = mutual_info_classif(
+            Xf,
+            yf,
+            discrete_features=discrete_mask,
+            random_state=config.get_seed(),
         )
     except Exception:
         scores = np.zeros(len(feature_cols))

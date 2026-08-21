@@ -23,7 +23,7 @@ def downcast_numeric_df(df: pd.DataFrame) -> pd.DataFrame:
             out[col] = out[col].astype("float32")
     if "_symbol_bar_index" in out.columns:
         out["_symbol_bar_index"] = out["_symbol_bar_index"].astype("int32")
-    if "symbol" in out.columns and out["symbol"].dtype == object:
+    if "symbol" in out.columns and str(out["symbol"].dtype) != "category":
         out["symbol"] = out["symbol"].astype("category")
     non_meta = [
         c

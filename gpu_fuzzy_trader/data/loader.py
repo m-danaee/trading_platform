@@ -2,20 +2,22 @@
 data/loader.py — Data_Loader
 
 Stateless CSV loading with full preparation pipeline:
-  1. Read CSV (comma-separated)
+  1. Read CSV (comma-separated with PyArrow engine fallback)
   2. Parse datetime column
   3. Derive forward labels from OHLCV when the CSV has no labels
   4. Sort by (datetime, symbol) — matches evaluator_v5.ipynb row order
-  5. Optionally attach exact first-touch barrier outcomes
+  5. Optionally attach exact first-touch barrier outcomes (cached by tape SHA-256)
   6. Drop last TAIL_DROP_ROWS rows per symbol
   7. Drop rows where any LABEL_COLUMNS value is NaN
   8. Fill NaN in feature columns with 0
   9. Compute _symbol_bar_index via groupby("symbol").cumcount()
-
-No caching or persistence — caller is responsible for that.
 """
 
 from __future__ import annotations
+
+import os
+from pathlib import Path
+from typing import Mapping
 
 import numpy as np
 import pandas as pd
@@ -29,6 +31,7 @@ from gpu_fuzzy_trader.config import (
     TAIL_DROP_ROWS,
 )
 from gpu_fuzzy_trader.data.labels import compute_labels
+from gpu_fuzzy_trader.research_integrity import sha256_file
 
 
 _OHLCV_COLUMNS = ("open", "high", "low", "close", "volume")
@@ -215,7 +218,13 @@ class Data_Loader:
         # ------------------------------------------------------------------
         # 1. Read CSV
         # ------------------------------------------------------------------
-        df = pd.read_csv(path, sep=",")
+        try:
+            df = pd.read_csv(path, sep=",", engine="pyarrow")
+        except Exception:
+            df = pd.read_csv(path, sep=",")
+
+        if "symbol" in df.columns and str(df["symbol"].dtype) != "category":
+            df["symbol"] = df["symbol"].astype("category")
 
         # ------------------------------------------------------------------
         # 2. Parse datetime column
@@ -263,7 +272,35 @@ class Data_Loader:
                     attach_barrier_outcomes,
                 )
 
-                df = attach_barrier_outcomes(df, horizon=TAIL_DROP_ROWS)
+                # Barrier outcomes can be cached per tape content hash
+                cached_barrier_df = None
+                tape_hash = None
+                try:
+                    if isinstance(path, (str, Path, os.PathLike)) and os.path.exists(str(path)):
+                        tape_hash = sha256_file(path)
+                        cache_dir = Path(_cfg.OUTPUTS_DIR) / ".cache" / "barriers"
+                        cache_file = cache_dir / f"{tape_hash}_{TAIL_DROP_ROWS}.parquet"
+                        if cache_file.exists():
+                            cached_barrier_df = pd.read_parquet(cache_file)
+                except Exception:
+                    cached_barrier_df = None
+
+                if cached_barrier_df is not None and len(cached_barrier_df) == len(df):
+                    # Attach cached barrier columns directly
+                    barrier_cols = [c for c in cached_barrier_df.columns if c.startswith("_barrier_")]
+                    for c in barrier_cols:
+                        df[c] = cached_barrier_df[c].values
+                else:
+                    df = attach_barrier_outcomes(df, horizon=TAIL_DROP_ROWS)
+                    if tape_hash is not None:
+                        try:
+                            cache_dir = Path(_cfg.OUTPUTS_DIR) / ".cache" / "barriers"
+                            cache_dir.mkdir(parents=True, exist_ok=True)
+                            cache_file = cache_dir / f"{tape_hash}_{TAIL_DROP_ROWS}.parquet"
+                            barrier_cols = [c for c in df.columns if c.startswith("_barrier_")]
+                            df[barrier_cols].to_parquet(cache_file)
+                        except Exception:
+                            pass
 
         # ------------------------------------------------------------------
         # 6. Drop last TAIL_DROP_ROWS rows per symbol (optional)
