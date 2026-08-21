@@ -7,6 +7,7 @@ All entry points accept host NumPy arrays only (never JAX DeviceArray).
 from __future__ import annotations
 
 import logging
+import os
 import numpy as np
 
 from gpu_fuzzy_trader import config as _cfg
@@ -14,10 +15,17 @@ from gpu_fuzzy_trader import config as _cfg
 _NUMBA_AVAILABLE = False
 _NUMBA_SORT_AVAILABLE = False
 try:
+    import numba
     from numba import njit
 
     _NUMBA_AVAILABLE = True
     _NUMBA_SORT_AVAILABLE = True
+    _numba_threads = int(os.environ.get("NUMBA_NUM_THREADS", "0") or 0)
+    if _numba_threads > 0:
+        try:
+            numba.set_num_threads(_numba_threads)
+        except Exception:
+            pass
 except ImportError:
     njit = None  # type: ignore[assignment,misc]
 

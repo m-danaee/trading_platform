@@ -44,8 +44,10 @@ def _append_xla_flag(flags: str, flag: str) -> str:
 
 def configure_jax_env() -> None:
     """
-    Configure JAX/XLA runtime for predictable desktop-friendly GPU usage.
+    Configure JAX/XLA runtime and CPU threading limits for predictable desktop/cloud usage.
 
+    - Set thread caps for OpenMP, MKL, OpenBLAS, NumExpr, and Numba early to prevent
+      CPU oversubscription (default min(2, cpu_count) without overwriting user settings).
     - ``XLA_PYTHON_CLIENT_PREALLOCATE``: keep memory on demand by default so
       JAX does not reserve most of the VRAM at startup.
     - ``XLA_PYTHON_CLIENT_MEM_FRACTION``: cap allocator growth when JAX does
@@ -55,6 +57,17 @@ def configure_jax_env() -> None:
     - ``ABSL_MIN_LOGLEVEL`` / ``TF_CPP_MIN_LOG_LEVEL``: hide benign CUDA driver
       version parse errors from XLA on WSL.
     """
+    cpus = os.cpu_count() or 1
+    thread_cap_str = str(max(1, min(2, cpus)))
+    for env_var in (
+        "NUMBA_NUM_THREADS",
+        "OMP_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+    ):
+        os.environ.setdefault(env_var, thread_cap_str)
+
     os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
     os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.8")
     os.environ.setdefault("JAX_PLATFORMS", "cuda,cpu")

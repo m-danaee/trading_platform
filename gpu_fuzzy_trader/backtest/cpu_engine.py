@@ -1221,8 +1221,10 @@ class CPUBacktestEngine:
 
         workers = max_workers
         if workers is None:
-            workers = int(_cfg.BACKTEST_BATCH_WORKERS)
-        workers = max(1, min(int(workers), len(rule_sets)))
+            workers = int(_cfg.resolve_backtest_workers())
+        else:
+            workers = int(_cfg.resolve_backtest_workers(workers))
+        workers = max(1, min(workers, len(rule_sets)))
 
         if cache is not None and split is not None:
             def _eval_one(rs: list[dict]) -> dict:

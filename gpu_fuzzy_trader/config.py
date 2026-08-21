@@ -379,12 +379,29 @@ MAX_TOTAL_EXPOSURE_PCT = 100.0
 #   Lower  → more micro-trades counted toward support metrics.
 MIN_POSITION_NOTIONAL = 1.0
 
+def resolve_backtest_workers(requested: int | None = None) -> int:
+    """Resolve the CPU worker cap for batched rule-set simulations.
+
+    When ``cpu_count <= 2`` (e.g. 2-core cloud/CI environments), workers are capped at 2.
+    Otherwise, capped at min(8, cpu_count).
+    If an explicit worker count is requested, it is respected but bounded by the hardware cap.
+    """
+    cpus = os.cpu_count() or 1
+    if cpus <= 2:
+        hw_cap = min(2, cpus)
+    else:
+        hw_cap = min(8, cpus)
+    
+    if requested is not None:
+        return max(1, min(int(requested), hw_cap))
+    return max(1, hw_cap)
+
+
 # Shared CPU worker cap for batched rule-set simulations used by RB and tests.
 # Exact rule-set/RB evaluation is Python-heavy and each process carries a
-# prepared copy of the scoring arrays.  Capping the default at eight keeps an
-# 8-core host busy without spawning one worker per logical SMT thread (which
-# otherwise increases RAM pressure and process-pool overhead).
-BACKTEST_BATCH_WORKERS = min(8, os.cpu_count() or 4)
+# prepared copy of the scoring arrays. Capping workers prevents SMT thread
+# contention and RAM pressure.
+BACKTEST_BATCH_WORKERS = resolve_backtest_workers()
 
 
 # =============================================================================
