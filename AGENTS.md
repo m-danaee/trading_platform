@@ -2,3 +2,4 @@
 - Always use .venv for running commands!
 - After changing sections of my code, remove additional(wasted) parts from old implementation to get clean my project.
 - Do not run all tests together and without `PYTEST_LOW_MEMORY=1` on local / WSL because it can hit OOM.
+- Write in ASD-STE100.
