@@ -12,7 +12,9 @@ kept separate from evaluator-facing feature columns.
 
 from __future__ import annotations
 
-from typing import Iterable
+from collections.abc import Iterable
+import hashlib
+import json
 
 import numpy as np
 import pandas as pd
@@ -23,6 +25,9 @@ try:  # Numba is part of the production requirements, but keep a safe fallback.
     from numba import njit
 except Exception:  # pragma: no cover - exercised only in minimal installs
     njit = None
+
+
+BARRIER_CACHE_FORMAT_VERSION = "exact-first-touch-v2"
 
 
 def _number_token(value: float) -> str:
@@ -40,21 +45,75 @@ def barrier_column_names(direction: str, tp: float, sl: float) -> tuple[str, str
     return f"{prefix}_return_pct", f"{prefix}_offset"
 
 
+def _canonical_barrier_pairs(
+    pairs: Iterable[tuple[float, float]],
+) -> list[tuple[float, float]]:
+    """Return stable, unique numeric TP/SL pairs."""
+    return sorted({(float(tp), float(sl)) for tp, sl in pairs})
+
+
 def configured_barrier_pairs() -> list[tuple[float, float]]:
     """Return the deterministic risk pairs required by all production stages."""
     tps = {float(getattr(_cfg, "PHASE2_TP", 2.0))}
     sls = {float(getattr(_cfg, "PHASE2_SL", 1.2))}
     tps.update(float(v) for v in getattr(_cfg, "RB_TP_GRID", ()))
     sls.update(float(v) for v in getattr(_cfg, "RB_SL_GRID", ()))
-    return [(tp, sl) for tp in sorted(tps) for sl in sorted(sls)]
+    return _canonical_barrier_pairs(
+        (tp, sl) for tp in sorted(tps) for sl in sorted(sls)
+    )
 
 
-def required_barrier_columns() -> set[str]:
+def _resolve_barrier_pairs(
+    pairs: Iterable[tuple[float, float]] | None,
+) -> list[tuple[float, float]]:
+    if pairs is None:
+        return configured_barrier_pairs()
+    return _canonical_barrier_pairs(pairs)
+
+
+def required_barrier_columns(
+    pairs: Iterable[tuple[float, float]] | None = None,
+) -> set[str]:
+    """Return the exact barrier schema for the supplied or configured pairs."""
     columns: set[str] = set()
+    resolved_pairs = _resolve_barrier_pairs(pairs)
     for direction in ("long", "short"):
-        for tp, sl in configured_barrier_pairs():
+        for tp, sl in resolved_pairs:
             columns.update(barrier_column_names(direction, tp, sl))
     return columns
+
+
+def barrier_cache_identity(
+    *,
+    horizon: int,
+    pairs: Iterable[tuple[float, float]] | None = None,
+) -> str:
+    """Hash the complete exact-barrier cache contract."""
+    resolved_pairs = _resolve_barrier_pairs(pairs)
+    payload = {
+        "format_version": BARRIER_CACHE_FORMAT_VERSION,
+        "horizon": int(horizon),
+        "pairs": [[tp, sl] for tp, sl in resolved_pairs],
+    }
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def barrier_cache_filename(
+    tape_hash: str,
+    *,
+    horizon: int,
+    pairs: Iterable[tuple[float, float]] | None = None,
+) -> str:
+    """Return a cache filename bound to the tape and exact execution contract."""
+    identity = barrier_cache_identity(horizon=horizon, pairs=pairs)
+    return (
+        f"{tape_hash!s}_{BARRIER_CACHE_FORMAT_VERSION}_{identity}.parquet"
+    )
 
 
 def _first_touch_for_symbol_python(
@@ -239,9 +298,11 @@ def attach_barrier_outcomes(
     horizon = int(horizon or getattr(_cfg, "MAX_HOLD_CANDLES", 96))
     if horizon < 1:
         raise ValueError("Barrier horizon must be positive")
-    pairs = list(pairs or configured_barrier_pairs())
+    pairs = _resolve_barrier_pairs(pairs)
     if not pairs:
-        return df
+        # Preserve the established empty-pairs behavior: callers without a
+        # usable override receive the configured production grid.
+        pairs = configured_barrier_pairs()
 
     out = df.sort_values(["datetime", "symbol"]).reset_index(drop=True).copy()
 

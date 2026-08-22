@@ -391,7 +391,7 @@ def resolve_backtest_workers(requested: int | None = None) -> int:
         hw_cap = min(2, cpus)
     else:
         hw_cap = min(8, cpus)
-    
+
     if requested is not None:
         return max(1, min(int(requested), hw_cap))
     return max(1, hw_cap)

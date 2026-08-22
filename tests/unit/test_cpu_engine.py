@@ -1362,4 +1362,3 @@ class TestCostModelAndReliabilityAuditFixes:
         assert res_ba['executed_trades'] == 2
         assert res_ab['executed_trades'] == res_ba['executed_trades']
         assert res_ab['final_equity'] == pytest.approx(res_ba['final_equity'])
-

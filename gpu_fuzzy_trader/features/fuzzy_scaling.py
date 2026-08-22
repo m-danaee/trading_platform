@@ -22,7 +22,7 @@ _FORMAT_VERSION = 1
 
 def fit_fuzzy_feature_scaling(train_df: pd.DataFrame) -> dict[str, Any]:
     """Build a train-only scaling contract for ordinal ``ff_*`` columns.
-    
+
     If config.FEATURE_SCALE_MANIFEST is provided, it is used directly.
     Otherwise the scaling is inferred from the training split.
     """

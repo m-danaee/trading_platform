@@ -4,13 +4,19 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 from gpu_fuzzy_trader import _gpu_runtime
 from gpu_fuzzy_trader import config as _cfg
+from gpu_fuzzy_trader.backtest.barrier import required_barrier_columns
 from gpu_fuzzy_trader.research_profile import HardwareProfile
+
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_detect_gpu_name_success():
@@ -64,6 +70,22 @@ def test_is_t4_runtime_non_t4():
         assert _gpu_runtime.is_t4_runtime() is False
 
 
+def test_is_t4_runtime_rejects_known_non_t4_with_16_gib():
+    _gpu_runtime.is_t4_runtime.cache_clear()
+    _gpu_runtime.detect_gpu_name.cache_clear()
+    _gpu_runtime.detect_gpu_vram_gb.cache_clear()
+    with patch.dict("os.environ", {}, clear=True), \
+         patch(
+             "gpu_fuzzy_trader._gpu_runtime.detect_gpu_name",
+             return_value="NVIDIA RTX A4000",
+         ), \
+         patch(
+             "gpu_fuzzy_trader._gpu_runtime.detect_gpu_vram_gb",
+             return_value=16.0,
+         ):
+        assert _gpu_runtime.is_t4_runtime() is False
+
+
 def test_detect_hardware_profile():
     _gpu_runtime.detect_hardware_profile.cache_clear()
     _gpu_runtime.is_t4_runtime.cache_clear()
@@ -98,6 +120,49 @@ def test_scripts_benchmark_t4_dry_run():
     assert "cpu_count" in report["hardware"]
     assert "vram_gb" in report["hardware"]
     assert "batch_size" in report["resolved_config"]
+
+
+def test_exact_engine_benchmark_reports_cpu_exact_route():
+    from scripts import benchmark_t4
+
+    result = benchmark_t4.run_exact_engine_benchmark(
+        batch_size=1,
+        n_samples=_cfg.TAIL_DROP_ROWS + 8,
+    )
+    if result["status"] == "skipped":
+        pytest.skip(result["reason"])
+    assert result["execution_route"] == "cpu_exact"
+    assert result["exact_barrier_pair"] == [
+        _cfg.PHASE2_TP,
+        _cfg.PHASE2_SL,
+    ]
+
+
+def test_evolution_benchmark_reports_production_dont_cares():
+    from scripts import benchmark_t4
+
+    result = benchmark_t4.run_evolution_benchmark(
+        generations=0,
+        pop_size=2,
+        n_samples=_cfg.TAIL_DROP_ROWS + 8,
+    )
+    assert result["dont_care_codes"] == [2, 5, 3]
+
+
+def test_loader_benchmark_reports_exact_barriers(tmp_path, monkeypatch):
+    from scripts import benchmark_t4
+
+    monkeypatch.setattr(
+        benchmark_t4._cfg,
+        "OUTPUTS_DIR",
+        str(tmp_path / "outputs"),
+    )
+    result = benchmark_t4.run_data_loader_benchmark(
+        n_samples=4 * (_cfg.TAIL_DROP_ROWS + 4),
+    )
+    assert result["barrier_column_count"] == len(
+        required_barrier_columns(),
+    )
 
 
 def test_research_profile_hardware_snapshot():
@@ -179,3 +244,33 @@ def test_configure_jax_env():
         assert os.environ.get("JAX_COMPILATION_CACHE_DIR") == "/tmp/jax_cache"
         assert os.path.isdir(os.environ.get("JAX_COMPILATION_CACHE_DIR"))
 
+
+def test_run_pipeline_sets_thread_caps_before_numpy_import():
+    script = """
+import builtins
+import os
+for key in (
+    "NUMBA_NUM_THREADS",
+    "OMP_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+):
+    os.environ.pop(key, None)
+real_import = builtins.__import__
+def guarded_import(name, *args, **kwargs):
+    if name.split(".", 1)[0] in {"numpy", "pandas"}:
+        if not os.environ.get("OPENBLAS_NUM_THREADS"):
+            raise RuntimeError("numpy/pandas imported before JAX environment setup")
+    return real_import(name, *args, **kwargs)
+builtins.__import__ = guarded_import
+import gpu_fuzzy_trader.run_pipeline
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=_PROJECT_ROOT,
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr

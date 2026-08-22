@@ -34,8 +34,10 @@ logger = logging.getLogger("benchmark_t4")
 def run_data_loader_benchmark(n_samples: int = 50000) -> dict[str, Any]:
     """Run a quick micro-benchmark on synthetic feature framing and Data_Loader."""
     import tempfile
+
     import numpy as np
     import pandas as pd
+
     from gpu_fuzzy_trader.data.loader import Data_Loader
 
     rng = np.random.default_rng(42)
@@ -44,13 +46,17 @@ def run_data_loader_benchmark(n_samples: int = 50000) -> dict[str, Any]:
     dfs = []
     for sym in symbols:
         dt = pd.date_range("2024-01-01", periods=rows_per_sym, freq="5min")
+        opens = rng.uniform(100, 110, rows_per_sym)
+        spreads = rng.uniform(0.002, 0.02, rows_per_sym)
+        lows = opens * (1.0 - spreads)
+        highs = opens * (1.0 + spreads)
         dfs.append(pd.DataFrame({
             "datetime": dt.strftime("%Y-%m-%d %H:%M:%S"),
             "symbol": sym,
-            "open": rng.uniform(100, 110, rows_per_sym),
-            "high": rng.uniform(110, 120, rows_per_sym),
-            "low": rng.uniform(90, 100, rows_per_sym),
-            "close": rng.uniform(95, 115, rows_per_sym),
+            "open": opens,
+            "high": highs,
+            "low": lows,
+            "close": lows + (highs - lows) * rng.random(rows_per_sym),
             "volume": rng.uniform(1000, 5000, rows_per_sym),
             "feature_1": rng.uniform(-1.0, 1.0, rows_per_sym),
             "feature_2": rng.uniform(-1.0, 1.0, rows_per_sym),
@@ -63,7 +69,11 @@ def run_data_loader_benchmark(n_samples: int = 50000) -> dict[str, Any]:
 
     try:
         t0 = time.perf_counter()
-        loaded = Data_Loader().load_dataset(tmp_path, require_context=False)
+        loaded = Data_Loader().load_dataset(
+            tmp_path,
+            require_context=False,
+            include_barrier_outcomes=True,
+        )
         elapsed = time.perf_counter() - t0
         loader_ms = elapsed * 1000.0
         return {
@@ -73,40 +83,77 @@ def run_data_loader_benchmark(n_samples: int = 50000) -> dict[str, Any]:
             "elapsed_sec": round(elapsed, 4),
             "symbol_is_category": str(loaded["symbol"].dtype) == "category",
             "datetime_is_datetime64": pd.api.types.is_datetime64_any_dtype(loaded["datetime"]),
+            "barrier_column_count": sum(
+                column.startswith("_barrier_") for column in loaded.columns
+            ),
         }
     finally:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
 
 
-def run_jax_engine_benchmark(batch_size: int | None = None) -> dict[str, Any]:
-    """Run synthetic GPUBacktestEngine simulate_rule_batch if JAX is functional."""
+def run_exact_engine_benchmark(
+    batch_size: int | None = None,
+    n_samples: int = 1000,
+) -> dict[str, Any]:
+    """Benchmark the production exact-barrier route through the engine facade."""
     t0 = time.perf_counter()
     try:
-        import jax
         import numpy as np
         import pandas as pd
 
+        from gpu_fuzzy_trader.backtest.barrier import attach_barrier_outcomes
         from gpu_fuzzy_trader.backtest.gpu_engine import GPUBacktestEngine
+        from gpu_fuzzy_trader.config import LABEL_COLUMNS
+        from gpu_fuzzy_trader.data.labels import compute_labels
 
         resolved_batch = batch_size or resolve_phase2_gpu_batch_size()
-        n = 1000
+        n = int(n_samples)
+        if n <= int(_cfg.TAIL_DROP_ROWS):
+            raise ValueError(
+                "n_samples must exceed TAIL_DROP_ROWS for exact benchmark data"
+            )
         rng = np.random.default_rng(42)
-        df = pd.DataFrame({
+        opens = 100.0 + np.cumsum(rng.normal(0.0, 0.2, n))
+        opens = np.maximum(opens, 1.0)
+        spreads = rng.uniform(0.002, 0.02, n)
+        lows = opens * (1.0 - spreads)
+        highs = opens * (1.0 + spreads)
+        closes = lows + (highs - lows) * rng.random(n)
+        raw = pd.DataFrame({
             "symbol": ["BENCH"] * n,
-            "datetime": pd.date_range("2024-01-01", periods=n, freq="5min"),
-            "_symbol_bar_index": np.arange(n),
-            "label_open_next": rng.uniform(90, 110, n),
-            "label_max_288": rng.uniform(92, 115, n),
-            "label_min_288": rng.uniform(85, 98, n),
-            "label_close_288": rng.uniform(90, 110, n),
-            "label_max_before_min": rng.integers(0, 2, n),
+            "datetime": pd.date_range("2024-01-01", periods=n, freq="15min"),
+            "open": opens,
+            "high": highs,
+            "low": lows,
+            "close": closes,
+            "volume": rng.uniform(1000, 5000, n),
             "feat_a": rng.integers(0, 2, n),
             "feat_b": rng.integers(0, 5, n),
             "feat_c": rng.integers(0, 3, n),
         })
+        labels = compute_labels(
+            raw[["datetime", "symbol", "open", "high", "low", "close", "volume"]]
+        )
+        df = raw.merge(
+            labels,
+            on=["datetime", "symbol"],
+            how="left",
+            sort=False,
+            validate="one_to_one",
+        )
+        exact_pair = (float(_cfg.PHASE2_TP), float(_cfg.PHASE2_SL))
+        df = attach_barrier_outcomes(
+            df,
+            horizon=_cfg.TAIL_DROP_ROWS,
+            pairs=[exact_pair],
+        )
+        df = df.dropna(subset=LABEL_COLUMNS).reset_index(drop=True)
+        df["_symbol_bar_index"] = np.arange(len(df), dtype=np.int32)
         feature_modes = {"feat_a": "binary", "feat_b": "positive", "feat_c": "ternary"}
         engine = GPUBacktestEngine(df, feature_modes, "long")
+        if not engine._has_exact_barrier_pair(*exact_pair):
+            raise RuntimeError("Exact benchmark barrier pair was not attached")
 
         k = len(feature_modes)
         chrom = np.zeros((resolved_batch, k), dtype=np.int32)
@@ -120,10 +167,6 @@ def run_jax_engine_benchmark(batch_size: int | None = None) -> dict[str, Any]:
             generation=1,
             is_last_gen=False,
         )
-        try:
-            jax.block_until_ready(jax.numpy.zeros(1))
-        except Exception:
-            pass
 
         t_start = time.perf_counter()
         engine.simulate_rule_batch(
@@ -134,15 +177,14 @@ def run_jax_engine_benchmark(batch_size: int | None = None) -> dict[str, Any]:
             generation=1,
             is_last_gen=False,
         )
-        try:
-            jax.block_until_ready(jax.numpy.zeros(1))
-        except Exception:
-            pass
         t_exec = time.perf_counter() - t_start
 
         return {
             "status": "success",
             "batch_size": resolved_batch,
+            "rows": len(df),
+            "execution_route": "cpu_exact",
+            "exact_barrier_pair": list(exact_pair),
             "exec_time_sec": round(t_exec, 4),
             "total_time_sec": round(time.perf_counter() - t0, 4),
         }
@@ -154,29 +196,37 @@ def run_jax_engine_benchmark(batch_size: int | None = None) -> dict[str, Any]:
         }
 
 
+def run_jax_engine_benchmark(
+    batch_size: int | None = None,
+    n_samples: int = 1000,
+) -> dict[str, Any]:
+    """Backward-compatible alias for the exact production-route benchmark."""
+    return run_exact_engine_benchmark(
+        batch_size=batch_size,
+        n_samples=n_samples,
+    )
+
+
 def run_evolution_benchmark(
     generations: int = 3,
     pop_size: int = 32,
     n_samples: int = 2000,
 ) -> dict[str, Any]:
     """Run synthetic NSGA-III / NSGA-II evolution micro-benchmark."""
-    import psutil
     import numpy as np
     import pandas as pd
+    import psutil
+
     from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
     from gpu_fuzzy_trader.evolution.evox_runner import (
         N_OBJ,
         Phase2EvolutionState,
         _evaluate_population_indices,
-        _get_reference_vectors,
         trim_evolution_state_memory,
     )
-    from gpu_fuzzy_trader.phases.phase2_rule_pool import _init_population
-    from gpu_fuzzy_trader.phases.phase2_sparse_encoding import (
-        count_active_slots,
-        empty_slots,
-        is_sparse_chromosome,
-        use_sparse_slots,
+    from gpu_fuzzy_trader.phases.phase2_rule_pool import (
+        _get_dont_cares,
+        _init_population,
     )
 
     t0 = time.perf_counter()
@@ -196,7 +246,7 @@ def run_evolution_benchmark(
     })
     feature_modes = {"feat_a": "binary", "feat_b": "positive", "feat_c": "ternary"}
     feature_infos = [{"name": k, "mode": v} for k, v in feature_modes.items()]
-    dont_cares = np.array([0, 0, 0], dtype=np.int32)
+    dont_cares = _get_dont_cares(feature_infos)
     engine = CPUBacktestEngine(df, feature_modes, "long")
 
     t_warm_start = time.perf_counter()
@@ -265,6 +315,7 @@ def run_evolution_benchmark(
         "status": "success",
         "generations": generations,
         "pop_size": pop_size,
+        "dont_care_codes": dont_cares.tolist(),
         "cache_hit_rate": round(cache_hit_rate, 4),
         "warmup_ms": round(warmup_ms, 2),
         "gen_avg_ms": round(gen_avg_ms, 2),

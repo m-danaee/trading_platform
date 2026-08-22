@@ -688,11 +688,11 @@ class OOS_Evaluator:
                     ]
                     candidate_counter = Counter(candidate_lwc_hashes)
                     archive_counter = Counter(archive_lwc_hashes)
-                    for rule_hash, count in candidate_counter.items():
-                        if archive_counter[rule_hash] < count:
-                            raise ValidationError(
-                                f"Candidate LWC rule multiset count ({count}) exceeds frozen LWC archive count ({archive_counter[rule_hash]}) for rule {rule_hash}"
-                            )
+                    if candidate_counter != archive_counter:
+                        raise ValidationError(
+                            "Candidate LWC rule multiset does not exactly "
+                            "match the frozen LWC archive payload"
+                        )
 
 
                 strategies[direction] = data

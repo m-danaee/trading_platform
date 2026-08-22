@@ -26,33 +26,38 @@ Requirements: 13.1, 13.2, 13.3, 13.4, 13.5
 """
 
 from __future__ import annotations
-from gpu_fuzzy_trader.reporting import reporter as _reporter_module
-from gpu_fuzzy_trader.phases import phase5_oos as _phase5_module
-from gpu_fuzzy_trader.phases import phase2_rule_pool as _phase2_module
-from gpu_fuzzy_trader import rb_governor as _rb_governor_module
-from gpu_fuzzy_trader.features import selector as _selector_module
+
+import argparse
+from contextlib import contextmanager
+from datetime import datetime, timezone
+import hashlib
+import json
+import logging
+import os
+import subprocess
+import sys
+import time
+from typing import Any
+import uuid
+from pathlib import Path
+
+from gpu_fuzzy_trader._jax_env import configure_jax_env
+
+configure_jax_env()
+
+import numpy as np
+import pandas as pd
+
 from gpu_fuzzy_trader import config as _cfg
+from gpu_fuzzy_trader import rb_governor as _rb_governor_module
 from gpu_fuzzy_trader.data.loader import Data_Loader, validate_context_columns
 from gpu_fuzzy_trader.data.splitter import Data_Splitter, load_cached_split_if_fresh
-from gpu_fuzzy_trader.features.selector import Feature_Selector
+from gpu_fuzzy_trader.features import selector as _selector_module
 from gpu_fuzzy_trader.features.fuzzy_scaling import (
     apply_fuzzy_feature_scaling,
     fit_fuzzy_feature_scaling,
 )
-from gpu_fuzzy_trader.validation.rolling_cv import (
-    build_forbidden_ranges,
-    mask_df_to_safe_region,
-)
-from gpu_fuzzy_trader.phases.phase2_rule_pool import Rule_Pool_Generator
-from gpu_fuzzy_trader.phases.phase5_oos import OOS_Evaluator
-
-from gpu_fuzzy_trader.research_integrity import (
-    ExperimentLedger,
-    count_trials,
-    sha256_file,
-    write_dataset_manifests,
-)
-from gpu_fuzzy_trader.research_profile import ResearchProfile
+from gpu_fuzzy_trader.features.selector import Feature_Selector
 from gpu_fuzzy_trader.mtf import (
     DEFAULT_HWC_PURGE_MINUTES,
     DEFAULT_MWC_PURGE_MINUTES,
@@ -78,26 +83,22 @@ from gpu_fuzzy_trader.mtf.runtime import (
     attach_oof_layer_scores,
     evaluate_candidate_frame,
 )
-
-import argparse
-from contextlib import contextmanager
-import pandas as pd
-from typing import Any
-from datetime import datetime, timezone
-import hashlib
-import uuid
-import time
-import sys
-import os
-import logging
-import json
-import numpy as np
-import subprocess
-from pathlib import Path
-
-from gpu_fuzzy_trader._jax_env import configure_jax_env
-
-configure_jax_env()
+from gpu_fuzzy_trader.phases import phase2_rule_pool as _phase2_module
+from gpu_fuzzy_trader.phases import phase5_oos as _phase5_module
+from gpu_fuzzy_trader.phases.phase2_rule_pool import Rule_Pool_Generator
+from gpu_fuzzy_trader.phases.phase5_oos import OOS_Evaluator
+from gpu_fuzzy_trader.reporting import reporter as _reporter_module
+from gpu_fuzzy_trader.research_integrity import (
+    ExperimentLedger,
+    count_trials,
+    sha256_file,
+    write_dataset_manifests,
+)
+from gpu_fuzzy_trader.research_profile import ResearchProfile
+from gpu_fuzzy_trader.validation.rolling_cv import (
+    build_forbidden_ranges,
+    mask_df_to_safe_region,
+)
 
 
 def _dataframe_sha256(frame: pd.DataFrame | None) -> str:

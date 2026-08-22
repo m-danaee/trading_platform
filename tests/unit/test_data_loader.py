@@ -16,7 +16,13 @@ import tempfile
 import pandas as pd
 import pytest
 
-from gpu_fuzzy_trader.config import LABEL_COLUMNS, META_COLUMNS, TAIL_DROP_ROWS
+from gpu_fuzzy_trader import config as _cfg
+from gpu_fuzzy_trader.backtest.barrier import (
+    attach_barrier_outcomes,
+    barrier_column_names,
+    required_barrier_columns,
+)
+from gpu_fuzzy_trader.config import LABEL_COLUMNS, TAIL_DROP_ROWS
 from gpu_fuzzy_trader.data.loader import Data_Loader, load_dataset
 
 
@@ -97,6 +103,13 @@ def _loader_from_rows(rows: list[dict], **kwargs) -> pd.DataFrame:
         return Data_Loader().load_dataset(tmp_path, **kwargs)
     finally:
         os.unlink(tmp_path)
+
+
+def _write_raw_ohlcv_csv(tmp_path, *, rows: int):
+    """Write a raw tape whose cache can be reused across loader invocations."""
+    path = tmp_path / "raw_ohlcv.csv"
+    pd.DataFrame(_make_ohlcv_rows("BTCUSDT", rows)).to_csv(path, index=False)
+    return path
 
 
 # ---------------------------------------------------------------------------
@@ -311,6 +324,109 @@ class TestSymbolBarIndex:
         rows = _make_rows(1, TAIL_DROP_ROWS + 1)
         df = _loader_from_rows(rows)
         assert "_symbol_bar_index" in df.columns
+
+
+# ---------------------------------------------------------------------------
+# Tests: exact barrier cache contract
+# ---------------------------------------------------------------------------
+
+class TestBarrierCache:
+    def test_empty_barrier_pair_override_preserves_configured_default(
+        self,
+        monkeypatch,
+    ):
+        monkeypatch.setattr(_cfg, "RB_TP_GRID", ())
+        monkeypatch.setattr(_cfg, "RB_SL_GRID", ())
+        raw = pd.DataFrame({
+            "datetime": pd.date_range("2024-01-01", periods=3, freq="15min"),
+            "symbol": ["BTCUSDT"] * 3,
+            "open": [100.0, 101.0, 102.0],
+            "high": [101.0, 102.0, 103.0],
+            "low": [99.0, 100.0, 101.0],
+            "close": [100.5, 101.5, 102.5],
+        })
+
+        attached = attach_barrier_outcomes(raw, horizon=1, pairs=[])
+
+        assert required_barrier_columns().issubset(attached.columns)
+
+    def test_required_barrier_columns_consumes_single_pass_iterable_once(self):
+        pair = (2.0, 1.2)
+        columns = required_barrier_columns(
+            (candidate for candidate in [pair]),
+        )
+
+        expected = set()
+        for direction in ("long", "short"):
+            expected.update(barrier_column_names(direction, *pair))
+        assert columns == expected
+
+    def test_barrier_cache_rebuilds_when_risk_grid_changes(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        monkeypatch.setattr(_cfg, "OUTPUTS_DIR", str(tmp_path / "outputs"))
+        monkeypatch.setattr(_cfg, "RB_TP_GRID", ())
+        monkeypatch.setattr(_cfg, "RB_SL_GRID", ())
+        csv_path = _write_raw_ohlcv_csv(
+            tmp_path,
+            rows=TAIL_DROP_ROWS + 4,
+        )
+
+        first = Data_Loader().load_dataset(
+            str(csv_path),
+            drop_tail=False,
+            include_barrier_outcomes=True,
+        )
+        first_columns = {
+            column for column in first if column.startswith("_barrier_")
+        }
+
+        monkeypatch.setattr(_cfg, "RB_TP_GRID", (3.0,))
+        monkeypatch.setattr(_cfg, "RB_SL_GRID", (1.2,))
+        refreshed = Data_Loader().load_dataset(
+            str(csv_path),
+            drop_tail=False,
+            include_barrier_outcomes=True,
+        )
+        refreshed_columns = {
+            column for column in refreshed if column.startswith("_barrier_")
+        }
+
+        assert first_columns < refreshed_columns
+        assert refreshed_columns == required_barrier_columns()
+
+    def test_barrier_cache_rebuilds_when_cached_columns_are_incomplete(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        monkeypatch.setattr(_cfg, "OUTPUTS_DIR", str(tmp_path / "outputs"))
+        csv_path = _write_raw_ohlcv_csv(
+            tmp_path,
+            rows=TAIL_DROP_ROWS + 4,
+        )
+
+        Data_Loader().load_dataset(
+            str(csv_path),
+            drop_tail=False,
+            include_barrier_outcomes=True,
+        )
+        cache_dir = tmp_path / "outputs" / ".cache" / "barriers"
+        cache_file = next(cache_dir.glob("*.parquet"))
+        cached = pd.read_parquet(cache_file)
+        cached.drop(columns=[cached.columns[0]]).to_parquet(cache_file)
+
+        rebuilt = Data_Loader().load_dataset(
+            str(csv_path),
+            drop_tail=False,
+            include_barrier_outcomes=True,
+        )
+        rebuilt_columns = {
+            column for column in rebuilt if column.startswith("_barrier_")
+        }
+        assert rebuilt_columns == required_barrier_columns()
 
 
 # ---------------------------------------------------------------------------

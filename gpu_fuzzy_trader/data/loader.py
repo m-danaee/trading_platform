@@ -270,35 +270,56 @@ class Data_Loader:
             if set(_OHLCV_COLUMNS).issubset(df.columns):
                 from gpu_fuzzy_trader.backtest.barrier import (
                     attach_barrier_outcomes,
+                    barrier_cache_filename,
+                    configured_barrier_pairs,
+                    required_barrier_columns,
                 )
 
                 # Barrier outcomes can be cached per tape content hash
                 cached_barrier_df = None
                 tape_hash = None
+                cache_file = None
+                barrier_pairs = configured_barrier_pairs()
+                expected_barrier_columns = required_barrier_columns(
+                    barrier_pairs,
+                )
                 try:
                     if isinstance(path, (str, Path, os.PathLike)) and os.path.exists(str(path)):
                         tape_hash = sha256_file(path)
                         cache_dir = Path(_cfg.OUTPUTS_DIR) / ".cache" / "barriers"
-                        cache_file = cache_dir / f"{tape_hash}_{TAIL_DROP_ROWS}.parquet"
+                        cache_file = cache_dir / barrier_cache_filename(
+                            tape_hash,
+                            horizon=TAIL_DROP_ROWS,
+                            pairs=barrier_pairs,
+                        )
                         if cache_file.exists():
                             cached_barrier_df = pd.read_parquet(cache_file)
                 except Exception:
                     cached_barrier_df = None
 
-                if cached_barrier_df is not None and len(cached_barrier_df) == len(df):
+                cache_is_valid = (
+                    cached_barrier_df is not None
+                    and len(cached_barrier_df) == len(df)
+                    and set(cached_barrier_df.columns)
+                    == expected_barrier_columns
+                )
+                if cache_is_valid:
                     # Attach cached barrier columns directly
-                    barrier_cols = [c for c in cached_barrier_df.columns if c.startswith("_barrier_")]
-                    for c in barrier_cols:
+                    for c in sorted(expected_barrier_columns):
                         df[c] = cached_barrier_df[c].values
                 else:
-                    df = attach_barrier_outcomes(df, horizon=TAIL_DROP_ROWS)
-                    if tape_hash is not None:
+                    df = attach_barrier_outcomes(
+                        df,
+                        horizon=TAIL_DROP_ROWS,
+                        pairs=barrier_pairs,
+                    )
+                    if tape_hash is not None and cache_file is not None:
                         try:
-                            cache_dir = Path(_cfg.OUTPUTS_DIR) / ".cache" / "barriers"
+                            cache_dir = cache_file.parent
                             cache_dir.mkdir(parents=True, exist_ok=True)
-                            cache_file = cache_dir / f"{tape_hash}_{TAIL_DROP_ROWS}.parquet"
-                            barrier_cols = [c for c in df.columns if c.startswith("_barrier_")]
-                            df[barrier_cols].to_parquet(cache_file)
+                            df[sorted(expected_barrier_columns)].to_parquet(
+                                cache_file,
+                            )
                         except Exception:
                             pass
 

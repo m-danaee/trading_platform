@@ -379,13 +379,21 @@ def test_phase5_strict_binding_to_archive_payloads(tmp_path):
         "sl": 1.2,
         "capital_pct": 18.0,
     }
+    second_lwc_rule = dict(
+        lwc_rule,
+        conditions=["[open] <= 999999"],
+    )
 
     hwc_hash = save_mtf_rule_archive(
         "hwc", [hwc_rule], hwc_dir / "hwc_rules.json", metadata={"role": "hwc"})
     mwc_hash = save_mtf_rule_archive(
         "mwc", [mwc_rule], mwc_dir / "mwc_rules.json", metadata={"role": "mwc"})
     lwc_hash = save_mtf_rule_archive(
-        "lwc", [lwc_rule], lwc_dir / "lwc_rules.json", metadata={"role": "lwc"})
+        "lwc",
+        [lwc_rule, second_lwc_rule],
+        lwc_dir / "lwc_rules.json",
+        metadata={"role": "lwc"},
+    )
 
     manifest = {
         "frozen_runtime": True,
@@ -457,8 +465,8 @@ def test_phase5_strict_binding_to_archive_payloads(tmp_path):
         loaded_multiset = evaluator.load_strategies()
         assert "long" not in loaded_multiset
 
-        # Test valid exact matching candidate
-        strategy_payload_valid = {
+        # Test LWC subset divergence: a candidate cannot omit a frozen rule.
+        strategy_payload_lwc_subset = {
             "direction": "long",
             "rules_set": [lwc_rule],
             "mtf_manifest": manifest,
@@ -466,6 +474,25 @@ def test_phase5_strict_binding_to_archive_payloads(tmp_path):
             "mtf_candidate": {
                 "direction": "long",
                 "lwc_rules": [lwc_rule],
+                "hwc_rules": [hwc_rule],
+                "mwc_rules": [mwc_rule],
+                "mtf_manifest": manifest,
+            },
+        }
+        strategy_path.write_text(json.dumps(
+            strategy_payload_lwc_subset), encoding="utf-8")
+        loaded_subset = evaluator.load_strategies()
+        assert "long" not in loaded_subset
+
+        # Test valid exact matching candidate
+        strategy_payload_valid = {
+            "direction": "long",
+            "rules_set": [lwc_rule, second_lwc_rule],
+            "mtf_manifest": manifest,
+            "provenance": {"mtf_manifest_hash": manifest_sha},
+            "mtf_candidate": {
+                "direction": "long",
+                "lwc_rules": [lwc_rule, second_lwc_rule],
                 "hwc_rules": [hwc_rule],
                 "mwc_rules": [mwc_rule],
                 "mtf_manifest": manifest,

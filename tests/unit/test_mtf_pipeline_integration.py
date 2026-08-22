@@ -564,7 +564,7 @@ def test_mtf_validation_fitness_selection_separation():
     })
     runner = Pipeline_Runner()
     val_fitness, val_selection = runner._validation_scoring_frames(val_df)
-    
+
     # Must be non-empty and disjoint subsets
     assert not val_fitness.empty
     assert not val_selection.empty
@@ -572,4 +572,3 @@ def test_mtf_validation_fitness_selection_separation():
     assert len(val_selection) < len(val_df)
     # Chronologically purged: max fitness datetime < min selection datetime
     assert val_fitness["datetime"].max() < val_selection["datetime"].min()
-

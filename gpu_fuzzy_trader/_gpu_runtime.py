@@ -206,10 +206,10 @@ def is_t4_runtime() -> bool:
         return False
 
     gpu_name = detect_gpu_name()
-    if gpu_name and "t4" in gpu_name.lower():
-        return True
+    if gpu_name is not None:
+        return "t4" in gpu_name.lower()
 
-    # Fallback heuristic: 14.5 - 16.5 GiB VRAM on Linux without specific name
+    # Fallback heuristic only when product-name probing is unavailable.
     vram = detect_gpu_vram_gb()
     if vram is not None and 14.5 <= vram <= 16.5:
         return True

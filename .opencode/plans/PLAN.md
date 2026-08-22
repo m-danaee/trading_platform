@@ -280,4 +280,3 @@ flowchart LR
 ## Outcome memory
 - After each task completes, orchestrator records noteworthy outcomes with `graphify save-result` and `graphify reflect` + handoff JSON
 - On future plans, check LESSONS for patterns and avoid repeating mistakes
-
