@@ -12,6 +12,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pytest
 
+# Keep Numba's pool aligned with the later JAX runtime setup.  This must happen
+# before test collection imports a Numba-backed module; changing the value after
+# its pool starts raises RuntimeError and leaves low-memory runs non-repeatable.
+_THREAD_CAP = str(max(1, min(2, os.cpu_count() or 1)))
+for _thread_env in (
+    "NUMBA_NUM_THREADS",
+    "OMP_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+):
+    os.environ.setdefault(_thread_env, _THREAD_CAP)
+
 # Set before any test module imports JAX (pytest loads conftest first).
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 os.environ.setdefault("XLA_PYTHON_CLIENT_ALLOCATOR", "platform")
@@ -48,18 +61,35 @@ def pytest_collection_modifyitems(
             item.add_marker(skip_benchmark)
 
 
+def _clear_loaded_jax_caches() -> None:
+    """Release JAX caches without loading JAX for a CPU-only test."""
+    jax = sys.modules.get("jax")
+    if jax is None:
+        return
+    try:
+        jax.clear_caches()
+    except Exception:
+        pass
+
+
+def _close_loaded_matplotlib_figures() -> None:
+    """Close figures without importing Matplotlib for tests that never used it."""
+    pyplot = sys.modules.get("matplotlib.pyplot")
+    if pyplot is None:
+        return
+    try:
+        pyplot.close("all")
+    except Exception:
+        pass
+
+
 @pytest.fixture(autouse=True)
-def _low_memory_cleanup(request: pytest.FixtureRequest):
+def _low_memory_cleanup():
     yield
     if not _LOW_MEMORY:
         return
     gc.collect()
-    try:
-        import jax
-
-        jax.clear_caches()
-    except Exception:
-        pass
+    _clear_loaded_jax_caches()
 
 
 @pytest.fixture(autouse=True)
@@ -71,9 +101,4 @@ def _close_matplotlib_figures():
     overhead under low-memory runs.
     """
     yield
-    try:
-        import matplotlib.pyplot as plt
-
-        plt.close("all")
-    except Exception:
-        pass
+    _close_loaded_matplotlib_figures()

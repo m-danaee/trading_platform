@@ -2,6 +2,9 @@
   "name": "gpu-fuzzy-trader",
   "private": true,
   "scripts": {
-    "test": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q tests/unit/test_t4_profile.py tests/unit/test_config_validation.py"
+    "test": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q tests/unit/test_t4_profile.py tests/unit/test_config_validation.py",
+    "test:cpu": "PYTEST_LOW_MEMORY=1 MPLCONFIGDIR=/tmp/trading-platform-mpl .venv/bin/python -m pytest -q --ignore=tests/benchmark --ignore=tests/unit/test_gpu_engine.py --ignore=tests/unit/test_gpu_rule_set_batch.py --ignore=tests/property/test_gpu_engine_properties.py",
+    "test:jax": "PYTEST_LOW_MEMORY=1 MPLCONFIGDIR=/tmp/trading-platform-mpl .venv/bin/python -m pytest -q tests/unit/test_gpu_engine.py tests/unit/test_gpu_rule_set_batch.py tests/property/test_gpu_engine_properties.py",
+    "test:all": "npm run test:cpu && npm run test:jax"
   }
 }

@@ -245,9 +245,9 @@ through `outputs/reports/hyperparameter_correlation.json`.
 ## Tests
 
 On local or WSL hosts, always set `PYTEST_LOW_MEMORY=1`. It scales down
-Hypothesis example counts, clears JAX caches between tests, and closes
-matplotlib figures to reduce peak memory. Benchmark tests stay skipped unless
-you also set `RUN_BENCHMARKS=1`.
+Hypothesis example counts and releases JAX caches or matplotlib figures only
+when a test has actually loaded those optional libraries. Benchmark tests stay
+skipped unless you also set `RUN_BENCHMARKS=1`.
 
 Do not run the full GPU project locally without low-memory mode. Prefer
 targeted runs while iterating on a change:
@@ -260,5 +260,11 @@ PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q tests/unit/test_rb_fail_closed
 PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q tests/unit/test_optuna_search.py
 ```
 
-The full suite is available with `PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q`
-but can still take a long time on memory-constrained machines.
+For complete local validation, use the sequential suite runner:
+
+```bash
+npm run test:all
+```
+
+It runs CPU/property tests first and direct-JAX tests second, in separate
+processes so JAX memory is released between groups.

@@ -340,16 +340,23 @@ class TestParquetPersistence:
     def test_train_parquet_content_matches_returned_df(self, tmp_path):
         train_df, _, train_path, _ = _split({1: 2000}, str(tmp_path))
         loaded = pd.read_parquet(train_path)
+        expected = train_df.reset_index(drop=True).copy()
+        # Parquet round-trips categorical symbols as their physical values.
+        # The splitter and its cache consumers require row identity, not the
+        # in-memory pandas categorical representation.
+        expected["symbol"] = expected["symbol"].astype(loaded["symbol"].dtype)
         pd.testing.assert_frame_equal(
-            train_df.reset_index(drop=True),
+            expected,
             loaded.reset_index(drop=True),
         )
 
     def test_validation_parquet_content_matches_returned_df(self, tmp_path):
         _, val_df, _, val_path = _split({1: 2000}, str(tmp_path))
         loaded = pd.read_parquet(val_path)
+        expected = val_df.reset_index(drop=True).copy()
+        expected["symbol"] = expected["symbol"].astype(loaded["symbol"].dtype)
         pd.testing.assert_frame_equal(
-            val_df.reset_index(drop=True),
+            expected,
             loaded.reset_index(drop=True),
         )
 

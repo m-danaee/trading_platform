@@ -31,10 +31,13 @@ try:
 except ImportError:
     jax_available = False
 
-pytestmark = pytest.mark.skipif(
-    not jax_available,
-    reason="JAX is not installed; skipping GPU engine tests.",
-)
+pytestmark = [
+    pytest.mark.skipif(
+        not jax_available,
+        reason="JAX is not installed; skipping GPU engine tests.",
+    ),
+    pytest.mark.uses_jax,
+]
 
 # ---------------------------------------------------------------------------
 # Conditional imports (only executed when JAX is available)

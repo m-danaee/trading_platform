@@ -12,10 +12,13 @@ try:
 except ImportError:
     jax_available = False
 
-pytestmark = pytest.mark.skipif(
-    not jax_available,
-    reason="JAX not installed",
-)
+pytestmark = [
+    pytest.mark.skipif(
+        not jax_available,
+        reason="JAX not installed",
+    ),
+    pytest.mark.uses_jax,
+]
 
 if jax_available:
     from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine

@@ -53,6 +53,11 @@ def prop_settings(
         "suppress_health_check": checks,
         **kwargs,
     }
-    if deadline is not ...:
+    if deadline is ...:
+        if _LOW_MEMORY:
+            # Feature-selection properties legitimately exceed Hypothesis's
+            # 200 ms default while NumPy/Numba warm up on constrained hosts.
+            settings_kwargs["deadline"] = None
+    else:
         settings_kwargs["deadline"] = deadline
     return settings(**settings_kwargs)
