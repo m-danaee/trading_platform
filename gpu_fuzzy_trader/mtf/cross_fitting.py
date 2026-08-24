@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 # Standard default purge durations in minutes
 DEFAULT_HWC_PURGE_MINUTES: int = 1440  # K_HWC (6) * 240m = 24h
 DEFAULT_MWC_PURGE_MINUTES: int = 240   # K_MWC (4) * 60m = 4h
-DEFAULT_LWC_PURGE_MINUTES: int = 720   # Max trade duration (48) * 15m = 12h
+DEFAULT_LWC_PURGE_MINUTES: int = 1440  # Max trade duration (96) * 15m = 24h
 
 
 @dataclass(frozen=True)

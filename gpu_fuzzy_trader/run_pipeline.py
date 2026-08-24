@@ -59,8 +59,6 @@ from gpu_fuzzy_trader.features.fuzzy_scaling import (
 )
 from gpu_fuzzy_trader.features.selector import Feature_Selector
 from gpu_fuzzy_trader.mtf import (
-    DEFAULT_HWC_PURGE_MINUTES,
-    DEFAULT_MWC_PURGE_MINUTES,
     DEFAULT_MIN_EVIDENCE_STRENGTH,
     DEFAULT_RETENTION_FLOOR,
     DEFAULT_RETENTION_TARGET,
@@ -76,6 +74,8 @@ from gpu_fuzzy_trader.mtf import (
 )
 from gpu_fuzzy_trader.mtf.discovery import (
     LayerDiscoveryResult,
+    discovery_purge_minutes,
+    discovery_search_identity,
     discover_directional_layer,
 )
 from gpu_fuzzy_trader.mtf.runtime import (
@@ -1681,7 +1681,7 @@ class Pipeline_Orchestrator:
                     mtf_folds = build_master_temporal_folds(
                         train_df,
                         n_folds=int(getattr(_cfg, "MTF_N_FOLDS", 4)),
-                        embargo_minutes=DEFAULT_HWC_PURGE_MINUTES,
+                        embargo_minutes=discovery_purge_minutes("hwc"),
                     )
                     hwc_rules = self.run_phase1_hwc(
                         train_df, folds=mtf_folds, force=True)
@@ -1714,7 +1714,7 @@ class Pipeline_Orchestrator:
                     mtf_folds = build_master_temporal_folds(
                         train_df,
                         n_folds=int(getattr(_cfg, "MTF_N_FOLDS", 4)),
-                        embargo_minutes=DEFAULT_HWC_PURGE_MINUTES,
+                        embargo_minutes=discovery_purge_minutes("hwc"),
                     )
                     hwc_rules = self.run_phase1_hwc(
                         train_df, folds=mtf_folds, force=False)
@@ -1795,7 +1795,7 @@ class Pipeline_Orchestrator:
                     mtf_folds = build_master_temporal_folds(
                         train_df,
                         n_folds=int(getattr(_cfg, "MTF_N_FOLDS", 4)),
-                        embargo_minutes=DEFAULT_HWC_PURGE_MINUTES,
+                        embargo_minutes=discovery_purge_minutes("hwc"),
                     )
                     hwc_rules = self.run_phase1_hwc(
                         train_df, folds=mtf_folds, force=False)
@@ -2149,7 +2149,7 @@ class Pipeline_Orchestrator:
         mtf_folds = build_master_temporal_folds(
             train_df,
             n_folds=int(getattr(_cfg, "MTF_N_FOLDS", 4)),
-            embargo_minutes=DEFAULT_HWC_PURGE_MINUTES,
+            embargo_minutes=discovery_purge_minutes("hwc"),
         )
         self._mtf_folds = mtf_folds
 
@@ -2332,7 +2332,7 @@ class Pipeline_Orchestrator:
         mtf_folds = build_master_temporal_folds(
             train_df,
             n_folds=int(getattr(_cfg, "MTF_N_FOLDS", 4)),
-            embargo_minutes=DEFAULT_HWC_PURGE_MINUTES,
+            embargo_minutes=discovery_purge_minutes("hwc"),
         )
         self._mtf_folds = mtf_folds
 
@@ -3473,6 +3473,7 @@ class Pipeline_Orchestrator:
     def _run_phase5(
         self,
         allowed_directions: frozenset[str] | None = None,
+        test_csv_path: str | None = None,
     ) -> dict[str, dict]:
         """
         Run Phase 5 (Out-of-Sample Evaluation). Always runs.
@@ -3502,7 +3503,10 @@ class Pipeline_Orchestrator:
         else:
             logger.info("Running %s …", phase_name)
         try:
-            evaluator = OOS_Evaluator(run_id=self._run_id)
+            evaluator = OOS_Evaluator(
+                test_csv_path=test_csv_path,
+                run_id=self._run_id,
+            )
             result = evaluator.run(allowed_directions=allowed_directions)
         except Exception as exc:
             logger.error("Phase 5 failed: %s", exc, exc_info=True)
@@ -3682,9 +3686,10 @@ class Pipeline_Orchestrator:
             },
             "cross_fitting": {
                 "purge_durations_minutes": {
-                    "hwc": int(getattr(_cfg, "DEFAULT_HWC_PURGE_MINUTES", 1440)),
-                    "mwc": int(getattr(_cfg, "DEFAULT_MWC_PURGE_MINUTES", 240)),
-                    "lwc": int(getattr(_cfg, "DEFAULT_LWC_PURGE_MINUTES", 720)),
+                    "hwc": discovery_purge_minutes("hwc"),
+                    "mwc": discovery_purge_minutes("mwc"),
+                    "lwc": int(_cfg.MAX_HOLD_CANDLES)
+                    * int(_cfg.LWC_TIMEFRAME_MINUTES),
                 },
                 "embargo_policy": "strict_label_or_trade_horizon_before_prediction_start",
                 **cross_metadata,
@@ -3750,7 +3755,7 @@ class Pipeline_Orchestrator:
             folds = build_master_temporal_folds(
                 source,
                 n_folds=int(getattr(_cfg, "MTF_N_FOLDS", 4)),
-                embargo_minutes=DEFAULT_HWC_PURGE_MINUTES,
+                embargo_minutes=discovery_purge_minutes("hwc"),
             )
         archive_path = Path(self._output_dir) / \
             "rule_archives" / "hwc" / "hwc_rules.json"
@@ -3773,6 +3778,7 @@ class Pipeline_Orchestrator:
                 current_schema_hash = _schema_hash(
                     bars.drop(columns=["_move"], errors="ignore"))
                 current_fold_boundaries = export_fold_boundaries(folds)
+                current_search_identity = discovery_search_identity("hwc")
                 if meta.get("dataset_hash") != current_data_hash:
                     raise ValueError(
                         f"Archive dataset_hash mismatch: expected {current_data_hash}, got {meta.get('dataset_hash')}"
@@ -3784,6 +3790,14 @@ class Pipeline_Orchestrator:
                 if meta.get("fold_boundaries") != current_fold_boundaries:
                     raise ValueError(
                         "Archive fold_boundaries do not match current temporal folds")
+                search_metadata = meta.get("search")
+                if (
+                    not isinstance(search_metadata, dict)
+                    or search_metadata.get("identity") != current_search_identity
+                ):
+                    raise ValueError(
+                        "Archive search identity does not match active HWC settings"
+                    )
 
                 oof_records = json.loads(oof_path.read_text(encoding="utf-8"))
                 oof_scores = canonicalize_oof_scores(
@@ -3832,7 +3846,7 @@ class Pipeline_Orchestrator:
             "theta_per_oof_fold": discovery.theta_per_oof_fold,
             "theta_final_train": discovery.theta_final_train,
             "oof_score_hash": discovery.oof_score_hash,
-            "purge_minutes": DEFAULT_HWC_PURGE_MINUTES,
+            "purge_minutes": discovery_purge_minutes("hwc"),
             "search": discovery.search_metadata,
         }
         archive_hash = save_mtf_rule_archive(
@@ -3879,7 +3893,24 @@ class Pipeline_Orchestrator:
             folds = build_master_temporal_folds(
                 source,
                 n_folds=int(getattr(_cfg, "MTF_N_FOLDS", 4)),
-                embargo_minutes=DEFAULT_HWC_PURGE_MINUTES,
+                embargo_minutes=discovery_purge_minutes("hwc"),
+            )
+        upstream = getattr(self, "_mtf_hwc_discovery", None)
+        if upstream is None:
+            logger.warning(
+                "MWC requires current HWC OOF scores; resolving HWC before "
+                "MWC archive reuse",
+            )
+            self.run_phase1_hwc(source, folds=list(folds), force=force)
+            upstream = getattr(self, "_mtf_hwc_discovery", None)
+        if upstream is None:
+            raise RuntimeError(
+                "Cannot run MWC discovery without verified HWC OOF scores.",
+            )
+        current_hwc_oof_hash = getattr(upstream, "oof_score_hash", "")
+        if not isinstance(current_hwc_oof_hash, str) or not current_hwc_oof_hash:
+            raise RuntimeError(
+                "Cannot run MWC discovery without an HWC OOF score hash.",
             )
         archive_path = Path(self._output_dir) / \
             "rule_archives" / "mwc" / "mwc_rules.json"
@@ -3902,6 +3933,7 @@ class Pipeline_Orchestrator:
                 current_schema_hash = _schema_hash(
                     bars.drop(columns=["_move"], errors="ignore"))
                 current_fold_boundaries = export_fold_boundaries(folds)
+                current_search_identity = discovery_search_identity("mwc")
                 if meta.get("dataset_hash") != current_data_hash:
                     raise ValueError(
                         f"Archive dataset_hash mismatch: expected {current_data_hash}, got {meta.get('dataset_hash')}"
@@ -3913,6 +3945,14 @@ class Pipeline_Orchestrator:
                 if meta.get("fold_boundaries") != current_fold_boundaries:
                     raise ValueError(
                         "Archive fold_boundaries do not match current temporal folds")
+                search_metadata = meta.get("search")
+                if (
+                    not isinstance(search_metadata, dict)
+                    or search_metadata.get("identity") != current_search_identity
+                ):
+                    raise ValueError(
+                        "Archive search identity does not match active MWC settings"
+                    )
 
                 oof_records = json.loads(oof_path.read_text(encoding="utf-8"))
                 oof_scores = canonicalize_oof_scores(
@@ -3921,6 +3961,11 @@ class Pipeline_Orchestrator:
                 if meta.get("oof_score_hash") != current_oof_hash:
                     raise ValueError(
                         f"Archive oof_score_hash mismatch: expected {current_oof_hash}, got {meta.get('oof_score_hash')}"
+                    )
+                if meta.get("hwc_oof_score_hash") != current_hwc_oof_hash:
+                    raise ValueError(
+                        "Archive hwc_oof_score_hash does not match current "
+                        "HWC OOF scores"
                     )
 
                 discovery = LayerDiscoveryResult(
@@ -3951,19 +3996,11 @@ class Pipeline_Orchestrator:
                 logger.warning(
                     "Failed to validate and resume MWC archive from %s (%s); running discovery", archive_path, exc)
 
-        upstream = getattr(self, "_mtf_hwc_discovery", None)
-
-        if upstream is None and hwc_rules is not None:
-            logger.warning(
-                "MWC discovery has no HWC OOF sidecar; rebuilding HWC OOF scores first"
-            )
-            self.run_phase1_hwc(source, folds=list(folds), force=force)
-            upstream = getattr(self, "_mtf_hwc_discovery", None)
         discovery = discover_directional_layer(
             source,
             role="mwc",
             folds=folds,
-            upstream_oof_scores=upstream.oof_scores if upstream is not None else None,
+            upstream_oof_scores=upstream.oof_scores,
         )
         self._mtf_mwc_discovery = discovery
         metadata = {
@@ -3975,7 +4012,8 @@ class Pipeline_Orchestrator:
             "theta_per_oof_fold": discovery.theta_per_oof_fold,
             "theta_final_train": discovery.theta_final_train,
             "oof_score_hash": discovery.oof_score_hash,
-            "purge_minutes": DEFAULT_MWC_PURGE_MINUTES,
+            "hwc_oof_score_hash": current_hwc_oof_hash,
+            "purge_minutes": discovery_purge_minutes("mwc"),
             "search": discovery.search_metadata,
         }
         archive_hash = save_mtf_rule_archive(
@@ -4054,13 +4092,25 @@ class Pipeline_Orchestrator:
         mwc_path = Path(self._output_dir) / "rule_archives" / "mwc" / "mwc_rules.json"
         lwc_path = Path(self._output_dir) / "rule_archives" / "lwc" / "lwc_rules.json"
 
+        hwc_loaded_from_archive = False
         if hwc_rules is None:
-            hwc_rules = load_mtf_rule_archive(hwc_path) if hwc_path.exists() else self.run_phase1_hwc()
+            if hwc_path.exists():
+                hwc_rules = load_mtf_rule_archive(hwc_path)
+                hwc_loaded_from_archive = True
+            else:
+                hwc_rules = self.run_phase1_hwc()
+
+        mwc_loaded_from_archive = False
         if mwc_rules is None:
-            mwc_rules = load_mtf_rule_archive(mwc_path) if mwc_path.exists() else self.run_phase1_mwc(hwc_rules=hwc_rules)
+            if mwc_path.exists():
+                mwc_rules = load_mtf_rule_archive(mwc_path)
+                mwc_loaded_from_archive = True
+            else:
+                mwc_rules = self.run_phase1_mwc(hwc_rules=hwc_rules)
 
         lwc_long: list[dict] = []
         lwc_short: list[dict] = []
+        lwc_loaded_from_archive = False
         if isinstance(lwc_rules, dict):
             lwc_long = lwc_rules.get("long", [])
             lwc_short = lwc_rules.get("short", [])
@@ -4076,6 +4126,7 @@ class Pipeline_Orchestrator:
                         f"LWC rule has invalid direction {r.get('direction')!r}"
                     )
         elif lwc_path.exists():
+            lwc_loaded_from_archive = True
             for r in load_mtf_rule_archive(lwc_path):
                 rule_direction = str(r.get("direction", "")).strip().lower()
                 if rule_direction == "long":
@@ -4089,43 +4140,80 @@ class Pipeline_Orchestrator:
 
         hwc_discovery = getattr(self, "_mtf_hwc_discovery", None)
         mwc_discovery = getattr(self, "_mtf_mwc_discovery", None)
-        hwc_hash = save_mtf_rule_archive(
-            "hwc",
-            hwc_rules,
-            path=hwc_path,
-            metadata=(
-                {"role": "hwc", "dataset_hash": hwc_discovery.data_hash,
-                 "feature_schema_hash": hwc_discovery.feature_schema_hash,
-                 "fold_boundaries": export_fold_boundaries(folds or []),
-                 "theta_per_oof_fold": hwc_discovery.theta_per_oof_fold,
-                 "theta_final_train": hwc_discovery.theta_final_train,
-                 "oof_score_hash": hwc_discovery.oof_score_hash,
-                 "purge_minutes": DEFAULT_HWC_PURGE_MINUTES,
-                 "search": hwc_discovery.search_metadata}
-                if hwc_discovery is not None else None
-            ),
-            require_provenance=hwc_discovery is not None,
-        ) if hwc_rules else ""
-        mwc_hash = save_mtf_rule_archive(
-            "mwc",
-            mwc_rules,
-            path=mwc_path,
-            metadata=(
-                {"role": "mwc", "conditioned_on": "hwc_oof_scores_only",
-                 "dataset_hash": mwc_discovery.data_hash,
-                 "feature_schema_hash": mwc_discovery.feature_schema_hash,
-                 "fold_boundaries": export_fold_boundaries(folds or []),
-                 "theta_per_oof_fold": mwc_discovery.theta_per_oof_fold,
-                 "theta_final_train": mwc_discovery.theta_final_train,
-                 "oof_score_hash": mwc_discovery.oof_score_hash,
-                 "purge_minutes": DEFAULT_MWC_PURGE_MINUTES,
-                 "search": mwc_discovery.search_metadata}
-                if mwc_discovery is not None else None
-            ),
-            require_provenance=mwc_discovery is not None,
-        ) if mwc_rules else ""
         all_lwc = lwc_long + lwc_short
-        lwc_hash = save_mtf_rule_archive("lwc", all_lwc, path=lwc_path) if all_lwc else ""
+
+        def loaded_archive_hash(path: Path) -> str:
+            from gpu_fuzzy_trader.mtf.archives import load_mtf_archive_payload
+
+            archive_hash = load_mtf_archive_payload(path).get("archive_hash")
+            if not isinstance(archive_hash, str) or not archive_hash:
+                raise ValueError(f"MTF archive has no archive hash: {path}")
+            return archive_hash
+
+        if not hwc_rules:
+            hwc_hash = ""
+        elif hwc_loaded_from_archive:
+            hwc_hash = loaded_archive_hash(hwc_path)
+        else:
+            hwc_metadata = None
+            if hwc_discovery is not None:
+                hwc_metadata = {
+                    "role": "hwc",
+                    "dataset_hash": hwc_discovery.data_hash,
+                    "feature_schema_hash": hwc_discovery.feature_schema_hash,
+                    "fold_boundaries": export_fold_boundaries(folds or []),
+                    "theta_per_oof_fold": hwc_discovery.theta_per_oof_fold,
+                    "theta_final_train": hwc_discovery.theta_final_train,
+                    "oof_score_hash": hwc_discovery.oof_score_hash,
+                    "purge_minutes": discovery_purge_minutes("hwc"),
+                    "search": hwc_discovery.search_metadata,
+                }
+            hwc_hash = save_mtf_rule_archive(
+                "hwc",
+                hwc_rules,
+                path=hwc_path,
+                metadata=hwc_metadata,
+                require_provenance=hwc_metadata is not None,
+            )
+
+        if not mwc_rules:
+            mwc_hash = ""
+        elif mwc_loaded_from_archive:
+            mwc_hash = loaded_archive_hash(mwc_path)
+        else:
+            mwc_metadata = None
+            if mwc_discovery is not None:
+                if hwc_discovery is None:
+                    raise RuntimeError(
+                        "Cannot serialize MWC discovery without HWC OOF provenance.",
+                    )
+                mwc_metadata = {
+                    "role": "mwc",
+                    "conditioned_on": "hwc_oof_scores_only",
+                    "dataset_hash": mwc_discovery.data_hash,
+                    "feature_schema_hash": mwc_discovery.feature_schema_hash,
+                    "fold_boundaries": export_fold_boundaries(folds or []),
+                    "theta_per_oof_fold": mwc_discovery.theta_per_oof_fold,
+                    "theta_final_train": mwc_discovery.theta_final_train,
+                    "oof_score_hash": mwc_discovery.oof_score_hash,
+                    "hwc_oof_score_hash": hwc_discovery.oof_score_hash,
+                    "purge_minutes": discovery_purge_minutes("mwc"),
+                    "search": mwc_discovery.search_metadata,
+                }
+            mwc_hash = save_mtf_rule_archive(
+                "mwc",
+                mwc_rules,
+                path=mwc_path,
+                metadata=mwc_metadata,
+                require_provenance=mwc_metadata is not None,
+            )
+
+        if not all_lwc:
+            lwc_hash = ""
+        elif lwc_loaded_from_archive:
+            lwc_hash = loaded_archive_hash(lwc_path)
+        else:
+            lwc_hash = save_mtf_rule_archive("lwc", all_lwc, path=lwc_path)
 
         candidates: dict[str, HierarchicalStrategyCandidate] = {}
         for direction, dir_lwc in (("long", lwc_long), ("short", lwc_short)):

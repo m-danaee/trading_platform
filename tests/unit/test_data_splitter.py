@@ -575,6 +575,15 @@ class TestLoadCachedSplitIfFresh:
         os.remove(paths["fitness"])
         assert load_cached_split_if_fresh() is None
 
+    def test_cache_rejected_when_parquet_content_changes(self, tmp_path, monkeypatch):
+        """A cache manifest must bind each persisted split payload."""
+        paths = self._write_holdout_cache(tmp_path, monkeypatch)
+        train = pd.read_parquet(paths["train"])
+        train.loc[0, "label_open_next"] = 777.0
+        train.to_parquet(paths["train"], index=False)
+
+        assert load_cached_split_if_fresh() is None
+
     def test_purged_reference_rows_mismatch_rejects_cache(
         self, tmp_path, monkeypatch,
     ):

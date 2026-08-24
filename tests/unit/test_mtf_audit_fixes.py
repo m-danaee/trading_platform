@@ -31,7 +31,14 @@ from gpu_fuzzy_trader.mtf.cross_fitting import (
     build_master_temporal_folds,
 )
 from gpu_fuzzy_trader.mtf.discovery import (
+    LayerDiscoveryResult,
+    _build_layer_frame,
+    _frame_hash,
+    _schema_hash,
     _directional_pareto_front,
+    discovery_search_contract,
+    discovery_search_identity,
+    discovery_purge_minutes,
     _passes_cross_symbol_mcc_admission,
     canonicalize_oof_scores,
     discover_directional_layer,
@@ -267,7 +274,187 @@ def test_oof_sidecar_hash_survives_json_roundtrip():
     assert hash_oof_scores(loaded) == saved
 
 
-def test_resume_reuses_valid_hwc_mwc_artifacts(tmp_path):
+def test_mwc_resume_rejects_changed_hwc_oof_lineage(tmp_path, monkeypatch):
+    """MWC artifacts trained on different HWC OOF scores must not be reused."""
+    from gpu_fuzzy_trader import run_pipeline as pipeline_module
+
+    runner = Pipeline_Runner(output_dir=str(tmp_path))
+    dates = pd.date_range("2024-01-01", periods=128, freq="15min")
+    raw = pd.DataFrame({
+        "datetime": dates,
+        "symbol": "BTCUSDT",
+        "open": 100.0 + np.arange(len(dates)),
+        "high": 101.0 + np.arange(len(dates)),
+        "low": 99.0 + np.arange(len(dates)),
+        "close": 100.5 + np.arange(len(dates)),
+        "volume": 10.0,
+    })
+    bars = _build_layer_frame(raw, 60, "mwc")
+    data_hash = _frame_hash(bars.drop(columns=["_move"], errors="ignore"))
+    schema_hash = _schema_hash(bars.drop(columns=["_move"], errors="ignore"))
+    empty_oof = pd.DataFrame()
+    old_rule = {
+        "timeframe": "mwc",
+        "direction": "long",
+        "conditions": ["[mwc_rsi_14] >= 50"],
+        "coverage": 0.5,
+        "directional_edge": 0.2,
+        "mcc": 0.2,
+        "stability": 0.9,
+        "skill": 0.2,
+        "data_hash": data_hash,
+        "feature_schema_hash": schema_hash,
+        "oof_metrics": {
+            "directional_edge": 0.2,
+            "mcc": 0.2,
+            "coverage": 0.5,
+            "stability": 0.9,
+        },
+    }
+    archive_path = tmp_path / "rule_archives" / "mwc" / "mwc_rules.json"
+    save_mtf_rule_archive(
+        "mwc",
+        [old_rule],
+        archive_path,
+        metadata={
+            "role": "mwc",
+            "dataset_hash": data_hash,
+            "feature_schema_hash": schema_hash,
+            "fold_boundaries": [],
+            "oof_score_hash": hash_oof_scores(empty_oof),
+            "hwc_oof_score_hash": "old-hwc-oof",
+        },
+        require_provenance=True,
+    )
+    archive_path.with_name("mwc_oof_scores.json").write_text("[]", encoding="utf-8")
+
+    runner._mtf_hwc_discovery = LayerDiscoveryResult(
+        timeframe="hwc",
+        rules=[],
+        oof_scores=empty_oof,
+        bars=pd.DataFrame(),
+        feature_schema_hash="hwc-schema",
+        data_hash="hwc-data",
+        theta_per_oof_fold={},
+        theta_final_train=0.0,
+        fold_rules={},
+        oof_score_hash="new-hwc-oof",
+    )
+    refreshed = LayerDiscoveryResult(
+        timeframe="mwc",
+        rules=[],
+        oof_scores=empty_oof,
+        bars=bars,
+        feature_schema_hash=schema_hash,
+        data_hash=data_hash,
+        theta_per_oof_fold={},
+        theta_final_train=0.0,
+        fold_rules={},
+        oof_score_hash=hash_oof_scores(empty_oof),
+    )
+    monkeypatch.setattr(
+        pipeline_module,
+        "discover_directional_layer",
+        lambda *args, **kwargs: refreshed,
+    )
+    runner.run_phase1_mwc(raw, folds=[], force=False)
+
+    metadata = json.loads(archive_path.read_text(encoding="utf-8"))["metadata"]
+    assert metadata["hwc_oof_score_hash"] == "new-hwc-oof"
+
+
+def test_composition_keeps_loaded_archive_provenance(tmp_path):
+    """Composition must not erase the provenance of verified HWC/MWC archives."""
+    output_dir = tmp_path / "outputs"
+    runner = Pipeline_Runner(output_dir=str(output_dir))
+    provenanced_rule = {
+        "direction": "long",
+        "conditions": ["[open] >= 1"],
+        "coverage": 0.5,
+        "directional_edge": 0.2,
+        "mcc": 0.2,
+        "stability": 0.9,
+        "skill": 0.2,
+        "data_hash": "source-data",
+        "feature_schema_hash": "feature-schema",
+        "oof_metrics": {
+            "directional_edge": 0.2,
+            "mcc": 0.2,
+            "coverage": 0.5,
+            "stability": 0.9,
+        },
+    }
+    for timeframe, metadata in (
+        ("hwc", {
+            "role": "hwc",
+            "dataset_hash": "source-data",
+            "feature_schema_hash": "feature-schema",
+            "fold_boundaries": [],
+            "oof_score_hash": "hwc-oof",
+        }),
+        ("mwc", {
+            "role": "mwc",
+            "dataset_hash": "source-data",
+            "feature_schema_hash": "feature-schema",
+            "fold_boundaries": [],
+            "oof_score_hash": "mwc-oof",
+            "hwc_oof_score_hash": "hwc-oof",
+        }),
+    ):
+        archive_path = output_dir / "rule_archives" / timeframe / f"{timeframe}_rules.json"
+        save_mtf_rule_archive(
+            timeframe,
+            [dict(provenanced_rule, timeframe=timeframe)],
+            archive_path,
+            metadata=metadata,
+            require_provenance=True,
+        )
+
+    runner.run_mtf_composition(lwc_rules={
+        "long": [{
+            "timeframe": "lwc",
+            "direction": "long",
+            "conditions": ["[open] >= 1"],
+            "coverage": 0.5,
+            "tp": 2.0,
+            "sl": 1.2,
+            "capital_pct": 10.0,
+        }],
+    })
+
+    for timeframe in ("hwc", "mwc"):
+        archive_path = output_dir / "rule_archives" / timeframe / f"{timeframe}_rules.json"
+        metadata = json.loads(archive_path.read_text(encoding="utf-8"))["metadata"]
+        assert metadata["provenance_required"] is True
+        assert metadata["dataset_hash"] == "source-data"
+
+
+def test_mtf_search_contract_uses_configured_horizons_and_rule_limit(
+    monkeypatch,
+):
+    """MTF discovery must use and identify its active search settings."""
+    baseline_identity = discovery_search_identity("hwc")
+    monkeypatch.setattr(_cfg, "MTF_HWC_HORIZON_BARS", 2)
+    monkeypatch.setattr(_cfg, "MTF_DISCOVERY_MAX_RULES_PER_LAYER", 3)
+
+    contract = discovery_search_contract("hwc")
+
+    assert contract["profile"]["forward_horizon_bars"] == 2
+    assert contract["max_rules_per_layer"] == 3
+    assert discovery_purge_minutes("hwc") == 2 * 240
+    assert discovery_search_identity("hwc") != baseline_identity
+
+
+def test_mtf_manifest_lwc_purge_matches_execution_horizon(tmp_path):
+    """Manifest LWC purge must cover the configured maximum trade horizon."""
+    manifest = Pipeline_Runner(output_dir=str(tmp_path)).build_mtf_manifest()
+
+    assert manifest["cross_fitting"]["purge_durations_minutes"]["lwc"] == (
+        int(_cfg.MAX_HOLD_CANDLES) * int(_cfg.LWC_TIMEFRAME_MINUTES)
+    )
+
+
+def test_resume_reuses_valid_hwc_mwc_artifacts(tmp_path, monkeypatch):
     """Resume reuses a discovered archive and rejects a tampered dataset hash."""
     runner = Pipeline_Runner()
     runner._output_dir = str(tmp_path / "outputs")
@@ -348,6 +535,14 @@ def test_resume_reuses_valid_hwc_mwc_artifacts(tmp_path):
     after_sidecar = runner.run_phase1_hwc(df, folds=folds, force=False)
     assert all("[PLANTED]" not in str(rule.get("conditions"))
                for rule in after_sidecar)
+
+    monkeypatch.setattr(_cfg, "MTF_HWC_HORIZON_BARS", 5)
+    after_search_change = runner.run_phase1_hwc(df, folds=folds, force=False)
+    changed_payload = json.loads(archive_path.read_text(encoding="utf-8"))
+    assert all("[PLANTED]" not in str(rule.get("conditions"))
+               for rule in after_search_change)
+    assert changed_payload["metadata"]["search"]["identity"] != \
+        metadata["search"]["identity"]
 
 
 def test_phase5_strict_binding_to_archive_payloads(tmp_path):

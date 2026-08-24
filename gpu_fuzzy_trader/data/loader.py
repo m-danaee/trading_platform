@@ -15,6 +15,9 @@ Stateless CSV loading with full preparation pipeline:
 
 from __future__ import annotations
 
+import hashlib
+import json
+import logging
 import os
 from pathlib import Path
 from typing import Mapping
@@ -43,6 +46,28 @@ _CONTEXT_TRIGGER_COLUMNS = (
     "lwc_pullback_reversal_short",
 )
 _VALID_STATE_CODES = frozenset(_cfg.CONTEXT_STATE_CODES.values())
+_BARRIER_CACHE_MANIFEST_VERSION = 1
+
+logger = logging.getLogger(__name__)
+
+
+def _barrier_cache_manifest_path(cache_file: Path) -> Path:
+    """Return the integrity manifest path for one barrier cache file."""
+    return cache_file.with_suffix(f"{cache_file.suffix}.json")
+
+
+def _barrier_frame_sha256(frame: pd.DataFrame) -> str:
+    """Return a stable content hash for cached barrier rows and their order."""
+    columns = sorted(str(column) for column in frame.columns)
+    canonical = frame.loc[:, columns]
+    schema = [(column, str(canonical[column].dtype)) for column in columns]
+    values = pd.util.hash_pandas_object(
+        canonical,
+        index=True,
+    ).to_numpy().tobytes()
+    return hashlib.sha256(
+        json.dumps(schema, separators=(",", ":")).encode("utf-8") + values
+    ).hexdigest()
 
 
 def validate_context_columns(df: pd.DataFrame) -> None:
@@ -246,6 +271,12 @@ class Data_Loader:
         # 4. Sort by (datetime, symbol)
         # ------------------------------------------------------------------
         df = df.sort_values(["datetime", "symbol"]).reset_index(drop=True)
+        duplicate_rows = df.duplicated(["datetime", "symbol"], keep=False)
+        if duplicate_rows.any():
+            raise ValueError(
+                "Dataset contains duplicate (datetime, symbol) rows; "
+                "refusing ambiguous bars."
+            )
 
         # ------------------------------------------------------------------
         # 4b. Validate mandatory trend-context contract if requested.
@@ -271,17 +302,24 @@ class Data_Loader:
                 from gpu_fuzzy_trader.backtest.barrier import (
                     attach_barrier_outcomes,
                     barrier_cache_filename,
+                    barrier_cache_identity,
                     configured_barrier_pairs,
                     required_barrier_columns,
                 )
 
                 # Barrier outcomes can be cached per tape content hash
                 cached_barrier_df = None
+                cached_barrier_manifest = None
                 tape_hash = None
                 cache_file = None
+                cache_manifest_path = None
                 barrier_pairs = configured_barrier_pairs()
                 expected_barrier_columns = required_barrier_columns(
                     barrier_pairs,
+                )
+                cache_identity = barrier_cache_identity(
+                    horizon=TAIL_DROP_ROWS,
+                    pairs=barrier_pairs,
                 )
                 try:
                     if isinstance(path, (str, Path, os.PathLike)) and os.path.exists(str(path)):
@@ -292,16 +330,43 @@ class Data_Loader:
                             horizon=TAIL_DROP_ROWS,
                             pairs=barrier_pairs,
                         )
-                        if cache_file.exists():
+                        cache_manifest_path = _barrier_cache_manifest_path(
+                            cache_file,
+                        )
+                        if cache_file.exists() and cache_manifest_path.exists():
                             cached_barrier_df = pd.read_parquet(cache_file)
-                except Exception:
+                            cached_barrier_manifest = json.loads(
+                                cache_manifest_path.read_text(encoding="utf-8"),
+                            )
+                except Exception as exc:
+                    logger.warning(
+                        "Rejecting unreadable barrier cache %s (%s)",
+                        cache_file,
+                        exc,
+                    )
                     cached_barrier_df = None
+                    cached_barrier_manifest = None
 
                 cache_is_valid = (
                     cached_barrier_df is not None
+                    and isinstance(cached_barrier_manifest, dict)
                     and len(cached_barrier_df) == len(df)
                     and set(cached_barrier_df.columns)
                     == expected_barrier_columns
+                    and cached_barrier_manifest.get("format_version")
+                    == _BARRIER_CACHE_MANIFEST_VERSION
+                    and cached_barrier_manifest.get("source_sha256") == tape_hash
+                    and cached_barrier_manifest.get("cache_identity")
+                    == cache_identity
+                    and cached_barrier_manifest.get("row_count") == len(df)
+                    and cached_barrier_manifest.get("columns")
+                    == sorted(expected_barrier_columns)
+                    and cached_barrier_manifest.get("content_sha256")
+                    == _barrier_frame_sha256(
+                        cached_barrier_df.loc[
+                            :, sorted(expected_barrier_columns),
+                        ],
+                    )
                 )
                 if cache_is_valid:
                     # Attach cached barrier columns directly
@@ -313,15 +378,46 @@ class Data_Loader:
                         horizon=TAIL_DROP_ROWS,
                         pairs=barrier_pairs,
                     )
-                    if tape_hash is not None and cache_file is not None:
+                    if (
+                        tape_hash is not None
+                        and cache_file is not None
+                        and cache_manifest_path is not None
+                    ):
                         try:
                             cache_dir = cache_file.parent
                             cache_dir.mkdir(parents=True, exist_ok=True)
-                            df[sorted(expected_barrier_columns)].to_parquet(
-                                cache_file,
+                            cache_frame = df.loc[
+                                :, sorted(expected_barrier_columns),
+                            ]
+                            cache_manifest = {
+                                "format_version": _BARRIER_CACHE_MANIFEST_VERSION,
+                                "source_sha256": tape_hash,
+                                "cache_identity": cache_identity,
+                                "row_count": len(cache_frame),
+                                "columns": sorted(expected_barrier_columns),
+                                "content_sha256": _barrier_frame_sha256(
+                                    cache_frame,
+                                ),
+                            }
+                            cache_temp_path = cache_file.with_name(
+                                f".{cache_file.name}.{os.getpid()}.tmp",
                             )
-                        except Exception:
-                            pass
+                            manifest_temp_path = cache_manifest_path.with_name(
+                                f".{cache_manifest_path.name}.{os.getpid()}.tmp",
+                            )
+                            cache_frame.to_parquet(cache_temp_path, index=False)
+                            os.replace(cache_temp_path, cache_file)
+                            manifest_temp_path.write_text(
+                                json.dumps(cache_manifest, sort_keys=True),
+                                encoding="utf-8",
+                            )
+                            os.replace(manifest_temp_path, cache_manifest_path)
+                        except Exception as exc:
+                            logger.warning(
+                                "Could not persist barrier cache %s (%s)",
+                                cache_file,
+                                exc,
+                            )
 
         # ------------------------------------------------------------------
         # 6. Drop last TAIL_DROP_ROWS rows per symbol (optional)

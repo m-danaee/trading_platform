@@ -479,6 +479,7 @@ def write_cv_folds_manifest(
     *,
     reference_rows: int,
     source_sha256: str | None = None,
+    artifact_sha256: dict[str, str] | None = None,
     path: str | None = None,
 ) -> str:
     """Persist split/fold metadata JSON; returns the path written."""
@@ -491,6 +492,7 @@ def write_cv_folds_manifest(
         "split_mode": getattr(_cfg, "SPLIT_MODE", "holdout"),
         "config_fingerprint": purged_config_fingerprint(),
         "source_sha256": source_sha256,
+        "artifact_sha256": dict(artifact_sha256 or {}),
         "reference_rows": int(reference_rows),
         "n_folds": len(fold_list),
         "config": {
@@ -514,8 +516,10 @@ def write_cv_folds_manifest(
             for f in fold_list
         ],
     }
-    with open(out_path, "w", encoding="utf-8") as fh:
+    temp_path = f"{out_path}.{os.getpid()}.tmp"
+    with open(temp_path, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, indent=2)
+    os.replace(temp_path, out_path)
     return out_path
 
 
@@ -525,5 +529,10 @@ def load_cv_folds_manifest(path: str | None = None) -> dict[str, Any] | None:
         _cfg, "CV_FOLDS_MANIFEST_PATH", "data/cv_folds_manifest.json")
     if not os.path.exists(out_path):
         return None
-    with open(out_path, encoding="utf-8") as fh:
-        return json.load(fh)
+    try:
+        with open(out_path, encoding="utf-8") as fh:
+            payload = json.load(fh)
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("Rejecting unreadable split manifest %s (%s)", out_path, exc)
+        return None
+    return payload if isinstance(payload, dict) else None

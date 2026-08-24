@@ -238,9 +238,9 @@ def load_cached_split_if_fresh() -> (
 ):
     """Load cached split parquets when they are newer than the source CSV.
 
-    Validates manifest ``split_mode``, ``config_fingerprint``, source content
-    hash, all four parquet mtimes, and (purged mode) ``reference_rows`` against
-    a fresh CSV load.
+    Validates manifest ``split_mode``, ``config_fingerprint``, source and
+    persisted-split content hashes, all four parquet mtimes, and (purged mode)
+    ``reference_rows`` against a fresh CSV load.
 
     Returns
     -------
@@ -283,7 +283,7 @@ def load_cached_split_if_fresh() -> (
             os.path.getmtime(manifest_path),
         )
         manifest = load_cv_folds_manifest(manifest_path)
-        if manifest is None:
+        if not isinstance(manifest, dict):
             return None
         if manifest.get("split_mode") != _cfg.SPLIT_MODE:
             return None
@@ -296,16 +296,44 @@ def load_cached_split_if_fresh() -> (
         if _file_sha256(csv_path) != source_sha256:
             logger.warning("Rejecting split cache: source CSV content changed")
             return None
+        artifact_sha256 = manifest.get("artifact_sha256")
+        cache_paths = {
+            "train": train_path,
+            "validation": val_path,
+            "validation_fitness": fitness_path,
+            "validation_selection": selection_path,
+        }
+        if not isinstance(artifact_sha256, dict):
+            logger.warning("Rejecting split cache: manifest has no split hashes")
+            return None
+        for artifact_name, artifact_path in cache_paths.items():
+            expected_hash = artifact_sha256.get(artifact_name)
+            if not isinstance(expected_hash, str) or not expected_hash:
+                logger.warning(
+                    "Rejecting split cache: manifest has no hash for %s",
+                    artifact_name,
+                )
+                return None
+            if _file_sha256(artifact_path) != expected_hash:
+                logger.warning(
+                    "Rejecting split cache: %s content changed",
+                    artifact_name,
+                )
+                return None
     except OSError:
         return None
 
     if cache_mtime < csv_mtime:
         return None
 
-    train_df = downcast_numeric_df(pd.read_parquet(train_path))
-    val_df = downcast_numeric_df(pd.read_parquet(val_path))
-    val_fitness = downcast_numeric_df(pd.read_parquet(fitness_path))
-    val_selection = downcast_numeric_df(pd.read_parquet(selection_path))
+    try:
+        train_df = downcast_numeric_df(pd.read_parquet(train_path))
+        val_df = downcast_numeric_df(pd.read_parquet(val_path))
+        val_fitness = downcast_numeric_df(pd.read_parquet(fitness_path))
+        val_selection = downcast_numeric_df(pd.read_parquet(selection_path))
+    except Exception as exc:
+        logger.warning("Rejecting split cache: cannot read persisted frames (%s)", exc)
+        return None
 
     # The four parquet files are a single cache unit.  A previous test run (or
     # an interrupted copy) can leave train/validation parquets from one data
@@ -466,12 +494,23 @@ class Data_Splitter:
         val_fitness_df.to_parquet(VALIDATION_FITNESS_PATH, index=False)
         val_selection_df.to_parquet(VALIDATION_SELECTION_PATH, index=False)
 
+        persisted_paths = {
+            "train": TRAIN_70_PATH,
+            "validation": VALIDATION_30_PATH,
+            "validation_fitness": VALIDATION_FITNESS_PATH,
+            "validation_selection": VALIDATION_SELECTION_PATH,
+        }
         try:
             source_sha256 = _file_sha256(_cfg.TRAIN_CSV_PATH)
+            artifact_sha256 = {
+                name: _file_sha256(path)
+                for name, path in persisted_paths.items()
+            }
         except OSError:
             source_sha256 = None
+            artifact_sha256 = None
             logger.warning(
-                "Could not hash split source %s; cache will not be reusable",
+                "Could not hash split source or artifacts; cache will not be reusable",
                 _cfg.TRAIN_CSV_PATH,
             )
 
@@ -479,6 +518,7 @@ class Data_Splitter:
             cv_folds,
             reference_rows=len(df),
             source_sha256=source_sha256,
+            artifact_sha256=artifact_sha256,
         )
         logger.info(
             "Persisted train/validation splits and manifest=%s (mode=%s)",

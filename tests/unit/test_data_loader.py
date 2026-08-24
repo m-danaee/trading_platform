@@ -154,6 +154,14 @@ class TestSort:
         for sym, grp in df.groupby("symbol"):
             assert grp["datetime"].is_monotonic_increasing
 
+    def test_rejects_duplicate_timestamp_for_precomputed_labels(self):
+        """A supplied-label tape must not contain two bars for one symbol/time."""
+        rows = _make_rows(1, TAIL_DROP_ROWS + 3)
+        rows.insert(1, dict(rows[0]))
+
+        with pytest.raises(ValueError, match="duplicate.*datetime.*symbol"):
+            _loader_from_rows(rows)
+
 
 # ---------------------------------------------------------------------------
 # Tests: raw OHLCV label generation
@@ -427,6 +435,40 @@ class TestBarrierCache:
             column for column in rebuilt if column.startswith("_barrier_")
         }
         assert rebuilt_columns == required_barrier_columns()
+
+    def test_barrier_cache_rebuilds_when_values_are_corrupted(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        """A structurally valid but modified cache must not change outcomes."""
+        monkeypatch.setattr(_cfg, "OUTPUTS_DIR", str(tmp_path / "outputs"))
+        csv_path = _write_raw_ohlcv_csv(
+            tmp_path,
+            rows=TAIL_DROP_ROWS + 4,
+        )
+
+        first = Data_Loader().load_dataset(
+            str(csv_path),
+            drop_tail=False,
+            include_barrier_outcomes=True,
+        )
+        cache_file = next(
+            (tmp_path / "outputs" / ".cache" / "barriers").glob("*.parquet")
+        )
+        cached = pd.read_parquet(cache_file)
+        column = cached.columns[0]
+        expected = float(first.loc[0, column])
+        cached.loc[0, column] = 777.0
+        cached.to_parquet(cache_file, index=False)
+
+        rebuilt = Data_Loader().load_dataset(
+            str(csv_path),
+            drop_tail=False,
+            include_barrier_outcomes=True,
+        )
+
+        assert float(rebuilt.loc[0, column]) == pytest.approx(expected)
 
 
 # ---------------------------------------------------------------------------

@@ -792,6 +792,9 @@ class OOS_Evaluator:
                 else bool(getattr(_cfg, "REQUIRE_CONTEXT_COLUMNS", False))
             ),
         )
+        train_full = train_full.dropna(
+            subset=list(_cfg.LABEL_COLUMNS),
+        ).reset_index(drop=True)
         train_df, val_df, _cv_folds = splitter.split_and_persist(train_full)
         test_df = self.prepare_test_data(self.test_csv_path)
         datasets["train"] = train_df

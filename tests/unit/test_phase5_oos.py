@@ -1096,6 +1096,47 @@ class TestOOSEvaluatorRun:
 
 
 class TestPhase5CachedSplitFreshness:
+    def test_fresh_raw_train_split_excludes_unlabelled_tail(
+        self, tmp_path, monkeypatch,
+    ):
+        """Fresh Phase 5 splits must not send raw-label tails to validation."""
+        from tests.unit.test_data_splitter import _patch_split_paths
+
+        def write_raw(path):
+            parts = []
+            for symbol, base in (("SYM_A", 100.0), ("SYM_B", 200.0)):
+                n_rows = 500
+                close = base + np.arange(n_rows, dtype=float) * 0.1
+                parts.append(pd.DataFrame({
+                    "datetime": pd.date_range(
+                        "2024-01-01", periods=n_rows, freq="15min",
+                    ),
+                    "symbol": symbol,
+                    "open": close,
+                    "high": close + 1.0,
+                    "low": close - 1.0,
+                    "close": close + 0.5,
+                    "volume": 10.0,
+                }))
+            pd.concat(parts, ignore_index=True).to_csv(path, index=False)
+
+        train_csv = tmp_path / "raw_train.csv"
+        test_csv = tmp_path / "raw_test.csv"
+        write_raw(train_csv)
+        write_raw(test_csv)
+        split_dir = tmp_path / "split_cache"
+        split_dir.mkdir()
+
+        monkeypatch.setattr(_cfg, "OUTPUTS_DIR", str(tmp_path / "outputs"))
+        with _patch_split_paths(str(split_dir))(), patch.object(
+            _cfg, "TRAIN_CSV_PATH", str(train_csv),
+        ):
+            datasets = OOS_Evaluator(test_csv_path=str(test_csv))._load_datasets_by_split()
+
+        for split_name in ("train", "validation"):
+            labels = datasets[split_name][list(_cfg.LABEL_COLUMNS)]
+            assert labels.notna().all().all(), split_name
+
     def test_load_datasets_uses_validated_cache_when_fresh(
         self, tmp_path, monkeypatch,
     ):

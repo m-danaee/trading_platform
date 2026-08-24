@@ -90,6 +90,21 @@ def test_context_coverage_report_includes_split_and_symbol_counts() -> None:
     assert report["validation_selection"]["long"]["eligible_rows"] == 0
 
 
+def test_phase5_wrapper_forwards_custom_test_tape(monkeypatch, tmp_path) -> None:
+    """The public Phase 5 method must honour its custom test tape argument."""
+    orchestrator = Pipeline_Orchestrator(output_dir=str(tmp_path))
+    monkeypatch.setattr(pipeline, "_log_phase_entry", lambda *args, **kwargs: None)
+    evaluator = MagicMock()
+    evaluator.run.return_value = {}
+    monkeypatch.setattr(pipeline, "OOS_Evaluator", MagicMock(return_value=evaluator))
+
+    assert orchestrator.run_phase5_oos(test_csv_path="custom-test.csv") == {}
+    pipeline.OOS_Evaluator.assert_called_once_with(
+        test_csv_path="custom-test.csv",
+        run_id=orchestrator._run_id,
+    )
+
+
 def test_context_coverage_preflight_logs_all_splits_and_directions(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

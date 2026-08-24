@@ -122,6 +122,14 @@ def test_tail_embargo_and_horizon_must_be_equal(monkeypatch: pytest.MonkeyPatch)
         cfg.validate_config()
 
 
+def test_mtf_discovery_bounds_must_be_valid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(cfg, "MTF_HWC_HORIZON_BARS", 0)
+    with pytest.raises(cfg.ConfigError, match="MTF HWC and MWC label horizons"):
+        cfg.validate_config()
+
+
 def test_audit_report_writes_the_effective_snapshot(tmp_path: Path) -> None:
     report_path = Path(cfg.write_config_audit_report(str(tmp_path), n_rows=1000, n_symbols=4))
     assert report_path.name == "config_audit.json"

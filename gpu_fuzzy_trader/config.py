@@ -2499,6 +2499,15 @@ def validate_config(
         "LWC/MWC/HWC must be 15m/1h/4h (×4 hierarchy)",
     )
     _config_check(
+        int(MTF_HWC_HORIZON_BARS) >= 1
+        and int(MTF_MWC_HORIZON_BARS) >= 1,
+        "MTF HWC and MWC label horizons must be positive",
+    )
+    _config_check(
+        int(MTF_DISCOVERY_MAX_RULES_PER_LAYER) >= 2,
+        "MTF_DISCOVERY_MAX_RULES_PER_LAYER must be at least 2",
+    )
+    _config_check(
         1 <= int(LWC_PULLBACK_LOOKBACK) <= int(MAX_HOLD_CANDLES),
         "LWC_PULLBACK_LOOKBACK must be in [1, MAX_HOLD_CANDLES] (frozen at 24)",
     )

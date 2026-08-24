@@ -8,7 +8,7 @@ search receives only the upstream HWC OOF score frame.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import hashlib
 import json
 from typing import Any, Sequence
@@ -53,6 +53,59 @@ class LayerDiscoveryResult:
     fold_rules: dict[int, list[dict[str, Any]]]
     search_metadata: dict[str, Any] = field(default_factory=dict)
     oof_score_hash: str = ""
+
+
+def _configured_rule_search_profile(role: str):
+    """Return the active MTF profile with its configured label horizon."""
+    profile = get_rule_search_profile(role)
+    horizon_setting = {
+        "hwc": "MTF_HWC_HORIZON_BARS",
+        "mwc": "MTF_MWC_HORIZON_BARS",
+    }.get(profile.role)
+    if horizon_setting is None:
+        return profile
+    horizon_bars = int(
+        getattr(_cfg, horizon_setting, profile.forward_horizon_bars),
+    )
+    if horizon_bars < 1:
+        raise ValueError(f"{horizon_setting} must be positive")
+    return replace(profile, forward_horizon_bars=horizon_bars)
+
+
+def _configured_max_rules_per_layer(profile) -> int:
+    """Return the bounded active-rule count for one MTF layer."""
+    default = max(2, int(profile.max_conditions) * 4)
+    max_rules = int(
+        getattr(_cfg, "MTF_DISCOVERY_MAX_RULES_PER_LAYER", default),
+    )
+    if max_rules < 2:
+        raise ValueError("MTF_DISCOVERY_MAX_RULES_PER_LAYER must be at least 2")
+    return max_rules
+
+
+def discovery_search_contract(role: str) -> dict[str, Any]:
+    """Return the effective MTF discovery settings for one layer."""
+    profile = _configured_rule_search_profile(role)
+    return {
+        "profile": profile.as_dict(),
+        "max_rules_per_layer": _configured_max_rules_per_layer(profile),
+    }
+
+
+def discovery_purge_minutes(role: str) -> int:
+    """Return the exact temporal purge required by one MTF label horizon."""
+    profile = _configured_rule_search_profile(role)
+    return int(profile.forward_horizon_bars) * int(profile.timeframe_minutes)
+
+
+def discovery_search_identity(role: str) -> str:
+    """Hash the effective MTF discovery settings for archive reuse checks."""
+    encoded = json.dumps(
+        discovery_search_contract(role),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _frame_hash(frame: pd.DataFrame) -> str:
@@ -112,6 +165,7 @@ def _build_layer_frame(
     timeframe_minutes: int,
     role: str,
 ) -> pd.DataFrame:
+    profile = _configured_rule_search_profile(role)
     bars = build_complete_higher_bars(raw_df, timeframe_minutes)
     if bars.empty:
         return bars
@@ -131,7 +185,7 @@ def _build_layer_frame(
         moves = compute_forward_movement_labels(
             close,
             atr,
-            horizon_bars=int(get_rule_search_profile(role).forward_horizon_bars),
+            horizon_bars=int(profile.forward_horizon_bars),
         )
         result.loc[indices, "_move"] = moves
     return result.sort_values(["datetime", "symbol"]).reset_index(drop=True)
@@ -296,7 +350,7 @@ def _fit_fold_candidates(
     upstream_train: np.ndarray | None,
     upstream_test: np.ndarray | None,
 ) -> tuple[list[dict[str, Any]], np.ndarray, np.ndarray, float]:
-    profile = get_rule_search_profile(role)
+    profile = _configured_rule_search_profile(role)
     train_moves = train["_move"].to_numpy(dtype=float)
     test_moves = test["_move"].to_numpy(dtype=float)
     theta = fit_directional_threshold(train_moves, profile.quantile)
@@ -374,7 +428,7 @@ def _fit_fold_candidates(
                     })
     pareto_candidates = _directional_pareto_front(candidates)
     selected = _select_balanced_candidates(
-        pareto_candidates, max(2, profile.max_conditions * 4)
+        pareto_candidates, _configured_max_rules_per_layer(profile)
     )
     if not selected:
         return [], np.zeros(len(test)), np.zeros(len(test)), theta
@@ -520,11 +574,26 @@ def discover_directional_layer(
     if role not in {"hwc", "mwc"}:
         raise ValueError("discover_directional_layer supports only 'hwc' and 'mwc'")
     timeframe = 240 if role == "hwc" else 60
-    profile = get_rule_search_profile(role)
+    profile = _configured_rule_search_profile(role)
+    max_rules = _configured_max_rules_per_layer(profile)
+    search_contract = discovery_search_contract(role)
+    search_identity = discovery_search_identity(role)
     bars = _build_layer_frame(raw_df, timeframe, role)
     if bars.empty:
         return LayerDiscoveryResult(
-            role, [], pd.DataFrame(), bars, _schema_hash(bars), _frame_hash(bars), {}, 1.0, {}
+            role,
+            [],
+            pd.DataFrame(),
+            bars,
+            _schema_hash(bars),
+            _frame_hash(bars),
+            {},
+            1.0,
+            {},
+            search_metadata={
+                "search_contract": search_contract,
+                "identity": search_identity,
+            },
         )
     upstream = _align_upstream_scores(
         bars,
@@ -631,7 +700,6 @@ def discover_directional_layer(
             "data_hash": data_hash,
             "feature_schema_hash": feature_schema_hash,
         })
-    max_rules = max(2, profile.max_conditions * 4)
     pareto_rules = _directional_pareto_front(frozen_rules)
     frozen_rules = _select_balanced_candidates(pareto_rules, max_rules)
     ensemble_weights = compute_rule_weights(frozen_rules)
@@ -663,6 +731,8 @@ def discover_directional_layer(
             "ensemble_weight_formula": "max(0, directional_edge) * max(0, stability)",
             "plateau_metric": "directional_pareto_quality",
             "plateau_restarts": 0,
+            "search_contract": search_contract,
+            "identity": search_identity,
         },
         oof_score_hash=hash_oof_scores(oof_scores),
     )
