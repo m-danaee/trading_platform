@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 
 from gpu_fuzzy_trader import config as _cfg
+from gpu_fuzzy_trader.config import required_folds
 
 from gpu_fuzzy_trader.data.multi_timeframe import (
     build_complete_higher_bars,
@@ -642,8 +643,7 @@ def discover_directional_layer(
             "fold_id": int(fold.fold_id),
         }))
 
-    min_fold_support = max(
-        1, min(int(getattr(_cfg, "MTF_MIN_FOLD_SUPPORT", 2)), len(valid_folds)))
+    min_fold_support = required_folds(len(valid_folds))
     all_symbols = sorted(
         str(s) for s in bars["symbol"].unique()) if "symbol" in bars.columns else []
 
