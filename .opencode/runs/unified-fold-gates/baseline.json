@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "captured_at": "2026-08-25T12:13:10.592Z",
+  "commit": "e1246d1ac2fd0a362b7d1a663f061a3daef1471f",
+  "results": [
+    {
+      "id": "test",
+      "command": "npm test",
+      "argv": [
+        "npm",
+        "test"
+      ],
+      "exit_code": 0,
+      "pass": true,
+      "stdout_tail": "\n> test\n> PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q tests/unit/test_t4_profile.py tests/unit/test_config_validation.py\n\n.................................                                        [100%]\n33 passed in 16.72s\n",
+      "stderr_tail": ""
+    }
+  ]
+}

@@ -1,0 +1,1062 @@
+{
+  "schema_version": "1.0",
+  "run_id": "unified-fold-gates",
+  "state": "COMPLETED",
+  "workflow": "default",
+  "execution_mode": "delegated",
+  "current_unit": null,
+  "pending_review_findings": null,
+  "plan_commit": "c4d64986be276d769df10245a2c0a926f390e603",
+  "head_commit": "c4d64986be276d769df10245a2c0a926f390e603",
+  "implementer_commit": "cd9d653ec4a62d16cf206f7a83b542bd1ba3b7e0",
+  "branch": "feat/task-7-nested-rename-audit",
+  "impact": {
+    "ok": true,
+    "schema_version": "1.0",
+    "provider": "nexus-impact",
+    "graph_provider": "nexus-impact",
+    "base_commit": "c4d64986be276d769df10245a2c0a926f390e603",
+    "head_commit": "c4d64986be276d769df10245a2c0a926f390e603",
+    "worktree_head": "c4d64986be276d769df10245a2c0a926f390e603",
+    "changed_files": [
+      {
+        "status": "A",
+        "path": ".opencode/CONTEXT.md"
+      },
+      {
+        "status": "A",
+        "path": ".opencode/cache/impact/files.json"
+      },
+      {
+        "status": "A",
+        "path": ".opencode/cache/impact/imports.json"
+      },
+      {
+        "status": "A",
+        "path": ".opencode/cache/impact/symbols.json"
+      },
+      {
+        "status": "A",
+        "path": ".opencode/handoffs/unified-fold-gates-implementer.json"
+      },
+      {
+        "status": "A",
+        "path": ".opencode/handoffs/unified-fold-gates-reviewer.json"
+      },
+      {
+        "status": "A",
+        "path": ".opencode/impact/latest.json"
+      },
+      {
+        "status": "A",
+        "path": ".opencode/nexus.json"
+      },
+      {
+        "status": "A",
+        "path": ".opencode/plans/PLAN.md"
+      },
+      {
+        "status": "A",
+        "path": ".opencode/runs/unified-fold-gates/baseline.json"
+      },
+      {
+        "status": "A",
+        "path": ".opencode/runs/unified-fold-gates/metrics.jsonl"
+      },
+      {
+        "status": "A",
+        "path": ".opencode/runs/unified-fold-gates/state.json"
+      },
+      {
+        "status": "A",
+        "path": ".opencode/tasks/task-1.md"
+      },
+      {
+        "status": "A",
+        "path": ".opencode/tasks/task-2.md"
+      },
+      {
+        "status": "A",
+        "path": ".opencode/tasks/task-3.md"
+      },
+      {
+        "status": "A",
+        "path": ".opencode/tasks/task-4.md"
+      },
+      {
+        "status": "A",
+        "path": ".opencode/tasks/task-5.md"
+      },
+      {
+        "status": "A",
+        "path": ".opencode/tasks/task-6.md"
+      },
+      {
+        "status": "A",
+        "path": ".opencode/tasks/task-7.md"
+      },
+      {
+        "status": "A",
+        "path": ".opencode/trajectories/unified-fold-gates.jsonl"
+      },
+      {
+        "status": "A",
+        "path": "test-data.xml"
+      }
+    ],
+    "added_lines": 0,
+    "deleted_lines": 0,
+    "changed_symbols": [],
+    "direct_dependents": [],
+    "transitive_dependents": [],
+    "affected_packages": [
+      "."
+    ],
+    "related_tests": [],
+    "risk": "MEDIUM",
+    "level": "MEDIUM",
+    "computed_risk": "MEDIUM",
+    "risk_signals": [
+      "cross_package_change"
+    ],
+    "confidence": 1,
+    "verification_mode": "targeted",
+    "trusted": true,
+    "analysis_quality": "PRECISE",
+    "graph_quality": "PRECISE",
+    "analysis_complete": true,
+    "pre_impact": false,
+    "phase": "post",
+    "graph_freshness": {
+      "valid": true,
+      "current_head": "c4d64986be276d769df10245a2c0a926f390e603"
+    },
+    "uncertainties": [],
+    "dimensions": {
+      "symbols": 0,
+      "dependents": 0,
+      "tests": 0
+    },
+    "index_stats": {
+      "parsed": 0,
+      "cacheHits": 5000,
+      "unsupported": 4994,
+      "files": 5000
+    },
+    "placeholder_fields": [],
+    "provider_validated": true,
+    "validated_at": "2026-08-25T14:48:43.310Z",
+    "artifact_digest": "sha256:0aa0fca43cb62b4af32e549b0d26ab4925c194a50d1a7b30122cfba9c73bb98d"
+  },
+  "change_class": null,
+  "verification_policy": {
+    "exempt": false,
+    "reason": null
+  },
+  "compatibility_mode": null,
+  "require_post_impact": true,
+  "blocked_from": null,
+  "resume_state": null,
+  "block_reason": null,
+  "block_code": null,
+  "agent_calls_used": 15,
+  "agent_call_budget": {
+    "profile": "default",
+    "workflow": "default",
+    "change_class": "task",
+    "execution_mode": "delegated",
+    "units": 7,
+    "category": "normal",
+    "max_calls": 21,
+    "derived_max_calls": 21,
+    "source": "v5-default-workflow"
+  },
+  "escalation_reasons": [],
+  "transitions": [
+    {
+      "from": "CREATED",
+      "to": "BRAINSTORMING",
+      "at": "2026-08-25T11:34:59.861Z",
+      "evidence": null
+    },
+    {
+      "from": "BRAINSTORMING",
+      "to": "PLANNED",
+      "at": "2026-08-25T11:39:26.471Z",
+      "evidence": null
+    },
+    {
+      "from": "PLANNED",
+      "to": "TASK_IMPACT_READY",
+      "at": "2026-08-25T11:39:38.997Z",
+      "evidence": null
+    },
+    {
+      "from": "TASK_IMPACT_READY",
+      "to": "IMPLEMENTING",
+      "at": "2026-08-25T11:47:28.030Z",
+      "evidence": null
+    },
+    {
+      "from": "IMPLEMENTING",
+      "to": "VERIFYING",
+      "at": "2026-08-25T12:15:28.165Z",
+      "evidence": null,
+      "agent_calls": 1,
+      "agent": "implementer"
+    },
+    {
+      "from": "VERIFYING",
+      "to": "REVIEWING",
+      "at": "2026-08-25T12:15:34.785Z",
+      "evidence": null
+    },
+    {
+      "from": "REVIEWING",
+      "to": "TASK_IMPACT_READY",
+      "at": "2026-08-25T12:19:26.249Z",
+      "evidence": null,
+      "agent_calls": 1,
+      "agent": "reviewer"
+    },
+    {
+      "from": "TASK_IMPACT_READY",
+      "to": "IMPLEMENTING",
+      "at": "2026-08-25T12:19:34.742Z",
+      "evidence": null
+    },
+    {
+      "from": "IMPLEMENTING",
+      "to": "VERIFYING",
+      "at": "2026-08-25T13:08:52.685Z",
+      "evidence": null,
+      "agent_calls": 1,
+      "agent": "implementer"
+    },
+    {
+      "from": "VERIFYING",
+      "to": "REVIEWING",
+      "at": "2026-08-25T13:09:03.297Z",
+      "evidence": null
+    },
+    {
+      "from": "REVIEWING",
+      "to": "TASK_IMPACT_READY",
+      "at": "2026-08-25T13:12:21.176Z",
+      "evidence": null,
+      "agent_calls": 1,
+      "agent": "reviewer"
+    },
+    {
+      "from": "TASK_IMPACT_READY",
+      "to": "IMPLEMENTING",
+      "at": "2026-08-25T13:12:53.912Z",
+      "evidence": null
+    },
+    {
+      "from": "IMPLEMENTING",
+      "to": "VERIFYING",
+      "at": "2026-08-25T13:29:58.232Z",
+      "evidence": null,
+      "agent_calls": 1,
+      "agent": "implementer"
+    },
+    {
+      "from": "VERIFYING",
+      "to": "REVIEWING",
+      "at": "2026-08-25T13:30:05.039Z",
+      "evidence": null
+    },
+    {
+      "from": "REVIEWING",
+      "to": "TASK_IMPACT_READY",
+      "at": "2026-08-25T13:32:17.416Z",
+      "evidence": null,
+      "agent_calls": 1,
+      "agent": "reviewer"
+    },
+    {
+      "from": "TASK_IMPACT_READY",
+      "to": "IMPLEMENTING",
+      "at": "2026-08-25T13:32:48.316Z",
+      "evidence": null
+    },
+    {
+      "from": "IMPLEMENTING",
+      "to": "VERIFYING",
+      "at": "2026-08-25T13:57:12.763Z",
+      "evidence": null,
+      "agent_calls": 1,
+      "agent": "implementer"
+    },
+    {
+      "from": "VERIFYING",
+      "to": "REVIEWING",
+      "at": "2026-08-25T13:57:12.869Z",
+      "evidence": null
+    },
+    {
+      "from": "REVIEWING",
+      "to": "TASK_IMPACT_READY",
+      "at": "2026-08-25T13:59:05.648Z",
+      "evidence": null,
+      "agent_calls": 1,
+      "agent": "reviewer"
+    },
+    {
+      "from": "TASK_IMPACT_READY",
+      "to": "IMPLEMENTING",
+      "at": "2026-08-25T13:59:12.368Z",
+      "evidence": null
+    },
+    {
+      "from": "IMPLEMENTING",
+      "to": "VERIFYING",
+      "at": "2026-08-25T14:12:51.379Z",
+      "evidence": null,
+      "agent_calls": 1,
+      "agent": "implementer"
+    },
+    {
+      "from": "VERIFYING",
+      "to": "REVIEWING",
+      "at": "2026-08-25T14:12:51.486Z",
+      "evidence": null
+    },
+    {
+      "from": "REVIEWING",
+      "to": "TASK_IMPACT_READY",
+      "at": "2026-08-25T14:14:10.738Z",
+      "evidence": null,
+      "agent_calls": 1,
+      "agent": "reviewer"
+    },
+    {
+      "from": "TASK_IMPACT_READY",
+      "to": "IMPLEMENTING",
+      "at": "2026-08-25T14:14:18.679Z",
+      "evidence": null
+    },
+    {
+      "from": "IMPLEMENTING",
+      "to": "VERIFYING",
+      "at": "2026-08-25T14:46:48.953Z",
+      "evidence": null,
+      "agent_calls": 1,
+      "agent": "implementer"
+    },
+    {
+      "from": "VERIFYING",
+      "to": "REVIEWING",
+      "at": "2026-08-25T14:46:49.044Z",
+      "evidence": null
+    },
+    {
+      "from": "REVIEWING",
+      "to": "TASK_IMPACT_READY",
+      "at": "2026-08-25T14:48:43.311Z",
+      "evidence": null,
+      "agent_calls": 1,
+      "agent": "reviewer"
+    },
+    {
+      "from": "TASK_IMPACT_READY",
+      "to": "IMPLEMENTING",
+      "at": "2026-08-25T14:49:00.209Z",
+      "evidence": null
+    },
+    {
+      "from": "IMPLEMENTING",
+      "to": "VERIFYING",
+      "at": "2026-08-25T15:59:17.129Z",
+      "evidence": null,
+      "agent_calls": 1,
+      "agent": "implementer"
+    },
+    {
+      "from": "VERIFYING",
+      "to": "REVIEWING",
+      "at": "2026-08-25T15:59:17.227Z",
+      "evidence": null
+    },
+    {
+      "from": "REVIEWING",
+      "to": "FINAL_VERIFYING",
+      "at": "2026-08-25T16:04:29.146Z",
+      "evidence": null,
+      "agent_calls": 1,
+      "agent": "reviewer"
+    },
+    {
+      "from": "FINAL_VERIFYING",
+      "to": "COMPLETED",
+      "at": "2026-08-25T16:06:03.179Z",
+      "evidence": null
+    }
+  ],
+  "created_at": "2026-08-25T11:34:57.826Z",
+  "updated_at": "2026-08-25T16:06:03.180Z",
+  "tdd_required": false,
+  "blast": {
+    "ok": true,
+    "schema_version": "1.0",
+    "provider": "nexus-impact",
+    "graph_provider": "nexus-impact",
+    "base_commit": "c4d64986be276d769df10245a2c0a926f390e603",
+    "head_commit": "c4d64986be276d769df10245a2c0a926f390e603",
+    "worktree_head": "c4d64986be276d769df10245a2c0a926f390e603",
+    "changed_files": [
+      {
+        "status": "A",
+        "path": ".opencode/CONTEXT.md"
+      },
+      {
+        "status": "A",
+        "path": ".opencode/cache/impact/files.json"
+      },
+      {
+        "status": "A",
+        "path": ".opencode/cache/impact/imports.json"
+      },
+      {
+        "status": "A",
+        "path": ".opencode/cache/impact/symbols.json"
+      },
+      {
+        "status": "A",
+        "path": ".opencode/handoffs/unified-fold-gates-implementer.json"
+      },
+      {
+        "status": "A",
+        "path": ".opencode/handoffs/unified-fold-gates-reviewer.json"
+      },
+      {
+        "status": "A",
+        "path": ".opencode/impact/latest.json"
+      },
+      {
+        "status": "A",
+        "path": ".opencode/nexus.json"
+      },
+      {
+        "status": "A",
+        "path": ".opencode/plans/PLAN.md"
+      },
+      {
+        "status": "A",
+        "path": ".opencode/runs/unified-fold-gates/baseline.json"
+      },
+      {
+        "status": "A",
+        "path": ".opencode/runs/unified-fold-gates/metrics.jsonl"
+      },
+      {
+        "status": "A",
+        "path": ".opencode/runs/unified-fold-gates/state.json"
+      },
+      {
+        "status": "A",
+        "path": ".opencode/tasks/task-1.md"
+      },
+      {
+        "status": "A",
+        "path": ".opencode/tasks/task-2.md"
+      },
+      {
+        "status": "A",
+        "path": ".opencode/tasks/task-3.md"
+      },
+      {
+        "status": "A",
+        "path": ".opencode/tasks/task-4.md"
+      },
+      {
+        "status": "A",
+        "path": ".opencode/tasks/task-5.md"
+      },
+      {
+        "status": "A",
+        "path": ".opencode/tasks/task-6.md"
+      },
+      {
+        "status": "A",
+        "path": ".opencode/tasks/task-7.md"
+      },
+      {
+        "status": "A",
+        "path": ".opencode/trajectories/unified-fold-gates.jsonl"
+      },
+      {
+        "status": "A",
+        "path": "test-data.xml"
+      }
+    ],
+    "added_lines": 0,
+    "deleted_lines": 0,
+    "changed_symbols": [],
+    "direct_dependents": [],
+    "transitive_dependents": [],
+    "affected_packages": [
+      "."
+    ],
+    "related_tests": [],
+    "risk": "MEDIUM",
+    "level": "MEDIUM",
+    "computed_risk": "MEDIUM",
+    "risk_signals": [
+      "cross_package_change"
+    ],
+    "confidence": 1,
+    "verification_mode": "targeted",
+    "trusted": true,
+    "analysis_quality": "PRECISE",
+    "graph_quality": "PRECISE",
+    "analysis_complete": true,
+    "pre_impact": false,
+    "phase": "post",
+    "graph_freshness": {
+      "valid": true,
+      "current_head": "c4d64986be276d769df10245a2c0a926f390e603"
+    },
+    "uncertainties": [],
+    "dimensions": {
+      "symbols": 0,
+      "dependents": 0,
+      "tests": 0
+    },
+    "index_stats": {
+      "parsed": 0,
+      "cacheHits": 5000,
+      "unsupported": 4994,
+      "files": 5000
+    },
+    "placeholder_fields": [],
+    "provider_validated": true,
+    "validated_at": "2026-08-25T14:48:43.310Z",
+    "artifact_digest": "sha256:0aa0fca43cb62b4af32e549b0d26ab4925c194a50d1a7b30122cfba9c73bb98d"
+  },
+  "review_level": "reviewer",
+  "profile": "default",
+  "impact_consumed_for_implement": true,
+  "allowed_files": [
+    "gpu_fuzzy_trader/validation/nested_walk_forward.py",
+    "gpu_fuzzy_trader/validation/walk_forward_stability_report.py",
+    "gpu_fuzzy_trader/config.py",
+    "gpu_fuzzy_trader/mtf/cross_fitting.py",
+    "gpu_fuzzy_trader/run_pipeline.py",
+    "gpu_fuzzy_trader/phases/phase2_rule_pool.py",
+    "gpu_fuzzy_trader/rb_governor.py",
+    "README.md",
+    "RUN.md"
+  ],
+  "last_implementer_handoff": {
+    "schema_version": "1.1",
+    "run_id": "unified-fold-gates",
+    "unit_or_task": "task-7",
+    "task_id": "task-7",
+    "agent": "implementer",
+    "base_commit": "c4d64986be276d769df10245a2c0a926f390e603",
+    "created_at": "2026-08-25T15:56:21Z",
+    "status": "DONE",
+    "commit": "cd9d653ec4a62d16cf206f7a83b542bd1ba3b7e0",
+    "files_changed": [
+      "gpu_fuzzy_trader/validation/nested_walk_forward.py",
+      "gpu_fuzzy_trader/validation/walk_forward_stability_report.py",
+      "gpu_fuzzy_trader/config.py",
+      "gpu_fuzzy_trader/mtf/cross_fitting.py",
+      "gpu_fuzzy_trader/run_pipeline.py",
+      "gpu_fuzzy_trader/phases/phase2_rule_pool.py",
+      "README.md",
+      "RUN.md"
+    ],
+    "allowed_files": [
+      "gpu_fuzzy_trader/validation/nested_walk_forward.py",
+      "gpu_fuzzy_trader/validation/walk_forward_stability_report.py",
+      "gpu_fuzzy_trader/config.py",
+      "gpu_fuzzy_trader/mtf/cross_fitting.py",
+      "gpu_fuzzy_trader/run_pipeline.py",
+      "gpu_fuzzy_trader/phases/phase2_rule_pool.py",
+      "README.md",
+      "RUN.md"
+    ],
+    "scope_extras": [
+      "gpu_fuzzy_trader/validation/__init__.py",
+      "gpu_fuzzy_trader/mtf/discovery.py",
+      "tests/property/test_data_splitter_properties.py",
+      "tests/unit/test_config_trade_scaling.py",
+      "tests/unit/test_phase2_rule_pool.py",
+      "tests/unit/test_phase2_support.py",
+      "tests/unit/test_phase5_oos.py",
+      "tests/unit/test_rolling_cv.py"
+    ],
+    "scope_expansion_requested": true,
+    "block_reason": "The canonical implementation is complete. The remaining nested import in gpu_fuzzy_trader/validation/__init__.py and repository-wide legacy test references are outside the dispatch scope; re-impact is required before editing them.",
+    "tasks_completed": [
+      "Replaced pseudo-nested implementation with frozen strategy stability reporting in walk_forward_stability_report.py and kept the old module as a compatibility shim.",
+      "Removed NESTED_VALIDATION_* and deprecated fold aliases from canonical config and pipeline output.",
+      "Removed rolling_cv, PURGED_WF, and SPLIT_MODE references from run_pipeline.py and phase2_rule_pool.py.",
+      "Extended fold manifest export with train/test geometry, row and per-symbol audit data, role purges, count-gate scaling, eligibility, and reasons.",
+      "Updated README.md and RUN.md for the unified holdout, adaptive folds, derived purges, and stability report."
+    ],
+    "impact": {
+      "verified": true,
+      "risk": "MEDIUM",
+      "confidence": 0.625,
+      "verification_mode": "strict",
+      "direct_dependents": [],
+      "transitive_dependents": [],
+      "related_tests": [
+        "tests/unit/test_config_additions.py",
+        "tests/unit/test_config_trade_scaling.py",
+        "tests/unit/test_config_validation.py",
+        "tests/unit/test_mtf_cross_fitting.py",
+        "tests/unit/test_phase2_rule_pool.py",
+        "tests/unit/test_run_pipeline.py",
+        "tests/property/test_phase2_rule_pool_properties.py"
+      ],
+      "risk_signals": [
+        "cross_package_change",
+        "low_impact_confidence",
+        "large_diff_weak"
+      ],
+      "pre_impact": {
+        "risk": "MEDIUM",
+        "confidence": 0.883,
+        "verification_mode": "wider",
+        "direct_dependents": [],
+        "transitive_dependents": [],
+        "related_tests": [
+          "tests/unit/test_config_additions.py",
+          "tests/unit/test_config_trade_scaling.py",
+          "tests/unit/test_config_validation.py",
+          "tests/unit/test_mtf_cross_fitting.py",
+          "tests/unit/test_phase2_rule_pool.py",
+          "tests/unit/test_run_pipeline.py",
+          "tests/property/test_phase2_rule_pool_properties.py"
+        ],
+        "uncertainties": [
+          "unsupported_language_coverage"
+        ]
+      },
+      "callers_checked": [
+        "gpu_fuzzy_trader.run_pipeline canonical MTF, stability, split, and manifest paths",
+        "gpu_fuzzy_trader.phases.phase2_rule_pool legacy fold evaluator and sampler paths",
+        "gpu_fuzzy_trader.mtf.cross_fitting export_fold_boundaries and role purges",
+        "gpu_fuzzy_trader.validation.research_integrity compatibility import",
+        "gpu_fuzzy_trader.config effective snapshot and validation"
+      ],
+      "uncertainties": [
+        "unsupported_language_coverage"
+      ]
+    },
+    "impact_verified": true,
+    "tdd_required": true,
+    "tdd": {
+      "red": {
+        "command": "! grep -R \"nested_walk_forward\\|NESTED_VALIDATION\" --include=\"*.py\" gpu_fuzzy_trader/",
+        "exit_code": 1,
+        "pass": true,
+        "actual": "Expected audit failure: gpu_fuzzy_trader/validation/__init__.py still exports the historical compatibility module outside allowed_files."
+      },
+      "green": {
+        "command": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q tests/unit/test_mtf_cross_fitting.py tests/unit/test_mtf_composer.py tests/unit/test_data_splitter.py tests/unit/test_fold_gates.py tests/unit/test_purge_leakage.py",
+        "exit_code": 0,
+        "pass": true,
+        "actual": "61 passed in 19.70s"
+      }
+    },
+    "verification_gates": [
+      {
+        "id": "canonical-nested-config-audit",
+        "cmd": "grep -R \"nested_walk_forward\\|NESTED_VALIDATION\" --include=\"*.py\" gpu_fuzzy_trader/",
+        "expected": "0 canonical hits",
+        "actual": "One hit remains in gpu_fuzzy_trader/validation/__init__.py; this file is outside allowed_files.",
+        "exit_code": 0,
+        "pass": false
+      },
+      {
+        "id": "unified-fold-regression",
+        "cmd": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q tests/unit/test_mtf_cross_fitting.py tests/unit/test_mtf_composer.py tests/unit/test_data_splitter.py tests/unit/test_fold_gates.py tests/unit/test_purge_leakage.py",
+        "expected": "all pass",
+        "actual": "61 passed in 19.70s",
+        "exit_code": 0,
+        "pass": true
+      },
+      {
+        "id": "manifest-audit-command",
+        "cmd": "cat outputs/mtf_manifest.json 2>/dev/null | head -n 80 || grep -n \"MTF_MAX_FOLDS\" gpu_fuzzy_trader/config.py",
+        "expected": "audit fields present",
+        "actual": "No outputs/mtf_manifest.json exists in this worktree; the shell pipeline produced no fallback output. A post-commit inline audit verified all required fold fields in export_fold_boundaries.",
+        "exit_code": 0,
+        "pass": false
+      },
+      {
+        "id": "config-and-pipeline-regression",
+        "cmd": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q tests/unit/test_config_validation.py tests/unit/test_config_additions.py tests/unit/test_config_trade_scaling.py tests/unit/test_run_pipeline.py tests/unit/test_research_integrity.py",
+        "expected": "all pass",
+        "actual": "48 passed",
+        "exit_code": 0,
+        "pass": true
+      },
+      {
+        "id": "mtf-audit-regression",
+        "cmd": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q tests/unit/test_mtf_audit_fixes.py tests/unit/test_mtf_pipeline_integration.py",
+        "expected": "all pass",
+        "actual": "26 passed in 17.18s",
+        "exit_code": 0,
+        "pass": true
+      },
+      {
+        "id": "compile-changed-python",
+        "cmd": "PYTEST_LOW_MEMORY=1 .venv/bin/python -m compileall -q gpu_fuzzy_trader/config.py gpu_fuzzy_trader/mtf/cross_fitting.py gpu_fuzzy_trader/phases/phase2_rule_pool.py gpu_fuzzy_trader/run_pipeline.py gpu_fuzzy_trader/validation/nested_walk_forward.py gpu_fuzzy_trader/validation/walk_forward_stability_report.py",
+        "expected": "pass",
+        "actual": "completed without output",
+        "exit_code": 0,
+        "pass": true
+      }
+    ],
+    "drift_check": {
+      "command": "nexus run drift",
+      "pass": true,
+      "drift": "NONE",
+      "commit_distance": 0,
+      "plan_commit": null,
+      "current_head": null
+    },
+    "notes_for_reviewer": "No review verdict is provided. Review the two scope-limited audit failures and request re-impact for the listed scope extras.",
+    "notes": "Committed as cd9d653ec4a62d16cf206f7a83b542bd1ba3b7e0. The working tree also contains pre-existing out-of-scope gpu_fuzzy_trader/rb_governor.py changes and untracked Nexus artifacts; they were not staged or changed by this task.",
+    "tests": [],
+    "blast": {
+      "risk": "UNKNOWN",
+      "verified": null,
+      "callers_checked": []
+    }
+  },
+  "provider_verification": {
+    "ok": true,
+    "results": [
+      {
+        "id": "test",
+        "command": "npm test",
+        "argv": [
+          "npm",
+          "test"
+        ],
+        "exit_code": 0,
+        "pass": true,
+        "stdout_tail": "\n> test\n> PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q tests/unit/test_t4_profile.py tests/unit/test_config_validation.py\n\n.................................                                        [100%]\n33 passed in 15.78s\n",
+        "stderr_tail": ""
+      },
+      {
+        "id": "related:tests/unit/test_fold_gates.py",
+        "command": "npm test -- tests/unit/test_fold_gates.py",
+        "argv": [
+          "npm",
+          "test",
+          "--",
+          "tests/unit/test_fold_gates.py"
+        ],
+        "exit_code": 0,
+        "pass": true,
+        "stdout_tail": "\n> test\n> PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q tests/unit/test_t4_profile.py tests/unit/test_config_validation.py tests/unit/test_fold_gates.py\n\n........................................                                 [100%]\n40 passed in 17.18s\n",
+        "stderr_tail": ""
+      },
+      {
+        "id": "related:tests/unit/test_purge_leakage.py",
+        "command": "npm test -- tests/unit/test_purge_leakage.py",
+        "argv": [
+          "npm",
+          "test",
+          "--",
+          "tests/unit/test_purge_leakage.py"
+        ],
+        "exit_code": 0,
+        "pass": true,
+        "stdout_tail": "\n> test\n> PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q tests/unit/test_t4_profile.py tests/unit/test_config_validation.py tests/unit/test_purge_leakage.py\n\n...................................                                      [100%]\n35 passed in 17.53s\n",
+        "stderr_tail": ""
+      },
+      {
+        "id": "related:tests/unit/test_unified_folds.py",
+        "command": "npm test -- tests/unit/test_unified_folds.py",
+        "argv": [
+          "npm",
+          "test",
+          "--",
+          "tests/unit/test_unified_folds.py"
+        ],
+        "exit_code": 0,
+        "pass": true,
+        "stdout_tail": "\n> test\n> PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q tests/unit/test_t4_profile.py tests/unit/test_config_validation.py tests/unit/test_unified_folds.py\n\n.....................................                                    [100%]\n37 passed in 17.55s\n",
+        "stderr_tail": ""
+      }
+    ],
+    "plan": {
+      "ecosystem": "node",
+      "steps": [
+        {
+          "id": "test",
+          "command": "npm",
+          "args": [
+            "test"
+          ],
+          "kind": "test"
+        },
+        {
+          "id": "related:tests/unit/test_fold_gates.py",
+          "command": "npm",
+          "args": [
+            "test",
+            "--",
+            "tests/unit/test_fold_gates.py"
+          ],
+          "kind": "targeted-test"
+        },
+        {
+          "id": "related:tests/unit/test_purge_leakage.py",
+          "command": "npm",
+          "args": [
+            "test",
+            "--",
+            "tests/unit/test_purge_leakage.py"
+          ],
+          "kind": "targeted-test"
+        },
+        {
+          "id": "related:tests/unit/test_unified_folds.py",
+          "command": "npm",
+          "args": [
+            "test",
+            "--",
+            "tests/unit/test_unified_folds.py"
+          ],
+          "kind": "targeted-test"
+        }
+      ],
+      "related_tests": [
+        "tests/unit/test_fold_gates.py",
+        "tests/unit/test_purge_leakage.py",
+        "tests/unit/test_unified_folds.py"
+      ]
+    },
+    "source": "verification-provider",
+    "baseline_comparison": {
+      "ok": true,
+      "new_regressions": [],
+      "pre_existing_failures": [],
+      "fixed": []
+    },
+    "worktree_head": "e1246d1ac2fd0a362b7d1a663f061a3daef1471f",
+    "provider_validated": true,
+    "validated_at": "2026-08-25T12:15:28.135Z",
+    "artifact_digest": "sha256:a4e9e14121bcac124f49f7b62e765960d0007999d8520f3f336ba6eea7e83b5b"
+  },
+  "post_impact": {
+    "ok": true,
+    "schema_version": "1.0",
+    "provider": "nexus-impact",
+    "graph_provider": "nexus-impact",
+    "base_commit": "d151be48c23dad8f02c1a852cc2bf1f1a1b72ea3",
+    "head_commit": "e1246d1ac2fd0a362b7d1a663f061a3daef1471f",
+    "worktree_head": "e1246d1ac2fd0a362b7d1a663f061a3daef1471f",
+    "changed_files": [
+      {
+        "status": "A",
+        "path": "tests/unit/test_fold_gates.py"
+      },
+      {
+        "status": "A",
+        "path": "tests/unit/test_purge_leakage.py"
+      },
+      {
+        "status": "A",
+        "path": "tests/unit/test_unified_folds.py"
+      }
+    ],
+    "added_lines": 410,
+    "deleted_lines": 0,
+    "changed_symbols": [],
+    "direct_dependents": [],
+    "transitive_dependents": [],
+    "affected_packages": [
+      "."
+    ],
+    "related_tests": [
+      "tests/unit/test_fold_gates.py",
+      "tests/unit/test_purge_leakage.py",
+      "tests/unit/test_unified_folds.py"
+    ],
+    "risk": "MEDIUM",
+    "level": "MEDIUM",
+    "computed_risk": "MEDIUM",
+    "risk_signals": [
+      "low_impact_confidence",
+      "large_diff_weak"
+    ],
+    "confidence": 0.6,
+    "verification_mode": "strict",
+    "trusted": false,
+    "analysis_quality": "CONSERVATIVE",
+    "graph_quality": "CONSERVATIVE",
+    "analysis_complete": true,
+    "pre_impact": false,
+    "phase": "post",
+    "graph_freshness": {
+      "valid": true,
+      "current_head": "e1246d1ac2fd0a362b7d1a663f061a3daef1471f"
+    },
+    "uncertainties": [
+      "unsupported_language_coverage"
+    ],
+    "dimensions": {
+      "symbols": 0,
+      "dependents": 0,
+      "tests": 3
+    },
+    "index_stats": {
+      "parsed": 0,
+      "cacheHits": 5000,
+      "unsupported": 4994,
+      "files": 5000
+    },
+    "placeholder_fields": [],
+    "provider_validated": true,
+    "validated_at": "2026-08-25T12:14:10.054Z",
+    "artifact_digest": "sha256:91f4bd0df0b75179b03b5c3a4ae2f8c036e13d70ddd5d63e77589436b1310e37"
+  },
+  "last_review_handoff": {
+    "schema_version": "1.1",
+    "run_id": "unified-fold-gates",
+    "unit_or_task": "task-7",
+    "task_id": "task-7",
+    "agent": "reviewer",
+    "reviewed_commit": "cd9d653ec4a62d16cf206f7a83b542bd1ba3b7e0",
+    "base_commit": "c4d64986be276d769df10245a2c0a926f390e603",
+    "verdict": "APPROVED",
+    "findings": [],
+    "summary": "Final review APPROVED for unified-fold-gates"
+  },
+  "units": 7,
+  "execution_units": 7,
+  "classification": {
+    "units": 7
+  },
+  "final_verification": {
+    "ok": true,
+    "results": [
+      {
+        "id": "test",
+        "command": "npm test",
+        "argv": [
+          "npm",
+          "test"
+        ],
+        "exit_code": 0,
+        "pass": true,
+        "stdout_tail": "\n> test\n> PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q tests/unit/test_t4_profile.py tests/unit/test_config_validation.py\n\n.................................                                        [100%]\n33 passed in 16.07s\n",
+        "stderr_tail": ""
+      },
+      {
+        "id": "related:tests/unit/test_fold_gates.py",
+        "command": "npm test -- tests/unit/test_fold_gates.py",
+        "argv": [
+          "npm",
+          "test",
+          "--",
+          "tests/unit/test_fold_gates.py"
+        ],
+        "exit_code": 0,
+        "pass": true,
+        "stdout_tail": "\n> test\n> PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q tests/unit/test_t4_profile.py tests/unit/test_config_validation.py tests/unit/test_fold_gates.py\n\n........................................                                 [100%]\n40 passed in 17.09s\n",
+        "stderr_tail": ""
+      },
+      {
+        "id": "related:tests/unit/test_purge_leakage.py",
+        "command": "npm test -- tests/unit/test_purge_leakage.py",
+        "argv": [
+          "npm",
+          "test",
+          "--",
+          "tests/unit/test_purge_leakage.py"
+        ],
+        "exit_code": 0,
+        "pass": true,
+        "stdout_tail": "\n> test\n> PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q tests/unit/test_t4_profile.py tests/unit/test_config_validation.py tests/unit/test_purge_leakage.py\n\n...................................                                      [100%]\n35 passed in 18.03s\n",
+        "stderr_tail": ""
+      },
+      {
+        "id": "related:tests/unit/test_unified_folds.py",
+        "command": "npm test -- tests/unit/test_unified_folds.py",
+        "argv": [
+          "npm",
+          "test",
+          "--",
+          "tests/unit/test_unified_folds.py"
+        ],
+        "exit_code": 0,
+        "pass": true,
+        "stdout_tail": "\n> test\n> PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q tests/unit/test_t4_profile.py tests/unit/test_config_validation.py tests/unit/test_unified_folds.py\n\n.....................................                                    [100%]\n37 passed in 18.77s\n",
+        "stderr_tail": ""
+      }
+    ],
+    "plan": {
+      "ecosystem": "node",
+      "steps": [
+        {
+          "id": "test",
+          "command": "npm",
+          "args": [
+            "test"
+          ],
+          "kind": "test"
+        },
+        {
+          "id": "related:tests/unit/test_fold_gates.py",
+          "command": "npm",
+          "args": [
+            "test",
+            "--",
+            "tests/unit/test_fold_gates.py"
+          ],
+          "kind": "targeted-test"
+        },
+        {
+          "id": "related:tests/unit/test_purge_leakage.py",
+          "command": "npm",
+          "args": [
+            "test",
+            "--",
+            "tests/unit/test_purge_leakage.py"
+          ],
+          "kind": "targeted-test"
+        },
+        {
+          "id": "related:tests/unit/test_unified_folds.py",
+          "command": "npm",
+          "args": [
+            "test",
+            "--",
+            "tests/unit/test_unified_folds.py"
+          ],
+          "kind": "targeted-test"
+        }
+      ],
+      "related_tests": [
+        "tests/unit/test_fold_gates.py",
+        "tests/unit/test_purge_leakage.py",
+        "tests/unit/test_unified_folds.py"
+      ]
+    },
+    "source": "verification-provider",
+    "baseline_comparison": {
+      "ok": true,
+      "new_regressions": [],
+      "pre_existing_failures": [],
+      "fixed": []
+    },
+    "worktree_head": "cd9d653ec4a62d16cf206f7a83b542bd1ba3b7e0",
+    "provider_validated": true,
+    "validated_at": "2026-08-25T16:06:03.176Z",
+    "artifact_digest": "sha256:465c044852c9f801df32b487362a6567181d51db244f1702ba56e0ed51f407ec"
+  },
+  "_revision": 33
+}
