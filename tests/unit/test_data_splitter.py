@@ -478,7 +478,7 @@ class TestModuleLevelFunction:
             assert cv_func == cv_class
 
 
-class TestValidationHalfPurge:
+class TestValidationPurge:
     def test_fitness_and_selection_are_separated_by_label_horizon(self):
         validation = _make_df({"BTCUSDT": 1600, "ETHUSDT": 1701})
         fitness, selection = split_validation_fitness_selection(validation)

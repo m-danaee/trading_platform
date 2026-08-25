@@ -262,7 +262,7 @@ def split_validation_fitness_selection(
         validation_df, first_half=True, purge_rows=purge_rows,
     )
     val_selection = _chronological_half_split(
-        validation_df, first_half=False, purge_rows=purge_rows,
+        validation_df, first_half=False,
     )
     return val_fitness, val_selection
 
