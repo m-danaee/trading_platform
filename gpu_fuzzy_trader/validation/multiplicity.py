@@ -182,7 +182,20 @@ def _records_from_matrix(matrix: Any) -> list[dict[str, Any]]:
             oos_array = np.asarray(oos_values, dtype=float)
             if is_array.shape != oos_array.shape or is_array.ndim != 2:
                 raise ValueError("IS and OOS matrices must be matching 2D arrays")
-            orientation = str(matrix.get("orientation", "fold_candidate"))
+            orientation_value = matrix.get("orientation")
+            if orientation_value is None:
+                candidate_values = matrix.get("candidate_ids")
+                fold_values = matrix.get("fold_ids")
+                if (
+                    candidate_values is not None
+                    and fold_values is not None
+                    and len(candidate_values) == is_array.shape[0]
+                    and len(fold_values) == is_array.shape[1]
+                ):
+                    orientation_value = "candidate_fold"
+                else:
+                    orientation_value = "fold_candidate"
+            orientation = str(orientation_value)
             if orientation.lower().replace("-", "_") in {
                 "candidate_fold",
                 "candidate_major",
