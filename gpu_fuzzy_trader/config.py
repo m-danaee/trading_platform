@@ -2245,7 +2245,7 @@ def scale_trade_floor(
 
     New callers should use ``validation.fold_gates.scale_count_gate`` with
     explicit train or OOF exposure.  Without an explicit reference exposure,
-    the historical base value is retained for existing phase helpers.
+    the historical base value is retained for backwards compatibility.
     """
     if reference_rows is None or int(reference_rows) <= 0:
         return int(base)
@@ -2261,48 +2261,75 @@ def scale_trade_floor(
             rows=int(reference_rows), duration_bars=0, per_symbol_rows={}
         ),
         absolute_min=int(FOLD_ABSOLUTE_MIN_TRADES),
-        rounding="legacy",
+        rounding="ceil",
     )
 
 
+def _effective_reference_rows(reference_rows: int | None) -> int:
+    """Return the default full Phase 2 exposure for a row-count gate."""
+    if reference_rows is None:
+        return int(PHASE1_SAMPLING_TOTAL)
+    return int(reference_rows)
 
-def effective_min_trade_support(n_rows: int | None = None) -> int:
+
+def effective_min_trade_support(
+    n_rows: int | None = None,
+    reference_rows: int | None = None,
+) -> int:
     base = int(MIN_TRADE_SUPPORT)
     if n_rows is None:
         return base
-    return scale_trade_floor(base, n_rows)
+    return scale_trade_floor(
+        base, n_rows, _effective_reference_rows(reference_rows)
+    )
 
 
-
-def effective_min_trade_pool_floor(n_rows: int | None = None) -> int:
+def effective_min_trade_pool_floor(
+    n_rows: int | None = None,
+    reference_rows: int | None = None,
+) -> int:
     base = int(MIN_TRADE_POOL_FLOOR)
     if n_rows is None:
         return base
-    return scale_trade_floor(base, n_rows)
+    return scale_trade_floor(
+        base, n_rows, _effective_reference_rows(reference_rows)
+    )
 
 
-
-def effective_val_trade_floor_for_objectives(n_rows: int | None = None) -> int:
+def effective_val_trade_floor_for_objectives(
+    n_rows: int | None = None,
+    reference_rows: int | None = None,
+) -> int:
     base = max(int(MIN_TRADE_POOL_FLOOR) // 4, 10)
     if n_rows is None:
         return base
-    return scale_trade_floor(base, n_rows)
+    return scale_trade_floor(
+        base, n_rows, _effective_reference_rows(reference_rows)
+    )
 
 
-
-def effective_pool_min_val_trades(n_rows: int | None = None) -> int:
+def effective_pool_min_val_trades(
+    n_rows: int | None = None,
+    reference_rows: int | None = None,
+) -> int:
     base = max(int(MIN_TRADE_POOL_FLOOR) // 4, 10)
     if n_rows is None:
         return base
-    return scale_trade_floor(base, n_rows)
+    return scale_trade_floor(
+        base, n_rows, _effective_reference_rows(reference_rows)
+    )
 
 
-
-def effective_monthly_min_trades(n_rows: int | None = None) -> int:
+def effective_monthly_min_trades(
+    n_rows: int | None = None,
+    reference_rows: int | None = None,
+) -> int:
     base = int(MONTHLY_MIN_TRADES)
     if n_rows is None:
         return base
-    return scale_trade_floor(base, n_rows)
+    return scale_trade_floor(
+        base, n_rows, _effective_reference_rows(reference_rows)
+    )
 
 
 

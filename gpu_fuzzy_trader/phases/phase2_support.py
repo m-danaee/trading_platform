@@ -6,9 +6,11 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import TYPE_CHECKING
 
 import numpy as np
+import pandas as pd
 
 from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.scoring.gates import (
@@ -20,6 +22,65 @@ if TYPE_CHECKING:
     from gpu_fuzzy_trader.phases.phase2_stage import Phase2StageParams
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_reference_rows(
+    island_hyperparams: _cfg.IslandHyperparams | None = None,
+    reference_rows: int | None = None,
+) -> int:
+    """Resolve the full exposure used to scale a Phase 2 count gate."""
+    if reference_rows is not None and int(reference_rows) > 0:
+        return int(reference_rows)
+    if island_hyperparams is not None:
+        island_rows = int(getattr(island_hyperparams, "n_rows", 0))
+        if island_rows > 0:
+            return island_rows
+    return max(1, int(_cfg.PHASE1_SAMPLING_TOTAL))
+
+
+@lru_cache(maxsize=32)
+def _row_gate_context(scoring_rows: int, reference_rows: int) -> dict:
+    """Build and cache row-only fold exposure contexts.
+
+    The Phase 2 support helpers receive row counts rather than frames.  A
+    ``RangeIndex`` frame preserves that row exposure without allocating data,
+    while routing production floor resolution through the canonical context
+    builder.
+    """
+    from gpu_fuzzy_trader.validation.fold_gates import build_fold_gate_context
+
+    scoring_frame = pd.DataFrame(
+        index=pd.RangeIndex(max(0, int(scoring_rows)), name="row")
+    )
+    reference_frame = pd.DataFrame(
+        index=pd.RangeIndex(max(0, int(reference_rows)), name="row")
+    )
+    return build_fold_gate_context(
+        scoring_frame,
+        reference_frame,
+        stage="train",
+    )
+
+
+def _scale_phase2_count_gate(
+    base: int,
+    n_rows: int | None,
+    *,
+    reference_rows: int,
+) -> int:
+    """Scale a Phase 2 count floor from scoring to reference exposure."""
+    if n_rows is None:
+        return int(base)
+    from gpu_fuzzy_trader.validation.fold_gates import scale_count_gate
+
+    context = _row_gate_context(int(n_rows), int(reference_rows))
+    return scale_count_gate(
+        int(base),
+        context["scoring_exposure"],
+        context["reference_exposure"],
+        absolute_min=int(_cfg.FOLD_ABSOLUTE_MIN_TRADES),
+        rounding="ceil",
+    )
 
 
 @dataclass(frozen=True)
@@ -38,16 +99,29 @@ def resolve_evolution_floors(
     *,
     n_rows: int | None = None,
     island_hyperparams: _cfg.IslandHyperparams | None = None,
+    reference_rows: int | None = None,
 ) -> EvolutionFloors:
     """Return stage-aware fitness floors; defaults to global strict knobs.
 
     When both *stage_params* and *island_hyperparams* are set, Stage A keeps
     soft exploration floors; Stage B uses the override support target.
     """
+    resolved_reference_rows = _resolve_reference_rows(
+        island_hyperparams,
+        reference_rows,
+    )
     if stage_params is not None:
-        min_support = int(stage_params.min_trade_support)
+        min_support = _scale_phase2_count_gate(
+            stage_params.min_trade_support,
+            n_rows,
+            reference_rows=resolved_reference_rows,
+        )
         if island_hyperparams is not None:
-            island_support = int(island_hyperparams.min_trade_support)
+            island_support = _scale_phase2_count_gate(
+                island_hyperparams.min_trade_support,
+                n_rows,
+                reference_rows=resolved_reference_rows,
+            )
             if bool(stage_params.soft_feasibility) or stage_params.stage == "A":
                 # Soft Stage A: never stricter than the island-scaled target.
                 min_support = min(min_support, island_support)
@@ -66,7 +140,11 @@ def resolve_evolution_floors(
     if island_hyperparams is not None:
         return EvolutionFloors(
             return_floor_pct=float(_cfg.PHASE2_RETURN_FLOOR_PCT),
-            min_trade_support=int(island_hyperparams.min_trade_support),
+            min_trade_support=_scale_phase2_count_gate(
+                island_hyperparams.min_trade_support,
+                n_rows,
+                reference_rows=resolved_reference_rows,
+            ),
             use_robust_return_obj=bool(_cfg.PHASE2_USE_ROBUST_RETURN_OBJ),
             soft_feasibility=False,
             pool_require_positive_splits=bool(
@@ -75,7 +153,11 @@ def resolve_evolution_floors(
         )
     return EvolutionFloors(
         return_floor_pct=float(_cfg.PHASE2_RETURN_FLOOR_PCT),
-        min_trade_support=int(_cfg.effective_min_trade_support(n_rows)),
+        min_trade_support=_scale_phase2_count_gate(
+            _cfg.MIN_TRADE_SUPPORT,
+            n_rows,
+            reference_rows=resolved_reference_rows,
+        ),
         use_robust_return_obj=bool(_cfg.PHASE2_USE_ROBUST_RETURN_OBJ),
         soft_feasibility=False,
         pool_require_positive_splits=bool(
@@ -132,20 +214,36 @@ def trade_support_penalty(
 def _pool_admission_floors(
     n_valid_rows: int | None = None,
     island_hyperparams: _cfg.IslandHyperparams | None = None,
+    *,
+    reference_rows: int | None = None,
 ) -> tuple[int, float, float, float, int]:
     """Return (train_trade_floor, train_ret_min, val_ret_min, pf_floor, min_val_trades).
 
     Uses ADMISSION PF 1.15 — this is the hard gate at pool entry.
     """
-    min_val = (
+    resolved_reference_rows = _resolve_reference_rows(
+        island_hyperparams,
+        reference_rows,
+    )
+    min_val_base = (
         int(island_hyperparams.val_trade_floor)
         if island_hyperparams is not None
-        else _cfg.effective_pool_min_val_trades(n_valid_rows)
+        else max(int(_cfg.MIN_TRADE_POOL_FLOOR) // 4, 10)
     )
-    train_floor = (
+    train_floor_base = (
         int(island_hyperparams.min_trade_pool_floor)
         if island_hyperparams is not None
-        else _cfg.effective_min_trade_pool_floor(n_valid_rows)
+        else int(_cfg.MIN_TRADE_POOL_FLOOR)
+    )
+    min_val = _scale_phase2_count_gate(
+        min_val_base,
+        n_valid_rows,
+        reference_rows=resolved_reference_rows,
+    )
+    train_floor = _scale_phase2_count_gate(
+        train_floor_base,
+        n_valid_rows,
+        reference_rows=resolved_reference_rows,
     )
     return (
         int(train_floor),
@@ -159,6 +257,8 @@ def _pool_admission_floors(
 def _evolution_feasibility_floors(
     n_valid_rows: int | None = None,
     island_hyperparams: _cfg.IslandHyperparams | None = None,
+    *,
+    reference_rows: int | None = None,
 ) -> tuple[int, float, float, float, int]:
     """Return (train_trade_floor, train_ret_min, val_ret_min, pf_floor, min_val_trades).
 
@@ -166,15 +266,29 @@ def _evolution_feasibility_floors(
     so the feasible set isn't artificially collapsed when val trade counts are thin.
     Pool admission (hard gate) still uses ADMISSION PF 1.15.
     """
-    min_val = (
+    resolved_reference_rows = _resolve_reference_rows(
+        island_hyperparams,
+        reference_rows,
+    )
+    min_val_base = (
         int(island_hyperparams.val_trade_floor)
         if island_hyperparams is not None
-        else _cfg.effective_pool_min_val_trades(n_valid_rows)
+        else max(int(_cfg.MIN_TRADE_POOL_FLOOR) // 4, 10)
     )
-    train_floor = (
+    train_floor_base = (
         int(island_hyperparams.min_trade_pool_floor)
         if island_hyperparams is not None
-        else _cfg.effective_min_trade_pool_floor(n_valid_rows)
+        else int(_cfg.MIN_TRADE_POOL_FLOOR)
+    )
+    min_val = _scale_phase2_count_gate(
+        min_val_base,
+        n_valid_rows,
+        reference_rows=resolved_reference_rows,
+    )
+    train_floor = _scale_phase2_count_gate(
+        train_floor_base,
+        n_valid_rows,
+        reference_rows=resolved_reference_rows,
     )
     return (
         int(train_floor),
@@ -191,12 +305,17 @@ def _passes_pool_admission_impl(
     *,
     n_valid_rows: int | None = None,
     island_hyperparams: _cfg.IslandHyperparams | None = None,
+    reference_rows: int | None = None,
 ) -> bool:
     if not _cfg.PHASE2_POOL_REQUIRE_POSITIVE_SPLITS:
         return True
 
     train_floor, train_ret_min, val_ret_min, pf_floor, min_val_trades = (
-        _pool_admission_floors(n_valid_rows, island_hyperparams)
+        _pool_admission_floors(
+            n_valid_rows,
+            island_hyperparams,
+            reference_rows=reference_rows,
+        )
     )
 
     # Pool admission always requires validation metrics when positive splits
@@ -274,6 +393,7 @@ def _feasibility_gate_failures(
     *,
     n_valid_rows: int | None = None,
     island_hyperparams: _cfg.IslandHyperparams | None = None,
+    reference_rows: int | None = None,
 ) -> dict[str, int]:
     """Return per-gate failure flags for evolution-time feasibility diagnostics.
 
@@ -306,7 +426,11 @@ def _feasibility_gate_failures(
         Dict mapping gate name to 0 (passed) or 1 (failed).
     """
     train_floor, train_ret_min, val_ret_min, pf_floor, min_val_trades = (
-        _evolution_feasibility_floors(n_valid_rows, island_hyperparams)
+        _evolution_feasibility_floors(
+            n_valid_rows,
+            island_hyperparams,
+            reference_rows=reference_rows,
+        )
     )
     failures: dict[str, int] = {
         "train_trade_floor": 0,
@@ -393,6 +517,7 @@ def passes_pool_admission_gate(
     *,
     n_valid_rows: int | None = None,
     island_hyperparams: _cfg.IslandHyperparams | None = None,
+    reference_rows: int | None = None,
 ) -> bool:
     """
     Hard gate for Phase 2 pool/archive on merged holdout metrics.
@@ -404,6 +529,7 @@ def passes_pool_admission_gate(
         val_metrics,
         n_valid_rows=n_valid_rows,
         island_hyperparams=island_hyperparams,
+        reference_rows=reference_rows,
     )
 
 
@@ -445,12 +571,22 @@ def passes_pool_trade_floor(
     *,
     n_rows: int | None = None,
     island_hyperparams: _cfg.IslandHyperparams | None = None,
+    reference_rows: int | None = None,
 ) -> bool:
     """Pool/archive inclusion gate."""
-    if island_hyperparams is not None:
-        trade_floor = int(island_hyperparams.min_trade_pool_floor)
-    else:
-        trade_floor = _cfg.effective_min_trade_pool_floor(n_rows)
+    trade_floor_base = (
+        int(island_hyperparams.min_trade_pool_floor)
+        if island_hyperparams is not None
+        else int(_cfg.MIN_TRADE_POOL_FLOOR)
+    )
+    trade_floor = _scale_phase2_count_gate(
+        trade_floor_base,
+        n_rows,
+        reference_rows=_resolve_reference_rows(
+            island_hyperparams,
+            reference_rows,
+        ),
+    )
     if executed >= trade_floor:
         return True
     return False
@@ -564,6 +700,7 @@ def _raw_feasibility_violation_score(
     n_valid_rows: int | None = None,
     include_val: bool = True,
     island_hyperparams: _cfg.IslandHyperparams | None = None,
+    reference_rows: int | None = None,
 ) -> float:
     """Compute violation score using evolution PF floors (1.05) during NSGA-III fitness.
 
@@ -578,7 +715,11 @@ def _raw_feasibility_violation_score(
         return 0.0
 
     train_floor, train_ret_min, val_ret_min, pf_floor, min_val_trades = (
-        _evolution_feasibility_floors(n_valid_rows, island_hyperparams)
+        _evolution_feasibility_floors(
+            n_valid_rows,
+            island_hyperparams,
+            reference_rows=reference_rows,
+        )
     )
     score = 0.0
 
@@ -628,6 +769,7 @@ def feasibility_violation_score(
     stage_params: Phase2StageParams | None = None,
     n_valid_rows: int | None = None,
     island_hyperparams: _cfg.IslandHyperparams | None = None,
+    reference_rows: int | None = None,
 ) -> float:
     """
     Non-negative violation score; 0 means the rule meets deployability floors.
@@ -639,6 +781,7 @@ def feasibility_violation_score(
         stage_params,
         n_rows=n_valid_rows,
         island_hyperparams=island_hyperparams,
+        reference_rows=reference_rows,
     )
     if floors.soft_feasibility:
         return 0.0
@@ -649,6 +792,7 @@ def feasibility_violation_score(
         val_metrics,
         n_valid_rows=n_valid_rows,
         island_hyperparams=island_hyperparams,
+        reference_rows=reference_rows,
     )
 
 
