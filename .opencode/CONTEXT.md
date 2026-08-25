@@ -3,7 +3,7 @@
 workflow: default
 execution_mode: delegated
 branch_cleanup_policy: always
-active_objective: unified-fold-gates — unify Folds/Purge/Gate scaling, remove deprecated purged_walk_forward/SPLIT_MODE/rolling_cv, achieve single adaptive expanding Master Temporal Fold system
+active_objective: fix-fold-gates — address verdict blockers: ratio support, count-gate scaling, rolling_cv cleanup, SPLIT_MODE tests, low cleanup
 current_phase: PLANNED
 base_branch: main
 branch_policy: isolated
@@ -13,10 +13,9 @@ verification_baseline:
   test: PYTEST_LOW_MEMORY=1 .venv/bin/python -m pytest -q --ignore=tests/benchmark
   lint: none detected
   typecheck: none detected
-  baseline_run: pending (to be run at first implementer handoff)
-plan_commit: d151be4 (d151be48c23dad8f02c1a852cc2bf1f1a1b72ea3)
-generated_at: 2026-08-25T15:06:56+03:30
+  baseline_run: pending
+plan_commit: 3d0ce31 (3d0ce312bd043594180fd82b7f3a106e264ca3c1)
+generated_at: 2026-08-25T16:30:00+03:30
 impact: pending (nexus impact to be run per-task pre-impact)
 pending_blockers: none
-next_action: nexus run transition --to PLANNED then TASK_IMPACT_READY for task-1
-
+next_action: nexus run transition --to PLANNED

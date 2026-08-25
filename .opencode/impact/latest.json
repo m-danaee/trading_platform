@@ -3,45 +3,69 @@
   "schema_version": "1.0",
   "provider": "nexus-impact",
   "graph_provider": "nexus-impact",
-  "base_commit": "c4d64986be276d769df10245a2c0a926f390e603",
-  "head_commit": "cd9d653ec4a62d16cf206f7a83b542bd1ba3b7e0",
-  "worktree_head": "cd9d653ec4a62d16cf206f7a83b542bd1ba3b7e0",
+  "base_commit": "f02cc132c8a23cd7dc36ab37fe1d5a8f00c6f3c2",
+  "head_commit": "f02cc132c8a23cd7dc36ab37fe1d5a8f00c6f3c2",
+  "worktree_head": "f02cc132c8a23cd7dc36ab37fe1d5a8f00c6f3c2",
   "changed_files": [
     {
       "status": "M",
-      "path": "README.md"
+      "path": ".opencode/CONTEXT.md"
     },
     {
       "status": "M",
-      "path": "RUN.md"
+      "path": ".opencode/impact/latest.json"
     },
     {
       "status": "M",
-      "path": "gpu_fuzzy_trader/config.py"
+      "path": ".opencode/nexus.json"
     },
     {
       "status": "M",
-      "path": "gpu_fuzzy_trader/mtf/cross_fitting.py"
+      "path": ".opencode/plans/PLAN.md"
     },
     {
       "status": "M",
-      "path": "gpu_fuzzy_trader/phases/phase2_rule_pool.py"
-    },
-    {
-      "status": "M",
-      "path": "gpu_fuzzy_trader/run_pipeline.py"
-    },
-    {
-      "status": "M",
-      "path": "gpu_fuzzy_trader/validation/nested_walk_forward.py"
+      "path": ".opencode/tasks/task-1.md"
     },
     {
       "status": "A",
-      "path": "gpu_fuzzy_trader/validation/walk_forward_stability_report.py"
+      "path": ".opencode/cache/impact/files.json"
+    },
+    {
+      "status": "A",
+      "path": ".opencode/cache/impact/imports.json"
+    },
+    {
+      "status": "A",
+      "path": ".opencode/cache/impact/symbols.json"
+    },
+    {
+      "status": "A",
+      "path": ".opencode/handoffs/fix-fold-gates-implementer.json"
+    },
+    {
+      "status": "A",
+      "path": ".opencode/handoffs/fix-fold-gates-reviewer.json"
+    },
+    {
+      "status": "A",
+      "path": ".opencode/runs/fix-fold-gates/metrics.jsonl"
+    },
+    {
+      "status": "A",
+      "path": ".opencode/runs/fix-fold-gates/state.json"
+    },
+    {
+      "status": "A",
+      "path": ".opencode/trajectories/fix-fold-gates.jsonl"
+    },
+    {
+      "status": "A",
+      "path": "data/split_manifest.json"
     }
   ],
-  "added_lines": 588,
-  "deleted_lines": 360,
+  "added_lines": 243,
+  "deleted_lines": 384,
   "changed_symbols": [],
   "direct_dependents": [],
   "transitive_dependents": [],
@@ -49,96 +73,67 @@
     "."
   ],
   "related_tests": [
-    ".venv/lib/python3.12/site-packages/joblib/test/__pycache__/test_config.cpython-312-pytest-9.0.3.pyc",
-    ".venv/lib/python3.12/site-packages/joblib/test/test_config.py",
-    ".venv/lib/python3.12/site-packages/matplotlib/tests/test_fontconfig_pattern.py",
-    ".venv/lib/python3.12/site-packages/networkx/utils/tests/__pycache__/test_config.cpython-312-pytest-9.0.3.pyc",
-    ".venv/lib/python3.12/site-packages/networkx/utils/tests/test_config.py",
-    ".venv/lib/python3.12/site-packages/numba/tests/__pycache__/test_config.cpython-312-pytest-9.0.3.pyc",
-    ".venv/lib/python3.12/site-packages/numba/tests/__pycache__/test_config.cpython-312.pyc",
-    ".venv/lib/python3.12/site-packages/numba/tests/test_config.py",
-    ".venv/lib/python3.12/site-packages/numpy/_core/tests/data/umath-validation-set-README.txt",
-    ".venv/lib/python3.12/site-packages/numpy/tests/__pycache__/test_configtool.cpython-312-pytest-9.0.3.pyc",
-    ".venv/lib/python3.12/site-packages/numpy/tests/__pycache__/test_numpy_config.cpython-312-pytest-9.0.3.pyc",
-    ".venv/lib/python3.12/site-packages/numpy/tests/test_configtool.py",
-    ".venv/lib/python3.12/site-packages/numpy/tests/test_numpy_config.py",
-    ".venv/lib/python3.12/site-packages/numpy/typing/tests/data/fail/ufunc_config.pyi",
-    ".venv/lib/python3.12/site-packages/numpy/typing/tests/data/pass/__pycache__/ufunc_config.cpython-312-pytest-9.0.3.pyc",
-    ".venv/lib/python3.12/site-packages/numpy/typing/tests/data/pass/ufunc_config.py",
-    ".venv/lib/python3.12/site-packages/numpy/typing/tests/data/reveal/ufunc_config.pyi",
-    ".venv/lib/python3.12/site-packages/pandas/tests/config/__init__.py",
-    ".venv/lib/python3.12/site-packages/pandas/tests/config/__pycache__/__init__.cpython-312.pyc",
-    ".venv/lib/python3.12/site-packages/pandas/tests/config/__pycache__/test_config.cpython-312-pytest-9.0.3.pyc",
-    ".venv/lib/python3.12/site-packages/pandas/tests/config/__pycache__/test_localization.cpython-312-pytest-9.0.3.pyc",
-    ".venv/lib/python3.12/site-packages/pandas/tests/config/test_config.py",
-    ".venv/lib/python3.12/site-packages/pandas/tests/config/test_localization.py",
-    ".venv/lib/python3.12/site-packages/pyarrow/tests/data/orc/README.md",
-    ".venv/lib/python3.12/site-packages/scipy/_lib/tests/test_config.py",
-    ".venv/lib/python3.12/site-packages/setuptools/_distutils/tests/test_config_cmd.py",
-    ".venv/lib/python3.12/site-packages/setuptools/_distutils/tests/test_sysconfig.py",
-    ".venv/lib/python3.12/site-packages/setuptools/tests/config/__init__.py",
-    ".venv/lib/python3.12/site-packages/setuptools/tests/config/downloads/__init__.py",
-    ".venv/lib/python3.12/site-packages/setuptools/tests/config/downloads/preload.py",
-    ".venv/lib/python3.12/site-packages/setuptools/tests/config/setupcfg_examples.txt",
-    ".venv/lib/python3.12/site-packages/setuptools/tests/config/test_apply_pyprojecttoml.py",
-    ".venv/lib/python3.12/site-packages/setuptools/tests/config/test_expand.py",
-    ".venv/lib/python3.12/site-packages/setuptools/tests/config/test_pyprojecttoml.py",
-    ".venv/lib/python3.12/site-packages/setuptools/tests/config/test_pyprojecttoml_dynamic_deps.py",
-    ".venv/lib/python3.12/site-packages/setuptools/tests/config/test_setupcfg.py",
-    ".venv/lib/python3.12/site-packages/setuptools/tests/test_config_discovery.py",
-    ".venv/lib/python3.12/site-packages/sklearn/tests/test_config.py",
-    ".worktrees/audit-research-integrity/tests/property/hypothesis_config.py",
-    ".worktrees/audit-research-integrity/tests/property/test_phase2_rule_pool_properties.py",
-    ".worktrees/audit-research-integrity/tests/unit/test_anti_overfit_config.py",
-    ".worktrees/audit-research-integrity/tests/unit/test_config_additions.py",
-    ".worktrees/audit-research-integrity/tests/unit/test_config_trade_scaling.py",
-    ".worktrees/audit-research-integrity/tests/unit/test_config_validation.py",
-    ".worktrees/audit-research-integrity/tests/unit/test_mtf_cross_fitting.py",
-    ".worktrees/audit-research-integrity/tests/unit/test_phase2_rule_pool.py",
-    ".worktrees/audit-research-integrity/tests/unit/test_run_pipeline.py",
-    "tests/property/hypothesis_config.py",
-    "tests/property/test_phase2_rule_pool_properties.py",
-    "tests/unit/__pycache__/test_config_additions.cpython-312-pytest-9.0.3.pyc",
-    "tests/unit/__pycache__/test_config_trade_scaling.cpython-312-pytest-9.0.3.pyc",
-    "tests/unit/__pycache__/test_config_validation.cpython-312-pytest-9.0.3.pyc",
-    "tests/unit/__pycache__/test_mtf_cross_fitting.cpython-312-pytest-9.0.3.pyc",
-    "tests/unit/__pycache__/test_phase2_rule_pool.cpython-312-pytest-9.0.3.pyc",
-    "tests/unit/__pycache__/test_run_pipeline.cpython-312-pytest-9.0.3.pyc",
-    "tests/unit/test_anti_overfit_config.py",
-    "tests/unit/test_config_additions.py",
-    "tests/unit/test_config_trade_scaling.py",
-    "tests/unit/test_config_validation.py",
-    "tests/unit/test_mtf_cross_fitting.py",
-    "tests/unit/test_phase2_rule_pool.py",
-    "tests/unit/test_run_pipeline.py"
+    ".venv/lib/python3.12/site-packages/networkx/tests/test_lazy_imports.py",
+    ".venv/lib/python3.12/site-packages/numpy/_core/tests/examples/limited_api/limited_api_latest.c",
+    ".venv/lib/python3.12/site-packages/numpy/_core/tests/test_errstate.py",
+    ".venv/lib/python3.12/site-packages/numpy/random/tests/test_randomstate.py",
+    ".venv/lib/python3.12/site-packages/numpy/random/tests/test_randomstate_regression.py",
+    ".venv/lib/python3.12/site-packages/pandas/tests/io/generate_legacy_storage_files.py",
+    ".venv/lib/python3.12/site-packages/sklearn/metrics/_plot/tests/__init__.py",
+    ".venv/lib/python3.12/site-packages/sklearn/metrics/_plot/tests/test_common_curve_display.py",
+    ".venv/lib/python3.12/site-packages/sklearn/metrics/_plot/tests/test_confusion_matrix_display.py",
+    ".venv/lib/python3.12/site-packages/sklearn/metrics/_plot/tests/test_det_curve_display.py",
+    ".venv/lib/python3.12/site-packages/sklearn/metrics/_plot/tests/test_precision_recall_display.py",
+    ".venv/lib/python3.12/site-packages/sklearn/metrics/_plot/tests/test_predict_error_display.py",
+    ".venv/lib/python3.12/site-packages/sklearn/metrics/_plot/tests/test_roc_curve_display.py",
+    ".venv/lib/python3.12/site-packages/sklearn/metrics/cluster/tests/__init__.py",
+    ".venv/lib/python3.12/site-packages/sklearn/metrics/cluster/tests/test_bicluster.py",
+    ".venv/lib/python3.12/site-packages/sklearn/metrics/cluster/tests/test_common.py",
+    ".venv/lib/python3.12/site-packages/sklearn/metrics/cluster/tests/test_supervised.py",
+    ".venv/lib/python3.12/site-packages/sklearn/metrics/cluster/tests/test_unsupervised.py",
+    ".venv/lib/python3.12/site-packages/sklearn/metrics/tests/__init__.py",
+    ".venv/lib/python3.12/site-packages/sklearn/metrics/tests/test_classification.py",
+    ".venv/lib/python3.12/site-packages/sklearn/metrics/tests/test_common.py",
+    ".venv/lib/python3.12/site-packages/sklearn/metrics/tests/test_dist_metrics.py",
+    ".venv/lib/python3.12/site-packages/sklearn/metrics/tests/test_pairwise.py",
+    ".venv/lib/python3.12/site-packages/sklearn/metrics/tests/test_pairwise_distances_reduction.py",
+    ".venv/lib/python3.12/site-packages/sklearn/metrics/tests/test_ranking.py",
+    ".venv/lib/python3.12/site-packages/sklearn/metrics/tests/test_regression.py",
+    ".venv/lib/python3.12/site-packages/sklearn/metrics/tests/test_score_objects.py",
+    ".venv/lib/python3.12/site-packages/sympy/physics/quantum/tests/test_state.py",
+    ".venv/lib/python3.12/site-packages/sympy/testing/tests/diagnose_imports.py",
+    ".venv/lib/python3.12/site-packages/sympy/testing/tests/test_module_imports.py",
+    ".worktrees/audit-research-integrity/tests/unit/test_plateau_state_leak.py",
+    ".worktrees/audit-research-integrity/tests/unit/test_rb_island_source_symbols.py",
+    ".worktrees/audit-research-integrity/tests/unit/test_rb_min_symbols.py",
+    "tests/unit/test_plateau_state_leak.py",
+    "tests/unit/test_rb_island_source_symbols.py",
+    "tests/unit/test_rb_min_symbols.py"
   ],
   "risk": "MEDIUM",
   "level": "MEDIUM",
   "computed_risk": "MEDIUM",
   "risk_signals": [
     "cross_package_change",
-    "low_impact_confidence",
     "large_diff_weak"
   ],
-  "confidence": 0.625,
-  "verification_mode": "strict",
-  "trusted": false,
-  "analysis_quality": "CONSERVATIVE",
-  "graph_quality": "CONSERVATIVE",
+  "confidence": 1,
+  "verification_mode": "targeted",
+  "trusted": true,
+  "analysis_quality": "PRECISE",
+  "graph_quality": "PRECISE",
   "analysis_complete": true,
   "pre_impact": false,
   "phase": "post",
   "graph_freshness": {
     "valid": true,
-    "current_head": "cd9d653ec4a62d16cf206f7a83b542bd1ba3b7e0"
+    "current_head": "f02cc132c8a23cd7dc36ab37fe1d5a8f00c6f3c2"
   },
-  "uncertainties": [
-    "unsupported_language_coverage"
-  ],
+  "uncertainties": [],
   "dimensions": {
     "symbols": 0,
     "dependents": 0,
-    "tests": 62
+    "tests": 36
   },
   "index_stats": {
     "parsed": 0,
