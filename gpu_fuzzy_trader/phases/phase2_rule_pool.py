@@ -506,6 +506,30 @@ def _resolve_sample_total_rows(
     return capped
 
 
+def _fold_forbidden_ranges(
+    folds: list | None,
+    *,
+    embargo: int | None = None,
+) -> list[tuple[int, int]]:
+    """Return bar-index exclusions for optional legacy-shaped fold records.
+
+    The canonical data splitter returns no top-level CV folds.  This helper
+    keeps the sampler safe for callers that still pass a fold-shaped record,
+    without importing the removed rolling-fold implementation.
+    """
+    if not folds:
+        return []
+    gap = int(_cfg.MAX_HOLD_CANDLES if embargo is None else embargo)
+    ranges: list[tuple[int, int]] = []
+    for fold in folds:
+        start = getattr(fold, "valid_start_bar", None)
+        end = getattr(fold, "valid_end_bar", None)
+        if start is None or end is None:
+            continue
+        ranges.append((max(0, int(start) - gap), int(end)))
+    return ranges
+
+
 def sample_df_for_phase2(
     df: pd.DataFrame,
     total_rows: int | None = None,
@@ -642,17 +666,52 @@ def _sample_df(
 
 
 # ---------------------------------------------------------------------------
-# Purged CV fold evaluator (CPU, sequential per fold)
+# Optional fold evaluator (CPU, sequential per fold)
 # ---------------------------------------------------------------------------
 
 
-class CvFoldValEvaluator:
-    """
-    Evaluate chromosomes on purged CV validation folds (excluding holdout).
+def _aggregate_fold_metrics(fold_metrics: list[dict]) -> dict:
+    """Collapse optional fold metrics with the canonical worst-case policy."""
+    if not fold_metrics:
+        return {
+            "total_return_pct": -100.0,
+            "profit_factor": 0.0,
+            "sortino_ratio": 0.0,
+            "max_drawdown_pct": 100.0,
+            "executed_trades": 0,
+            "win_rate": 0.0,
+        }
+    worst_return = min(
+        fold_metrics,
+        key=lambda metrics: float(metrics.get("total_return_pct", -1e9)),
+    )
+    return {
+        "total_return_pct": min(
+            float(metrics.get("total_return_pct", 0.0))
+            for metrics in fold_metrics
+        ),
+        "profit_factor": min(
+            float(metrics.get("profit_factor", 0.0))
+            for metrics in fold_metrics
+        ),
+        "sortino_ratio": min(
+            float(metrics.get("sortino_ratio", 0.0))
+            for metrics in fold_metrics
+        ),
+        "max_drawdown_pct": max(
+            float(metrics.get("max_drawdown_pct", 0.0))
+            for metrics in fold_metrics
+        ),
+        "executed_trades": min(
+            int(metrics.get("executed_trades", 0))
+            for metrics in fold_metrics
+        ),
+        "win_rate": float(worst_return.get("win_rate", 0.0)),
+    }
 
-    Aggregates per-fold metrics with ``aggregate_fold_metrics`` for fitness.
-    Builds one fold engine at a time to limit RAM use.
-    """
+
+class CvFoldValEvaluator:
+    """Evaluate chromosomes on optional temporal validation folds."""
 
     def __init__(
         self,
@@ -661,17 +720,17 @@ class CvFoldValEvaluator:
         feature_names: list[str],
         direction: str,
     ) -> None:
-        from gpu_fuzzy_trader.validation.rolling_cv import (
-            aggregate_fold_metrics,
-            cv_folds_only,
-        )
-
-        self._folds = cv_folds_only(cv_folds)
+        self._folds = [
+            fold for fold in cv_folds
+            if not bool(getattr(fold, "is_holdout", False))
+        ]
         self._feature_modes = feature_modes
         self._feature_names = feature_names
         self._direction = direction
-        self._aggregate_fn = aggregate_fold_metrics
-        fold_rows = [int(f.n_valid_rows) for f in self._folds]
+        fold_rows = [
+            int(getattr(fold, "n_valid_rows", len(getattr(fold, "valid_df", []))))
+            for fold in self._folds
+        ]
         self.n_valid_rows = min(fold_rows) if fold_rows else 0
         # Cache: build fold engines once, reuse across all evolution calls
         self._cached_fold_engines: list | None = None
@@ -703,7 +762,7 @@ class CvFoldValEvaluator:
     ) -> list[dict]:
         if not self._folds:
             return [
-                self._aggregate_fn([])
+                _aggregate_fold_metrics([])
                 for _ in range(len(chromosomes))
             ]
 
@@ -747,8 +806,7 @@ class CvFoldValEvaluator:
             for i, metrics in enumerate(fold_metrics):
                 per_chrom[i].append(metrics)
 
-        mode = str(getattr(_cfg, "PURGED_WF_AGGREGATION", "worst"))
-        return [self._aggregate_fn(fms, mode=mode) for fms in per_chrom]
+        return [_aggregate_fold_metrics(fms) for fms in per_chrom]
 
 
 # ---------------------------------------------------------------------------
@@ -2252,10 +2310,7 @@ def _build_pool_from_archive(
             )
             continue
 
-        if (
-            cv_fold_evaluator is not None
-            and bool(getattr(_cfg, "PURGED_WF_REQUIRE_ALL_CV_FOLDS", False))
-        ):
+        if cv_fold_evaluator is not None:
             try:
                 cv_metrics_list = cv_fold_evaluator.simulate_rule_batch(
                     chromosomes=_chromosome_batch(chrom),
@@ -3148,14 +3203,9 @@ class Rule_Pool_Generator:
             int(len(val_df)) if val_df is not None else None
         )
 
-        # Build forbidden bar ranges from CV folds so the sampled training
-        # slice never overlaps a CV/holdout valid region (prevents data
-        # leakage into the CV fitness signal).
-        from gpu_fuzzy_trader.validation.rolling_cv import build_forbidden_ranges
-
-        forbidden_ranges = (
-            build_forbidden_ranges(self._cv_folds) if self._cv_folds else []
-        )
+        # Optional fold-shaped callers may still provide valid bar ranges.
+        # The canonical holdout path passes ``None`` here.
+        forbidden_ranges = _fold_forbidden_ranges(self._cv_folds)
         self._forbidden_ranges = forbidden_ranges
 
         feature_names = [fi["name"] for fi in feature_infos]
@@ -3700,12 +3750,11 @@ class Rule_Pool_Generator:
             and self.pop_size == _cfg.PHASE2_POPULATION_SIZE
         )
 
-        # Purged CV: fitness on aggregated CV folds; pool admission on holdout val.
+        # Optional fold fitness is separate from the canonical holdout gate.
         fitness_val_engine = self._val_engine
         if (
             self._cv_val_evaluator is not None
             and _cfg.PHASE2_JOINT_TRAIN_VAL
-            and _cfg.split_mode_is_purged_walk_forward()
         ):
             fitness_val_engine = self._cv_val_evaluator
 

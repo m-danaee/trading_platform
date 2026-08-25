@@ -33,8 +33,9 @@ requirements.txt    Shared dependency contract; main.ipynb selects the CUDA extr
 
 1. Raw 15m OHLCV is normalized to UTC; incomplete or gapped 1h/4h buckets are
    discarded and features are computed independently per timeframe.
-2. Purged master folds discover HWC directional rules, then MWC conditional
-   continuation rules using only OOF HWC scores.
+2. One adaptive expanding master-fold system discovers HWC directional rules,
+   then MWC conditional continuation rules using only OOF HWC scores. Each role
+   applies its own derived forward-label purge at row retrieval time.
 3. LWC discovery receives only OOF HWC and MWC scores; validation and OOS use
    frozen full-train ensembles.
 4. The MTF composer applies asymmetric HWC/MWC contradiction vetoes to LWC
@@ -147,9 +148,9 @@ it is never silently converted into an ETH-only product. The legacy global and
 clustered modes remain available for controlled experiments.
 
 Every run writes `reports/dataset_manifest.json`,
-`reports/experiment_ledger.jsonl`, nested outer-fold diagnostics, and baseline
-reports. `test_new.csv` is frozen and never feeds feature selection, RB, or
-Optuna. A forward tape is accepted at most once per output directory.
+`reports/experiment_ledger.jsonl`, frozen-strategy stability diagnostics, and
+baseline reports. `test_new.csv` is frozen and never feeds feature selection,
+RB, or Optuna. A forward tape is accepted at most once per output directory.
 
 Override paths with `DATA_ROOT`, `TRAIN_CSV_PATH`, or `TEST_CSV_PATH` when
 needed. The evaluator-facing strategy files are `outputs/long.json` and
@@ -166,10 +167,11 @@ mutation and support floors, monthly windows, RB risk grids, rule-capital
   contract.
 
 The maximum holding period is 96 15m bars, or 24 hours. Label generation,
-barrier outcomes, force exits, tail drops, holdout embargo, purged-walk-forward
-embargo, and validation-half purge use the same 96-bar horizon. Legacy label
-column names ending in `_288` remain temporarily for schema compatibility; the
-values and runtime behavior use 96 bars.
+barrier outcomes, force exits, tail drops, the holdout embargo, and validation
+purge use this horizon. MTF HWC, MWC, and LWC purges are derived from their
+configured horizons and are recorded per fold. Legacy label column names
+ending in `_288` remain temporarily for schema compatibility; the values and
+runtime behavior use 96 bars.
 
 Strategy, pool, archive, split, feature-selection, and dataset identities
 include raw dataset hashes, fitted thresholds, OOF fold boundaries, timeframes,
@@ -200,9 +202,10 @@ the locked strategy without pruning or rewriting it from test-set PnL.
 - `reports/rb_governor_{direction}_report.json`: gate, risk, tail, and
   fail-closed diagnostics.
 - `reports/config_audit.json`: effective configuration snapshot.
-- `mtf_manifest.json`: raw dataset hashes, feature schemas, OOF fold boundaries,
-  label thresholds, archive hashes, frozen composer parameters, and release
-  policy.
+- `mtf_manifest.json`: raw dataset hashes, feature schemas, adaptive OOF fold
+  boundaries, per-fold rows and symbol coverage, role-specific purges,
+  base/scaled count gates, eligibility reasons, label thresholds, archive
+  hashes, frozen composer parameters, and release policy.
 - `reports/test_*`: consumed-test diagnostics, marked
   `acceptance_status=diagnostic_only`.
 - `reports/forward_*`: optional forward-candidate reports when

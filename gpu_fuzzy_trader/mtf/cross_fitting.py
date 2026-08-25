@@ -1081,13 +1081,17 @@ def export_fold_boundaries(
     min_rows_per_symbol: int | None = None,
     min_duration_bars: float | None = None,
     min_symbol_coverage: float | None = None,
+    base_min_trades: int | None = None,
+    absolute_min_trades: int | None = None,
 ) -> list[dict[str, Any]]:
     """Export geometry and optional per-fold eligibility audit fields.
 
     Existing callers that pass only ``folds`` receive the same geometry fields
     as before, except that the deprecated ``purge_minutes`` field is absent.
     Pass ``contexts`` or ``df`` to include row, duration, symbol, and eligibility
-    evidence in the manifest.
+    evidence in the manifest.  Every record also carries the canonical role
+    purges and count-gate audit.  The gate fields use test/OOF exposure for the
+    fold and the supplied frame as the reference exposure.
     """
     fold_list = list(folds)
     resolved_contexts: Sequence[FoldContext] | None
@@ -1119,11 +1123,106 @@ def export_fold_boundaries(
     if resolved_contexts is not None and len(resolved_contexts) != len(fold_list):
         raise ValueError("contexts length must match folds length")
 
+    # Import config and the count-gate helper lazily.  cross_fitting is imported
+    # by fold_gates, so importing either at module load time would create a
+    # cycle.  The manifest is an audit boundary, not a second gate implementation.
+    try:
+        from gpu_fuzzy_trader import config as _cfg
+        from gpu_fuzzy_trader.validation.fold_gates import scale_count_gate
+
+        configured_base = int(getattr(_cfg, "MIN_TRADE_SUPPORT", 0))
+        configured_absolute = int(
+            getattr(_cfg, "FOLD_ABSOLUTE_MIN_TRADES", 5)
+        )
+        role_purges = {
+            role: int(_purge_minutes_for_role(role))
+            for role in ("hwc", "mwc", "lwc")
+        }
+        bar_minutes = max(1, int(getattr(_cfg, "LWC_TIMEFRAME_MINUTES", 15)))
+    except (ImportError, AttributeError, TypeError, ValueError):
+        scale_count_gate = None
+        configured_base = 0
+        configured_absolute = 5
+        role_purges = {
+            "hwc": int(DEFAULT_HWC_PURGE_MINUTES),
+            "mwc": int(DEFAULT_MWC_PURGE_MINUTES),
+            "lwc": int(DEFAULT_LWC_PURGE_MINUTES),
+        }
+        bar_minutes = 15
+
+    resolved_base = configured_base if base_min_trades is None else int(base_min_trades)
+    resolved_absolute = (
+        configured_absolute
+        if absolute_min_trades is None
+        else int(absolute_min_trades)
+    )
+    reference_rows = int(len(df)) if isinstance(df, pd.DataFrame) else 0
+    if reference_rows <= 0 and resolved_contexts:
+        reference_rows = max(
+            int(context.train_rows) + int(context.test_rows)
+            for context in resolved_contexts
+        )
+
+    def _scaled_gate(rows: int) -> int:
+        if scale_count_gate is None or reference_rows <= 0:
+            return max(resolved_absolute, resolved_base)
+        return int(
+            scale_count_gate(
+                resolved_base,
+                FoldExposure(
+                    rows=max(0, int(rows)),
+                    duration_bars=0,
+                    per_symbol_rows={},
+                ),
+                FoldExposure(
+                    rows=reference_rows,
+                    duration_bars=0,
+                    per_symbol_rows={},
+                ),
+                resolved_absolute,
+            )
+        )
+
     exported: list[dict[str, Any]] = []
     for index, fold in enumerate(fold_list):
         record = fold.to_dict()
         if resolved_contexts is not None:
             record.update(resolved_contexts[index].to_dict())
+        context = resolved_contexts[index] if resolved_contexts is not None else None
+        train_rows = int(context.train_rows) if context is not None else 0
+        test_rows = int(context.test_rows) if context is not None else 0
+        scaled_train = _scaled_gate(train_rows)
+        scaled_oof = _scaled_gate(test_rows)
+        record.update({
+            "purge_hwc": int(role_purges["hwc"]),
+            "purge_mwc": int(role_purges["mwc"]),
+            "purge_lwc": int(role_purges["lwc"]),
+            "purge_hwc_minutes": int(role_purges["hwc"]),
+            "purge_mwc_minutes": int(role_purges["mwc"]),
+            "purge_lwc_minutes": int(role_purges["lwc"]),
+            "purge_hwc_bars": int(role_purges["hwc"] // bar_minutes),
+            "purge_mwc_bars": int(role_purges["mwc"] // bar_minutes),
+            "purge_lwc_bars": int(role_purges["lwc"] // bar_minutes),
+            "base_min_trades": int(resolved_base),
+            "scaled_min_trades": int(scaled_oof),
+            "scaled_min_trades_by_stage": {
+                "train": int(scaled_train),
+                "oof": int(scaled_oof),
+            },
+            "gate_audit": {
+                "base_min_trades": int(resolved_base),
+                "absolute_min_trades": int(resolved_absolute),
+                "scaled_min_trades": {
+                    "train": int(scaled_train),
+                    "oof": int(scaled_oof),
+                },
+                "quality_gates_fixed": True,
+            },
+            "eligible_by_role": {
+                role: bool(eligible_for_role(fold, role))
+                for role in ("hwc", "mwc", "lwc")
+            },
+        })
         exported.append(_FoldBoundaryRecord(record, fold))
     return exported
 

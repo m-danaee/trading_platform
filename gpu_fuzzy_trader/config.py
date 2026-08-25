@@ -151,8 +151,6 @@ FORWARD_CSV_PATH = os.environ.get("FORWARD_CSV_PATH", "").strip() or None
 # input; these files make dataset lineage and adaptive trial counts auditable.
 EXPERIMENT_LEDGER_ENABLED: bool = True
 DATASET_MANIFEST_ENABLED: bool = True
-NESTED_VALIDATION_ENABLED: bool = True
-NESTED_VALIDATION_OUTER_FOLDS: int = 3
 # A forward tape is a release acceptance observation, not a reusable
 # validation set.  A given output directory may consume it only once.
 FORWARD_ACCEPTANCE_ONCE: bool = True
@@ -312,8 +310,6 @@ MAX_HOLD_CANDLES = 96
 # selection.  The forward labels consume the next MAX_HOLD_CANDLES bars, so the
 # same horizon is required here as at the main train/validation boundary.
 VALIDATION_PURGE_CANDLES = MAX_HOLD_CANDLES
-# Deprecated name retained as an alias for existing callers.
-VALIDATION_HALF_PURGE_CANDLES = VALIDATION_PURGE_CANDLES
 
 # MAX_TOTAL_EXPOSURE_PCT — cap on sum of concurrent rule capital allocations.
 # Must remain aligned with evaluator_v5.ipynb and RB_MAX_TOTAL_CAPITAL.
@@ -464,12 +460,7 @@ MTF_MIN_EVIDENCE_STRENGTH_MWC: float = 0.15
 MTF_RETENTION_FLOOR: float = 0.50
 MTF_RETENTION_TARGET: float = 0.60
 MTF_PIPELINE_ENABLED: bool = True
-# Deprecated compatibility alias.  New code must use MTF_MAX_FOLDS.
-MTF_N_FOLDS: int = MTF_MAX_FOLDS
 MTF_DISCOVERY_MAX_RULES_PER_LAYER: int = 8
-# Deprecated fixed-count compatibility alias.  New fold admission code must
-# derive support with validation.fold_gates.required_folds() and the ratio.
-MTF_MIN_FOLD_SUPPORT: int = 2
 
 # Role purges are derived from the horizon/timeframe contract used by
 # discovery.  They are resolved at row retrieval time and never stored on
@@ -2234,9 +2225,8 @@ def phase2_shared_archive_path(direction: str) -> str:
 def required_folds(eligible: int, ratio: float | None = None) -> int:
     """Return ratio-based fold support through the canonical gate helper.
 
-    ``MTF_MIN_FOLD_SUPPORT`` is retained only for old callers.  New callers
-    should use the configured ``MTF_MIN_FOLD_SUPPORT_RATIO`` so support adapts
-    to the number of eligible folds.
+    Support adapts to the number of eligible folds through the configured
+    ``MTF_MIN_FOLD_SUPPORT_RATIO``.
     """
     from gpu_fuzzy_trader.validation.fold_gates import (
         required_folds as _required_folds,
@@ -2812,8 +2802,6 @@ def validate_config(
         all(float(value) >= 1.0 for value in RB_COST_STRESS_MULTIPLIERS),
         "RB_COST_STRESS_MULTIPLIERS must be >= 1",
     )
-    _config_check(int(NESTED_VALIDATION_OUTER_FOLDS) >= 1,
-                  "NESTED_VALIDATION_OUTER_FOLDS must be positive")
     _config_check(0.0 < float(RB_TAIL_HOLDOUT_FRACTION) < 1.0,
                   "RB_TAIL_HOLDOUT_FRACTION must be in (0, 1)")
     _config_check(float(RB_TAIL_HOLDOUT_MIN_RETURN_PCT) >= 0.0,
@@ -2937,10 +2925,21 @@ def effective_config_snapshot(
             "absolute_min_trades": int(FOLD_ABSOLUTE_MIN_TRADES),
             "min_duration_bars": int(FOLD_MIN_DURATION_BARS),
             "min_symbol_coverage": float(FOLD_MIN_SYMBOL_COVERAGE),
+            "horizon_bars": {
+                "hwc": int(MTF_HWC_HORIZON_BARS),
+                "mwc": int(MTF_MWC_HORIZON_BARS),
+                "lwc": int(MAX_HOLD_CANDLES),
+            },
+            "base_min_trades": int(MIN_TRADE_SUPPORT),
             "purge_minutes": {
                 "hwc": int(purge_for_role("hwc")),
                 "mwc": int(purge_for_role("mwc")),
                 "lwc": int(purge_for_role("lwc")),
+            },
+            "purge_bars": {
+                "hwc": int(purge_for_role("hwc") // (CONTEXT_BAR_SECONDS // 60)),
+                "mwc": int(purge_for_role("mwc") // (CONTEXT_BAR_SECONDS // 60)),
+                "lwc": int(purge_for_role("lwc") // (CONTEXT_BAR_SECONDS // 60)),
             },
         },
         "phase2": {

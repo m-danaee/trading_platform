@@ -95,10 +95,6 @@ from gpu_fuzzy_trader.research_integrity import (
     write_dataset_manifests,
 )
 from gpu_fuzzy_trader.research_profile import ResearchProfile
-from gpu_fuzzy_trader.validation.rolling_cv import (
-    build_forbidden_ranges,
-    mask_df_to_safe_region,
-)
 
 
 def _dataframe_sha256(frame: pd.DataFrame | None) -> str:
@@ -427,7 +423,8 @@ _PHASE2_RESUME_CODE_PATHS = (
     "phases/phase2_sparse_encoding.py",
     "phases/phase2_support.py",
     "phases/rule_identity.py",
-    "validation/rolling_cv.py",
+    "validation/fold_gates.py",
+    "mtf/cross_fitting.py",
 )
 
 
@@ -1070,7 +1067,7 @@ def _log_phase_entry(
 
 
 def _phase5_test_metrics(metrics: dict) -> dict:
-    """Return test-split metrics (supports nested Phase 5 result shape)."""
+    """Return test-split metrics from a direct or wrapped Phase 5 result."""
     if "test" in metrics:
         return metrics["test"]
     return metrics
@@ -1436,7 +1433,7 @@ class Pipeline_Orchestrator:
                     "phase2": self._phase2_status,
                     "rb_governor": self._rb_status_summary(rb_result),
                 }
-                results["nested_validation"] = self._run_nested_validation(
+                results["strategy_stability"] = self._run_nested_validation(
                     train_df,
                     rb_result,
                     trial_count=count_trials(
@@ -1598,7 +1595,7 @@ class Pipeline_Orchestrator:
                     "phase2": self._phase2_status,
                     "rb_governor": self._rb_status_summary(rb_result),
                 }
-                results["nested_validation"] = self._run_nested_validation(
+                results["strategy_stability"] = self._run_nested_validation(
                     train_df,
                     rb_result,
                     trial_count=count_trials(
@@ -1680,7 +1677,7 @@ class Pipeline_Orchestrator:
                 if self._should_use_mtf_pipeline(train_df):
                     mtf_folds = build_master_temporal_folds(
                         train_df,
-                        n_folds=int(getattr(_cfg, "MTF_N_FOLDS", 4)),
+                        n_folds=int(_cfg.MTF_MAX_FOLDS),
                         embargo_minutes=discovery_purge_minutes("hwc"),
                     )
                     hwc_rules = self.run_phase1_hwc(
@@ -1713,7 +1710,7 @@ class Pipeline_Orchestrator:
                 if self._should_use_mtf_pipeline(train_df):
                     mtf_folds = build_master_temporal_folds(
                         train_df,
-                        n_folds=int(getattr(_cfg, "MTF_N_FOLDS", 4)),
+                        n_folds=int(_cfg.MTF_MAX_FOLDS),
                         embargo_minutes=discovery_purge_minutes("hwc"),
                     )
                     hwc_rules = self.run_phase1_hwc(
@@ -1794,7 +1791,7 @@ class Pipeline_Orchestrator:
                 if self._should_use_mtf_pipeline(train_df):
                     mtf_folds = build_master_temporal_folds(
                         train_df,
-                        n_folds=int(getattr(_cfg, "MTF_N_FOLDS", 4)),
+                        n_folds=int(_cfg.MTF_MAX_FOLDS),
                         embargo_minutes=discovery_purge_minutes("hwc"),
                     )
                     hwc_rules = self.run_phase1_hwc(
@@ -2030,12 +2027,12 @@ class Pipeline_Orchestrator:
             from gpu_fuzzy_trader.validation.multiplicity import (
                 summarize_multiplicity,
             )
-            nested = results.get("nested_validation", {})
+            stability = results.get("strategy_stability", {})
             fold_returns = [
                 float(report.get("median_return_pct", 0.0))
-                for report in nested.values()
+                for report in stability.values()
                 if isinstance(report, dict)
-            ] if isinstance(nested, dict) else []
+            ] if isinstance(stability, dict) else []
             multiplicity = summarize_multiplicity(
                 fold_returns=fold_returns,
                 n_trials=trial_count,
@@ -2148,7 +2145,7 @@ class Pipeline_Orchestrator:
             "Canonical input is raw OHLCV; running hierarchical MTF pipeline")
         mtf_folds = build_master_temporal_folds(
             train_df,
-            n_folds=int(getattr(_cfg, "MTF_N_FOLDS", 4)),
+            n_folds=int(_cfg.MTF_MAX_FOLDS),
             embargo_minutes=discovery_purge_minutes("hwc"),
         )
         self._mtf_folds = mtf_folds
@@ -2230,7 +2227,7 @@ class Pipeline_Orchestrator:
                     if Path(_cfg.TEST_CSV_PATH).exists()
                     else "",
                 },
-                "fold_boundaries": export_fold_boundaries(mtf_folds),
+                "fold_boundaries": export_fold_boundaries(mtf_folds, df=train_df),
                 "labels": {
                     "theta_per_oof_fold": {
                         "hwc": hwc_discovery.theta_per_oof_fold,
@@ -2288,7 +2285,7 @@ class Pipeline_Orchestrator:
             and strategy.get("deployment_accepted") is True
         )
         phase5_result = self._run_phase5(allowed_directions=accepted)
-        nested_report = self._run_nested_validation(
+        stability_report = self._run_nested_validation(
             train_df,
             rb_result,
             trial_count=count_trials(
@@ -2314,9 +2311,9 @@ class Pipeline_Orchestrator:
             "phase3": rb_result,
             "phase4": rb_result,
             "phase_status": {"mtf": "completed", "rb_governor": self._rb_status_summary(rb_result)},
-            "nested_validation": nested_report or {
-                "status": "run" if bool(getattr(_cfg, "NESTED_VALIDATION_ENABLED", True)) else "not_run",
-                "reason": "completed" if bool(getattr(_cfg, "NESTED_VALIDATION_ENABLED", True)) else "disabled",
+            "strategy_stability": stability_report or {
+                "status": "not_run",
+                "reason": "no_frozen_strategy",
             },
             "phase5": phase5_result,
         }
@@ -2331,7 +2328,7 @@ class Pipeline_Orchestrator:
         logger.info("Running hierarchical MTF pipeline from Phase 2")
         mtf_folds = build_master_temporal_folds(
             train_df,
-            n_folds=int(getattr(_cfg, "MTF_N_FOLDS", 4)),
+            n_folds=int(_cfg.MTF_MAX_FOLDS),
             embargo_minutes=discovery_purge_minutes("hwc"),
         )
         self._mtf_folds = mtf_folds
@@ -2399,7 +2396,7 @@ class Pipeline_Orchestrator:
                     if Path(_cfg.TEST_CSV_PATH).exists()
                     else "",
                 },
-                "fold_boundaries": export_fold_boundaries(mtf_folds),
+                "fold_boundaries": export_fold_boundaries(mtf_folds, df=train_df),
                 "labels": {
                     "theta_per_oof_fold": {
                         "hwc": hwc_discovery.theta_per_oof_fold,
@@ -2457,7 +2454,7 @@ class Pipeline_Orchestrator:
             and strategy.get("deployment_accepted") is True
         )
         phase5_result = self._run_phase5(allowed_directions=accepted)
-        nested_report = self._run_nested_validation(
+        stability_report = self._run_nested_validation(
             train_df,
             rb_result,
             trial_count=count_trials(
@@ -2483,9 +2480,9 @@ class Pipeline_Orchestrator:
             "phase3": rb_result,
             "phase4": rb_result,
             "phase_status": {"mtf": "completed", "rb_governor": self._rb_status_summary(rb_result)},
-            "nested_validation": nested_report or {
-                "status": "run" if bool(getattr(_cfg, "NESTED_VALIDATION_ENABLED", True)) else "not_run",
-                "reason": "completed" if bool(getattr(_cfg, "NESTED_VALIDATION_ENABLED", True)) else "disabled",
+            "strategy_stability": stability_report or {
+                "status": "not_run",
+                "reason": "no_frozen_strategy",
             },
             "phase5": phase5_result,
         }
@@ -2780,9 +2777,6 @@ class Pipeline_Orchestrator:
     def _load_and_split_data(self) -> tuple[pd.DataFrame, pd.DataFrame]:
         """
         Load train_new.csv and split into train/validation DataFrames.
-
-        When ``SPLIT_MODE`` is ``purged_walk_forward``, also rebuilds CV folds
-        (stored on ``self._cv_folds``) for Phase 2 and RB.
         """
         mtf_mode = bool(getattr(_cfg, "MTF_PIPELINE_ENABLED", False))
         if not mtf_mode:
@@ -2813,10 +2807,9 @@ class Pipeline_Orchestrator:
             self._preloaded_val_fitness = val_fitness
             self._preloaded_val_selection = val_selection
             logger.info(
-                "Using cached train/validation split from %s and %s (mode=%s)",
-                _cfg.TRAIN_70_PATH,
-                _cfg.VALIDATION_30_PATH,
-                _cfg.SPLIT_MODE,
+                "Using cached train/validation split from %s and %s",
+                _cfg.DEVELOPMENT_TRAIN_PATH,
+                _cfg.VALIDATION_PATH,
             )
             return self._apply_debug_symbol_scope(train_df, val_df)
 
@@ -2869,11 +2862,7 @@ class Pipeline_Orchestrator:
                 )
 
         splitter = Data_Splitter()
-        split_label = (
-            "purged walk-forward"
-            if _cfg.split_mode_is_purged_walk_forward()
-            else f"holdout {_cfg.holdout_train_val_label()}"
-        )
+        split_label = f"holdout {_cfg.holdout_train_val_label()}"
         logger.info("Splitting %s (%s) …", _cfg.TRAIN_CSV_PATH, split_label)
 
         train_df, val_df, cv_folds = splitter.split_and_persist(train_full)
@@ -2943,10 +2932,8 @@ class Pipeline_Orchestrator:
         if self._cv_folds:
             from dataclasses import replace
 
-            from gpu_fuzzy_trader.validation.rolling_cv import PurgedFold
-
             sym_set = set(str(s) for s in symbols)
-            scoped_folds: list[PurgedFold] = []
+            scoped_folds: list = []
             for fold in self._cv_folds:
                 train_part = fold.train_df[
                     fold.train_df["symbol"].astype(str).isin(sym_set)
@@ -3032,13 +3019,12 @@ class Pipeline_Orchestrator:
         from dataclasses import replace
 
         from gpu_fuzzy_trader.backtest.df_slim import prune_train_columns
-        from gpu_fuzzy_trader.validation.rolling_cv import PurgedFold
 
         names = Pipeline_Orchestrator._phase1_keep_feature_names(phase1_result)
         if not names:
             return cv_folds
 
-        pruned: list[PurgedFold] = []
+        pruned: list = []
         for fold in cv_folds:
             pruned_train = prune_train_columns(fold.train_df, names)
             pruned_valid = prune_train_columns(fold.valid_df, names)
@@ -3073,15 +3059,29 @@ class Pipeline_Orchestrator:
     # ------------------------------------------------------------------
 
     def _mask_train_df_for_phase1(self, train_df: pd.DataFrame) -> pd.DataFrame:
-        """Exclude CV/holdout valid bars (+ embargo) from Phase 1 training data."""
+        """Return the canonical holdout training frame without legacy CV masking."""
         if not self._cv_folds or train_df.empty:
             return train_df
-        forbidden = build_forbidden_ranges(self._cv_folds)
+        if "_symbol_bar_index" not in train_df.columns:
+            return train_df
+        forbidden = [
+            (
+                max(0, int(getattr(fold, "valid_start_bar")) - int(_cfg.MAX_HOLD_CANDLES)),
+                int(getattr(fold, "valid_end_bar")),
+            )
+            for fold in self._cv_folds
+            if getattr(fold, "valid_start_bar", None) is not None
+            and getattr(fold, "valid_end_bar", None) is not None
+        ]
         if not forbidden:
             return train_df
-        masked = mask_df_to_safe_region(train_df, forbidden)
+        bar_index = train_df["_symbol_bar_index"].to_numpy()
+        safe = np.ones(len(train_df), dtype=bool)
+        for start, end in forbidden:
+            safe &= ~((bar_index >= start) & (bar_index <= end))
+        masked = train_df.loc[safe].reset_index(drop=True)
         logger.info(
-            "Phase 1: masked train_df to safe region (%d -> %d rows)",
+            "Phase 1: masked train_df to safe fold region (%d -> %d rows)",
             len(train_df),
             len(masked),
         )
@@ -3536,27 +3536,23 @@ class Pipeline_Orchestrator:
         *,
         trial_count: int = 1,
     ) -> dict[str, dict]:
-        """Evaluate current packages on purged outer folds only."""
-        if not bool(getattr(_cfg, "NESTED_VALIDATION_ENABLED", True)):
-            return {}
+        """Write a diagnostic stability report for frozen strategy packages."""
         try:
-            from gpu_fuzzy_trader.validation.nested_walk_forward import (
-                write_nested_reports,
+            from gpu_fuzzy_trader.validation.walk_forward_stability_report import (
+                write_strategy_stability_reports,
             )
-            nested_strategies = {
+            stability_strategies = {
                 direction: {
                     **strategy,
                     "trial_count": int(trial_count),
                 }
                 for direction, strategy in strategies.items()
             }
-            nested = write_nested_reports(
+            stability = write_strategy_stability_reports(
                 _cfg.OUTPUTS_DIR,
-                nested_strategies,
+                stability_strategies,
                 train_df,
-                n_outer=int(getattr(
-                    _cfg, "NESTED_VALIDATION_OUTER_FOLDS", 3,
-                )),
+                n_windows=3,
             )
             from gpu_fuzzy_trader.validation.baselines import (
                 write_baseline_reports,
@@ -3564,14 +3560,14 @@ class Pipeline_Orchestrator:
             baseline = write_baseline_reports(
                 _cfg.OUTPUTS_DIR,
                 train_df,
-                nested_strategies,
+                stability_strategies,
             )
-            for direction, report in nested.items():
+            for direction, report in stability.items():
                 report["baselines"] = baseline.get(direction, {})
-            return nested
+            return stability
         except Exception as exc:
             logger.warning(
-                "Nested validation failed (non-fatal to pipeline): %s",
+                "Strategy stability report failed (non-fatal to pipeline): %s",
                 exc,
             )
             return {}
@@ -3645,7 +3641,12 @@ class Pipeline_Orchestrator:
         config_fields = {
             name: getattr(_cfg, name)
             for name in (
-                "MTF_PIPELINE_ENABLED", "MTF_N_FOLDS",
+                "HOLDOUT_TRAIN_FRACTION", "MAX_HOLD_CANDLES",
+                "VALIDATION_PURGE_CANDLES",
+                "MTF_PIPELINE_ENABLED", "MTF_MAX_FOLDS", "MTF_MIN_FOLDS",
+                "MTF_MIN_FOLD_SUPPORT_RATIO", "FOLD_MIN_EFFECTIVE_ROWS",
+                "FOLD_MIN_ROWS_PER_SYMBOL", "FOLD_ABSOLUTE_MIN_TRADES",
+                "FOLD_MIN_DURATION_BARS", "FOLD_MIN_SYMBOL_COVERAGE",
                 "LWC_TIMEFRAME_MINUTES", "MWC_TIMEFRAME_MINUTES",
                 "HWC_TIMEFRAME_MINUTES", "MTF_DISCOVERY_MAX_RULES_PER_LAYER",
                 "MTF_HWC_HORIZON_BARS", "MTF_MWC_HORIZON_BARS",
@@ -3754,7 +3755,7 @@ class Pipeline_Orchestrator:
         if folds is None:
             folds = build_master_temporal_folds(
                 source,
-                n_folds=int(getattr(_cfg, "MTF_N_FOLDS", 4)),
+                n_folds=int(_cfg.MTF_MAX_FOLDS),
                 embargo_minutes=discovery_purge_minutes("hwc"),
             )
         archive_path = Path(self._output_dir) / \
@@ -3777,7 +3778,7 @@ class Pipeline_Orchestrator:
                     bars.drop(columns=["_move"], errors="ignore"))
                 current_schema_hash = _schema_hash(
                     bars.drop(columns=["_move"], errors="ignore"))
-                current_fold_boundaries = export_fold_boundaries(folds)
+                current_fold_boundaries = export_fold_boundaries(folds, df=source)
                 current_search_identity = discovery_search_identity("hwc")
                 if meta.get("dataset_hash") != current_data_hash:
                     raise ValueError(
@@ -3842,7 +3843,7 @@ class Pipeline_Orchestrator:
             "role": "hwc",
             "dataset_hash": discovery.data_hash,
             "feature_schema_hash": discovery.feature_schema_hash,
-            "fold_boundaries": export_fold_boundaries(folds),
+            "fold_boundaries": export_fold_boundaries(folds, df=source),
             "theta_per_oof_fold": discovery.theta_per_oof_fold,
             "theta_final_train": discovery.theta_final_train,
             "oof_score_hash": discovery.oof_score_hash,
@@ -3892,7 +3893,7 @@ class Pipeline_Orchestrator:
         if folds is None:
             folds = build_master_temporal_folds(
                 source,
-                n_folds=int(getattr(_cfg, "MTF_N_FOLDS", 4)),
+                n_folds=int(_cfg.MTF_MAX_FOLDS),
                 embargo_minutes=discovery_purge_minutes("hwc"),
             )
         upstream = getattr(self, "_mtf_hwc_discovery", None)
@@ -3932,7 +3933,7 @@ class Pipeline_Orchestrator:
                     bars.drop(columns=["_move"], errors="ignore"))
                 current_schema_hash = _schema_hash(
                     bars.drop(columns=["_move"], errors="ignore"))
-                current_fold_boundaries = export_fold_boundaries(folds)
+                current_fold_boundaries = export_fold_boundaries(folds, df=source)
                 current_search_identity = discovery_search_identity("mwc")
                 if meta.get("dataset_hash") != current_data_hash:
                     raise ValueError(
@@ -4008,7 +4009,7 @@ class Pipeline_Orchestrator:
             "conditioned_on": "hwc_oof_scores_only",
             "dataset_hash": discovery.data_hash,
             "feature_schema_hash": discovery.feature_schema_hash,
-            "fold_boundaries": export_fold_boundaries(folds),
+            "fold_boundaries": export_fold_boundaries(folds, df=source),
             "theta_per_oof_fold": discovery.theta_per_oof_fold,
             "theta_final_train": discovery.theta_final_train,
             "oof_score_hash": discovery.oof_score_hash,
@@ -4161,7 +4162,9 @@ class Pipeline_Orchestrator:
                     "role": "hwc",
                     "dataset_hash": hwc_discovery.data_hash,
                     "feature_schema_hash": hwc_discovery.feature_schema_hash,
-                    "fold_boundaries": export_fold_boundaries(folds or []),
+                    "fold_boundaries": export_fold_boundaries(
+                        folds or [], df=df,
+                    ),
                     "theta_per_oof_fold": hwc_discovery.theta_per_oof_fold,
                     "theta_final_train": hwc_discovery.theta_final_train,
                     "oof_score_hash": hwc_discovery.oof_score_hash,
@@ -4192,7 +4195,9 @@ class Pipeline_Orchestrator:
                     "conditioned_on": "hwc_oof_scores_only",
                     "dataset_hash": mwc_discovery.data_hash,
                     "feature_schema_hash": mwc_discovery.feature_schema_hash,
-                    "fold_boundaries": export_fold_boundaries(folds or []),
+                    "fold_boundaries": export_fold_boundaries(
+                        folds or [], df=df,
+                    ),
                     "theta_per_oof_fold": mwc_discovery.theta_per_oof_fold,
                     "theta_final_train": mwc_discovery.theta_final_train,
                     "oof_score_hash": mwc_discovery.oof_score_hash,

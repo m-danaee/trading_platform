@@ -70,6 +70,18 @@ The orchestrator validates configuration before expensive execution and writes
 split geometry, effective stage budgets, sample budgets, island floors, RB
 capital feasibility, and all active gate thresholds.
 
+## Unified fold and purge contract
+
+The pipeline has one top-level development/validation holdout and one adaptive
+expanding master-fold system. Master folds try `MTF_MAX_FOLDS` down to
+`MTF_MIN_FOLDS` and fail closed when a candidate count cannot satisfy the
+`FOLD_MIN_*` row, duration, or symbol-coverage checks. HWC, MWC, and LWC use
+the same fold boundaries, but each role retrieves training rows with its own
+derived purge from the configured label horizon. Fold manifests record train
+and test boundaries, row counts, per-symbol counts, role purges,
+base/scaled count gates, and `eligible`/`reason` fields. Quality gates stay
+fixed; only count gates scale with the rows exposed to that fold.
+
 Missing or invalid Phase 2 output is a direction-specific failure. RB writes a
 fresh empty strategy with `deployment_accepted: false` and a machine-readable
 reason. Phase 5 receives only non-empty strategies from the current run, so
@@ -103,10 +115,10 @@ multi-symbol direction fails closed when one symbol has no qualifying
 specialist. Global and clustered modes remain available for controlled
 experiments.
 
-Each run writes a dataset manifest, append-only experiment ledger, nested
-outer-fold report, and baseline/ablation reports. The consumed test file is
-never a tuning input. A forward acceptance tape is locked after its first
-evaluation in an output directory.
+Each run writes a dataset manifest, append-only experiment ledger, frozen
+strategy-stability report, and baseline/ablation reports. The consumed test
+file is never a tuning input. A forward acceptance tape is locked after its
+first evaluation in an output directory.
 
 The evaluator-facing strategy files are `outputs/long.json` and
 `outputs/short.json`; clean copies are written below
