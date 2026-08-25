@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 # must use purge_for_role() so a changed horizon cannot create a second source.
 
 
-@dataclass(frozen=True, init=False)
+@dataclass(frozen=True)
 class TemporalFold:
     """Dataclass defining a single master temporal cross-fitting fold.
 
@@ -38,41 +38,6 @@ class TemporalFold:
     train_end: pd.Timestamp
     test_start: pd.Timestamp
     test_end: pd.Timestamp
-
-    def __init__(
-        self,
-        fold_id: int,
-        train_start: pd.Timestamp,
-        train_end: pd.Timestamp,
-        test_start: pd.Timestamp,
-        test_end: pd.Timestamp,
-        is_seed: bool | None = None,
-    ) -> None:
-        """Create geometry-only fold metadata.
-
-        ``is_seed`` is accepted only as a deprecated constructor compatibility
-        argument.  It is not a dataclass field and is never used for role
-        eligibility.  Older callers that read the property still receive the
-        Fold 1 geometry alias.
-        """
-        object.__setattr__(self, "fold_id", int(fold_id))
-        object.__setattr__(self, "train_start", train_start)
-        object.__setattr__(self, "train_end", train_end)
-        object.__setattr__(self, "test_start", test_start)
-        object.__setattr__(self, "test_end", test_end)
-        object.__setattr__(
-            self,
-            "_legacy_seed_override",
-            None if is_seed is None else bool(is_seed),
-        )
-
-    @property
-    def is_seed(self) -> bool:
-        """Deprecated read-only alias for the Fold 1 geometry."""
-        override = getattr(self, "_legacy_seed_override", None)
-        if override is not None:
-            return bool(override)
-        return self.fold_id == 1
 
     def to_dict(self) -> dict[str, Any]:
         """Convert fold metadata to JSON-serializable dictionary."""
@@ -902,7 +867,6 @@ def generate_oof_scores(
     fit_predict_fn: Callable[[pd.DataFrame, pd.DataFrame, TemporalFold], Any],
     purge_minutes: int | None = None,
     datetime_col: str = "datetime",
-    exclude_seed: bool | None = None,
     role: str | None = None,
 ) -> pd.DataFrame:
     """Coordinate fitting on purged training folds and generating out-of-fold predictions.
@@ -918,50 +882,34 @@ def generate_oof_scores(
         predictions (as DataFrame, Series, ndarray, or dict) aligned to test_df.
     purge_minutes : int or None, default None
         Override purge minutes for training set. If None, the configured purge
-        for ``role`` (or HWC when no role is supplied) is used.
+        for ``role`` (or MWC when no role is supplied) is used.
     datetime_col : str, default "datetime"
         Name of the datetime column.
-    exclude_seed : bool or None, default None
-        Deprecated compatibility alias.  Role-aware calls use
-        ``eligible_for_role``; role-less calls retain the historical default of
-        excluding Fold 1.
     role : {"hwc", "mwc", "lwc"} or None, optional
-        Role used to resolve purge and seed-fold eligibility.
+        Role used to resolve purge and fold eligibility.  When omitted, the MWC
+        role is used because it requires upstream OOF evidence.
 
     Returns
     -------
     pd.DataFrame
         Combined out-of-fold prediction DataFrame with ``fold_id`` and
-        prediction fields.  Role-less compatibility calls also include the
-        deprecated ``is_seed`` output alias.
+        prediction fields.
     """
-    normalized_role = None if role is None else _normalize_role(role)
+    normalized_role = _normalize_role(role or "mwc")
     if df.empty or not folds:
         return pd.DataFrame()
 
     dt_series = _get_datetime_series(df, datetime_col)
     n_folds = len(folds)
     results: list[pd.DataFrame] = []
-    # A role is authoritative.  The old boolean can still request an
-    # additional Fold 1 exclusion, but it can never make an ineligible role
-    # eligible again.
-    eligibility_role = (
-        normalized_role
-        if normalized_role is not None
-        else "hwc"
-        if exclude_seed is False
-        else "mwc"
-    )
     p_min = (
-        _purge_minutes_for_role(normalized_role or "hwc")
+        _purge_minutes_for_role(normalized_role)
         if purge_minutes is None
         else _validate_purge_minutes(purge_minutes)
     )
 
     for i, fold in enumerate(folds):
-        if not eligible_for_role(fold, eligibility_role):
-            continue
-        if normalized_role is not None and exclude_seed is True and fold.fold_id == 1:
+        if not eligible_for_role(fold, normalized_role):
             continue
 
         # 1. Train slice: [train_start, test_start)
@@ -992,7 +940,6 @@ def generate_oof_scores(
             test_slice,
             fold,
             datetime_col,
-            include_legacy_seed_alias=normalized_role is None,
         )
         results.append(pred_df)
 
@@ -1015,8 +962,6 @@ def _format_fold_predictions(
     test_slice: pd.DataFrame,
     fold: TemporalFold,
     datetime_col: str,
-    *,
-    include_legacy_seed_alias: bool = False,
 ) -> pd.DataFrame:
     """Format callback prediction output into a standardized DataFrame."""
     if isinstance(preds, pd.DataFrame):
@@ -1042,32 +987,7 @@ def _format_fold_predictions(
         out.insert(1, "symbol", test_slice["symbol"].values)
 
     out["fold_id"] = fold.fold_id
-    if include_legacy_seed_alias:
-        out["is_seed"] = fold.fold_id == 1
     return out
-
-
-class _FoldBoundaryRecord(dict[str, Any]):
-    """Geometry mapping with a read-only compatibility lookup for old code.
-
-    The deprecated seed marker is intentionally not stored in the mapping, so
-    manifests and JSON payloads contain geometry only.  Direct indexing by an
-    older in-memory caller remains supported for one compatibility cycle.
-    """
-
-    def __init__(self, data: dict[str, Any], fold: TemporalFold) -> None:
-        super().__init__(data)
-        self._fold = fold
-
-    def __getitem__(self, key: str) -> Any:
-        if key == "is_seed":
-            return self._fold.fold_id == 1
-        return super().__getitem__(key)
-
-    def get(self, key: str, default: Any = None) -> Any:
-        if key == "is_seed":
-            return self._fold.fold_id == 1
-        return super().get(key, default)
 
 
 def export_fold_boundaries(
@@ -1223,7 +1143,7 @@ def export_fold_boundaries(
                 for role in ("hwc", "mwc", "lwc")
             },
         })
-        exported.append(_FoldBoundaryRecord(record, fold))
+        exported.append(record)
     return exported
 
 
@@ -1262,15 +1182,6 @@ def validate_master_temporal_folds(folds: Sequence[TemporalFold]) -> bool:
         if fold.train_end != fold.test_start:
             return False
         if fold.test_start >= fold.test_end:
-            return False
-        # A legacy constructor override is checked only to avoid silently
-        # accepting a corrupted object from an older caller.  Generated folds
-        # have no override and validation is purely geometric.
-        legacy_override = getattr(fold, "_legacy_seed_override", None)
-        if (
-            legacy_override is not None
-            and bool(legacy_override) != (int(fold.fold_id) == 1)
-        ):
             return False
         if i > 0:
             prev_fold = folds[i - 1]

@@ -9,6 +9,11 @@ from gpu_fuzzy_trader.mtf.cross_fitting import (
     build_master_temporal_folds,
     validate_master_temporal_folds,
 )
+from gpu_fuzzy_trader.validation.fold_gates import (
+    FoldExposure,
+    required_folds,
+    scale_count_gate,
+)
 
 
 def _make_synthetic_df(
@@ -49,6 +54,14 @@ def _interval_rows(
 ) -> pd.DataFrame:
     timestamps = _datetime_series(df)
     return df.loc[(timestamps >= start) & (timestamps < end)]
+
+
+def test_fold_gate_helpers_use_the_production_contract():
+    reference = FoldExposure(rows=100_000, duration_bars=0, per_symbol_rows={})
+    quarter = FoldExposure(rows=25_000, duration_bars=0, per_symbol_rows={})
+
+    assert scale_count_gate(40, quarter, reference, 5) == 10
+    assert required_folds(3, 0.67) == 3
 
 
 def _fold_has_symbol_coverage(

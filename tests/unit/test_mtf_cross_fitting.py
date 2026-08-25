@@ -41,15 +41,15 @@ def test_master_temporal_folds_structure():
     assert len(folds) == 4
     assert validate_master_temporal_folds(folds) is True
 
-    # Fold 1 is the seed period
+    # Fold IDs describe geometry; role eligibility is checked by the caller.
     assert folds[0].fold_id == 1
-    assert folds[0].is_seed is True
+    assert not hasattr(folds[0], "is_seed")
     assert folds[0].train_start == dt[0]
 
     # Expanding training window
     for i in range(1, len(folds)):
         assert folds[i].fold_id == i + 1
-        assert folds[i].is_seed is False
+        assert not hasattr(folds[i], "is_seed")
         assert folds[i].train_start == folds[0].train_start
         assert folds[i].train_end == folds[i].test_start
         assert folds[i].test_start == folds[i - 1].test_end
@@ -58,7 +58,7 @@ def test_master_temporal_folds_structure():
     exported = export_fold_boundaries(folds)
     assert len(exported) == 4
     assert exported[0]["fold_id"] == 1
-    assert exported[0]["is_seed"] is True
+    assert "is_seed" not in exported[0]
     assert "train_start" in exported[0]
 
 
@@ -82,14 +82,13 @@ def test_master_temporal_folds_validation_failures():
     # Corrupted folds fail validation
     folds = build_master_temporal_folds(df, n_folds=3)
     corrupted_folds = list(folds)
-    # Corrupt seed flag
+    # Corrupt fold geometry
     corrupted_folds[0] = TemporalFold(
-        fold_id=1,
+        fold_id=2,
         train_start=folds[0].train_start,
         train_end=folds[0].train_end,
         test_start=folds[0].test_start,
         test_end=folds[0].test_end,
-        is_seed=False,
     )
     assert validate_master_temporal_folds(corrupted_folds) is False
 
@@ -166,37 +165,32 @@ def test_generate_oof_scores_callback():
             "strength_score": np.full(len(test_df), 0.5),
         }, index=test_df.index)
 
-    # Full OOF run including seed fold
+    # HWC OOF includes Fold 1.
     oof_df = generate_oof_scores(
         df=df,
         folds=folds,
         fit_predict_fn=mock_estimator,
         purge_minutes=1440,
-        exclude_seed=False,
+        role="hwc",
     )
 
     assert not oof_df.empty
     assert "fold_id" in oof_df.columns
-    assert "is_seed" in oof_df.columns
+    assert "is_seed" not in oof_df.columns
     assert "direction_score" in oof_df.columns
     assert "strength_score" in oof_df.columns
     assert set(oof_df["fold_id"].unique()) == {1, 2, 3}
 
-    # Fold 1 is flagged as seed
-    assert (oof_df[oof_df["fold_id"] == 1]["is_seed"] == True).all()
-    assert (oof_df[oof_df["fold_id"] == 2]["is_seed"] == False).all()
-    assert (oof_df[oof_df["fold_id"] == 3]["is_seed"] == False).all()
-
-    # OOF run excluding seed fold
+    # MWC OOF excludes Fold 1 because upstream OOF evidence is unavailable.
     oof_no_seed = generate_oof_predictions(
         df=df,
         folds=folds,
         fit_predict_fn=mock_estimator,
         purge_minutes=1440,
-        exclude_seed=True,
+        role="mwc",
     )
     assert set(oof_no_seed["fold_id"].unique()) == {2, 3}
-    assert not oof_no_seed["is_seed"].any()
+    assert "is_seed" not in oof_no_seed.columns
 
 
 def test_generate_oof_scores_excludes_seed_by_default_and_purges_exact_boundary():
@@ -212,7 +206,7 @@ def test_generate_oof_scores_excludes_seed_by_default_and_purges_exact_boundary(
 
     oof = generate_oof_scores(df, folds, callback, purge_minutes=2)
     assert not oof.empty
-    assert not oof["is_seed"].any()
+    assert "is_seed" not in oof.columns
     assert len(seen_train_sizes) == 1
 
     cutoff = folds[1].test_start - pd.Timedelta(minutes=2)

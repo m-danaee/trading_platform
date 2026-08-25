@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
-import math
-
 import pytest
+
+from gpu_fuzzy_trader.validation.fold_gates import (
+    FoldExposure,
+    required_folds,
+    scale_count_gate,
+)
 
 
 COUNT_GATES = {
@@ -16,17 +20,8 @@ COUNT_GATES = {
 }
 
 
-def _scale_count_gate(
-    base: int,
-    effective_rows: int,
-    reference_rows: int,
-    absolute_min: int = 5,
-) -> int:
-    """Inline gate specification used before validation.fold_gates exists."""
-    return max(
-        absolute_min,
-        math.ceil(base * effective_rows / reference_rows),
-    )
+def _exposure(rows: int) -> FoldExposure:
+    return FoldExposure(rows=rows, duration_bars=0, per_symbol_rows={})
 
 
 def _scale_gates(
@@ -37,10 +32,10 @@ def _scale_gates(
 ) -> dict[str, float | int]:
     return {
         name: (
-            _scale_count_gate(
+            scale_count_gate(
                 int(value),
-                effective_rows,
-                reference_rows,
+                _exposure(effective_rows),
+                _exposure(reference_rows),
                 absolute_min,
             )
             if name in COUNT_GATES
@@ -63,7 +58,12 @@ def test_count_gate_scales_by_effective_exposure(
     effective_rows: int,
     expected: int,
 ):
-    assert _scale_count_gate(40, effective_rows, 100_000) == expected
+    assert scale_count_gate(
+        40,
+        _exposure(effective_rows),
+        _exposure(100_000),
+        5,
+    ) == expected
 
 
 def test_quality_gates_do_not_change_when_fold_size_shrinks():
@@ -103,7 +103,7 @@ def _resolve_stage_gate(
 ) -> int:
     """Use train exposure for train gates and OOF exposure for OOF gates."""
     rows = exposure["train_rows"] if stage == "train" else exposure["oof_rows"]
-    return _scale_count_gate(base, rows, reference_rows)
+    return scale_count_gate(base, _exposure(rows), _exposure(reference_rows))
 
 
 @pytest.mark.parametrize(
@@ -114,3 +114,7 @@ def test_gate_stage_selects_its_own_exposure(stage: str, expected: int):
     exposure = {"train_rows": 100_000, "oof_rows": 25_000}
 
     assert _resolve_stage_gate(40, stage, exposure) == expected
+
+
+def test_required_folds_uses_the_production_helper():
+    assert required_folds(3, 0.67) == 3

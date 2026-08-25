@@ -1433,7 +1433,7 @@ class Pipeline_Orchestrator:
                     "phase2": self._phase2_status,
                     "rb_governor": self._rb_status_summary(rb_result),
                 }
-                results["strategy_stability"] = self._run_nested_validation(
+                results["strategy_stability"] = self.run_stability_report(
                     train_df,
                     rb_result,
                     trial_count=count_trials(
@@ -1595,7 +1595,7 @@ class Pipeline_Orchestrator:
                     "phase2": self._phase2_status,
                     "rb_governor": self._rb_status_summary(rb_result),
                 }
-                results["strategy_stability"] = self._run_nested_validation(
+                results["strategy_stability"] = self.run_stability_report(
                     train_df,
                     rb_result,
                     trial_count=count_trials(
@@ -2285,7 +2285,7 @@ class Pipeline_Orchestrator:
             and strategy.get("deployment_accepted") is True
         )
         phase5_result = self._run_phase5(allowed_directions=accepted)
-        stability_report = self._run_nested_validation(
+        stability_report = self.run_stability_report(
             train_df,
             rb_result,
             trial_count=count_trials(
@@ -2454,7 +2454,7 @@ class Pipeline_Orchestrator:
             and strategy.get("deployment_accepted") is True
         )
         phase5_result = self._run_phase5(allowed_directions=accepted)
-        stability_report = self._run_nested_validation(
+        stability_report = self.run_stability_report(
             train_df,
             rb_result,
             trial_count=count_trials(
@@ -3530,7 +3530,7 @@ class Pipeline_Orchestrator:
         return result
 
     @staticmethod
-    def _run_nested_validation(
+    def run_stability_report(
         train_df: pd.DataFrame,
         strategies: dict[str, dict],
         *,

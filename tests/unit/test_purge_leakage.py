@@ -91,27 +91,19 @@ def test_future_spike_is_purged_for_hwc_mwc_and_lwc():
 
 
 def _generate_role_oof(df, folds, role: str, purge_minutes: int) -> pd.DataFrame:
-    """Use the future role API when present, else the current seed switch."""
+    """Generate OOF scores through the role-aware production API."""
     callback = lambda train, test, fold: np.zeros(len(test))
-    try:
-        return _cross_fitting.generate_oof_scores(
-            df,
-            folds,
-            callback,
-            role=role,
-        )
-    except TypeError:
-        return _cross_fitting.generate_oof_scores(
-            df,
-            folds,
-            callback,
-            purge_minutes=purge_minutes,
-            exclude_seed=(role != "hwc"),
-        )
+    return _cross_fitting.generate_oof_scores(
+        df,
+        folds,
+        callback,
+        purge_minutes=purge_minutes,
+        role=role,
+    )
 
 
 def test_hwc_seed_fold_is_usable_but_mwc_seed_fold_is_unavailable():
-    """Current is_seed fallback; role-specific eligibility will replace it later."""
+    """HWC may use Fold 1; MWC requires upstream OOF history."""
     df = _make_synthetic_df(periods=400)
     folds = _cross_fitting.build_master_temporal_folds(
         df,
