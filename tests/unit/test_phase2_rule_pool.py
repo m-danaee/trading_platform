@@ -3166,13 +3166,11 @@ class TestIslandAwareTradeFloor:
         )
 
     def test_fallback_to_effective_floor(self, monkeypatch):
-        """When island_hyperparams is None, trade_floor falls back to
-        effective_min_trade_pool_floor(n_valid_rows)."""
+        """The fallback floor scales the count gate to the sampled exposure."""
         from gpu_fuzzy_trader.phases.phase2_rule_pool import (
             compute_phase2_objectives_from_metrics,
         )
 
-        monkeypatch.setattr(_cfg, "SPLIT_MODE", "holdout")
         monkeypatch.setattr(_cfg, "MIN_TRADE_POOL_FLOOR", 25)
         monkeypatch.setattr(_cfg, "MIN_TRADE_SUPPORT", 1)
         monkeypatch.setattr(_cfg, "MAX_CONDITIONS", 4)
@@ -3198,16 +3196,16 @@ class TestIslandAwareTradeFloor:
             },
         }
 
-        # Without island, with n_valid_rows: effective_min_trade_pool_floor(500)
-        # will return MIN_TRADE_POOL_FLOOR=25 (since not in purged WF mode).
-        # So 20 < 25 → penalty fires → f2 = 100 + 50 = 150
+        # With no island, the 500-row slice scales the 25-trade floor against
+        # the configured Phase 1 reference exposure.  The absolute floor is
+        # five, so 20 trades no longer trigger the low-count penalty.
         objectives, _ = compute_phase2_objectives_from_metrics(
             chrom, dont_cares, metrics, [],
             n_valid_rows=500,
             island_hyperparams=None,
         )
-        assert np.isclose(objectives[1], 150.0, atol=0.1), (
-            f"Expected f2 ≈ 150 (100 dd + 50 penalty), got {objectives[1]}"
+        assert np.isclose(objectives[1], 2.0, atol=0.1), (
+            f"Expected f2 ≈ 2 (drawdown only after scaled floor), got {objectives[1]}"
         )
 
 

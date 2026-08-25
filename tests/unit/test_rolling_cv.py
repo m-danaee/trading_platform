@@ -1,169 +1,48 @@
-"""Unit tests for purged walk-forward fold construction."""
+"""Unit tests for the current fold geometry and count-gate helpers."""
 
 from __future__ import annotations
 
-import math
-
-import numpy as np
 import pandas as pd
-import pytest
 
-from gpu_fuzzy_trader.validation.rolling_cv import (
-    PurgedFold,
-    aggregate_fold_metrics,
-    build_forbidden_ranges,
-    build_purged_walk_forward_folds,
-    cv_folds_only,
-    derive_primary_holdout,
-    mask_df_to_safe_region,
-    summarize_fold_metrics,
+from gpu_fuzzy_trader.mtf.cross_fitting import TemporalFold, eligible_for_role
+from gpu_fuzzy_trader.validation.fold_gates import (
+    FoldExposure,
+    required_folds,
+    scale_count_gate,
 )
 
 
-def _make_symbol_df(symbol: str, n: int, *, start_index: int = 0) -> pd.DataFrame:
-    base = pd.Timestamp("2024-01-01")
-    rows = []
-    for i in range(n):
-        rows.append(
-            {
-                "datetime": base + pd.Timedelta(minutes=5 * (start_index + i)),
-                "symbol": symbol,
-                "label_open_next": 1.0,
-                "label_close_288": 1.0,
-                "label_min_288": 0.99,
-                "label_max_288": 1.01,
-                "label_max_before_min": 1.0,
-                "_symbol_bar_index": start_index + i,
-                "feature_a": float(i),
-            }
-        )
-    return pd.DataFrame(rows)
+def test_required_folds_uses_configured_support_ratio() -> None:
+    assert required_folds(2, 0.67) == 2
+    assert required_folds(3, 0.67) == 3
+    assert required_folds(4, 0.67) == 3
 
 
-def _make_multi_symbol_df(per_symbol: int, symbols: tuple[str, ...] = ("A", "B")) -> pd.DataFrame:
-    parts = [_make_symbol_df(sym, per_symbol) for sym in symbols]
-    return pd.concat(parts, ignore_index=True).sort_values(
-        ["symbol", "datetime"]
-    ).reset_index(drop=True)
+def test_scale_count_gate_uses_ceiling_and_absolute_floor() -> None:
+    reference = FoldExposure(rows=100_000, duration_bars=0, per_symbol_rows={})
+    quarter = FoldExposure(rows=25_000, duration_bars=0, per_symbol_rows={})
+
+    assert scale_count_gate(40, quarter, reference, absolute_min=5) == 10
+    assert scale_count_gate(45, quarter, reference, absolute_min=5) == 12
+    assert scale_count_gate(1, quarter, reference, absolute_min=5) == 5
 
 
-@pytest.fixture
-def purged_cv_config(monkeypatch):
-    monkeypatch.setattr(
-        "gpu_fuzzy_trader.validation.rolling_cv._cfg.PURGED_WF_N_SPLITS",
-        4,
+def test_role_eligibility_uses_fold_geometry() -> None:
+    fold_one = TemporalFold(
+        fold_id=1,
+        train_start=pd.Timestamp("2024-01-01"),
+        train_end=pd.Timestamp("2024-01-02"),
+        test_start=pd.Timestamp("2024-01-03"),
+        test_end=pd.Timestamp("2024-01-04"),
     )
-    monkeypatch.setattr(
-        "gpu_fuzzy_trader.validation.rolling_cv._cfg.PURGED_WF_HOLDOUT_FRACTION",
-        0.25,
-    )
-    monkeypatch.setattr(
-        "gpu_fuzzy_trader.validation.rolling_cv._cfg.PURGED_WF_EMBARGO_CANDLES",
-        288,
-    )
-    monkeypatch.setattr(
-        "gpu_fuzzy_trader.validation.rolling_cv._cfg.PURGED_WF_MIN_TRAIN_FRACTION",
-        0.20,
-    )
-    monkeypatch.setattr(
-        "gpu_fuzzy_trader.validation.rolling_cv._cfg.PURGED_WF_MIN_VALID_ROWS",
-        200,
+    fold_two = TemporalFold(
+        fold_id=2,
+        train_start=pd.Timestamp("2024-01-01"),
+        train_end=pd.Timestamp("2024-01-03"),
+        test_start=pd.Timestamp("2024-01-04"),
+        test_end=pd.Timestamp("2024-01-05"),
     )
 
-
-class TestPurgedWalkForward:
-    def test_build_folds_purge_gap(self, purged_cv_config):
-        df = _make_multi_symbol_df(8000)
-        folds = build_purged_walk_forward_folds(df)
-        assert len(folds) >= 2
-
-        cv = cv_folds_only(folds)
-        assert cv, "expected at least one CV fold"
-
-        for fold in cv:
-            for sym, group in fold.train_df.groupby("symbol"):
-                valid_sym = fold.valid_df[fold.valid_df["symbol"] == sym]
-                if valid_sym.empty or group.empty:
-                    continue
-                last_train_idx = int(group["_symbol_bar_index"].max())
-                first_valid_idx = int(valid_sym["_symbol_bar_index"].min())
-                gap = first_valid_idx - last_train_idx
-                assert gap >= 288, (
-                    f"symbol {sym} fold {fold.fold_id}: purge gap {gap} < 288"
-                )
-
-    def test_expanding_train_grows(self, purged_cv_config):
-        df = _make_multi_symbol_df(8000)
-        folds = cv_folds_only(build_purged_walk_forward_folds(df))
-        if len(folds) < 2:
-            pytest.skip("not enough CV folds in synthetic data")
-        assert folds[0].n_train_rows <= folds[-1].n_train_rows
-
-    def test_derive_primary_holdout_matches_tail(self, purged_cv_config):
-        df = _make_multi_symbol_df(6000)
-        folds = build_purged_walk_forward_folds(df)
-        train_df, val_df = derive_primary_holdout(folds)
-        holdout = next(f for f in folds if f.is_holdout)
-        assert len(train_df) == holdout.n_train_rows
-        assert len(val_df) == holdout.n_valid_rows
-
-    def test_aggregate_fold_metrics_worst(self):
-        metrics = [
-            {"total_return_pct": 5.0, "profit_factor": 1.5, "sortino_ratio": 1.0,
-             "max_drawdown_pct": 3.0, "executed_trades": 40, "win_rate": 55.0},
-            {"total_return_pct": -2.0, "profit_factor": 1.1, "sortino_ratio": 0.5,
-             "max_drawdown_pct": 8.0, "executed_trades": 20, "win_rate": 48.0},
-        ]
-        agg = aggregate_fold_metrics(metrics, mode="worst")
-        assert agg["total_return_pct"] == pytest.approx(-2.0)
-        assert agg["executed_trades"] == 20
-        assert agg["max_drawdown_pct"] == pytest.approx(8.0)
-
-    def test_summarize_fold_metrics_empty(self):
-        summary = summarize_fold_metrics([])
-        assert summary.folds == 0
-        assert summary.min_trades == 0
-
-    def test_cv_folds_equal_size_via_divmod(self, purged_cv_config, monkeypatch):
-        """CV valid blocks differ by at most 1 bar when remaining % n != 0."""
-        monkeypatch.setattr(
-            "gpu_fuzzy_trader.validation.rolling_cv._cfg.PURGED_WF_N_SPLITS",
-            2,
-        )
-        monkeypatch.setattr(
-            "gpu_fuzzy_trader.validation.rolling_cv._cfg.PURGED_WF_MIN_TRAIN_FRACTION",
-            0.20,
-        )
-        # per_symbol=10001 -> remaining often not divisible by n_cv_folds
-        df = _make_multi_symbol_df(10001)
-        folds = cv_folds_only(build_purged_walk_forward_folds(df))
-        assert len(folds) >= 2
-        sizes = []
-        for fold in folds:
-            per_sym = fold.n_valid_rows // df["symbol"].nunique()
-            sizes.append(per_sym)
-        assert max(sizes) - min(sizes) <= 1
-
-    def test_build_forbidden_ranges_includes_embargo(self, purged_cv_config):
-        df = _make_multi_symbol_df(8000)
-        folds = build_purged_walk_forward_folds(df)
-        forbidden = build_forbidden_ranges(folds, embargo=288)
-        assert forbidden
-        for fold, (f_start, f_end) in zip(folds, forbidden):
-            assert f_start == max(0, fold.valid_start_bar - 288)
-            assert f_end == fold.valid_end_bar
-
-    def test_mask_df_to_safe_region_excludes_cv_valid(self, purged_cv_config):
-        df = _make_multi_symbol_df(8000)
-        folds = build_purged_walk_forward_folds(df)
-        forbidden = build_forbidden_ranges(folds)
-        masked = mask_df_to_safe_region(df, forbidden)
-        for f_start, f_end in forbidden:
-            for sym in df["symbol"].unique():
-                sub = masked[masked["symbol"] == sym]
-                if sub.empty:
-                    continue
-                bi = sub["_symbol_bar_index"].to_numpy()
-                assert np.all((bi < f_start) | (bi > f_end)), (
-                    f"symbol {sym} overlaps forbidden [{f_start}, {f_end}]"
-                )
+    assert eligible_for_role(fold_one, "hwc") is True
+    assert eligible_for_role(fold_one, "mwc") is False
+    assert eligible_for_role(fold_two, "mwc") is True

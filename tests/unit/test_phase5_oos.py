@@ -1168,7 +1168,6 @@ class TestPhase5CachedSplitFreshness:
         monkeypatch.setattr(
             _cfg, "VALIDATION_SELECTION_PATH", paths["selection"])
         monkeypatch.setattr(_cfg, "CV_FOLDS_MANIFEST_PATH", paths["manifest"])
-        monkeypatch.setattr(_cfg, "SPLIT_MODE", "holdout")
 
         ev = OOS_Evaluator(test_csv_path=test_csv)
         datasets = ev._load_datasets_by_split()
@@ -1203,7 +1202,6 @@ class TestPhase5CachedSplitFreshness:
         monkeypatch.setattr(
             _cfg, "VALIDATION_SELECTION_PATH", paths["selection"])
         monkeypatch.setattr(_cfg, "CV_FOLDS_MANIFEST_PATH", paths["manifest"])
-        monkeypatch.setattr(_cfg, "SPLIT_MODE", "holdout")
 
         assert load_cached_split_if_fresh() is None
 

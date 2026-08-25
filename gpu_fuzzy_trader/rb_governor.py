@@ -3400,11 +3400,11 @@ def run_rb_governor_pipeline(
         # Build per-fold engines for CV-fold consistency (C4)
         fold_engines: list[CPUBacktestEngine] | None = None
         if cv_folds:
-            from gpu_fuzzy_trader.validation.rolling_cv import cv_folds_only
             try:
                 fold_engines = [
                     CPUBacktestEngine(fold.valid_df, {}, direction)
-                    for fold in cv_folds_only(cv_folds)
+                    for fold in cv_folds
+                    if not bool(getattr(fold, "is_holdout", False))
                 ]
             except Exception:
                 logger.warning("RB [%s]: failed to build CV-fold engines; skipping CV term.", direction)

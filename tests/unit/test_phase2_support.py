@@ -337,17 +337,19 @@ class TestPoolAdmissionScaledFloors:
             island_hyperparams=island,
         ) is True
 
-    def test_scaled_min_val_trades_on_small_slice(self, monkeypatch) -> None:
+    def test_scaled_min_val_trades_on_small_slice(self) -> None:
         from gpu_fuzzy_trader.phases.phase2_support import _pool_admission_floors
 
-        monkeypatch.setattr(_cfg, "SPLIT_MODE", "purged_walk_forward")
-        monkeypatch.setattr(_cfg, "PURGED_WF_SCALE_TRADE_FLOORS", True)
-        _cfg.set_purged_wf_reference_rows(700_000)
-
-        _, _, _, _, full_min = _pool_admission_floors(None)
-        _, _, _, _, small_min = _pool_admission_floors(40_000)
+        _, _, _, _, full_min = _pool_admission_floors(
+            None,
+            reference_rows=700_000,
+        )
+        _, _, _, _, small_min = _pool_admission_floors(
+            40_000,
+            reference_rows=700_000,
+        )
         assert small_min < full_min
-        assert small_min >= _cfg.PURGED_WF_MIN_TRADE_FLOOR_ABSOLUTE
+        assert small_min >= _cfg.FOLD_ABSOLUTE_MIN_TRADES
 
     def test_pf_floor_uses_admission_not_evolution(self, monkeypatch) -> None:
         """_pool_admission_floors returns the ADMISSION floor (1.15),
