@@ -522,6 +522,8 @@ MTF_PIPELINE_ENABLED: bool = True
 # Deprecated compatibility alias.  New code must use MTF_MAX_FOLDS.
 MTF_N_FOLDS: int = MTF_MAX_FOLDS
 MTF_DISCOVERY_MAX_RULES_PER_LAYER: int = 8
+# Deprecated fixed-count compatibility alias.  New fold admission code must
+# derive support with validation.fold_gates.required_folds() and the ratio.
 MTF_MIN_FOLD_SUPPORT: int = 2
 
 # Role purges are derived from the same horizon/timeframe contract used by
@@ -2281,13 +2283,32 @@ def set_purged_wf_reference_rows(n_rows: int) -> None:
     _PURGED_WF_REFERENCE_ROWS = max(0, int(n_rows))
 
 
+def required_folds(eligible: int, ratio: float | None = None) -> int:
+    """Return ratio-based fold support through the canonical gate helper.
+
+    ``MTF_MIN_FOLD_SUPPORT`` is retained only for old callers.  New callers
+    should use the configured ``MTF_MIN_FOLD_SUPPORT_RATIO`` so support adapts
+    to the number of eligible folds.
+    """
+    from gpu_fuzzy_trader.validation.fold_gates import (
+        required_folds as _required_folds,
+    )
+
+    support_ratio = MTF_MIN_FOLD_SUPPORT_RATIO if ratio is None else ratio
+    return _required_folds(int(eligible), float(support_ratio))
+
 
 def scale_trade_floor(
     base: int,
     n_rows: int,
     reference_rows: int | None = None,
 ) -> int:
-    """Scale an integer trade floor by slice size vs reference universe."""
+    """Deprecated compatibility wrapper for fold-aware count scaling.
+
+    New callers should use ``validation.fold_gates.scale_count_gate`` with
+    explicit train or OOF exposure.  The legacy purged-WF path retains its
+    historical rounding mode so existing callers keep their old results.
+    """
     if not split_mode_is_purged_walk_forward():
         return int(base)
     if not PURGED_WF_SCALE_TRADE_FLOORS:
@@ -2300,8 +2321,18 @@ def scale_trade_floor(
             base,
         )
         return int(base)
-    scaled = int(round(int(base) * int(n_rows) / int(ref)))
-    return max(int(PURGED_WF_MIN_TRADE_FLOOR_ABSOLUTE), scaled)
+    from gpu_fuzzy_trader.validation.fold_gates import (
+        FoldExposure,
+        scale_count_gate,
+    )
+
+    return scale_count_gate(
+        int(base),
+        FoldExposure(rows=int(n_rows), duration_bars=0, per_symbol_rows={}),
+        FoldExposure(rows=int(ref), duration_bars=0, per_symbol_rows={}),
+        absolute_min=int(FOLD_ABSOLUTE_MIN_TRADES),
+        rounding="legacy",
+    )
 
 
 
@@ -2352,15 +2383,25 @@ def scale_trade_floor_by_universe(
     *,
     absolute_min: int | None = None,
 ) -> int:
-    """Scale integer trade floors by slice size vs full-universe reference."""
+    """Deprecated wrapper for scaling against an explicit universe reference."""
     ref = int(reference_rows)
     if ref <= 0:
         return int(base)
     floor_min = int(
         absolute_min if absolute_min is not None else 8
     )
-    scaled = int(round(int(base) * int(n_rows) / ref))
-    return max(floor_min, scaled)
+    from gpu_fuzzy_trader.validation.fold_gates import (
+        FoldExposure,
+        scale_count_gate,
+    )
+
+    return scale_count_gate(
+        int(base),
+        FoldExposure(rows=int(n_rows), duration_bars=0, per_symbol_rows={}),
+        FoldExposure(rows=ref, duration_bars=0, per_symbol_rows={}),
+        absolute_min=floor_min,
+        rounding="legacy",
+    )
 
 @dataclass(frozen=True)
 class IslandHyperparams:
