@@ -8,6 +8,8 @@ stability windows and never performs candidate search or threshold fitting.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+import json
 from typing import Any, Callable, Iterable
 
 import numpy as np
@@ -15,7 +17,11 @@ import pandas as pd
 
 from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
-from gpu_fuzzy_trader.validation.multiplicity import summarize_multiplicity
+from gpu_fuzzy_trader.validation.multiplicity import (
+    aggregate_seed_metrics,
+    read_candidate_fold_matrix,
+    summarize_multiplicity,
+)
 
 
 @dataclass(frozen=True)
@@ -156,6 +162,172 @@ def _metric_summary(metrics: Iterable[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _candidate_id(candidate: dict[str, Any], *, source: str, direction: str) -> str:
+    """Return a stable ID for a candidate that has no explicit ID."""
+    explicit = candidate.get("candidate_id") or candidate.get("strategy_id")
+    if explicit:
+        return str(explicit)
+    payload = json.dumps(candidate, sort_keys=True, default=str, separators=(",", ":"))
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+    return f"{source}:{direction}:{digest}"
+
+
+def _candidate_rows(candidate: Any) -> list[dict[str, Any]]:
+    """Return candidate records from either a mapping or a sequence."""
+    if isinstance(candidate, dict):
+        return [candidate]
+    if isinstance(candidate, (list, tuple)):
+        return [value for value in candidate if isinstance(value, dict)]
+    return []
+
+
+def _precomputed_candidate_fold_rows(
+    candidate: dict[str, Any],
+    *,
+    candidate_id: str,
+    source: str,
+    direction: str,
+) -> list[dict[str, Any]]:
+    """Read fold scores already attached by a search implementation."""
+    values = candidate.get("fold_scores", candidate.get("candidate_fold_scores"))
+    if values is None:
+        is_values = candidate.get("in_sample_scores", candidate.get("is_scores"))
+        oos_values = candidate.get("out_of_sample_scores", candidate.get("oos_scores"))
+        if is_values is None or oos_values is None:
+            return []
+        values = [
+            {
+                "fold_id": index,
+                "is_score": is_value,
+                "oos_score": oos_value,
+            }
+            for index, (is_value, oos_value) in enumerate(
+                zip(is_values, oos_values, strict=False)
+            )
+        ]
+    if not isinstance(values, Iterable) or isinstance(values, (str, bytes)):
+        return []
+    rows: list[dict[str, Any]] = []
+    for index, value in enumerate(values):
+        if not isinstance(value, dict):
+            continue
+        is_score = value.get("is_score", value.get("in_sample_score"))
+        oos_score = value.get("oos_score", value.get("out_of_sample_score"))
+        try:
+            is_score = float(is_score)
+            oos_score = float(oos_score)
+        except (TypeError, ValueError):
+            continue
+        fold_id = value.get("fold_id", index)
+        try:
+            fold_id = int(fold_id)
+        except (TypeError, ValueError):
+            fold_id = str(fold_id)
+        rows.append({
+            "candidate_id": candidate_id,
+            "fold_id": fold_id,
+            "is_score": is_score,
+            "oos_score": oos_score,
+            "source": source,
+            "direction": direction,
+        })
+    return rows
+
+
+def build_candidate_fold_matrix(
+    frame: pd.DataFrame | None,
+    candidates: Any,
+    *,
+    n_windows: int = 3,
+) -> list[dict[str, Any]]:
+    """Evaluate candidates on chronological IS/OOS stability folds.
+
+    The function records one return score for every candidate and fold.  It
+    also accepts precomputed ``fold_scores`` so callers can use the exact
+    evaluator scores when a search stage already produced them.  Candidate
+    IDs and fold IDs are sorted by the writer, not by evaluation completion.
+    """
+    entries: list[dict[str, Any]] = []
+    if isinstance(candidates, dict):
+        for source_key in sorted(candidates):
+            source_value = candidates[source_key]
+            source = str(source_key)
+            if source_value is None:
+                continue
+            if isinstance(source_value, dict) and (
+                "rules_set" in source_value or "conditions" in source_value
+            ):
+                source_values = [source_value]
+            elif isinstance(source_value, dict):
+                source_values = [
+                    dict(value, direction=direction)
+                    for direction, value in sorted(source_value.items())
+                    if isinstance(value, dict)
+                ]
+            else:
+                source_values = _candidate_rows(source_value)
+            for value in source_values:
+                entry = dict(value)
+                entry.setdefault("source", source)
+                entries.append(entry)
+    else:
+        entries = [dict(value) for value in _candidate_rows(candidates)]
+
+    rows: list[dict[str, Any]] = []
+    fold_list = build_stability_folds(
+        frame,
+        n_windows=max(1, int(n_windows)),
+    ) if isinstance(frame, pd.DataFrame) and not frame.empty else []
+    for candidate in entries:
+        source = str(candidate.get("source", "phase2"))
+        direction = str(candidate.get("direction", "long")).lower()
+        candidate_id = _candidate_id(
+            candidate,
+            source=source,
+            direction=direction,
+        )
+        precomputed = _precomputed_candidate_fold_rows(
+            candidate,
+            candidate_id=candidate_id,
+            source=source,
+            direction=direction,
+        )
+        if precomputed:
+            rows.extend(precomputed)
+            continue
+        if not fold_list:
+            continue
+        rules = candidate.get("rules_set")
+        if not isinstance(rules, list):
+            rules = [candidate] if candidate.get("conditions") else []
+        if not rules:
+            continue
+        for fold in fold_list:
+            try:
+                is_metrics = CPUBacktestEngine(
+                    fold.train_df, {}, direction,
+                ).simulate_rule_set(rules)
+                oos_metrics = CPUBacktestEngine(
+                    fold.test_df, {}, direction,
+                ).simulate_rule_set(rules)
+                is_score = float(is_metrics.get("total_return_pct", 0.0))
+                oos_score = float(oos_metrics.get("total_return_pct", 0.0))
+            except Exception:
+                # A malformed legacy candidate must not stop the report for
+                # every other candidate.  The persisted phase metrics remain
+                # available through the fallback ledger path.
+                continue
+            rows.append({
+                "candidate_id": candidate_id,
+                "fold_id": int(fold.fold_id),
+                "is_score": is_score,
+                "oos_score": oos_score,
+                "source": source,
+                "direction": direction,
+            })
+    return rows
+
+
 def evaluate_strategy_stability(
     frame: pd.DataFrame,
     strategy: dict[str, Any],
@@ -181,6 +353,9 @@ def evaluate_strategy_stability(
 
     metrics = [evaluator(fold.test_df, rule_set) for fold in folds]
     summary = _metric_summary(metrics)
+    matrix = strategy.get("candidate_fold_matrix")
+    if isinstance(matrix, (str, bytes)):
+        matrix = read_candidate_fold_matrix(matrix)
     summary.update({
         "direction": strategy.get("direction"),
         "strategy_id": strategy.get("strategy_id"),
@@ -204,6 +379,8 @@ def evaluate_strategy_stability(
                 for row in metrics
             ],
             n_trials=int(strategy.get("trial_count", max(1, len(rule_set)))),
+            matrix=matrix,
+            trial_count_ledger=strategy.get("trial_count_ledger"),
         ),
     })
     return summary
@@ -215,6 +392,8 @@ def write_strategy_stability_reports(
     frame: pd.DataFrame,
     *,
     n_windows: int = 3,
+    candidate_fold_matrix: Any | None = None,
+    trial_count_ledger: int | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Write per-direction frozen-strategy stability reports."""
     import json
@@ -226,9 +405,14 @@ def write_strategy_stability_reports(
     for direction, strategy in strategies.items():
         if direction not in {"long", "short"} or not strategy.get("rules_set"):
             continue
+        report_strategy = dict(strategy)
+        if candidate_fold_matrix is not None:
+            report_strategy["candidate_fold_matrix"] = candidate_fold_matrix
+        if trial_count_ledger is not None:
+            report_strategy["trial_count_ledger"] = int(trial_count_ledger)
         report = evaluate_strategy_stability(
             frame,
-            strategy,
+            report_strategy,
             n_windows=n_windows,
         )
         results[direction] = report
@@ -239,9 +423,43 @@ def write_strategy_stability_reports(
     return results
 
 
+def write_golden_baseline_report(
+    output_dir: str,
+    seed_records: Iterable[dict[str, Any]],
+) -> dict[str, Any]:
+    """Write a multi-seed golden-baseline aggregation report."""
+    from pathlib import Path
+
+    report = aggregate_seed_metrics(seed_records)
+    configured_path = getattr(
+        _cfg,
+        "GOLDEN_BASELINE_REPORT_PATH",
+        Path(output_dir) / "reports" / "golden_baseline.json",
+    )
+    if str(configured_path).endswith(
+        "outputs/reports/golden_baseline.json"
+    ):
+        configured_path = Path(output_dir) / "reports" / "golden_baseline.json"
+    path = Path(configured_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
+    return report
+
+
+# Keep the baseline helper discoverable from the stability-report module, which
+# is the report entry point used by the pipeline.
+aggregate_golden_baseline = aggregate_seed_metrics
+aggregate_golden_baselines = aggregate_seed_metrics
+
+
 __all__ = [
     "StabilityFold",
+    "aggregate_golden_baseline",
+    "aggregate_golden_baselines",
+    "aggregate_seed_metrics",
+    "build_candidate_fold_matrix",
     "build_stability_folds",
     "evaluate_strategy_stability",
+    "write_golden_baseline_report",
     "write_strategy_stability_reports",
 ]

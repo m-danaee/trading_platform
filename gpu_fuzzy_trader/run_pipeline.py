@@ -1433,13 +1433,22 @@ class Pipeline_Orchestrator:
                     "phase2": self._phase2_status,
                     "rb_governor": self._rb_status_summary(rb_result),
                 }
+                matrix_rows = self._write_candidate_fold_matrix(
+                    train_df,
+                    phase2_result,
+                    rb_result,
+                )
+                trial_counters = self._trial_counters(
+                    phase1_result,
+                    phase2_result,
+                    rb_result,
+                )
                 results["strategy_stability"] = self.run_stability_report(
                     train_df,
                     rb_result,
-                    trial_count=count_trials(
-                        phase2=phase2_result,
-                        rb=rb_result,
-                    ),
+                    trial_count=max(1, sum(trial_counters.values())),
+                    trial_count_ledger=sum(trial_counters.values()),
+                    candidate_fold_matrix=matrix_rows,
                 )
                 phase5_directions = frozenset(
                     direction
@@ -1595,13 +1604,22 @@ class Pipeline_Orchestrator:
                     "phase2": self._phase2_status,
                     "rb_governor": self._rb_status_summary(rb_result),
                 }
+                matrix_rows = self._write_candidate_fold_matrix(
+                    train_df,
+                    phase2_result,
+                    rb_result,
+                )
+                trial_counters = self._trial_counters(
+                    phase1_result,
+                    phase2_result,
+                    rb_result,
+                )
                 results["strategy_stability"] = self.run_stability_report(
                     train_df,
                     rb_result,
-                    trial_count=count_trials(
-                        phase2=phase2_result,
-                        rb=rb_result,
-                    ),
+                    trial_count=max(1, sum(trial_counters.values())),
+                    trial_count_ledger=sum(trial_counters.values()),
+                    candidate_fold_matrix=matrix_rows,
                 )
                 phase5_directions = frozenset(
                     direction
@@ -1744,6 +1762,11 @@ class Pipeline_Orchestrator:
                         val_df=lwc_val_fitness_scored,
                         blocked_directions=frozenset(),
                     )
+                    self._write_candidate_fold_matrix(
+                        train_df,
+                        results["phase2"],
+                        None,
+                    )
                 else:
                     val_fitness_df, val_selection_df = self._validation_scoring_frames(
                         val_df)
@@ -1779,6 +1802,11 @@ class Pipeline_Orchestrator:
                         force=True,
                         val_df=val_fitness_df,
                         blocked_directions=blocked_directions,
+                    )
+                    self._write_candidate_fold_matrix(
+                        train_df,
+                        results["phase2"],
+                        None,
                     )
 
             elif phase in {3, 4}:
@@ -1849,6 +1877,11 @@ class Pipeline_Orchestrator:
                     "phase2": self._phase2_status,
                     "rb_governor": self._rb_status_summary(results.get("rb_governor", {})),
                 }
+                self._write_candidate_fold_matrix(
+                    train_df,
+                    results.get("phase2"),
+                    results.get("rb_governor"),
+                )
 
             else:
                 self._ensure_phase5_inputs()
@@ -1931,6 +1964,156 @@ class Pipeline_Orchestrator:
             _cfg.REPORTS_DIR,
         )
 
+    @staticmethod
+    def _trial_counters(
+        phase1: dict[str, Any] | None = None,
+        phase2: dict[str, Any] | None = None,
+        rb: dict[str, Any] | None = None,
+    ) -> dict[str, int]:
+        """Build explicit trial counters for the research ledger.
+
+        These counters describe alternatives that reached each report stage.
+        They are kept separate so DSR does not silently reuse a rough artifact
+        size estimate when the ledger is available.
+        """
+        feature_alternatives = sum(
+            len(value) for value in (phase1 or {}).values()
+            if isinstance(value, list)
+        )
+        rules_tested = sum(
+            len(value) for value in (phase2 or {}).values()
+            if isinstance(value, list)
+        )
+        selection_candidates = rules_tested
+        hyperparameter_configs = 0
+        if phase2:
+            hyperparameter_configs += 1
+        if rb:
+            hyperparameter_configs += 1
+        return {
+            "feature_alternatives": int(feature_alternatives),
+            "rules_tested": int(rules_tested),
+            "hyperparameter_configs": int(hyperparameter_configs),
+            "selection_candidates": int(selection_candidates),
+        }
+
+    @staticmethod
+    def _write_candidate_fold_matrix(
+        train_df: pd.DataFrame,
+        phase2: dict[str, Any] | None,
+        rb: dict[str, Any] | None,
+    ) -> list[dict[str, Any]]:
+        """Persist deterministic Phase 2/RB candidate×fold score rows."""
+        if not bool(getattr(_cfg, "MULTIPLICITY_REPORT_ENABLED", True)):
+            return []
+        from gpu_fuzzy_trader.validation.multiplicity import (
+            write_candidate_fold_matrix,
+        )
+        from gpu_fuzzy_trader.validation.walk_forward_stability_report import (
+            build_candidate_fold_matrix,
+        )
+
+        candidates: list[dict[str, Any]] = []
+
+        def add_candidate(
+            source: str,
+            direction: str,
+            candidate: Any,
+        ) -> None:
+            if not isinstance(candidate, dict):
+                return
+            entry = dict(candidate)
+            entry["source"] = source
+            entry["direction"] = direction
+            if not entry.get("candidate_id"):
+                identity = {
+                    "chromosome": entry.get("chromosome"),
+                    "conditions": entry.get("conditions"),
+                    "rules_set": entry.get("rules_set"),
+                    "strategy_id": entry.get("strategy_id"),
+                }
+                digest = hashlib.sha256(
+                    json.dumps(
+                        identity,
+                        sort_keys=True,
+                        default=str,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest()[:16]
+                entry["candidate_id"] = f"{source}:{direction}:{digest}"
+            candidates.append(entry)
+
+        for direction in sorted((phase2 or {})):
+            values = (phase2 or {}).get(direction)
+            if isinstance(values, list):
+                for candidate in values:
+                    add_candidate("phase2", str(direction), candidate)
+        for direction in sorted((rb or {})):
+            add_candidate("rb", str(direction), (rb or {}).get(direction))
+
+        rows = build_candidate_fold_matrix(
+            train_df,
+            candidates,
+            n_windows=int(getattr(_cfg, "MULTIPLICITY_STABILITY_WINDOWS", 3)),
+        )
+        if not rows:
+            # Legacy/resumed artifacts can contain only their admission metrics.
+            # Keep one auditable fold rather than dropping the candidate from
+            # the ledger when a full frame re-evaluation is not possible.
+            for candidate in candidates:
+                objectives = candidate.get("objectives", {})
+                validation = candidate.get("val_objectives", {})
+                if isinstance(objectives, dict) and isinstance(validation, dict):
+                    rows.append({
+                        "candidate_id": candidate["candidate_id"],
+                        "fold_id": 0,
+                        "is_score": float(
+                            objectives.get("total_return_pct", 0.0) or 0.0
+                        ),
+                        "oos_score": float(
+                            validation.get("total_return_pct", 0.0) or 0.0
+                        ),
+                        "source": candidate.get("source", "phase2"),
+                        "direction": candidate.get("direction", ""),
+                    })
+                    continue
+                split_metrics = candidate.get("split_metrics", {})
+                if isinstance(split_metrics, dict):
+                    train_metrics = split_metrics.get("train", {})
+                    valid_metrics = split_metrics.get("validation", {})
+                    if isinstance(train_metrics, dict) and isinstance(
+                        valid_metrics, dict
+                    ):
+                        rows.append({
+                            "candidate_id": candidate["candidate_id"],
+                            "fold_id": 0,
+                            "is_score": float(
+                                train_metrics.get("total_return_pct", 0.0) or 0.0
+                            ),
+                            "oos_score": float(
+                                valid_metrics.get("total_return_pct", 0.0) or 0.0
+                            ),
+                            "source": candidate.get("source", "rb"),
+                            "direction": candidate.get("direction", ""),
+                        })
+
+        configured_matrix_path = getattr(
+            _cfg,
+            "CANDIDATE_FOLD_MATRIX_PATH",
+            os.path.join(_cfg.REPORTS_DIR, "candidate_fold_matrix.jsonl"),
+        )
+        # Keep temporary-output tests and --output runs bound to the active
+        # report directory even when the module-level default was imported
+        # before OUTPUTS_DIR was overridden.
+        if str(configured_matrix_path).endswith(
+            os.path.join("outputs", "reports", "candidate_fold_matrix.jsonl")
+        ):
+            configured_matrix_path = os.path.join(
+                _cfg.REPORTS_DIR, "candidate_fold_matrix.jsonl"
+            )
+        write_candidate_fold_matrix(configured_matrix_path, rows)
+        return rows
+
     def _record_research_integrity(
         self,
         results: dict[str, Any],
@@ -1982,7 +2165,31 @@ class Pipeline_Orchestrator:
             for key in config_keys
             if hasattr(_cfg, key)
         }
-        trial_count = count_trials(phase2=phase2, rb=rb)
+        trial_counters = self._trial_counters(
+            results.get("phase1"),
+            phase2,
+            rb,
+        )
+        from gpu_fuzzy_trader.validation.multiplicity import (
+            read_candidate_fold_matrix,
+            read_ledger_trial_count,
+            summarize_multiplicity,
+            trial_count_from_counters,
+        )
+        trial_count = trial_count_from_counters(trial_counters)
+        if trial_count <= 0:
+            trial_count = count_trials(phase2=phase2, rb=rb)
+        matrix_path = getattr(
+            _cfg,
+            "CANDIDATE_FOLD_MATRIX_PATH",
+            os.path.join(_cfg.REPORTS_DIR, "candidate_fold_matrix.jsonl"),
+        )
+        if str(matrix_path).endswith(
+            os.path.join("outputs", "reports", "candidate_fold_matrix.jsonl")
+        ):
+            matrix_path = os.path.join(
+                _cfg.REPORTS_DIR, "candidate_fold_matrix.jsonl"
+            )
         ExperimentLedger(_cfg.OUTPUTS_DIR).append({
             "record_type": "pipeline_run",
             "run_id": self._run_id,
@@ -2017,6 +2224,9 @@ class Pipeline_Orchestrator:
                 if isinstance(phase5, dict) else {}
             ),
             "trial_count_estimate": trial_count,
+            "trial_count_ledger": int(trial_count),
+            "trial_counters": trial_counters,
+            "candidate_fold_matrix": matrix_path,
             "config": config_delta,
             "research_profile": {
                 "profile_id": ResearchProfile.from_config(_cfg).profile_id,
@@ -2024,20 +2234,40 @@ class Pipeline_Orchestrator:
             },
         })
         try:
-            from gpu_fuzzy_trader.validation.multiplicity import (
-                summarize_multiplicity,
-            )
             stability = results.get("strategy_stability", {})
             fold_returns = [
                 float(report.get("median_return_pct", 0.0))
                 for report in stability.values()
                 if isinstance(report, dict)
             ] if isinstance(stability, dict) else []
+            ledger_trial_count = read_ledger_trial_count(
+                _cfg.OUTPUTS_DIR,
+                run_id=self._run_id,
+            )
+            matrix_rows = read_candidate_fold_matrix(matrix_path)
             multiplicity = summarize_multiplicity(
                 fold_returns=fold_returns,
                 n_trials=trial_count,
+                matrix=matrix_rows,
+                trial_count_ledger=(
+                    ledger_trial_count
+                    if ledger_trial_count is not None
+                    else trial_count
+                ),
+                ledger_counters=trial_counters,
             )
-            Path(_cfg.REPORTS_DIR, "multiplicity_summary.json").write_text(
+            configured_summary_path = getattr(
+                _cfg,
+                "MULTIPLICITY_SUMMARY_PATH",
+                Path(_cfg.REPORTS_DIR) / "multiplicity_summary.json",
+            )
+            if str(configured_summary_path).endswith(
+                os.path.join("outputs", "reports", "multiplicity_summary.json")
+            ):
+                configured_summary_path = Path(
+                    _cfg.REPORTS_DIR, "multiplicity_summary.json"
+                )
+            Path(configured_summary_path).write_text(
                 json.dumps(multiplicity, indent=2, sort_keys=True),
                 encoding="utf-8",
             )
@@ -2285,13 +2515,22 @@ class Pipeline_Orchestrator:
             and strategy.get("deployment_accepted") is True
         )
         phase5_result = self._run_phase5(allowed_directions=accepted)
+        matrix_rows = self._write_candidate_fold_matrix(
+            train_df,
+            lwc_rules,
+            rb_result,
+        )
+        trial_counters = self._trial_counters(
+            lwc_phase1,
+            lwc_rules,
+            rb_result,
+        )
         stability_report = self.run_stability_report(
             train_df,
             rb_result,
-            trial_count=count_trials(
-                phase2=lwc_rules,
-                rb=rb_result,
-            ),
+            trial_count=max(1, sum(trial_counters.values())),
+            trial_count_ledger=sum(trial_counters.values()),
+            candidate_fold_matrix=matrix_rows,
         )
         return {
             "data": {
@@ -2454,13 +2693,22 @@ class Pipeline_Orchestrator:
             and strategy.get("deployment_accepted") is True
         )
         phase5_result = self._run_phase5(allowed_directions=accepted)
+        matrix_rows = self._write_candidate_fold_matrix(
+            train_df,
+            lwc_rules,
+            rb_result,
+        )
+        trial_counters = self._trial_counters(
+            lwc_phase1,
+            lwc_rules,
+            rb_result,
+        )
         stability_report = self.run_stability_report(
             train_df,
             rb_result,
-            trial_count=count_trials(
-                phase2=lwc_rules,
-                rb=rb_result,
-            ),
+            trial_count=max(1, sum(trial_counters.values())),
+            trial_count_ledger=sum(trial_counters.values()),
+            candidate_fold_matrix=matrix_rows,
         )
         return {
             "data": {
@@ -3535,6 +3783,8 @@ class Pipeline_Orchestrator:
         strategies: dict[str, dict],
         *,
         trial_count: int = 1,
+        trial_count_ledger: int | None = None,
+        candidate_fold_matrix: Any | None = None,
     ) -> dict[str, dict]:
         """Write a diagnostic stability report for frozen strategy packages."""
         try:
@@ -3552,7 +3802,11 @@ class Pipeline_Orchestrator:
                 _cfg.OUTPUTS_DIR,
                 stability_strategies,
                 train_df,
-                n_windows=3,
+                n_windows=int(
+                    getattr(_cfg, "MULTIPLICITY_STABILITY_WINDOWS", 3)
+                ),
+                candidate_fold_matrix=candidate_fold_matrix,
+                trial_count_ledger=trial_count_ledger,
             )
             from gpu_fuzzy_trader.validation.baselines import (
                 write_baseline_reports,

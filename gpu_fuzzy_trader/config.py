@@ -168,6 +168,20 @@ SPLIT_MANIFEST_PATH = "data/split_manifest.json"
 OUTPUTS_DIR = "outputs"
 RUN_LOG_PATH = os.path.join(OUTPUTS_DIR, "run.log")
 REPORTS_DIR = os.path.join(OUTPUTS_DIR, "reports")
+# Multiplicity artifacts are report-only.  The candidate/fold ledger is kept
+# separate from the append-only experiment ledger so score rows remain easy to
+# inspect and replay.
+MULTIPLICITY_REPORT_ENABLED: bool = True
+MULTIPLICITY_STABILITY_WINDOWS: int = 3
+CANDIDATE_FOLD_MATRIX_PATH = os.path.join(
+    REPORTS_DIR, "candidate_fold_matrix.jsonl"
+)
+MULTIPLICITY_SUMMARY_PATH = os.path.join(
+    REPORTS_DIR, "multiplicity_summary.json"
+)
+GOLDEN_BASELINE_REPORT_PATH = os.path.join(
+    REPORTS_DIR, "golden_baseline.json"
+)
 
 PHASE2_POOL_PATHS = {
     "long": os.path.join(OUTPUTS_DIR, "phase2_long_pool.json"),
