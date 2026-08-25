@@ -526,22 +526,37 @@ MTF_DISCOVERY_MAX_RULES_PER_LAYER: int = 8
 # derive support with validation.fold_gates.required_folds() and the ratio.
 MTF_MIN_FOLD_SUPPORT: int = 2
 
-# Role purges are derived from the same horizon/timeframe contract used by
-# discovery.  They are resolved by cross_fitting at row retrieval time, never
-# stored on TemporalFold geometry.
-MTF_HWC_PURGE_MINUTES: int = MTF_HWC_HORIZON_BARS * HWC_TIMEFRAME_MINUTES
-MTF_MWC_PURGE_MINUTES: int = MTF_MWC_HORIZON_BARS * MWC_TIMEFRAME_MINUTES
-MTF_LWC_PURGE_MINUTES: int = MAX_HOLD_CANDLES * LWC_TIMEFRAME_MINUTES
+# Role purges are derived from the horizon/timeframe contract used by
+# discovery.  They are resolved at row retrieval time and never stored on
+# TemporalFold geometry.  Keep the arithmetic here, rather than in each MTF
+# caller, so every role uses one forward-label boundary.
+def _derived_mtf_purges() -> dict[str, int]:
+    """Return current role purges from the canonical horizon settings."""
+    return {
+        "hwc": int(MTF_HWC_HORIZON_BARS) * 240,
+        "mwc": int(MTF_MWC_HORIZON_BARS) * 60,
+        "lwc": int(MAX_HOLD_CANDLES) * 15,
+    }
+
+
+HWC_PURGE: int = _derived_mtf_purges()["hwc"]
+MWC_PURGE: int = _derived_mtf_purges()["mwc"]
+LWC_PURGE: int = _derived_mtf_purges()["lwc"]
+
+# Named minute aliases are retained for manifests and older integrations.
+# They point at the derived values; they are not independent configuration.
+HWC_PURGE_MINUTES: int = HWC_PURGE
+MWC_PURGE_MINUTES: int = MWC_PURGE
+LWC_PURGE_MINUTES: int = LWC_PURGE
+MTF_HWC_PURGE_MINUTES: int = HWC_PURGE
+MTF_MWC_PURGE_MINUTES: int = MWC_PURGE
+MTF_LWC_PURGE_MINUTES: int = LWC_PURGE
 
 
 def purge_for_role(role: str) -> int:
-    """Return the configured forward-label purge for an MTF role."""
+    """Return the current forward-label purge for an MTF role."""
     normalized = str(role).strip().lower()
-    values = {
-        "hwc": MTF_HWC_PURGE_MINUTES,
-        "mwc": MTF_MWC_PURGE_MINUTES,
-        "lwc": MTF_LWC_PURGE_MINUTES,
-    }
+    values = _derived_mtf_purges()
     if normalized not in values:
         raise ValueError(f"Unknown MTF role {role!r}; expected hwc, mwc, or lwc")
     return int(values[normalized])
@@ -3009,9 +3024,9 @@ def effective_config_snapshot(
             "min_duration_bars": int(FOLD_MIN_DURATION_BARS),
             "min_symbol_coverage": float(FOLD_MIN_SYMBOL_COVERAGE),
             "purge_minutes": {
-                "hwc": int(MTF_HWC_PURGE_MINUTES),
-                "mwc": int(MTF_MWC_PURGE_MINUTES),
-                "lwc": int(MTF_LWC_PURGE_MINUTES),
+                "hwc": int(purge_for_role("hwc")),
+                "mwc": int(purge_for_role("mwc")),
+                "lwc": int(purge_for_role("lwc")),
             },
         },
         "phase2": {

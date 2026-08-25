@@ -15,13 +15,11 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-# Standard default purge durations in minutes
-DEFAULT_HWC_PURGE_MINUTES: int = 1440  # K_HWC (6) * 240m = 24h
-DEFAULT_MWC_PURGE_MINUTES: int = 240   # K_MWC (4) * 60m = 4h
-DEFAULT_LWC_PURGE_MINUTES: int = 1440  # Max trade duration (96) * 15m = 24h
+# Deprecated default names are initialized from config below.  New callers
+# must use purge_for_role() so a changed horizon cannot create a second source.
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class TemporalFold:
     """Dataclass defining a single master temporal cross-fitting fold.
 
@@ -31,8 +29,6 @@ class TemporalFold:
         train_end: Nominal ending timestamp of the training interval (before purging).
         test_start: Starting timestamp of the out-of-fold test interval.
         test_end: Ending timestamp of the out-of-fold test interval.
-        is_seed: True if this is the initial seed fold (Fold 1) lacking prior OOF history.
-
     Purge is deliberately not part of a fold.  A fold describes geometry only;
     the caller selects the role-specific purge when rows are retrieved.
     """
@@ -42,7 +38,41 @@ class TemporalFold:
     train_end: pd.Timestamp
     test_start: pd.Timestamp
     test_end: pd.Timestamp
-    is_seed: bool = False
+
+    def __init__(
+        self,
+        fold_id: int,
+        train_start: pd.Timestamp,
+        train_end: pd.Timestamp,
+        test_start: pd.Timestamp,
+        test_end: pd.Timestamp,
+        is_seed: bool | None = None,
+    ) -> None:
+        """Create geometry-only fold metadata.
+
+        ``is_seed`` is accepted only as a deprecated constructor compatibility
+        argument.  It is not a dataclass field and is never used for role
+        eligibility.  Older callers that read the property still receive the
+        Fold 1 geometry alias.
+        """
+        object.__setattr__(self, "fold_id", int(fold_id))
+        object.__setattr__(self, "train_start", train_start)
+        object.__setattr__(self, "train_end", train_end)
+        object.__setattr__(self, "test_start", test_start)
+        object.__setattr__(self, "test_end", test_end)
+        object.__setattr__(
+            self,
+            "_legacy_seed_override",
+            None if is_seed is None else bool(is_seed),
+        )
+
+    @property
+    def is_seed(self) -> bool:
+        """Deprecated read-only alias for the Fold 1 geometry."""
+        override = getattr(self, "_legacy_seed_override", None)
+        if override is not None:
+            return bool(override)
+        return self.fold_id == 1
 
     def to_dict(self) -> dict[str, Any]:
         """Convert fold metadata to JSON-serializable dictionary."""
@@ -52,7 +82,6 @@ class TemporalFold:
             "train_end": self.train_end.isoformat(),
             "test_start": self.test_start.isoformat(),
             "test_end": self.test_end.isoformat(),
-            "is_seed": bool(self.is_seed),
         }
 
     def get_train_slice(
@@ -64,11 +93,14 @@ class TemporalFold:
         role: str | None = None,
     ) -> pd.DataFrame:
         """Extract purged training data for this fold from a DataFrame."""
-        p_min = (
-            _purge_minutes_for_role(role or "hwc")
-            if purge_minutes is None
-            else _validate_purge_minutes(purge_minutes)
-        )
+        if role is not None:
+            p_min = _purge_minutes_for_role(role)
+        elif purge_minutes is not None:
+            p_min = _validate_purge_minutes(purge_minutes)
+        else:
+            # Keep the historical no-argument call working while new callers
+            # should pass role explicitly.
+            p_min = _purge_minutes_for_role("hwc")
         dt_series = _get_datetime_series(df, datetime_col)
         raw_train = df.loc[(dt_series >= self.train_start) & (dt_series < self.test_start)].copy()
         return apply_purge_embargo(
@@ -276,29 +308,6 @@ def _config_value(name: str, default: Any) -> Any:
         return default
 
 
-def _purge_minutes_for_role(role: str) -> int:
-    """Resolve a role purge from config, retaining the old constants as fallback."""
-    normalized = str(role).strip().lower()
-    if normalized not in {"hwc", "mwc", "lwc"}:
-        raise ValueError(f"Unknown MTF role {role!r}; expected hwc, mwc, or lwc")
-
-    configured_helper = _config_value("purge_for_role", None)
-    if callable(configured_helper):
-        return _validate_purge_minutes(configured_helper(normalized))
-
-    configured_name = f"MTF_{normalized.upper()}_PURGE_MINUTES"
-    configured = _config_value(configured_name, None)
-    if configured is not None:
-        return _validate_purge_minutes(configured)
-
-    fallback = {
-        "hwc": DEFAULT_HWC_PURGE_MINUTES,
-        "mwc": DEFAULT_MWC_PURGE_MINUTES,
-        "lwc": DEFAULT_LWC_PURGE_MINUTES,
-    }
-    return fallback[normalized]
-
-
 def _validate_purge_minutes(value: Any) -> int:
     """Validate an explicit purge duration without storing it on a fold."""
     try:
@@ -308,6 +317,73 @@ def _validate_purge_minutes(value: Any) -> int:
     if parsed < 0:
         raise ValueError(f"purge_minutes must be non-negative, got {value!r}")
     return parsed
+
+
+def _configured_default_purge(role: str) -> int:
+    """Resolve a deprecated default name from the canonical config helper."""
+    configured_helper = _config_value("purge_for_role", None)
+    if not callable(configured_helper):
+        raise RuntimeError("gpu_fuzzy_trader.config.purge_for_role is required")
+    return _validate_purge_minutes(configured_helper(role))
+
+
+# Deprecated compatibility aliases.  These values are derived from config and
+# are kept only for callers that imported the old names.
+DEFAULT_HWC_PURGE_MINUTES: int = _configured_default_purge("hwc")
+DEFAULT_MWC_PURGE_MINUTES: int = _configured_default_purge("mwc")
+DEFAULT_LWC_PURGE_MINUTES: int = _configured_default_purge("lwc")
+
+
+_MTF_ROLES = frozenset({"hwc", "mwc", "lwc"})
+
+
+def _normalize_role(role: str) -> str:
+    """Normalize and validate an MTF role name."""
+    normalized = str(role).strip().lower()
+    if normalized not in _MTF_ROLES:
+        raise ValueError(f"Unknown MTF role {role!r}; expected hwc, mwc, or lwc")
+    return normalized
+
+
+def eligible_for_role(fold: TemporalFold, role: str) -> bool:
+    """Return whether ``fold`` may produce OOF data for an MTF role.
+
+    HWC has no upstream layer, so every geometry fold is usable.  MWC and LWC
+    consume upstream OOF evidence and therefore skip Fold 1, which has no
+    preceding HWC OOF history.  LWC follows the same rule for now because its
+    downstream evidence is also unavailable on the seed fold.
+    """
+    if not isinstance(fold, TemporalFold):
+        raise TypeError("eligible_for_role expects a TemporalFold")
+    normalized = _normalize_role(role)
+    fold_id = int(fold.fold_id)
+    if normalized == "hwc":
+        return fold_id >= 1
+    return fold_id > 1
+
+
+def _purge_minutes_for_role(role: str) -> int:
+    """Resolve a role purge from the single-source config helper."""
+    normalized = _normalize_role(role)
+
+    configured_helper = _config_value("purge_for_role", None)
+    if callable(configured_helper):
+        return _validate_purge_minutes(configured_helper(normalized))
+
+    for configured_name in (
+        f"{normalized.upper()}_PURGE",
+        f"MTF_{normalized.upper()}_PURGE_MINUTES",
+    ):
+        configured = _config_value(configured_name, None)
+        if configured is not None:
+            return _validate_purge_minutes(configured)
+
+    fallback = {
+        "hwc": DEFAULT_HWC_PURGE_MINUTES,
+        "mwc": DEFAULT_MWC_PURGE_MINUTES,
+        "lwc": DEFAULT_LWC_PURGE_MINUTES,
+    }
+    return fallback[normalized]
 
 
 def _fold_thresholds(
@@ -419,7 +495,6 @@ def _build_temporal_folds(
             train_end=boundaries[k],
             test_start=boundaries[k],
             test_end=boundaries[k + 1],
-            is_seed=(k == 1),
         )
         for k in range(1, n_folds + 1)
     ]
@@ -847,40 +922,46 @@ def generate_oof_scores(
     datetime_col : str, default "datetime"
         Name of the datetime column.
     exclude_seed : bool or None, default None
-        Excludes Fold 1 (the seed period without prior OOF history) by default.
-        HWC role calls include the seed fold because HWC has no upstream OOF
-        dependency; MWC/LWC and role-less calls exclude it.  Set explicitly to
-        override that policy.
+        Deprecated compatibility alias.  Role-aware calls use
+        ``eligible_for_role``; role-less calls retain the historical default of
+        excluding Fold 1.
     role : {"hwc", "mwc", "lwc"} or None, optional
         Role used to resolve purge and seed-fold eligibility.
 
     Returns
     -------
     pd.DataFrame
-        Combined out-of-fold prediction DataFrame with columns:
-        ``fold_id``, ``is_seed``, and prediction fields.
+        Combined out-of-fold prediction DataFrame with ``fold_id`` and
+        prediction fields.  Role-less compatibility calls also include the
+        deprecated ``is_seed`` output alias.
     """
+    normalized_role = None if role is None else _normalize_role(role)
     if df.empty or not folds:
         return pd.DataFrame()
 
     dt_series = _get_datetime_series(df, datetime_col)
     n_folds = len(folds)
     results: list[pd.DataFrame] = []
-    resolved_exclude_seed = (
-        (role or "").strip().lower() != "hwc"
-        if exclude_seed is None and role is not None
-        else True
-        if exclude_seed is None
-        else bool(exclude_seed)
+    # A role is authoritative.  The old boolean can still request an
+    # additional Fold 1 exclusion, but it can never make an ineligible role
+    # eligible again.
+    eligibility_role = (
+        normalized_role
+        if normalized_role is not None
+        else "hwc"
+        if exclude_seed is False
+        else "mwc"
     )
     p_min = (
-        _purge_minutes_for_role(role or "hwc")
+        _purge_minutes_for_role(normalized_role or "hwc")
         if purge_minutes is None
         else _validate_purge_minutes(purge_minutes)
     )
 
     for i, fold in enumerate(folds):
-        if resolved_exclude_seed and fold.is_seed:
+        if not eligible_for_role(fold, eligibility_role):
+            continue
+        if normalized_role is not None and exclude_seed is True and fold.fold_id == 1:
             continue
 
         # 1. Train slice: [train_start, test_start)
@@ -906,7 +987,13 @@ def generate_oof_scores(
 
         # 3. Fit & Predict callback
         preds = fit_predict_fn(purged_train, test_slice, fold)
-        pred_df = _format_fold_predictions(preds, test_slice, fold, datetime_col)
+        pred_df = _format_fold_predictions(
+            preds,
+            test_slice,
+            fold,
+            datetime_col,
+            include_legacy_seed_alias=normalized_role is None,
+        )
         results.append(pred_df)
 
     if not results:
@@ -928,6 +1015,8 @@ def _format_fold_predictions(
     test_slice: pd.DataFrame,
     fold: TemporalFold,
     datetime_col: str,
+    *,
+    include_legacy_seed_alias: bool = False,
 ) -> pd.DataFrame:
     """Format callback prediction output into a standardized DataFrame."""
     if isinstance(preds, pd.DataFrame):
@@ -953,8 +1042,32 @@ def _format_fold_predictions(
         out.insert(1, "symbol", test_slice["symbol"].values)
 
     out["fold_id"] = fold.fold_id
-    out["is_seed"] = fold.is_seed
+    if include_legacy_seed_alias:
+        out["is_seed"] = fold.fold_id == 1
     return out
+
+
+class _FoldBoundaryRecord(dict[str, Any]):
+    """Geometry mapping with a read-only compatibility lookup for old code.
+
+    The deprecated seed marker is intentionally not stored in the mapping, so
+    manifests and JSON payloads contain geometry only.  Direct indexing by an
+    older in-memory caller remains supported for one compatibility cycle.
+    """
+
+    def __init__(self, data: dict[str, Any], fold: TemporalFold) -> None:
+        super().__init__(data)
+        self._fold = fold
+
+    def __getitem__(self, key: str) -> Any:
+        if key == "is_seed":
+            return self._fold.fold_id == 1
+        return super().__getitem__(key)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        if key == "is_seed":
+            return self._fold.fold_id == 1
+        return super().get(key, default)
 
 
 def export_fold_boundaries(
@@ -1011,7 +1124,7 @@ def export_fold_boundaries(
         record = fold.to_dict()
         if resolved_contexts is not None:
             record.update(resolved_contexts[index].to_dict())
-        exported.append(record)
+        exported.append(_FoldBoundaryRecord(record, fold))
     return exported
 
 
@@ -1028,16 +1141,15 @@ def validate_master_temporal_folds(folds: Sequence[TemporalFold]) -> bool:
 
     Checks:
     1. Fold IDs are strictly sequential starting at 1.
-    2. Fold 1 has is_seed = True; subsequent folds have is_seed = False.
-    3. Train start is identical across all folds.
-    4. Train end == test start for every fold.
-    5. Test intervals are contiguous (test_end_{k} == test_start_{k+1}).
+    2. Train start is identical across all folds.
+    3. Train end == test start for every fold.
+    4. Test intervals are contiguous (test_end_{k} == test_start_{k+1}).
     """
     if not folds:
         return False
 
     first = folds[0]
-    if first.fold_id != 1 or not first.is_seed:
+    if first.fold_id != 1:
         return False
 
     base_train_start = first.train_start
@@ -1052,9 +1164,14 @@ def validate_master_temporal_folds(folds: Sequence[TemporalFold]) -> bool:
             return False
         if fold.test_start >= fold.test_end:
             return False
-        if i == 0 and not fold.is_seed:
-            return False
-        if i > 0 and fold.is_seed:
+        # A legacy constructor override is checked only to avoid silently
+        # accepting a corrupted object from an older caller.  Generated folds
+        # have no override and validation is purely geometric.
+        legacy_override = getattr(fold, "_legacy_seed_override", None)
+        if (
+            legacy_override is not None
+            and bool(legacy_override) != (int(fold.fold_id) == 1)
+        ):
             return False
         if i > 0:
             prev_fold = folds[i - 1]

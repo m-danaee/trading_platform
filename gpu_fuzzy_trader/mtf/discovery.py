@@ -29,7 +29,7 @@ from gpu_fuzzy_trader.evolution.directional_evaluator import (
     evaluate_directional_rule,
     fit_directional_threshold,
 )
-from gpu_fuzzy_trader.mtf.cross_fitting import TemporalFold
+from gpu_fuzzy_trader.mtf.cross_fitting import TemporalFold, eligible_for_role
 from gpu_fuzzy_trader.mtf.ensembler import (
     compute_ensemble_direction_and_strength,
     compute_rule_weights,
@@ -94,8 +94,7 @@ def discovery_search_contract(role: str) -> dict[str, Any]:
 
 def discovery_purge_minutes(role: str) -> int:
     """Return the exact temporal purge required by one MTF label horizon."""
-    profile = _configured_rule_search_profile(role)
-    return int(profile.forward_horizon_bars) * int(profile.timeframe_minutes)
+    return int(_cfg.purge_for_role(role))
 
 
 def discovery_search_identity(role: str) -> str:
@@ -604,9 +603,9 @@ def discover_directional_layer(
     fold_metrics: dict[tuple, list[dict[str, Any]]] = {}
     oof_parts: list[pd.DataFrame] = []
     theta_per_fold: dict[str, float] = {}
-    valid_folds = [f for f in folds if not f.is_seed]
+    valid_folds = [f for f in folds if eligible_for_role(f, role)]
     for index, fold in enumerate(folds):
-        if fold.is_seed:
+        if not eligible_for_role(fold, role):
             continue
         train_mask = (bars["datetime"] >= fold.train_start) & (bars["datetime"] < fold.test_start)
         test_mask = (bars["datetime"] >= fold.test_start) & (
@@ -618,7 +617,7 @@ def discover_directional_layer(
             continue
         # Purge rows whose forward movement reaches the test start.  The layer
         # labels are already materialized on the full bar frame.
-        purge = pd.Timedelta(minutes=profile.forward_horizon_bars * timeframe)
+        purge = pd.Timedelta(minutes=discovery_purge_minutes(role))
         train = train.loc[train["datetime"] < fold.test_start - purge]
         if train.empty:
             continue
@@ -641,7 +640,6 @@ def discover_directional_layer(
             "direction_score": direction_score,
             "strength_score": strength_score,
             "fold_id": int(fold.fold_id),
-            "is_seed": False,
         }))
 
     min_fold_support = max(
