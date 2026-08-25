@@ -52,7 +52,6 @@ Environment overrides: DATA_ROOT, RAW_TRAIN_CSV_PATH, RAW_TEST_CSV_PATH,
 from __future__ import annotations
 
 import json
-import logging
 import math
 import os
 from dataclasses import dataclass
@@ -64,9 +63,6 @@ import pandas as pd
 # Repo root (parent of gpu_fuzzy_trader/) — paths outside per-run OUTPUTS_DIR.
 _PROJECT_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), os.pardir))
-
-_logger = logging.getLogger(__name__)
-
 
 # =============================================================================
 # Global randomness
@@ -284,52 +280,6 @@ def holdout_train_val_label(frac: float = HOLDOUT_TRAIN_FRACTION) -> str:
     train_pct = int(round(frac * 100))
     val_pct = 100 - train_pct
     return f"{train_pct}/{val_pct}"
-
-
-# --- Purged walk-forward (when SPLIT_MODE == purged_walk_forward) ---
-# NOTE: Purged walk-forward CV is deprecated. SPLIT_MODE is now "holdout"
-# with HOLDOUT_TRAIN_FRACTION + HOLDOUT_EMBARGO_CANDLES (see above).
-# The purged-WF keys below are retained for reference but are inactive when
-# SPLIT_MODE != "purged_walk_forward".
-
-# PURGED_WF_N_SPLITS — number of CV folds on the train prefix (K).
-#   K CV folds are built on the first (1 - HOLDOUT_FRACTION) of each symbol;
-#   a separate primary holdout (validation_30) is always appended (K+1 total).
-PURGED_WF_N_SPLITS = 2
-
-# PURGED_WF_HOLDOUT_FRACTION — tail fraction per symbol reserved for val parquet.
-PURGED_WF_HOLDOUT_FRACTION = 0.3
-
-# PURGED_WF_EMBARGO_CANDLES — purge gap between train and valid (label horizon).
-PURGED_WF_EMBARGO_CANDLES = 96
-
-# PURGED_WF_MIN_TRAIN_FRACTION — minimum train prefix before first CV valid block.
-# Set to 0.4 so the strict no-leak safe region (prefix - embargo) is wide enough
-# to fit PHASE1_SAMPLING_TOTAL per-symbol bars without overlap.
-PURGED_WF_MIN_TRAIN_FRACTION = 0.4
-
-# PURGED_WF_MIN_VALID_ROWS — minimum rows in a CV valid block (holdout exempt).
-PURGED_WF_MIN_VALID_ROWS = 3000
-
-# PURGED_WF_AGGREGATION — combine per-fold metrics: worst | mean.
-# mean averages return/PF/Sortino; still uses max drawdown and min trades.
-# Prefer mean when per-fold trade floors are low (scaled slices) so one noisy
-# fold does not dominate fitness; worst is more conservative for large folds.
-PURGED_WF_AGGREGATION = "mean"
-
-# PURGED_WF_REQUIRE_ALL_CV_FOLDS — pool admission also checks every CV fold.
-PURGED_WF_REQUIRE_ALL_CV_FOLDS = False
-
-# PURGED_WF_SCALE_TRADE_FLOORS — scale trade-count gates by slice row fraction.
-PURGED_WF_SCALE_TRADE_FLOORS = True
-
-# PURGED_WF_MIN_TRADE_FLOOR_ABSOLUTE — floor after proportional scaling.
-PURGED_WF_MIN_TRADE_FLOOR_ABSOLUTE = 5
-
-CV_FOLDS_MANIFEST_PATH = "data/cv_folds_manifest.json"
-
-# Set at split time; used by scale_trade_floor when purged mode is active.
-_PURGED_WF_REFERENCE_ROWS: int | None = None
 
 
 # =============================================================================
@@ -2286,18 +2236,6 @@ def phase2_shared_archive_path(direction: str) -> str:
     return os.path.join(PHASE2_ARCHIVE_DIR, direction, "shared_archive.json")
 
 
-def split_mode_is_purged_walk_forward() -> bool:
-    """True when the active split mode is purged walk-forward."""
-    return str(SPLIT_MODE).strip().lower() == "purged_walk_forward"
-
-
-
-def set_purged_wf_reference_rows(n_rows: int) -> None:
-    """Store full train_new.csv row count after loader prep (split time)."""
-    global _PURGED_WF_REFERENCE_ROWS
-    _PURGED_WF_REFERENCE_ROWS = max(0, int(n_rows))
-
-
 def required_folds(eligible: int, ratio: float | None = None) -> int:
     """Return ratio-based fold support through the canonical gate helper.
 
@@ -2318,23 +2256,13 @@ def scale_trade_floor(
     n_rows: int,
     reference_rows: int | None = None,
 ) -> int:
-    """Deprecated compatibility wrapper for fold-aware count scaling.
+    """Deprecated wrapper around the canonical fold-aware count gate.
 
     New callers should use ``validation.fold_gates.scale_count_gate`` with
-    explicit train or OOF exposure.  The legacy purged-WF path retains its
-    historical rounding mode so existing callers keep their old results.
+    explicit train or OOF exposure.  Without an explicit reference exposure,
+    the historical base value is retained for existing phase helpers.
     """
-    if not split_mode_is_purged_walk_forward():
-        return int(base)
-    if not PURGED_WF_SCALE_TRADE_FLOORS:
-        return int(base)
-    ref = reference_rows if reference_rows is not None else _PURGED_WF_REFERENCE_ROWS
-    if ref is None or ref <= 0:
-        _logger.warning(
-            "scale_trade_floor: purged walk-forward active but reference_rows "
-            "unset; using unscaled base=%s (call set_purged_wf_reference_rows)",
-            base,
-        )
+    if reference_rows is None or int(reference_rows) <= 0:
         return int(base)
     from gpu_fuzzy_trader.validation.fold_gates import (
         FoldExposure,
@@ -2344,7 +2272,9 @@ def scale_trade_floor(
     return scale_count_gate(
         int(base),
         FoldExposure(rows=int(n_rows), duration_bars=0, per_symbol_rows={}),
-        FoldExposure(rows=int(ref), duration_bars=0, per_symbol_rows={}),
+        FoldExposure(
+            rows=int(reference_rows), duration_bars=0, per_symbol_rows={}
+        ),
         absolute_min=int(FOLD_ABSOLUTE_MIN_TRADES),
         rounding="legacy",
     )
@@ -2564,14 +2494,6 @@ def validate_config(
                   "HOLDOUT_EMBARGO_CANDLES must equal MAX_HOLD_CANDLES")
     _config_check(int(VALIDATION_HALF_PURGE_CANDLES) >= int(MAX_HOLD_CANDLES),
                   "VALIDATION_HALF_PURGE_CANDLES must cover MAX_HOLD_CANDLES")
-    # The 96-bar horizon contract must stay coherent across every linked
-    # embargo/tail knob (24 h at 15-minute bars).
-    _config_check(
-        int(TAIL_DROP_ROWS) == int(HOLDOUT_EMBARGO_CANDLES)
-        == int(PURGED_WF_EMBARGO_CANDLES) == int(MAX_HOLD_CANDLES),
-        "TAIL_DROP_ROWS, HOLDOUT_EMBARGO_CANDLES, PURGED_WF_EMBARGO_CANDLES, "
-        "and MAX_HOLD_CANDLES must all be equal",
-    )
     _config_check(
         int(VALIDATION_HALF_PURGE_CANDLES) == int(MAX_HOLD_CANDLES),
         "VALIDATION_HALF_PURGE_CANDLES must equal MAX_HOLD_CANDLES",
