@@ -498,6 +498,17 @@ CONTEXT_COLUMNS: tuple[str, ...] = (
 # ---------------------------------------------------------------------------
 MTF_HWC_HORIZON_BARS: int = 6
 MTF_MWC_HORIZON_BARS: int = 4
+# Master temporal folds are selected adaptively from MAX down to MIN.  These
+# floors are intentionally small enough for the minimum auditable fold, while
+# the absolute trade floor remains a separate count-gate contract.
+MTF_MAX_FOLDS: int = 4
+MTF_MIN_FOLDS: int = 2
+MTF_MIN_FOLD_SUPPORT_RATIO: float = 0.67
+FOLD_MIN_EFFECTIVE_ROWS: int = 5
+FOLD_MIN_ROWS_PER_SYMBOL: int = 5
+FOLD_ABSOLUTE_MIN_TRADES: int = 5
+FOLD_MIN_DURATION_BARS: int = 5
+FOLD_MIN_SYMBOL_COVERAGE: float = 1.0
 MTF_V_HWC_LONG: float = 0.65
 MTF_V_HWC_SHORT: float = 0.60
 MTF_V_MWC_LONG: float = 0.60
@@ -508,9 +519,30 @@ MTF_MIN_EVIDENCE_STRENGTH_MWC: float = 0.15
 MTF_RETENTION_FLOOR: float = 0.50
 MTF_RETENTION_TARGET: float = 0.60
 MTF_PIPELINE_ENABLED: bool = True
-MTF_N_FOLDS: int = 4
+# Deprecated compatibility alias.  New code must use MTF_MAX_FOLDS.
+MTF_N_FOLDS: int = MTF_MAX_FOLDS
 MTF_DISCOVERY_MAX_RULES_PER_LAYER: int = 8
 MTF_MIN_FOLD_SUPPORT: int = 2
+
+# Role purges are derived from the same horizon/timeframe contract used by
+# discovery.  They are resolved by cross_fitting at row retrieval time, never
+# stored on TemporalFold geometry.
+MTF_HWC_PURGE_MINUTES: int = MTF_HWC_HORIZON_BARS * HWC_TIMEFRAME_MINUTES
+MTF_MWC_PURGE_MINUTES: int = MTF_MWC_HORIZON_BARS * MWC_TIMEFRAME_MINUTES
+MTF_LWC_PURGE_MINUTES: int = MAX_HOLD_CANDLES * LWC_TIMEFRAME_MINUTES
+
+
+def purge_for_role(role: str) -> int:
+    """Return the configured forward-label purge for an MTF role."""
+    normalized = str(role).strip().lower()
+    values = {
+        "hwc": MTF_HWC_PURGE_MINUTES,
+        "mwc": MTF_MWC_PURGE_MINUTES,
+        "lwc": MTF_LWC_PURGE_MINUTES,
+    }
+    if normalized not in values:
+        raise ValueError(f"Unknown MTF role {role!r}; expected hwc, mwc, or lwc")
+    return int(values[normalized])
 
 # Maximum allowed candle staleness for forward-filled HTF features on data gaps
 MTF_MAX_STALENESS_CANDLES: int = 5
@@ -2504,6 +2536,38 @@ def validate_config(
         "MTF HWC and MWC label horizons must be positive",
     )
     _config_check(
+        int(MTF_MIN_FOLDS) >= 2,
+        "MTF_MIN_FOLDS must be at least 2",
+    )
+    _config_check(
+        int(MTF_MAX_FOLDS) >= int(MTF_MIN_FOLDS),
+        "MTF_MAX_FOLDS must be >= MTF_MIN_FOLDS",
+    )
+    _config_check(
+        0.0 < float(MTF_MIN_FOLD_SUPPORT_RATIO) <= 1.0,
+        "MTF_MIN_FOLD_SUPPORT_RATIO must be in (0, 1]",
+    )
+    _config_check(
+        int(FOLD_MIN_EFFECTIVE_ROWS) >= 1,
+        "FOLD_MIN_EFFECTIVE_ROWS must be positive",
+    )
+    _config_check(
+        int(FOLD_MIN_ROWS_PER_SYMBOL) >= 1,
+        "FOLD_MIN_ROWS_PER_SYMBOL must be positive",
+    )
+    _config_check(
+        int(FOLD_ABSOLUTE_MIN_TRADES) >= 1,
+        "FOLD_ABSOLUTE_MIN_TRADES must be positive",
+    )
+    _config_check(
+        int(FOLD_MIN_DURATION_BARS) >= 1,
+        "FOLD_MIN_DURATION_BARS must be positive",
+    )
+    _config_check(
+        0.0 < float(FOLD_MIN_SYMBOL_COVERAGE) <= 1.0,
+        "FOLD_MIN_SYMBOL_COVERAGE must be in (0, 1]",
+    )
+    _config_check(
         int(MTF_DISCOVERY_MAX_RULES_PER_LAYER) >= 2,
         "MTF_DISCOVERY_MAX_RULES_PER_LAYER must be at least 2",
     )
@@ -2894,6 +2958,21 @@ def effective_config_snapshot(
             "tail_drop_rows": int(TAIL_DROP_ROWS),
         },
         "context": context_contract(),
+        "mtf": {
+            "max_folds": int(MTF_MAX_FOLDS),
+            "min_folds": int(MTF_MIN_FOLDS),
+            "min_fold_support_ratio": float(MTF_MIN_FOLD_SUPPORT_RATIO),
+            "min_effective_rows": int(FOLD_MIN_EFFECTIVE_ROWS),
+            "min_rows_per_symbol": int(FOLD_MIN_ROWS_PER_SYMBOL),
+            "absolute_min_trades": int(FOLD_ABSOLUTE_MIN_TRADES),
+            "min_duration_bars": int(FOLD_MIN_DURATION_BARS),
+            "min_symbol_coverage": float(FOLD_MIN_SYMBOL_COVERAGE),
+            "purge_minutes": {
+                "hwc": int(MTF_HWC_PURGE_MINUTES),
+                "mwc": int(MTF_MWC_PURGE_MINUTES),
+                "lwc": int(MTF_LWC_PURGE_MINUTES),
+            },
+        },
         "phase2": {
             "population_size": int(PHASE2_POPULATION_SIZE),
             "generations": int(PHASE2_GENERATIONS),
