@@ -6,7 +6,7 @@ Tests cover:
   - Chronological ordering preserved (train rows precede validation rows)
   - No row overlap between train and validation sets
   - Row count conservation (train + validation + embargo == total)
-  - Parquet persistence to TRAIN_70_PATH and VALIDATION_30_PATH
+  - Parquet persistence to DEVELOPMENT_TRAIN_PATH and VALIDATION_PATH
   - Multi-symbol independence (each symbol split independently)
   - Edge cases: single-row symbol, small row counts (embargo consumes all)
   - Module-level convenience function
@@ -22,14 +22,6 @@ import pandas as pd
 import pytest
 
 from gpu_fuzzy_trader import config as _cfg
-from gpu_fuzzy_trader.config import (
-    LABEL_COLUMNS,
-    TAIL_DROP_ROWS,
-    TRAIN_70_PATH,
-    VALIDATION_30_PATH,
-    HOLDOUT_TRAIN_FRACTION,
-    HOLDOUT_EMBARGO_CANDLES,
-)
 from gpu_fuzzy_trader.data.splitter import (
     Data_Splitter,
     load_cached_split_if_fresh,
@@ -96,32 +88,43 @@ def _patch_split_paths(tmp_dir: str):
     import gpu_fuzzy_trader.config as config_mod
     import gpu_fuzzy_trader.data.splitter as splitter_mod
 
-    train_path = os.path.join(tmp_dir, "train_70.parquet")
-    val_path = os.path.join(tmp_dir, "validation_30.parquet")
+    train_path = os.path.join(tmp_dir, "development_train.parquet")
+    val_path = os.path.join(tmp_dir, "validation.parquet")
     fitness_path = os.path.join(tmp_dir, "validation_fitness.parquet")
     selection_path = os.path.join(tmp_dir, "validation_selection.parquet")
-    manifest_path = os.path.join(tmp_dir, "cv_folds_manifest.json")
+    manifest_path = os.path.join(tmp_dir, "split_manifest.json")
 
     originals = {
-        "train": (config_mod.TRAIN_70_PATH, splitter_mod.TRAIN_70_PATH),
-        "val": (config_mod.VALIDATION_30_PATH, splitter_mod.VALIDATION_30_PATH),
+        "train": (
+            config_mod.DEVELOPMENT_TRAIN_PATH,
+            config_mod.TRAIN_70_PATH,
+            splitter_mod.TRAIN_70_PATH,
+        ),
+        "val": (
+            config_mod.VALIDATION_PATH,
+            config_mod.VALIDATION_30_PATH,
+            splitter_mod.VALIDATION_30_PATH,
+        ),
         "fitness": (config_mod.VALIDATION_FITNESS_PATH, splitter_mod.VALIDATION_FITNESS_PATH),
         "selection": (
             config_mod.VALIDATION_SELECTION_PATH,
             splitter_mod.VALIDATION_SELECTION_PATH,
         ),
-        "manifest": (config_mod.CV_FOLDS_MANIFEST_PATH,),
-        "mode": (config_mod.SPLIT_MODE,),
+        "manifest": (
+            config_mod.SPLIT_MANIFEST_PATH,
+        ),
     }
 
     @contextlib.contextmanager
-    def _cm(split_mode: str = "holdout"):
+    def _cm():
+        config_mod.DEVELOPMENT_TRAIN_PATH = train_path
         config_mod.TRAIN_70_PATH = train_path
+        config_mod.VALIDATION_PATH = val_path
         config_mod.VALIDATION_30_PATH = val_path
         config_mod.VALIDATION_FITNESS_PATH = fitness_path
         config_mod.VALIDATION_SELECTION_PATH = selection_path
+        config_mod.SPLIT_MANIFEST_PATH = manifest_path
         config_mod.CV_FOLDS_MANIFEST_PATH = manifest_path
-        config_mod.SPLIT_MODE = split_mode
         splitter_mod.TRAIN_70_PATH = train_path
         splitter_mod.VALIDATION_30_PATH = val_path
         splitter_mod.VALIDATION_FITNESS_PATH = fitness_path
@@ -135,21 +138,25 @@ def _patch_split_paths(tmp_dir: str):
                 "manifest": manifest_path,
             }
         finally:
-            config_mod.TRAIN_70_PATH = originals["train"][0]
-            config_mod.VALIDATION_30_PATH = originals["val"][0]
+            config_mod.DEVELOPMENT_TRAIN_PATH = originals["train"][0]
+            config_mod.TRAIN_70_PATH = originals["train"][1]
+            config_mod.VALIDATION_PATH = originals["val"][0]
+            config_mod.VALIDATION_30_PATH = originals["val"][1]
             config_mod.VALIDATION_FITNESS_PATH = originals["fitness"][0]
             config_mod.VALIDATION_SELECTION_PATH = originals["selection"][0]
-            config_mod.CV_FOLDS_MANIFEST_PATH = originals["manifest"][0]
-            config_mod.SPLIT_MODE = originals["mode"][0]
-            splitter_mod.TRAIN_70_PATH = originals["train"][1]
-            splitter_mod.VALIDATION_30_PATH = originals["val"][1]
+            config_mod.SPLIT_MANIFEST_PATH = originals["manifest"][0]
+            splitter_mod.TRAIN_70_PATH = originals["train"][2]
+            splitter_mod.VALIDATION_30_PATH = originals["val"][2]
             splitter_mod.VALIDATION_FITNESS_PATH = originals["fitness"][1]
             splitter_mod.VALIDATION_SELECTION_PATH = originals["selection"][1]
 
     return _cm
 
 
-def _split(symbol_sizes: dict, tmp_dir: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+def _split(
+    symbol_sizes: dict,
+    tmp_dir: str,
+) -> tuple[pd.DataFrame, pd.DataFrame, str, str]:
     """Helper: build df, patch paths, run split, return (train, val)."""
     with _patch_split_paths(tmp_dir)() as paths:
         df = _make_df(symbol_sizes)
@@ -182,7 +189,7 @@ class TestSplitRatio:
 
     def test_single_symbol_validation_size_after_embargo(self, tmp_path):
         """Remaining rows after embargo gap go to validation."""
-        n = 2000  # large enough to have val after 288-bar embargo
+        n = 2000  # large enough to have val after the 96-bar embargo
         train_df, val_df, _, _ = _split({1: n}, str(tmp_path))
         _, exp_val = self._expected_train_val(n)
         assert len(val_df) == exp_val
@@ -360,6 +367,22 @@ class TestParquetPersistence:
             loaded.reset_index(drop=True),
         )
 
+    def test_manifest_records_single_holdout_contract(self, tmp_path):
+        import json
+
+        with _patch_split_paths(str(tmp_path))() as paths:
+            df = _make_df({1: 2000, 2: 1800})
+            Data_Splitter().split_and_persist(df)
+            manifest = json.loads(
+                open(paths["manifest"], encoding="utf-8").read(),
+            )
+
+        assert manifest["holdout_train_fraction"] == _cfg.HOLDOUT_TRAIN_FRACTION
+        assert manifest["embargo_candles"] == _cfg.HOLDOUT_EMBARGO_CANDLES
+        assert manifest["purge_candles"] == _cfg.VALIDATION_PURGE_CANDLES
+        assert "split_mode" not in manifest
+        assert "config_fingerprint" not in manifest
+
 
 # ---------------------------------------------------------------------------
 # Tests: edge cases
@@ -367,20 +390,20 @@ class TestParquetPersistence:
 
 class TestEdgeCases:
     def test_single_row_symbol_all_embargo(self, tmp_path):
-        """Single row: floor(1 * train_frac) = 0, and 288-bar embargo consumes it."""
+        """Single row: floor(1 * train_frac) = 0, and embargo consumes it."""
         train_df, val_df, _, _ = _split({1: 1}, str(tmp_path))
         # train = floor(1 * 0.65) = 0
-        # embargo_end = min(0 + 288, 1) = 1 → val = 0
+        # embargo_end = min(0 + 96, 1) = 1 → val = 0
         assert len(train_df) == 0
         assert len(val_df) == 0
 
     def test_small_symbol_embargo_consumes_all_validation(self, tmp_path):
-        """Small symbol where 288-bar embargo leaves no validation rows."""
+        """Small symbol where the embargo leaves no validation rows."""
         train_df, val_df, _, _ = _split({1: 4}, str(tmp_path))
         train_frac = float(_cfg.HOLDOUT_TRAIN_FRACTION)
         exp_train = math.floor(4 * train_frac)  # floor(4 * 0.65) = 2
         assert len(train_df) == exp_train
-        # embargo_end = min(2 + 288, 4) = 4 → val = 0
+        # embargo_end = min(2 + 96, 4) = 4 → val = 0
         assert len(val_df) == 0
 
     def test_empty_dataframe_returns_empty_dfs(self, tmp_path):
@@ -459,7 +482,7 @@ class TestValidationHalfPurge:
     def test_fitness_and_selection_are_separated_by_label_horizon(self):
         validation = _make_df({"BTCUSDT": 1600, "ETHUSDT": 1701})
         fitness, selection = split_validation_fitness_selection(validation)
-        purge = int(_cfg.VALIDATION_HALF_PURGE_CANDLES)
+        purge = int(_cfg.VALIDATION_PURGE_CANDLES)
 
         for symbol, group in validation.groupby("symbol", observed=False):
             group = group.sort_values("datetime").reset_index(drop=True)
@@ -471,39 +494,21 @@ class TestValidationHalfPurge:
                 selection["symbol"] == symbol, "_symbol_bar_index"
             ].tolist()
             assert fitness_bars == list(range(max(0, boundary - purge)))
-            assert selection_bars == list(
-                range(min(len(group), boundary + purge), len(group))
-            )
+            assert selection_bars == list(range(boundary, len(group)))
             if fitness_bars and selection_bars:
-                assert fitness_bars[-1] + purge < selection_bars[0]
-
-
-class TestPurgedWalkForwardSplit:
-    def test_purged_mode_returns_cv_folds(self, tmp_path, monkeypatch):
-        import gpu_fuzzy_trader.config as config_mod
-
-        monkeypatch.setattr(config_mod, "PURGED_WF_MIN_VALID_ROWS", 200)
-        monkeypatch.setattr(config_mod, "PURGED_WF_MIN_TRAIN_FRACTION", 0.20)
-
-        with _patch_split_paths(str(tmp_path))("purged_walk_forward") as paths:
-            df = _make_df({1: 6000, 2: 6000})
-            train_df, val_df, cv_folds = Data_Splitter().split_and_persist(df)
-            assert cv_folds is not None
-            assert len(cv_folds) >= 2
-            assert len(train_df) + len(val_df) <= len(df)
-            assert os.path.exists(paths["manifest"])
+                assert selection_bars[0] - fitness_bars[-1] - 1 == purge
 
 
 class TestLoadCachedSplitIfFresh:
-    def _write_holdout_cache(self, tmp_path, monkeypatch, *, split_mode="holdout"):
+    def _write_holdout_cache(self, tmp_path, monkeypatch):
         import gpu_fuzzy_trader.config as config_mod
 
         csv_path = tmp_path / "train.csv"
         csv_path.write_text("x\n1\n", encoding="utf-8")
         monkeypatch.setattr(config_mod, "TRAIN_CSV_PATH", str(csv_path))
 
-        n = 4000  # large enough for both purged validation halves
-        with _patch_split_paths(str(tmp_path))(split_mode) as paths:
+        n = 4000  # large enough for both validation halves and the gap
+        with _patch_split_paths(str(tmp_path))() as paths:
             df = _make_df({1: n})
             Data_Splitter().split_and_persist(df)
 
@@ -512,16 +517,16 @@ class TestLoadCachedSplitIfFresh:
                 os.utime(path, (2, 2))
 
         monkeypatch.setattr(config_mod, "TRAIN_CSV_PATH", str(csv_path))
+        monkeypatch.setattr(config_mod, "DEVELOPMENT_TRAIN_PATH", paths["train"])
         monkeypatch.setattr(config_mod, "TRAIN_70_PATH", paths["train"])
+        monkeypatch.setattr(config_mod, "VALIDATION_PATH", paths["val"])
         monkeypatch.setattr(config_mod, "VALIDATION_30_PATH", paths["val"])
         monkeypatch.setattr(
             config_mod, "VALIDATION_FITNESS_PATH", paths["fitness"])
         monkeypatch.setattr(
             config_mod, "VALIDATION_SELECTION_PATH", paths["selection"],
         )
-        monkeypatch.setattr(
-            config_mod, "CV_FOLDS_MANIFEST_PATH", paths["manifest"])
-        monkeypatch.setattr(config_mod, "SPLIT_MODE", split_mode)
+        monkeypatch.setattr(config_mod, "SPLIT_MANIFEST_PATH", paths["manifest"])
         return paths
 
     def test_holdout_cache_hit_returns_all_frames(self, tmp_path, monkeypatch):
@@ -535,17 +540,17 @@ class TestLoadCachedSplitIfFresh:
         assert len(val_selection) > 0
         assert cv_folds is None
 
-    def test_holdout_cache_rejected_when_manifest_split_mode_differs(
+    def test_cache_accepts_removed_mode_metadata(
         self, tmp_path, monkeypatch,
     ):
         paths = self._write_holdout_cache(tmp_path, monkeypatch)
         import json
 
         manifest = json.loads(open(paths["manifest"], encoding="utf-8").read())
-        manifest["split_mode"] = "purged_walk_forward"
+        manifest["split_mode"] = "obsolete_metadata"
         open(paths["manifest"], "w",
              encoding="utf-8").write(json.dumps(manifest))
-        assert load_cached_split_if_fresh() is None
+        assert load_cached_split_if_fresh() is not None
 
     def test_cache_rejected_when_csv_newer_than_parquets(self, tmp_path, monkeypatch):
         paths = self._write_holdout_cache(tmp_path, monkeypatch)
@@ -584,87 +589,15 @@ class TestLoadCachedSplitIfFresh:
 
         assert load_cached_split_if_fresh() is None
 
-    def test_purged_reference_rows_mismatch_rejects_cache(
+    def test_holdout_reference_rows_mismatch_rejects_cache(
         self, tmp_path, monkeypatch,
     ):
         import json
 
-        import gpu_fuzzy_trader.config as config_mod
-
-        csv_path = tmp_path / "train.csv"
-        csv_path.write_text("x\n1\n", encoding="utf-8")
-        monkeypatch.setattr(config_mod, "TRAIN_CSV_PATH", str(csv_path))
-        df = _make_df({1: 6000, 2: 6000})
-
-        with _patch_split_paths(str(tmp_path))("purged_walk_forward") as paths:
-            Data_Splitter().split_and_persist(df)
-
-            manifest = json.loads(
-                open(paths["manifest"], encoding="utf-8").read())
-            manifest["reference_rows"] = int(manifest["reference_rows"]) + 999
-            open(paths["manifest"], "w", encoding="utf-8").write(
-                json.dumps(manifest),
-            )
-
-            os.utime(csv_path, (1, 1))
-            for path in paths.values():
-                os.utime(path, (2, 2))
-
-        monkeypatch.setattr(config_mod, "TRAIN_CSV_PATH", str(csv_path))
-        monkeypatch.setattr(config_mod, "TRAIN_70_PATH", paths["train"])
-        monkeypatch.setattr(config_mod, "VALIDATION_30_PATH", paths["val"])
-        monkeypatch.setattr(
-            config_mod, "VALIDATION_FITNESS_PATH", paths["fitness"])
-        monkeypatch.setattr(
-            config_mod, "VALIDATION_SELECTION_PATH", paths["selection"],
-        )
-        monkeypatch.setattr(
-            config_mod, "CV_FOLDS_MANIFEST_PATH", paths["manifest"])
-        monkeypatch.setattr(config_mod, "SPLIT_MODE", "purged_walk_forward")
-
-        monkeypatch.setattr(
-            "gpu_fuzzy_trader.data.loader.Data_Loader.load_dataset",
-            lambda self, path: df.copy(),
+        paths = self._write_holdout_cache(tmp_path, monkeypatch)
+        manifest = json.loads(open(paths["manifest"], encoding="utf-8").read())
+        manifest["reference_rows"] = int(manifest["reference_rows"]) + 999
+        open(paths["manifest"], "w", encoding="utf-8").write(
+            json.dumps(manifest),
         )
         assert load_cached_split_if_fresh() is None
-
-    def test_purged_cache_sets_reference_rows_from_fresh_load(
-        self, tmp_path, monkeypatch,
-    ):
-        import gpu_fuzzy_trader.config as config_mod
-
-        csv_path = tmp_path / "train.csv"
-        csv_path.write_text("x\n1\n", encoding="utf-8")
-        monkeypatch.setattr(config_mod, "TRAIN_CSV_PATH", str(csv_path))
-        df = _make_df({1: 6000, 2: 6000})
-
-        with _patch_split_paths(str(tmp_path))("purged_walk_forward") as paths:
-            Data_Splitter().split_and_persist(df)
-            expected_rows = len(df)
-
-            os.utime(csv_path, (1, 1))
-            for path in paths.values():
-                os.utime(path, (2, 2))
-
-        monkeypatch.setattr(config_mod, "TRAIN_CSV_PATH", str(csv_path))
-        monkeypatch.setattr(config_mod, "TRAIN_70_PATH", paths["train"])
-        monkeypatch.setattr(config_mod, "VALIDATION_30_PATH", paths["val"])
-        monkeypatch.setattr(
-            config_mod, "VALIDATION_FITNESS_PATH", paths["fitness"])
-        monkeypatch.setattr(
-            config_mod, "VALIDATION_SELECTION_PATH", paths["selection"],
-        )
-        monkeypatch.setattr(
-            config_mod, "CV_FOLDS_MANIFEST_PATH", paths["manifest"])
-        monkeypatch.setattr(config_mod, "SPLIT_MODE", "purged_walk_forward")
-        config_mod.set_purged_wf_reference_rows(0)
-
-        monkeypatch.setattr(
-            "gpu_fuzzy_trader.data.loader.Data_Loader.load_dataset",
-            lambda self, path: df.copy(),
-        )
-        result = load_cached_split_if_fresh()
-        assert result is not None
-        _, _, _, _, cv_folds = result
-        assert cv_folds is not None
-        assert config_mod._PURGED_WF_REFERENCE_ROWS == expected_rows

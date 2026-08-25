@@ -158,10 +158,14 @@ NESTED_VALIDATION_OUTER_FOLDS: int = 3
 FORWARD_ACCEPTANCE_ONCE: bool = True
 
 # Cached splits from train_new.csv (Phases 2–5). Rebuilt when train_new.csv is newer.
-TRAIN_70_PATH = "data/train_70.parquet"
-VALIDATION_30_PATH = "data/validation_30.parquet"
+DEVELOPMENT_TRAIN_PATH = "data/development_train.parquet"
+VALIDATION_PATH = "data/validation.parquet"
+# Deprecated names retained as aliases for callers that patch the old paths.
+TRAIN_70_PATH = DEVELOPMENT_TRAIN_PATH
+VALIDATION_30_PATH = VALIDATION_PATH
 VALIDATION_FITNESS_PATH = "data/validation_fitness.parquet"
 VALIDATION_SELECTION_PATH = "data/validation_selection.parquet"
+SPLIT_MANIFEST_PATH = "data/split_manifest.json"
 
 OUTPUTS_DIR = "outputs"
 RUN_LOG_PATH = os.path.join(OUTPUTS_DIR, "run.log")
@@ -234,17 +238,7 @@ TAIL_DROP_ROWS = 96
 # =============================================================================
 # Phase 0 — Train / validation split (Phase 2 and RB)
 # =============================================================================
-# Phases 4–5 always use persisted train_70 + validation_30 (see splitter.py).
-
-# SPLIT_MODE — how train_new.csv is divided before Phase 2.
-#   holdout             → single per-symbol chronological split with embargo
-#                         (HOLDOUT_EMBARGO_CANDLES bars dropped between train
-#                         and val — 96, not the legacy 288-bar horizon).
-#                         The actual train/val fraction is set by
-#                         HOLDOUT_TRAIN_FRACTION (see below).
-#   purged_walk_forward → expanding CV folds + primary tail holdout with embargo
-#                         (deprecated — use holdout instead).
-SPLIT_MODE = "holdout"
+# Phases 4–5 always use the persisted development/validation split.
 
 # HOLDOUT_TRAIN_FRACTION — fraction of each symbol's bars reserved for training.
 # The remaining (1 - HOLDOUT_TRAIN_FRACTION) is validation, with an embargo gap
@@ -314,11 +308,12 @@ COST_MODEL_ID: str = "crypto_bar_v2"
 # 96 bars = 24 hours at 15-minute bars (was 288 = 72 h).
 MAX_HOLD_CANDLES = 96
 
-# VALIDATION_HALF_PURGE_CANDLES — bars removed on both sides of the internal
-# validation fitness/selection boundary.  The forward labels consume the next
-# MAX_HOLD_CANDLES bars, so the same horizon is required here as at the main
-# train/validation boundary.
-VALIDATION_HALF_PURGE_CANDLES = MAX_HOLD_CANDLES
+# VALIDATION_PURGE_CANDLES — bars removed between validation fitness and
+# selection.  The forward labels consume the next MAX_HOLD_CANDLES bars, so the
+# same horizon is required here as at the main train/validation boundary.
+VALIDATION_PURGE_CANDLES = MAX_HOLD_CANDLES
+# Deprecated name retained as an alias for existing callers.
+VALIDATION_HALF_PURGE_CANDLES = VALIDATION_PURGE_CANDLES
 
 # MAX_TOTAL_EXPOSURE_PCT — cap on sum of concurrent rule capital allocations.
 # Must remain aligned with evaluator_v5.ipynb and RB_MAX_TOTAL_CAPITAL.
@@ -2478,8 +2473,6 @@ def validate_config(
     before a long evolution/backtest can start with an incoherent contract.
     """
 
-    _config_check(str(SPLIT_MODE).lower() in {"holdout", "purged_walk_forward"},
-                  f"Unsupported SPLIT_MODE={SPLIT_MODE!r}")
     _config_check(int(PHASE2_MIN_PROFITABLE_SYMBOLS) >= 1,
                   "PHASE2_MIN_PROFITABLE_SYMBOLS must be positive")
     _config_check(int(DEBUG_SYMBOL_COUNT) >= 1,
@@ -2492,11 +2485,11 @@ def validate_config(
                   "TAIL_DROP_ROWS must equal MAX_HOLD_CANDLES")
     _config_check(int(HOLDOUT_EMBARGO_CANDLES) == int(MAX_HOLD_CANDLES),
                   "HOLDOUT_EMBARGO_CANDLES must equal MAX_HOLD_CANDLES")
-    _config_check(int(VALIDATION_HALF_PURGE_CANDLES) >= int(MAX_HOLD_CANDLES),
-                  "VALIDATION_HALF_PURGE_CANDLES must cover MAX_HOLD_CANDLES")
+    _config_check(int(VALIDATION_PURGE_CANDLES) >= int(MAX_HOLD_CANDLES),
+                  "VALIDATION_PURGE_CANDLES must cover MAX_HOLD_CANDLES")
     _config_check(
-        int(VALIDATION_HALF_PURGE_CANDLES) == int(MAX_HOLD_CANDLES),
-        "VALIDATION_HALF_PURGE_CANDLES must equal MAX_HOLD_CANDLES",
+        int(VALIDATION_PURGE_CANDLES) == int(MAX_HOLD_CANDLES),
+        "VALIDATION_PURGE_CANDLES must equal MAX_HOLD_CANDLES",
     )
     # Trend-context contract coherence.
     _config_check(
@@ -2929,10 +2922,9 @@ def effective_config_snapshot(
             },
         },
         "split": {
-            "mode": str(SPLIT_MODE),
             "holdout_train_fraction": float(HOLDOUT_TRAIN_FRACTION),
             "embargo_candles": int(HOLDOUT_EMBARGO_CANDLES),
-            "validation_half_purge_candles": int(VALIDATION_HALF_PURGE_CANDLES),
+            "purge_candles": int(VALIDATION_PURGE_CANDLES),
             "tail_drop_rows": int(TAIL_DROP_ROWS),
         },
         "context": context_contract(),

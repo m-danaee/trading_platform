@@ -1,17 +1,16 @@
 """
 data/splitter.py — Data_Splitter
 
-Per-symbol chronological split for Phase 2, RB, and Phase 5 preparation:
+Per-symbol chronological split for Phase 2, RB, and Phase 5 preparation.
 
-- ``holdout``: single holdout split + embargo gap of ``HOLDOUT_EMBARGO_CANDLES``
-  bars (active). Train/val fraction determined by ``HOLDOUT_TRAIN_FRACTION``
-  (default 65/35).
-- ``purged_walk_forward``: expanding CV folds + primary tail holdout with embargo (deprecated).
+The pipeline uses one development/validation holdout with an embargo gap.
+The train/validation fraction is determined by ``HOLDOUT_TRAIN_FRACTION``.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 
@@ -38,6 +37,111 @@ def _file_sha256(path: str) -> str:
         for chunk in iter(lambda: fh.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _write_split_manifest(
+    path: str,
+    *,
+    reference_rows: int,
+    source_sha256: str | None,
+    artifact_sha256: dict[str, str] | None,
+) -> str:
+    """Persist the holdout cache contract and content hashes."""
+    manifest = {
+        "schema_version": 1,
+        "holdout_train_fraction": float(_cfg.HOLDOUT_TRAIN_FRACTION),
+        "embargo_candles": int(_cfg.HOLDOUT_EMBARGO_CANDLES),
+        "purge_candles": int(
+            getattr(_cfg, "VALIDATION_PURGE_CANDLES", _cfg.MAX_HOLD_CANDLES)
+        ),
+        "reference_rows": int(reference_rows),
+        "source_sha256": source_sha256,
+        "artifact_sha256": artifact_sha256,
+    }
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(manifest, fh, indent=2, sort_keys=True)
+    return path
+
+
+def _load_split_manifest(path: str) -> dict | None:
+    """Load a split manifest, returning ``None`` for invalid JSON."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            manifest = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    return manifest if isinstance(manifest, dict) else None
+
+
+def _validation_purge_candles() -> int:
+    """Return the single gap used between validation fitness and selection."""
+    return int(
+        getattr(_cfg, "VALIDATION_PURGE_CANDLES", _cfg.MAX_HOLD_CANDLES)
+    )
+
+
+def _configured_split_path(
+    canonical_name: str,
+    legacy_name: str | None,
+    default: str,
+) -> str:
+    """Resolve a path while honoring temporary patches of either name."""
+    canonical = str(getattr(_cfg, canonical_name, default))
+    if legacy_name is None:
+        return canonical
+    legacy = str(getattr(_cfg, legacy_name, canonical))
+    return legacy if legacy != default else canonical
+
+
+def _split_manifest_matches_config(manifest: dict) -> bool:
+    """Return whether a manifest was built with the current split geometry."""
+    try:
+        return (
+            float(manifest["holdout_train_fraction"])
+            == float(_cfg.HOLDOUT_TRAIN_FRACTION)
+            and int(manifest["embargo_candles"])
+            == int(_cfg.HOLDOUT_EMBARGO_CANDLES)
+            and int(manifest["purge_candles"]) == _validation_purge_candles()
+        )
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def _persisted_split_paths() -> dict[str, str]:
+    """Resolve write paths while keeping old module-level patches working."""
+    defaults = {
+        "train": "data/development_train.parquet",
+        "validation": "data/validation.parquet",
+        "validation_fitness": "data/validation_fitness.parquet",
+        "validation_selection": "data/validation_selection.parquet",
+    }
+    module_paths = {
+        "train": TRAIN_70_PATH,
+        "validation": VALIDATION_30_PATH,
+        "validation_fitness": VALIDATION_FITNESS_PATH,
+        "validation_selection": VALIDATION_SELECTION_PATH,
+    }
+    config_names = {
+        "train": ("DEVELOPMENT_TRAIN_PATH", "TRAIN_70_PATH"),
+        "validation": ("VALIDATION_PATH", "VALIDATION_30_PATH"),
+        "validation_fitness": ("VALIDATION_FITNESS_PATH", None),
+        "validation_selection": ("VALIDATION_SELECTION_PATH", None),
+    }
+    paths: dict[str, str] = {}
+    for name, module_path in module_paths.items():
+        if module_path != defaults[name]:
+            paths[name] = module_path
+            continue
+        canonical_name, legacy_name = config_names[name]
+        paths[name] = _configured_split_path(
+            canonical_name,
+            legacy_name,
+            defaults[name],
+        )
+    return paths
 
 
 def _holdout_embargo_split(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -111,33 +215,6 @@ def _holdout_embargo_split_with_mask(
     )
 
 
-def _purged_walk_forward_split(
-    df: pd.DataFrame,
-) -> tuple[pd.DataFrame, pd.DataFrame, list]:
-    from gpu_fuzzy_trader.validation.rolling_cv import (
-        build_purged_walk_forward_folds,
-        derive_primary_holdout,
-    )
-
-    _cfg.set_purged_wf_reference_rows(len(df))
-    folds = build_purged_walk_forward_folds(df)
-    if not folds:
-        logger.warning(
-            "Purged walk-forward produced no folds; falling back to holdout_embargo"
-        )
-        train_df, val_df = _holdout_embargo_split(df)
-        return train_df, val_df, []
-
-    train_df, val_df = derive_primary_holdout(folds)
-    logger.info(
-        "Purged walk-forward: %d folds, train=%d rows, holdout val=%d rows",
-        len(folds),
-        len(train_df),
-        len(val_df),
-    )
-    return train_df, val_df, folds
-
-
 def _chronological_half_split(
     df: pd.DataFrame,
     *,
@@ -146,9 +223,9 @@ def _chronological_half_split(
 ) -> pd.DataFrame:
     """Per-symbol chronological first or second half of *df*.
 
-    ``purge_rows`` is removed on both sides of the internal boundary.  This
-    is separate from the main train/validation embargo: labels at the end of
-    the fitness half otherwise inspect prices that belong to selection.
+    ``purge_rows`` is removed between the halves.  This is separate from the
+    main train/validation embargo: labels at the end of the fitness half
+    otherwise inspect prices that belong to selection.
     """
     parts: list[pd.DataFrame] = []
     sort_col = "datetime" if "datetime" in df.columns else None
@@ -164,7 +241,7 @@ def _chronological_half_split(
         if first_half:
             parts.append(g.iloc[:max(0, split_point - purge_rows)])
         else:
-            parts.append(g.iloc[min(n, split_point + purge_rows):])
+            parts.append(g.iloc[split_point:])
     if not parts:
         return pd.DataFrame(columns=df.columns)
     return pd.concat(parts, ignore_index=True)
@@ -173,18 +250,14 @@ def _chronological_half_split(
 def split_validation_fitness_selection(
     validation_df: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Split validation into purged fitness and selection halves per symbol.
+    """Split validation into fitness and selection halves per symbol.
 
     The gap is intentionally present even in ordinary holdout mode.  A
     validation label opened near the end of fitness can otherwise use future
     prices from selection, allowing the same bar path to influence both
     evolutionary scoring and downstream model selection.
     """
-    purge_rows = max(
-        int(getattr(_cfg, "VALIDATION_HALF_PURGE_CANDLES", 0)),
-        int(getattr(_cfg, "HOLDOUT_EMBARGO_CANDLES", 0)),
-        int(getattr(_cfg, "PURGED_WF_EMBARGO_CANDLES", 0)),
-    )
+    purge_rows = _validation_purge_candles()
     val_fitness = _chronological_half_split(
         validation_df, first_half=True, purge_rows=purge_rows,
     )
@@ -199,12 +272,8 @@ def _validation_half_geometry_matches(
     val_fitness: pd.DataFrame,
     val_selection: pd.DataFrame,
 ) -> bool:
-    """Return whether cached internal halves match the purged geometry."""
-    purge_rows = max(
-        int(getattr(_cfg, "VALIDATION_HALF_PURGE_CANDLES", 0)),
-        int(getattr(_cfg, "HOLDOUT_EMBARGO_CANDLES", 0)),
-        int(getattr(_cfg, "PURGED_WF_EMBARGO_CANDLES", 0)),
-    )
+    """Return whether cached internal halves match the single-gap geometry."""
+    purge_rows = _validation_purge_candles()
     if "symbol" not in validation_df.columns:
         return False
 
@@ -224,7 +293,7 @@ def _validation_half_geometry_matches(
         n = len(group)
         split_point = n // 2
         expected_fitness = group.iloc[:max(0, split_point - purge_rows)]
-        expected_selection = group.iloc[min(n, split_point + purge_rows):]
+        expected_selection = group.iloc[split_point:]
         if positions(val_fitness, symbol) != positions(expected_fitness, symbol):
             return False
         if positions(val_selection, symbol) != positions(expected_selection, symbol):
@@ -238,9 +307,10 @@ def load_cached_split_if_fresh() -> (
 ):
     """Load cached split parquets when they are newer than the source CSV.
 
-    Validates manifest ``split_mode``, ``config_fingerprint``, source and
-    persisted-split content hashes, all four parquet mtimes, and (purged mode)
-    ``reference_rows`` against a fresh CSV load.
+    Validates the holdout geometry, source and persisted-split content hashes,
+    and all four parquet mtimes.  Legacy artifact names are accepted as a
+    one-release read fallback, while new writes use the development/validation
+    names.
 
     Returns
     -------
@@ -248,19 +318,48 @@ def load_cached_split_if_fresh() -> (
         ``(train, val, val_fitness, val_selection, cv_folds)`` on cache hit,
         else ``None``.
     """
-    from gpu_fuzzy_trader.data.loader import Data_Loader
-    from gpu_fuzzy_trader.validation.rolling_cv import (
-        build_purged_walk_forward_folds,
-        load_cv_folds_manifest,
-        purged_config_fingerprint,
-    )
-
     csv_path = _cfg.TRAIN_CSV_PATH
-    train_path = _cfg.TRAIN_70_PATH
-    val_path = _cfg.VALIDATION_30_PATH
+    train_path = _configured_split_path(
+        "DEVELOPMENT_TRAIN_PATH",
+        "TRAIN_70_PATH",
+        "data/development_train.parquet",
+    )
+    val_path = _configured_split_path(
+        "VALIDATION_PATH",
+        "VALIDATION_30_PATH",
+        "data/validation.parquet",
+    )
     fitness_path = _cfg.VALIDATION_FITNESS_PATH
     selection_path = _cfg.VALIDATION_SELECTION_PATH
-    manifest_path = getattr(_cfg, "CV_FOLDS_MANIFEST_PATH", "")
+    manifest_path = _configured_split_path(
+        "SPLIT_MANIFEST_PATH",
+        None,
+        "data/split_manifest.json",
+    )
+
+    current_paths = (
+        csv_path,
+        train_path,
+        val_path,
+        fitness_path,
+        selection_path,
+        manifest_path,
+    )
+    if not all(os.path.exists(p) for p in current_paths):
+        legacy_paths = (
+            csv_path,
+            "data/train_70.parquet",
+            "data/validation_30.parquet",
+            fitness_path,
+            selection_path,
+            "data/cv_folds_manifest.json",
+        )
+        if all(os.path.exists(p) for p in legacy_paths):
+            _, train_path, val_path, fitness_path, selection_path, manifest_path = (
+                legacy_paths
+            )
+        else:
+            return None
 
     required_paths = (
         csv_path,
@@ -282,12 +381,10 @@ def load_cached_split_if_fresh() -> (
             os.path.getmtime(selection_path),
             os.path.getmtime(manifest_path),
         )
-        manifest = load_cv_folds_manifest(manifest_path)
+        manifest = _load_split_manifest(manifest_path)
         if not isinstance(manifest, dict):
             return None
-        if manifest.get("split_mode") != _cfg.SPLIT_MODE:
-            return None
-        if manifest.get("config_fingerprint") != purged_config_fingerprint():
+        if not _split_manifest_matches_config(manifest):
             return None
         source_sha256 = manifest.get("source_sha256")
         if not isinstance(source_sha256, str) or not source_sha256:
@@ -338,10 +435,9 @@ def load_cached_split_if_fresh() -> (
     # The four parquet files are a single cache unit.  A previous test run (or
     # an interrupted copy) can leave train/validation parquets from one data
     # set beside fitness/selection parquets from another.  Mtime and the
-    # split-mode fingerprint cannot detect that case, but passing the tiny
-    # mismatched fitness frame into Phase 2 silently removes validation from
-    # the search.  Validate the cheap structural invariants before accepting
-    # a cache hit.
+    # manifest cannot detect that case, but passing the mismatched fitness frame
+    # into Phase 2 silently removes validation from the search.  Validate the
+    # cheap structural invariants before accepting a cache hit.
     required_columns = (
         set(_cfg.META_COLUMNS)
         | set(_cfg.LABEL_COLUMNS)
@@ -377,81 +473,40 @@ def load_cached_split_if_fresh() -> (
     ):
         logger.warning(
             "Rejecting split cache: validation fitness/selection halves do "
-            "not match the current purged geometry",
+            "not match the current single-gap geometry",
         )
         return None
 
-    # In holdout mode the manifest's reference_rows is the prepared source
-    # length.  When every symbol has a non-empty validation tail, it can be
-    # checked exactly from the cached partitions: train + validation + the
-    # fixed embargo per symbol.  This catches stale caches without rereading
+    # When every symbol has a non-empty validation tail, the holdout source
+    # length is recoverable from the cached partitions: train + validation +
+    # the fixed embargo per symbol.  This catches stale caches without loading
     # and relabelling the full CSV on every normal run.
-    if not _cfg.split_mode_is_purged_walk_forward():
-        reference_rows = manifest.get("reference_rows")
-        if reference_rows is not None and "symbol" in train_df.columns:
-            train_symbols = set(train_df["symbol"].astype(str).unique())
-            val_symbols = set(val_df["symbol"].astype(str).unique())
-            symbols = train_symbols | val_symbols
-            val_counts = val_df["symbol"].astype(str).value_counts()
-            has_empty_val = any(
-                int(val_counts.get(sym, 0)) == 0 for sym in symbols
-            ) if symbols else False
-            if has_empty_val:
-                # Debug/undersampled universe where the embargo consumes the
-                # entire tail for at least one symbol: the holdout geometry
-                # is not recoverable from partitions alone. Fall back to a
-                # lightweight exact check by rereading the CSV row count.
-                try:
-                    from gpu_fuzzy_trader.data.loader import Data_Loader as _DL
-                    _loader = _DL()
-                    _full = _loader.load_dataset(csv_path, drop_tail=False,
-                                                  include_barrier_outcomes=False)
-                    # dropna on labels mirrors loader's tail/label logic
-                    _full = _full.dropna(subset=list(_cfg.LABEL_COLUMNS))
-                    if int(reference_rows) != len(_full):
-                        logger.warning(
-                            "Rejecting split cache: manifest reference_rows=%s, "
-                            "full CSV implies %s (debug/zero-val universe)",
-                            reference_rows, len(_full),
-                        )
-                        return None
-                except Exception as exc:
-                    logger.warning(
-                        "Rejecting split cache: cannot verify reference_rows "
-                        "for debug/zero-val universe (%s)", exc,
-                    )
-                    return None
-            elif symbols and all(int(val_counts.get(sym, 0)) > 0 for sym in symbols):
-                expected_reference_rows = (
-                    len(train_df)
-                    + len(val_df)
-                    + int(_cfg.HOLDOUT_EMBARGO_CANDLES) * len(symbols)
+    reference_rows = manifest.get("reference_rows")
+    if reference_rows is not None and "symbol" in train_df.columns:
+        train_symbols = set(train_df["symbol"].astype(str).unique())
+        val_symbols = set(val_df["symbol"].astype(str).unique())
+        symbols = train_symbols | val_symbols
+        val_counts = val_df["symbol"].astype(str).value_counts()
+        if symbols and all(int(val_counts.get(sym, 0)) > 0 for sym in symbols):
+            expected_reference_rows = (
+                len(train_df)
+                + len(val_df)
+                + int(_cfg.HOLDOUT_EMBARGO_CANDLES) * len(symbols)
+            )
+            try:
+                reference_matches = int(reference_rows) == expected_reference_rows
+            except (TypeError, ValueError):
+                reference_matches = False
+            if not reference_matches:
+                logger.warning(
+                    "Rejecting split cache: manifest reference_rows=%s, "
+                    "cached holdout geometry implies %s",
+                    reference_rows,
+                    expected_reference_rows,
                 )
-                if int(reference_rows) != expected_reference_rows:
-                    logger.warning(
-                        "Rejecting split cache: manifest reference_rows=%s, "
-                        "cached holdout geometry implies %s",
-                        reference_rows,
-                        expected_reference_rows,
-                    )
-                    return None
+                return None
 
-    cv_folds: list | None = None
-    if _cfg.split_mode_is_purged_walk_forward():
-        loader = Data_Loader()
-        # Only the prepared row count is needed to rebuild CV fold geometry;
-        # the cache-schema check above already enforces exact barriers for raw
-        # OHLCV sources.  Keep this lightweight call compatible with custom
-        # loader doubles used by callers/tests.
-        train_full = loader.load_dataset(csv_path)
-        ref = manifest.get("reference_rows")
-        if ref is None or int(ref) != len(train_full):
-            return None
-        _cfg.set_purged_wf_reference_rows(len(train_full))
-        folds = build_purged_walk_forward_folds(train_full)
-        cv_folds = folds if folds else None
-
-    return train_df, val_df, val_fitness, val_selection, cv_folds
+    return train_df, val_df, val_fitness, val_selection, None
 
 
 class Data_Splitter:
@@ -466,20 +521,12 @@ class Data_Splitter:
 
         Returns
         -------
-        tuple[pd.DataFrame, pd.DataFrame, list[PurgedFold] | None]
-            ``(train_df, validation_df, cv_folds)``. ``cv_folds`` is non-None
-            only when ``SPLIT_MODE == purged_walk_forward``.
+        tuple[pd.DataFrame, pd.DataFrame, list | None]
+            ``(train_df, validation_df, cv_folds)``.  ``cv_folds`` remains in
+            the return value for backwards compatibility and is always None.
         """
-        from gpu_fuzzy_trader.validation.rolling_cv import write_cv_folds_manifest
-
-        mode = str(_cfg.SPLIT_MODE).strip().lower()
         cv_folds: list | None = None
-
-        if mode == "purged_walk_forward":
-            train_df, validation_df, cv_folds = _purged_walk_forward_split(df)
-        else:
-            train_df, validation_df = _holdout_embargo_split(df)
-            _cfg.set_purged_wf_reference_rows(len(df))
+        train_df, validation_df = _holdout_embargo_split(df)
 
         train_df = downcast_numeric_df(train_df)
         validation_df = downcast_numeric_df(validation_df)
@@ -489,17 +536,15 @@ class Data_Splitter:
         val_fitness_df = downcast_numeric_df(val_fitness_df)
         val_selection_df = downcast_numeric_df(val_selection_df)
 
-        train_df.to_parquet(TRAIN_70_PATH, index=False)
-        validation_df.to_parquet(VALIDATION_30_PATH, index=False)
-        val_fitness_df.to_parquet(VALIDATION_FITNESS_PATH, index=False)
-        val_selection_df.to_parquet(VALIDATION_SELECTION_PATH, index=False)
-
-        persisted_paths = {
-            "train": TRAIN_70_PATH,
-            "validation": VALIDATION_30_PATH,
-            "validation_fitness": VALIDATION_FITNESS_PATH,
-            "validation_selection": VALIDATION_SELECTION_PATH,
-        }
+        persisted_paths = _persisted_split_paths()
+        train_df.to_parquet(persisted_paths["train"], index=False)
+        validation_df.to_parquet(persisted_paths["validation"], index=False)
+        val_fitness_df.to_parquet(
+            persisted_paths["validation_fitness"], index=False,
+        )
+        val_selection_df.to_parquet(
+            persisted_paths["validation_selection"], index=False,
+        )
         try:
             source_sha256 = _file_sha256(_cfg.TRAIN_CSV_PATH)
             artifact_sha256 = {
@@ -510,20 +555,23 @@ class Data_Splitter:
             source_sha256 = None
             artifact_sha256 = None
             logger.warning(
-                "Could not hash split source or artifacts; cache will not be reusable",
+                "Could not hash split source or artifacts; cache will not be reusable (%s)",
                 _cfg.TRAIN_CSV_PATH,
             )
 
-        manifest_path = write_cv_folds_manifest(
-            cv_folds,
+        manifest_path = _write_split_manifest(
+            _configured_split_path(
+                "SPLIT_MANIFEST_PATH",
+                None,
+                "data/split_manifest.json",
+            ),
             reference_rows=len(df),
             source_sha256=source_sha256,
             artifact_sha256=artifact_sha256,
         )
         logger.info(
-            "Persisted train/validation splits and manifest=%s (mode=%s)",
+            "Persisted development/validation splits and manifest=%s",
             manifest_path,
-            _cfg.SPLIT_MODE,
         )
 
         return train_df, validation_df, cv_folds
