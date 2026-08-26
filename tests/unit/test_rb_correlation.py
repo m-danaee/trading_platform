@@ -50,6 +50,7 @@ def _candidate(name: str, mask: np.ndarray, pnl: list[float], score: float) -> C
 
 def test_signal_overlap_is_jaccard_and_pnl_is_pearson():
     assert signal_overlap([1, 1, 0, 0], [1, 0, 1, 0]) == 1.0 / 3.0
+    assert signal_overlap({"a", "b"}, {"b", "c"}) == 1.0 / 3.0
     assert pnl_correlation([1.0, 2.0, 3.0], [2.0, 4.0, 6.0]) == 1.0
     assert pnl_correlation([1.0, 2.0, 3.0], [3.0, 2.0, 1.0]) == -1.0
     assert downside_dependence([1.0, -2.0, 1.0], [2.0, -4.0, 2.0]) == 1.0

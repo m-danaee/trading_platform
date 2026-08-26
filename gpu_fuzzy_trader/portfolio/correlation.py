@@ -33,27 +33,63 @@ def _finite_pair(
     return left_array[finite], right_array[finite]
 
 
+def _signal_values(values: Iterable[object] | np.ndarray) -> tuple[str, object]:
+    """Classify a signal input as a binary mask or a set of signal IDs."""
+    if isinstance(values, (set, frozenset)):
+        return "set", set(values)
+    if not isinstance(values, np.ndarray) and not isinstance(values, (str, bytes)):
+        try:
+            values = list(values)
+        except TypeError:
+            pass
+    array = np.asarray(values)
+    flat = array.reshape(-1)
+    if flat.size == 0:
+        return "mask", np.zeros(0, dtype=bool)
+    try:
+        numeric = np.asarray(flat, dtype=float)
+    except (TypeError, ValueError):
+        return "set", set(flat.tolist())
+    if np.all(np.isfinite(numeric)) and np.all(np.isin(numeric, (0.0, 1.0))):
+        return "mask", numeric.astype(bool, copy=False)
+    return "set", set(flat.tolist())
+
+
 def signal_overlap(
     left: Iterable[object] | np.ndarray,
     right: Iterable[object] | np.ndarray,
 ) -> float:
     """Return the Jaccard overlap of two signal masks.
 
-    A true value means that a rule emits a signal at that observation.  An
-    empty union has no observed overlap and therefore returns ``0.0``.  Input
-    lengths must match because a signal at one timestamp cannot be compared to
-    a different timestamp.
+    A true value means that a rule emits a signal at that observation.  Binary
+    array-like inputs are compared positionally.  Set-like inputs are treated
+    as signal identifiers.  An empty union has no observed overlap and
+    therefore returns ``0.0``.  Binary mask lengths must match because a signal
+    at one timestamp cannot be compared to a different timestamp.
     """
-    left_array = _as_1d(left, dtype=bool)
-    right_array = _as_1d(right, dtype=bool)
-    if left_array.size != right_array.size:
-        raise ValueError("signal masks must have the same number of observations")
-    union = left_array | right_array
-    union_count = int(np.count_nonzero(union))
-    if union_count == 0:
+    left_kind, left_values = _signal_values(left)
+    right_kind, right_values = _signal_values(right)
+    if left_kind == right_kind == "mask":
+        left_array = left_values
+        right_array = right_values
+        if left_array.size != right_array.size:
+            raise ValueError(
+                "signal masks must have the same number of observations"
+            )
+        union_count = int(np.count_nonzero(left_array | right_array))
+        if union_count == 0:
+            return 0.0
+        intersection_count = int(np.count_nonzero(left_array & right_array))
+        return float(intersection_count / union_count)
+
+    if left_kind == "mask":
+        left_values = set(np.flatnonzero(left_values).tolist())
+    if right_kind == "mask":
+        right_values = set(np.flatnonzero(right_values).tolist())
+    union = set(left_values) | set(right_values)
+    if not union:
         return 0.0
-    intersection_count = int(np.count_nonzero(left_array & right_array))
-    return float(intersection_count / union_count)
+    return float(len(set(left_values) & set(right_values)) / len(union))
 
 
 def pnl_correlation(
