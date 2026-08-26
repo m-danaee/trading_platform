@@ -1839,6 +1839,27 @@ RB_MAX_RULES: int = 20
 #   if traded symbols differ. Correlated with MIN_DISTINCT + coverage fix.
 RB_MAX_PAIR_OVERLAP: float = 0.35
 
+# --- Correlation-aware RB portfolio selection --------------------------------
+# The report is always built.  When selection is disabled, it is report-only
+# and the historical RB composition path remains unchanged.
+RB_CORRELATION_AWARE_SELECTION: bool = False
+RB_SIGNAL_OVERLAP_WEIGHT: float = 0.50
+RB_PNL_CORR_WEIGHT: float = 0.50
+# ``0`` preserves the historical selection order.  ``"low"`` and
+# ``"medium"`` are accepted by ``resolve_redundancy_penalty`` for controlled
+# rollout without making callers know the numeric penalty values.
+RB_REDUNDANCY_PENALTY: float | str = 0.0
+RB_REDUNDANCY_PENALTY_LOW: float = 0.25
+RB_REDUNDANCY_PENALTY_MEDIUM: float = 0.50
+RB_CORRELATION_CLUSTER_THRESHOLD: float = 0.70
+RB_CORRELATION_STABILITY_ALPHA: float = 0.25
+
+# Deprecated aliases kept for saved experiment configurations.  New code must
+# use the three canonical RB correlation controls above.
+RB_CORRELATION_LAMBDA: float = 0.0
+RB_CORRELATION_SIGNAL_WEIGHT: float = RB_SIGNAL_OVERLAP_WEIGHT
+RB_CORRELATION_PNL_WEIGHT: float = RB_PNL_CORR_WEIGHT
+
 # Bounded certificate-first diversification search.  The beam is deliberately
 # small because each state requires a full CPU train/validation simulation.
 RB_DIVERSIFICATION_BEAM_WIDTH: int = 6
@@ -2462,6 +2483,47 @@ class ConfigError(ValueError):
     """Raised when a configuration violates a cross-parameter contract."""
 
 
+def resolve_redundancy_penalty(value: object | None = None) -> float:
+    """Resolve the RB redundancy penalty control to a non-negative lambda.
+
+    The rollout has three named levels: ``0``/``off``, ``low``, and
+    ``medium``.  Numeric values remain valid so experiments can tune the
+    penalty without adding another configuration flag.
+    """
+    raw = RB_REDUNDANCY_PENALTY if value is None else value
+    if isinstance(raw, str):
+        text = raw.strip().lower()
+        named = {
+            "0": 0.0,
+            "off": 0.0,
+            "none": 0.0,
+            "low": float(RB_REDUNDANCY_PENALTY_LOW),
+            "medium": float(RB_REDUNDANCY_PENALTY_MEDIUM),
+        }
+        if text in named:
+            penalty = named[text]
+        else:
+            try:
+                penalty = float(text)
+            except (TypeError, ValueError) as exc:
+                raise ConfigError(
+                    "RB_REDUNDANCY_PENALTY must be 0, 'low', 'medium', or "
+                    f"a non-negative number; got {raw!r}"
+                ) from exc
+    else:
+        try:
+            penalty = float(raw)
+        except (TypeError, ValueError) as exc:
+            raise ConfigError(
+                "RB_REDUNDANCY_PENALTY must be numeric or a named level"
+            ) from exc
+    if not math.isfinite(penalty) or penalty < 0.0:
+        raise ConfigError(
+            "RB_REDUNDANCY_PENALTY must be finite and non-negative"
+        )
+    return float(penalty)
+
+
 def _config_check(condition: bool, message: str) -> None:
     if not condition:
         raise ConfigError(message)
@@ -2851,6 +2913,30 @@ def validate_config(
                   "RB_TAIL_HOLDOUT_MIN_TRADES must be non-negative")
     _config_check(0.0 <= float(RB_MAX_PAIR_OVERLAP) <= 1.0,
                   "RB_MAX_PAIR_OVERLAP must be in [0, 1]")
+    resolve_redundancy_penalty()
+    _config_check(
+        isinstance(RB_CORRELATION_AWARE_SELECTION, bool),
+        "RB_CORRELATION_AWARE_SELECTION must be a boolean",
+    )
+    _config_check(
+        0.0 <= float(RB_CORRELATION_CLUSTER_THRESHOLD) <= 1.0,
+        "RB_CORRELATION_CLUSTER_THRESHOLD must be in [0, 1]",
+    )
+    _config_check(
+        float(RB_CORRELATION_STABILITY_ALPHA) >= 0.0
+        and math.isfinite(float(RB_CORRELATION_STABILITY_ALPHA)),
+        "RB_CORRELATION_STABILITY_ALPHA must be finite and non-negative",
+    )
+    correlation_weights = (
+        float(RB_SIGNAL_OVERLAP_WEIGHT),
+        float(RB_PNL_CORR_WEIGHT),
+    )
+    _config_check(
+        all(math.isfinite(value) and value >= 0.0 for value in correlation_weights)
+        and sum(correlation_weights) > 0.0,
+        "RB_SIGNAL_OVERLAP_WEIGHT and RB_PNL_CORR_WEIGHT must be finite, "
+        "non-negative, and not both zero",
+    )
     _config_check(0.0 <= float(RB_MAX_SYMBOL_SHARE_ABS_PNL) <= 1.0,
                   "RB_MAX_SYMBOL_SHARE_ABS_PNL must be in [0, 1]")
     _config_check(0.0 <= float(RB_MAX_SYMBOL_HHI) <= 1.0,
@@ -3039,6 +3125,19 @@ def effective_config_snapshot(
             "risk_min_improvement": float(RB_RISK_MIN_IMPROVEMENT),
             "tail_min_return_pct": float(RB_TAIL_HOLDOUT_MIN_RETURN_PCT),
             "max_pair_overlap": float(RB_MAX_PAIR_OVERLAP),
+            "correlation_aware_selection": bool(RB_CORRELATION_AWARE_SELECTION),
+            "signal_overlap_weight": float(RB_SIGNAL_OVERLAP_WEIGHT),
+            "pnl_corr_weight": float(RB_PNL_CORR_WEIGHT),
+            "redundancy_penalty": float(resolve_redundancy_penalty()),
+            # Keep the old snapshot keys while consumers migrate to the
+            # canonical names above.
+            "correlation_lambda": float(resolve_redundancy_penalty()),
+            "correlation_cluster_threshold": float(
+                RB_CORRELATION_CLUSTER_THRESHOLD
+            ),
+            "correlation_stability_alpha": float(RB_CORRELATION_STABILITY_ALPHA),
+            "correlation_signal_weight": float(RB_SIGNAL_OVERLAP_WEIGHT),
+            "correlation_pnl_weight": float(RB_PNL_CORR_WEIGHT),
             "max_symbol_share_abs_pnl": float(RB_MAX_SYMBOL_SHARE_ABS_PNL),
             "max_symbol_hhi": float(RB_MAX_SYMBOL_HHI),
             "symbol_filters_required": bool(RB_REQUIRE_SYMBOL_FILTERS),

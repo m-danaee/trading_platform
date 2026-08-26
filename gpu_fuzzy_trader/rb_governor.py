@@ -37,6 +37,15 @@ from gpu_fuzzy_trader.phases.rule_identity import (
     strategy_id,
 )
 from gpu_fuzzy_trader.phases.phase2_support import expectancy_lcb_pct
+from gpu_fuzzy_trader.portfolio.clustering import (
+    adjusted_quality,
+    greedy_adjusted_quality,
+    threshold_graph_clusters,
+)
+from gpu_fuzzy_trader.portfolio.redundancy import (
+    redundancy_matrix,
+    stable_corr,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +63,11 @@ class CandidateRecord:
     # silently treats a rescued rule as an ordinary positive-good rule.
     recency: bool = False
     recency_fitness_metrics: dict | None = None
+    # Optional fold/return evidence used by correlation-aware composition.
+    # Legacy callers may leave these fields unset.
+    pnl_series: np.ndarray | None = None
+    fold_returns: list[float] | None = None
+    fold_pnl_series: list[np.ndarray] | None = None
 
 
 def _f(metrics: dict | None, key: str, default: float = 0.0) -> float:
@@ -1851,7 +1865,17 @@ def _filter_good_rules(
                     0, n_cov - 1
                 )
             rec = CandidateRecord(
-                rule=rule, train_metrics=train_m, valid_metrics=valid_m, score=score)
+                rule=rule,
+                train_metrics=train_m,
+                valid_metrics=valid_m,
+                score=score,
+                fold_returns=cv_fold_returns,
+                pnl_series=(
+                    np.asarray(cv_fold_returns, dtype=float)
+                    if cv_fold_returns
+                    else None
+                ),
+            )
             rec.mask = _mask_for(rule, train_like_df, valid_df)
             records.append(rec)
 
@@ -2037,6 +2061,204 @@ def _univariate_baseline_pool(
     return out, added
 
 
+def _correlation_control(
+    canonical_name: str,
+    legacy_name: str,
+    default: float,
+) -> object:
+    """Read a canonical correlation control with legacy-config support."""
+    canonical = getattr(_cfg, canonical_name, default)
+    legacy = getattr(_cfg, legacy_name, default)
+    if canonical != default or legacy == default:
+        return canonical
+    return legacy
+
+
+def _redundancy_lambda() -> float:
+    """Resolve the configured zero/low/medium redundancy penalty."""
+    raw = _correlation_control(
+        "RB_REDUNDANCY_PENALTY",
+        "RB_CORRELATION_LAMBDA",
+        0.0,
+    )
+    resolver = getattr(_cfg, "resolve_redundancy_penalty", None)
+    if callable(resolver):
+        return float(resolver(raw))
+    return float(raw)
+
+
+def _candidate_pnl_evidence(candidate: CandidateRecord) -> np.ndarray | None:
+    """Return the best available candidate-major PnL evidence."""
+    explicit = getattr(candidate, "pnl_series", None)
+    if explicit is not None:
+        try:
+            values = np.asarray(explicit, dtype=float).reshape(-1)
+        except (TypeError, ValueError):
+            values = np.asarray([], dtype=float)
+        if values.size:
+            return values
+    fold_returns = getattr(candidate, "fold_returns", None)
+    if fold_returns:
+        try:
+            return np.asarray(fold_returns, dtype=float).reshape(-1)
+        except (TypeError, ValueError):
+            pass
+    for metrics in (candidate.valid_metrics, candidate.train_metrics):
+        if not isinstance(metrics, dict):
+            continue
+        for key in ("pnl_series", "returns", "trade_returns", "pnl"):
+            values = metrics.get(key)
+            if values is None or np.isscalar(values):
+                continue
+            try:
+                array = np.asarray(values, dtype=float).reshape(-1)
+            except (TypeError, ValueError):
+                continue
+            if array.size:
+                return array
+    return None
+
+
+def _normalised_candidate_masks(candidates: list[CandidateRecord]) -> list[np.ndarray]:
+    """Make missing or legacy masks safe for a report-only correlation pass."""
+    raw_masks: list[np.ndarray] = []
+    for candidate in candidates:
+        try:
+            raw = np.asarray(candidate.mask, dtype=bool).reshape(-1)
+        except (TypeError, ValueError):
+            raw = np.asarray([], dtype=bool)
+        raw_masks.append(raw)
+    target_size = max((mask.size for mask in raw_masks), default=0)
+    masks: list[np.ndarray] = []
+    for mask in raw_masks:
+        if mask.size == target_size:
+            masks.append(mask)
+            continue
+        padded = np.zeros(target_size, dtype=bool)
+        padded[: min(mask.size, target_size)] = mask[:target_size]
+        masks.append(padded)
+    return masks
+
+
+def _correlation_profile(
+    candidates: list[CandidateRecord],
+) -> tuple[dict[str, Any], np.ndarray, list[list[int]], dict[int, int]]:
+    """Build the correlation report and the arrays used by compose."""
+    if not candidates:
+        empty = {
+            "enabled": bool(getattr(_cfg, "RB_CORRELATION_AWARE_SELECTION", False)),
+            "report_only": not bool(
+                getattr(_cfg, "RB_CORRELATION_AWARE_SELECTION", False)
+            ),
+            "formula": "Rij=0.5*Overlap+0.5*max(0,PnLCorr)",
+            "matrix": [],
+            "clusters": [],
+            "selected_order": [],
+        }
+        return empty, np.zeros((0, 0), dtype=float), [], {}
+
+    masks = _normalised_candidate_masks(candidates)
+    pnl = [_candidate_pnl_evidence(candidate) for candidate in candidates]
+    signal_weight = float(
+        _correlation_control(
+            "RB_SIGNAL_OVERLAP_WEIGHT",
+            "RB_CORRELATION_SIGNAL_WEIGHT",
+            0.5,
+        )
+    )
+    pnl_weight = float(
+        _correlation_control(
+            "RB_PNL_CORR_WEIGHT",
+            "RB_CORRELATION_PNL_WEIGHT",
+            0.5,
+        )
+    )
+    penalty_lambda = _redundancy_lambda()
+    matrix = redundancy_matrix(
+        masks,
+        pnl,
+        signal_weight=signal_weight,
+        pnl_weight=pnl_weight,
+    )
+
+    # If per-fold PnL vectors are supplied, construct one matrix per fold and
+    # apply the stable median-plus-alpha rule.  The ordinary RB path currently
+    # supplies candidate-major fold returns, so its one-matrix result is still
+    # passed through the same stable formula.
+    fold_evidence = [getattr(candidate, "fold_pnl_series", None) for candidate in candidates]
+    fold_count = max(
+        (len(evidence) for evidence in fold_evidence if evidence),
+        default=0,
+    )
+    if fold_count and all(
+        evidence is not None and len(evidence) == fold_count
+        for evidence in fold_evidence
+    ):
+        fold_matrices: list[np.ndarray] = []
+        for fold_index in range(fold_count):
+            fold_pnl = [evidence[fold_index] for evidence in fold_evidence]
+            fold_matrices.append(
+                redundancy_matrix(
+                    masks,
+                    fold_pnl,
+                    signal_weight=signal_weight,
+                    pnl_weight=pnl_weight,
+                )
+            )
+        stable_input = np.stack(fold_matrices, axis=0)
+    else:
+        stable_input = np.expand_dims(matrix, axis=0)
+    stable_matrix = np.asarray(
+        stable_corr(
+            stable_input,
+            alpha=float(getattr(_cfg, "RB_CORRELATION_STABILITY_ALPHA", 0.25)),
+            axis=0,
+        ),
+        dtype=float,
+    )
+    stable_matrix = np.clip(stable_matrix, 0.0, 1.0)
+    clusters = threshold_graph_clusters(
+        stable_matrix,
+        threshold=float(getattr(_cfg, "RB_CORRELATION_CLUSTER_THRESHOLD", 0.70)),
+    )
+    cluster_map = {
+        index: cluster_id
+        for cluster_id, cluster in enumerate(clusters)
+        for index in cluster
+    }
+    enabled = bool(getattr(_cfg, "RB_CORRELATION_AWARE_SELECTION", False))
+    order = greedy_adjusted_quality(
+        [float(candidate.score) for candidate in candidates],
+        stable_matrix,
+        lambda_=penalty_lambda,
+        max_items=len(candidates),
+        clusters=clusters,
+        require_cross_cluster=enabled,
+    )
+    report = {
+        "enabled": enabled,
+        "report_only": not enabled,
+        "formula": "Rij=0.5*Overlap+0.5*max(0,PnLCorr)",
+        "stable_formula": "median+alpha*std",
+        "signal_weight": signal_weight,
+        "pnl_weight": pnl_weight,
+        "stability_alpha": float(
+            getattr(_cfg, "RB_CORRELATION_STABILITY_ALPHA", 0.25)
+        ),
+        "lambda": penalty_lambda,
+        "redundancy_penalty": penalty_lambda,
+        "cluster_threshold": float(
+            getattr(_cfg, "RB_CORRELATION_CLUSTER_THRESHOLD", 0.70)
+        ),
+        "matrix": stable_matrix.tolist(),
+        "clusters": clusters,
+        "selected_order": order,
+        "candidate_count": len(candidates),
+        "fold_count": fold_count,
+    }
+    return report, stable_matrix, clusters, cluster_map
+
+
 def _compose_ruleset(
     candidates: list[CandidateRecord],
     train_engine: CPUBacktestEngine,
@@ -2050,6 +2272,18 @@ def _compose_ruleset(
 ) -> tuple[list[CandidateRecord], dict, dict, float, list[dict]]:
     if not candidates:
         raise ValueError(f"No rb-positive rules available for {direction}")
+
+    correlation_report, correlation_matrix, correlation_clusters, cluster_map = (
+        _correlation_profile(candidates)
+    )
+    candidate_indices = {
+        _rule_key(candidate.rule): index
+        for index, candidate in enumerate(candidates)
+    }
+    correlation_enabled = bool(
+        getattr(_cfg, "RB_CORRELATION_AWARE_SELECTION", False)
+    )
+    redundancy_lambda = _redundancy_lambda()
 
     tail_eligible = [
         candidate for candidate in candidates
@@ -2118,6 +2352,11 @@ def _compose_ruleset(
             )[1].get("qualifying_symbols", [])),
         )
 
+    # Preserve the report in the first history row for both the ordinary and
+    # beam paths.  Disabled correlation remains explicitly report-only.
+    if history:
+        history[0]["correlation_report"] = correlation_report
+
     max_overlap = float(getattr(_cfg, "RB_MAX_PAIR_OVERLAP", 0.22))
     min_score_improve = float(getattr(_cfg, "RB_MIN_SCORE_IMPROVEMENT", 0.05))
     min_train_ret_improve = float(
@@ -2137,12 +2376,42 @@ def _compose_ruleset(
             getattr(_cfg, "RB_MIN_COMBINED_RETURN_IMPROVEMENT", 0.05))
 
     used = {_rule_key(r.rule) for r in selected}
+    ordered_indices = list(range(len(candidates)))
+    if correlation_enabled:
+        ordered_indices = [
+            int(index) for index in correlation_report.get("selected_order", [])
+            if 0 <= int(index) < len(candidates)
+        ]
+        ordered_indices.extend(
+            index for index in range(len(candidates))
+            if index not in ordered_indices
+        )
     while len(selected) < max_rules:
         best: tuple[float, CandidateRecord, dict, dict] | None = None
-        for cand in candidates:
+        best_cross: tuple[float, CandidateRecord, dict, dict] | None = None
+        selected_indices = {
+            candidate_indices.get(_rule_key(record.rule))
+            for record in selected
+        }
+        selected_indices.discard(None)
+        selected_cluster_ids = {
+            cluster_map[index] for index in selected_indices
+            if index in cluster_map
+        }
+        unrepresented_cluster_ids = {
+            cluster_id for cluster_id in cluster_map.values()
+            if cluster_id not in selected_cluster_ids
+        }
+        for candidate_index in ordered_indices:
+            cand = candidates[candidate_index]
             key = _rule_key(cand.rule)
             if key in used:
                 continue
+            candidate_cluster = cluster_map.get(candidate_index)
+            is_cross_cluster = (
+                candidate_cluster is not None
+                and candidate_cluster not in selected_cluster_ids
+            )
             ov = _max_overlap(cand, selected)
             if (not ignore_overlap) and ov > max_overlap:
                 continue
@@ -2198,6 +2467,16 @@ def _compose_ruleset(
                 if score <= cur_score + min_score_improve:
                     continue
                 choose_score = score
+            correlation_penalty = 0.0
+            if correlation_enabled and selected_indices:
+                correlation_penalty = float(
+                    np.max(correlation_matrix[candidate_index, list(selected_indices)])
+                )
+                choose_score = adjusted_quality(
+                    choose_score,
+                    correlation_penalty,
+                    lambda_=redundancy_lambda,
+                )
             # Once the beam has found a certified seed, score growth must not
             # reintroduce a symbol imbalance or discard a positive contributor.
             cert_ok, _cert_detail = _portfolio_selection_certificate(
@@ -2210,6 +2489,16 @@ def _compose_ruleset(
                 continue
             if best is None or choose_score > best[0]:
                 best = (choose_score, cand, train_m, valid_m)
+            if (
+                correlation_enabled
+                and unrepresented_cluster_ids
+                and is_cross_cluster
+                and (best_cross is None or choose_score > best_cross[0])
+            ):
+                best_cross = (choose_score, cand, train_m, valid_m)
+
+        if best_cross is not None:
+            best = best_cross
 
         if best is None:
             logger.info(
