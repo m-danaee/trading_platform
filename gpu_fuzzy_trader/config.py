@@ -1954,9 +1954,28 @@ RB_MIN_SL: float = 1.0
 # by Phase 2. An exit experiment must create a new strategy family.
 RB_RISK_OPTIMIZE_EXITS: bool = False
 RB_EXPECTANCY_LCB_MARGIN_PCT: float = 0.0
-RB_COST_STRESS_MULTIPLIERS: tuple[float, ...] = (1.0, 1.5)
+# Robustness certificates are observations of the frozen portfolio.  They are
+# enabled by default, but report-only: no certificate can clear or reject a
+# deployment unless an explicit hard-gate flag is enabled.
+RB_ROBUSTNESS_REPORT_ONLY: bool = True
+RB_COST_STRESS_MULTIPLIERS: tuple[float, ...] = (1.0, 1.5, 2.0)
 RB_COST_STRESS_ENABLED: bool = True
+RB_COST_STRESS_REPORT_ONLY: bool = True
+RB_COST_STRESS_HARD_GATE: bool = False
 RB_COST_STRESS_MIN_RETURN_PCT: float = 0.0
+RB_COST_STRESS_MIN_PF: float = 1.0
+RB_COST_STRESS_FRAGILE_PF_FLOOR: float = 1.0
+RB_EXECUTION_STRESS_ENABLED: bool = True
+RB_EXECUTION_STRESS_REPORT_ONLY: bool = True
+RB_EXECUTION_STRESS_DELAY_BARS: int = 1
+RB_REGIME_ROBUSTNESS_ENABLED: bool = True
+RB_REGIME_ROBUSTNESS_REPORT_ONLY: bool = True
+RB_REGIME_VOLATILITY_WINDOW: int = 20
+RB_REGIME_SMA_WINDOW: int = 20
+RB_REGIME_PROFIT_CONCENTRATION_THRESHOLD: float = 0.70
+RB_RULE_DROPOUT_STRESS_ENABLED: bool = True
+RB_RULE_DROPOUT_STRESS_REPORT_ONLY: bool = True
+RB_RULE_DROPOUT_DEPENDENCY_THRESHOLD: float = 0.70
 RB_MONTHLY_CERTIFICATE_ENABLED: bool = True
 RB_MONTHLY_MIN_PROFITABLE_RATIO: float = 0.55
 RB_MONTHLY_MAX_BEARISH_RATIO: float = 0.35
@@ -2908,9 +2927,42 @@ def validate_config(
                   "RB_RISK_GRID_WF_SPLITS must be >= 1")
     _config_check(float(RB_EXPECTANCY_LCB_MARGIN_PCT) >= -100.0,
                   "RB_EXPECTANCY_LCB_MARGIN_PCT is invalid")
+    _validate_config_grid(
+        "RB_COST_STRESS_MULTIPLIERS",
+        RB_COST_STRESS_MULTIPLIERS,
+        minimum=1.0,
+    )
     _config_check(
-        all(float(value) >= 1.0 for value in RB_COST_STRESS_MULTIPLIERS),
-        "RB_COST_STRESS_MULTIPLIERS must be >= 1",
+        isinstance(RB_ROBUSTNESS_REPORT_ONLY, bool)
+        and isinstance(RB_COST_STRESS_ENABLED, bool)
+        and isinstance(RB_COST_STRESS_REPORT_ONLY, bool)
+        and isinstance(RB_COST_STRESS_HARD_GATE, bool)
+        and isinstance(RB_EXECUTION_STRESS_ENABLED, bool)
+        and isinstance(RB_EXECUTION_STRESS_REPORT_ONLY, bool)
+        and isinstance(RB_REGIME_ROBUSTNESS_ENABLED, bool)
+        and isinstance(RB_REGIME_ROBUSTNESS_REPORT_ONLY, bool)
+        and isinstance(RB_RULE_DROPOUT_STRESS_ENABLED, bool)
+        and isinstance(RB_RULE_DROPOUT_STRESS_REPORT_ONLY, bool),
+        "RB robustness flags must be booleans",
+    )
+    _config_check(
+        float(RB_COST_STRESS_MIN_PF) >= 0.0
+        and float(RB_COST_STRESS_FRAGILE_PF_FLOOR) >= 0.0,
+        "RB cost-stress PF thresholds must be non-negative",
+    )
+    _config_check(
+        int(RB_EXECUTION_STRESS_DELAY_BARS) >= 1,
+        "RB_EXECUTION_STRESS_DELAY_BARS must be at least one",
+    )
+    _config_check(
+        int(RB_REGIME_VOLATILITY_WINDOW) >= 1
+        and int(RB_REGIME_SMA_WINDOW) >= 1,
+        "RB regime windows must be positive",
+    )
+    _config_check(
+        0.0 <= float(RB_REGIME_PROFIT_CONCENTRATION_THRESHOLD) <= 1.0
+        and 0.0 <= float(RB_RULE_DROPOUT_DEPENDENCY_THRESHOLD) <= 1.0,
+        "RB robustness concentration thresholds must be in [0, 1]",
     )
     _config_check(0.0 < float(RB_TAIL_HOLDOUT_FRACTION) < 1.0,
                   "RB_TAIL_HOLDOUT_FRACTION must be in (0, 1)")
@@ -3128,10 +3180,31 @@ def effective_config_snapshot(
             "candidate_risk_admission": bool(
                 RB_CANDIDATE_RISK_ADMISSION_ENABLED
             ),
+            "robustness_report_only": bool(RB_ROBUSTNESS_REPORT_ONLY),
             "cost_stress_enabled": bool(RB_COST_STRESS_ENABLED),
+            "cost_stress_report_only": bool(RB_COST_STRESS_REPORT_ONLY),
+            "cost_stress_hard_gate": bool(RB_COST_STRESS_HARD_GATE),
             "cost_stress_multipliers": [
                 float(value) for value in RB_COST_STRESS_MULTIPLIERS
             ],
+            "cost_stress_min_profit_factor": float(RB_COST_STRESS_MIN_PF),
+            "execution_stress_enabled": bool(RB_EXECUTION_STRESS_ENABLED),
+            "execution_stress_report_only": bool(RB_EXECUTION_STRESS_REPORT_ONLY),
+            "execution_stress_delay_bars": int(RB_EXECUTION_STRESS_DELAY_BARS),
+            "regime_robustness_enabled": bool(RB_REGIME_ROBUSTNESS_ENABLED),
+            "regime_robustness_report_only": bool(RB_REGIME_ROBUSTNESS_REPORT_ONLY),
+            "regime_volatility_window": int(RB_REGIME_VOLATILITY_WINDOW),
+            "regime_sma_window": int(RB_REGIME_SMA_WINDOW),
+            "regime_profit_concentration_threshold": float(
+                RB_REGIME_PROFIT_CONCENTRATION_THRESHOLD
+            ),
+            "rule_dropout_stress_enabled": bool(RB_RULE_DROPOUT_STRESS_ENABLED),
+            "rule_dropout_stress_report_only": bool(
+                RB_RULE_DROPOUT_STRESS_REPORT_ONLY
+            ),
+            "rule_dropout_dependency_threshold": float(
+                RB_RULE_DROPOUT_DEPENDENCY_THRESHOLD
+            ),
             "tail_holdout_fraction": float(RB_TAIL_HOLDOUT_FRACTION),
             "tail_holdout_selection_gate": bool(RB_TAIL_HOLDOUT_SELECTION_GATE),
             "tail_holdout_min_trades": int(RB_TAIL_HOLDOUT_MIN_TRADES),

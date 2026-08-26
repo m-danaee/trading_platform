@@ -14,6 +14,8 @@ All plots are saved as PNG files (not displayed).
 from __future__ import annotations
 from scipy.stats import spearmanr
 from gpu_fuzzy_trader import config as _cfg
+from collections.abc import Mapping
+import json
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -1402,7 +1404,151 @@ class Reporter:
             "feature_bucket_concentration": feature_concentration,
         }
         with open(out_path, "w", encoding="utf-8") as fh:
-            import json
             json.dump(payload, fh, indent=2)
         logger.info("Saved generalization diagnostics: %s", out_path)
         return os.path.abspath(out_path)
+
+    def write_robustness_certificates(
+        self,
+        certificates: Mapping[str, Any] | None = None,
+        output_dir: str | None = None,
+        *,
+        direction: str | None = None,
+        cost_stress: Mapping[str, Any] | None = None,
+        execution_stress: Mapping[str, Any] | None = None,
+        regime_robustness: Mapping[str, Any] | None = None,
+        rule_dropout_stress: Mapping[str, Any] | None = None,
+    ) -> dict[str, str]:
+        """Write report-only robustness certificates.
+
+        ``certificates`` may be a component map such as
+        ``{"cost_stress": certificate}``, or a direction map such as
+        ``{"long": {"cost_stress": certificate}}``.  One file per
+        certificate and a combined ``robustness_certificates.json`` index are
+        written below the reports directory.
+        """
+        known = {
+            "cost_stress": cost_stress,
+            "execution_stress": execution_stress,
+            "regime_robustness": regime_robustness,
+            "rule_dropout_stress": rule_dropout_stress,
+        }
+        component_map: dict[str, Any] = {
+            key: value
+            for key, value in known.items()
+            if value is not None
+        }
+        supplied = dict(certificates or {})
+        if direction is not None:
+            # A single certificate can be surfaced under a direction without
+            # requiring callers to construct the aggregate shape themselves.
+            for key, value in supplied.items():
+                if key in known:
+                    component_map[key] = {str(direction): value}
+        elif any(key in known for key in supplied):
+            component_map.update(
+                {key: value for key, value in supplied.items() if key in known}
+            )
+        else:
+            # The governor uses direction -> component -> certificate.
+            for key, value in supplied.items():
+                if isinstance(value, Mapping):
+                    for certificate_name, certificate in value.items():
+                        if certificate_name in known:
+                            component_map.setdefault(certificate_name, {})
+                            current = component_map[certificate_name]
+                            if isinstance(current, Mapping):
+                                current = dict(current)
+                            else:
+                                current = {}
+                            current[str(key)] = certificate
+                            component_map[certificate_name] = current
+
+        reports_dir = output_dir if output_dir is not None else _REPORTS_DIR
+        os.makedirs(reports_dir, exist_ok=True)
+        paths: dict[str, str] = {}
+        index: dict[str, Any] = {
+            "schema_version": "1.0",
+            "report_only": True,
+            "certificates": {},
+        }
+        filenames = {
+            "cost_stress": "cost_stress.json",
+            "execution_stress": "execution_stress.json",
+            "regime_robustness": "regime_robustness.json",
+            "rule_dropout_stress": "rule_dropout_stress.json",
+        }
+        for name, value in component_map.items():
+            if value is None or name not in filenames:
+                continue
+            if isinstance(value, Mapping) and "certificate" not in value:
+                directions = {
+                    str(key): item for key, item in value.items()
+                }
+                payload: dict[str, Any] = {
+                    "schema_version": "1.0",
+                    "certificate": name,
+                    "report_only": True,
+                    "directions": directions,
+                }
+                if len(directions) == 1:
+                    only = next(iter(directions.values()))
+                    if isinstance(only, Mapping):
+                        payload.update(dict(only))
+                        payload["directions"] = directions
+            else:
+                payload = dict(value) if isinstance(value, Mapping) else {
+                    "certificate": name,
+                    "value": value,
+                }
+                payload.setdefault("schema_version", "1.0")
+                payload.setdefault("certificate", name)
+                payload.setdefault("report_only", True)
+            path = os.path.abspath(os.path.join(reports_dir, filenames[name]))
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(payload, fh, indent=2, default=str)
+            paths[name] = path
+            index["certificates"][name] = payload
+
+        aggregate_path = os.path.abspath(
+            os.path.join(reports_dir, "robustness_certificates.json")
+        )
+        with open(aggregate_path, "w", encoding="utf-8") as fh:
+            json.dump(index, fh, indent=2, default=str)
+        paths["robustness_certificates"] = aggregate_path
+        logger.info("Saved robustness certificates: %s", aggregate_path)
+        return paths
+
+    def surface_robustness_certificates(
+        self,
+        certificates: Mapping[str, Any] | None = None,
+        output_dir: str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, str]:
+        """Compatibility name for :meth:`write_robustness_certificates`."""
+        return self.write_robustness_certificates(
+            certificates, output_dir, **kwargs
+        )
+
+    def write_robustness_report(
+        self,
+        certificates: Mapping[str, Any] | None = None,
+        output_dir: str | None = None,
+        **kwargs: Any,
+    ) -> str:
+        """Write certificates and return the combined report path."""
+        paths = self.write_robustness_certificates(
+            certificates, output_dir, **kwargs
+        )
+        return paths["robustness_certificates"]
+
+    def surface_certificates(
+        self,
+        certificates: Mapping[str, Any] | None = None,
+        output_dir: str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, str]:
+        """Short compatibility alias for the certificate surface writer."""
+        return self.write_robustness_certificates(
+            certificates, output_dir, **kwargs
+        )

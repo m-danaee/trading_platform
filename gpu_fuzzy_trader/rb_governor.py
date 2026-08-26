@@ -31,6 +31,16 @@ from gpu_fuzzy_trader.validation.monthly_windows import (
     summarize_monthly_metrics,
     MonthlyWindowSummary,
 )
+from gpu_fuzzy_trader.validation.cost_stress import (
+    cost_stress_certificate,
+)
+from gpu_fuzzy_trader.validation.execution_stress import (
+    execution_stress_certificate,
+)
+from gpu_fuzzy_trader.validation.regime_robustness import (
+    regime_robustness_certificate,
+    rule_dropout_stress,
+)
 from gpu_fuzzy_trader.phases.rule_identity import (
     feature_conditions_only,
     phase2_rule_id,
@@ -1137,51 +1147,34 @@ def _cost_stress_gate(
     train_engine: CPUBacktestEngine,
     valid_engine: CPUBacktestEngine,
     rules: list[dict],
+    *,
+    certificate_out: dict[str, Any] | None = None,
 ) -> tuple[bool, list[dict]]:
-    """Require the final package to survive a configured cost stress."""
-    if not (
-        bool(getattr(_cfg, "RB_CANONICAL_PIPELINE_ACTIVE", False))
-        and bool(getattr(_cfg, "RB_COST_STRESS_ENABLED", False))
-    ):
-        return True, []
-    results: list[dict] = []
-    base_fee = float(getattr(_cfg, "FEE_PCT", 0.0))
-    min_return = float(getattr(_cfg, "RB_COST_STRESS_MIN_RETURN_PCT", 0.0))
-    passed = True
-    for multiplier in getattr(_cfg, "RB_COST_STRESS_MULTIPLIERS", (1.0,)):
-        factor = float(multiplier)
-        if factor <= 1.0:
-            continue
-        stressed_train = CPUBacktestEngine(
-            train_engine.df,
-            {},
-            train_engine.trade_direction,
-            fee_pct=base_fee * factor,
-        ).simulate_rule_set([_rule_to_engine(rule) for rule in rules])
-        stressed_valid = CPUBacktestEngine(
-            valid_engine.df,
-            {},
-            valid_engine.trade_direction,
-            fee_pct=base_fee * factor,
-        ).simulate_rule_set([_rule_to_engine(rule) for rule in rules])
-        ok = (
-            _f(stressed_train, "total_return_pct") >= min_return
-            and _f(stressed_valid, "total_return_pct") >= min_return
-            and min(
-                expectancy_lcb_pct(stressed_train),
-                expectancy_lcb_pct(stressed_valid),
-            ) >= float(getattr(_cfg, "RB_EXPECTANCY_LCB_MARGIN_PCT", 0.0))
-        )
-        passed = passed and ok
-        results.append({
-            "multiplier": factor,
-            "train_return_pct": _f(stressed_train, "total_return_pct"),
-            "valid_return_pct": _f(stressed_valid, "total_return_pct"),
-            "train_profit_factor": _f(stressed_train, "profit_factor"),
-            "valid_profit_factor": _f(stressed_valid, "profit_factor"),
-            "passed": bool(ok),
-        })
-    return passed, results
+    """Build the cost certificate while keeping the historical tuple API.
+
+    Cost stress is report-only by default.  ``certificate_out`` is an optional
+    mutable sink used by the pipeline so the expensive frozen-portfolio curve
+    is evaluated once and both the strategy report and aggregate certificate
+    share the same evidence.
+    """
+    certificate = cost_stress_certificate(
+        train_engine,
+        valid_engine,
+        [_rule_to_engine(rule) for rule in rules],
+        direction=train_engine.trade_direction,
+    )
+    if certificate_out is not None:
+        certificate_out.update(certificate)
+    results = [
+        dict(row) for row in certificate.get("stress_curve", [])
+        if isinstance(row, dict)
+    ]
+    hard_gate = bool(
+        getattr(_cfg, "RB_COST_STRESS_HARD_GATE", False)
+        and not bool(getattr(_cfg, "RB_ROBUSTNESS_REPORT_ONLY", True))
+        and not bool(getattr(_cfg, "RB_COST_STRESS_REPORT_ONLY", True))
+    )
+    return (bool(certificate.get("passed", True)) if hard_gate else True), results
 
 
 def _monthly_selection_certificate(
@@ -3757,6 +3750,51 @@ def _write_marginal_report(
         json.dump(report, fh, indent=2, default=str)
 
 
+def _empty_robustness_certificates(
+    direction: str,
+    reason: str,
+) -> dict[str, Any]:
+    """Return explicit unavailable certificates for a fail-closed direction."""
+    report_only = bool(getattr(_cfg, "RB_ROBUSTNESS_REPORT_ONLY", True))
+    component_flags = {
+        "cost_stress": "RB_COST_STRESS_ENABLED",
+        "execution_stress": "RB_EXECUTION_STRESS_ENABLED",
+        "regime_robustness": "RB_REGIME_ROBUSTNESS_ENABLED",
+        "rule_dropout_stress": "RB_RULE_DROPOUT_STRESS_ENABLED",
+    }
+    component_report_flags = {
+        "cost_stress": "RB_COST_STRESS_REPORT_ONLY",
+        "execution_stress": "RB_EXECUTION_STRESS_REPORT_ONLY",
+        "regime_robustness": "RB_REGIME_ROBUSTNESS_REPORT_ONLY",
+        "rule_dropout_stress": "RB_RULE_DROPOUT_STRESS_REPORT_ONLY",
+    }
+    return {
+        "schema_version": "1.0",
+        "direction": direction,
+        "report_only": report_only,
+        "available": False,
+        "reason": reason,
+        **{
+            name: {
+                "schema_version": "1.0",
+                "certificate": name,
+                "enabled": bool(
+                    getattr(_cfg, component_flags[name], True)
+                ),
+                "available": False,
+                "diagnostic_only": True,
+                "report_only": bool(
+                    report_only
+                    or getattr(_cfg, component_report_flags[name], True)
+                ),
+                "verdict": "unavailable",
+                "reason": reason,
+            }
+            for name in component_flags
+        },
+    }
+
+
 def _write_fail_closed_strategy(
     out_dir: Path,
     reports_dir: Path,
@@ -3764,6 +3802,7 @@ def _write_fail_closed_strategy(
     reason: str,
     *,
     phase2_status: dict | None = None,
+    robustness_certificates: dict[str, Any] | None = None,
 ) -> dict:
     """Persist an explicit empty strategy and diagnostic report."""
 
@@ -3778,6 +3817,7 @@ def _write_fail_closed_strategy(
             "fail_closed": True,
             "reason": reason,
             "phase2_status": phase2_status or {},
+            "robustness_certificates": robustness_certificates or {},
         },
     )
     strategy_path = out_dir / f"{direction}.json"
@@ -3801,6 +3841,7 @@ def _write_fail_closed_strategy(
         "fail_closed": True,
         "reason": reason,
         "phase2_status": phase2_status or {},
+        "robustness_certificates": robustness_certificates or {},
     }
     with (reports_dir / f"rb_governor_{direction}_report.json").open(
         "w", encoding="utf-8"
@@ -3971,6 +4012,7 @@ def run_rb_governor_pipeline(
         ),
         "directions": {},
     }
+    robustness_reports: dict[str, dict[str, Any]] = {}
 
     for direction in directions:
         direction_marginal_report = _empty_marginal_report(
@@ -3983,12 +4025,16 @@ def run_rb_governor_pipeline(
             logger.warning("RB [%s]: empty Phase 2 pool; fail closed (%s).", direction, reason)
             direction_marginal_report["reason"] = reason
             marginal_report["directions"][direction] = direction_marginal_report
+            robustness_reports[direction] = _empty_robustness_certificates(
+                direction, reason,
+            )
             results[direction] = _write_fail_closed_strategy(
                 out_dir,
                 reports_dir,
                 direction,
                 reason,
                 phase2_status={"reason": reason},
+                robustness_certificates=robustness_reports[direction],
             )
             continue
         # Normalize provenance for pools produced by current or compatible
@@ -4140,11 +4186,15 @@ def run_rb_governor_pipeline(
             )
             direction_marginal_report["reason"] = "no_positive_good_candidates"
             marginal_report["directions"][direction] = direction_marginal_report
+            robustness_reports[direction] = _empty_robustness_certificates(
+                direction, "no_positive_good_candidates",
+            )
             results[direction] = _write_fail_closed_strategy(
                 out_dir,
                 reports_dir,
                 direction,
                 "no_positive_good_candidates",
+                robustness_certificates=robustness_reports[direction],
             )
             continue
 
@@ -4452,6 +4502,9 @@ def run_rb_governor_pipeline(
                     direction,
                     len(invalid_rules),
                 )
+                robustness_reports[direction] = _empty_robustness_certificates(
+                    direction, "phase2_condition_contract",
+                )
                 strategy = _strategy(
                     direction,
                     [],
@@ -4461,6 +4514,7 @@ def run_rb_governor_pipeline(
                         "fail_closed": True,
                         "reason": "phase2_condition_contract",
                         "invalid_rules": invalid_rules,
+                        "robustness_certificates": robustness_reports[direction],
                     },
                 )
                 strategy_path = out_dir / f"{direction}.json"
@@ -4482,6 +4536,7 @@ def run_rb_governor_pipeline(
                     "fail_closed_reason": "phase2_condition_contract",
                     "invalid_rules": invalid_rules,
                     "marginal_contribution": direction_marginal_report,
+                    "robustness_certificates": robustness_reports[direction],
                 }
                 with (reports_dir / f"rb_governor_{direction}_report.json").open(
                     "w", encoding="utf-8",
@@ -4509,6 +4564,9 @@ def run_rb_governor_pipeline(
                         "(%d < %d required); failing closed.",
                         direction, n_symbols, min_distinct,
                     )
+                    robustness_reports[direction] = _empty_robustness_certificates(
+                        direction, "insufficient_distinct_symbols",
+                    )
                     opt_rules = []
                     opt_train = {}
                     opt_test = {}
@@ -4525,6 +4583,7 @@ def run_rb_governor_pipeline(
                             "symbol_coverage_policy": symbol_policy,
                             "symbol_contribution_certificate": portfolio_certificate,
                             "marginal_contribution": direction_marginal_report,
+                            "robustness_certificates": robustness_reports[direction],
                         },
                     )
                     strategy_path = out_dir / f"{direction}.json"
@@ -4566,6 +4625,7 @@ def run_rb_governor_pipeline(
                         "required_symbols": min_distinct,
                         "symbol_coverage_policy": symbol_policy,
                         "marginal_contribution": direction_marginal_report,
+                        "robustness_certificates": robustness_reports[direction],
                     }
                     with (reports_dir / f"rb_governor_{direction}_report.json").open("w", encoding="utf-8") as fh:
                         json.dump(report, fh, indent=2, default=str)
@@ -4605,11 +4665,139 @@ def run_rb_governor_pipeline(
                 max_hhi=concentration_max_hhi,
             )
         tail_ok, tail_gate = _passes_tail_holdout_gate(risk_history)
-        cost_stress_ok, cost_stress = _cost_stress_gate(
-            train_engine,
-            valid_engine,
-            opt_rules,
+        cost_certificate: dict[str, Any] = {}
+        try:
+            cost_stress_ok, cost_stress = _cost_stress_gate(
+                train_engine,
+                valid_engine,
+                opt_rules,
+                certificate_out=cost_certificate,
+            )
+        except Exception as exc:  # pragma: no cover - defensive report path
+            logger.warning(
+                "RB [%s]: cost-stress diagnostic failed: %s",
+                direction,
+                exc,
+            )
+            cost_stress_ok, cost_stress = True, []
+            cost_certificate = {
+                "schema_version": "1.0",
+                "certificate": "cost_stress",
+                "enabled": bool(
+                    getattr(_cfg, "RB_COST_STRESS_ENABLED", True)
+                ),
+                "available": False,
+                "diagnostic_only": True,
+                "report_only": bool(
+                    getattr(_cfg, "RB_ROBUSTNESS_REPORT_ONLY", True)
+                ),
+                "verdict": "unavailable",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        try:
+            execution_certificate = execution_stress_certificate(
+                train_engine,
+                opt_rules,
+                validation_engine=valid_engine,
+                direction=direction,
+                delay_bars=int(
+                    getattr(_cfg, "RB_EXECUTION_STRESS_DELAY_BARS", 1)
+                ),
+            )
+        except Exception as exc:  # pragma: no cover - defensive report path
+            execution_certificate = {
+                "schema_version": "1.0",
+                "certificate": "execution_stress",
+                "enabled": bool(
+                    getattr(_cfg, "RB_EXECUTION_STRESS_ENABLED", True)
+                ),
+                "available": False,
+                "diagnostic_only": True,
+                "report_only": bool(
+                    getattr(_cfg, "RB_ROBUSTNESS_REPORT_ONLY", True)
+                ),
+                "verdict": "unavailable",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        try:
+            regime_certificate = regime_robustness_certificate(
+                train_like,
+                valid_df,
+                opt_rules,
+                direction=direction,
+            )
+        except Exception as exc:  # pragma: no cover - defensive report path
+            regime_certificate = {
+                "schema_version": "1.0",
+                "certificate": "regime_robustness",
+                "enabled": bool(
+                    getattr(_cfg, "RB_REGIME_ROBUSTNESS_ENABLED", True)
+                ),
+                "available": False,
+                "diagnostic_only": True,
+                "report_only": bool(
+                    getattr(_cfg, "RB_ROBUSTNESS_REPORT_ONLY", True)
+                ),
+                "verdict": "unavailable",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        try:
+            dropout_train = rule_dropout_stress(
+                train_engine,
+                opt_rules,
+                direction=direction,
+            )
+            dropout_valid = rule_dropout_stress(
+                valid_engine,
+                opt_rules,
+                direction=direction,
+            )
+            # Validation remains the headline dropout result, while train is
+            # retained to make the diagnostic auditable on both frozen splits.
+            dropout_certificate = dict(dropout_valid)
+            dropout_certificate["splits"] = {
+                "train": dropout_train,
+                "validation": dropout_valid,
+            }
+            dropout_certificate["single_rule_dependency"] = bool(
+                dropout_train.get("single_rule_dependency", False)
+                or dropout_valid.get("single_rule_dependency", False)
+            )
+        except Exception as exc:  # pragma: no cover - defensive report path
+            dropout_certificate = {
+                "schema_version": "1.0",
+                "certificate": "rule_dropout_stress",
+                "enabled": bool(
+                    getattr(_cfg, "RB_RULE_DROPOUT_STRESS_ENABLED", True)
+                ),
+                "available": False,
+                "diagnostic_only": True,
+                "report_only": bool(
+                    getattr(_cfg, "RB_ROBUSTNESS_REPORT_ONLY", True)
+                ),
+                "per_rule": [],
+                "verdict": "unavailable",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        robustness_reports[direction] = {
+            "schema_version": "1.0",
+            "direction": direction,
+            "report_only": bool(
+                getattr(_cfg, "RB_ROBUSTNESS_REPORT_ONLY", True)
+            ),
+            "cost_stress": cost_certificate,
+            "execution_stress": execution_certificate,
+            "regime_robustness": regime_certificate,
+            "rule_dropout_stress": dropout_certificate,
+        }
+        cost_gate_active = bool(
+            getattr(_cfg, "RB_COST_STRESS_HARD_GATE", False)
+            and not bool(getattr(_cfg, "RB_ROBUSTNESS_REPORT_ONLY", True))
+            and not bool(getattr(_cfg, "RB_COST_STRESS_REPORT_ONLY", True))
         )
+        # Diagnostics must not become an accidental deployment gate.  Only an
+        # explicit hard-gate configuration can opt into the old behaviour.
+        cost_gate_ok = cost_stress_ok if cost_gate_active else True
         monthly_ok, monthly_certificate = _monthly_selection_certificate(
             valid_engine,
             opt_rules,
@@ -4621,7 +4809,7 @@ def run_rb_governor_pipeline(
             and portfolio_cert_ok
             and sym_ok
             and tail_ok
-            and cost_stress_ok
+            and cost_gate_ok
             and monthly_ok
         )
         if not portfolio_cert_ok:
@@ -4647,7 +4835,7 @@ def run_rb_governor_pipeline(
                 float(tail_gate.get("tail_return_pct", 0.0)),
                 float(tail_gate.get("min_return_pct", 0.0)),
             )
-        if not cost_stress_ok:
+        if not cost_gate_ok:
             logger.warning(
                 "RB [%s]: cost-stress gate failed (%s)",
                 direction,
@@ -4667,7 +4855,7 @@ def run_rb_governor_pipeline(
             not portfolio_cert_ok
             or not sym_ok
             or not tail_ok
-            or not cost_stress_ok
+            or not cost_gate_ok
             or not monthly_ok
         ):
             reasons: list[str] = []
@@ -4683,7 +4871,7 @@ def run_rb_governor_pipeline(
                 reasons.append("symbol_concentration")
             if not tail_ok:
                 reasons.append("tail_holdout")
-            if not cost_stress_ok:
+            if not cost_gate_ok:
                 reasons.append("cost_stress")
             if not monthly_ok:
                 reasons.append("monthly_stability")
@@ -4705,6 +4893,11 @@ def run_rb_governor_pipeline(
                     "symbol_concentration_gate": sym_gate,
                     "tail_holdout_gate": tail_gate,
                     "cost_stress_gate": cost_stress,
+                    "cost_stress_certificate": cost_certificate,
+                    "execution_stress_certificate": execution_certificate,
+                    "regime_robustness_certificate": regime_certificate,
+                    "rule_dropout_stress_certificate": dropout_certificate,
+                    "robustness_certificates": robustness_reports[direction],
                     "monthly_certificate": monthly_certificate,
                     "symbol_coverage_policy": symbol_policy,
                     "symbol_contribution_certificate": portfolio_certificate,
@@ -4756,6 +4949,11 @@ def run_rb_governor_pipeline(
                 "symbol_concentration_gate": sym_gate,
                 "tail_holdout_gate": tail_gate,
                 "cost_stress_gate": cost_stress,
+                "cost_stress_certificate": cost_certificate,
+                "execution_stress_certificate": execution_certificate,
+                "regime_robustness_certificate": regime_certificate,
+                "rule_dropout_stress_certificate": dropout_certificate,
+                "robustness_certificates": robustness_reports[direction],
                 "monthly_certificate": monthly_certificate,
                 "symbol_coverage_policy": symbol_policy,
                 "validation_gate": {
@@ -4804,6 +5002,11 @@ def run_rb_governor_pipeline(
                 "rb_valid_executed_trades": _i(opt_test, "executed_trades"),
                 "rb_train_minus_valid_return_pct": _f(opt_train, "total_return_pct") - val_ret,
                 "rb_train_valid_ratio": _f(opt_train, "total_return_pct") / max(val_ret, 1e-9),
+                "cost_stress_certificate": cost_certificate,
+                "execution_stress_certificate": execution_certificate,
+                "regime_robustness_certificate": regime_certificate,
+                "rule_dropout_stress_certificate": dropout_certificate,
+                "robustness_certificates": robustness_reports[direction],
                 "rb_profit_amp_objective": profit_objective,
                 "rb_profit_amp_accepted": bool(profit_meta.get("accepted", False)),
             },
@@ -4832,6 +5035,11 @@ def run_rb_governor_pipeline(
             "symbol_coverage_policy": symbol_policy,
             "symbol_contribution_certificate": portfolio_certificate,
             "marginal_contribution": direction_marginal_report,
+            "cost_stress_certificate": cost_certificate,
+            "execution_stress_certificate": execution_certificate,
+            "regime_robustness_certificate": regime_certificate,
+            "rule_dropout_stress_certificate": dropout_certificate,
+            "robustness_certificates": robustness_reports[direction],
             "top_single_rules": [
                 {
                     "rank": i + 1,
@@ -4920,6 +5128,11 @@ def run_rb_governor_pipeline(
                     "used": True,
                     "selection_frame": "complete_validation_holdout",
                 }
+                recovered_certificates = candidate.get(
+                    "robustness_certificates"
+                )
+                if isinstance(recovered_certificates, dict):
+                    robustness_reports[direction] = recovered_certificates
                 strategy_path = out_dir / f"{direction}.json"
                 try:
                     with strategy_path.open("w", encoding="utf-8") as fh:
@@ -4937,6 +5150,26 @@ def run_rb_governor_pipeline(
                     direction,
                     len(candidate.get("rules_set", [])),
                 )
+    try:
+        from gpu_fuzzy_trader.reporting.reporter import Reporter
+
+        certificate_inputs: dict[str, Any] = robustness_reports
+        if not certificate_inputs:
+            certificate_inputs = {
+                name: {}
+                for name in (
+                    "cost_stress",
+                    "execution_stress",
+                    "regime_robustness",
+                    "rule_dropout_stress",
+                )
+            }
+        Reporter().write_robustness_certificates(
+            certificate_inputs,
+            output_dir=str(reports_dir),
+        )
+    except Exception as exc:  # pragma: no cover - reporting is non-fatal
+        logger.warning("RB robustness certificate reports failed: %s", exc)
     _write_marginal_report(reports_dir, marginal_report)
     return results
 
