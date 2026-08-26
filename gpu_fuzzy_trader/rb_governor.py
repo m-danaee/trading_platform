@@ -46,6 +46,10 @@ from gpu_fuzzy_trader.portfolio.redundancy import (
     redundancy_matrix,
     stable_corr,
 )
+from gpu_fuzzy_trader.portfolio.marginal import (
+    effective_rule_count,
+    marginal_contribution,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -2259,6 +2263,296 @@ def _correlation_profile(
     return report, stable_matrix, clusters, cluster_map
 
 
+def _marginal_metric_has_worst_month(metrics: object) -> bool:
+    """Return whether a backtest result already carries a worst-month value."""
+    if not isinstance(metrics, dict):
+        return False
+    return any(
+        key in metrics
+        for key in (
+            "WorstMonth",
+            "worstmonth",
+            "worst_month",
+            "worst_month_return",
+            "worst_month_return_pct",
+            "worst_return_pct",
+        )
+    )
+
+
+def _marginal_exact_metrics(
+    engine: CPUBacktestEngine,
+    rules: list[dict],
+    direction: str,
+) -> dict:
+    """Run one exact CPU evaluation and attach a monthly worst-return value."""
+    formatted = [_rule_to_engine(rule) for rule in rules]
+    try:
+        result = engine.simulate_rule_set(formatted)
+    except Exception as exc:
+        logger.warning(
+            "RB [%s]: marginal CPU evaluation failed: %s",
+            direction,
+            exc,
+        )
+        return {}
+    if isinstance(result, tuple):
+        result = result[0] if result and isinstance(result[0], dict) else {}
+    metrics = dict(result) if isinstance(result, dict) else {}
+    if _marginal_metric_has_worst_month(metrics):
+        return metrics
+
+    # CPUBacktestEngine does not need to calculate monthly summaries for its
+    # ordinary path.  Build them only for this report, and only when the engine
+    # exposes a real frame.  Small fixtures may have no eligible monthly
+    # windows; in that case zero is an explicit, non-fabricated fallback.
+    metrics["WorstMonth"] = 0.0
+    frame = getattr(engine, "df", None)
+    if not isinstance(frame, pd.DataFrame) or frame.empty:
+        return metrics
+    try:
+        windows = build_monthly_windows(frame)
+    except Exception as exc:
+        logger.debug("RB [%s]: cannot build marginal monthly windows: %s", direction, exc)
+        return metrics
+    if not windows:
+        return metrics
+
+    monthly_returns: list[float] = []
+    for window in windows:
+        try:
+            window_metrics = CPUBacktestEngine(
+                window,
+                {},
+                direction,
+            ).simulate_rule_set(formatted)
+            if isinstance(window_metrics, tuple):
+                window_metrics = window_metrics[0]
+            if isinstance(window_metrics, dict):
+                monthly_returns.append(_f(window_metrics, "total_return_pct"))
+        except Exception as exc:
+            logger.debug(
+                "RB [%s]: marginal monthly evaluation failed: %s",
+                direction,
+                exc,
+            )
+    if monthly_returns:
+        metrics["WorstMonth"] = float(min(monthly_returns))
+    return metrics
+
+
+def _marginal_redundancy_matrix(
+    selected: list[CandidateRecord],
+) -> np.ndarray:
+    """Build the dependence matrix used by the effective rule count report."""
+    if not selected:
+        return np.zeros((0, 0), dtype=float)
+    masks = _normalised_candidate_masks(selected)
+    pnl = [_candidate_pnl_evidence(candidate) for candidate in selected]
+    return redundancy_matrix(
+        masks,
+        pnl,
+        signal_weight=float(
+            _correlation_control(
+                "RB_SIGNAL_OVERLAP_WEIGHT",
+                "RB_CORRELATION_SIGNAL_WEIGHT",
+                0.5,
+            )
+        ),
+        pnl_weight=float(
+            _correlation_control(
+                "RB_PNL_CORR_WEIGHT",
+                "RB_CORRELATION_PNL_WEIGHT",
+                0.5,
+            )
+        ),
+    )
+
+
+def _empty_marginal_report(
+    direction: str,
+    *,
+    reason: str = "no_selected_rules",
+) -> dict[str, Any]:
+    """Return a stable report shape for empty or fail-closed directions."""
+    return {
+        "direction": direction,
+        "pruning_enabled": bool(getattr(_cfg, "RB_MARGINAL_PRUNING", False)),
+        "effective_rule_count_enabled": bool(
+            getattr(_cfg, "RB_EFFECTIVE_RULE_COUNT_ENABLED", True)
+        ),
+        "passes": [],
+        "per_rule": [],
+        "rules": [],
+        "selected_rule_count": 0,
+        "removed_rule_count": 0,
+        "effective_independent_rules": 0.0,
+        "effective_rule_count": 0.0,
+        "stable": True,
+        "pruned": False,
+        "reason": reason,
+    }
+
+
+def _marginal_prune_ruleset(
+    selected: list[CandidateRecord],
+    train_engine: CPUBacktestEngine,
+    valid_engine: CPUBacktestEngine,
+    direction: str,
+) -> tuple[list[CandidateRecord], dict, dict, dict[str, Any]]:
+    """Report and optionally prune negative leave-one-out rule contributions.
+
+    The validation engine is the selection evidence used for the marginal
+    decision.  The train engine is re-evaluated after pruning so downstream RB
+    risk tuning always receives exact metrics for the actual selected rules.
+    At most two pruning passes are allowed; report-only mode performs one
+    diagnostic pass and never changes the greedy result.
+    """
+    if not selected:
+        empty = _empty_marginal_report(direction)
+        return [], {}, {}, empty
+
+    current = list(selected)
+    original_positions = {
+        id(record): index + 1 for index, record in enumerate(selected)
+    }
+    pruning_enabled = bool(getattr(_cfg, "RB_MARGINAL_PRUNING", False))
+    effective_enabled = bool(
+        getattr(_cfg, "RB_EFFECTIVE_RULE_COUNT_ENABLED", True)
+    )
+    configured_min_rules = max(0, int(getattr(_cfg, "RB_MIN_RULES", 1)))
+    entries_by_identity: dict[int, dict[str, Any]] = {}
+    pass_reports: list[dict[str, Any]] = []
+    max_passes = 2 if pruning_enabled else 1
+    stable = False
+
+    for pass_number in range(1, max_passes + 1):
+        if not current:
+            stable = True
+            break
+        current_rules = [record.rule for record in current]
+        full_metrics = _marginal_exact_metrics(
+            valid_engine,
+            current_rules,
+            direction,
+        )
+        pass_entries: list[dict[str, Any]] = []
+        negative_records: list[tuple[float, int, CandidateRecord]] = []
+        for local_index, record in enumerate(current):
+            without_rules = [
+                other.rule
+                for other_index, other in enumerate(current)
+                if other_index != local_index
+            ]
+            without_metrics = _marginal_exact_metrics(
+                valid_engine,
+                without_rules,
+                direction,
+            )
+            contribution = marginal_contribution(full_metrics, without_metrics)
+            original_index = original_positions.get(id(record), local_index + 1)
+            rule = record.rule
+            rule_id = str(
+                rule.get("phase2_rule_id")
+                or rule.get("rule_id")
+                or f"rule-{original_index}"
+            )
+            entry: dict[str, Any] = {
+                "rule_index": int(original_index),
+                "current_index": int(local_index + 1),
+                "rule_id": rule_id,
+                "phase2_rule_id": str(rule.get("phase2_rule_id", "")),
+                "conditions": list(rule.get("conditions", [])),
+                **contribution,
+                "pass": int(pass_number),
+                "removed": False,
+                "retained": True,
+            }
+            pass_entries.append(entry)
+            entries_by_identity[id(record)] = entry
+            if not bool(contribution["is_beneficial"]):
+                negative_records.append(
+                    (
+                        float(contribution["ΔReturn"]),
+                        int(original_index),
+                        record,
+                    )
+                )
+
+        removable_count = max(0, len(current) - configured_min_rules)
+        to_remove: list[CandidateRecord] = []
+        if pruning_enabled and removable_count and negative_records:
+            # Remove the most negative contributors first.  This makes the
+            # bounded pass deterministic and preserves RB_MIN_RULES.
+            negative_records.sort(key=lambda item: (item[0], item[1]))
+            to_remove = [
+                record
+                for _delta_return, _index, record in negative_records[
+                    :removable_count
+                ]
+            ]
+            remove_ids = {id(record) for record in to_remove}
+            for record in to_remove:
+                entry = entries_by_identity[id(record)]
+                entry["removed"] = True
+                entry["retained"] = False
+                entry["removal_reason"] = "negative_marginal_contribution"
+            current = [record for record in current if id(record) not in remove_ids]
+
+        pass_reports.append({
+            "pass": int(pass_number),
+            "rules_before": len(pass_entries),
+            "rules_removed": len(to_remove),
+            "rules_after": len(current),
+            "full_metrics": {
+                "Return": _f(full_metrics, "total_return_pct"),
+                "Sortino": _f(full_metrics, "sortino_ratio"),
+                "MDD": _f(full_metrics, "max_drawdown_pct"),
+                "PF": _f(full_metrics, "profit_factor"),
+                "WorstMonth": _f(full_metrics, "WorstMonth"),
+            },
+            "per_rule": pass_entries,
+        })
+
+        if not to_remove:
+            stable = True
+            break
+
+    final_rules = [record.rule for record in current]
+    final_train = _marginal_exact_metrics(train_engine, final_rules, direction)
+    final_valid = _marginal_exact_metrics(valid_engine, final_rules, direction)
+    matrix = _marginal_redundancy_matrix(current)
+    effective = (
+        effective_rule_count(matrix) if effective_enabled else None
+    )
+    per_rule = list(entries_by_identity.values())
+    per_rule.sort(key=lambda row: int(row.get("rule_index", 0)))
+    report: dict[str, Any] = {
+        "direction": direction,
+        "metric_delta_contract": "full_minus_without_i",
+        "pruning_enabled": pruning_enabled,
+        "effective_rule_count_enabled": effective_enabled,
+        "passes": pass_reports,
+        "per_rule": per_rule,
+        # ``rules`` is a descriptive alias used by report consumers.
+        "rules": per_rule,
+        "selected_rule_count": len(current),
+        "removed_rule_count": len(selected) - len(current),
+        "effective_independent_rules": effective,
+        "effective_rule_count": effective,
+        "redundancy_matrix": matrix.tolist(),
+        "stable": bool(stable),
+        "pruned": bool(len(current) != len(selected)),
+    }
+    return current, final_train, final_valid, report
+
+
+# Public descriptive alias for callers that want to run the bounded pass
+# outside the pipeline, while the underscore name keeps the governor API
+# private for existing integrations.
+prune_negative_marginal = _marginal_prune_ruleset
+
+
 def _compose_ruleset(
     candidates: list[CandidateRecord],
     train_engine: CPUBacktestEngine,
@@ -3415,6 +3709,54 @@ def _write_clean_evaluator(strategy: dict, output_path: Path) -> None:
         json.dump(clean, fh, indent=2)
 
 
+def _write_marginal_report(
+    reports_dir: Path,
+    report: dict[str, Any],
+) -> None:
+    """Write the aggregate marginal contribution report."""
+    directions = report.get("directions", {})
+    if isinstance(directions, dict):
+        if len(directions) == 1:
+            only_direction = next(iter(directions.values()))
+            if isinstance(only_direction, dict):
+                # Keep the single-direction shape convenient for lightweight
+                # report consumers while retaining the direction map for
+                # normal long/short pipeline runs.
+                report["per_rule"] = only_direction.get("per_rule", [])
+                report["rules"] = only_direction.get("rules", [])
+                report["marginal_contributions"] = report["per_rule"]
+                report["effective_independent_rules"] = only_direction.get(
+                    "effective_independent_rules",
+                    0.0,
+                )
+                report["effective_rule_count"] = only_direction.get(
+                    "effective_rule_count",
+                    0.0,
+                )
+        else:
+            report["per_rule"] = {
+                str(direction): detail.get("per_rule", [])
+                for direction, detail in directions.items()
+                if isinstance(detail, dict)
+            }
+            report["rules"] = report["per_rule"]
+            report["marginal_contributions"] = report["per_rule"]
+            report["effective_independent_rules"] = {
+                str(direction): detail.get("effective_independent_rules", 0.0)
+                for direction, detail in directions.items()
+                if isinstance(detail, dict)
+            }
+            report["effective_rule_count"] = report[
+                "effective_independent_rules"
+            ]
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    with (reports_dir / "marginal_contribution.json").open(
+        "w",
+        encoding="utf-8",
+    ) as fh:
+        json.dump(report, fh, indent=2, default=str)
+
+
 def _write_fail_closed_strategy(
     out_dir: Path,
     reports_dir: Path,
@@ -3618,12 +3960,29 @@ def run_rb_governor_pipeline(
     scoring_val = val_selection_df if val_selection_df is not None else val_df
     _, valid_df = _load_scoring_frames(train_df, scoring_val)
     results: dict[str, dict] = {}
+    marginal_report: dict[str, Any] = {
+        "schema_version": "1.0",
+        "metric_delta_contract": "full_minus_without_i",
+        "pruning_enabled": bool(
+            getattr(_cfg, "RB_MARGINAL_PRUNING", False)
+        ),
+        "effective_rule_count_enabled": bool(
+            getattr(_cfg, "RB_EFFECTIVE_RULE_COUNT_ENABLED", True)
+        ),
+        "directions": {},
+    }
 
     for direction in directions:
+        direction_marginal_report = _empty_marginal_report(
+            direction,
+            reason="not_evaluated",
+        )
         pool = pools.get(direction, [])
         if not pool:
             reason = (failure_reasons or {}).get(direction, "empty_phase2_pool")
             logger.warning("RB [%s]: empty Phase 2 pool; fail closed (%s).", direction, reason)
+            direction_marginal_report["reason"] = reason
+            marginal_report["directions"][direction] = direction_marginal_report
             results[direction] = _write_fail_closed_strategy(
                 out_dir,
                 reports_dir,
@@ -3779,6 +4138,8 @@ def run_rb_governor_pipeline(
                 "RB [%s]: no positive-good single rules; fail closed.",
                 direction,
             )
+            direction_marginal_report["reason"] = "no_positive_good_candidates"
+            marginal_report["directions"][direction] = direction_marginal_report
             results[direction] = _write_fail_closed_strategy(
                 out_dir,
                 reports_dir,
@@ -3817,6 +4178,36 @@ def run_rb_governor_pipeline(
             concentration_max_share=concentration_max_share,
             concentration_max_hhi=concentration_max_hhi,
         )
+
+        # The greedy composition is the first point where a complete RB team
+        # exists.  Compare that team with every exact validation leave-one-out
+        # portfolio before risk tuning or profit amplification can change its
+        # membership.  Report-only is the default; enabling the flag applies
+        # the bounded, deterministic removal pass.
+        try:
+            (
+                selected,
+                sel_train,
+                sel_test,
+                direction_marginal_report,
+            ) = _marginal_prune_ruleset(
+                selected,
+                train_engine,
+                valid_engine,
+                direction,
+            )
+        except Exception as exc:
+            logger.warning(
+                "RB [%s]: marginal contribution pass failed; retaining greedy "
+                "selection: %s",
+                direction,
+                exc,
+            )
+            direction_marginal_report = _empty_marginal_report(
+                direction,
+                reason=f"evaluation_error: {type(exc).__name__}: {exc}",
+            )
+        marginal_report["directions"][direction] = direction_marginal_report
 
         opt_rules, opt_train, opt_test, opt_score, risk_history = _optimize_risk(
             selected, train_engine, valid_engine, direction,
@@ -4090,6 +4481,7 @@ def run_rb_governor_pipeline(
                     "fail_closed": True,
                     "fail_closed_reason": "phase2_condition_contract",
                     "invalid_rules": invalid_rules,
+                    "marginal_contribution": direction_marginal_report,
                 }
                 with (reports_dir / f"rb_governor_{direction}_report.json").open(
                     "w", encoding="utf-8",
@@ -4132,6 +4524,7 @@ def run_rb_governor_pipeline(
                             "required": min_distinct,
                             "symbol_coverage_policy": symbol_policy,
                             "symbol_contribution_certificate": portfolio_certificate,
+                            "marginal_contribution": direction_marginal_report,
                         },
                     )
                     strategy_path = out_dir / f"{direction}.json"
@@ -4172,6 +4565,7 @@ def run_rb_governor_pipeline(
                         "n_symbols": n_symbols,
                         "required_symbols": min_distinct,
                         "symbol_coverage_policy": symbol_policy,
+                        "marginal_contribution": direction_marginal_report,
                     }
                     with (reports_dir / f"rb_governor_{direction}_report.json").open("w", encoding="utf-8") as fh:
                         json.dump(report, fh, indent=2, default=str)
@@ -4400,6 +4794,7 @@ def run_rb_governor_pipeline(
                 "tail_holdout_gate": tail_gate,
                 "symbol_coverage_policy": symbol_policy,
                 "symbol_contribution_certificate": portfolio_certificate,
+                "marginal_contribution": direction_marginal_report,
                 "recency_rescue": recency_detail,
                 "rb_score": opt_score,
                 "rb_train_return_pct": _f(opt_train, "total_return_pct"),
@@ -4436,6 +4831,7 @@ def run_rb_governor_pipeline(
             "rejected_portfolio_certificates": rejected_portfolio_certificates,
             "symbol_coverage_policy": symbol_policy,
             "symbol_contribution_certificate": portfolio_certificate,
+            "marginal_contribution": direction_marginal_report,
             "top_single_rules": [
                 {
                     "rank": i + 1,
@@ -4541,6 +4937,7 @@ def run_rb_governor_pipeline(
                     direction,
                     len(candidate.get("rules_set", [])),
                 )
+    _write_marginal_report(reports_dir, marginal_report)
     return results
 
 

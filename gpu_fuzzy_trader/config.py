@@ -1854,6 +1854,13 @@ RB_REDUNDANCY_PENALTY_MEDIUM: float = 0.50
 RB_CORRELATION_CLUSTER_THRESHOLD: float = 0.70
 RB_CORRELATION_STABILITY_ALPHA: float = 0.25
 
+# Leave-one-out marginal contribution diagnostics are always safe to run on
+# the exact CPU validation engine.  Pruning is report-only by default; enable
+# it explicitly after reviewing the generated report.  The effective rule
+# count uses the participation ratio of the selected-rule redundancy matrix.
+RB_MARGINAL_PRUNING: bool = False
+RB_EFFECTIVE_RULE_COUNT_ENABLED: bool = True
+
 # Deprecated aliases kept for saved experiment configurations.  New code must
 # use the three canonical RB correlation controls above.
 RB_CORRELATION_LAMBDA: float = 0.0
@@ -2919,6 +2926,14 @@ def validate_config(
         "RB_CORRELATION_AWARE_SELECTION must be a boolean",
     )
     _config_check(
+        isinstance(RB_MARGINAL_PRUNING, bool),
+        "RB_MARGINAL_PRUNING must be a boolean",
+    )
+    _config_check(
+        isinstance(RB_EFFECTIVE_RULE_COUNT_ENABLED, bool),
+        "RB_EFFECTIVE_RULE_COUNT_ENABLED must be a boolean",
+    )
+    _config_check(
         0.0 <= float(RB_CORRELATION_CLUSTER_THRESHOLD) <= 1.0,
         "RB_CORRELATION_CLUSTER_THRESHOLD must be in [0, 1]",
     )
@@ -3138,6 +3153,10 @@ def effective_config_snapshot(
             "correlation_stability_alpha": float(RB_CORRELATION_STABILITY_ALPHA),
             "correlation_signal_weight": float(RB_SIGNAL_OVERLAP_WEIGHT),
             "correlation_pnl_weight": float(RB_PNL_CORR_WEIGHT),
+            "marginal_pruning": bool(RB_MARGINAL_PRUNING),
+            "effective_rule_count_enabled": bool(
+                RB_EFFECTIVE_RULE_COUNT_ENABLED
+            ),
             "max_symbol_share_abs_pnl": float(RB_MAX_SYMBOL_SHARE_ABS_PNL),
             "max_symbol_hhi": float(RB_MAX_SYMBOL_HHI),
             "symbol_filters_required": bool(RB_REQUIRE_SYMBOL_FILTERS),
