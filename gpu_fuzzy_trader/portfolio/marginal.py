@@ -163,9 +163,9 @@ def marginal_contribution(
     without_i:
         Exact metrics for the same ruleset with rule ``i`` removed.
     max_return_degradation_pct:
-        Maximum accepted negative ``ΔReturn`` when the rule improves MDD.
-        The default is five percentage points.  Sortino improvement is always
-        sufficient for ``is_beneficial`` under the stated contribution rule.
+        Maximum accepted negative ``ΔReturn`` when a risk metric improves.
+        The default is five percentage points.  A Sortino or MDD improvement
+        is beneficial only when the return loss is not severe.
 
     Returns
     -------
@@ -190,8 +190,8 @@ def marginal_contribution(
     drawdown_improved = deltas["ΔMDD"] <= _EPSILON
     return_not_severely_degraded = deltas["ΔReturn"] >= -tolerance - _EPSILON
     deltas["is_beneficial"] = bool(
-        sortino_improved
-        or (drawdown_improved and return_not_severely_degraded)
+        (sortino_improved or drawdown_improved)
+        and return_not_severely_degraded
     )
     return deltas
 

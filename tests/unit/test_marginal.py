@@ -55,6 +55,18 @@ def test_marginal_contribution_rejects_sortino_and_drawdown_degradation() -> Non
     assert result["is_beneficial"] is False
 
 
+def test_marginal_contribution_rejects_severe_return_loss() -> None:
+    result = marginal_contribution(
+        {"Return": -5.0, "Sortino": 1.2, "MDD": 4.0},
+        {"Return": 10.0, "Sortino": 0.8, "MDD": 6.0},
+    )
+
+    assert result["ΔSortino"] == 0.4
+    assert result["ΔMDD"] == -2.0
+    assert result["ΔReturn"] == -15.0
+    assert result["is_beneficial"] is False
+
+
 def test_effective_rule_count_is_participation_ratio() -> None:
     assert effective_rule_count(np.eye(3)) == 3.0
     assert effective_rule_count(np.ones((3, 3))) == 1.0
