@@ -778,15 +778,32 @@ class Reporter:
         -------
         float
             Spearman correlation coefficient, or ``NaN`` if fewer than 2
-            non-NaN paired rows remain.
+            numeric paired rows remain, either side is constant, or SciPy
+            cannot compute the statistic (object / fuzzy labels).
         """
-        mask = a.notna() & b.notna()
-        if mask.sum() < 2:
+        a_num = pd.to_numeric(a, errors="coerce")
+        b_num = pd.to_numeric(b, errors="coerce")
+        mask = a_num.notna() & b_num.notna()
+        if int(mask.sum()) < 2:
             return float("nan")
-        result = spearmanr(a[mask].values, b[mask].values)
-        stat = getattr(result, "statistic", None) or getattr(
-            result, "correlation", float("nan"))
-        return float(stat)
+        a_vals = a_num[mask].to_numpy(dtype=float)
+        b_vals = b_num[mask].to_numpy(dtype=float)
+        if np.unique(a_vals).size < 2 or np.unique(b_vals).size < 2:
+            return float("nan")
+        try:
+            result = spearmanr(a_vals, b_vals)
+        except (TypeError, ValueError):
+            return float("nan")
+        stat = getattr(result, "statistic", None)
+        if stat is None:
+            stat = getattr(result, "correlation", float("nan"))
+        try:
+            value = float(stat)
+        except (TypeError, ValueError):
+            return float("nan")
+        if not np.isfinite(value):
+            return float("nan")
+        return value
 
     def write_spearman_correlation_report(
         self,

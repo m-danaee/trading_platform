@@ -9,7 +9,7 @@ Stateless CSV loading with full preparation pipeline:
   5. Optionally attach exact first-touch barrier outcomes (cached by tape SHA-256)
   6. Drop last TAIL_DROP_ROWS rows per symbol
   7. Drop rows where any LABEL_COLUMNS value is NaN
-  8. Fill NaN in feature columns with 0
+  8. Optionally fill NaN in feature columns with 0 when FILL_NA_WITH_ZERO
   9. Compute _symbol_bar_index via groupby("symbol").cumcount()
 """
 
@@ -34,6 +34,7 @@ from gpu_fuzzy_trader.config import (
     TAIL_DROP_ROWS,
 )
 from gpu_fuzzy_trader.data.labels import compute_labels
+from gpu_fuzzy_trader.data.multi_timeframe import _as_utc_datetime
 from gpu_fuzzy_trader.research_integrity import sha256_file
 
 
@@ -211,7 +212,10 @@ class Data_Loader:
             enriched (context columns present) or ``require_context`` is set
         6. Optionally drop last TAIL_DROP_ROWS rows per symbol
         7. Drop rows where any LABEL_COLUMNS value is NaN
-        8. Fill NaN in feature columns with 0
+        8. Optionally fill NaN in feature columns with 0 when
+           ``FILL_NA_WITH_ZERO`` is True.  Default is False so warmup NaNs
+           stay unavailable.  OHLCV, labels, and ``_``-prefixed internals
+           are never filled.
         9. Compute _symbol_bar_index per symbol
 
         Parameters
@@ -258,9 +262,7 @@ class Data_Loader:
         # convention before labels, splits, or fixed candle boundaries are
         # computed. This prevents host-local timezone inference from changing
         # the temporal contract.
-        df["datetime"] = pd.to_datetime(
-            df["datetime"], errors="raise", utc=True
-        ).dt.tz_localize(None)
+        df["datetime"] = _as_utc_datetime(df["datetime"])
 
         # ------------------------------------------------------------------
         # 3. Derive labels from raw OHLCV when needed
@@ -464,6 +466,37 @@ class Data_Loader:
         ).cumcount()
 
         return downcast_numeric_df(df)
+
+    def load_raw_ohlcv_tape(self, path: str) -> pd.DataFrame:
+        """Load OHLCV only. Keep tape identity. Apply datetime/duplicate rules.
+
+        Does not derive labels, drop tails, or fill feature NaNs.  Row order
+        follows the loader sort contract: ``(datetime, symbol)``.
+        """
+        try:
+            df = pd.read_csv(path, sep=",", engine="pyarrow")
+        except Exception:
+            df = pd.read_csv(path, sep=",")
+
+        missing = [
+            column
+            for column in ("datetime", "symbol", *_OHLCV_COLUMNS)
+            if column not in df.columns
+        ]
+        if missing:
+            raise ValueError(
+                f"Raw OHLCV tape is missing required columns: {missing}"
+            )
+        if str(df["symbol"].dtype) != "category":
+            df["symbol"] = df["symbol"].astype("category")
+        df["datetime"] = _as_utc_datetime(df["datetime"])
+        df = df.sort_values(["datetime", "symbol"]).reset_index(drop=True)
+        if df.duplicated(["datetime", "symbol"]).any():
+            raise ValueError(
+                "Dataset contains duplicate (datetime, symbol) rows; "
+                "refusing ambiguous bars."
+            )
+        return df.loc[:, ["datetime", "symbol", *_OHLCV_COLUMNS]].copy()
 
 
 # ---------------------------------------------------------------------------

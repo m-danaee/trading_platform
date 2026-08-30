@@ -111,18 +111,22 @@ def _run_split(
     """Patch TRAIN_70_PATH / VALIDATION_30_PATH to tmp_path and run split."""
     original_train = config_mod.TRAIN_70_PATH
     original_val = config_mod.VALIDATION_30_PATH
+    original_manifest = config_mod.SPLIT_MANIFEST_PATH
 
     train_path = os.path.join(tmp_path, "train_70.parquet")
     val_path = os.path.join(tmp_path, "validation_30.parquet")
+    manifest_path = os.path.join(tmp_path, "split_manifest.json")
 
     splitter_mod.TRAIN_70_PATH = train_path
     splitter_mod.VALIDATION_30_PATH = val_path
+    config_mod.SPLIT_MANIFEST_PATH = manifest_path
 
     try:
         train_df, val_df, _ = Data_Splitter().split_and_persist(df)
     finally:
         splitter_mod.TRAIN_70_PATH = original_train
         splitter_mod.VALIDATION_30_PATH = original_val
+        config_mod.SPLIT_MANIFEST_PATH = original_manifest
 
     return train_df, val_df
 

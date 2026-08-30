@@ -711,20 +711,25 @@ def test_property_6_spearman_correctness(dataset, tmp_path):
     row = result_df[result_df["feature"] == feature_name].iloc[0]
     train_val = row["train_spearman"]
 
-    # Compute expected value directly
-    mask = dataset[feature_name].notna() & dataset["label_close_288"].notna()
-    n_valid = mask.sum()
+    # Compute expected value on numeric pairs only (object/fuzzy → NaN).
+    a = pd.to_numeric(dataset[feature_name], errors="coerce")
+    b = pd.to_numeric(dataset["label_close_288"], errors="coerce")
+    mask = a.notna() & b.notna()
+    n_valid = int(mask.sum())
 
-    if n_valid >= 2:
-        expected = scipy_spearmanr(
-            dataset[feature_name][mask].values,
-            dataset["label_close_288"][mask].values,
-        )
-        expected_stat = getattr(expected, "statistic", None) or getattr(expected, "correlation", float("nan"))
-        expected_float = float(expected_stat)
+    if n_valid >= 2 and a[mask].nunique() >= 2 and b[mask].nunique() >= 2:
+        try:
+            expected = scipy_spearmanr(
+                a[mask].to_numpy(dtype=float),
+                b[mask].to_numpy(dtype=float),
+            )
+            expected_stat = getattr(expected, "statistic", None)
+            if expected_stat is None:
+                expected_stat = getattr(expected, "correlation", float("nan"))
+            expected_float = float(expected_stat)
+        except (TypeError, ValueError):
+            expected_float = float("nan")
         if pd.isna(expected_float):
-            # Constant input (e.g. all same fuzzy value) → spearmanr returns NaN;
-            # the reporter also returns NaN in this case — both are consistent.
             assert pd.isna(train_val)
         else:
             assert not pd.isna(train_val)

@@ -72,11 +72,13 @@ from gpu_fuzzy_trader.mtf import (
     load_mtf_rule_archive,
     save_mtf_rule_archive,
 )
+from gpu_fuzzy_trader.data.multi_timeframe import _as_utc_datetime
 from gpu_fuzzy_trader.mtf.discovery import (
     LayerDiscoveryResult,
     discovery_purge_minutes,
     discovery_search_identity,
     discover_directional_layer,
+    summarize_layer_ensembles,
 )
 from gpu_fuzzy_trader.mtf.runtime import (
     attach_frozen_layer_scores,
@@ -162,9 +164,7 @@ def _merge_mtf_score_columns(
     left = base.copy()
     right = scored.loc[:, ["datetime", "symbol", *_MTF_SCORE_COLUMNS]].copy()
     for frame in (left, right):
-        frame["datetime"] = pd.to_datetime(
-            frame["datetime"], errors="raise", utc=True
-        ).dt.tz_localize(None)
+        frame["datetime"] = _as_utc_datetime(frame["datetime"])
         if str(frame["symbol"].dtype) != "category":
             frame["symbol"] = frame["symbol"].astype("category")
     if left.duplicated(["datetime", "symbol"]).any():
@@ -225,9 +225,7 @@ def _merge_mtf_lwc_runtime_columns(
     ]
     right = scored.loc[:, ["datetime", "symbol", *right_columns]].copy()
     for frame in (left, right):
-        frame["datetime"] = pd.to_datetime(
-            frame["datetime"], errors="raise", utc=True
-        ).dt.tz_localize(None)
+        frame["datetime"] = _as_utc_datetime(frame["datetime"])
         if str(frame["symbol"].dtype) != "category":
             frame["symbol"] = frame["symbol"].astype("category")
     if left.duplicated(["datetime", "symbol"]).any():
@@ -3581,9 +3579,7 @@ class Pipeline_Orchestrator:
         """Load only raw OHLCV columns for standalone MTF discovery calls."""
         source_path = path or getattr(
             _cfg, "RAW_TRAIN_CSV_PATH", _cfg.TRAIN_CSV_PATH)
-        columns = ["datetime", "symbol", "open",
-                   "high", "low", "close", "volume"]
-        return pd.read_csv(source_path, usecols=columns)
+        return Data_Loader().load_raw_ohlcv_tape(source_path)
 
     def build_mtf_manifest(
         self,
@@ -3624,7 +3620,7 @@ class Pipeline_Orchestrator:
         )
         feature_metadata.setdefault(
             "frozen_transforms",
-            {"lwc": "causal_indicator_nan_to_zero", "mwc": "none", "hwc": "none"},
+            {"lwc": "feature_nan_remains_unavailable", "mwc": "none", "hwc": "none"},
         )
         if "fold_boundaries" in raw_metadata:
             cross_metadata["fold_boundaries"] = raw_metadata.pop(
@@ -3674,7 +3670,7 @@ class Pipeline_Orchestrator:
                 "partial_candle_policy": "drop_unclosed_bucket",
                 "release_time_policy": "htf_close_at_or_before_lwc_execution",
                 "warmup_policy": {
-                    "lwc": "causal_indicator_nan_to_zero",
+                    "lwc": "feature_nan_remains_unavailable",
                     "mwc": "feature_nan_remains_unavailable",
                     "hwc": "feature_nan_remains_unavailable",
                 },
@@ -3697,6 +3693,7 @@ class Pipeline_Orchestrator:
             },
             "features": feature_metadata,
             "search": search_metadata,
+            "ensembles": dict(raw_metadata.pop("ensembles", {})),
             "archives": {
                 "hwc_archive_hash": str(hwc_archive_hash),
                 "mwc_archive_hash": str(mwc_archive_hash),
@@ -4272,6 +4269,22 @@ class Pipeline_Orchestrator:
                     }
 
         manifest_metadata = dict(metadata or {})
+        ensembles: dict[str, Any] = {}
+        if hwc_discovery is not None:
+            ensembles["hwc"] = (
+                (hwc_discovery.search_metadata or {}).get("ensemble_identity")
+                or summarize_layer_ensembles(
+                    hwc_discovery.rules, hwc_discovery.fold_rules
+                )
+            )
+        if mwc_discovery is not None:
+            ensembles["mwc"] = (
+                (mwc_discovery.search_metadata or {}).get("ensemble_identity")
+                or summarize_layer_ensembles(
+                    mwc_discovery.rules, mwc_discovery.fold_rules
+                )
+            )
+        manifest_metadata["ensembles"] = ensembles
         manifest_metadata["retention_diagnostics"] = runtime_retention
         manifest = self.build_mtf_manifest(
             hwc_archive_hash=hwc_hash,

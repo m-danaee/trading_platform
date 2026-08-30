@@ -11,7 +11,7 @@ Workflow:
          - Sort by (datetime, symbol)
          - Attach exact first-touch outcomes, then drop rows with unavailable labels
          - Drop NaN label rows
-         - Fill feature NaN with 0
+         - Fill feature NaN with 0 only when FILL_NA_WITH_ZERO is True
          - Compute _symbol_bar_index
   3. Evaluate each available strategy on train / validation / test using
       CPUBacktestEngine.simulate_rule_set() with return_logs=True

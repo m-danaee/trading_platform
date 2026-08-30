@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 
 from gpu_fuzzy_trader.data.multi_timeframe import (
+    _as_utc_datetime,
     align_htf_features_causal,
     build_complete_higher_bars,
     compute_timeframe_features,
@@ -248,7 +249,7 @@ def prepare_causal_mtf_frame(
         return raw_df.copy()
 
     lwc = raw_df.copy()
-    lwc["datetime"] = pd.to_datetime(lwc["datetime"], errors="raise", utc=True).dt.tz_localize(None)
+    lwc["datetime"] = _as_utc_datetime(lwc["datetime"])
 
     for timeframe, prefix in ((mwc_minutes, "mwc_"), (hwc_minutes, "hwc_")):
         bars = build_complete_higher_bars(lwc, timeframe)
@@ -269,11 +270,8 @@ def prepare_causal_mtf_frame(
         column for column in lwc.columns if str(column).startswith("lwc_")
     ]
 
-    if lwc_feature_columns:
-        # Match the repository's established feature warm-up convention while
-        # keeping the imputation local to the causal LWC feature family. No
-        # future value is used; unavailable indicators are neutral zeroes.
-        lwc[lwc_feature_columns] = lwc[lwc_feature_columns].fillna(0.0)
+    # Warmup NaNs stay unavailable.  FILL_NA_WITH_ZERO=False: a zero fill
+    # would look like a real ordinal 0 on lwc_* features.
     return lwc
 
 
@@ -298,9 +296,7 @@ def _causal_score_columns(
     source = scores.loc[
         :, ["datetime", "symbol", "direction_score", "strength_score"]
     ].copy()
-    source["datetime"] = pd.to_datetime(
-        source["datetime"], errors="raise", utc=True
-    ).dt.tz_localize(None)
+    source["datetime"] = _as_utc_datetime(source["datetime"])
     source["direction_score"] = pd.to_numeric(
         source["direction_score"], errors="raise"
     )

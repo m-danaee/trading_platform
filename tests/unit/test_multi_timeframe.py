@@ -7,6 +7,30 @@ from gpu_fuzzy_trader.data.multi_timeframe import (
     compute_timeframe_features,
     align_htf_features_causal,
 )
+from gpu_fuzzy_trader.mtf.runtime import prepare_causal_mtf_frame
+
+
+def test_complete_higher_bars_accepts_second_resolution_timestamps():
+    """PyArrow tapes use datetime64[s]; complete 15m buckets must still form."""
+    dt = pd.date_range("2024-01-01 00:00", periods=16, freq="15min").astype(
+        "datetime64[s]"
+    )
+    df = pd.DataFrame({
+        "datetime": dt,
+        "symbol": "BTCUSDT",
+        "open": 100.0,
+        "high": 101.0,
+        "low": 99.0,
+        "close": 100.5,
+        "volume": 10.0,
+    })
+    assert str(df["datetime"].dtype) == "datetime64[s]"
+    mwc = build_complete_higher_bars(df, 60)
+    hwc = build_complete_higher_bars(df, 240)
+    assert len(mwc) == 4
+    assert len(hwc) == 1
+    assert mwc["datetime"].iloc[0] == pd.Timestamp("2024-01-01 00:00")
+    assert hwc["datetime"].iloc[0] == pd.Timestamp("2024-01-01 00:00")
 
 
 def test_build_complete_higher_bars_utc_and_completeness():
@@ -227,3 +251,20 @@ def test_empty_and_invalid_inputs():
 
     with pytest.raises(ValueError):
         build_complete_higher_bars(pd.DataFrame({"a": [1]}), 60)
+
+
+def test_prepare_causal_mtf_frame_keeps_lwc_warmup_nan():
+    dt = pd.date_range("2024-01-01 00:00", periods=16, freq="15min")
+    df = pd.DataFrame({
+        "datetime": dt,
+        "symbol": "BTCUSDT",
+        "open": 100.0,
+        "high": 101.0,
+        "low": 99.0,
+        "close": 100.5,
+        "volume": 10.0,
+    })
+    frame = prepare_causal_mtf_frame(df)
+    rsi = frame["lwc_rsi_14"]
+    assert pd.isna(rsi.iloc[0])
+    assert int(rsi.isna().sum()) >= 1

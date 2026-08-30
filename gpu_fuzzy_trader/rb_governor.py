@@ -1039,12 +1039,16 @@ def _is_recency_good(
     return True
 
 
+_OHLCV_COLUMNS = ("open", "high", "low", "close", "volume")
+
+
 def _prepare_scoring_frame(df: pd.DataFrame) -> pd.DataFrame:
     """Prepare a scoring frame with evaluator ordering."""
+    from gpu_fuzzy_trader.data.multi_timeframe import _as_utc_datetime
+
     out = df.copy()
     if "datetime" in out.columns:
-        out["datetime"] = pd.to_datetime(out["datetime"], errors="coerce", utc=True)
-        out["datetime"] = out["datetime"].dt.tz_localize(None)
+        out["datetime"] = _as_utc_datetime(out["datetime"])
     if "datetime" in out.columns and "symbol" in out.columns:
         out = out.sort_values(["datetime", "symbol"]).reset_index(drop=True)
     elif "datetime" in out.columns:
@@ -1054,9 +1058,20 @@ def _prepare_scoring_frame(df: pd.DataFrame) -> pd.DataFrame:
     labels = ["label_open_next", "label_close_288", "label_min_288", "label_max_288", "label_max_before_min"]
     present = [c for c in labels if c in out.columns]
     out = out.dropna(subset=present).reset_index(drop=True)
-    non_features = set(labels) | {"datetime", "symbol", "dataset_type", "_symbol_bar_index"}
-    feature_cols = [c for c in out.columns if c not in non_features]
-    out[feature_cols] = out[feature_cols].fillna(0)
+    # Never fill OHLCV, labels, or ``_``-prefixed internals (barriers, bar
+    # identity).  Feature fill is gated by FILL_NA_WITH_ZERO so ff_* warmup
+    # NaNs are not turned into fake neutrals.
+    if bool(getattr(_cfg, "FILL_NA_WITH_ZERO", False)):
+        never_fill = set(labels) | {"datetime", "symbol", "dataset_type"} | set(
+            _OHLCV_COLUMNS
+        )
+        feature_cols = [
+            column
+            for column in out.columns
+            if column not in never_fill and not str(column).startswith("_")
+        ]
+        if feature_cols:
+            out[feature_cols] = out[feature_cols].fillna(0)
     # Keep the source-tape bar identity when the loader supplied it.  Exact
     # first-touch barrier offsets are measured on that complete tape; resetting
     # a validation slice to zero would make every release target point at the

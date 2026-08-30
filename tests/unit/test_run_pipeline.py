@@ -170,14 +170,10 @@ def test_context_coverage_reports_permission_trigger_breakdown() -> None:
 
 
 def test_floor_aware_preflight_rejects_sparse_island_support() -> None:
+    # 20 rows so fold-aware scaling uses full-frame exposure.  Keep the
+    # permission/trigger island at 2 eligible rows so min_trade_support still
+    # rejects.
     frame = _context_frame(rows=20)
-    for column in (
-        "tf_permission_long",
-        "tf_permission_short",
-        "lwc_pullback_reversal_long",
-        "lwc_pullback_reversal_short",
-    ):
-        frame[column] = 1
 
     with pytest.raises(RuntimeError, match="min_trade_support"):
         _context_coverage_preflight(

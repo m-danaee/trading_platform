@@ -360,7 +360,11 @@ def test_run_phase1_hwc_and_mwc_discovery():
         runner = Pipeline_Runner(output_dir=tmp_dir)
 
         hwc_rules = runner.run_phase1_hwc(force=True)
-        assert len(hwc_rules) > 0
+        assert isinstance(hwc_rules, list)
+        oof_path = Path(tmp_dir) / "rule_archives" / "hwc" / "hwc_oof_scores.json"
+        assert oof_path.exists()
+        oof_records = json.loads(oof_path.read_text(encoding="utf-8"))
+        assert len(oof_records) > 0
         assert (Path(tmp_dir) / "rule_archives" / "hwc" / "hwc_rules.json").exists()
 
         mwc_rules = runner.run_phase1_mwc(hwc_rules=hwc_rules, force=True)

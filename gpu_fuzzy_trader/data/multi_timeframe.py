@@ -20,14 +20,18 @@ _OHLCV_COLUMNS = ("open", "high", "low", "close", "volume")
 
 
 def _as_utc_datetime(values: pd.Series | pd.Index) -> pd.Series | pd.DatetimeIndex:
-    """Parse timestamps as UTC without accepting a local-time interpretation."""
+    """Parse timestamps as UTC-naive ``datetime64[ns]``.
+
+    PyArrow CSV yields ``datetime64[s]``. Completeness checks and joins must
+    use one resolution so second-resolution tapes match nanosecond calendars.
+    """
     parsed = pd.to_datetime(values, errors="raise", utc=True)
     # The repository's persisted tapes use timezone-naive timestamps.  Keep
     # that storage convention while making the values unambiguously UTC after
     # conversion (including inputs carrying a non-UTC offset).
     if isinstance(parsed, pd.Series):
-        return parsed.dt.tz_localize(None)
-    return parsed.tz_localize(None)
+        return parsed.dt.tz_localize(None).astype("datetime64[ns]")
+    return pd.DatetimeIndex(parsed.tz_localize(None).astype("datetime64[ns]"))
 
 
 def build_complete_higher_bars(
@@ -105,9 +109,14 @@ def build_complete_higher_bars(
         for bucket_start, bucket_rows in g.groupby(bucket, sort=True, observed=False):
             expected = pd.DatetimeIndex(
                 bucket_start + np.arange(expected_rows) * base_tf
-            )
-            actual = pd.DatetimeIndex(bucket_rows["datetime"].sort_values())
-            if len(actual) == expected_rows and actual.equals(expected):
+            ).astype("datetime64[ns]")
+            actual = pd.DatetimeIndex(
+                bucket_rows["datetime"].sort_values()
+            ).astype("datetime64[ns]")
+            if (
+                len(actual) == expected_rows
+                and np.array_equal(actual.asi8, expected.asi8)
+            ):
                 complete_bucket_values.append(bucket_start)
 
         if not complete_bucket_values:

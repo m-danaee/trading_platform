@@ -127,6 +127,16 @@ class TestDatetimeParsing:
         df = _loader_from_rows(rows)
         # First row should be 2024-01-01 00:00:00
         assert df["datetime"].iloc[0] == pd.Timestamp("2024-01-01 00:00:00")
+        assert str(df["datetime"].dtype) == "datetime64[ns]"
+
+    def test_raw_ohlcv_tape_uses_nanosecond_datetime(self, tmp_path):
+        path = tmp_path / "raw.csv"
+        pd.DataFrame(_make_ohlcv_rows("BTCUSDT", 4)).to_csv(path, index=False)
+        df = Data_Loader().load_raw_ohlcv_tape(str(path))
+        assert str(df["datetime"].dtype) == "datetime64[ns]"
+        assert list(df.columns) == [
+            "datetime", "symbol", "open", "high", "low", "close", "volume",
+        ]
 
 
 # ---------------------------------------------------------------------------

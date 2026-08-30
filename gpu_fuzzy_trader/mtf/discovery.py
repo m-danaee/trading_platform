@@ -20,6 +20,7 @@ from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.config import required_folds
 
 from gpu_fuzzy_trader.data.multi_timeframe import (
+    _as_utc_datetime,
     build_complete_higher_bars,
     compute_timeframe_features,
 )
@@ -123,8 +124,7 @@ def canonicalize_oof_scores(frame: pd.DataFrame) -> pd.DataFrame:
     if out.empty:
         return out
     if "datetime" in out.columns:
-        out["datetime"] = pd.to_datetime(
-            out["datetime"], utc=True).dt.tz_localize(None)
+        out["datetime"] = _as_utc_datetime(out["datetime"])
     return out
 
 
@@ -215,7 +215,7 @@ def _align_upstream_scores(
     if not required.issubset(upstream_scores.columns):
         raise ValueError(f"Upstream OOF scores are missing {sorted(required - set(upstream_scores.columns))}")
     source = upstream_scores.copy()
-    source["datetime"] = pd.to_datetime(source["datetime"], errors="raise", utc=True).dt.tz_localize(None)
+    source["datetime"] = _as_utc_datetime(source["datetime"])
     source["direction_score"] = pd.to_numeric(
         source["direction_score"], errors="raise"
     )
@@ -562,6 +562,47 @@ def _fit_fold_candidates(
     return rules, direction_score, strength_score, theta
 
 
+def summarize_layer_ensembles(
+    frozen_rules: Sequence[dict[str, Any]],
+    fold_rules: dict[int, list[dict[str, Any]]] | None = None,
+) -> dict[str, Any]:
+    """Record fold-level vs frozen ensembles so OOF vetoes are not production.
+
+    OOF scores come from per-fold models.  Production uses the frozen archive
+    only.  A fold short veto is not a frozen-rule veto.
+    """
+
+    def _rule_summary(rules: Sequence[dict[str, Any]]) -> dict[str, Any]:
+        directions = sorted(
+            {
+                str(rule.get("direction", "")).strip().lower()
+                for rule in rules
+                if str(rule.get("direction", "")).strip()
+            }
+        )
+        return {
+            "rule_count": int(len(rules)),
+            "directions": directions,
+            "conditions": [
+                list(rule.get("conditions", []))
+                for rule in rules
+            ],
+        }
+
+    fold_models: dict[str, Any] = {}
+    for fold_id, rules in (fold_rules or {}).items():
+        fold_models[str(fold_id)] = _rule_summary(rules)
+    return {
+        "source": "fold_models_score_oof_frozen_archive_is_production",
+        "frozen": _rule_summary(frozen_rules),
+        "fold_models": fold_models,
+        "note": (
+            "OOF veto diagnostics use per-fold models. "
+            "Production uses the frozen archive only."
+        ),
+    }
+
+
 def discover_directional_layer(
     raw_df: pd.DataFrame,
     *,
@@ -593,6 +634,7 @@ def discover_directional_layer(
             search_metadata={
                 "search_contract": search_contract,
                 "identity": search_identity,
+                "ensemble_identity": summarize_layer_ensembles([], {}),
             },
         )
     upstream = _align_upstream_scores(
@@ -717,6 +759,7 @@ def discover_directional_layer(
         theta_final_train=float(theta_final),
         fold_rules=fold_rules,
         search_metadata={
+            "ensemble_identity": summarize_layer_ensembles(frozen_rules, fold_rules),
             "algorithm": "bounded_directional_threshold_search",
             "objective_names": [
                 "directional_edge",

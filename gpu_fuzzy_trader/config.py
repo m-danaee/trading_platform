@@ -2243,9 +2243,11 @@ def scale_trade_floor(
 ) -> int:
     """Deprecated wrapper around the canonical fold-aware count gate.
 
-    New callers should use ``validation.fold_gates.scale_count_gate`` with
-    explicit train or OOF exposure.  Without an explicit reference exposure,
-    the historical base value is retained for backwards compatibility.
+    This wrapper exists only for ``rounding="legacy"``.  New callers should
+    use ``validation.fold_gates.scale_count_gate`` with ``rounding="ceil"``
+    and explicit train or OOF exposure.  Without an explicit reference
+    exposure, the historical base value is retained for backwards
+    compatibility.
     """
     if reference_rows is None or int(reference_rows) <= 0:
         return int(base)
@@ -2261,7 +2263,7 @@ def scale_trade_floor(
             rows=int(reference_rows), duration_bars=0, per_symbol_rows={}
         ),
         absolute_min=int(FOLD_ABSOLUTE_MIN_TRADES),
-        rounding="ceil",
+        rounding="legacy",
     )
 
 

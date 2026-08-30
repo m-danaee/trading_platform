@@ -215,7 +215,12 @@ def run_evolution_benchmark(
     """Run synthetic NSGA-III / NSGA-II evolution micro-benchmark."""
     import numpy as np
     import pandas as pd
-    import psutil
+    import resource
+
+    try:
+        import psutil
+    except ImportError:
+        psutil = None
 
     from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
     from gpu_fuzzy_trader.evolution.evox_runner import (
@@ -306,7 +311,10 @@ def run_evolution_benchmark(
         gen_times.append((time.perf_counter() - tg0) * 1000.0)
 
     trim_evolution_state_memory(state, pop_size=pop_size)
-    rss_mib = psutil.Process().memory_info().rss / (1024 * 1024)
+    if psutil is not None:
+        rss_mib = psutil.Process().memory_info().rss / (1024 * 1024)
+    else:
+        rss_mib = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
 
     cache_hit_rate = (total_cache_hits / total_evals) if total_evals > 0 else 0.0
     gen_avg_ms = float(np.mean(gen_times)) if gen_times else 0.0

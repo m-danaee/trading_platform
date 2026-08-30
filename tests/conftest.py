@@ -84,6 +84,31 @@ def _close_loaded_matplotlib_figures() -> None:
 
 
 @pytest.fixture(autouse=True)
+def _isolate_split_cache(tmp_path_factory, monkeypatch):
+    """Keep splitter cache writes out of the repository tree."""
+    cache_dir = tmp_path_factory.mktemp("split_cache")
+    train = str(cache_dir / "development_train.parquet")
+    validation = str(cache_dir / "validation.parquet")
+    fitness = str(cache_dir / "validation_fitness.parquet")
+    selection = str(cache_dir / "validation_selection.parquet")
+    manifest = str(cache_dir / "split_manifest.json")
+    import gpu_fuzzy_trader.config as config_mod
+    import gpu_fuzzy_trader.data.splitter as splitter_mod
+
+    monkeypatch.setattr(config_mod, "DEVELOPMENT_TRAIN_PATH", train)
+    monkeypatch.setattr(config_mod, "TRAIN_70_PATH", train)
+    monkeypatch.setattr(config_mod, "VALIDATION_PATH", validation)
+    monkeypatch.setattr(config_mod, "VALIDATION_30_PATH", validation)
+    monkeypatch.setattr(config_mod, "VALIDATION_FITNESS_PATH", fitness)
+    monkeypatch.setattr(config_mod, "VALIDATION_SELECTION_PATH", selection)
+    monkeypatch.setattr(config_mod, "SPLIT_MANIFEST_PATH", manifest)
+    monkeypatch.setattr(splitter_mod, "TRAIN_70_PATH", train)
+    monkeypatch.setattr(splitter_mod, "VALIDATION_30_PATH", validation)
+    monkeypatch.setattr(splitter_mod, "VALIDATION_FITNESS_PATH", fitness)
+    monkeypatch.setattr(splitter_mod, "VALIDATION_SELECTION_PATH", selection)
+
+
+@pytest.fixture(autouse=True)
 def _low_memory_cleanup():
     yield
     if not _LOW_MEMORY:
