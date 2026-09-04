@@ -26,8 +26,8 @@ def _as_utc_datetime(values: pd.Series | pd.Index) -> pd.Series | pd.DatetimeInd
     # that storage convention while making the values unambiguously UTC after
     # conversion (including inputs carrying a non-UTC offset).
     if isinstance(parsed, pd.Series):
-        return parsed.dt.tz_localize(None)
-    return parsed.tz_localize(None)
+        return parsed.dt.tz_localize(None).astype("datetime64[ns]")
+    return parsed.tz_localize(None).astype("datetime64[ns]")
 
 
 def build_complete_higher_bars(

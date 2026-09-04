@@ -102,7 +102,7 @@ def test_cost_certificate_has_three_frozen_cost_points(tmp_path):
     ]
     for row in certificate["stress_curve"]:
         assert {"profit_factor", "max_drawdown_pct", "total_return_pct"} <= set(row)
-    assert certificate["report_only"] is True
+    assert certificate["report_only"] is False
     output = tmp_path / "cost_stress.json"
     output.write_text(json.dumps(certificate), encoding="utf-8")
     assert json.loads(output.read_text(encoding="utf-8"))["verdict"] in {
@@ -110,6 +110,25 @@ def test_cost_certificate_has_three_frozen_cost_points(tmp_path):
         "fragile",
         "unavailable",
     }
+
+
+def test_cost_certificate_can_stress_frozen_per_rule_masks():
+    df = _frame()
+    masks = [np.zeros(len(df), dtype=bool) for _ in _rules()]
+    certificate = cost_stress_certificate(
+        _engine(df),
+        _engine(df),
+        _rules(),
+        train_signal_masks=masks,
+        validation_signal_masks=masks,
+    )
+
+    assert certificate["available"] is True
+    assert all(
+        row["train"]["executed_trades"] == 0
+        and row["validation"]["executed_trades"] == 0
+        for row in certificate["stress_curve"]
+    )
 
 
 def test_execution_certificate_reports_delayed_sortino():
@@ -220,3 +239,7 @@ def test_robustness_defaults_are_report_only():
     assert config.RB_REGIME_ROBUSTNESS_ENABLED is True
     assert config.RB_RULE_DROPOUT_STRESS_ENABLED is True
     assert config.RB_ROBUSTNESS_REPORT_ONLY is True
+    assert config.RB_COST_STRESS_REPORT_ONLY is False
+    assert config.RB_COST_STRESS_HARD_GATE is True
+    assert config.SPREAD_BPS > 0.0
+    assert config.SLIPPAGE_BPS > 0.0

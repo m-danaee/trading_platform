@@ -44,6 +44,15 @@ def _first_value(mapping: Mapping[str, Any], keys: Sequence[str]) -> Any:
     return None
 
 
+def _metadata_length(value: Any) -> int | None:
+    if value is None or isinstance(value, (str, bytes)):
+        return None
+    try:
+        return len(value)
+    except TypeError:
+        return None
+
+
 def _fold_sort_key(value: Any) -> tuple[int, int | str]:
     try:
         return (0, int(value))
@@ -85,26 +94,15 @@ def _records_from_array(
 ) -> list[dict[str, Any]]:
     """Convert a numeric ``[..., 2]`` matrix to ledger rows.
 
-    The last axis stores IS and OOS scores.  The default first two axes are
-    ``fold, candidate`` because that is the historical API orientation.
-    ``candidate_fold`` is accepted for callers that store candidate-major
-    arrays.
+    The last axis stores IS and OOS scores.  The first two axes are either
+    ``fold, candidate`` or ``candidate, fold`` as specified by ``orientation``.
     """
     array = np.asarray(matrix, dtype=float)
     if array.ndim != 3 or array.shape[-1] < 2:
         raise ValueError("matrix must have shape (folds, candidates, 2)")
     n_first, n_second = int(array.shape[0]), int(array.shape[1])
-    orientation_name = str(orientation).lower().replace("-", "_")
-    if orientation_name == "auto":
-        # Most ledgers have more candidates than folds.  This keeps raw
-        # candidate-major arrays intuitive while preserving the historical
-        # fold-major interpretation for a 5×10 fold/candidate fixture.
-        candidate_major = n_first > n_second
-    else:
-        candidate_major = orientation_name in {
-            "candidate_fold",
-            "candidate_major",
-        }
+    orientation_name = _normalise_matrix_orientation(orientation)
+    candidate_major = orientation_name == "candidate_fold"
     if candidate_major:
         n_candidates, n_folds = n_first, n_second
     else:
@@ -138,8 +136,28 @@ def _records_from_array(
     return rows
 
 
-def _records_from_matrix(matrix: Any) -> list[dict[str, Any]]:
-    """Accept all supported matrix/ledger representations."""
+def _normalise_matrix_orientation(value: str | None) -> str:
+    if value is None:
+        raise ValueError(
+            "raw score arrays require matrix_orientation='fold_candidate' "
+            "or 'candidate_fold'"
+        )
+    normalized = str(value).lower().replace("-", "_")
+    if normalized in {"fold_candidate", "fold_major"}:
+        return "fold_candidate"
+    if normalized in {"candidate_fold", "candidate_major"}:
+        return "candidate_fold"
+    raise ValueError(
+        "matrix_orientation must be 'fold_candidate' or 'candidate_fold'"
+    )
+
+
+def _records_from_matrix(
+    matrix: Any,
+    *,
+    orientation: str | None = None,
+) -> list[dict[str, Any]]:
+    """Accept supported ledgers and require orientation for raw arrays."""
     if hasattr(matrix, "to_dict") and not isinstance(matrix, Mapping):
         try:
             dataframe_rows = matrix.to_dict("records")
@@ -184,35 +202,43 @@ def _records_from_matrix(matrix: Any) -> list[dict[str, Any]]:
                 raise ValueError("IS and OOS matrices must be matching 2D arrays")
             orientation_value = matrix.get("orientation")
             if orientation_value is None:
+                orientation_value = orientation
+            if orientation_value is None:
                 candidate_values = matrix.get("candidate_ids")
                 fold_values = matrix.get("fold_ids")
-                if (
-                    candidate_values is not None
-                    and fold_values is not None
-                    and len(candidate_values) == is_array.shape[0]
-                    and len(fold_values) == is_array.shape[1]
-                ):
+                candidate_count = _metadata_length(candidate_values)
+                fold_count = _metadata_length(fold_values)
+                candidate_major = (
+                    candidate_count == is_array.shape[0]
+                    and fold_count == is_array.shape[1]
+                )
+                fold_major = (
+                    candidate_count == is_array.shape[1]
+                    and fold_count == is_array.shape[0]
+                )
+                if candidate_major and not fold_major:
                     orientation_value = "candidate_fold"
-                else:
+                elif fold_major and not candidate_major:
                     orientation_value = "fold_candidate"
-            orientation = str(orientation_value)
-            if orientation.lower().replace("-", "_") in {
-                "candidate_fold",
-                "candidate_major",
-            }:
-                paired = np.stack((is_array, oos_array), axis=-1)
-            else:
-                paired = np.stack((is_array, oos_array), axis=-1)
+                else:
+                    raise ValueError(
+                        "paired IS/OOS mappings require explicit "
+                        "matrix_orientation unless candidate_ids and "
+                        "fold_ids unambiguously identify axes"
+                    )
+            orientation_name = _normalise_matrix_orientation(orientation_value)
+            paired = np.stack((is_array, oos_array), axis=-1)
             return _records_from_array(
                 paired,
                 candidate_ids=matrix.get("candidate_ids"),
                 fold_ids=matrix.get("fold_ids"),
-                orientation=orientation,
+                orientation=orientation_name,
             )
 
         nested = matrix.get("matrix")
         if nested is not None:
-            return _records_from_matrix(nested)
+            nested_orientation = matrix.get("orientation") or orientation
+            return _records_from_matrix(nested, orientation=nested_orientation)
 
         # A mapping of candidate id -> fold rows is convenient when loading a
         # hand-written fixture.  It is intentionally parsed after the explicit
@@ -258,24 +284,44 @@ def _records_from_matrix(matrix: Any) -> list[dict[str, Any]]:
                         })
             if rows:
                 return rows
-        return _records_from_array(matrix, orientation="auto")
+        return _records_from_array(
+            matrix,
+            orientation=_normalise_matrix_orientation(orientation),
+        )
 
     if isinstance(matrix, (str, bytes)):
         raise TypeError("matrix must be score data, not text")
     values = list(matrix)
     if not values:
         return []
-    if len(values) == 2 and all(
-        isinstance(value, (np.ndarray, list, tuple))
-        for value in values
-    ):
+    paired_raw = (
+        len(values) == 2
+        and (
+            isinstance(matrix, tuple)
+            or any(isinstance(value, np.ndarray) for value in values)
+        )
+        and all(
+            isinstance(value, (np.ndarray, list, tuple))
+            for value in values
+        )
+    )
+    if paired_raw:
         first = np.asarray(values[0], dtype=float)
         second = np.asarray(values[1], dtype=float)
         if first.shape == second.shape and first.ndim == 2:
             return _records_from_array(
                 np.stack((first, second), axis=-1),
-                orientation="auto",
+                orientation=_normalise_matrix_orientation(orientation),
             )
+    try:
+        raw_array = np.asarray(values, dtype=float)
+    except (TypeError, ValueError):
+        raw_array = None
+    if raw_array is not None and raw_array.ndim == 3:
+        return _records_from_array(
+            raw_array,
+            orientation=_normalise_matrix_orientation(orientation),
+        )
     if values and all(isinstance(value, Mapping) for value in values):
         return [
             _normalise_record(value, index)
@@ -296,9 +342,6 @@ def _records_from_matrix(matrix: Any) -> list[dict[str, Any]]:
             }, index)
             for index, value in enumerate(values)
         ]
-    array = np.asarray(values, dtype=float)
-    if array.ndim == 3:
-        return _records_from_array(array, orientation="auto")
     raise ValueError("matrix must be a ledger row sequence or a paired 3D array")
 
 
@@ -375,6 +418,7 @@ def estimate_pbo(
     out_of_sample_scores: Sequence[Sequence[float]] | None = None,
     *,
     matrix: Any | None = None,
+    matrix_orientation: str | None = None,
 ) -> float | None:
     """Estimate CSCV-style probability of backtest overfitting.
 
@@ -384,13 +428,16 @@ def estimate_pbo(
     two-argument ``fold -> candidate`` API remains supported.
     """
     if matrix is not None:
-        records = _records_from_matrix(matrix)
+        records = _records_from_matrix(matrix, orientation=matrix_orientation)
         _, _, is_scores, oos_scores = _records_to_arrays(records)
         return _pbo_from_arrays(is_scores, oos_scores)
     if out_of_sample_scores is None:
         if in_sample_scores is None:
             return None
-        records = _records_from_matrix(in_sample_scores)
+        records = _records_from_matrix(
+            in_sample_scores,
+            orientation=matrix_orientation,
+        )
         _, _, is_scores, oos_scores = _records_to_arrays(records)
         return _pbo_from_arrays(is_scores, oos_scores)
     if in_sample_scores is None:
@@ -413,6 +460,7 @@ def write_candidate_fold_matrix(
     rows: Iterable[Mapping[str, Any]] | Any | None = None,
     *,
     matrix: Any | None = None,
+    matrix_orientation: str | None = None,
 ) -> Path:
     """Write candidate×fold IS/OOS rows in deterministic JSONL order."""
     if rows is None:
@@ -420,10 +468,17 @@ def write_candidate_fold_matrix(
     if rows is None:
         normalised: list[dict[str, Any]] = []
     elif isinstance(rows, Mapping) or isinstance(rows, np.ndarray):
-        normalised = _records_from_matrix(rows)
+        normalised = _records_from_matrix(
+            rows,
+            orientation=matrix_orientation,
+        )
     else:
         values = list(rows)
-        normalised = _records_from_matrix(values) if values else []
+        normalised = (
+            _records_from_matrix(values, orientation=matrix_orientation)
+            if values
+            else []
+        )
     normalised = [
         _normalise_record(row, index)
         for index, row in enumerate(normalised)
@@ -603,6 +658,7 @@ def summarize_multiplicity(
     fold_returns: Iterable[float] = (),
     n_trials: int | None = None,
     matrix: Any | None = None,
+    matrix_orientation: str | None = None,
     candidate_fold_matrix: Any | None = None,
     trial_count_ledger: int | None = None,
     ledger_counters: Mapping[str, Any] | None = None,
@@ -619,8 +675,15 @@ def summarize_multiplicity(
     records: list[dict[str, Any]] = []
     if supplied_matrix is not None:
         try:
-            records = _records_from_matrix(supplied_matrix)
-        except (TypeError, ValueError):
+            records = _records_from_matrix(
+                supplied_matrix,
+                orientation=matrix_orientation,
+            )
+        except ValueError as error:
+            if "matrix_orientation" in str(error):
+                raise
+            records = []
+        except TypeError:
             records = []
 
     ledger_trials = trial_count_ledger

@@ -1,8 +1,9 @@
-"""Report-only transaction-cost stress diagnostics.
+"""Transaction-cost stress diagnostics for the frozen portfolio.
 
 The cost certificate evaluates one already selected rule set at several cost
-levels.  It never changes the rule set, exits, or sizing.  This is important:
-the result describes the economic fragility of the frozen portfolio rather
+levels.  It never changes the rule set, exits, or sizing.  The certificate can
+be report-only or an explicit acceptance gate, as configured by the caller.
+This keeps the result as economic evidence for the frozen portfolio rather
 than a second optimisation pass.
 """
 
@@ -97,6 +98,7 @@ def _simulate_at_cost(
     multiplier: float,
     *,
     direction: str | None,
+    signal_masks: Sequence[Any] | None = None,
 ) -> dict[str, Any]:
     """Simulate *rules* with costs multiplied by *multiplier*.
 
@@ -168,7 +170,10 @@ def _simulate_at_cost(
     context_mask = getattr(source, "_context_mask", None)
     if context_mask is not None and len(context_mask) == len(frame):
         engine._context_mask = context_mask.copy()  # type: ignore[attr-defined]
-    return dict(engine.simulate_rule_set([dict(rule) for rule in rules]))
+    formatted_rules = [dict(rule) for rule in rules]
+    if signal_masks is not None:
+        return dict(engine.simulate_signal_masks(signal_masks, formatted_rules))
+    return dict(engine.simulate_rule_set(formatted_rules))
 
 
 def _row_for_multiplier(
@@ -228,8 +233,7 @@ def summarise_cost_stress_results(
     rows = [dict(row) for row in results]
     report_only_value = bool(
         (
-            getattr(_cfg, "RB_ROBUSTNESS_REPORT_ONLY", True)
-            or getattr(_cfg, "RB_COST_STRESS_REPORT_ONLY", True)
+            getattr(_cfg, "RB_COST_STRESS_REPORT_ONLY", True)
         )
         if report_only is None
         else report_only
@@ -367,6 +371,8 @@ def cost_stress_certificate(
     report_only: bool | None = None,
     min_return_pct: float | None = None,
     min_pf: float | None = None,
+    train_signal_masks: Sequence[Any] | None = None,
+    validation_signal_masks: Sequence[Any] | None = None,
 ) -> dict[str, Any]:
     """Evaluate a frozen portfolio at 1.0x, 1.5x, and 2.0x costs.
 
@@ -395,8 +401,7 @@ def cost_stress_certificate(
         else enabled
     )
     report_only_value = bool(
-        getattr(_cfg, "RB_ROBUSTNESS_REPORT_ONLY", True)
-        or getattr(_cfg, "RB_COST_STRESS_REPORT_ONLY", True)
+        getattr(_cfg, "RB_COST_STRESS_REPORT_ONLY", True)
         if report_only is None
         else report_only
     )
@@ -423,14 +428,22 @@ def cost_stress_certificate(
     for multiplier in _normalise_multipliers(multipliers):
         try:
             train_metrics = _simulate_at_cost(
-                train_engine, rules_value, multiplier, direction=direction
+                train_engine,
+                rules_value,
+                multiplier,
+                direction=direction,
+                signal_masks=train_signal_masks,
             )
         except Exception as exc:  # pragma: no cover - defensive report path
             logger.warning("Cost stress train evaluation failed at %.2fx: %s", multiplier, exc)
             train_metrics = {}
         try:
             validation_metrics = _simulate_at_cost(
-                validation_engine, rules_value, multiplier, direction=direction
+                validation_engine,
+                rules_value,
+                multiplier,
+                direction=direction,
+                signal_masks=validation_signal_masks,
             )
         except Exception as exc:  # pragma: no cover - defensive report path
             logger.warning(

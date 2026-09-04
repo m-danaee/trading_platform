@@ -21,7 +21,11 @@ from gpu_fuzzy_trader.portfolio.redundancy import (
     redundancy_matrix,
     stable_corr,
 )
-from gpu_fuzzy_trader.rb_governor import CandidateRecord, _compose_ruleset
+from gpu_fuzzy_trader.rb_governor import (
+    CandidateRecord,
+    _compose_ruleset,
+    _correlation_profile,
+)
 
 
 def _metrics(return_pct: float) -> dict:
@@ -45,6 +49,17 @@ def _candidate(name: str, mask: np.ndarray, pnl: list[float], score: float) -> C
         score=score,
         mask=mask,
         pnl_series=np.asarray(pnl, dtype=float),
+    )
+
+
+def _candidate_with_fold_pnl(name: str, vectors: list[list[float]]) -> CandidateRecord:
+    return CandidateRecord(
+        rule={"conditions": [name]},
+        train_metrics=_metrics(1.0),
+        valid_metrics=_metrics(1.0),
+        score=1.0,
+        mask=np.asarray([True, True]),
+        fold_pnl_series=[np.asarray(vector, dtype=float) for vector in vectors],
     )
 
 
@@ -179,3 +194,18 @@ def test_disabled_correlation_is_report_only():
 
     assert len(selected) == 2
     assert history[0]["correlation_report"]["report_only"] is True
+
+
+def test_correlation_stability_uses_candidate_fold_pnl_evidence():
+    candidates = [
+        _candidate_with_fold_pnl("A", [[1.0, -1.0], [1.0, -1.0]]),
+        _candidate_with_fold_pnl("B", [[1.0, -1.0], [-1.0, 1.0]]),
+    ]
+
+    with patch.object(_cfg, "RB_CORRELATION_STABILITY_ALPHA", 0.0):
+        low_report, low_matrix, *_ = _correlation_profile(candidates)
+    with patch.object(_cfg, "RB_CORRELATION_STABILITY_ALPHA", 0.5):
+        high_report, high_matrix, *_ = _correlation_profile(candidates)
+
+    assert low_report["fold_count"] == high_report["fold_count"] == 2
+    assert high_matrix[0, 1] > low_matrix[0, 1]

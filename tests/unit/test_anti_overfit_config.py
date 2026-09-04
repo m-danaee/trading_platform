@@ -24,7 +24,7 @@ def test_anti_overfit_config_bundle():
     assert cfg.PHASE2_PROFIT_FACTOR_FLOOR_EVOLUTION == 1.0
     assert cfg.PHASE2_RETURN_FLOOR_PCT == 0.25
     assert cfg.PHASE2_GENERATIONS == 100
-    assert cfg.PHASE2_POPULATION_SIZE == 500
+    assert cfg.PHASE2_POPULATION_SIZE <= cfg.PHASE2_GPU_CPU_ROUTE_MAX_BATCH
     assert cfg.PHASE2_TWO_STAGE_ENABLED is True
     assert cfg.PHASE2_SAMPLE_MAX_BARS_PER_SYMBOL == 60_000
     assert cfg.PHASE2_SAMPLE_ROTATION_FRACTION == 0.65
@@ -70,4 +70,3 @@ def test_anti_overfit_config_bundle():
     assert cfg.RB_CAPITAL_GRID[-1] == 18.0
     assert cfg.RB_MAX_TOTAL_CAPITAL == cfg.MAX_TOTAL_EXPOSURE_PCT
     assert cfg.RB_MAX_TOTAL_CAPITAL >= cfg.RB_MAX_RULES * cfg.RB_CAPITAL_GRID[0]
-

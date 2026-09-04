@@ -82,6 +82,7 @@ from gpu_fuzzy_trader.mtf.runtime import (
     attach_frozen_layer_scores,
     attach_oof_layer_scores,
     evaluate_candidate_frame,
+    evaluate_candidate_rule_masks,
 )
 from gpu_fuzzy_trader.phases import phase2_rule_pool as _phase2_module
 from gpu_fuzzy_trader.phases import phase5_oos as _phase5_module
@@ -145,6 +146,27 @@ _MTF_SCORE_COLUMNS = (
     "mtf_mwc_strength",
     "_mtf_oof_available",
 )
+
+
+def _normalize_mtf_lwc_rules(
+    rules: list[dict[str, Any]],
+    direction: str,
+) -> list[dict[str, Any]]:
+    """Add the archive contract fields to Phase 2 LWC rules."""
+    normalized_direction = str(direction).strip().lower()
+    if normalized_direction not in {"long", "short"}:
+        raise ValueError(f"Invalid LWC direction: {direction!r}")
+
+    normalized: list[dict[str, Any]] = []
+    for rule in rules:
+        if not isinstance(rule, dict):
+            raise TypeError(f"LWC rules must be dictionaries: {rule!r}")
+        rule_copy = dict(rule)
+        rule_copy["timeframe"] = "lwc"
+        rule_copy["direction"] = normalized_direction
+        rule_copy["coverage"] = float(rule_copy.get("coverage", 0.15))
+        normalized.append(rule_copy)
+    return normalized
 
 
 def _merge_mtf_score_columns(
@@ -2391,9 +2413,14 @@ class Pipeline_Orchestrator:
             folds=mtf_folds,
             force=force,
         )
+        # MWC is an optional confirmation layer.  Its discovery artifact still
+        # carries the OOF score frame, so an empty admitted rule set is a valid
+        # no-veto result.  HWC remains mandatory because it anchors the
+        # hierarchical candidate and its causal OOF contract.
         if not mwc_rules:
-            raise RuntimeError(
-                "MTF MWC discovery produced no admissible HWC-conditioned rules"
+            logger.warning(
+                "MTF MWC discovery produced no admissible rules; continuing "
+                "with an explicit empty MWC veto layer",
             )
 
         hwc_discovery = getattr(self, "_mtf_hwc_discovery", None)
@@ -2745,13 +2772,53 @@ class Pipeline_Orchestrator:
     ) -> dict[str, dict[str, Any]]:
         """Validate frozen composed signals and write MTF-aware strategy packages."""
         from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
+        from gpu_fuzzy_trader.validation.cost_stress import cost_stress_certificate
 
         output_root = Path(_cfg.OUTPUTS_DIR)
         output_root.mkdir(parents=True, exist_ok=True)
         reports_root = Path(_cfg.REPORTS_DIR)
         reports_root.mkdir(parents=True, exist_ok=True)
         results: dict[str, dict[str, Any]] = {}
+        nested_validation = bool(
+            getattr(_cfg, "RB_NESTED_VALIDATION_SELECTION_ONLY", False)
+        )
+        selection_val_df = val_df
+        reserved_tail_df = val_df.iloc[:0].copy()
+        if nested_validation:
+            selection_val_df, reserved_tail_df = (
+                _rb_governor_module._split_tail_holdout_frame(
+                    val_df,
+                    float(getattr(_cfg, "RB_TAIL_HOLDOUT_FRACTION", 0.0)),
+                )
+            )
+        validation_frame_contract = {
+            "source_rows": int(len(val_df)),
+            "selection_rows": int(len(selection_val_df)),
+            "reserved_tail_rows": int(len(reserved_tail_df)),
+            "tail_isolated": nested_validation,
+            "tail_evaluation": (
+                "deferred_until_best_trial"
+                if nested_validation
+                else "disabled"
+            ),
+        }
+        tail_history_df = pd.concat(
+            [train_df, selection_val_df],
+            ignore_index=True,
+            sort=False,
+        )
         for direction in ("long", "short"):
+            if nested_validation:
+                _rb_governor_module._write_reserved_tail_frame(
+                    reserved_tail_df,
+                    reports_root / f"optuna_reserved_tail_{direction}.json",
+                )
+                _rb_governor_module._write_reserved_tail_frame(
+                    tail_history_df,
+                    reports_root / (
+                        f"optuna_reserved_tail_history_{direction}.json"
+                    ),
+                )
             candidate = candidates.get(direction)
             if candidate is None or not candidate.lwc_rules:
                 results[direction] = {
@@ -2763,30 +2830,24 @@ class Pipeline_Orchestrator:
                 }
                 continue
 
-            first_rule = candidate.lwc_rules[0]
-            tp = float(first_rule.get(
-                "tp", getattr(_cfg, "RB_DEFAULT_TP", 2.0)))
-            sl = float(first_rule.get(
-                "sl", getattr(_cfg, "RB_DEFAULT_SL", 1.2)))
-            capital_pct = float(first_rule.get(
-                "capital_pct", getattr(_cfg, "RB_DEFAULT_CAPITAL_PCT", 18.0)
-            ))
-
             split_metrics: dict[str, dict[str, Any]] = {}
             retention: dict[str, Any] = {}
-            for split_name, split_df in (("train", train_df), ("validation", val_df)):
-                signals, stats, audit = evaluate_candidate_frame(
+            split_rule_masks: dict[str, list[np.ndarray]] = {}
+            for split_name, split_df in (
+                ("train", train_df),
+                ("validation", selection_val_df),
+            ):
+                rule_masks, stats, _audit = evaluate_candidate_rule_masks(
                     candidate,
                     split_df,
                     history_df=train_df if split_name == "validation" else None,
                 )
+                split_rule_masks[split_name] = rule_masks
                 retention[split_name] = stats.get("retention_diagnostics", {})
                 engine = CPUBacktestEngine(split_df, {}, direction)
-                metrics = engine.simulate_signal_mask(
-                    signals != 0,
-                    tp=tp,
-                    sl=sl,
-                    capital_pct=capital_pct,
+                metrics = engine.simulate_signal_masks(
+                    rule_masks,
+                    candidate.lwc_rules,
                 )
                 split_metrics[split_name] = metrics
 
@@ -2818,8 +2879,47 @@ class Pipeline_Orchestrator:
                     ),
                 )
             )
+            cost_gate_active = bool(
+                getattr(_cfg, "RB_COST_STRESS_HARD_GATE", False)
+                and not bool(getattr(_cfg, "RB_COST_STRESS_REPORT_ONLY", True))
+            )
+            try:
+                cost_certificate = cost_stress_certificate(
+                    train_df,
+                    selection_val_df,
+                    candidate.lwc_rules,
+                    direction=direction,
+                    train_signal_masks=split_rule_masks["train"],
+                    validation_signal_masks=split_rule_masks["validation"],
+                )
+                cost_stress_ok = (
+                    bool(cost_certificate.get("passed", False))
+                    if cost_gate_active
+                    else True
+                )
+            except Exception as exc:  # pragma: no cover - defensive report path
+                cost_stress_ok = not cost_gate_active
+                cost_certificate = {
+                    "schema_version": "1.0",
+                    "certificate": "cost_stress",
+                    "enabled": bool(
+                        getattr(_cfg, "RB_COST_STRESS_ENABLED", True)
+                    ),
+                    "available": False,
+                    "diagnostic_only": True,
+                    "report_only": bool(
+                        getattr(_cfg, "RB_COST_STRESS_REPORT_ONLY", True)
+                    ),
+                    "verdict": "unavailable",
+                    "passed": cost_stress_ok,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
             accepted = bool(
-                retention_ok and performance_ok and candidate.lwc_rules)
+                retention_ok
+                and performance_ok
+                and cost_stress_ok
+                and candidate.lwc_rules
+            )
             strategy = {
                 "direction": direction,
                 "rules_set": [dict(rule) for rule in candidate.lwc_rules],
@@ -2831,7 +2931,11 @@ class Pipeline_Orchestrator:
                     else (
                         "mtf_train_validation_gate"
                         if not performance_ok
-                        else "mtf_candidate_accepted"
+                        else (
+                            "mtf_cost_stress_gate"
+                            if not cost_stress_ok
+                            else "mtf_candidate_accepted"
+                        )
                     )
                 ),
                 "strategy_id": candidate.strategy_id,
@@ -2839,16 +2943,19 @@ class Pipeline_Orchestrator:
                 "mtf_manifest": candidate.mtf_manifest,
                 "mtf_runtime": {
                     "frozen": True,
+                    "risk_policy": "per_lwc_rule",
                     "split_metrics": split_metrics,
                     "retention": retention,
-                    "tp": tp,
-                    "sl": sl,
-                    "capital_pct": capital_pct,
+                    "validation_frame_contract": validation_frame_contract,
+                    "cost_stress_certificate": cost_certificate,
                     "acceptance_gates": {
                         "retention_floor": retention_ok,
                         "train_validation_performance": performance_ok,
+                        "cost_stress": cost_stress_ok,
                     },
                 },
+                "cost_stress_certificate": cost_certificate,
+                "validation_frame_contract": validation_frame_contract,
                 "provenance": {
                     "mtf_manifest_hash": hashlib.sha256(
                         json.dumps(candidate.mtf_manifest or {},
@@ -3960,9 +4067,8 @@ class Pipeline_Orchestrator:
             "composer": c_params,
             "execution": {
                 "fee_pct_round_trip": float(getattr(_cfg, "FEE_PCT", 0.0)),
-                "slippage_bps_per_side": float(
-                    getattr(_cfg, "SLIPPAGE_BPS_PER_SIDE", 0.0)
-                ),
+                "spread_bps": float(getattr(_cfg, "SPREAD_BPS", 0.0)),
+                "slippage_bps": float(getattr(_cfg, "SLIPPAGE_BPS", 0.0)),
                 "default_tp": float(getattr(_cfg, "RB_DEFAULT_TP", 2.0)),
                 "default_sl": float(getattr(_cfg, "RB_DEFAULT_SL", 1.2)),
                 "same_bar_ambiguity": "stop_first_conservative",
@@ -4315,14 +4421,9 @@ class Pipeline_Orchestrator:
             blocked_directions=blocked_directions,
         )
         lwc_archive_path = Path(self._output_dir) / "rule_archives" / "lwc" / "lwc_rules.json"
-        all_lwc_rules = []
+        all_lwc_rules: list[dict[str, Any]] = []
         for direction, rules in res.items():
-            for r in rules:
-                rule_copy = dict(r)
-                rule_copy["timeframe"] = "lwc"
-                rule_copy["direction"] = direction
-                rule_copy["coverage"] = float(r.get("coverage", 0.15))
-                all_lwc_rules.append(rule_copy)
+            all_lwc_rules.extend(_normalize_mtf_lwc_rules(rules, direction))
         if all_lwc_rules:
             save_mtf_rule_archive(timeframe="lwc", rules=all_lwc_rules, path=lwc_archive_path)
         return res
@@ -4392,6 +4493,9 @@ class Pipeline_Orchestrator:
                     raise ValueError(
                         f"LWC archive rule has invalid direction {r.get('direction')!r}"
                     )
+
+        lwc_long = _normalize_mtf_lwc_rules(lwc_long, "long")
+        lwc_short = _normalize_mtf_lwc_rules(lwc_short, "short")
 
         hwc_discovery = getattr(self, "_mtf_hwc_discovery", None)
         mwc_discovery = getattr(self, "_mtf_mwc_discovery", None)

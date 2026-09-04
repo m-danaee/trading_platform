@@ -431,14 +431,16 @@ def ensemble_layer_scores(
     return direction, strength, active
 
 
-def evaluate_candidate_frame(
+def _candidate_layer_components(
     candidate: Any,
     raw_df: pd.DataFrame,
     history_df: pd.DataFrame | None = None,
-) -> tuple[np.ndarray, dict[str, Any], pd.DataFrame]:
-    """Apply a frozen candidate and return signals, funnel stats, and audit rows."""
+) -> tuple[pd.DataFrame, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Prepare one candidate's causal HWC/MWC score arrays."""
     frame, target_mask = _prepare_target_with_history(raw_df, history_df)
-    hwc_direction, hwc_strength, _ = ensemble_layer_scores(frame, candidate.hwc_rules)
+    hwc_direction, hwc_strength, _ = ensemble_layer_scores(
+        frame, candidate.hwc_rules
+    )
     mwc_direction, mwc_strength, _ = ensemble_layer_scores(
         frame,
         candidate.mwc_rules,
@@ -448,6 +450,93 @@ def evaluate_candidate_frame(
     frame["mtf_hwc_strength"] = hwc_strength
     frame["mtf_mwc_direction"] = mwc_direction
     frame["mtf_mwc_strength"] = mwc_strength
+    return (
+        frame,
+        target_mask,
+        hwc_direction,
+        hwc_strength,
+        mwc_direction,
+        mwc_strength,
+    )
+
+
+def _rule_direction(value: Any) -> str:
+    normalized = str(value).strip().lower()
+    if normalized in ("long", "buy", "1", "+1"):
+        return "long"
+    if normalized in ("short", "sell", "-1"):
+        return "short"
+    return ""
+
+
+def _compose_candidate_rule_masks(
+    candidate: Any,
+    frame: pd.DataFrame,
+    hwc_direction: np.ndarray,
+    hwc_strength: np.ndarray,
+    mwc_direction: np.ndarray,
+    mwc_strength: np.ndarray,
+) -> list[np.ndarray]:
+    """Compose one accepted mask for each frozen LWC rule."""
+    masks: list[np.ndarray] = []
+    for rule in candidate.lwc_rules:
+        rule_direction = _rule_direction(rule.get("direction"))
+        raw = rule_mask(frame, rule)
+        if candidate.direction != "bidirectional":
+            if rule_direction != candidate.direction:
+                masks.append(np.zeros(len(frame), dtype=bool))
+                continue
+            trigger = raw.astype(np.int8)
+        elif rule_direction == "long":
+            trigger = raw.astype(np.int8)
+        elif rule_direction == "short":
+            trigger = -raw.astype(np.int8)
+        else:
+            masks.append(np.zeros(len(frame), dtype=bool))
+            continue
+        composed, _ = candidate.compose(
+            trigger,
+            hwc_direction,
+            hwc_strength,
+            mwc_direction,
+            mwc_strength,
+        )
+        masks.append(np.asarray(composed) != 0)
+    return masks
+
+
+def evaluate_candidate_frame(
+    candidate: Any,
+    raw_df: pd.DataFrame,
+    history_df: pd.DataFrame | None = None,
+    *,
+    _return_rule_masks: bool = False,
+) -> tuple[np.ndarray, dict[str, Any], pd.DataFrame]:
+    """Apply a frozen candidate and return signals, funnel stats, and audit rows."""
+    (
+        frame,
+        target_mask,
+        hwc_direction,
+        hwc_strength,
+        mwc_direction,
+        mwc_strength,
+    ) = _candidate_layer_components(
+        candidate,
+        raw_df,
+        history_df=history_df,
+    )
+    rule_masks = (
+        _compose_candidate_rule_masks(
+            candidate,
+            frame,
+            hwc_direction,
+            hwc_strength,
+            mwc_direction,
+            mwc_strength,
+        )
+        if _return_rule_masks
+        else None
+    )
 
     if candidate.direction == "bidirectional":
         long_rules = [r for r in candidate.lwc_rules if str(r.get("direction", "")).lower() == "long"]
@@ -554,4 +643,33 @@ def evaluate_candidate_frame(
         signals = signals[target_mask]
         stats = _slice_composition_stats(stats, target_mask)
         audit = audit.loc[target_mask].reset_index(drop=True)
+        if rule_masks is not None:
+            rule_masks = [
+                np.asarray(mask, dtype=bool)[target_mask]
+                for mask in rule_masks
+            ]
+    if _return_rule_masks:
+        # This private extension is consumed only by the per-rule execution
+        # path below.  Keep the public three-value API unchanged.
+        return np.asarray(signals), stats, audit, rule_masks  # type: ignore[return-value]
     return np.asarray(signals), stats, audit
+
+
+def evaluate_candidate_rule_masks(
+    candidate: Any,
+    raw_df: pd.DataFrame,
+    history_df: pd.DataFrame | None = None,
+) -> tuple[list[np.ndarray], dict[str, Any], pd.DataFrame]:
+    """Return one causal, accepted execution mask for every frozen LWC rule.
+
+    The masks are aligned to ``raw_df``.  If history is supplied, it is used
+    only to build higher-timeframe features and is removed from the returned
+    masks, statistics, and audit rows.
+    """
+    _, stats, audit, masks = evaluate_candidate_frame(
+        candidate,
+        raw_df,
+        history_df=history_df,
+        _return_rule_masks=True,
+    )
+    return list(masks or []), stats, audit

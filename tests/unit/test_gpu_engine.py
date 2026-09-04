@@ -443,6 +443,7 @@ class TestGPUBacktestEngineInit:
         eng = _make_engine(df, initial_capital=500.0, fee_pct=0.10)
         assert eng.initial_capital == pytest.approx(500.0)
         assert eng.fee_rate == pytest.approx(0.001)
+        assert eng.effective_fee_rate == pytest.approx(0.002)
 
 
 # ---------------------------------------------------------------------------

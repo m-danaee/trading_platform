@@ -536,6 +536,107 @@ def _build_entries_from_rule_set(
     return entries
 
 
+def _build_entries_from_signal_masks(
+    df: pd.DataFrame,
+    signal_masks: list[np.ndarray | pd.Series],
+    rule_set: list[dict],
+    *,
+    row_priority: np.ndarray | None = None,
+    normalized_symbols: np.ndarray | None = None,
+    context_mask: np.ndarray | None = None,
+) -> list[dict]:
+    """Build first-match entries from already-composed per-rule masks.
+
+    MTF composition produces one causal mask per LWC rule.  Keep those masks
+    separate until allocation so each rule keeps its own TP, SL, capital, and
+    symbol-priority settings.
+    """
+    if len(signal_masks) != len(rule_set):
+        raise ValueError("signal_masks and rule_set must have the same length")
+    if not rule_set:
+        return []
+
+    n_rows = len(df)
+    if context_mask is None:
+        context = np.ones(n_rows, dtype=bool)
+    else:
+        context = np.asarray(context_mask, dtype=bool)
+        if len(context) != n_rows:
+            raise ValueError("context_mask length does not match dataset length")
+
+    if row_priority is None:
+        if "datetime" in df.columns:
+            priority = compute_entry_time_priority(df["datetime"].values, n_rows)
+        else:
+            priority = np.arange(n_rows, dtype=np.int64)
+    else:
+        priority = np.asarray(row_priority)
+        if len(priority) != n_rows:
+            raise ValueError("row_priority length does not match dataset length")
+
+    if normalized_symbols is not None:
+        symbols = np.asarray(normalized_symbols, dtype=object)
+        if len(symbols) != n_rows:
+            raise ValueError(
+                "normalized_symbols length does not match dataset length"
+            )
+    elif _rules_need_normalized_symbols(rule_set):
+        symbols = get_normalized_symbol_array(df)
+    else:
+        symbols = None
+
+    assigned_mask = np.zeros(n_rows, dtype=bool)
+    entries: list[dict] = []
+    for rule_idx, rule_entry in enumerate(rule_set, start=1):
+        if not isinstance(rule_entry, dict):
+            raise ValueError("Each rule entry must be a dictionary.")
+        try:
+            tp = float(rule_entry["tp"])
+            sl = float(rule_entry["sl"])
+            capital_pct = float(rule_entry["capital_pct"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Rule {rule_idx} must define numeric tp, sl, and capital_pct"
+            ) from exc
+        if (
+            not np.isfinite(tp)
+            or tp <= 0
+            or not np.isfinite(sl)
+            or sl <= 0
+            or not np.isfinite(capital_pct)
+            or capital_pct <= 0
+        ):
+            raise ValueError(f"Rule {rule_idx} has invalid risk parameters")
+
+        mask = np.asarray(signal_masks[rule_idx - 1], dtype=bool)
+        if len(mask) != n_rows:
+            raise ValueError(
+                f"signal mask {rule_idx} length does not match the dataset"
+            )
+        matched = np.flatnonzero(mask & context & ~assigned_mask)
+        if len(matched) == 0:
+            continue
+        assigned_mask[matched] = True
+        conditions = rule_entry.get("conditions", [])
+        rule_symbols = _rule_symbols_for_allocation(
+            rule_entry, conditions, rule_idx
+        )
+        _append_allocated_entries(
+            entries,
+            matched,
+            rule_idx=rule_idx,
+            tp=tp,
+            sl=sl,
+            capital_pct=capital_pct,
+            row_priority=priority,
+            rule_symbols=rule_symbols,
+            normalized_symbols=symbols,
+        )
+
+    _sort_entries_by_allocation_priority(entries)
+    return entries
+
+
 def _rules_need_normalized_symbols(rule_set: list[dict]) -> bool:
     for rule_entry in rule_set:
         if not isinstance(rule_entry, dict):
@@ -574,7 +675,8 @@ class CPUBacktestEngine:
     **constants
         Optional overrides for backtest constants. Recognised keys:
         initial_capital, leverage, fee_pct, max_hold_candles,
-        max_total_exposure_pct, min_position_notional.
+        max_total_exposure_pct, min_position_notional, spread_bps, and
+        slippage_bps.
         Defaults come from config.py.
     """
 
@@ -1153,6 +1255,32 @@ class CPUBacktestEngine:
             normalized_symbols=None,
         )
         _sort_entries_by_allocation_priority(entries)
+        return self._simulate_rule_set_entries(
+            entries,
+            return_logs=return_logs,
+            initial_capital=self.initial_capital,
+        )
+
+    def simulate_signal_masks(
+        self,
+        signal_masks: list[np.ndarray | pd.Series],
+        rules: list[dict],
+        *,
+        return_logs: bool = False,
+    ) -> "dict | tuple[dict, pd.DataFrame]":
+        """Simulate causal signal masks with the risk of each rule.
+
+        Masks are assigned in rule order.  An entry that matches more than one
+        mask is assigned to the first matching rule, which is the same policy
+        as :meth:`simulate_rule_set`.
+        """
+        entries = _build_entries_from_signal_masks(
+            self.df,
+            signal_masks,
+            rules,
+            row_priority=self.entry_time_priority,
+            context_mask=self._context_mask,
+        )
         return self._simulate_rule_set_entries(
             entries,
             return_logs=return_logs,

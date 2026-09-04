@@ -858,6 +858,15 @@ class GPUBacktestEngine:
         self.leverage = float(constants.get("leverage", _cfg.LEVERAGE))
         self.fee_pct = float(constants.get("fee_pct", _cfg.FEE_PCT))
         self.fee_rate = self.fee_pct / 100.0
+        self.spread_bps = float(constants.get("spread_bps", _cfg.SPREAD_BPS))
+        self.slippage_bps = float(
+            constants.get("slippage_bps", _cfg.SLIPPAGE_BPS)
+        )
+        self.effective_fee_rate = (
+            self.fee_rate
+            + (self.spread_bps / 10000.0)
+            + (self.slippage_bps / 10000.0)
+        )
         self.max_hold_candles = int(
             constants.get("max_hold_candles", _cfg.MAX_HOLD_CANDLES))
         self.max_total_exposure_pct = float(
@@ -1075,7 +1084,7 @@ class GPUBacktestEngine:
             self.initial_capital,
             n_rows,
             max_open_slots,
-            self.fee_rate,
+            self.effective_fee_rate,
             self.leverage,
             capital_rate,
             max_exposure_rate,
@@ -1102,7 +1111,7 @@ class GPUBacktestEngine:
             self.initial_capital,
             n_rows,
             max_open_slots,
-            self.fee_rate,
+            self.effective_fee_rate,
             self.leverage,
             capital_rate,
             max_exposure_rate,

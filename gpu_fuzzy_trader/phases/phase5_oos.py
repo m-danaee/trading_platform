@@ -54,6 +54,7 @@ from gpu_fuzzy_trader.research_integrity import (
     write_forward_acceptance_record,
 )
 from gpu_fuzzy_trader.reporting.reporter import Reporter
+from gpu_fuzzy_trader.mtf.runtime import evaluate_candidate_rule_masks
 
 logger = logging.getLogger(__name__)
 
@@ -424,9 +425,39 @@ class OOS_Evaluator:
         joint_test_logs = pd.DataFrame()
         try:
             for split, split_df in datasets_by_split.items():
+                joint_history_df = None
+                if any(
+                    "mtf_candidate" in strategy
+                    for strategy in strategies.values()
+                ):
+                    if split == "validation":
+                        joint_history_df = datasets_by_split.get("train")
+                    elif split == "test":
+                        joint_history_df = pd.concat(
+                            [
+                                datasets_by_split["train"],
+                                datasets_by_split["validation"],
+                            ],
+                            ignore_index=True,
+                            sort=False,
+                        )
+                    elif split == "forward":
+                        joint_history_df = pd.concat(
+                            [
+                                datasets_by_split["train"],
+                                datasets_by_split["validation"],
+                                datasets_by_split["test"],
+                            ],
+                            ignore_index=True,
+                            sort=False,
+                        )
                 joint_metrics, joint_logs = JointPortfolioEngine(
                     split_df,
-                ).simulate(strategies, return_logs=True)
+                ).simulate(
+                    strategies,
+                    return_logs=True,
+                    history_df=joint_history_df,
+                )
                 joint_by_split[split] = joint_metrics
                 if split == "test":
                     joint_test_logs = joint_logs
@@ -932,28 +963,19 @@ class OOS_Evaluator:
                 candidate = HierarchicalStrategyCandidate.from_dict(
                     strategy["mtf_candidate"]
                 )
-                signals, composition_stats, _audit = candidate.evaluate_frame(
+                rule_masks, composition_stats, _audit = evaluate_candidate_rule_masks(
+                    candidate,
                     test_df,
                     history_df=history_df,
                 )
-                runtime = strategy.get("mtf_runtime", {})
-                first_rule = candidate.lwc_rules[0] if candidate.lwc_rules else {}
-                tp = float(runtime.get("tp", first_rule.get("tp", getattr(_cfg, "RB_DEFAULT_TP", 2.0))))
-                sl = float(runtime.get("sl", first_rule.get("sl", getattr(_cfg, "RB_DEFAULT_SL", 1.2))))
-                capital_pct = float(runtime.get(
-                    "capital_pct",
-                    first_rule.get("capital_pct", getattr(_cfg, "RB_DEFAULT_CAPITAL_PCT", 18.0)),
-                ))
                 engine = CPUBacktestEngine(
                     test_df,
                     feature_modes={},
                     direction=direction,
                 )
-                metrics, trade_log = engine.simulate_signal_mask(
-                    np.asarray(signals) != 0,
-                    tp=tp,
-                    sl=sl,
-                    capital_pct=capital_pct,
+                metrics, trade_log = engine.simulate_signal_masks(
+                    rule_masks,
+                    candidate.lwc_rules,
                     return_logs=True,
                 )
                 metrics["mtf_composition"] = {

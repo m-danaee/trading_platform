@@ -162,6 +162,83 @@ def _metric_summary(metrics: Iterable[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _history_before_stability_window(
+    frame: pd.DataFrame,
+    test_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """Return raw rows strictly before each test symbol's first timestamp."""
+    if frame.empty or test_df.empty:
+        return frame.iloc[0:0].copy()
+    if "datetime" not in frame.columns or "datetime" not in test_df.columns:
+        return frame.iloc[0:0].copy()
+
+    frame_times = pd.to_datetime(frame["datetime"], errors="raise", utc=True)
+    test_times = pd.to_datetime(test_df["datetime"], errors="raise", utc=True)
+    if "symbol" not in frame.columns or "symbol" not in test_df.columns:
+        return _sorted_symbol_frame(
+            frame.loc[frame_times < test_times.min()].copy()
+        )
+
+    test_with_times = pd.DataFrame({
+        "symbol": test_df["symbol"].to_numpy(),
+        "_test_start": test_times.to_numpy(),
+    })
+    starts = test_with_times.groupby(
+        "symbol", sort=False, observed=False,
+    )["_test_start"].min()
+    cutoffs = frame["symbol"].map(starts)
+    history_mask = cutoffs.notna().to_numpy() & (
+        frame_times.to_numpy() < cutoffs.to_numpy()
+    )
+    return _sorted_symbol_frame(frame.loc[history_mask].copy())
+
+
+def _raw_mtf_stability_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    """Remove precomputed MTF features before the frozen runtime rebuilds them."""
+    derived_prefixes = ("lwc_", "mwc_", "hwc_", "mtf_", "_mtf")
+    columns = [
+        column
+        for column in frame.columns
+        if not str(column).startswith(derived_prefixes)
+    ]
+    return frame.loc[:, columns].copy()
+
+
+def _evaluate_mtf_strategy_stability(
+    frame: pd.DataFrame,
+    strategy: dict[str, Any],
+    folds: list[StabilityFold],
+) -> list[dict[str, Any]]:
+    """Evaluate a frozen MTF candidate with causal per-window history."""
+    candidate_payload = strategy.get("mtf_candidate")
+    if not isinstance(candidate_payload, dict):
+        raise ValueError("MTF stability evaluation requires mtf_candidate")
+
+    # Keep these imports local.  The backtest package is imported during Phase
+    # 2 collection, and a module-level MTF runtime import recreates that cycle.
+    from gpu_fuzzy_trader.mtf.candidate import HierarchicalStrategyCandidate
+    from gpu_fuzzy_trader.mtf.runtime import evaluate_candidate_rule_masks
+
+    candidate = HierarchicalStrategyCandidate.from_dict(candidate_payload)
+    direction = str(strategy.get("direction", candidate.direction))
+    raw_frame = _raw_mtf_stability_frame(frame)
+    metrics: list[dict[str, Any]] = []
+    for fold in folds:
+        raw_test_df = _raw_mtf_stability_frame(fold.test_df)
+        history_df = _history_before_stability_window(raw_frame, raw_test_df)
+        rule_masks, _stats, _audit = evaluate_candidate_rule_masks(
+            candidate,
+            raw_test_df,
+            history_df=history_df,
+        )
+        metrics.append(
+            CPUBacktestEngine(
+                fold.test_df, {}, direction,
+            ).simulate_signal_masks(rule_masks, candidate.lwc_rules)
+        )
+    return metrics
+
+
 def _candidate_id(candidate: dict[str, Any], *, source: str, direction: str) -> str:
     """Return a stable ID for a candidate that has no explicit ID."""
     explicit = candidate.get("candidate_id") or candidate.get("strategy_id")
@@ -343,15 +420,24 @@ def evaluate_strategy_stability(
     """
     folds = build_stability_folds(frame, n_windows=n_windows)
     rule_set = list(strategy.get("rules_set", []))
-    if evaluator is None:
+    mtf_strategy = isinstance(strategy.get("mtf_candidate"), dict)
+    if evaluator is None and mtf_strategy:
+        metrics = _evaluate_mtf_strategy_stability(frame, strategy, folds)
+        evaluator_contract = "mtf_candidate_runtime"
+        history_contract = "strictly_prior_per_symbol_to_test_window"
+    else:
+        evaluator_contract = "custom" if evaluator is not None else "cpu_rule_set"
+        history_contract = "not_required"
 
-        def evaluator(stability_frame: pd.DataFrame, rules: list[dict]) -> dict:
-            direction = str(strategy.get("direction", "long"))
-            return CPUBacktestEngine(
-                stability_frame, {}, direction,
-            ).simulate_rule_set(rules)
+        if evaluator is None:
 
-    metrics = [evaluator(fold.test_df, rule_set) for fold in folds]
+            def evaluator(stability_frame: pd.DataFrame, rules: list[dict]) -> dict:
+                direction = str(strategy.get("direction", "long"))
+                return CPUBacktestEngine(
+                    stability_frame, {}, direction,
+                ).simulate_rule_set(rules)
+
+        metrics = [evaluator(fold.test_df, rule_set) for fold in folds]
     summary = _metric_summary(metrics)
     matrix = strategy.get("candidate_fold_matrix")
     if isinstance(matrix, (str, bytes)):
@@ -373,6 +459,8 @@ def evaluate_strategy_stability(
             for fold in folds
         ],
         "stability_contract": "frozen_strategy_chronological_comparison",
+        "evaluator_contract": evaluator_contract,
+        "historical_context": history_contract,
         "multiplicity": summarize_multiplicity(
             fold_returns=[
                 float(row.get("total_return_pct", 0.0))

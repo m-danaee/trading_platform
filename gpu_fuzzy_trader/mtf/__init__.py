@@ -60,6 +60,7 @@ from gpu_fuzzy_trader.mtf.runtime import (
     attach_frozen_layer_scores,
     attach_oof_layer_scores,
     evaluate_candidate_frame,
+    evaluate_candidate_rule_masks,
     prepare_causal_mtf_frame,
 )
 
@@ -96,6 +97,7 @@ __all__ = [
     "discover_directional_layer",
     "eligible_for_role",
     "evaluate_candidate_frame",
+    "evaluate_candidate_rule_masks",
     "export_fold_boundaries",
     "format_retention_report",
     "generate_oof_predictions",

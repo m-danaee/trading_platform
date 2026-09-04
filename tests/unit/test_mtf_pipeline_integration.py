@@ -354,6 +354,36 @@ def test_run_mtf_composition_and_candidate_signal_evaluation():
         assert stats["accepted_trades"] == stats["raw_triggers"] - stats["hwc_vetoed"] - stats["mwc_vetoed"]
 
 
+def test_run_mtf_composition_normalizes_raw_phase2_rules_for_archive():
+    """Phase 2 output must satisfy the LWC archive contract before saving."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        runner = Pipeline_Runner(output_dir=tmp_dir)
+        raw_rule = {
+            "chromosome": [1, 2, 3],
+            "conditions": ["[feature_rsi] IS High"],
+            "tp": 2.0,
+            "sl": 1.2,
+            "capital_pct": 18.0,
+        }
+
+        candidates = runner.run_mtf_composition(
+            lwc_rules={"long": [raw_rule], "short": []},
+            hwc_rules=[],
+            mwc_rules=[],
+        )
+
+        assert len(candidates["long"].lwc_rules) == 1
+        normalized = candidates["long"].lwc_rules[0]
+        assert normalized["timeframe"] == "lwc"
+        assert normalized["direction"] == "long"
+        assert normalized["coverage"] == 0.15
+
+        archive_path = Path(tmp_dir) / "rule_archives" / "lwc" / "lwc_rules.json"
+        archive = json.loads(archive_path.read_text(encoding="utf-8"))
+        assert archive["rules"][0]["direction"] == "long"
+        assert archive["rules"][0]["coverage"] == 0.15
+
+
 def test_run_phase1_hwc_and_mwc_discovery():
     """Verify run_phase1_hwc and run_phase1_mwc discover and persist rules."""
     with tempfile.TemporaryDirectory() as tmp_dir:

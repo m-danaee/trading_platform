@@ -710,6 +710,8 @@ class TestCanonicalNotebookPrecision:
             df,
             direction="long",
             max_hold_candles=2,
+            spread_bps=0.0,
+            slippage_bps=0.0,
         ).simulate_rule_set(rule_set, return_logs=True)
         strategy = {"direction": "long", "rules_set": rule_set}
         parsed = namespace["strategy_dict_to_rule_set"](strategy, df)
@@ -970,7 +972,14 @@ class TestFeeDeduction:
             feature_val=0.9,
         )
         rule_set = [{"conditions": ["[feat_a] IS Very High"], "tp": 4.0, "sl": 2.0, "capital_pct": 50.0}]
-        eng = _make_engine(df, initial_capital=1000.0, fee_pct=0.20, max_hold_candles=2)
+        eng = _make_engine(
+            df,
+            initial_capital=1000.0,
+            fee_pct=0.20,
+            spread_bps=0.0,
+            slippage_bps=0.0,
+            max_hold_candles=2,
+        )
         metrics, logs = eng.simulate_rule_set(rule_set, return_logs=True)
 
         for _, row in logs.iterrows():

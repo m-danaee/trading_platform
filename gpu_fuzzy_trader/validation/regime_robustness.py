@@ -12,7 +12,7 @@ import json
 import logging
 import math
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
@@ -62,6 +62,55 @@ def _price_series(df: pd.DataFrame) -> pd.Series:
     return values.astype(float)
 
 
+def _per_symbol_causal_series(
+    df: pd.DataFrame,
+    calculator: Callable[[pd.DataFrame], pd.Series],
+) -> pd.Series:
+    """Apply a rolling calculation independently within each symbol."""
+    if not isinstance(df, pd.DataFrame):
+        raise TypeError("df must be a pandas DataFrame")
+    if not callable(calculator):
+        raise TypeError("calculator must be callable")
+
+    values = np.full(len(df), np.nan, dtype=float)
+    symbol_column = _find_column(df, ("symbol",))
+    datetime_column = _find_column(df, ("datetime",))
+    if symbol_column is None:
+        groups = (np.arange(len(df), dtype=int),)
+    else:
+        groups = (
+            np.asarray(positions, dtype=int)
+            for positions in df.groupby(
+                symbol_column, sort=False, dropna=False, observed=False
+            ).indices.values()
+        )
+
+    for positions in groups:
+        if not len(positions):
+            continue
+        ordered_positions = positions
+        if datetime_column is not None and len(positions) > 1:
+            order_frame = df.iloc[positions][[datetime_column]].reset_index(drop=True)
+            order_frame[datetime_column] = pd.to_datetime(
+                order_frame[datetime_column], errors="coerce", utc=True
+            )
+            order = order_frame.sort_values(
+                datetime_column, kind="mergesort"
+            ).index.to_numpy(dtype=int)
+            ordered_positions = positions[order]
+
+        calculated = calculator(df.iloc[ordered_positions])
+        if not isinstance(calculated, pd.Series):
+            calculated = pd.Series(calculated)
+        if len(calculated) != len(ordered_positions):
+            raise ValueError("calculator must return one value per input row")
+        values[ordered_positions] = pd.to_numeric(
+            calculated, errors="coerce"
+        ).to_numpy(dtype=float)
+
+    return pd.Series(values, index=df.index)
+
+
 def _volatility_series(df: pd.DataFrame, window: int) -> pd.Series:
     """Return a causal volatility proxy from ATR or realised returns."""
     explicit = [
@@ -73,31 +122,44 @@ def _volatility_series(df: pd.DataFrame, window: int) -> pd.Series:
         values = pd.to_numeric(df[explicit[0]], errors="coerce")
         return values.abs().astype(float)
 
-    close = _price_series(df)
     high_column = _find_column(df, ("high", "high_price"))
     low_column = _find_column(df, ("low", "low_price"))
     if high_column is not None and low_column is not None:
-        high = pd.to_numeric(df[high_column], errors="coerce").astype(float)
-        low = pd.to_numeric(df[low_column], errors="coerce").astype(float)
-        previous_close = close.shift(1)
-        true_range = pd.concat(
-            [high - low, (high - previous_close).abs(), (low - previous_close).abs()],
-            axis=1,
-        ).max(axis=1)
-        denominator = close.abs().replace(0.0, np.nan)
-        return (true_range / denominator).rolling(
-            max(1, int(window)), min_periods=1
-        ).mean()
+        def calculate_true_range(frame: pd.DataFrame) -> pd.Series:
+            frame_close = _price_series(frame)
+            high = pd.to_numeric(frame[high_column], errors="coerce").astype(float)
+            low = pd.to_numeric(frame[low_column], errors="coerce").astype(float)
+            previous_close = frame_close.shift(1)
+            true_range = pd.concat(
+                [
+                    high - low,
+                    (high - previous_close).abs(),
+                    (low - previous_close).abs(),
+                ],
+                axis=1,
+            ).max(axis=1)
+            denominator = frame_close.abs().replace(0.0, np.nan)
+            return (true_range / denominator).rolling(
+                max(1, int(window)), min_periods=1
+            ).mean()
 
-    returns = close.pct_change()
-    return returns.rolling(max(1, int(window)), min_periods=2).std().abs()
+        return _per_symbol_causal_series(df, calculate_true_range)
+
+    def calculate_return_volatility(frame: pd.DataFrame) -> pd.Series:
+        returns = _price_series(frame).pct_change()
+        return returns.rolling(max(1, int(window)), min_periods=2).std().abs()
+
+    return _per_symbol_causal_series(df, calculate_return_volatility)
 
 
 def _trend_strength_series(df: pd.DataFrame, window: int) -> pd.Series:
     """Return absolute distance from a causal moving average."""
-    price = _price_series(df)
-    sma = price.rolling(max(1, int(window)), min_periods=1).mean()
-    return (price / sma.replace(0.0, np.nan) - 1.0).abs()
+    def calculate_trend_strength(frame: pd.DataFrame) -> pd.Series:
+        price = _price_series(frame)
+        sma = price.rolling(max(1, int(window)), min_periods=1).mean()
+        return (price / sma.replace(0.0, np.nan) - 1.0).abs()
+
+    return _per_symbol_causal_series(df, calculate_trend_strength)
 
 
 def _threshold(values: pd.Series) -> float:
@@ -334,6 +396,37 @@ def _profit_concentration(
     }
 
 
+def _partitioned_profit_concentration(
+    regimes: Mapping[str, Mapping[str, Any]],
+    threshold: float,
+) -> dict[str, Any]:
+    """Calculate concentration separately for volatility and trend states."""
+    volatility = _profit_concentration(
+        {name: regimes[name] for name in ("high_vol", "low_vol")}, threshold
+    )
+    trend = _profit_concentration(
+        {name: regimes[name] for name in ("trend", "range")}, threshold
+    )
+    partitions = {"volatility": volatility, "trend": trend}
+    top_partition = max(partitions, key=lambda name: partitions[name]["hhi"])
+    top_report = partitions[top_partition]
+    headline = max(volatility["hhi"], trend["hhi"])
+    concentration_warning = bool(
+        volatility["concentration_warning"] or trend["concentration_warning"]
+    )
+    return {
+        "volatility": volatility,
+        "trend": trend,
+        "hhi": headline,
+        "hhi_concentration": headline,
+        "top_partition": top_partition,
+        "top_regime": top_report["top_regime"],
+        "top_regime_profit_share": top_report["top_regime_profit_share"],
+        "concentration_warning": concentration_warning,
+        "warning": concentration_warning,
+    }
+
+
 def _regime_split_report(
     source: Any,
     frame: pd.DataFrame,
@@ -357,7 +450,7 @@ def _regime_split_report(
             "pf": metrics["profit_factor"],
             "mdd": metrics["max_drawdown_pct"],
         }
-    concentration = _profit_concentration(
+    concentration = _partitioned_profit_concentration(
         regimes,
         _finite_float(
             getattr(_cfg, "RB_REGIME_PROFIT_CONCENTRATION_THRESHOLD", 0.70),
@@ -372,6 +465,7 @@ def _regime_split_report(
         "profit_concentration": concentration,
         "hhi": concentration["hhi"],
         "hhi_concentration": concentration["hhi"],
+        "top_partition": concentration["top_partition"],
         "top_regime": concentration["top_regime"],
         "top_regime_profit_share": concentration["top_regime_profit_share"],
         "concentration_warning": concentration["concentration_warning"],

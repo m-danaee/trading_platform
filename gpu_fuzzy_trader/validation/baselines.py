@@ -25,7 +25,23 @@ def _evaluate(
     frame: pd.DataFrame,
     direction: str,
     rules: list[dict],
+    *,
+    strategy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if strategy and isinstance(strategy.get("mtf_candidate"), dict):
+        from gpu_fuzzy_trader.mtf.candidate import HierarchicalStrategyCandidate
+        from gpu_fuzzy_trader.mtf.runtime import evaluate_candidate_rule_masks
+
+        candidate = HierarchicalStrategyCandidate.from_dict(
+            strategy["mtf_candidate"]
+        )
+        candidate.lwc_rules = [dict(rule) for rule in rules]
+        rule_masks, _stats, _audit = evaluate_candidate_rule_masks(
+            candidate, frame,
+        )
+        return CPUBacktestEngine(
+            frame, {}, direction,
+        ).simulate_signal_masks(rule_masks, candidate.lwc_rules)
     return CPUBacktestEngine(frame, {}, direction).simulate_rule_set(rules)
 
 
@@ -124,14 +140,45 @@ def _random_entry(
     )
 
 
+def _shuffle_column_per_symbol(
+    frame: pd.DataFrame,
+    column: str,
+    rng: np.random.Generator,
+) -> None:
+    """Shuffle one feature within each symbol without mixing instruments."""
+    column_index = frame.columns.get_loc(column)
+    if "symbol" not in frame.columns:
+        values = frame.iloc[:, column_index].to_numpy(copy=True)
+        rng.shuffle(values)
+        frame.iloc[:, column_index] = values
+        return
+
+    for positions in frame.groupby(
+        "symbol", sort=False, observed=False,
+    ).indices.values():
+        values = frame.iloc[positions, column_index].to_numpy(copy=True)
+        rng.shuffle(values)
+        frame.iloc[positions, column_index] = values
+
+
 def _feature_shuffle(
     frame: pd.DataFrame,
     direction: str,
     rules: list[dict],
     *,
     seed: int,
+    strategy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    shuffled = frame.copy()
+    mtf_strategy = strategy and isinstance(strategy.get("mtf_candidate"), dict)
+    if mtf_strategy:
+        # Materialize the causal feature family before selecting the columns.
+        # The runtime preserves existing derived columns, so it will consume
+        # the shuffled feature instead of rebuilding the original value.
+        from gpu_fuzzy_trader.mtf.runtime import prepare_causal_mtf_frame
+
+        shuffled = prepare_causal_mtf_frame(frame)
+    else:
+        shuffled = frame.copy()
     rng = np.random.default_rng(seed)
     feature_names = {
         str(condition).split("]", 1)[0].lstrip("[")
@@ -140,11 +187,10 @@ def _feature_shuffle(
         if str(condition).startswith("[")
     }
     for name in feature_names:
-        if name in shuffled.columns:
-            values = shuffled[name].to_numpy(copy=True)
-            rng.shuffle(values)
-            shuffled[name] = values
-    return _evaluate(shuffled, direction, rules)
+        if name == "symbol" or name not in shuffled.columns:
+            continue
+        _shuffle_column_per_symbol(shuffled, name, rng)
+    return _evaluate(shuffled, direction, rules, strategy=strategy)
 
 
 def evaluate_baselines(
@@ -163,20 +209,20 @@ def evaluate_baselines(
         "direction": direction,
         "strategy_id": strategy.get("strategy_id"),
         "fixed_phase2_exit": _compact(_evaluate(
-            frame, direction, _fixed_exit(rules),
+            frame, direction, _fixed_exit(rules), strategy=strategy,
         )),
         "equal_weight_capital": _compact(_evaluate(
-            frame, direction, _equal_weight(rules),
+            frame, direction, _equal_weight(rules), strategy=strategy,
         )),
         "feature_shuffle": _compact(_feature_shuffle(
-            frame, direction, rules, seed=seed,
+            frame, direction, rules, seed=seed, strategy=strategy,
         )),
         "random_entry_same_exit": _compact(_random_entry(
             frame, direction, rules, seed=seed,
         )),
     }
     drop_results = [
-        _compact(_evaluate(frame, direction, variant))
+        _compact(_evaluate(frame, direction, variant, strategy=strategy))
         for variant in _drop_one_condition_variants(rules)
     ]
     output["drop_one_condition"] = {

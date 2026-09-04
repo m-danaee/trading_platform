@@ -18,6 +18,7 @@ from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.backtest.cpu_engine import (
     CPUBacktestEngine,
     _build_entries_from_rule_set,
+    _build_entries_from_signal_masks,
     _safe_profit_factor,
     _sortino_ratio_from_returns,
     compute_entry_time_priority,
@@ -97,8 +98,37 @@ class JointPortfolioEngine:
             "per_symbol_metrics_available": True,
         }
 
-    def _entries(self, direction: str, strategy: dict) -> list[dict]:
+    def _entries(
+        self,
+        direction: str,
+        strategy: dict,
+        history_df: pd.DataFrame | None = None,
+    ) -> list[dict]:
         engine = self.long_engine if direction == "long" else self.short_engine
+        if isinstance(strategy, dict) and "mtf_candidate" in strategy:
+            from gpu_fuzzy_trader.mtf.candidate import (
+                HierarchicalStrategyCandidate,
+            )
+            from gpu_fuzzy_trader.mtf.runtime import evaluate_candidate_rule_masks
+
+            candidate = HierarchicalStrategyCandidate.from_dict(
+                strategy["mtf_candidate"]
+            )
+            signal_masks, _stats, _audit = evaluate_candidate_rule_masks(
+                candidate,
+                self.df,
+                history_df=history_df,
+            )
+            entries = _build_entries_from_signal_masks(
+                self.df,
+                signal_masks,
+                candidate.lwc_rules,
+                row_priority=self.entry_time_priority,
+                context_mask=engine._context_mask,
+            )
+            for entry in entries:
+                entry["direction"] = direction
+            return entries
         rules = strategy.get("rules_set", []) if isinstance(strategy, dict) else []
         normalized = None
         if any(
@@ -188,9 +218,16 @@ class JointPortfolioEngine:
         strategies: dict[str, dict],
         *,
         return_logs: bool = True,
+        history_df: pd.DataFrame | None = None,
     ) -> tuple[dict, pd.DataFrame]:
-        entries = self._entries("long", strategies.get("long", {}))
-        entries.extend(self._entries("short", strategies.get("short", {})))
+        entries = self._entries(
+            "long", strategies.get("long", {}), history_df=history_df
+        )
+        entries.extend(
+            self._entries(
+                "short", strategies.get("short", {}), history_df=history_df
+            )
+        )
         entries.sort(
             key=lambda row: (
                 int(row.get("entry_priority", 0)),

@@ -90,7 +90,11 @@ def _run_pipeline(
     valid_m = _mock_metrics(return_pct=valid_return_pct, pf=valid_pf)
     train_m = _mock_metrics()
 
-    with patch.object(_cfg, "RB_REQUIRE_SYMBOL_FILTERS", False), patch(
+    with patch.object(_cfg, "RB_REQUIRE_SYMBOL_FILTERS", False), patch.object(
+        _cfg, "RB_COST_STRESS_HARD_GATE", False,
+    ), patch.object(
+        _cfg, "RB_COST_STRESS_REPORT_ONLY", True,
+    ), patch(
         "gpu_fuzzy_trader.rb_governor._filter_good_rules",
         return_value=_candidates(rules),
     ), patch(

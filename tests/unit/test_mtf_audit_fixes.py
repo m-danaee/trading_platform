@@ -18,6 +18,7 @@ import pytest
 
 from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
+from gpu_fuzzy_trader.backtest.joint_engine import JointPortfolioEngine
 from gpu_fuzzy_trader.data.splitter import _holdout_embargo_split
 from gpu_fuzzy_trader.mtf.archives import (
     compute_archive_hash,
@@ -46,10 +47,15 @@ from gpu_fuzzy_trader.mtf.discovery import (
 )
 from gpu_fuzzy_trader.mtf.runtime import (
     evaluate_candidate_frame,
+    evaluate_candidate_rule_masks,
     prepare_causal_mtf_frame,
 )
 from gpu_fuzzy_trader.phases.phase5_oos import OOS_Evaluator, ValidationError
 from gpu_fuzzy_trader.run_pipeline import Pipeline_Runner
+from gpu_fuzzy_trader.validation import baselines
+from gpu_fuzzy_trader.validation.walk_forward_stability_report import (
+    evaluate_strategy_stability,
+)
 
 
 def test_oof_leakage_prevention_in_pareto_vector():
@@ -700,3 +706,235 @@ def test_phase5_strict_binding_to_archive_payloads(tmp_path):
     finally:
         _cfg.MTF_ARCHIVE_PATHS = orig_paths
         p5_mod._STRATEGY_PATHS = orig_strategy_paths
+
+
+def test_joint_portfolio_applies_frozen_mtf_veto():
+    n = 4
+    frame = pd.DataFrame({
+        "datetime": pd.date_range("2024-01-01", periods=n, freq="15min"),
+        "symbol": ["BTCUSDT"] * n,
+        "open": [100.0] * n,
+        "high": [105.0] * n,
+        "low": [99.0] * n,
+        "close": [100.0] * n,
+        "volume": [1.0] * n,
+        "_symbol_bar_index": np.arange(n),
+        "label_open_next": [100.0] * n,
+        "label_max_288": [105.0] * n,
+        "label_min_288": [99.0] * n,
+        "label_close_288": [104.0] * n,
+        "label_max_before_min": [1] * n,
+    })
+    lwc_rule = {
+        "timeframe": "lwc",
+        "direction": "long",
+        "conditions": ["[open] >= 0"],
+        "tp": 2.0,
+        "sl": 1.0,
+        "capital_pct": 10.0,
+    }
+    veto_rule = {
+        "timeframe": "hwc",
+        "direction": "short",
+        "conditions": ["[open] >= 0"],
+        "directional_edge": 1.0,
+        "mcc": 1.0,
+        "skill": 1.0,
+        "stability": 1.0,
+    }
+    candidate = HierarchicalStrategyCandidate(
+        direction="long",
+        lwc_rules=[lwc_rule],
+        hwc_rules=[veto_rule],
+    )
+    rule_masks, _stats, _audit = evaluate_candidate_rule_masks(candidate, frame)
+    assert rule_masks[0].tolist() == [False] * n
+
+    plain = {"direction": "long", "rules_set": [lwc_rule]}
+    mtf = {
+        "direction": "long",
+        "rules_set": [lwc_rule],
+        "mtf_candidate": candidate.to_dict(),
+    }
+    plain_metrics, _ = JointPortfolioEngine(
+        frame, spread_bps=0.0, slippage_bps=0.0
+    ).simulate({"long": plain}, return_logs=True)
+    mtf_metrics, _ = JointPortfolioEngine(
+        frame, spread_bps=0.0, slippage_bps=0.0
+    ).simulate({"long": mtf}, return_logs=True)
+
+    assert plain_metrics["raw_signal_count"] == n
+    assert mtf_metrics["raw_signal_count"] == 0
+    assert mtf_metrics["executed_trades"] == 0
+
+
+def test_mtf_signal_masks_keep_each_rule_risk_profile():
+    frame = pd.DataFrame({
+        "datetime": pd.date_range("2024-01-01", periods=2, freq="15min"),
+        "symbol": ["BTCUSDT", "ETHUSDT"],
+        "_symbol_bar_index": [0, 0],
+        "label_open_next": [100.0, 100.0],
+        "label_max_288": [105.0, 105.0],
+        "label_min_288": [99.0, 99.0],
+        "label_close_288": [104.0, 104.0],
+        "label_max_before_min": [1, 1],
+    })
+    rules = [
+        {
+            "conditions": ["[symbol] IS BTCUSDT"],
+            "tp": 2.0,
+            "sl": 1.0,
+            "capital_pct": 10.0,
+        },
+        {
+            "conditions": ["[symbol] IS ETHUSDT"],
+            "tp": 4.0,
+            "sl": 3.0,
+            "capital_pct": 30.0,
+        },
+    ]
+    engine = CPUBacktestEngine(
+        frame,
+        {},
+        "long",
+        spread_bps=0.0,
+        slippage_bps=0.0,
+    )
+    metrics, logs = engine.simulate_signal_masks(
+        [np.array([True, False]), np.array([False, True])],
+        rules,
+        return_logs=True,
+    )
+
+    assert metrics["executed_trades"] == 2
+    by_symbol = logs.set_index("Symbol")
+    assert by_symbol.loc["BTCUSDT", "Rule_TP"] == 2.0
+    assert by_symbol.loc["BTCUSDT", "Rule_SL"] == 1.0
+    assert by_symbol.loc["ETHUSDT", "Rule_TP"] == 4.0
+    assert by_symbol.loc["ETHUSDT", "Rule_SL"] == 3.0
+
+
+def test_mtf_stability_uses_causal_runtime_history_for_prefixed_rules():
+    """Frozen prefixed MTF rules must run through the MTF evaluator."""
+    n = 80
+    dates = pd.date_range("2024-01-01", periods=n, freq="15min")
+    close = 100.0 + np.sin(np.arange(n, dtype=float) / 4.0)
+    frame = pd.DataFrame({
+        "datetime": dates,
+        "symbol": "BTCUSDT",
+        "open": close,
+        "high": close + 1.0,
+        "low": close - 1.0,
+        "close": close,
+        "volume": 10.0,
+        "_symbol_bar_index": np.arange(n),
+        "label_open_next": close,
+        "label_close_288": close * 1.01,
+        "label_min_288": close * 0.99,
+        "label_max_288": close * 1.02,
+        "label_max_before_min": 1,
+    })
+    rule = {
+        "timeframe": "lwc",
+        "direction": "long",
+        "conditions": ["[lwc_bollinger_pct_b] >= 0"],
+        "tp": 2.0,
+        "sl": 1.0,
+        "capital_pct": 10.0,
+    }
+    candidate = HierarchicalStrategyCandidate(
+        direction="long",
+        lwc_rules=[rule],
+    )
+
+    report = evaluate_strategy_stability(
+        frame,
+        {
+            "direction": "long",
+            "rules_set": [rule],
+            "strategy_id": candidate.strategy_id,
+            "mtf_candidate": candidate.to_dict(),
+        },
+        n_windows=2,
+    )
+
+    assert report["folds"] == 2
+    assert report["evaluator_contract"] == "mtf_candidate_runtime"
+    assert report["historical_context"] == (
+        "strictly_prior_per_symbol_to_test_window"
+    )
+
+
+def test_mtf_feature_shuffle_materializes_and_shuffles_derived_feature(
+    monkeypatch,
+):
+    """MTF feature shuffle must change derived values before runtime evaluation."""
+    n = 80
+    dates = pd.date_range("2024-01-01", periods=n, freq="15min")
+
+    def _symbol_frame(symbol: str, phase: float) -> pd.DataFrame:
+        close = 100.0 + np.sin(np.arange(n, dtype=float) / 4.0 + phase)
+        return pd.DataFrame({
+            "datetime": dates,
+            "symbol": symbol,
+            "open": close,
+            "high": close + 1.0,
+            "low": close - 1.0,
+            "close": close,
+            "volume": 10.0,
+            "label_open_next": close,
+            "label_close_288": close * 1.01,
+            "label_min_288": close * 0.99,
+            "label_max_288": close * 1.02,
+            "label_max_before_min": 1,
+        })
+
+    frame = pd.concat([
+        _symbol_frame("BTCUSDT", 0.0),
+        _symbol_frame("ETHUSDT", 0.7),
+    ], ignore_index=True)
+    rule = {
+        "timeframe": "lwc",
+        "direction": "long",
+        "conditions": ["[lwc_bollinger_pct_b] >= 0"],
+    }
+    candidate = HierarchicalStrategyCandidate(
+        direction="long",
+        lwc_rules=[rule],
+    )
+    original = prepare_causal_mtf_frame(frame)
+    captured: dict[str, pd.DataFrame] = {}
+
+    def _capture(
+        shuffled: pd.DataFrame,
+        direction: str,
+        rules: list[dict],
+        *,
+        strategy: dict | None = None,
+    ) -> dict:
+        captured["frame"] = shuffled.copy()
+        return {"total_return_pct": 0.0}
+
+    monkeypatch.setattr(baselines, "_evaluate", _capture)
+    baselines._feature_shuffle(
+        frame,
+        "long",
+        [rule],
+        seed=17,
+        strategy={"mtf_candidate": candidate.to_dict()},
+    )
+
+    shuffled = captured["frame"]
+    assert "lwc_bollinger_pct_b" not in frame.columns
+    assert "lwc_bollinger_pct_b" in shuffled.columns
+    changed = False
+    for symbol in ("BTCUSDT", "ETHUSDT"):
+        before = original.loc[
+            original["symbol"] == symbol, "lwc_bollinger_pct_b"
+        ].to_numpy()
+        after = shuffled.loc[
+            shuffled["symbol"] == symbol, "lwc_bollinger_pct_b"
+        ].to_numpy()
+        assert np.array_equal(np.sort(before), np.sort(after))
+        changed |= not np.array_equal(before, after)
+    assert changed

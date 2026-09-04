@@ -23,6 +23,7 @@ from gpu_fuzzy_trader.rb_governor import (
     _passes_tail_selection_gate,
     _evaluate_ruleset,
     _rule_to_engine,
+    _split_tail_holdout_frame,
     CandidateRecord,
 )
 from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
@@ -135,6 +136,32 @@ class TestMakeFoldEnginesTailHoldout:
         folds, tail = _make_walk_forward_fold_engines(df, n_splits=2, tail_holdout_frac=0.25, direction="long")
         assert tail is not None
         assert len(folds) == 2
+
+
+def test_nested_tail_split_is_chronological_and_disjoint():
+    """Nested selection and tail frames must have no overlapping bars."""
+    frame = pd.DataFrame({
+        "symbol": [symbol for _ in range(4) for symbol in ("BTCUSDT", "ETHUSDT")],
+        "datetime": [
+            pd.Timestamp("2024-01-01") + pd.Timedelta(hours=index)
+            for index in range(8)
+        ],
+        "value": range(8),
+    })
+
+    selection, tail = _split_tail_holdout_frame(frame, 0.25)
+
+    selection_keys = set(zip(selection["symbol"], selection["datetime"], strict=False))
+    tail_keys = set(zip(tail["symbol"], tail["datetime"], strict=False))
+    assert selection_keys.isdisjoint(tail_keys)
+    assert len(selection) == 6
+    assert len(tail) == 2
+    for symbol in ("BTCUSDT", "ETHUSDT"):
+        selection_max = selection.loc[
+            selection["symbol"] == symbol, "datetime"
+        ].max()
+        tail_min = tail.loc[tail["symbol"] == symbol, "datetime"].min()
+        assert selection_max < tail_min
 
 
 # ---------------------------------------------------------------------------

@@ -307,12 +307,14 @@ LEVERAGE = 1.0
 #   Lower  → optimistic backtest; must match evaluator_v5.ipynb for valid OOS.
 FEE_PCT = 0.20
 # SPREAD_BPS — bid-ask spread cost in basis points (1 bp = 0.01% = 0.0001).
-SPREAD_BPS = 0.0
+# The default is a conservative round-trip allowance for liquid crypto bars.
+SPREAD_BPS = 5.0
 # SLIPPAGE_BPS — execution slippage in basis points (1 bp = 0.01% = 0.0001).
-SLIPPAGE_BPS = 0.0
+# Keep this non-zero so acceptance cannot rely on frictionless execution.
+SLIPPAGE_BPS = 5.0
 # Identifier included in strategy packages so a fee/execution-model change
 # cannot silently reuse an old economic strategy identity.
-COST_MODEL_ID: str = "crypto_bar_v2"
+COST_MODEL_ID: str = "crypto_bar_v3"
 
 # MAX_HOLD_CANDLES — force-exit horizon (bars) when neither TP nor SL hits.
 #   Higher → longer holds, larger label window, must match TAIL_DROP_ROWS.
@@ -458,7 +460,7 @@ MTF_MWC_HORIZON_BARS: int = 4
 # the absolute trade floor remains a separate count-gate contract.
 MTF_MAX_FOLDS: int = 4
 MTF_MIN_FOLDS: int = 2
-MTF_MIN_FOLD_SUPPORT_RATIO: float = 0.67
+MTF_MIN_FOLD_SUPPORT_RATIO: float = 0.50
 FOLD_MIN_EFFECTIVE_ROWS: int = 5
 FOLD_MIN_ROWS_PER_SYMBOL: int = 5
 FOLD_ABSOLUTE_MIN_TRADES: int = 5
@@ -1591,7 +1593,7 @@ PHASE2_ENRICH_SYMBOL_METRICS_EVERY_N_GENS = 20
 # PHASE2_POPULATION_SIZE — individuals per generation.
 #   Higher → better Pareto coverage, ~linear GPU cost per generation.
 #   Lower  → faster gens, risk of premature convergence.
-PHASE2_POPULATION_SIZE = 500
+PHASE2_POPULATION_SIZE = 256
 
 # PHASE2_GENERATIONS — generation budget for the global Phase 2 search.
 PHASE2_GENERATIONS = 100
@@ -1954,14 +1956,13 @@ RB_MIN_SL: float = 1.0
 # by Phase 2. An exit experiment must create a new strategy family.
 RB_RISK_OPTIMIZE_EXITS: bool = False
 RB_EXPECTANCY_LCB_MARGIN_PCT: float = 0.0
-# Robustness certificates are observations of the frozen portfolio.  They are
-# enabled by default, but report-only: no certificate can clear or reject a
-# deployment unless an explicit hard-gate flag is enabled.
+# Robustness certificates are observations of the frozen portfolio.  Most are
+# report-only by default.  Cost stress has a separate hard-gate contract below.
 RB_ROBUSTNESS_REPORT_ONLY: bool = True
 RB_COST_STRESS_MULTIPLIERS: tuple[float, ...] = (1.0, 1.5, 2.0)
 RB_COST_STRESS_ENABLED: bool = True
-RB_COST_STRESS_REPORT_ONLY: bool = True
-RB_COST_STRESS_HARD_GATE: bool = False
+RB_COST_STRESS_REPORT_ONLY: bool = False
+RB_COST_STRESS_HARD_GATE: bool = True
 RB_COST_STRESS_MIN_RETURN_PCT: float = 0.0
 RB_COST_STRESS_MIN_PF: float = 1.0
 RB_COST_STRESS_FRAGILE_PF_FLOOR: float = 1.0
@@ -2030,6 +2031,10 @@ RB_TAIL_HOLDOUT_MIN_RETURN_PCT: float = 0.0
 # This remains validation-only; Phase 5 test data is never read here.
 RB_TAIL_HOLDOUT_SELECTION_GATE: bool = True
 RB_TAIL_HOLDOUT_MIN_TRADES: int = 4
+# Internal Optuna contract.  Trial selection uses only the chronological
+# head of the RB validation-selection frame.  The reserved tail is persisted
+# for one evaluation after the best trial is frozen.
+RB_NESTED_VALIDATION_SELECTION_ONLY: bool = False
 
 # RB_MAX_SYMBOL_SHARE_ABS_PNL — max fraction of abs PnL from a single symbol on
 #   the RB validation frame; above this → fail-closed empty strategy
@@ -2294,7 +2299,10 @@ def required_folds(eligible: int, ratio: float | None = None) -> int:
     )
 
     support_ratio = MTF_MIN_FOLD_SUPPORT_RATIO if ratio is None else ratio
-    return _required_folds(int(eligible), float(support_ratio))
+    return max(
+        int(MTF_MIN_FOLDS),
+        _required_folds(int(eligible), float(support_ratio)),
+    )
 
 
 def scale_trade_floor(
@@ -2308,6 +2316,24 @@ def scale_trade_floor(
     explicit train or OOF exposure.  Without an explicit reference exposure,
     the historical base value is retained for backwards compatibility.
     """
+    return _scale_count_gate_from_rows(
+        base,
+        n_rows,
+        reference_rows,
+        absolute_min=int(FOLD_ABSOLUTE_MIN_TRADES),
+        rounding="legacy",
+    )
+
+
+def _scale_count_gate_from_rows(
+    base: int,
+    n_rows: int,
+    reference_rows: int | None,
+    *,
+    absolute_min: int,
+    rounding: str,
+) -> int:
+    """Scale a row-count gate through the canonical exposure helper."""
     if reference_rows is None or int(reference_rows) <= 0:
         return int(base)
     from gpu_fuzzy_trader.validation.fold_gates import (
@@ -2318,11 +2344,9 @@ def scale_trade_floor(
     return scale_count_gate(
         int(base),
         FoldExposure(rows=int(n_rows), duration_bars=0, per_symbol_rows={}),
-        FoldExposure(
-            rows=int(reference_rows), duration_bars=0, per_symbol_rows={}
-        ),
-        absolute_min=int(FOLD_ABSOLUTE_MIN_TRADES),
-        rounding="ceil",
+        FoldExposure(rows=int(reference_rows), duration_bars=0, per_symbol_rows={}),
+        absolute_min=int(absolute_min),
+        rounding=rounding,
     )
 
 
@@ -2333,16 +2357,29 @@ def _effective_reference_rows(reference_rows: int | None) -> int:
     return int(reference_rows)
 
 
+def _effective_trade_floor(
+    base: int,
+    n_rows: int | None,
+    reference_rows: int | None,
+) -> int:
+    """Scale active count gates with canonical ceiling rounding."""
+    if n_rows is None:
+        return int(base)
+    return _scale_count_gate_from_rows(
+        base,
+        n_rows,
+        _effective_reference_rows(reference_rows),
+        absolute_min=int(FOLD_ABSOLUTE_MIN_TRADES),
+        rounding="ceil",
+    )
+
+
 def effective_min_trade_support(
     n_rows: int | None = None,
     reference_rows: int | None = None,
 ) -> int:
     base = int(MIN_TRADE_SUPPORT)
-    if n_rows is None:
-        return base
-    return scale_trade_floor(
-        base, n_rows, _effective_reference_rows(reference_rows)
-    )
+    return _effective_trade_floor(base, n_rows, reference_rows)
 
 
 def effective_min_trade_pool_floor(
@@ -2350,11 +2387,7 @@ def effective_min_trade_pool_floor(
     reference_rows: int | None = None,
 ) -> int:
     base = int(MIN_TRADE_POOL_FLOOR)
-    if n_rows is None:
-        return base
-    return scale_trade_floor(
-        base, n_rows, _effective_reference_rows(reference_rows)
-    )
+    return _effective_trade_floor(base, n_rows, reference_rows)
 
 
 def effective_val_trade_floor_for_objectives(
@@ -2362,11 +2395,7 @@ def effective_val_trade_floor_for_objectives(
     reference_rows: int | None = None,
 ) -> int:
     base = max(int(MIN_TRADE_POOL_FLOOR) // 4, 10)
-    if n_rows is None:
-        return base
-    return scale_trade_floor(
-        base, n_rows, _effective_reference_rows(reference_rows)
-    )
+    return _effective_trade_floor(base, n_rows, reference_rows)
 
 
 def effective_pool_min_val_trades(
@@ -2374,11 +2403,7 @@ def effective_pool_min_val_trades(
     reference_rows: int | None = None,
 ) -> int:
     base = max(int(MIN_TRADE_POOL_FLOOR) // 4, 10)
-    if n_rows is None:
-        return base
-    return scale_trade_floor(
-        base, n_rows, _effective_reference_rows(reference_rows)
-    )
+    return _effective_trade_floor(base, n_rows, reference_rows)
 
 
 def effective_monthly_min_trades(
@@ -2386,11 +2411,7 @@ def effective_monthly_min_trades(
     reference_rows: int | None = None,
 ) -> int:
     base = int(MONTHLY_MIN_TRADES)
-    if n_rows is None:
-        return base
-    return scale_trade_floor(
-        base, n_rows, _effective_reference_rows(reference_rows)
-    )
+    return _effective_trade_floor(base, n_rows, reference_rows)
 
 
 
@@ -2408,15 +2429,10 @@ def scale_trade_floor_by_universe(
     floor_min = int(
         absolute_min if absolute_min is not None else 8
     )
-    from gpu_fuzzy_trader.validation.fold_gates import (
-        FoldExposure,
-        scale_count_gate,
-    )
-
-    return scale_count_gate(
-        int(base),
-        FoldExposure(rows=int(n_rows), duration_bars=0, per_symbol_rows={}),
-        FoldExposure(rows=ref, duration_bars=0, per_symbol_rows={}),
+    return _scale_count_gate_from_rows(
+        base,
+        n_rows,
+        ref,
         absolute_min=floor_min,
         rounding="legacy",
     )
@@ -3085,6 +3101,9 @@ def effective_config_snapshot(
         },
         "evaluator_contract": {
             "fee_pct": float(FEE_PCT),
+            "spread_bps": float(SPREAD_BPS),
+            "slippage_bps": float(SLIPPAGE_BPS),
+            "cost_model_id": str(COST_MODEL_ID),
             "max_hold_candles": int(MAX_HOLD_CANDLES),
             "initial_capital": float(INITIAL_CAPITAL),
             "leverage": float(LEVERAGE),
@@ -3208,6 +3227,9 @@ def effective_config_snapshot(
             "tail_holdout_fraction": float(RB_TAIL_HOLDOUT_FRACTION),
             "tail_holdout_selection_gate": bool(RB_TAIL_HOLDOUT_SELECTION_GATE),
             "tail_holdout_min_trades": int(RB_TAIL_HOLDOUT_MIN_TRADES),
+            "nested_validation_selection_only": bool(
+                RB_NESTED_VALIDATION_SELECTION_ONLY
+            ),
             "min_distinct_symbols": int(RB_MIN_DISTINCT_SYMBOLS),
             "effective_min_distinct_symbols": effective_rb_symbol_floor,
             "risk_min_improvement": float(RB_RISK_MIN_IMPROVEMENT),

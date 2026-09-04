@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import numpy as np
 
 from gpu_fuzzy_trader import config as _cfg
@@ -108,6 +110,65 @@ class _MarginalEngine:
             "executed_trades": 30,
         }
         return metrics
+
+
+def _marginal_metrics(return_pct, sortino=1.0, mdd=4.0, pf=1.5):
+    return {
+        "total_return_pct": return_pct,
+        "sortino_ratio": sortino,
+        "max_drawdown_pct": mdd,
+        "profit_factor": pf,
+        "executed_trades": 30,
+    }
+
+
+class _BatchTrapEngine:
+    def __init__(self, outcomes):
+        self.outcomes = outcomes
+
+    def simulate_rule_set(self, rules):
+        names = frozenset(rule["conditions"][0] for rule in rules)
+        return self.outcomes[names]
+
+
+def _record(name):
+    return CandidateRecord(
+        rule={"conditions": [name]},
+        train_metrics={},
+        valid_metrics={},
+        score=1.0,
+        mask=np.asarray([True, False, False]),
+    )
+
+
+def test_marginal_pruning_rechecks_before_a_second_removal():
+    records = [_record(name) for name in ("A", "B", "C")]
+    engine = _BatchTrapEngine(
+        {
+            frozenset(("A", "B", "C")): _marginal_metrics(10.0, 1.0, 4.0, 1.5),
+            frozenset(("B", "C")): _marginal_metrics(11.0, 2.0, 3.0, 2.0),
+            frozenset(("A", "C")): _marginal_metrics(11.0, 2.0, 3.0, 2.0),
+            frozenset(("A", "B")): _marginal_metrics(8.0, 0.5, 5.0, 1.2),
+            frozenset(("A",)): _marginal_metrics(0.0, 0.0, 9.0, 0.8),
+            frozenset(("B",)): _marginal_metrics(0.0, 0.0, 9.0, 0.8),
+            frozenset(("C",)): _marginal_metrics(0.0, 0.0, 9.0, 0.8),
+        }
+    )
+
+    with patch.object(_cfg, "RB_MARGINAL_PRUNING", True), patch.object(
+        _cfg, "RB_MIN_RULES", 1
+    ):
+        selected, _train, valid, report = _marginal_prune_ruleset(
+            records, engine, engine, "long"
+        )
+
+    assert [row.rule["conditions"][0] for row in selected] == ["B", "C"]
+    assert valid["total_return_pct"] == 11.0
+    assert report["removed_rule_count"] == 1
+    removed = [row for row in report["per_rule"] if row["removed"]]
+    assert [row["removal_reason"] for row in removed] == [
+        "negative_marginal_contribution_no_validation_regression"
+    ]
 
 
 def test_enabled_marginal_pruning_removes_negative_rule_in_two_pass_bound() -> None:

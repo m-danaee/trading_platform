@@ -61,7 +61,11 @@ def test_recovery_retries_only_rejected_direction_on_full_validation(tmp_path: P
         # direction; the complete validation frame supplies the candidate.
         return [candidate] if len(valid) == len(val_df) else []
 
-    with patch.object(_cfg, "RB_FULL_VALIDATION_RECOVERY_ENABLED", True), patch(
+    with patch.object(_cfg, "RB_FULL_VALIDATION_RECOVERY_ENABLED", True), patch.object(
+        _cfg, "RB_COST_STRESS_HARD_GATE", False,
+    ), patch.object(
+        _cfg, "RB_COST_STRESS_REPORT_ONLY", True,
+    ), patch(
         "gpu_fuzzy_trader.rb_governor.CPUBacktestEngine"
     ), patch(
         "gpu_fuzzy_trader.rb_governor._filter_good_rules",
@@ -99,3 +103,37 @@ def test_recovery_retries_only_rejected_direction_on_full_validation(tmp_path: P
     saved = json.loads((tmp_path / "long.json").read_text())
     assert saved["validation_recovery"]["used"] is True
 
+
+def test_nested_rb_selection_frame_excludes_reserved_tail(tmp_path: Path):
+    """Nested Optuna RB selection must pass only the chronological head to RB."""
+    train_df = _frame(8)
+    val_df = _frame(8)
+    seen: dict[str, pd.DataFrame] = {}
+
+    def capture_selection_frame(_pool, _train, valid, _direction, **_kwargs):
+        seen["valid"] = valid.copy()
+        return []
+
+    with patch.object(_cfg, "RB_NESTED_VALIDATION_SELECTION_ONLY", True), patch.object(
+        _cfg, "RB_TAIL_HOLDOUT_FRACTION", 0.25,
+    ), patch(
+        "gpu_fuzzy_trader.rb_governor.CPUBacktestEngine"
+    ), patch(
+        "gpu_fuzzy_trader.rb_governor._filter_good_rules",
+        side_effect=capture_selection_frame,
+    ):
+        result = run_rb_governor_pipeline(
+            train_df,
+            val_df,
+            {"long": [{"conditions": ["[feat] IS High"]}]},
+            ("long",),
+            output_dir=tmp_path,
+            val_selection_df=val_df,
+        )
+
+    selected = seen["valid"]
+    assert len(selected) == 6
+    selected_keys = set(zip(selected["symbol"], selected["datetime"], strict=False))
+    full_keys = set(zip(val_df["symbol"], val_df["datetime"], strict=False))
+    assert len(full_keys - selected_keys) == 2
+    assert result["long"]["fail_closed"] is True

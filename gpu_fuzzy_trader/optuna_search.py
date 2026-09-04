@@ -8,6 +8,8 @@ the final evaluator, but its metrics can never select hyperparameters.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
+import hashlib
 import json
 import os
 import shutil
@@ -18,6 +20,7 @@ from typing import Any
 from unittest.mock import patch
 
 import optuna
+import pandas as pd
 from optuna.pruners import MedianPruner
 from optuna.samplers import TPESampler
 
@@ -54,17 +57,27 @@ SEARCH_SPACE: dict[str, list[Any]] = {
 _fast_mode: bool = False
 _debug_mode: bool = False
 
+_TAIL_CONSUMPTION_ATTR = "optuna_reserved_tail_consumption_v1"
+_TAIL_ARTIFACTS: tuple[str, ...] = (
+    "reports/optuna_reserved_tail_long.json",
+    "reports/optuna_reserved_tail_short.json",
+    "reports/optuna_reserved_tail_history_long.json",
+    "reports/optuna_reserved_tail_history_short.json",
+)
+
 
 def _active_search_space() -> dict[str, list[Any]]:
-    """Return the search space after removing frozen fast-mode parameters."""
-
-    if not _fast_mode:
-        return dict(SEARCH_SPACE)
-    return {
-        key: values
-        for key, values in SEARCH_SPACE.items()
-        if not key.startswith("PHASE2_")
-    }
+    """Return only parameters that affect the active pipeline."""
+    space = dict(SEARCH_SPACE)
+    if bool(getattr(_cfg, "PHASE1_DISABLED", False)):
+        space.pop("PHASE1_TOP_K_FEATURES", None)
+    if _fast_mode:
+        space = {
+            key: values
+            for key, values in space.items()
+            if not key.startswith("PHASE2_")
+        }
+    return space
 
 
 def sample_trial_params(trial: optuna.Trial) -> dict[str, Any]:
@@ -107,8 +120,17 @@ def sample_trial_params(trial: optuna.Trial) -> dict[str, Any]:
     return params
 
 
-def apply_trial_config(trial_params: dict[str, Any]) -> list:
-    """Patch config globals and validate the complete trial contract."""
+def apply_trial_config(
+    trial_params: dict[str, Any],
+    *,
+    nested_validation: bool = False,
+) -> list:
+    """Patch config globals and validate the complete trial contract.
+
+    Nested Optuna trials use only the chronological validation head.  The
+    reserved tail is persisted by RB and evaluated after the best trial is
+    frozen.
+    """
 
     patchers: list = []
     try:
@@ -118,6 +140,19 @@ def apply_trial_config(trial_params: dict[str, Any]) -> list:
             patcher = patch(f"gpu_fuzzy_trader.config.{key}", value)
             patcher.start()
             patchers.append(patcher)
+        if nested_validation:
+            for key in (
+                "RB_NESTED_VALIDATION_SELECTION_ONLY",
+                "RB_RISK_GRID_USE_TAIL_HOLDOUT",
+                "RB_TAIL_HOLDOUT_SELECTION_GATE",
+                "RB_TAIL_HOLDOUT_HARD_GATE",
+                "RB_FULL_VALIDATION_RECOVERY_ENABLED",
+            ):
+                if hasattr(_cfg, key):
+                    value = key == "RB_NESTED_VALIDATION_SELECTION_ONLY"
+                    patcher = patch(f"gpu_fuzzy_trader.config.{key}", value)
+                    patcher.start()
+                    patchers.append(patcher)
         _cfg.validate_config()
     except Exception:
         for patcher in reversed(patchers):
@@ -173,7 +208,11 @@ def collect_validation_metrics(
 
 
 def compute_score(metrics: dict[str, float]) -> float:
-    """Score balanced validation/tail robustness without OOS leakage."""
+    """Score balanced validation evidence without reusing the RB tail.
+
+    The RB tail remains an audit field.  It is not an Optuna objective term,
+    so adaptive trials cannot optimize the same tail holdout repeatedly.
+    """
 
     if any(
         metrics.get(f"fail_closed_{direction}", 1.0) > 0.0
@@ -185,13 +224,11 @@ def compute_score(metrics: dict[str, float]) -> float:
     returns: list[float] = []
     for direction in ("long", "short"):
         valid_return = metrics.get(f"valid_{direction}_return_pct", -1000.0)
-        tail_return = metrics.get(f"tail_{direction}_return_pct", valid_return)
         valid_dd = metrics.get(f"valid_{direction}_dd_pct", 1000.0)
         valid_pf = metrics.get(f"valid_{direction}_pf", 0.0)
         returns.append(valid_return)
         direction_scores.append(
-            0.45 * valid_return
-            + 0.35 * tail_return
+            0.80 * valid_return
             + 0.20 * min(valid_pf, 3.0)
             - 0.10 * max(valid_dd, 0.0)
         )
@@ -237,6 +274,219 @@ def run_pipeline_for_trial(
     from gpu_fuzzy_trader.run_pipeline import Pipeline_Orchestrator
 
     return Pipeline_Orchestrator(output_dir=output_dir).run(force=not fast_mode)
+
+
+def _reserved_tail_hash(trial_dir: Path) -> str:
+    """Hash the frozen tail rows and any MTF history used to evaluate them."""
+    digest = hashlib.sha256()
+    for relative_path in _TAIL_ARTIFACTS:
+        path = trial_dir / relative_path
+        digest.update(relative_path.encode("utf-8"))
+        digest.update(b"\0")
+        try:
+            digest.update(path.read_bytes() if path.is_file() else b"<missing>")
+        except OSError:
+            digest.update(b"<unreadable>")
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _tail_consumption_records(study: optuna.Study) -> list[dict[str, Any]]:
+    """Return persisted reserved-tail consumption records for a study."""
+    existing = study.user_attrs.get(_TAIL_CONSUMPTION_ATTR)
+    if isinstance(existing, dict):
+        records = existing.get("consumptions", [])
+        if not isinstance(records, list):
+            records = []
+        # Accept the single-record shape from an earlier development version.
+        if not records and existing.get("tail_hash"):
+            records = [existing]
+    elif isinstance(existing, list):
+        records = existing
+    else:
+        records = []
+    return [record for record in records if isinstance(record, dict)]
+
+
+def _assert_study_unsealed(study: optuna.Study) -> None:
+    """Refuse any work after a study has consumed a reserved tail."""
+    records = _tail_consumption_records(study)
+    marker = study.user_attrs.get(_TAIL_CONSUMPTION_ATTR)
+    sealed = isinstance(marker, dict) and bool(marker.get("sealed"))
+    if records or sealed:
+        latest = records[-1] if records else {}
+        raise RuntimeError(
+            "The reserved tail has already been consumed; the Optuna study "
+            "is sealed "
+            f"(study={study.study_name!r}, "
+            f"best_trial={latest.get('best_trial_number', 'unknown')}, "
+            f"tail_hash={latest.get('tail_hash', 'unknown')}). "
+            "Create a new study and provide a new untouched tail before "
+            "running further optimization."
+        )
+
+
+def _claim_reserved_tail(
+    study: optuna.Study,
+    *,
+    best_trial_number: int,
+    tail_hash: str,
+) -> dict[str, Any]:
+    """Persist and validate the study's best-tail consumption claim."""
+    _assert_study_unsealed(study)
+    study_name = str(study.study_name)
+    records = _tail_consumption_records(study)
+
+    claim = {
+        "schema_version": "1.0",
+        "study_name": study_name,
+        "best_trial_number": int(best_trial_number),
+        "tail_hash": tail_hash,
+        "consumed_at": datetime.now(timezone.utc).isoformat(),
+    }
+    records.append(claim)
+    study.set_user_attr(
+        _TAIL_CONSUMPTION_ATTR,
+        {
+            "schema_version": "1.0",
+            "sealed": True,
+            "consumptions": records,
+        },
+    )
+    return claim
+
+
+def evaluate_best_trial_tail(
+    study: optuna.Study,
+    *,
+    output_root: str = "outputs",
+) -> dict[str, Any]:
+    """Evaluate the frozen best-trial strategies on the reserved tail once."""
+    _assert_study_unsealed(study)
+    best_trial = study.best_trial
+    trial_dir = Path(output_root) / f"trial_{best_trial.number}"
+    result: dict[str, Any] = {
+        "schema_version": "1.0",
+        "best_trial": int(best_trial.number),
+        "selection_score": float(best_trial.value),
+        "frozen": True,
+        "evaluated_once": False,
+        "consumption_claimed": False,
+        "directions": {},
+    }
+
+    artifacts: dict[str, tuple[pd.DataFrame, dict[str, Any]]] = {}
+
+    for direction in ("long", "short"):
+        tail_path = trial_dir / "reports" / (
+            f"optuna_reserved_tail_{direction}.json"
+        )
+        strategy_path = trial_dir / f"{direction}.json"
+        direction_result: dict[str, Any] = {
+            "tail_path": str(tail_path),
+            "strategy_path": str(strategy_path),
+            "available": False,
+        }
+        try:
+            records = json.loads(tail_path.read_text(encoding="utf-8"))
+            tail_df = pd.DataFrame.from_records(records)
+            strategy = json.loads(strategy_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            direction_result["reason"] = (
+                f"tail_artifact_unavailable:{type(exc).__name__}: {exc}"
+            )
+            result["directions"][direction] = direction_result
+            continue
+
+        if tail_df.empty:
+            direction_result.update({
+                "reason": "empty_reserved_tail",
+                "rows": 0,
+            })
+            result["directions"][direction] = direction_result
+            continue
+
+        rules = strategy.get("rules_set") or []
+        if not isinstance(rules, list) or not rules:
+            direction_result.update({
+                "reason": "frozen_strategy_has_no_rules",
+                "rows": int(len(tail_df)),
+            })
+            result["directions"][direction] = direction_result
+            continue
+
+        artifacts[direction] = (tail_df, strategy)
+        result["directions"][direction] = direction_result
+
+    # Claim before any simulation.  The claim is stored in the Optuna study,
+    # not only in an output JSON file, so load_if_exists=True cannot silently
+    # replay the same frozen best trial and tail on a later CLI run.
+    if not artifacts:
+        return result
+    tail_hash = _reserved_tail_hash(trial_dir)
+    claim = _claim_reserved_tail(
+        study,
+        best_trial_number=int(best_trial.number),
+        tail_hash=tail_hash,
+    )
+    result.update({
+        "evaluated_once": True,
+        "consumption_claimed": True,
+        "tail_hash": tail_hash,
+        "tail_consumption": claim,
+    })
+
+    from gpu_fuzzy_trader.backtest.cpu_engine import CPUBacktestEngine
+
+    for direction, (tail_df, strategy) in artifacts.items():
+        direction_result = result["directions"][direction]
+        try:
+            if isinstance(strategy.get("mtf_candidate"), dict):
+                from gpu_fuzzy_trader.mtf.candidate import (
+                    HierarchicalStrategyCandidate,
+                )
+                from gpu_fuzzy_trader.mtf.runtime import (
+                    evaluate_candidate_rule_masks,
+                )
+
+                history_path = trial_dir / "reports" / (
+                    f"optuna_reserved_tail_history_{direction}.json"
+                )
+                history_records = json.loads(
+                    history_path.read_text(encoding="utf-8")
+                )
+                history_df = pd.DataFrame.from_records(history_records)
+                candidate = HierarchicalStrategyCandidate.from_dict(
+                    strategy["mtf_candidate"]
+                )
+                rule_masks, _stats, _audit = evaluate_candidate_rule_masks(
+                    candidate,
+                    tail_df,
+                    history_df=history_df,
+                )
+                metrics = CPUBacktestEngine(
+                    tail_df, {}, direction,
+                ).simulate_signal_masks(rule_masks, candidate.lwc_rules)
+            else:
+                metrics = CPUBacktestEngine(
+                    tail_df, {}, direction,
+                ).simulate_rule_set(strategy.get("rules_set") or [])
+        except Exception as exc:
+            direction_result.update({
+                "reason": (
+                    f"tail_evaluation_failed:{type(exc).__name__}: {exc}"
+                ),
+                "rows": int(len(tail_df)),
+            })
+            result["directions"][direction] = direction_result
+            continue
+
+        direction_result.update({
+            "available": True,
+            "rows": int(len(tail_df)),
+            "metrics": metrics,
+        })
+    return result
 
 
 def _write_trial_correlation_report(study: optuna.Study, path: str) -> None:
@@ -313,7 +563,7 @@ def _pearson(a: list[float], b: list[float]) -> float:
 
 
 def objective(trial: optuna.Trial) -> float:
-    """Maximize robust validation/tail score in an isolated trial."""
+    """Maximize validation evidence in an isolated trial."""
 
     try:
         trial_params = sample_trial_params(trial)
@@ -332,7 +582,7 @@ def objective(trial: optuna.Trial) -> float:
     patchers: list = []
     trial_output_dir = os.path.join("outputs", f"trial_{trial.number}")
     try:
-        patchers = apply_trial_config(trial_params)
+        patchers = apply_trial_config(trial_params, nested_validation=True)
         effective = _cfg.effective_config_snapshot()
         trial.set_user_attr("derived_effective_values", effective)
         results = run_pipeline_for_trial(
@@ -345,7 +595,11 @@ def objective(trial: optuna.Trial) -> float:
         score = compute_score(metrics)
         for key, value in metrics.items():
             trial.set_user_attr(key, value)
-        trial.set_user_attr("score_source", "rb_validation_and_tail")
+        trial.set_user_attr(
+            "score_source",
+            "rb_validation_only_tail_deferred",
+        )
+        trial.set_user_attr("tail_evaluation", "best_trial_only_after_freeze")
         trial.set_user_attr("effective_config", effective)
         trial.set_user_attr("score", score)
         failed = [
@@ -394,10 +648,12 @@ def main() -> None:
         pruner=MedianPruner(n_startup_trials=5, n_warmup_steps=2),
         load_if_exists=True,
     )
+    _assert_study_unsealed(study)
     start = time.monotonic()
     study.optimize(objective, n_trials=args.n_trials, show_progress_bar=True)
     print(f"Search completed in {time.monotonic() - start:.1f}s")
     print(f"Best score: {study.best_value:.4f}")
+    tail_evaluation = evaluate_best_trial_tail(study)
     with open("outputs/optuna_best_params.json", "w", encoding="utf-8") as handle:
         json.dump(
             {
@@ -405,10 +661,15 @@ def main() -> None:
                 "best_score": study.best_value,
                 "best_params": study.best_params,
                 "user_attrs": study.best_trial.user_attrs,
+                "frozen": True,
+                "tail_evaluation": tail_evaluation,
             },
             handle,
             indent=2,
+            default=str,
         )
+    with open("outputs/optuna_best_tail_evaluation.json", "w", encoding="utf-8") as handle:
+        json.dump(tail_evaluation, handle, indent=2, default=str)
     _write_trial_correlation_report(
         study,
         "outputs/reports/hyperparameter_correlation.json",

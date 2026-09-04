@@ -1152,7 +1152,7 @@ def _cost_stress_gate(
 ) -> tuple[bool, list[dict]]:
     """Build the cost certificate while keeping the historical tuple API.
 
-    Cost stress is report-only by default.  ``certificate_out`` is an optional
+    Cost stress is an explicit acceptance gate by default.  ``certificate_out`` is an optional
     mutable sink used by the pipeline so the expensive frozen-portfolio curve
     is evaluated once and both the strategy report and aggregate certificate
     share the same evidence.
@@ -1171,7 +1171,6 @@ def _cost_stress_gate(
     ]
     hard_gate = bool(
         getattr(_cfg, "RB_COST_STRESS_HARD_GATE", False)
-        and not bool(getattr(_cfg, "RB_ROBUSTNESS_REPORT_ONLY", True))
         and not bool(getattr(_cfg, "RB_COST_STRESS_REPORT_ONLY", True))
     )
     return (bool(certificate.get("passed", True)) if hard_gate else True), results
@@ -1628,31 +1627,67 @@ def _diversification_beam(
     )
 
 
-def _eval_cv_fold_returns(
+def _realized_pnl_vector(logs: pd.DataFrame | None, row_count: int) -> np.ndarray:
+    """Map realized trade PnL to the row that released each trade."""
+    values = np.zeros(max(0, int(row_count)), dtype=float)
+    if logs is None or logs.empty:
+        return np.full(values.shape, np.nan, dtype=float)
+    realized = logs.loc[logs["Realized"].astype(bool)].copy()
+    indices = pd.to_numeric(realized["Release_Index"], errors="coerce")
+    pnl = pd.to_numeric(realized["Net_PnL"], errors="coerce")
+    valid = indices.notna() & pnl.notna()
+    for index, value in zip(indices[valid].astype(int), pnl[valid], strict=False):
+        if 0 <= index < len(values):
+            values[index] += float(value)
+    return values
+
+
+def _eval_cv_fold_evidence(
     rule: dict,
     fold_engines: list[CPUBacktestEngine] | None,
-) -> list[float] | None:
-    """Evaluate *rule* on each CV fold engine and return per-fold returns.
-
-    Each fold is simulated independently so a single failing fold does not
-    drop the entire CV signal.  Returns ``None`` when *fold_engines* is
-    ``None``, empty, or all folds fail.
-    """
+) -> tuple[list[float] | None, list[np.ndarray] | None]:
+    """Evaluate each CV fold and retain aligned realized-PnL observations."""
     if not fold_engines:
-        return None
+        return None, None
+
     returns: list[float] = []
+    fold_pnl_series: list[np.ndarray] = []
     for idx, fold_engine in enumerate(fold_engines):
         try:
-            m = fold_engine.simulate_rule_set([rule])
-            ret = _f(m, "total_return_pct")
-            returns.append(ret)
+            result = fold_engine.simulate_rule_set([rule], return_logs=True)
+            if isinstance(result, tuple) and len(result) >= 2:
+                metrics, logs = result[0], result[1]
+            else:
+                metrics, logs = result, None
+            returns.append(_f(metrics, "total_return_pct"))
+            fold_pnl_series.append(
+                _realized_pnl_vector(logs, len(fold_engine.df))
+            )
         except Exception:
             logger.warning(
                 "CV fold %d simulation failed for rule %s; skipping fold.",
                 idx, _rule_key(rule),
             )
-            continue
-    return returns if returns else None
+            try:
+                row_count = len(fold_engine.df)
+            except Exception:
+                row_count = 0
+            fold_pnl_series.append(
+                np.full(max(0, int(row_count)), np.nan, dtype=float)
+            )
+    return (
+        returns if returns else None,
+        fold_pnl_series if fold_pnl_series else None,
+    )
+
+
+def _eval_cv_fold_returns(
+    rule: dict,
+    fold_engines: list[CPUBacktestEngine] | None,
+) -> list[float] | None:
+    """Compatibility wrapper returning only per-fold CV returns."""
+    returns, _fold_pnl_series = _eval_cv_fold_evidence(rule, fold_engines)
+    return returns
 
 
 def _risk_envelope_admission_variant(
@@ -1847,8 +1882,11 @@ def _filter_good_rules(
                         bucket = reason.split("=", 1)[0]
                         reject_counts[bucket] = reject_counts.get(bucket, 0) + 1
                     continue
-            # Evaluate on CV folds if available (C4)
-            cv_fold_returns = _eval_cv_fold_returns(rule, fold_engines)
+            # Evaluate on CV folds once, retaining scalar returns for scoring
+            # and aligned realized-PnL vectors for correlation.
+            cv_fold_returns, cv_fold_pnl_series = _eval_cv_fold_evidence(
+                rule, fold_engines,
+            )
             score = _score_metrics(
                 train_m, valid_m, cv_fold_returns=cv_fold_returns)
             # Prefer cross-symbol coverage when building multi-symbol teams
@@ -1867,11 +1905,7 @@ def _filter_good_rules(
                 valid_metrics=valid_m,
                 score=score,
                 fold_returns=cv_fold_returns,
-                pnl_series=(
-                    np.asarray(cv_fold_returns, dtype=float)
-                    if cv_fold_returns
-                    else None
-                ),
+                fold_pnl_series=cv_fold_pnl_series,
             )
             rec.mask = _mask_for(rule, train_like_df, valid_df)
             records.append(rec)
@@ -2151,11 +2185,11 @@ def _correlation_profile(
             "matrix": [],
             "clusters": [],
             "selected_order": [],
+            "fold_count": 0,
         }
         return empty, np.zeros((0, 0), dtype=float), [], {}
 
     masks = _normalised_candidate_masks(candidates)
-    pnl = [_candidate_pnl_evidence(candidate) for candidate in candidates]
     signal_weight = float(
         _correlation_control(
             "RB_SIGNAL_OVERLAP_WEIGHT",
@@ -2171,28 +2205,21 @@ def _correlation_profile(
         )
     )
     penalty_lambda = _redundancy_lambda()
-    matrix = redundancy_matrix(
-        masks,
-        pnl,
-        signal_weight=signal_weight,
-        pnl_weight=pnl_weight,
-    )
 
     # If per-fold PnL vectors are supplied, construct one matrix per fold and
-    # apply the stable median-plus-alpha rule.  The ordinary RB path currently
-    # supplies candidate-major fold returns, so its one-matrix result is still
-    # passed through the same stable formula.
+    # apply the stable median-plus-alpha rule.  Otherwise retain the legacy
+    # candidate-major evidence path as one stable observation.
     fold_evidence = [getattr(candidate, "fold_pnl_series", None) for candidate in candidates]
-    fold_count = max(
-        (len(evidence) for evidence in fold_evidence if evidence),
+    configured_fold_count = max(
+        (len(evidence) for evidence in fold_evidence if evidence is not None),
         default=0,
     )
-    if fold_count and all(
-        evidence is not None and len(evidence) == fold_count
+    if configured_fold_count and all(
+        evidence is not None and len(evidence) == configured_fold_count
         for evidence in fold_evidence
     ):
         fold_matrices: list[np.ndarray] = []
-        for fold_index in range(fold_count):
+        for fold_index in range(configured_fold_count):
             fold_pnl = [evidence[fold_index] for evidence in fold_evidence]
             fold_matrices.append(
                 redundancy_matrix(
@@ -2204,7 +2231,15 @@ def _correlation_profile(
             )
         stable_input = np.stack(fold_matrices, axis=0)
     else:
+        pnl = [_candidate_pnl_evidence(candidate) for candidate in candidates]
+        matrix = redundancy_matrix(
+            masks,
+            pnl,
+            signal_weight=signal_weight,
+            pnl_weight=pnl_weight,
+        )
         stable_input = np.expand_dims(matrix, axis=0)
+    fold_count = int(stable_input.shape[0])
     stable_matrix = np.asarray(
         stable_corr(
             stable_input,
@@ -2362,6 +2397,20 @@ def _marginal_redundancy_matrix(
     )
 
 
+def _safe_marginal_removal(full_metrics: dict, without_metrics: dict) -> bool:
+    """Return whether removal causes no validation metric regression."""
+    delta = marginal_contribution(full_metrics, without_metrics)
+    epsilon = 1.0e-12
+    return bool(
+        not delta["is_beneficial"]
+        and delta["ΔReturn"] <= epsilon
+        and delta["ΔSortino"] <= epsilon
+        and delta["ΔPF"] <= epsilon
+        and delta["ΔWorstMonth"] <= epsilon
+        and delta["ΔMDD"] >= -epsilon
+    )
+
+
 def _empty_marginal_report(
     direction: str,
     *,
@@ -2430,7 +2479,7 @@ def _marginal_prune_ruleset(
             direction,
         )
         pass_entries: list[dict[str, Any]] = []
-        negative_records: list[tuple[float, int, CandidateRecord]] = []
+        safe_records: list[tuple[float, int, CandidateRecord]] = []
         for local_index, record in enumerate(current):
             without_rules = [
                 other.rule
@@ -2463,8 +2512,8 @@ def _marginal_prune_ruleset(
             }
             pass_entries.append(entry)
             entries_by_identity[id(record)] = entry
-            if not bool(contribution["is_beneficial"]):
-                negative_records.append(
+            if _safe_marginal_removal(full_metrics, without_metrics):
+                safe_records.append(
                     (
                         float(contribution["ΔReturn"]),
                         int(original_index),
@@ -2474,22 +2523,18 @@ def _marginal_prune_ruleset(
 
         removable_count = max(0, len(current) - configured_min_rules)
         to_remove: list[CandidateRecord] = []
-        if pruning_enabled and removable_count and negative_records:
-            # Remove the most negative contributors first.  This makes the
-            # bounded pass deterministic and preserves RB_MIN_RULES.
-            negative_records.sort(key=lambda item: (item[0], item[1]))
-            to_remove = [
-                record
-                for _delta_return, _index, record in negative_records[
-                    :removable_count
-                ]
-            ]
+        if pruning_enabled and removable_count and safe_records:
+            # Remove one safe candidate, then recompute on the reduced team.
+            safe_records.sort(key=lambda item: (item[0], item[1]))
+            to_remove = [safe_records[0][2]]
             remove_ids = {id(record) for record in to_remove}
             for record in to_remove:
                 entry = entries_by_identity[id(record)]
                 entry["removed"] = True
                 entry["retained"] = False
-                entry["removal_reason"] = "negative_marginal_contribution"
+                entry["removal_reason"] = (
+                    "negative_marginal_contribution_no_validation_regression"
+                )
             current = [record for record in current if id(record) not in remove_ids]
 
         pass_reports.append({
@@ -2826,6 +2871,69 @@ def _compose_ruleset(
         )
 
     return selected, cur_train, cur_valid, cur_score, history
+
+
+def _split_tail_holdout_frame(
+    frame: pd.DataFrame,
+    tail_holdout_frac: float,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Split a validation frame into a chronological head and untouched tail."""
+    fraction = float(tail_holdout_frac)
+    if not 0.0 <= fraction < 1.0:
+        raise ValueError("tail_holdout_frac must be in [0, 1)")
+    if frame.empty or fraction <= 0.0:
+        return frame.copy(), frame.iloc[:0].copy()
+
+    if "symbol" in frame.columns and "datetime" in frame.columns:
+        ordered = frame.sort_values(["symbol", "datetime"]).reset_index(drop=True)
+        groups = [
+            group.reset_index(drop=True)
+            for _, group in ordered.groupby(
+                "symbol", sort=False, observed=False,
+            )
+        ]
+    elif "datetime" in frame.columns:
+        groups = [frame.sort_values("datetime").reset_index(drop=True)]
+    else:
+        groups = [frame.reset_index(drop=True)]
+
+    heads: list[pd.DataFrame] = []
+    tails: list[pd.DataFrame] = []
+    for group in groups:
+        if group.empty:
+            continue
+        tail_count = min(
+            max(1, int(round(len(group) * fraction))),
+            max(0, len(group) - 1),
+        )
+        split_at = len(group) - tail_count
+        heads.append(group.iloc[:split_at].copy())
+        if tail_count:
+            tails.append(group.iloc[split_at:].copy())
+
+    head = (
+        pd.concat(heads, ignore_index=True)
+        if heads
+        else frame.iloc[:0].copy()
+    )
+    tail = (
+        pd.concat(tails, ignore_index=True)
+        if tails
+        else frame.iloc[:0].copy()
+    )
+    return head, tail
+
+
+def _write_reserved_tail_frame(
+    frame: pd.DataFrame,
+    path: Path,
+) -> None:
+    """Persist the nested-validation tail without evaluating it."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        frame.to_json(orient="records", date_format="iso"),
+        encoding="utf-8",
+    )
 
 
 def _make_walk_forward_fold_engines(
@@ -3784,8 +3892,12 @@ def _empty_robustness_certificates(
                 "available": False,
                 "diagnostic_only": True,
                 "report_only": bool(
-                    report_only
-                    or getattr(_cfg, component_report_flags[name], True)
+                    (
+                        report_only
+                        or getattr(_cfg, component_report_flags[name], True)
+                    )
+                    if name != "cost_stress"
+                    else getattr(_cfg, component_report_flags[name], True)
                 ),
                 "verdict": "unavailable",
                 "reason": reason,
@@ -3991,6 +4103,7 @@ def run_rb_governor_pipeline(
     val_selection_df: pd.DataFrame | None = None,
     failure_reasons: dict[str, str] | None = None,
     _allow_full_validation_recovery: bool = True,
+    _use_tail_holdout: bool | None = None,
 ) -> dict[str, dict]:
     """Build and optimize rb strategies for each direction and write outputs."""
     out_dir = Path(output_dir or _cfg.OUTPUTS_DIR)
@@ -3999,7 +4112,34 @@ def run_rb_governor_pipeline(
 
     train_like, _ = _load_scoring_frames(train_df, val_df)
     scoring_val = val_selection_df if val_selection_df is not None else val_df
-    _, valid_df = _load_scoring_frames(train_df, scoring_val)
+    nested_validation = bool(
+        getattr(_cfg, "RB_NESTED_VALIDATION_SELECTION_ONLY", False)
+    )
+    tail_holdout_enabled = (
+        bool(getattr(_cfg, "RB_RISK_GRID_USE_TAIL_HOLDOUT", False))
+        if _use_tail_holdout is None
+        else bool(_use_tail_holdout)
+    )
+    tail_fraction = float(getattr(_cfg, "RB_TAIL_HOLDOUT_FRACTION", 0.0))
+    selection_scoring_val = scoring_val
+    reserved_tail_df = scoring_val.iloc[:0].copy()
+    if nested_validation or tail_holdout_enabled:
+        selection_scoring_val, reserved_tail_df = _split_tail_holdout_frame(
+            scoring_val,
+            tail_fraction,
+        )
+    _, valid_df = _load_scoring_frames(train_df, selection_scoring_val)
+    validation_frame_contract = {
+        "source_rows": int(len(scoring_val)),
+        "selection_rows": int(len(valid_df)),
+        "reserved_tail_rows": int(len(reserved_tail_df)),
+        "tail_isolated": bool(nested_validation or tail_holdout_enabled),
+        "tail_evaluation": (
+            "deferred_until_best_trial"
+            if nested_validation
+            else ("rb_robustness_check" if tail_holdout_enabled else "disabled")
+        ),
+    }
     results: dict[str, dict] = {}
     marginal_report: dict[str, Any] = {
         "schema_version": "1.0",
@@ -4013,6 +4153,10 @@ def run_rb_governor_pipeline(
         "directions": {},
     }
     robustness_reports: dict[str, dict[str, Any]] = {}
+    if nested_validation:
+        for direction in directions:
+            path = reports_dir / f"optuna_reserved_tail_{direction}.json"
+            _write_reserved_tail_frame(reserved_tail_df, path)
 
     for direction in directions:
         direction_marginal_report = _empty_marginal_report(
@@ -4072,13 +4216,14 @@ def run_rb_governor_pipeline(
                     split_validation_fitness_selection,
                 )
 
-                if "symbol" in val_df.columns:
+                recency_source = selection_scoring_val if nested_validation else val_df
+                if "symbol" in recency_source.columns:
                     recency_fitness_raw, _ = split_validation_fitness_selection(
-                        val_df,
+                        recency_source,
                     )
                 else:
-                    midpoint = max(1, len(val_df) // 2)
-                    recency_fitness_raw = val_df.iloc[:midpoint].copy()
+                    midpoint = max(1, len(recency_source) // 2)
+                    recency_fitness_raw = recency_source.iloc[:midpoint].copy()
                 recency_fitness = _prepare_scoring_frame(recency_fitness_raw)
                 if len(recency_fitness) > 0:
                     recency_fitness_engine = CPUBacktestEngine(
@@ -4104,17 +4249,20 @@ def run_rb_governor_pipeline(
                 logger.warning("RB [%s]: failed to build CV-fold engines; skipping CV term.", direction)
                 fold_engines = None
 
-        # Build the chronological inner-validation tail before composing a
-        # strategy. It is a feasibility gate for selection and risk tuning;
-        # Phase 5 test data remains completely untouched.
+        # Build chronological inner-validation folds for ordinary RB runs.
+        # Nested Optuna runs use only selection_scoring_val here, with no tail
+        # engine. The reserved tail is evaluated after the best trial freezes.
         wf_splits = int(getattr(_cfg, "RB_RISK_GRID_WF_SPLITS", 1))
-        use_tail = bool(getattr(_cfg, "RB_RISK_GRID_USE_TAIL_HOLDOUT", False))
-        tail_frac = float(_cfg.RB_TAIL_HOLDOUT_FRACTION)
+        use_tail = tail_holdout_enabled and not nested_validation
+        tail_frac = tail_fraction
         wf_fold_engines: list[CPUBacktestEngine] | None = None
         wf_tail_engine: CPUBacktestEngine | None = None
         if wf_splits > 1 or use_tail:
             wf_fold_engines, wf_tail_engine = _make_walk_forward_fold_engines(
-                scoring_val, wf_splits, tail_frac if use_tail else 0.0, direction,
+                scoring_val if use_tail else selection_scoring_val,
+                wf_splits,
+                tail_frac if use_tail else 0.0,
+                direction,
             )
 
         candidate_pool, n_univariate_baselines = _univariate_baseline_pool(
@@ -4665,6 +4813,10 @@ def run_rb_governor_pipeline(
                 max_hhi=concentration_max_hhi,
             )
         tail_ok, tail_gate = _passes_tail_holdout_gate(risk_history)
+        cost_gate_active = bool(
+            getattr(_cfg, "RB_COST_STRESS_HARD_GATE", False)
+            and not bool(getattr(_cfg, "RB_COST_STRESS_REPORT_ONLY", True))
+        )
         cost_certificate: dict[str, Any] = {}
         try:
             cost_stress_ok, cost_stress = _cost_stress_gate(
@@ -4679,7 +4831,7 @@ def run_rb_governor_pipeline(
                 direction,
                 exc,
             )
-            cost_stress_ok, cost_stress = True, []
+            cost_stress_ok, cost_stress = not cost_gate_active, []
             cost_certificate = {
                 "schema_version": "1.0",
                 "certificate": "cost_stress",
@@ -4689,7 +4841,7 @@ def run_rb_governor_pipeline(
                 "available": False,
                 "diagnostic_only": True,
                 "report_only": bool(
-                    getattr(_cfg, "RB_ROBUSTNESS_REPORT_ONLY", True)
+                    getattr(_cfg, "RB_COST_STRESS_REPORT_ONLY", True)
                 ),
                 "verdict": "unavailable",
                 "error": f"{type(exc).__name__}: {exc}",
@@ -4790,13 +4942,8 @@ def run_rb_governor_pipeline(
             "regime_robustness": regime_certificate,
             "rule_dropout_stress": dropout_certificate,
         }
-        cost_gate_active = bool(
-            getattr(_cfg, "RB_COST_STRESS_HARD_GATE", False)
-            and not bool(getattr(_cfg, "RB_ROBUSTNESS_REPORT_ONLY", True))
-            and not bool(getattr(_cfg, "RB_COST_STRESS_REPORT_ONLY", True))
-        )
-        # Diagnostics must not become an accidental deployment gate.  Only an
-        # explicit hard-gate configuration can opt into the old behaviour.
+        # Cost stress has its own explicit acceptance contract.  The global
+        # report-only flag still controls the other robustness certificates.
         cost_gate_ok = cost_stress_ok if cost_gate_active else True
         monthly_ok, monthly_certificate = _monthly_selection_certificate(
             valid_engine,
@@ -4905,6 +5052,7 @@ def run_rb_governor_pipeline(
                     "rb_profit_amp_objective": profit_objective,
                     "rb_profit_amp_accepted": bool(profit_meta.get("accepted", False)),
                     "recency_rescue": recency_detail,
+                    "validation_frame_contract": validation_frame_contract,
                 },
             )
             strategy_path = out_dir / f"{direction}.json"
@@ -4962,6 +5110,7 @@ def run_rb_governor_pipeline(
                     "required_return_pct": ret_gate,
                     "required_profit_factor": pf_gate,
                 },
+                "validation_frame_contract": validation_frame_contract,
             }
             with (reports_dir / f"rb_governor_{direction}_report.json").open(
                 "w", encoding="utf-8",
@@ -5009,6 +5158,7 @@ def run_rb_governor_pipeline(
                 "robustness_certificates": robustness_reports[direction],
                 "rb_profit_amp_objective": profit_objective,
                 "rb_profit_amp_accepted": bool(profit_meta.get("accepted", False)),
+                "validation_frame_contract": validation_frame_contract,
             },
         )
 
@@ -5040,6 +5190,7 @@ def run_rb_governor_pipeline(
             "regime_robustness_certificate": regime_certificate,
             "rule_dropout_stress_certificate": dropout_certificate,
             "robustness_certificates": robustness_reports[direction],
+            "validation_frame_contract": validation_frame_contract,
             "top_single_rules": [
                 {
                     "rank": i + 1,
@@ -5115,6 +5266,7 @@ def run_rb_governor_pipeline(
             val_selection_df=val_df,
             failure_reasons=failure_reasons,
             _allow_full_validation_recovery=False,
+            _use_tail_holdout=False,
         )
         for direction in recovery_directions:
             candidate = recovered.get(direction)
