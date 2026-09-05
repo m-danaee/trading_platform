@@ -30,8 +30,10 @@ from gpu_fuzzy_trader.features.selector import (
     Feature_Selector,
     _align_feature_array,
     _build_target,
+    _candidate_feature_columns,
     _check_spearman_sign_consistency,
     _compute_stability,
+    _mi_scores_for_mask,
     _mutual_info_discrete_mask,
     _reduce_overlap,
     _remove_low_dispersion,
@@ -41,6 +43,24 @@ from gpu_fuzzy_trader.features.selector import (
     build_phase1_shared_context,
 )
 from gpu_fuzzy_trader import config
+
+
+# ---------------------------------------------------------------------------
+# Tests: rule-feature eligibility
+# ---------------------------------------------------------------------------
+
+def test_absolute_indicator_levels_are_not_rule_features() -> None:
+    frame = pd.DataFrame({
+        "datetime": pd.date_range("2024-01-01", periods=2, freq="15min"),
+        "symbol": ["BTCUSDT", "BTCUSDT"],
+        "atr_14": [100.0, 101.0],
+        "kama_10": [100.0, 101.0],
+        "lwc_atr_14": [100.0, 101.0],
+        "lwc_kama_10": [100.0, 101.0],
+        "lwc_atr_14_ratio": [0.4, 0.5],
+    })
+
+    assert _candidate_feature_columns(frame) == ["lwc_atr_14_ratio"]
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +182,24 @@ class TestSelectFeaturesNoSklearnClusteringWarning:
             and "Clustering metrics expects discrete" in str(w.message)
         ]
         assert clustering == []
+
+
+def test_mi_scores_ignore_nonfinite_feature_rows() -> None:
+    """Warm-up NaNs must not collapse a valid MI score to zero."""
+    feature = np.tile([0.0, 1.0], 100)
+    target = feature.astype(np.int32)
+    feature[0] = np.nan
+    scores = _mi_scores_for_mask(
+        feature.reshape(-1, 1),
+        ["feature"],
+        {"feature": "binary"},
+        target,
+        np.ones(len(feature), dtype=bool),
+        min_samples=2,
+    )
+
+    assert scores is not None
+    assert scores[0] > 0.0
 
 
 class TestBuildTarget:

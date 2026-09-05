@@ -108,21 +108,62 @@ def _run_split(
     df: pd.DataFrame,
     tmp_path: str,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Patch TRAIN_70_PATH / VALIDATION_30_PATH to tmp_path and run split."""
-    original_train = config_mod.TRAIN_70_PATH
-    original_val = config_mod.VALIDATION_30_PATH
+    """Patch every split artifact path to tmp_path and run the split."""
+    paths = {
+        "train": os.path.join(tmp_path, "development_train.parquet"),
+        "validation": os.path.join(tmp_path, "validation.parquet"),
+        "fitness": os.path.join(tmp_path, "validation_fitness.parquet"),
+        "selection": os.path.join(tmp_path, "validation_selection.parquet"),
+        "manifest": os.path.join(tmp_path, "split_manifest.json"),
+    }
+    config_originals = {
+        name: getattr(config_mod, name)
+        for name in (
+            "DEVELOPMENT_TRAIN_PATH",
+            "TRAIN_70_PATH",
+            "VALIDATION_PATH",
+            "VALIDATION_30_PATH",
+            "VALIDATION_FITNESS_PATH",
+            "VALIDATION_SELECTION_PATH",
+            "SPLIT_MANIFEST_PATH",
+        )
+    }
+    cv_manifest_exists = hasattr(config_mod, "CV_FOLDS_MANIFEST_PATH")
+    cv_manifest_original = getattr(config_mod, "CV_FOLDS_MANIFEST_PATH", None)
+    splitter_originals = {
+        name: getattr(splitter_mod, name)
+        for name in (
+            "TRAIN_70_PATH",
+            "VALIDATION_30_PATH",
+            "VALIDATION_FITNESS_PATH",
+            "VALIDATION_SELECTION_PATH",
+        )
+    }
 
-    train_path = os.path.join(tmp_path, "train_70.parquet")
-    val_path = os.path.join(tmp_path, "validation_30.parquet")
-
-    splitter_mod.TRAIN_70_PATH = train_path
-    splitter_mod.VALIDATION_30_PATH = val_path
+    config_mod.DEVELOPMENT_TRAIN_PATH = paths["train"]
+    config_mod.TRAIN_70_PATH = paths["train"]
+    config_mod.VALIDATION_PATH = paths["validation"]
+    config_mod.VALIDATION_30_PATH = paths["validation"]
+    config_mod.VALIDATION_FITNESS_PATH = paths["fitness"]
+    config_mod.VALIDATION_SELECTION_PATH = paths["selection"]
+    config_mod.SPLIT_MANIFEST_PATH = paths["manifest"]
+    config_mod.CV_FOLDS_MANIFEST_PATH = paths["manifest"]
+    splitter_mod.TRAIN_70_PATH = paths["train"]
+    splitter_mod.VALIDATION_30_PATH = paths["validation"]
+    splitter_mod.VALIDATION_FITNESS_PATH = paths["fitness"]
+    splitter_mod.VALIDATION_SELECTION_PATH = paths["selection"]
 
     try:
         train_df, val_df, _ = Data_Splitter().split_and_persist(df)
     finally:
-        splitter_mod.TRAIN_70_PATH = original_train
-        splitter_mod.VALIDATION_30_PATH = original_val
+        for name, value in config_originals.items():
+            setattr(config_mod, name, value)
+        if cv_manifest_exists:
+            config_mod.CV_FOLDS_MANIFEST_PATH = cv_manifest_original
+        elif hasattr(config_mod, "CV_FOLDS_MANIFEST_PATH"):
+            delattr(config_mod, "CV_FOLDS_MANIFEST_PATH")
+        for name, value in splitter_originals.items():
+            setattr(splitter_mod, name, value)
 
     return train_df, val_df
 

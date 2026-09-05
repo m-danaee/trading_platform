@@ -556,6 +556,109 @@ def test_phase3_and_phase4_are_rb_compatibility_aliases(tmp_path) -> None:
     assert orch._run_rb_governor.call_count == 2
 
 
+def test_standalone_mtf_phase2_persists_lwc_archive(tmp_path, monkeypatch) -> None:
+    """A later standalone MTF RB phase must see the Phase 2 LWC rules."""
+    frame = _frame(rows=20)
+    frame["_mtf_oof_available"] = True
+    orch = Pipeline_Orchestrator(output_dir=str(tmp_path))
+    orch._load_and_split_data = MagicMock(return_value=(frame, frame))
+    orch._validate_active_configuration = MagicMock()
+    orch._should_use_mtf_pipeline = MagicMock(return_value=True)
+    orch._validation_scoring_frames = MagicMock(return_value=(frame, frame))
+    orch.run_phase1_hwc = MagicMock(return_value=[])
+    orch.run_phase1_mwc = MagicMock(return_value=[])
+    orch._build_mtf_lwc_training_frame = MagicMock(return_value=frame)
+    orch._build_mtf_lwc_validation_frame = MagicMock(return_value=frame)
+    orch._mask_train_df_for_phase1 = MagicMock(return_value=frame)
+    orch._load_phase1_outputs = MagicMock(return_value={"long": [], "short": []})
+    orch._run_phase2 = MagicMock(return_value={
+        "long": [{"conditions": ["[feature] > 0"], "coverage": 0.1}],
+        "short": [],
+    })
+    orch._write_candidate_fold_matrix = MagicMock()
+    monkeypatch.setattr(
+        pipeline, "build_master_temporal_folds", MagicMock(return_value=[]),
+    )
+
+    result = orch.run_phase(2)
+
+    assert result["phase2"]["long"]
+    archive_path = tmp_path / "rule_archives" / "lwc" / "lwc_rules.json"
+    assert archive_path.exists()
+    payload = json.loads(archive_path.read_text(encoding="utf-8"))
+    assert payload["timeframe"] == "lwc"
+    assert payload["rules"][0]["direction"] == "long"
+
+
+def test_mtf_rb_reserves_and_gates_on_validation_tail(tmp_path, monkeypatch) -> None:
+    """The active MTF RB path must not score its full validation selection frame."""
+    frame = _frame(rows=8)
+    candidate = pipeline.HierarchicalStrategyCandidate(
+        direction="long",
+        lwc_rules=[{"conditions": [], "tp": 2.0, "sl": 1.2}],
+    )
+    mask_calls: list[tuple[int, int | None]] = []
+
+    def fake_evaluate(_candidate, split_df, *, history_df=None):
+        mask_calls.append((
+            len(split_df),
+            None if history_df is None else len(history_df),
+        ))
+        return (
+            [np.ones(len(split_df), dtype=bool)],
+            {"retention_diagnostics": {"passes_floor": True}},
+            {},
+        )
+
+    class FakeEngine:
+        def __init__(self, split_df, *_args, **_kwargs):
+            self.rows = len(split_df)
+
+        def simulate_signal_masks(self, *_args, **_kwargs):
+            failing_tail = self.rows == 2
+            return {
+                "total_return_pct": -1.0 if failing_tail else 1.0,
+                "profit_factor": 0.5 if failing_tail else 2.0,
+                "executed_trades": 1 if failing_tail else 20,
+            }
+
+    monkeypatch.setattr(pipeline._cfg, "RB_RISK_GRID_USE_TAIL_HOLDOUT", True)
+    monkeypatch.setattr(pipeline._cfg, "RB_TAIL_HOLDOUT_FRACTION", 0.25)
+    monkeypatch.setattr(pipeline._cfg, "RB_TAIL_HOLDOUT_HARD_GATE", True)
+    monkeypatch.setattr(pipeline._cfg, "RB_TAIL_HOLDOUT_MIN_RETURN_PCT", 0.0)
+    monkeypatch.setattr(pipeline._cfg, "RB_TAIL_HOLDOUT_MIN_TRADES", 1)
+    with pipeline._temporary_output_paths(str(tmp_path)), patch.object(
+        pipeline, "evaluate_candidate_rule_masks", side_effect=fake_evaluate,
+    ), patch(
+        "gpu_fuzzy_trader.backtest.cpu_engine.CPUBacktestEngine", FakeEngine,
+    ), patch(
+        "gpu_fuzzy_trader.validation.cost_stress.cost_stress_certificate",
+        return_value={"passed": True},
+    ):
+        result = Pipeline_Orchestrator(output_dir=str(tmp_path))._run_mtf_rb_governor(
+            train_df=frame,
+            val_df=frame,
+            candidates={"long": candidate},
+        )
+
+    strategy = result["long"]
+    assert mask_calls == [(8, None), (6, 8), (2, 14)]
+    assert strategy["validation_frame_contract"] == {
+        "source_rows": 8,
+        "selection_rows": 6,
+        "reserved_tail_rows": 2,
+        "tail_isolated": True,
+        "tail_evaluation": "mtf_candidate_acceptance_gate",
+    }
+    assert strategy["mtf_runtime"]["split_metrics"]["validation"][
+        "total_return_pct"
+    ] == 1.0
+    assert strategy["tail_holdout"]["raw_passed"] is False
+    assert strategy["tail_holdout"]["passed"] is False
+    assert strategy["deployment_accepted"] is False
+    assert strategy["reason"] == "mtf_tail_holdout_gate"
+
+
 def test_missing_phase2_outputs_are_recorded_for_rb_failure_reason(tmp_path) -> None:
     orch = Pipeline_Orchestrator(output_dir=str(tmp_path))
     frame = _frame()

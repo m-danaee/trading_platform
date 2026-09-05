@@ -13,6 +13,7 @@ Tests cover:
 import os
 import tempfile
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -23,6 +24,7 @@ from gpu_fuzzy_trader.backtest.barrier import (
     required_barrier_columns,
 )
 from gpu_fuzzy_trader.config import LABEL_COLUMNS, TAIL_DROP_ROWS
+from gpu_fuzzy_trader.data.labels import compute_labels
 from gpu_fuzzy_trader.data.loader import Data_Loader, load_dataset
 
 
@@ -187,6 +189,86 @@ class TestOHLCVLabelGeneration:
 
         with pytest.raises(ValueError, match="only some required label columns"):
             _loader_from_rows(rows)
+
+    def test_supplied_labels_are_checked_against_ohlcv(self):
+        """Raw prices must be the source of truth for forward targets."""
+        raw = pd.DataFrame(
+            _make_ohlcv_rows("BTCUSDT", TAIL_DROP_ROWS + 5)
+        )
+        labels = compute_labels(raw)
+        labelled = raw.merge(labels, on=["datetime", "symbol"], validate="one_to_one")
+        path = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".csv", delete=False, newline="",
+        )
+        path.close()
+        try:
+            labelled.to_csv(path.name, index=False)
+            loaded = Data_Loader().load_dataset(path.name)
+            assert loaded["label_close_288"].iloc[0] == pytest.approx(
+                labels["label_close_288"].iloc[0]
+            )
+        finally:
+            os.unlink(path.name)
+
+    def test_mismatched_ohlcv_labels_are_rejected(self):
+        """A label override must not create a hidden look-ahead target."""
+        raw = pd.DataFrame(
+            _make_ohlcv_rows("BTCUSDT", TAIL_DROP_ROWS + 5)
+        )
+        labelled = raw.merge(
+            compute_labels(raw),
+            on=["datetime", "symbol"],
+            validate="one_to_one",
+        )
+        labelled.loc[0, "label_close_288"] += 1.0
+        path = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".csv", delete=False, newline="",
+        )
+        path.close()
+        try:
+            labelled.to_csv(path.name, index=False)
+            with pytest.raises(ValueError, match="Supplied labels do not match"):
+                Data_Loader().load_dataset(path.name)
+        finally:
+            os.unlink(path.name)
+
+    def test_partial_ohlcv_with_supplied_labels_is_rejected(self):
+        raw = pd.DataFrame(
+            _make_ohlcv_rows("BTCUSDT", TAIL_DROP_ROWS + 5)
+        )
+        labelled = raw.merge(
+            compute_labels(raw),
+            on=["datetime", "symbol"],
+            validate="one_to_one",
+        ).drop(columns=["volume"])
+
+        path = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".csv", delete=False, newline="",
+        )
+        path.close()
+        try:
+            labelled.to_csv(path.name, index=False)
+            with pytest.raises(ValueError, match="only some OHLCV columns"):
+                Data_Loader().load_dataset(path.name)
+        finally:
+            os.unlink(path.name)
+
+    def test_nonfinite_ohlcv_is_rejected(self):
+        raw = pd.DataFrame(
+            _make_ohlcv_rows("BTCUSDT", TAIL_DROP_ROWS + 5)
+        )
+        raw.loc[0, "high"] = np.nan
+
+        path = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".csv", delete=False, newline="",
+        )
+        path.close()
+        try:
+            raw.to_csv(path.name, index=False)
+            with pytest.raises(ValueError, match="non-numeric or non-finite"):
+                Data_Loader().load_dataset(path.name)
+        finally:
+            os.unlink(path.name)
 
 
 # ---------------------------------------------------------------------------

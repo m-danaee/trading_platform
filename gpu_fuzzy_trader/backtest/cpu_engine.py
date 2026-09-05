@@ -1409,6 +1409,14 @@ class CPUBacktestEngine:
             "trade_return_std_pct": 0.0,
             "expectancy_lcb_pct_per_trade": 0.0,
             "expected_shortfall_pct": 0.0,
+            "fee_pct": self.fee_pct,
+            "round_trip_fee_rate": self.round_trip_fee_rate,
+            "spread_bps": self.spread_bps,
+            "slippage_bps": self.slippage_bps,
+            "effective_fee_rate": self.effective_fee_rate,
+            "total_fees": 0.0,
+            "total_position_notional": 0.0,
+            "turnover_multiple": 0.0,
         }
 
         if len(entries) == 0:
@@ -1428,6 +1436,7 @@ class CPUBacktestEngine:
             "time_closed_count": 0,
             "gross_profit_sum": 0.0,
             "gross_loss_sum": 0.0,
+            "fees_sum": 0.0,
             "account_ruined": False,
         }
 
@@ -1525,6 +1534,7 @@ class CPUBacktestEngine:
             gross_pnl = position_notional * price_return_rate
             fee = position_notional * self.effective_fee_rate
             net_pnl = gross_pnl - fee
+            stats["fees_sum"] += fee
             trade_returns.append(net_pnl / equity if equity > 0.0 else 0.0)
             margin_used = position_notional / max(self.leverage, 1e-9)
 
@@ -1730,6 +1740,17 @@ class CPUBacktestEngine:
             "trade_return_std_pct": trade_return_std,
             "expectancy_lcb_pct_per_trade": expectancy_lcb,
             "expected_shortfall_pct": expected_shortfall,
+            "fee_pct": self.fee_pct,
+            "round_trip_fee_rate": self.round_trip_fee_rate,
+            "spread_bps": self.spread_bps,
+            "slippage_bps": self.slippage_bps,
+            "effective_fee_rate": self.effective_fee_rate,
+            "total_fees": float(stats.get("fees_sum", 0.0)),
+            "total_position_notional": float(position_notional_sum),
+            "turnover_multiple": float(
+                position_notional_sum / initial_capital
+                if initial_capital > 0.0 else 0.0
+            ),
         }
 
         if return_logs:

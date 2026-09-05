@@ -30,7 +30,7 @@ def test_anti_overfit_config_bundle():
     assert cfg.PHASE2_SAMPLE_ROTATION_FRACTION == 0.65
     assert cfg.PHASE2_TP == 2.0
     assert cfg.PHASE2_MONTHLY_ADMISSION_MIN_MONTHS == 2
-    assert cfg.PHASE1_DISABLED is True
+    assert cfg.PHASE1_DISABLED is False
     assert cfg.PHASE2_DIVERSITY_ON_F4 is True
     assert cfg.PHASE2_USE_TOTAL_RETURN_OBJ is False
     assert cfg.PHASE2_MIN_PROFITABLE_SYMBOLS == 2

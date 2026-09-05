@@ -27,6 +27,7 @@ def _evaluate(
     rules: list[dict],
     *,
     strategy: dict[str, Any] | None = None,
+    history_df: pd.DataFrame | None = None,
 ) -> dict[str, Any]:
     if strategy and isinstance(strategy.get("mtf_candidate"), dict):
         from gpu_fuzzy_trader.mtf.candidate import HierarchicalStrategyCandidate
@@ -37,7 +38,7 @@ def _evaluate(
         )
         candidate.lwc_rules = [dict(rule) for rule in rules]
         rule_masks, _stats, _audit = evaluate_candidate_rule_masks(
-            candidate, frame,
+            candidate, frame, history_df=history_df,
         )
         return CPUBacktestEngine(
             frame, {}, direction,
@@ -168,6 +169,7 @@ def _feature_shuffle(
     *,
     seed: int,
     strategy: dict[str, Any] | None = None,
+    history_df: pd.DataFrame | None = None,
 ) -> dict[str, Any]:
     mtf_strategy = strategy and isinstance(strategy.get("mtf_candidate"), dict)
     if mtf_strategy:
@@ -190,7 +192,17 @@ def _feature_shuffle(
         if name == "symbol" or name not in shuffled.columns:
             continue
         _shuffle_column_per_symbol(shuffled, name, rng)
-    return _evaluate(shuffled, direction, rules, strategy=strategy)
+    if history_df is None:
+        # Preserve the small monkeypatchable call contract used by existing
+        # report tests and legacy research notebooks.
+        return _evaluate(shuffled, direction, rules, strategy=strategy)
+    return _evaluate(
+        shuffled,
+        direction,
+        rules,
+        strategy=strategy,
+        history_df=history_df,
+    )
 
 
 def evaluate_baselines(
@@ -198,6 +210,7 @@ def evaluate_baselines(
     strategy: dict[str, Any],
     *,
     seed: int = 17,
+    history_df: pd.DataFrame | None = None,
 ) -> dict[str, Any]:
     """Return compact baseline and entry-ablation metrics."""
     direction = str(strategy.get("direction", "long"))
@@ -209,20 +222,39 @@ def evaluate_baselines(
         "direction": direction,
         "strategy_id": strategy.get("strategy_id"),
         "fixed_phase2_exit": _compact(_evaluate(
-            frame, direction, _fixed_exit(rules), strategy=strategy,
+            frame,
+            direction,
+            _fixed_exit(rules),
+            strategy=strategy,
+            history_df=history_df,
         )),
         "equal_weight_capital": _compact(_evaluate(
-            frame, direction, _equal_weight(rules), strategy=strategy,
+            frame,
+            direction,
+            _equal_weight(rules),
+            strategy=strategy,
+            history_df=history_df,
         )),
         "feature_shuffle": _compact(_feature_shuffle(
-            frame, direction, rules, seed=seed, strategy=strategy,
+            frame,
+            direction,
+            rules,
+            seed=seed,
+            strategy=strategy,
+            history_df=history_df,
         )),
         "random_entry_same_exit": _compact(_random_entry(
             frame, direction, rules, seed=seed,
         )),
     }
     drop_results = [
-        _compact(_evaluate(frame, direction, variant, strategy=strategy))
+        _compact(_evaluate(
+            frame,
+            direction,
+            variant,
+            strategy=strategy,
+            history_df=history_df,
+        ))
         for variant in _drop_one_condition_variants(rules)
     ]
     output["drop_one_condition"] = {
@@ -248,8 +280,15 @@ def write_baseline_reports(
     output_dir: str,
     frame: pd.DataFrame,
     strategies: dict[str, dict[str, Any]],
+    *,
+    validation_frame: pd.DataFrame | None = None,
+    validation_history_df: pd.DataFrame | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """Write baseline reports without consulting any OOS/test frame."""
+    """Write train baselines and optional frozen-validation comparisons.
+
+    The consumed test tape is intentionally not accepted by this API.  The
+    validation comparison is report-only and does not change strategy choice.
+    """
     reports_dir = Path(output_dir) / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
     reports: dict[str, dict[str, Any]] = {}
@@ -257,6 +296,15 @@ def write_baseline_reports(
         if direction not in {"long", "short"} or not strategy.get("rules_set"):
             continue
         report = evaluate_baselines(frame, strategy)
+        if validation_frame is not None:
+            report["validation"] = evaluate_baselines(
+                validation_frame,
+                strategy,
+                history_df=validation_history_df,
+            )
+            report["validation_contract"] = (
+                "frozen_strategy_validation_only; not_used_for_selection"
+            )
         reports[direction] = report
         (reports_dir / f"baseline_{direction}.json").write_text(
             json.dumps(report, indent=2, default=str),

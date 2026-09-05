@@ -13,6 +13,11 @@ import numpy as np
 import pandas as pd
 
 from gpu_fuzzy_trader import config as _cfg
+from gpu_fuzzy_trader.features.fuzzy_scaling import (
+    causal_positive_scale,
+    causal_signed_scale,
+    validate_rule_feature_ranges,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -198,6 +203,8 @@ def _compute_kama(close: pd.Series, period: int = 10, fast: int = 2, slow: int =
 def compute_timeframe_features(
     df_bars: pd.DataFrame,
     timeframe_minutes: int,
+    *,
+    include_raw_features: bool = True,
 ) -> pd.DataFrame:
     """Compute technical features independently on completed bars of a timeframe.
 
@@ -213,8 +220,11 @@ def compute_timeframe_features(
     -------
     pd.DataFrame
         DataFrame containing ``datetime``, ``symbol``, original OHLCV, and
-        computed technical features (RSI, ATR, KAMA, Bollinger Bands, Realized
-        Volatility, Momentum, Volume metrics, EMA spreads).
+        computed rule-facing technical features.  Rule-facing derived values
+        are bounded to ``[-1, 1]`` and use causal magnitude scaling.  When
+        ``include_raw_features`` is true, the legacy absolute ``atr_14`` and
+        ``kama_10`` columns are also returned for internal label construction;
+        callers must not use those two columns as rule features.
     """
     if df_bars.empty:
         return df_bars.copy()
@@ -233,20 +243,27 @@ def compute_timeframe_features(
         low = g["low"].astype(float)
         volume = g["volume"].astype(float)
 
+        # The evaluator's fixed bins are defined on [0, 1] / [-1, 1].  The
+        # feature generator must therefore emit that representation, rather
+        # than raw indicator units such as RSI 0..100 or price-level KAMA.
+
         # 1. RSI
         rsi_14 = _compute_rsi(close, period=14)
-        g["rsi_14"] = rsi_14
-        g["rsi_14_midline"] = rsi_14 - 50.0
+        rsi_midline = ((rsi_14 - 50.0) / 50.0).clip(-1.0, 1.0)
+        g["rsi_14"] = rsi_midline
+        g["rsi_14_midline"] = rsi_midline
 
         # 2. ATR
-        atr_14 = _compute_atr(high, low, close, period=14)
-        g["atr_14"] = atr_14
-        g["atr_14_ratio"] = atr_14 / close.replace(0.0, np.nan)
+        atr_14_raw = _compute_atr(high, low, close, period=14)
+        atr_14_ratio = atr_14_raw / close.replace(0.0, np.nan)
+        g["atr_14_ratio"] = causal_positive_scale(atr_14_ratio)
 
         # 3. KAMA
         kama_10 = _compute_kama(close, period=10)
-        g["kama_10"] = kama_10
-        g["kama_distance_10"] = (close - kama_10) / atr_14.replace(0.0, np.nan)
+        kama_distance = (close - kama_10) / atr_14_raw.replace(0.0, np.nan)
+        kama_slope = kama_10.diff() / atr_14_raw.replace(0.0, np.nan)
+        g["kama_distance_10"] = causal_signed_scale(kama_distance)
+        g["kama_slope_10"] = causal_signed_scale(kama_slope)
 
         # 4. Bollinger Bands (20, 2)
         sma_20 = close.rolling(20, min_periods=20).mean()
@@ -254,35 +271,58 @@ def compute_timeframe_features(
         upper_bb = sma_20 + 2.0 * std_20
         lower_bb = sma_20 - 2.0 * std_20
         bb_width = upper_bb - lower_bb
-        g["bollinger_pct_b"] = (close - lower_bb) / bb_width.replace(0.0, np.nan)
-        g["bollinger_bandwidth"] = bb_width / sma_20.replace(0.0, np.nan)
+        g["bollinger_pct_b"] = (
+            (close - lower_bb) / bb_width.replace(0.0, np.nan)
+        ).clip(0.0, 1.0)
+        bb_bandwidth = bb_width / sma_20.replace(0.0, np.nan)
+        g["bollinger_bandwidth"] = causal_positive_scale(bb_bandwidth)
 
         # 5. Realized Volatility (rolling std of log returns)
         log_ret = np.log(close / close.shift(1).replace(0.0, np.nan))
-        g["realized_volatility"] = log_ret.rolling(20, min_periods=20).std()
+        realized_volatility = log_ret.rolling(20, min_periods=20).std()
+        g["realized_volatility"] = causal_positive_scale(realized_volatility)
 
         # 6. Momentum / ROC / Efficiency
-        g["momentum_roc"] = (close - close.shift(10)) / close.shift(10).replace(0.0, np.nan)
+        momentum_roc = (close - close.shift(10)) / close.shift(10).replace(0.0, np.nan)
+        g["momentum_roc"] = causal_signed_scale(momentum_roc)
         disp_10 = close.diff(10)
         path_10 = close.diff(1).abs().rolling(10, min_periods=10).sum()
-        g["price_efficiency_10"] = disp_10 / path_10.replace(0.0, np.nan)
+        g["price_efficiency_10"] = (
+            disp_10 / path_10.replace(0.0, np.nan)
+        ).clip(-1.0, 1.0)
 
         # 7. EMA Spreads
         ema_8 = close.ewm(span=8, adjust=False).mean()
         ema_21 = close.ewm(span=21, adjust=False).mean()
-        g["ema_spread_8_21"] = (ema_8 - ema_21) / atr_14.replace(0.0, np.nan)
+        ema_spread = (ema_8 - ema_21) / atr_14_raw.replace(0.0, np.nan)
+        g["ema_spread_8_21"] = causal_signed_scale(ema_spread)
 
         # 8. Volume Features
         vol_sma_20 = volume.rolling(20, min_periods=20).mean()
         vol_std_20 = volume.rolling(20, min_periods=20).std()
-        g["relative_volume_20"] = volume / vol_sma_20.replace(0.0, np.nan)
+        relative_volume = volume / vol_sma_20.replace(0.0, np.nan)
+        g["relative_volume_20"] = causal_positive_scale(relative_volume)
         g["volume_spike"] = (volume > (vol_sma_20 + 2.0 * vol_std_20)).astype(float)
+
+        if include_raw_features:
+            # These columns preserve the old public helper output for callers
+            # that need raw ATR/KAMA during label construction.  They are not
+            # part of the fuzzy rule representation.
+            g["atr_14"] = atr_14_raw
+            g["kama_10"] = kama_10
 
         parts.append(g)
 
     result = pd.concat(parts, ignore_index=True)
     result = result.sort_values("_orig_order").drop(columns=["_orig_order"])
     result.index = df_bars.index
+    if not include_raw_features:
+        rule_columns = tuple(
+            column
+            for column in result.columns
+            if column not in ("datetime", "symbol", *_OHLCV_COLUMNS)
+        )
+        validate_rule_feature_ranges(result, columns=rule_columns)
     return result
 
 

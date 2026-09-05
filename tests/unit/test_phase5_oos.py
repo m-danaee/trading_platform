@@ -29,6 +29,8 @@ from gpu_fuzzy_trader.phases.phase5_oos import (
     OOS_Evaluator,
     _STRATEGY_PATHS,
     _REPORT_PATHS,
+    _forward_result_passes_gate,
+    _validate_forward_metadata,
 )
 
 
@@ -132,6 +134,105 @@ def _make_df(
         dfs.append(pd.DataFrame(data))
 
     return pd.concat(dfs, ignore_index=True)
+
+
+def _make_metadata_tape(
+    start: str,
+    rows_per_symbol: int = 100,
+    symbols: tuple[str, ...] = ("BTCUSDT", "ETHUSDT"),
+) -> pd.DataFrame:
+    parts = []
+    for symbol in symbols:
+        parts.append(pd.DataFrame({
+            "datetime": pd.date_range(
+                start, periods=rows_per_symbol, freq="15min",
+            ),
+            "symbol": symbol,
+        }))
+    return pd.concat(parts, ignore_index=True)
+
+
+class TestForwardMetadataValidation:
+    def test_accepts_contiguous_later_same_universe(self):
+        summary = _validate_forward_metadata(
+            _make_metadata_tape("2024-01-01"),
+            _make_metadata_tape("2024-02-01"),
+        )
+
+        assert summary["validation_contract"].startswith("strictly_later")
+        assert summary["forward"]["rows_per_symbol"] == {
+            "BTCUSDT": 100,
+            "ETHUSDT": 100,
+        }
+
+    def test_rejects_incomplete_symbol_universe(self):
+        with pytest.raises(ValueError, match="exactly the consumed test symbol"):
+            _validate_forward_metadata(
+                _make_metadata_tape("2024-01-01"),
+                _make_metadata_tape(
+                    "2024-02-01", symbols=("BTCUSDT",),
+                ),
+            )
+
+    def test_rejects_non_contiguous_forward_tape(self):
+        forward = _make_metadata_tape("2024-02-01")
+        forward.loc[10:, "datetime"] = (
+            pd.to_datetime(forward.loc[10:, "datetime"])
+            + pd.Timedelta(minutes=15)
+        )
+
+        with pytest.raises(ValueError, match="forward tape is not contiguous"):
+            _validate_forward_metadata(
+                _make_metadata_tape("2024-01-01"),
+                forward,
+            )
+
+    def test_rejects_tape_that_is_only_the_label_horizon(self):
+        with pytest.raises(ValueError, match="more than the label horizon"):
+            _validate_forward_metadata(
+                _make_metadata_tape("2024-01-01"),
+                _make_metadata_tape(
+                    "2024-02-01", rows_per_symbol=_cfg.TAIL_DROP_ROWS,
+                ),
+            )
+
+    def test_forward_acceptance_requires_minimum_trades_and_positive_ci(self):
+        result = {
+            "evaluation_status": "ok",
+            "total_return_pct": 1.0,
+            "executed_trades": 10,
+            "trade_uncertainty": {"mean_trade_return_ci95_pct": [0.01, 0.2]},
+        }
+
+        assert _forward_result_passes_gate(
+            result, minimum_trades=10, require_ci_positive=True,
+        )
+        assert not _forward_result_passes_gate(
+            {key: value for key, value in result.items()
+             if key != "evaluation_status"},
+            minimum_trades=10,
+            require_ci_positive=True,
+        )
+        assert not _forward_result_passes_gate(
+            {**result, "executed_trades": 9},
+            minimum_trades=10,
+            require_ci_positive=True,
+        )
+        assert not _forward_result_passes_gate(
+            {
+                **result,
+                "trade_uncertainty": {
+                    "mean_trade_return_ci95_pct": [-0.01, 0.2],
+                },
+            },
+            minimum_trades=10,
+            require_ci_positive=True,
+        )
+        assert not _forward_result_passes_gate(
+            {**result, "evaluation_status": "error"},
+            minimum_trades=10,
+            require_ci_positive=True,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -424,6 +525,47 @@ class TestEvaluateStrategy:
         strategy = _make_rule_set("long")
         metrics, _, _log = ev._evaluate_strategy(df, strategy, "long")
         assert isinstance(metrics, dict)
+
+    def test_mtf_evaluation_sets_status_and_handles_zero_trades(self, monkeypatch):
+        ev = self._make_evaluator()
+        df = _make_df(n_rows=200)
+        strategy = {
+            "direction": "long",
+            "rules_set": [],
+            "mtf_candidate": {
+                "direction": "long",
+                "lwc_rules": [{"conditions": []}],
+                "hwc_rules": [],
+                "mwc_rules": [],
+            },
+        }
+
+        monkeypatch.setattr(
+            "gpu_fuzzy_trader.phases.phase5_oos.evaluate_candidate_rule_masks",
+            lambda _candidate, frame, history_df=None: (
+                [np.zeros(len(frame), dtype=bool)],
+                {"retention_diagnostics": {}},
+                {},
+            ),
+        )
+
+        def _zero_trade_simulation(*_args, **_kwargs):
+            return {
+                "executed_trades": 0,
+                "account_ruined": True,
+                "total_return_pct": 99.0,
+            }, pd.DataFrame()
+
+        monkeypatch.setattr(
+            "gpu_fuzzy_trader.phases.phase5_oos.CPUBacktestEngine.simulate_signal_masks",
+            _zero_trade_simulation,
+        )
+        metrics, _, trade_log = ev._evaluate_strategy(df, strategy, "long")
+
+        assert metrics["evaluation_status"] == "ok"
+        assert metrics["account_ruined"] is False
+        assert metrics["total_return_pct"] == 0.0
+        assert trade_log.empty
 
     def test_metrics_has_required_keys(self):
         ev = self._make_evaluator()
@@ -1162,12 +1304,17 @@ class TestPhase5CachedSplitFreshness:
                 os.utime(path, (2, 2))
 
         monkeypatch.setattr(_cfg, "TRAIN_CSV_PATH", str(train_csv))
+        monkeypatch.setattr(_cfg, "DEVELOPMENT_TRAIN_PATH", paths["train"])
+        monkeypatch.setattr(_cfg, "VALIDATION_PATH", paths["val"])
         monkeypatch.setattr(_cfg, "TRAIN_70_PATH", paths["train"])
         monkeypatch.setattr(_cfg, "VALIDATION_30_PATH", paths["val"])
         monkeypatch.setattr(_cfg, "VALIDATION_FITNESS_PATH", paths["fitness"])
         monkeypatch.setattr(
             _cfg, "VALIDATION_SELECTION_PATH", paths["selection"])
-        monkeypatch.setattr(_cfg, "CV_FOLDS_MANIFEST_PATH", paths["manifest"])
+        monkeypatch.setattr(
+            _cfg, "CV_FOLDS_MANIFEST_PATH", paths["manifest"], raising=False,
+        )
+        monkeypatch.setattr(_cfg, "SPLIT_MANIFEST_PATH", paths["manifest"])
 
         ev = OOS_Evaluator(test_csv_path=test_csv)
         datasets = ev._load_datasets_by_split()
@@ -1196,12 +1343,17 @@ class TestPhase5CachedSplitFreshness:
                 os.utime(path, (2, 2))
 
         monkeypatch.setattr(_cfg, "TRAIN_CSV_PATH", str(train_csv))
+        monkeypatch.setattr(_cfg, "DEVELOPMENT_TRAIN_PATH", paths["train"])
+        monkeypatch.setattr(_cfg, "VALIDATION_PATH", paths["val"])
         monkeypatch.setattr(_cfg, "TRAIN_70_PATH", paths["train"])
         monkeypatch.setattr(_cfg, "VALIDATION_30_PATH", paths["val"])
         monkeypatch.setattr(_cfg, "VALIDATION_FITNESS_PATH", paths["fitness"])
         monkeypatch.setattr(
             _cfg, "VALIDATION_SELECTION_PATH", paths["selection"])
-        monkeypatch.setattr(_cfg, "CV_FOLDS_MANIFEST_PATH", paths["manifest"])
+        monkeypatch.setattr(
+            _cfg, "CV_FOLDS_MANIFEST_PATH", paths["manifest"], raising=False,
+        )
+        monkeypatch.setattr(_cfg, "SPLIT_MANIFEST_PATH", paths["manifest"])
 
         assert load_cached_split_if_fresh() is None
 

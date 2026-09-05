@@ -113,6 +113,10 @@ def _patch_split_paths(tmp_dir: str):
         "manifest": (
             config_mod.SPLIT_MANIFEST_PATH,
         ),
+        "cv_manifest": (
+            getattr(config_mod, "CV_FOLDS_MANIFEST_PATH", None),
+            hasattr(config_mod, "CV_FOLDS_MANIFEST_PATH"),
+        ),
     }
 
     @contextlib.contextmanager
@@ -145,6 +149,10 @@ def _patch_split_paths(tmp_dir: str):
             config_mod.VALIDATION_FITNESS_PATH = originals["fitness"][0]
             config_mod.VALIDATION_SELECTION_PATH = originals["selection"][0]
             config_mod.SPLIT_MANIFEST_PATH = originals["manifest"][0]
+            if originals["cv_manifest"][1]:
+                config_mod.CV_FOLDS_MANIFEST_PATH = originals["cv_manifest"][0]
+            elif hasattr(config_mod, "CV_FOLDS_MANIFEST_PATH"):
+                delattr(config_mod, "CV_FOLDS_MANIFEST_PATH")
             splitter_mod.TRAIN_70_PATH = originals["train"][2]
             splitter_mod.VALIDATION_30_PATH = originals["val"][2]
             splitter_mod.VALIDATION_FITNESS_PATH = originals["fitness"][1]

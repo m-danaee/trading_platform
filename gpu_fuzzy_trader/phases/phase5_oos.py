@@ -55,6 +55,7 @@ from gpu_fuzzy_trader.research_integrity import (
 )
 from gpu_fuzzy_trader.reporting.reporter import Reporter
 from gpu_fuzzy_trader.mtf.runtime import evaluate_candidate_rule_masks
+from gpu_fuzzy_trader.validation.uncertainty import compute_trade_uncertainty
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +145,175 @@ _FEATURE_PATHS: dict[str, str] = {
 }
 
 
+def _validate_forward_metadata(
+    test_meta: pd.DataFrame,
+    forward_meta: pd.DataFrame,
+) -> dict[str, Any]:
+    """Validate source-tape identity before a forward evaluation is consumed."""
+    expected_seconds = int(getattr(_cfg, "CONTEXT_BAR_SECONDS", 15 * 60))
+    expected_delta = pd.Timedelta(seconds=expected_seconds)
+
+    def normalise(
+        frame: pd.DataFrame,
+        name: str,
+    ) -> tuple[pd.DataFrame, dict[str, Any]]:
+        required = {"datetime", "symbol"}
+        missing = sorted(required - set(frame.columns))
+        if missing:
+            raise ValueError(f"{name} tape is missing metadata columns: {missing}")
+        if frame.empty:
+            raise ValueError(f"{name} tape is empty; refusing forward evaluation")
+        timestamps = pd.to_datetime(
+            frame["datetime"], errors="raise", utc=True,
+        )
+        if timestamps.isna().any():
+            raise ValueError(f"{name} tape contains missing timestamps")
+        symbols = frame["symbol"].astype("string").str.strip().str.upper()
+        if symbols.isna().any() or (symbols == "").any():
+            raise ValueError(f"{name} tape contains missing or empty symbols")
+        normalised = pd.DataFrame({
+            "datetime": timestamps,
+            "symbol": symbols,
+        })
+        if normalised.duplicated(["datetime", "symbol"]).any():
+            raise ValueError(
+                f"{name} tape contains duplicate (datetime, symbol) bars"
+            )
+
+        first_by_symbol: dict[str, str] = {}
+        last_by_symbol: dict[str, str] = {}
+        counts: dict[str, int] = {}
+        for symbol, group in normalised.groupby("symbol", sort=True):
+            ordered = group.sort_values("datetime")["datetime"]
+            deltas = ordered.diff().dropna()
+            if not deltas.eq(expected_delta).all():
+                bad = deltas.loc[~deltas.eq(expected_delta)].iloc[0]
+                raise ValueError(
+                    f"{name} tape is not contiguous at {symbol}: "
+                    f"observed interval {bad}, expected {expected_delta}"
+                )
+            first_by_symbol[str(symbol)] = ordered.iloc[0].isoformat()
+            last_by_symbol[str(symbol)] = ordered.iloc[-1].isoformat()
+            counts[str(symbol)] = len(ordered)
+
+        ranges = set(zip(first_by_symbol.values(), last_by_symbol.values()))
+        if len(ranges) > 1:
+            raise ValueError(
+                f"{name} tape does not cover all symbols on the same interval"
+            )
+        return normalised, {
+            "rows": len(normalised),
+            "symbols": sorted(counts),
+            "rows_per_symbol": counts,
+            "min_datetime": normalised["datetime"].min().isoformat(),
+            "max_datetime": normalised["datetime"].max().isoformat(),
+            "contiguous_cadence_seconds": expected_seconds,
+        }
+
+    test, test_summary = normalise(test_meta, "test")
+    forward, forward_summary = normalise(forward_meta, "forward")
+    test_symbols = set(test_summary["symbols"])
+    forward_symbols = set(forward_summary["symbols"])
+    if forward_symbols != test_symbols:
+        raise ValueError(
+            "FORWARD_CSV_PATH must contain exactly the consumed test symbol "
+            f"universe {sorted(test_symbols)}; got {sorted(forward_symbols)}."
+        )
+
+    test_last = test.groupby("symbol")["datetime"].max()
+    forward_first = forward.groupby("symbol")["datetime"].min()
+    overlap = [
+        str(symbol)
+        for symbol in sorted(test_symbols)
+        if forward_first[symbol] <= test_last[symbol]
+    ]
+    if overlap:
+        raise ValueError(
+            "FORWARD_CSV_PATH overlaps the consumed test tape for symbols: "
+            f"{overlap}"
+        )
+
+    if forward["datetime"].min() <= test["datetime"].max():
+        raise ValueError(
+            "FORWARD_CSV_PATH must start strictly after the complete "
+            "consumed test tape; refusing overlapping acceptance data."
+        )
+
+    minimum_rows = int(getattr(_cfg, "TAIL_DROP_ROWS", 0)) + 1
+    too_short = {
+        symbol: count
+        for symbol, count in forward_summary["rows_per_symbol"].items()
+        if int(count) < minimum_rows
+    }
+    if too_short:
+        raise ValueError(
+            "FORWARD_CSV_PATH must contain more than the label horizon for "
+            f"every symbol; short tapes: {too_short}"
+        )
+
+    return {
+        "expected_bar_seconds": expected_seconds,
+        "test": test_summary,
+        "forward": forward_summary,
+        "validation_contract": (
+            "strictly_later_same_universe_contiguous_15m_tape; "
+            "minimum_one_post_horizon_row_per_symbol"
+        ),
+    }
+
+
+def _forward_positive_result(result: dict[str, Any] | None) -> bool:
+    """Return whether a forward result is a successful positive return."""
+    if not isinstance(result, dict) or str(
+        result.get("evaluation_status", "")
+    ) != "ok":
+        return False
+    try:
+        total_return = float(result.get("total_return_pct", -float("inf")))
+    except (TypeError, ValueError):
+        return False
+    return bool(np.isfinite(total_return) and total_return > 0.0)
+
+
+def _forward_result_passes_gate(
+    result: dict[str, Any] | None,
+    *,
+    minimum_trades: int | None = None,
+    require_ci_positive: bool | None = None,
+) -> bool:
+    """Apply the non-selection acceptance gate to one forward result."""
+    if not _forward_positive_result(result):
+        return False
+    required_trades = int(
+        getattr(_cfg, "PHASE5_FORWARD_MIN_TRADES", 10)
+        if minimum_trades is None else minimum_trades
+    )
+    try:
+        if int(result.get("executed_trades", 0) or 0) < required_trades:
+            return False
+    except (TypeError, ValueError):
+        return False
+    ci_required = bool(
+        getattr(_cfg, "PHASE5_FORWARD_REQUIRE_CI_POSITIVE", True)
+        if require_ci_positive is None else require_ci_positive
+    )
+    if not ci_required:
+        return True
+    uncertainty = result.get("trade_uncertainty", {})
+    ci = (
+        uncertainty.get("mean_trade_return_ci95_pct", [])
+        if isinstance(uncertainty, dict)
+        else []
+    )
+    if not isinstance(ci, (list, tuple)) or len(ci) != 2:
+        return False
+    try:
+        lower_bound = float(ci[0])
+    except (TypeError, ValueError):
+        return False
+    return bool(np.isfinite(lower_bound) and lower_bound > 0.0)
+
+
 # ---------------------------------------------------------------------------
 # OOS_Evaluator
 # ---------------------------------------------------------------------------
@@ -183,6 +353,7 @@ class OOS_Evaluator:
             str(configured_forward).strip() if configured_forward else None
         )
         self._forward_acceptance_metadata: dict | None = None
+        self._forward_validation_summary: dict[str, Any] | None = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -285,6 +456,18 @@ class OOS_Evaluator:
                     metrics, per_symbol_rows, trade_log = self._evaluate_strategy(
                         split_df, strategy, direction
                     )
+                split_seed_offset = {
+                    "train": 0,
+                    "validation": 101,
+                }.get(split, 202)
+                metrics["trade_uncertainty"] = compute_trade_uncertainty(
+                    trade_log,
+                    seed=(
+                        int(getattr(_cfg, "GLOBAL_SEED", 42) or 42)
+                        + (1 if direction == "long" else 2)
+                        + split_seed_offset
+                    ),
+                )
                 metrics_by_split[split] = metrics
                 trade_logs_by_split[split] = trade_log
 
@@ -458,6 +641,18 @@ class OOS_Evaluator:
                     return_logs=True,
                     history_df=joint_history_df,
                 )
+                # Forward acceptance is fail-closed.  The joint engine is a
+                # successful evaluator only when it explicitly reports it.
+                joint_metrics.setdefault("evaluation_status", "ok")
+                split_seed_offset = {
+                    "train": 0,
+                    "validation": 101,
+                }.get(split, 202)
+                joint_metrics["trade_uncertainty"] = compute_trade_uncertainty(
+                    joint_logs,
+                    seed=int(getattr(_cfg, "GLOBAL_SEED", 42) or 42)
+                    + split_seed_offset,
+                )
                 joint_by_split[split] = joint_metrics
                 if split == "test":
                     joint_test_logs = joint_logs
@@ -498,20 +693,14 @@ class OOS_Evaluator:
         # A forward decision requires both direction specialists and the joint
         # account to be profitable on a new, untouched period.
         forward_available = "forward" in datasets_by_split
+
         forward_direction_ok = all(
-            direction in results
-            and float(
-                results[direction].get("forward", {}).get(
-                    "total_return_pct", -float("inf")
-                )
-            ) > 0.0
+            _forward_result_passes_gate(results.get(direction, {}).get("forward"))
             for direction in ("long", "short")
         )
-        forward_joint_ok = float(
-            results.get("joint_portfolio", {})
-            .get("forward", {})
-            .get("total_return_pct", -float("inf"))
-        ) > 0.0
+        forward_joint_ok = _forward_result_passes_gate(
+            results.get("joint_portfolio", {}).get("forward")
+        )
         results["acceptance"] = {
             "status": (
                 "accepted"
@@ -523,21 +712,41 @@ class OOS_Evaluator:
             "forward_dataset": self.forward_csv_path if forward_available else None,
             "test_dataset_is_diagnostic_only": True,
             "requires_positive_long_short_and_joint_forward_return": True,
+            "requires_successful_nonzero_trade_evaluation": True,
+            "requires_minimum_forward_trades": int(
+                getattr(_cfg, "PHASE5_FORWARD_MIN_TRADES", 10)
+            ),
+            "requires_positive_bootstrap_mean_return_ci": bool(
+                getattr(_cfg, "PHASE5_FORWARD_REQUIRE_CI_POSITIVE", True)
+            ),
             "long_positive": bool(
-                "long" in results
-                and float(results["long"].get("forward", {}).get(
-                    "total_return_pct", -float("inf")
-                )) > 0.0
+                _forward_positive_result(results.get("long", {}).get("forward"))
             ),
             "short_positive": bool(
-                "short" in results
-                and float(results["short"].get("forward", {}).get(
-                    "total_return_pct", -float("inf")
-                )) > 0.0
+                _forward_positive_result(results.get("short", {}).get("forward"))
             ),
-            "joint_positive": bool(forward_joint_ok),
+            "long_gate_pass": bool(
+                _forward_result_passes_gate(
+                    results.get("long", {}).get("forward")
+                )
+            ),
+            "short_gate_pass": bool(
+                _forward_result_passes_gate(
+                    results.get("short", {}).get("forward")
+                )
+            ),
+            "joint_positive": bool(
+                _forward_positive_result(
+                    results.get("joint_portfolio", {}).get("forward")
+                )
+            ),
+            "joint_gate_pass": bool(forward_joint_ok),
         }
 
+        if forward_available:
+            results["acceptance"]["forward_tape_validation"] = (
+                self._forward_validation_summary
+            )
         if forward_available and self._forward_acceptance_metadata is not None:
             write_forward_acceptance_record(
                 _cfg.OUTPUTS_DIR,
@@ -870,32 +1079,39 @@ class OOS_Evaluator:
         forward_meta = pd.read_csv(
             self.forward_csv_path, usecols=["datetime", "symbol"],
         )
-        test_dates = test_meta["datetime"]
-        forward_dates = forward_meta["datetime"]
-        test_max = pd.to_datetime(test_dates, errors="raise", utc=True).max()
-        forward_min = pd.to_datetime(
-            forward_dates, errors="raise", utc=True
-        ).min()
-        if pd.isna(test_max) or pd.isna(forward_min) or forward_min <= test_max:
-            raise ValueError(
-                "FORWARD_CSV_PATH must start strictly after the complete "
-                "consumed test tape; refusing overlapping acceptance data."
-            )
-        test_symbols = {
+        self._forward_validation_summary = _validate_forward_metadata(
+            test_meta,
+            forward_meta,
+        )
+        prepared = self.prepare_test_data(self.forward_csv_path)
+        expected_symbols = set(self._forward_validation_summary["test"]["symbols"])
+        prepared_symbols = {
             str(value).strip().upper()
-            for value in test_meta["symbol"].dropna().unique()
+            for value in prepared.get("symbol", pd.Series(dtype=str)).dropna().unique()
         }
-        forward_symbols = {
-            str(value).strip().upper()
-            for value in forward_meta["symbol"].dropna().unique()
-        }
-        if forward_symbols != test_symbols:
+        if prepared.empty or prepared_symbols != expected_symbols:
             raise ValueError(
-                "FORWARD_CSV_PATH must contain exactly the consumed test "
-                f"symbol universe {sorted(test_symbols)}; got "
-                f"{sorted(forward_symbols)}."
+                "FORWARD_CSV_PATH has no complete post-horizon rows for the "
+                "consumed symbol universe"
             )
-        return self.prepare_test_data(self.forward_csv_path)
+        expected_counts = {
+            symbol: int(count) - int(getattr(_cfg, "TAIL_DROP_ROWS", 0))
+            for symbol, count in self._forward_validation_summary[
+                "forward"
+            ]["rows_per_symbol"].items()
+        }
+        actual_counts = {
+            str(symbol).strip().upper(): int(len(group))
+            for symbol, group in prepared.groupby(
+                "symbol", sort=True, observed=False,
+            )
+        }
+        if actual_counts != expected_counts:
+            raise ValueError(
+                "FORWARD_CSV_PATH lost rows during label preparation; "
+                f"expected {expected_counts}, got {actual_counts}"
+            )
+        return prepared
 
     @staticmethod
     def _load_selected_features(direction: str) -> list[dict]:
@@ -978,6 +1194,14 @@ class OOS_Evaluator:
                     candidate.lwc_rules,
                     return_logs=True,
                 )
+                if not isinstance(metrics, dict):
+                    raise TypeError(
+                        "simulate_signal_masks returned a non-dict metrics object"
+                    )
+                metrics.setdefault("evaluation_status", "ok")
+                if int(metrics.get("executed_trades", 0) or 0) == 0:
+                    metrics["account_ruined"] = False
+                    metrics["total_return_pct"] = 0.0
                 metrics["mtf_composition"] = {
                     "frozen": True,
                     "retention_diagnostics": composition_stats.get(
@@ -1154,6 +1378,34 @@ class OOS_Evaluator:
             "win_rate": metrics.get("win_rate", 0.0),
             "profit_factor": metrics.get("profit_factor", 0.0),
             "executed_trades": metrics.get("executed_trades", 0),
+            "sortino_ratio": metrics.get("sortino_ratio", 0.0),
+            "expectancy_pct_per_trade": metrics.get(
+                "expectancy_pct_per_trade", 0.0,
+            ),
+            "expectancy_lcb_pct_per_trade": metrics.get(
+                "expectancy_lcb_pct_per_trade", 0.0,
+            ),
+            "expected_shortfall_pct": metrics.get(
+                "expected_shortfall_pct", 0.0,
+            ),
+            "turnover_multiple": metrics.get("turnover_multiple", 0.0),
+            "max_simultaneous_positions": metrics.get(
+                "max_simultaneous_positions", 0,
+            ),
+            "max_total_open_exposure": metrics.get(
+                "max_total_open_exposure", 0.0,
+            ),
+            "total_fees": metrics.get("total_fees", 0.0),
+            "fee_pct": metrics.get("fee_pct", getattr(_cfg, "FEE_PCT", 0.0)),
+            "spread_bps": metrics.get(
+                "spread_bps", getattr(_cfg, "SPREAD_BPS", 0.0),
+            ),
+            "slippage_bps": metrics.get(
+                "slippage_bps", getattr(_cfg, "SLIPPAGE_BPS", 0.0),
+            ),
+            "effective_fee_rate": metrics.get(
+                "effective_fee_rate", 0.0,
+            ),
             "account_status": (
                 "error" if evaluation_status == "error" else
                 "ruined" if metrics.get("account_ruined", False) else
@@ -1162,6 +1414,8 @@ class OOS_Evaluator:
             "final_equity": metrics.get("final_equity", _cfg.INITIAL_CAPITAL),
             "per_symbol_metrics": metrics.get("per_symbol_metrics", {}),
         }
+        if metrics.get("trade_uncertainty") is not None:
+            report["trade_uncertainty"] = metrics["trade_uncertainty"]
         if metrics.get("evaluation_error"):
             report["evaluation_error"] = str(metrics["evaluation_error"])
 

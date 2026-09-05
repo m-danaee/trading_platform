@@ -77,6 +77,7 @@ class JointPortfolioEngine:
     def _empty_metrics(initial_capital: float) -> dict:
         return {
             "direction": "joint",
+            "evaluation_status": "ok",
             "total_return_pct": 0.0,
             "sortino_ratio": 0.0,
             "max_drawdown_pct": 0.0,

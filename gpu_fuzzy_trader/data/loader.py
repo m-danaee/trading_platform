@@ -4,13 +4,14 @@ data/loader.py — Data_Loader
 Stateless CSV loading with full preparation pipeline:
   1. Read CSV (comma-separated with PyArrow engine fallback)
   2. Parse datetime column
-  3. Derive forward labels from OHLCV when the CSV has no labels
-  4. Sort by (datetime, symbol) — matches evaluator_v5.ipynb row order
-  5. Optionally attach exact first-touch barrier outcomes (cached by tape SHA-256)
-  6. Drop last TAIL_DROP_ROWS rows per symbol
-  7. Drop rows where any LABEL_COLUMNS value is NaN
-  8. Fill NaN in feature columns with 0
-  9. Compute _symbol_bar_index via groupby("symbol").cumcount()
+  3. Validate raw OHLCV values and bar geometry
+  4. Derive forward labels from OHLCV when the CSV has no labels
+  5. Sort by (datetime, symbol) — matches evaluator_v5.ipynb row order
+  6. Optionally attach exact first-touch barrier outcomes (cached by tape SHA-256)
+  7. Drop last TAIL_DROP_ROWS rows per symbol
+  8. Drop rows where any LABEL_COLUMNS value is NaN
+  9. Fill NaN in feature columns with 0
+  10. Compute _symbol_bar_index via groupby("symbol").cumcount()
 """
 
 from __future__ import annotations
@@ -20,7 +21,6 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Mapping
 
 import numpy as np
 import pandas as pd
@@ -143,8 +143,52 @@ def validate_context_columns(df: pd.DataFrame) -> None:
         )
 
 
+def _validate_ohlcv_values(df: pd.DataFrame) -> None:
+    """Reject malformed raw bars before labels or barriers use them."""
+    present = set(_OHLCV_COLUMNS) & set(df.columns)
+    if not present:
+        return
+    missing = sorted(set(_OHLCV_COLUMNS) - present)
+    if missing:
+        raise ValueError(
+            "Dataset contains only some OHLCV columns; missing: "
+            f"{missing}. Raw-bar validation cannot continue."
+        )
+
+    numeric = df.loc[:, _OHLCV_COLUMNS].apply(pd.to_numeric, errors="coerce")
+    values = numeric.to_numpy(dtype=float)
+    finite = np.isfinite(values).all(axis=1)
+    if not finite.all():
+        bad_columns = [
+            column
+            for column in _OHLCV_COLUMNS
+            if not np.isfinite(numeric[column].to_numpy(dtype=float)).all()
+        ]
+        raise ValueError(
+            "Raw OHLCV contains non-numeric or non-finite values in columns: "
+            f"{bad_columns}."
+        )
+
+    prices = numeric.loc[:, ["open", "high", "low", "close"]]
+    invalid_geometry = (
+        (prices <= 0.0).any(axis=1)
+        | (numeric["high"] < prices[["open", "close"]].max(axis=1))
+        | (numeric["low"] > prices[["open", "close"]].min(axis=1))
+        | (numeric["high"] < numeric["low"])
+        | (numeric["volume"] < 0.0)
+    )
+    if invalid_geometry.any():
+        raise ValueError(
+            "Raw OHLCV contains non-positive prices, invalid high/low geometry, "
+            "or negative volume."
+        )
+    # Keep downstream label and barrier arithmetic numeric even when a CSV
+    # encoded an otherwise valid numeric column as text.
+    df.loc[:, _OHLCV_COLUMNS] = numeric
+
+
 def _ensure_labels(df: pd.DataFrame) -> pd.DataFrame:
-    """Keep supplied labels or derive all labels from raw OHLCV columns.
+    """Validate supplied labels or derive them from raw OHLCV columns.
 
     The original datasets stored the five forward labels in the CSV. The
     replacement datasets intentionally contain raw OHLCV plus ``ff_*``
@@ -154,6 +198,60 @@ def _ensure_labels(df: pd.DataFrame) -> pd.DataFrame:
     """
     present = [column for column in LABEL_COLUMNS if column in df.columns]
     if len(present) == len(LABEL_COLUMNS):
+        # A tape that contains both prices and labels must not be allowed to
+        # choose its own target values.  A stale or look-ahead label file can
+        # otherwise pass every downstream schema check.  Recompute the labels
+        # from the source OHLCV and compare before the caller sorts, trims, or
+        # scales the frame.  Label-only legacy fixtures remain supported.
+        if set(_OHLCV_COLUMNS).issubset(df.columns):
+            expected = compute_labels(
+                df[["datetime", "symbol", *_OHLCV_COLUMNS]],
+            )
+            supplied = df.loc[:, ["datetime", "symbol", *LABEL_COLUMNS]]
+            try:
+                comparison = supplied.merge(
+                    expected,
+                    on=["datetime", "symbol"],
+                    how="left",
+                    sort=False,
+                    validate="one_to_one",
+                    suffixes=("_supplied", "_expected"),
+                )
+            except pd.errors.MergeError as exc:
+                raise ValueError(
+                    "Dataset must contain at most one row per (datetime, symbol) "
+                    "when labels are checked against OHLCV."
+                ) from exc
+
+            mismatches: dict[str, int] = {}
+            for column in LABEL_COLUMNS:
+                actual = pd.to_numeric(
+                    comparison[f"{column}_supplied"], errors="coerce",
+                ).to_numpy(dtype=float)
+                expected_values = pd.to_numeric(
+                    comparison[f"{column}_expected"], errors="coerce",
+                ).to_numpy(dtype=float)
+                equal = (
+                    (np.isnan(actual) & np.isnan(expected_values))
+                    | (
+                        np.isfinite(actual)
+                        & np.isfinite(expected_values)
+                        & np.isclose(
+                            actual,
+                            expected_values,
+                            rtol=1e-7,
+                            atol=1e-8,
+                        )
+                    )
+                )
+                bad_count = int((~equal).sum())
+                if bad_count:
+                    mismatches[column] = bad_count
+            if mismatches:
+                raise ValueError(
+                    "Supplied labels do not match labels recomputed from OHLCV; "
+                    f"refusing unverifiable targets: {mismatches}."
+                )
         return df
     if present:
         missing = [column for column in LABEL_COLUMNS if column not in df.columns]
@@ -204,15 +302,16 @@ class Data_Loader:
 
         1. Read CSV with comma separator
         2. Parse datetime column
-        3. Derive labels from OHLCV when labels are not supplied
-        4. Sort by (datetime, symbol)
-        5. Optionally attach exact first-touch barrier outcomes
-        5b. Validate the mandatory trend-context contract when the tape is
+        3. Validate raw OHLCV values and bar geometry when present
+        4. Derive labels from OHLCV when labels are not supplied
+        5. Sort by (datetime, symbol)
+        6. Optionally attach exact first-touch barrier outcomes
+        6b. Validate the mandatory trend-context contract when the tape is
             enriched (context columns present) or ``require_context`` is set
-        6. Optionally drop last TAIL_DROP_ROWS rows per symbol
-        7. Drop rows where any LABEL_COLUMNS value is NaN
-        8. Fill NaN in feature columns with 0
-        9. Compute _symbol_bar_index per symbol
+        7. Optionally drop last TAIL_DROP_ROWS rows per symbol
+        8. Drop rows where any LABEL_COLUMNS value is NaN
+        9. Fill NaN in feature columns with 0
+        10. Compute _symbol_bar_index per symbol
 
         Parameters
         ----------
@@ -261,6 +360,10 @@ class Data_Loader:
         df["datetime"] = pd.to_datetime(
             df["datetime"], errors="raise", utc=True
         ).dt.tz_localize(None)
+
+        # Validate the source before labels, barriers, or MTF aggregation can
+        # turn malformed bars into apparently valid derived values.
+        _validate_ohlcv_values(df)
 
         # ------------------------------------------------------------------
         # 3. Derive labels from raw OHLCV when needed

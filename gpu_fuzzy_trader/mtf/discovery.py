@@ -23,6 +23,7 @@ from gpu_fuzzy_trader.data.multi_timeframe import (
     build_complete_higher_bars,
     compute_timeframe_features,
 )
+from gpu_fuzzy_trader.features.fuzzy_scaling import validate_rule_feature_ranges
 from gpu_fuzzy_trader.evolution.directional_evaluator import (
     classify_directional_labels,
     compute_forward_movement_labels,
@@ -169,8 +170,12 @@ def _build_layer_frame(
     bars = build_complete_higher_bars(raw_df, timeframe_minutes)
     if bars.empty:
         return bars
-    features = compute_timeframe_features(bars, timeframe_minutes)
+    features = compute_timeframe_features(
+        bars, timeframe_minutes, include_raw_features=True,
+    )
     prefix = "hwc_" if role == "hwc" else "mwc_"
+    raw_atr = features["atr_14"].copy()
+    features = features.drop(columns=["atr_14", "kama_10"])
     rename = {
         column: f"{prefix}{column}"
         for column in features.columns
@@ -181,14 +186,16 @@ def _build_layer_frame(
     for _, group in result.groupby("symbol", sort=False, observed=False):
         indices = group.index.to_numpy()
         close = group["close"].to_numpy(dtype=float)
-        atr = group[f"{prefix}atr_14"].to_numpy(dtype=float)
+        atr = raw_atr.loc[indices].to_numpy(dtype=float)
         moves = compute_forward_movement_labels(
             close,
             atr,
             horizon_bars=int(profile.forward_horizon_bars),
         )
         result.loc[indices, "_move"] = moves
-    return result.sort_values(["datetime", "symbol"]).reset_index(drop=True)
+    result = result.sort_values(["datetime", "symbol"]).reset_index(drop=True)
+    validate_rule_feature_ranges(result, prefixes=(prefix,))
+    return result
 
 
 def _eligible_numeric_features(frame: pd.DataFrame, role: str) -> list[str]:

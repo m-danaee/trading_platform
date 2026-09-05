@@ -1468,6 +1468,7 @@ class Pipeline_Orchestrator:
                 results["strategy_stability"] = self.run_stability_report(
                     train_df,
                     rb_result,
+                    validation_df=val_selection_df,
                     trial_count=max(1, sum(trial_counters.values())),
                     trial_count_ledger=sum(trial_counters.values()),
                     candidate_fold_matrix=matrix_rows,
@@ -1639,6 +1640,7 @@ class Pipeline_Orchestrator:
                 results["strategy_stability"] = self.run_stability_report(
                     train_df,
                     rb_result,
+                    validation_df=val_selection_df,
                     trial_count=max(1, sum(trial_counters.values())),
                     trial_count_ledger=sum(trial_counters.values()),
                     candidate_fold_matrix=matrix_rows,
@@ -1777,7 +1779,10 @@ class Pipeline_Orchestrator:
                     except Exception:
                         phase1_result = self._run_phase1(
                             phase1_train_df, force=False, val_df=lwc_val_fitness_scored)
-                    results["phase2"] = self._run_phase2(
+                    # Use the public Phase 2 wrapper here.  Besides running
+                    # the LWC pool, it persists the archive required by a
+                    # later standalone Phase 3/4 MTF run.
+                    results["phase2"] = self.run_phase2(
                         phase1_train_df,
                         phase1_result,
                         force=True,
@@ -2259,8 +2264,8 @@ class Pipeline_Orchestrator:
             stability = results.get("strategy_stability", {})
             fold_returns = [
                 float(report.get("median_return_pct", 0.0))
-                for report in stability.values()
-                if isinstance(report, dict)
+                for direction, report in stability.items()
+                if direction != "_meta" and isinstance(report, dict)
             ] if isinstance(stability, dict) else []
             ledger_trial_count = read_ledger_trial_count(
                 _cfg.OUTPUTS_DIR,
@@ -2555,6 +2560,8 @@ class Pipeline_Orchestrator:
         stability_report = self.run_stability_report(
             train_df,
             rb_result,
+            validation_df=val_selection_df,
+            validation_history_df=train_df,
             trial_count=max(1, sum(trial_counters.values())),
             trial_count_ledger=sum(trial_counters.values()),
             candidate_fold_matrix=matrix_rows,
@@ -2733,6 +2740,8 @@ class Pipeline_Orchestrator:
         stability_report = self.run_stability_report(
             train_df,
             rb_result,
+            validation_df=val_selection_df,
+            validation_history_df=train_df,
             trial_count=max(1, sum(trial_counters.values())),
             trial_count_ledger=sum(trial_counters.values()),
             candidate_fold_matrix=matrix_rows,
@@ -2782,9 +2791,13 @@ class Pipeline_Orchestrator:
         nested_validation = bool(
             getattr(_cfg, "RB_NESTED_VALIDATION_SELECTION_ONLY", False)
         )
+        tail_holdout_enabled = bool(
+            getattr(_cfg, "RB_RISK_GRID_USE_TAIL_HOLDOUT", False)
+        )
         selection_val_df = val_df
         reserved_tail_df = val_df.iloc[:0].copy()
-        if nested_validation:
+        tail_isolated = nested_validation or tail_holdout_enabled
+        if tail_isolated:
             selection_val_df, reserved_tail_df = (
                 _rb_governor_module._split_tail_holdout_frame(
                     val_df,
@@ -2795,11 +2808,15 @@ class Pipeline_Orchestrator:
             "source_rows": int(len(val_df)),
             "selection_rows": int(len(selection_val_df)),
             "reserved_tail_rows": int(len(reserved_tail_df)),
-            "tail_isolated": nested_validation,
+            "tail_isolated": tail_isolated,
             "tail_evaluation": (
                 "deferred_until_best_trial"
                 if nested_validation
-                else "disabled"
+                else (
+                    "mtf_candidate_acceptance_gate"
+                    if tail_holdout_enabled
+                    else "disabled"
+                )
             ),
         }
         tail_history_df = pd.concat(
@@ -2833,14 +2850,19 @@ class Pipeline_Orchestrator:
             split_metrics: dict[str, dict[str, Any]] = {}
             retention: dict[str, Any] = {}
             split_rule_masks: dict[str, list[np.ndarray]] = {}
-            for split_name, split_df in (
-                ("train", train_df),
-                ("validation", selection_val_df),
-            ):
+            split_frames = [
+                ("train", train_df, None),
+                ("validation", selection_val_df, train_df),
+            ]
+            if tail_isolated and not reserved_tail_df.empty:
+                split_frames.append(
+                    ("validation_tail", reserved_tail_df, tail_history_df)
+                )
+            for split_name, split_df, history_df in split_frames:
                 rule_masks, stats, _audit = evaluate_candidate_rule_masks(
                     candidate,
                     split_df,
-                    history_df=train_df if split_name == "validation" else None,
+                    history_df=history_df,
                 )
                 split_rule_masks[split_name] = rule_masks
                 retention[split_name] = stats.get("retention_diagnostics", {})
@@ -2879,6 +2901,47 @@ class Pipeline_Orchestrator:
                     ),
                 )
             )
+            tail_holdout_ok = True
+            tail_holdout: dict[str, Any] = {
+                "enabled": bool(tail_isolated),
+                "hard_gate": bool(
+                    getattr(_cfg, "RB_TAIL_HOLDOUT_HARD_GATE", True)
+                ),
+                "available": False,
+                "passed": True,
+            }
+            if tail_isolated:
+                tail_metrics = split_metrics.get("validation_tail", {})
+                tail_available = not reserved_tail_df.empty
+                tail_holdout["available"] = tail_available
+                tail_holdout["tail_return_pct"] = float(
+                    tail_metrics.get("total_return_pct", 0.0)
+                )
+                tail_holdout["tail_profit_factor"] = float(
+                    tail_metrics.get("profit_factor", 0.0)
+                )
+                tail_holdout["tail_trades"] = int(
+                    tail_metrics.get("executed_trades", 0)
+                )
+                tail_holdout["min_return_pct"] = float(
+                    getattr(_cfg, "RB_TAIL_HOLDOUT_MIN_RETURN_PCT", 0.0)
+                )
+                tail_holdout["min_trades"] = int(
+                    getattr(_cfg, "RB_TAIL_HOLDOUT_MIN_TRADES", 0)
+                )
+                raw_tail_pass = bool(
+                    tail_available
+                    and tail_holdout["tail_return_pct"]
+                    >= tail_holdout["min_return_pct"] - 1e-12
+                    and tail_holdout["tail_trades"]
+                    >= tail_holdout["min_trades"]
+                )
+                tail_holdout["raw_passed"] = raw_tail_pass
+                tail_holdout_ok = bool(
+                    raw_tail_pass
+                    or not tail_holdout["hard_gate"]
+                )
+                tail_holdout["passed"] = tail_holdout_ok
             cost_gate_active = bool(
                 getattr(_cfg, "RB_COST_STRESS_HARD_GATE", False)
                 and not bool(getattr(_cfg, "RB_COST_STRESS_REPORT_ONLY", True))
@@ -2917,6 +2980,7 @@ class Pipeline_Orchestrator:
             accepted = bool(
                 retention_ok
                 and performance_ok
+                and tail_holdout_ok
                 and cost_stress_ok
                 and candidate.lwc_rules
             )
@@ -2932,9 +2996,13 @@ class Pipeline_Orchestrator:
                         "mtf_train_validation_gate"
                         if not performance_ok
                         else (
-                            "mtf_cost_stress_gate"
-                            if not cost_stress_ok
-                            else "mtf_candidate_accepted"
+                            "mtf_tail_holdout_gate"
+                            if not tail_holdout_ok
+                            else (
+                                "mtf_cost_stress_gate"
+                                if not cost_stress_ok
+                                else "mtf_candidate_accepted"
+                            )
                         )
                     )
                 ),
@@ -2947,14 +3015,17 @@ class Pipeline_Orchestrator:
                     "split_metrics": split_metrics,
                     "retention": retention,
                     "validation_frame_contract": validation_frame_contract,
+                    "tail_holdout": tail_holdout,
                     "cost_stress_certificate": cost_certificate,
                     "acceptance_gates": {
                         "retention_floor": retention_ok,
                         "train_validation_performance": performance_ok,
+                        "tail_holdout": tail_holdout_ok,
                         "cost_stress": cost_stress_ok,
                     },
                 },
                 "cost_stress_certificate": cost_certificate,
+                "tail_holdout": tail_holdout,
                 "validation_frame_contract": validation_frame_contract,
                 "provenance": {
                     "mtf_manifest_hash": hashlib.sha256(
@@ -3889,6 +3960,8 @@ class Pipeline_Orchestrator:
         train_df: pd.DataFrame,
         strategies: dict[str, dict],
         *,
+        validation_df: pd.DataFrame | None = None,
+        validation_history_df: pd.DataFrame | None = None,
         trial_count: int = 1,
         trial_count_ledger: int | None = None,
         candidate_fold_matrix: Any | None = None,
@@ -3922,16 +3995,25 @@ class Pipeline_Orchestrator:
                 _cfg.OUTPUTS_DIR,
                 train_df,
                 stability_strategies,
+                validation_frame=validation_df,
+                validation_history_df=validation_history_df,
             )
             for direction, report in stability.items():
-                report["baselines"] = baseline.get(direction, {})
+                if direction != "_meta" and isinstance(report, dict):
+                    report["baselines"] = baseline.get(direction, {})
             return stability
         except Exception as exc:
             logger.warning(
                 "Strategy stability report failed (non-fatal to pipeline): %s",
                 exc,
             )
-            return {}
+            return {
+                "_meta": {
+                    "status": "error",
+                    "contract": "frozen_strategy_chronological_comparison",
+                    "error": f"{type(exc).__name__}: {exc}",
+                },
+            }
 
     # ------------------------------------------------------------------
     # Hierarchical MTF Discovery & Composition Phase Methods

@@ -661,9 +661,9 @@ PHASE1_TOP_K_FEATURES = 20
 # detected by Feature_Detector. Phase 2 then evolves over the full feature set.
 #   True  → larger GA search space, more GPU RAM per chromosome, no MI prefilter.
 #   False → normal top-K MI-ranked selection (PHASE1_TOP_K_FEATURES=20).
-# Current default: bypass Phase 1 (full dispersion-filtered feature set) so the
-# configured Phase 2 budget explores the broader genome with context gates.
-PHASE1_DISABLED: bool = True
+# Current default: run the train-only sign, stationarity, redundancy, and MI
+# filters before Phase 2.  The bypass remains available for explicit ablations.
+PHASE1_DISABLED: bool = False
 
 # PHASE1_MAX_FEATURE_OVERLAP — max shared feature names between long & short lists.
 #   Enforced as int(TOP_K × overlap) shared names (e.g. 25 × 0.8 → 20 shared).
@@ -1714,6 +1714,14 @@ PHASE5_VALIDATION_PROFIT_FACTOR_GATE = 1.05
 
 # Phase 5 is report-only: it never mutates a strategy using held-out test
 # performance. Test-set pruning would turn the OOS report into a tuning step.
+# Trade-level uncertainty is also report-only.  It uses a deterministic moving
+# block bootstrap and is never read by the search or release gates.
+REPORT_BOOTSTRAP_SAMPLES = 1000
+REPORT_BOOTSTRAP_BLOCK_LENGTH = 0  # 0 means an automatic sqrt(n) block.
+# Forward acceptance is stricter than a positive one-off return.  These gates
+# are applied only to an explicitly supplied untouched forward tape.
+PHASE5_FORWARD_MIN_TRADES = 10
+PHASE5_FORWARD_REQUIRE_CI_POSITIVE = True
 
 
 # =============================================================================
@@ -3033,6 +3041,15 @@ def validate_config(
         and float(PHASE5_VALIDATION_PROFIT_FACTOR_GATE) >= 1.0,
         "Phase 5 deployment gates must be non-negative and PF >= 1.0",
     )
+    _config_check(
+        int(REPORT_BOOTSTRAP_SAMPLES) >= 0
+        and int(REPORT_BOOTSTRAP_BLOCK_LENGTH) >= 0,
+        "Report bootstrap sizes must be non-negative",
+    )
+    _config_check(
+        int(PHASE5_FORWARD_MIN_TRADES) >= 1,
+        "PHASE5_FORWARD_MIN_TRADES must be positive",
+    )
     if n_symbols is not None:
         active_symbols = int(n_symbols)
         _config_check(active_symbols >= 1, "n_symbols must be positive")
@@ -3128,6 +3145,14 @@ def effective_config_snapshot(
             "purge_candles": int(VALIDATION_PURGE_CANDLES),
             "tail_drop_rows": int(TAIL_DROP_ROWS),
         },
+        "phase5": {
+            "forward_min_trades": int(PHASE5_FORWARD_MIN_TRADES),
+            "forward_require_ci_positive": bool(
+                PHASE5_FORWARD_REQUIRE_CI_POSITIVE
+            ),
+            "report_bootstrap_samples": int(REPORT_BOOTSTRAP_SAMPLES),
+            "report_bootstrap_block_length": int(REPORT_BOOTSTRAP_BLOCK_LENGTH),
+        },
         "context": context_contract(),
         "mtf": {
             "max_folds": int(MTF_MAX_FOLDS),
@@ -3195,6 +3220,7 @@ def effective_config_snapshot(
                 float(RB_MAX_TOTAL_CAPITAL) // min_capital
             ),
             "risk_grid_wf_splits": int(RB_RISK_GRID_WF_SPLITS),
+            "risk_grid_use_tail_holdout": bool(RB_RISK_GRID_USE_TAIL_HOLDOUT),
             "risk_optimize_exits": bool(RB_RISK_OPTIMIZE_EXITS),
             "candidate_risk_admission": bool(
                 RB_CANDIDATE_RISK_ADMISSION_ENABLED
@@ -3225,6 +3251,7 @@ def effective_config_snapshot(
                 RB_RULE_DROPOUT_DEPENDENCY_THRESHOLD
             ),
             "tail_holdout_fraction": float(RB_TAIL_HOLDOUT_FRACTION),
+            "tail_holdout_hard_gate": bool(RB_TAIL_HOLDOUT_HARD_GATE),
             "tail_holdout_selection_gate": bool(RB_TAIL_HOLDOUT_SELECTION_GATE),
             "tail_holdout_min_trades": int(RB_TAIL_HOLDOUT_MIN_TRADES),
             "nested_validation_selection_only": bool(

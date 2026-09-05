@@ -605,6 +605,11 @@ def _make_simple_df(
 
 
 def _make_engine_custom(df: pd.DataFrame, direction: str = "long", **kw) -> CPUBacktestEngine:
+    # These properties isolate fee and accounting invariants.  The production
+    # default also includes spread and slippage, so make the extra execution
+    # costs explicit here instead of silently changing the property oracle.
+    kw.setdefault("spread_bps", 0.0)
+    kw.setdefault("slippage_bps", 0.0)
     return CPUBacktestEngine(df, feature_modes={}, direction=direction, **kw)
 
 

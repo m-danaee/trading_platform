@@ -101,5 +101,4 @@ def test_research_profile_is_stable_and_versioned():
     assert profile.schema_version == 4
     assert len(profile.profile_id) == 20
     assert profile.rb_risk_optimize_exits is False
-    assert profile.phase1_disabled is True
-
+    assert profile.phase1_disabled is False

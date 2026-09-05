@@ -22,6 +22,7 @@ from gpu_fuzzy_trader.validation.multiplicity import (
     read_candidate_fold_matrix,
     summarize_multiplicity,
 )
+from gpu_fuzzy_trader.validation.uncertainty import compute_trade_uncertainty
 
 
 @dataclass(frozen=True)
@@ -208,7 +209,7 @@ def _evaluate_mtf_strategy_stability(
     frame: pd.DataFrame,
     strategy: dict[str, Any],
     folds: list[StabilityFold],
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[pd.DataFrame]]:
     """Evaluate a frozen MTF candidate with causal per-window history."""
     candidate_payload = strategy.get("mtf_candidate")
     if not isinstance(candidate_payload, dict):
@@ -223,6 +224,7 @@ def _evaluate_mtf_strategy_stability(
     direction = str(strategy.get("direction", candidate.direction))
     raw_frame = _raw_mtf_stability_frame(frame)
     metrics: list[dict[str, Any]] = []
+    trade_logs: list[pd.DataFrame] = []
     for fold in folds:
         raw_test_df = _raw_mtf_stability_frame(fold.test_df)
         history_df = _history_before_stability_window(raw_frame, raw_test_df)
@@ -231,12 +233,16 @@ def _evaluate_mtf_strategy_stability(
             raw_test_df,
             history_df=history_df,
         )
-        metrics.append(
-            CPUBacktestEngine(
-                fold.test_df, {}, direction,
-            ).simulate_signal_masks(rule_masks, candidate.lwc_rules)
+        fold_metrics, fold_log = CPUBacktestEngine(
+            fold.test_df, {}, direction,
+        ).simulate_signal_masks(
+            rule_masks,
+            candidate.lwc_rules,
+            return_logs=True,
         )
-    return metrics
+        metrics.append(fold_metrics)
+        trade_logs.append(fold_log)
+    return metrics, trade_logs
 
 
 def _candidate_id(candidate: dict[str, Any], *, source: str, direction: str) -> str:
@@ -421,8 +427,12 @@ def evaluate_strategy_stability(
     folds = build_stability_folds(frame, n_windows=n_windows)
     rule_set = list(strategy.get("rules_set", []))
     mtf_strategy = isinstance(strategy.get("mtf_candidate"), dict)
+    trade_logs: list[pd.DataFrame | None] = []
     if evaluator is None and mtf_strategy:
-        metrics = _evaluate_mtf_strategy_stability(frame, strategy, folds)
+        metrics, mtf_trade_logs = _evaluate_mtf_strategy_stability(
+            frame, strategy, folds,
+        )
+        trade_logs = list(mtf_trade_logs)
         evaluator_contract = "mtf_candidate_runtime"
         history_contract = "strictly_prior_per_symbol_to_test_window"
     else:
@@ -435,9 +445,37 @@ def evaluate_strategy_stability(
                 direction = str(strategy.get("direction", "long"))
                 return CPUBacktestEngine(
                     stability_frame, {}, direction,
-                ).simulate_rule_set(rules)
+                ).simulate_rule_set(rules, return_logs=True)
 
-        metrics = [evaluator(fold.test_df, rule_set) for fold in folds]
+        metrics = []
+        for fold in folds:
+            evaluated = evaluator(fold.test_df, rule_set)
+            if (
+                isinstance(evaluated, tuple)
+                and len(evaluated) == 2
+                and isinstance(evaluated[0], dict)
+            ):
+                metric_row, fold_log = evaluated
+                metrics.append(metric_row)
+                trade_logs.append(
+                    fold_log if isinstance(fold_log, pd.DataFrame) else None
+                )
+            else:
+                metrics.append(evaluated)
+                trade_logs.append(None)
+
+    # Add uncertainty after evaluation only.  These rows are descriptive and
+    # are not fed back into candidate or risk selection.
+    audited_metrics: list[dict[str, Any]] = []
+    for fold_index, metric_row in enumerate(metrics):
+        audited = dict(metric_row)
+        if fold_index < len(trade_logs) and trade_logs[fold_index] is not None:
+            audited["trade_uncertainty"] = compute_trade_uncertainty(
+                trade_logs[fold_index],
+                seed=int(getattr(_cfg, "GLOBAL_SEED", 42) or 42) + fold_index,
+            )
+        audited_metrics.append(audited)
+    metrics = audited_metrics
     summary = _metric_summary(metrics)
     matrix = strategy.get("candidate_fold_matrix")
     if isinstance(matrix, (str, bytes)):
@@ -461,6 +499,10 @@ def evaluate_strategy_stability(
         "stability_contract": "frozen_strategy_chronological_comparison",
         "evaluator_contract": evaluator_contract,
         "historical_context": history_contract,
+        "uncertainty_contract": (
+            "descriptive_moving_block_bootstrap_on_realized_trades; "
+            "not_used_for_selection"
+        ),
         "multiplicity": summarize_multiplicity(
             fold_returns=[
                 float(row.get("total_return_pct", 0.0))

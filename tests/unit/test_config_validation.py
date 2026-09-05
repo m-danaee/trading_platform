@@ -18,10 +18,12 @@ def test_default_config_snapshot_is_valid_and_reports_effective_budgets() -> Non
     assert snapshot["phase2"]["stage_a_generations"] + snapshot["phase2"]["stage_b_generations"] == snapshot["phase2"]["generations"]
     assert snapshot["rb"]["max_total_capital"] == 100.0
     assert snapshot["rb"]["max_feasible_rules_at_min_capital"] >= cfg.RB_MAX_RULES
+    assert snapshot["rb"]["risk_grid_use_tail_holdout"] is True
+    assert snapshot["rb"]["tail_holdout_hard_gate"] is True
     assert snapshot["phase2"]["effective_min_profitable_symbols"] == 2
     assert snapshot["phase2"]["effective_f3_objective"] == "profit_factor"
     assert snapshot["phase2"]["joint_train_val"] is False
-    assert snapshot["phase2"]["phase1_disabled"] is True
+    assert snapshot["phase2"]["phase1_disabled"] is False
     assert snapshot["gates"]["rb_min_valid_trades"] <= snapshot["gates"]["rb_ruleset_min_valid_trades"]
 
 

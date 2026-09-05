@@ -145,6 +145,7 @@ def test_compute_timeframe_features():
         "rsi_14",
         "atr_14",
         "kama_10",
+        "kama_slope_10",
         "bollinger_pct_b",
         "bollinger_bandwidth",
         "realized_volatility",
@@ -155,6 +156,56 @@ def test_compute_timeframe_features():
         assert col in feats.columns
     # Warmup produces NaNs initially
     assert feats["rsi_14"].isna().iloc[0]
+
+    rule_feats = compute_timeframe_features(
+        df_bars, 60, include_raw_features=False,
+    )
+    assert "atr_14" not in rule_feats.columns
+    assert "kama_10" not in rule_feats.columns
+    derived = rule_feats.drop(
+        columns=["datetime", "symbol", "open", "high", "low", "close", "volume"],
+    )
+    finite = derived.to_numpy(dtype=float)
+    assert np.nanmin(finite) >= -1.0
+    assert np.nanmax(finite) <= 1.0
+
+
+def test_feature_representation_is_causal_under_future_mutation():
+    dt = pd.date_range("2024-01-01", periods=80, freq="15min")
+    close = 100.0 + np.cumsum(np.sin(np.arange(80) / 4.0))
+    base = pd.DataFrame({
+        "datetime": dt,
+        "symbol": "BTCUSDT",
+        "open": close,
+        "high": close + 1.0,
+        "low": close - 1.0,
+        "close": close,
+        "volume": np.linspace(10.0, 20.0, 80),
+    })
+    mutated = base.copy()
+    mutated.loc[50:, "close"] = 500.0
+    mutated.loc[50:, "open"] = 500.0
+    mutated.loc[50:, "high"] = 501.0
+    mutated.loc[50:, "low"] = 499.0
+    mutated.loc[50:, "volume"] = 1000.0
+
+    original_features = compute_timeframe_features(
+        base, 15, include_raw_features=False,
+    )
+    mutated_features = compute_timeframe_features(
+        mutated, 15, include_raw_features=False,
+    )
+    derived = [
+        column for column in original_features.columns
+        if column not in {"datetime", "symbol", "open", "high", "low", "close", "volume"}
+    ]
+    pd.testing.assert_frame_equal(
+        original_features.loc[:49, derived].reset_index(drop=True),
+        mutated_features.loc[:49, derived].reset_index(drop=True),
+        check_exact=False,
+        rtol=1e-12,
+        atol=1e-12,
+    )
 
 
 def test_causal_invariance_future_mutation():

@@ -101,10 +101,22 @@ performance.
 - `data/train_new.csv` feeds Phase 1 and Phase 2. Its OHLCV columns are used
   to derive the forward labels required by the backtest.
 - Validation fitness and selection windows feed Phase 2 and RB only.
+- RB reserves the final 25% of the validation-selection window as an inner
+  chronological tail check by default, including for the active MTF path.
+  The tail is not used to construct or tune the candidate.
 - `data/test_new.csv` is a consumed Phase 5 diagnostic holdout and uses the
   same OHLCV/features schema. Set `FORWARD_CSV_PATH` to an untouched tape
   whose first timestamp is strictly after the complete test tape for an
-  acceptance check.
+  acceptance check. The forward tape must have the same symbols, contiguous
+  15-minute bars, and more than the label horizon for every symbol.
+- If labels and OHLCV are both present, the loader recomputes labels from
+  OHLCV and rejects mismatched targets. This prevents stale or look-ahead
+  labels from entering a backtest.
+- Raw OHLCV values must be finite, positive for prices, geometrically valid,
+  and non-negative for volume.
+- The CSV `ff_*` indicators are supplied inputs. This repository does not
+  recreate them. Audit their generator for causal, as-of-bar construction
+  before using them in a release.
 - `evaluator_v5.ipynb` is read-only and is the final evaluation authority.
 
 The checked-in `train_new.csv` and `test_new.csv` profile contains the balanced
@@ -116,9 +128,12 @@ specialist. Global and clustered modes remain available for controlled
 experiments.
 
 Each run writes a dataset manifest, append-only experiment ledger, frozen
-strategy-stability report, and baseline/ablation reports. The consumed test
-file is never a tuning input. A forward acceptance tape is locked after its
-first evaluation in an output directory.
+strategy-stability report, and train plus validation baseline/ablation reports.
+Phase 5 also records costs, turnover, drawdown, tail loss, and descriptive
+moving-block bootstrap intervals. The consumed test file is never a tuning
+input. A forward acceptance tape is locked after its first evaluation in an
+output directory; acceptance also requires enough trades and a positive lower
+95% bootstrap bound.
 
 The evaluator-facing strategy files are `outputs/long.json` and
 `outputs/short.json`; clean copies are written below

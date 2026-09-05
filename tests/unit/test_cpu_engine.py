@@ -724,6 +724,8 @@ class TestCanonicalNotebookPrecision:
             df,
             fuzzy,
             trade_direction="long",
+            spread_bps=0.0,
+            slippage_bps=0.0,
             max_hold_candles=2,
         )
         notebook_metrics, notebook_logs = canonical.simulate_rule_set(

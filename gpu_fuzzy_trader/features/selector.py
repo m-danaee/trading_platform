@@ -55,6 +55,15 @@ _DIRECTION_PATHS = {
 }
 
 _RAW_OHLCV_FEATURES = frozenset({"open", "high", "low", "close", "volume"})
+_RAW_LEVEL_FEATURE_SUFFIXES = ("_atr_14", "_kama_10")
+
+
+def _is_raw_level_feature(name: str) -> bool:
+    """Return true for absolute indicator levels, not stationary rule inputs."""
+    normalized = str(name)
+    return normalized in {"atr_14", "kama_10"} or normalized.endswith(
+        _RAW_LEVEL_FEATURE_SUFFIXES
+    )
 
 
 def _candidate_feature_columns(train_df: pd.DataFrame) -> list[str]:
@@ -69,7 +78,9 @@ def _candidate_feature_columns(train_df: pd.DataFrame) -> list[str]:
         exclude |= _RAW_OHLCV_FEATURES
     return [
         c for c in train_df.columns
-        if c not in exclude and not c.startswith("_")
+        if c not in exclude
+        and not c.startswith("_")
+        and not _is_raw_level_feature(c)
     ]
 
 # Required top-level keys in the output JSON
@@ -513,10 +524,16 @@ class Feature_Selector:
                 mask = symbol_masks["__all__"]
 
             sym_target = target_values[mask]
+            X = feature_array[mask]
+            finite_rows = (
+                np.isfinite(X).all(axis=1)
+                & np.isfinite(sym_target)
+            )
+            X = X[finite_rows]
+            sym_target = sym_target[finite_rows]
             if len(np.unique(sym_target)) < 2:
                 continue
 
-            X = feature_array[mask]
             try:
                 scores = mutual_info_classif(
                     X,
@@ -1072,10 +1089,16 @@ def _mi_scores_for_mask(
     min_samples: int,
 ) -> Optional[list[float]]:
     """Compute MI vector for rows where *mask* is True; None if insufficient."""
-    if mask.sum() < min_samples:
+    row_mask = np.asarray(mask, dtype=bool)
+    if row_mask.sum() < min_samples:
         return None
-    Xf = feature_array[mask]
-    yf = target_values[mask].astype(np.int32, copy=False)
+    Xf = feature_array[row_mask]
+    yf = target_values[row_mask].astype(np.int32, copy=False)
+    finite_rows = np.isfinite(Xf).all(axis=1) & np.isfinite(yf)
+    Xf = Xf[finite_rows]
+    yf = yf[finite_rows]
+    if len(yf) < min_samples:
+        return None
     if len(np.unique(yf)) < 2:
         return None
     discrete_mask = _mutual_info_discrete_mask(feature_cols, feature_modes)

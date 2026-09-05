@@ -19,6 +19,7 @@ from gpu_fuzzy_trader.data.multi_timeframe import (
     build_complete_higher_bars,
     compute_timeframe_features,
 )
+from gpu_fuzzy_trader.features.fuzzy_scaling import validate_rule_feature_ranges
 from gpu_fuzzy_trader.backtest.symbol_conditions import (
     normalize_symbol_value,
     split_feature_and_symbol_conditions,
@@ -252,7 +253,12 @@ def prepare_causal_mtf_frame(
 
     for timeframe, prefix in ((mwc_minutes, "mwc_"), (hwc_minutes, "hwc_")):
         bars = build_complete_higher_bars(lwc, timeframe)
-        features = _prefix_features(compute_timeframe_features(bars, timeframe), prefix)
+        features = _prefix_features(
+            compute_timeframe_features(
+                bars, timeframe, include_raw_features=False,
+            ),
+            prefix,
+        )
         lwc = align_htf_features_causal(lwc, features, timeframe)
 
     # Raw tapes already carry engineered LWC features in production.  For a
@@ -260,7 +266,10 @@ def prepare_causal_mtf_frame(
     # prefix without replacing raw columns.
     lwc_source = lwc.loc[:, ["datetime", "symbol", *_OHLCV_COLUMNS]].copy()
     lwc_features = _prefix_features(
-        compute_timeframe_features(lwc_source, 15), "lwc_"
+        compute_timeframe_features(
+            lwc_source, 15, include_raw_features=False,
+        ),
+        "lwc_",
     )
     for column in lwc_features.columns:
         if column not in lwc.columns:
@@ -274,6 +283,7 @@ def prepare_causal_mtf_frame(
         # keeping the imputation local to the causal LWC feature family. No
         # future value is used; unavailable indicators are neutral zeroes.
         lwc[lwc_feature_columns] = lwc[lwc_feature_columns].fillna(0.0)
+    validate_rule_feature_ranges(lwc)
     return lwc
 
 
