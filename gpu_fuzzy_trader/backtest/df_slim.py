@@ -64,7 +64,7 @@ def slim_backtest_df(
     # Internal columns carry execution metadata (bar index and exact barrier
     # outcomes).  They are never feature candidates, but must survive every
     # slim/prune step so the backtest engine can honour the production trade
-    # contract after Phase 1 removes unused indicators.
+    # contract after catalog pruning removes unused indicators.
     internal_columns = [c for c in df.columns if str(c).startswith("_")]
     # Mandatory trend-context columns are fixed execution conditions (not
     # ordinary features) and must survive every slimmed train/validation/
@@ -85,5 +85,5 @@ def prune_train_columns(
     train_df: pd.DataFrame,
     feature_names: list[str],
 ) -> pd.DataFrame:
-    """Drop unused feature columns from the full training split after Phase 1."""
+    """Drop unused feature columns from the full training split after cataloging."""
     return slim_backtest_df(train_df, feature_names=feature_names)

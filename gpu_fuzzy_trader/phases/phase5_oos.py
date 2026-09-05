@@ -44,7 +44,7 @@ from gpu_fuzzy_trader.features.fuzzy_scaling import (
     apply_fuzzy_feature_scaling,
     fit_fuzzy_feature_scaling,
 )
-from gpu_fuzzy_trader.features.selector import Feature_Selector
+from gpu_fuzzy_trader.features.catalog import rule_feature_specs_from_rules
 from gpu_fuzzy_trader.output.writer import (
     Output_Writer,
     ValidationError,
@@ -138,12 +138,6 @@ _PHASE5_DERIVED_REPORT_NAMES: tuple[str, ...] = (
     "generalization_diagnostics_long.json",
     "generalization_diagnostics_short.json",
 )
-
-_FEATURE_PATHS: dict[str, str] = {
-    "long": os.path.join(_cfg.OUTPUTS_DIR, "selected_features_long.json"),
-    "short": os.path.join(_cfg.OUTPUTS_DIR, "selected_features_short.json"),
-}
-
 
 def _validate_forward_metadata(
     test_meta: pd.DataFrame,
@@ -493,8 +487,11 @@ class OOS_Evaluator:
                     metrics_by_split["forward"], direction, split="forward",
                 )
 
-            selected_features = self._load_selected_features(direction)
             rule_set = strategy.get("rules_set", [])
+            rule_features = self._rule_feature_specs(
+                datasets_by_split.get("train"),
+                strategy,
+            )
             reporter = Reporter()
 
             try:
@@ -565,7 +562,7 @@ class OOS_Evaluator:
             try:
                 reporter.write_spearman_correlation_report(
                     datasets_by_split,
-                    selected_features,
+                    rule_features,
                     direction,
                 )
             except Exception as exc:
@@ -577,7 +574,7 @@ class OOS_Evaluator:
                 reporter.write_feature_stratified_performance(
                     trade_logs_by_split,
                     rule_set,
-                    selected_features,
+                    rule_features,
                     datasets_by_split,
                     direction,
                 )
@@ -589,7 +586,7 @@ class OOS_Evaluator:
             try:
                 reporter.write_generalization_diagnostics(
                     metrics_by_split=metrics_by_split,
-                    selected_features=selected_features,
+                    rule_features=rule_features,
                     datasets_by_split=datasets_by_split,
                     direction=direction,
                 )
@@ -1114,27 +1111,17 @@ class OOS_Evaluator:
         return prepared
 
     @staticmethod
-    def _load_selected_features(direction: str) -> list[dict]:
-        """Load selected features for a direction when available."""
-        path = _FEATURE_PATHS.get(direction)
-        if path is None or not os.path.exists(path):
-            logger.warning(
-                "Selected features file not found, skipping %s direction: %s",
-                direction,
-                path,
-            )
+    def _rule_feature_specs(
+        train_df: pd.DataFrame | None,
+        strategy: dict,
+    ) -> list[dict[str, str]]:
+        """Derive report metadata from the frozen strategy's active inputs."""
+        if not isinstance(train_df, pd.DataFrame):
             return []
-
-        try:
-            return Feature_Selector.load_and_validate(path)
-        except ValueError as exc:
-            logger.warning(
-                "Selected features file failed validation, skipping %s direction: %s — %s",
-                direction,
-                path,
-                exc,
-            )
-            return []
+        return rule_feature_specs_from_rules(
+            train_df,
+            list(strategy.get("rules_set", [])),
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers

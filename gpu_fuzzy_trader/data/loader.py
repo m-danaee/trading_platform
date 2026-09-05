@@ -321,7 +321,7 @@ class Data_Loader:
             Explicit list of feature column names.  When *None* the feature
             columns are inferred as all columns that are neither in
             LABEL_COLUMNS nor in META_COLUMNS (and, by default, raw OHLCV
-            columns when ``PHASE1_EXCLUDE_RAW_OHLCV`` is enabled).
+            columns when ``RULE_EXCLUDE_RAW_OHLCV`` is enabled).
         drop_tail:
             Drop the final label horizon rows per symbol. Set to ``False``
             only when a caller needs the full source tape.
@@ -547,7 +547,7 @@ class Data_Loader:
             if feature_cols is None:
                 non_feature = set(LABEL_COLUMNS) | set(META_COLUMNS)
                 non_feature.update(c for c in df.columns if str(c).startswith("_"))
-                if bool(getattr(_cfg, "PHASE1_EXCLUDE_RAW_OHLCV", True)):
+                if bool(getattr(_cfg, "RULE_EXCLUDE_RAW_OHLCV", True)):
                     # Raw price levels are retained for barrier construction, but
                     # are not evaluator feature candidates.  Explicit
                     # ``feature_cols`` still overrides this default for callers

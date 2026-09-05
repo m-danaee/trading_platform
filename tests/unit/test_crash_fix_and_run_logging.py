@@ -1,7 +1,7 @@
 """Unit tests for crash-fix-and-run-logging spec.
 
 Covers:
-  - Task 1.1: Smoke tests for config changes (PHASE1_SAMPLING_TOTAL, RUN_LOG_PATH)
+  - Task 1.1: Smoke tests for config changes (PHASE2_SAMPLING_TOTAL, RUN_LOG_PATH)
   - Task 2.1: Smoke test for XLA_PYTHON_CLIENT_PREALLOCATE being set by configure_jax_env()
 """
 
@@ -371,7 +371,7 @@ class TestRunLogHandlerLifecycle:
         """Patch every phase method on Pipeline_Orchestrator to be a no-op."""
         from gpu_fuzzy_trader.run_pipeline import Pipeline_Orchestrator
 
-        # Empty frames must still expose meta columns used by val fitness/selection split.
+        # Empty frames must still expose metadata used by validation splitting.
         empty = pd.DataFrame(
             {
                 "symbol": pd.Series(dtype=str),
@@ -391,18 +391,23 @@ class TestRunLogHandlerLifecycle:
         )
         monkeypatch.setattr(
             Pipeline_Orchestrator,
-            "_run_phase1",
-            lambda self, train_df, **_kw: {"long": [], "short": []},
+            "_build_rule_feature_catalog",
+            lambda self, train_df: [],
         )
         monkeypatch.setattr(
             Pipeline_Orchestrator,
-            "_prune_train_df_after_phase1",
-            lambda self, train_df, phase1_result: train_df,
+            "_prune_splits_to_rule_features",
+            lambda self, train_df, val_df, feature_specs: (train_df, val_df),
+        )
+        monkeypatch.setattr(
+            Pipeline_Orchestrator,
+            "_prune_cv_folds_to_rule_features",
+            lambda self, cv_folds, feature_specs: cv_folds,
         )
         monkeypatch.setattr(
             Pipeline_Orchestrator,
             "_run_phase2",
-            lambda self, train_df, phase1_result, **_kw: {
+            lambda self, train_df, feature_specs, **_kw: {
                 "long": [], "short": []},
         )
         monkeypatch.setattr(

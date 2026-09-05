@@ -71,24 +71,6 @@ def _write_rule_set(path: str, direction: str = "long", n_rules: int = 2) -> Non
         json.dump(_make_rule_set(direction, n_rules), fh)
 
 
-def _write_selected_features(path: str, direction: str = "long", n_features: int = 2) -> None:
-    """Write a valid selected-features JSON to path."""
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    data = {
-        "direction": direction,
-        "features": [
-            {
-                "name": f"feat_{i}",
-                "mode": "binary",
-                "score": float(n_features - i),
-            }
-            for i in range(n_features)
-        ],
-    }
-    with open(path, "w") as fh:
-        json.dump(data, fh)
-
-
 def _make_df(
     n_rows: int = 200,
     symbols: list[str] | None = None,
@@ -150,6 +132,22 @@ def _make_metadata_tape(
             "symbol": symbol,
         }))
     return pd.concat(parts, ignore_index=True)
+
+
+def test_phase5_rule_feature_metadata_comes_from_frozen_rules() -> None:
+    train_df = _make_df(n_rows=20)
+    strategy = {
+        "rules_set": [{
+            "conditions": [
+                "[feat_1] IS High",
+                *_cfg.mandatory_context_conditions("long"),
+            ],
+        }],
+    }
+
+    assert OOS_Evaluator._rule_feature_specs(train_df, strategy) == [
+        {"name": "feat_1", "mode": "positive"},
+    ]
 
 
 class TestForwardMetadataValidation:
@@ -1164,10 +1162,6 @@ class TestOOSEvaluatorRun:
             OOS_Evaluator,
             "_evaluate_strategy",
             mock_evaluate,
-        ), patch.object(
-            OOS_Evaluator,
-            "_load_selected_features",
-            return_value=[],
         ), patch(
             "gpu_fuzzy_trader.phases.phase5_oos.Reporter"
         ) as reporter_cls:
@@ -1201,16 +1195,9 @@ class TestOOSEvaluatorRun:
         import gpu_fuzzy_trader.reporting.reporter as reporter_module
 
         orig_s, orig_r = self._setup_paths(m, tmp_path, directions=("long",))
-        orig_features = m._FEATURE_PATHS.copy()
         orig_reports_dir = reporter_module._REPORTS_DIR
         csv_path = _write_synthetic_test_csv(tmp_path)
 
-        m._FEATURE_PATHS["long"] = str(
-            tmp_path / "selected_features_long.json")
-        m._FEATURE_PATHS["short"] = str(
-            tmp_path / "selected_features_short.json")
-        _write_selected_features(m._FEATURE_PATHS["long"], "long")
-        _write_selected_features(m._FEATURE_PATHS["short"], "short")
         reporter_module._REPORTS_DIR = str(tmp_path / "reports")
 
         try:
@@ -1232,7 +1219,6 @@ class TestOOSEvaluatorRun:
             for path in expected_paths:
                 assert os.path.exists(path), f"Missing expected report: {path}"
         finally:
-            m._FEATURE_PATHS.update(orig_features)
             reporter_module._REPORTS_DIR = orig_reports_dir
             self._restore_paths(m, orig_s, orig_r)
 
@@ -1398,10 +1384,6 @@ class TestEquityCurvePlots:
             OOS_Evaluator,
             "_evaluate_strategy",
             mock_evaluate,
-        ), patch.object(
-            OOS_Evaluator,
-            "_load_selected_features",
-            return_value=[],
         ), patch(
             "gpu_fuzzy_trader.phases.phase5_oos.Reporter"
         ) as reporter_cls:

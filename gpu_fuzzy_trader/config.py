@@ -7,7 +7,7 @@ File layout
 -----------
   1. Global randomness (``GLOBAL_SEED``, ``get_seed``)
   2. Phase 0 — paths, schema, train/val split (holdout+embargo), backtest, logging
-  3. Phase 1 — feature selection + GPU row budget (Phase 1→2 bridge)
+  3. Rule-feature catalog + Phase 2 GPU row budget
   4. Phase 2 — rule evolution (NSGA-III): risk, genome, gates
   5. RB Governor — unified rule selection + risk tuning
   6. Monthly windows — shared validation penalties
@@ -18,7 +18,7 @@ File layout
 Pipeline phases
 ---------------
   Phase 0  Paths, schema, train/val split (holdout+embargo), backtest constants
-  Phase 1  Feature selection (train_new.csv only)
+  Catalog  Deterministic train-only rule-feature catalog
   Phase 2  NSGA-III rule-pool evolution (GPU backtests)
   RB       Rule-team selection + walk-forward TP/SL/capital optimization
   Phase 5  Test diagnostics; optional FORWARD_CSV_PATH acceptance
@@ -29,7 +29,7 @@ defined by the read-only evaluator_v5.ipynb notebook.
 Tuning cheat-sheet (symptom → knob)
 -----------------------------------
   Short OOS / overfitting          RB_* gates, PHASE2_JOINT_TRAIN_VAL
-  GPU OOM                          PHASE1_SAMPLING_TOTAL ↓, PHASE2_GPU_BATCH_SIZE ↓,
+  GPU OOM                          PHASE2_SAMPLING_TOTAL ↓, PHASE2_GPU_BATCH_SIZE ↓,
                                    PHASE2_SCAN_UNROLL ↓
   Phase 2 too slow                 PHASE2_GENERATIONS ↓, PHASE2_USE_GPU
   Empty Phase 2 pool               MIN_TRADE_SUPPORT ↓, PHASE2_*_FLOOR ↓
@@ -230,7 +230,32 @@ INTERNAL_COLUMNS = ("_symbol_bar_index",)
 # Raw OHLCV price levels are not fuzzy indicators: evaluator-v5's fixed
 # ``[-1, 1]`` condition thresholds would turn them into permanent signals.
 # The replacement data provides the bounded ``ff_*`` features for rule search.
-PHASE1_EXCLUDE_RAW_OHLCV = True
+
+# RULE_ALLOWED_FF_FEATURES — the fixed supplied feature contract.  The raw
+# train/test tapes and rule discovery must expose only this ff_* set.
+# MTF context features (for example lwc_*) are a separate runtime contract.
+RULE_ALLOWED_FF_FEATURES: tuple[str, ...] = (
+    "ff_donchian_width_20",
+    "ff_ema_spread_21_55",
+    "ff_relative_volume_20",
+    "ff_volume_regime_20",
+    "ff_bollinger_width_20",
+    "ff_volume_oscillator_5_20",
+    "ff_ema_stack_8_21_55",
+    "ff_volume_trailing_rank_50",
+    "ff_kama_distance_10",
+    "ff_roc_16",
+    "ff_ema_spread_8_21",
+    "ff_support_distance_20",
+    "ff_cvd_proxy_10",
+    "ff_rsi_7_level",
+    "ff_channel_midpoint_bias_20",
+    "ff_price_vs_ema_20",
+    "ff_rsi_14_midline_cross",
+    "ff_roc_8",
+)
+
+RULE_EXCLUDE_RAW_OHLCV = True
 
 # FILL_NA_WITH_ZERO — whether Data_Loader fills NaN feature values with 0.
 # Defaults to False so unavailable warmup periods are preserved as NaN and not
@@ -440,7 +465,7 @@ CONTEXT_TRIGGER_COLUMNS: tuple[str, str] = (
     "lwc_pullback_reversal_long",
     "lwc_pullback_reversal_short",
 )
-# All context columns, kept out of ordinary Phase 1 / NSGA feature inference.
+# All context columns, kept out of the rule-feature catalog and NSGA genes.
 CONTEXT_COLUMNS: tuple[str, ...] = (
     "hwc_state",
     "mwc_state",
@@ -640,90 +665,23 @@ def context_contract_digest() -> str:
 
 
 # =============================================================================
-# Phase 1 — Feature selection (train_new.csv only)
+# Rule-feature catalog (train_new.csv only)
 # =============================================================================
 
-# --- Ranking & shortlist ---
-
-# PHASE1_DISPERSION_THRESHOLD — drop features whose mode value exceeds this freq.
+# RULE_DISPERSION_THRESHOLD — drop features whose mode value exceeds this freq.
 #   Higher (→1.0) → keep near-constant columns; noisier Phase 2 gene space.
 #   Lower (→0.5)  → aggressive pruning; may drop weak but real signals.
-PHASE1_DISPERSION_THRESHOLD = 0.95
-
-# PHASE1_TOP_K_FEATURES — shortlist size per direction (long / short).
-#   Higher → wider Phase 2 search space, slower evolution, more combinations.
-#   Lower  → faster search, risk of missing predictive features.
-PHASE1_TOP_K_FEATURES = 20
-
-# PHASE1_DISABLED — bypass MI ranking, sign-consistency, stationarity, and top-K
-# selection. When True, Feature_Selector.run returns ALL features that pass the
-# dispersion filter (PHASE1_DISPERSION_THRESHOLD) for both directions, with modes
-# detected by Feature_Detector. Phase 2 then evolves over the full feature set.
-#   True  → larger GA search space, more GPU RAM per chromosome, no MI prefilter.
-#   False → normal top-K MI-ranked selection (PHASE1_TOP_K_FEATURES=20).
-# Current default: run the train-only sign, stationarity, redundancy, and MI
-# filters before Phase 2.  The bypass remains available for explicit ablations.
-PHASE1_DISABLED: bool = False
-
-# PHASE1_MAX_FEATURE_OVERLAP — max shared feature names between long & short lists.
-#   Enforced as int(TOP_K × overlap) shared names (e.g. 25 × 0.8 → 20 shared).
-#   Higher → more shared features across directions; smaller combined gene space.
-#   Lower  → more direction-specific lists; better asymmetry, less redundancy.
-PHASE1_MAX_FEATURE_OVERLAP = 0.8
-
-# PHASE1_ASYMMETRIC_TARGET — separate MI targets for long vs short.
-#   True  → direction-specific feature rankings (recommended).
-#   False → shared target; long/short pools share more structure.
-PHASE1_ASYMMETRIC_TARGET = True
-
-# PHASE1_USE_EXACT_BARRIER — use exact first-touch barrier outcomes for Phase 1 target.
-#   True  → check exact barrier columns (_barrier_{direction}_tp_{tp}_{sl}_return_pct)
-#           matching PHASE2_TP / PHASE2_SL to avoid max_before_min both-hit mislabeling.
-#   False → fallback to legacy label_max_before_min heuristic.
-PHASE1_USE_EXACT_BARRIER: bool = True
-# --- Sign consistency across stationarity folds ---
-
-# PHASE1_REQUIRE_SIGN_CONSISTENCY — drop features whose Spearman sign flips.
-#   True  → fewer unstable features; stricter shortlist.
-#   False → keep flip-flopping features; more noise in Phase 2.
-PHASE1_REQUIRE_SIGN_CONSISTENCY: bool = True
-
-# PHASE1_SIGN_CONSISTENCY_MIN_FOLDS — folds that must agree on correlation sign.
-#   Higher → stricter; features must be stable across more sub-periods.
-#   Lower  → more features pass; must be ≤ PHASE1_STATIONARITY_FOLDS.
-PHASE1_SIGN_CONSISTENCY_MIN_FOLDS: int = 4
-
-# PHASE1_SIGN_CONSISTENCY_MIN_ABS_CORR — ignore sign flips below this |ρ|.
-#   Higher → only strong correlations must be consistent; more features kept.
-#   Lower  → even weak correlations must be stable; stricter pruning.
-PHASE1_SIGN_CONSISTENCY_MIN_ABS_CORR: float = 0.03
-
-# --- Stationarity (reduce time-varying features) ---
-
-# PHASE1_STATIONARITY_FOLDS — chronological chunks for stability tests.
-#   Higher → more robust stationarity check, fewer features pass.
-#   Lower  → faster, looser stationarity filter.
-PHASE1_STATIONARITY_FOLDS = 5
-
-# PHASE1_STATIONARITY_CV_MAX — max coefficient-of-variation across fold MI ranks.
-#   Higher → allow more rank instability; keep more features.
-#   Lower  → drop features whose importance swings across folds.
-PHASE1_STATIONARITY_CV_MAX = 1.0
-
-# PHASE1_STATIONARITY_RANK_DRIFT_MAX — max allowed rank change between folds.
-#   Higher → tolerate large rank jumps; more features survive.
-#   Lower  → only consistently top-ranked features kept.
-PHASE1_STATIONARITY_RANK_DRIFT_MAX = 8
+RULE_DISPERSION_THRESHOLD = 0.95
 
 # =============================================================================
-# Phase 1 → Phase 2 bridge — GPU row budget & JAX performance
+# Phase 2 GPU row budget and JAX performance
 # =============================================================================
 
-# PHASE1_SAMPLING_TOTAL — max rows subsampled for Phase 2 GPU backtests.
+# PHASE2_SAMPLING_TOTAL — max rows subsampled for Phase 2 GPU backtests.
 # Peak GPU RAM scales ~linearly with this value (largest VRAM lever).
 #   Higher → more statistical power, slower, OOM risk on small GPUs.
 #   Lower  → faster, less RAM; trade/support floors may need proportional cut.
-PHASE1_SAMPLING_TOTAL = 701_000
+PHASE2_SAMPLING_TOTAL = 701_000
 
 # PHASE2_PER_EPOCH_WINDOW_ROTATION — rotate train-window start per epoch
 #   True  → each epoch samples a different contiguous sub-window from the
@@ -854,9 +812,9 @@ PHASE2_GPU_EVENT_MAX_EVENTS = 4096
 # Phase 2 — Fixed risk during rule search (RB tunes TP/SL/capital later)
 # =============================================================================
 
-# PHASE2_TP — take-profit % used when scoring rules in Phase 2 (and Phase 1 targets).
-#   Higher → fewer "wins" in labels/objectives; rules must catch larger moves.
-#   Lower  → more wins, higher turnover, may favor noisy frequent signals.
+# PHASE2_TP — take-profit % used when scoring rules in Phase 2.
+#   Higher → fewer profitable trades; rules must catch larger moves.
+#   Lower  → more profitable trades, higher turnover, may favor noisy signals.
 PHASE2_TP = 2.0
 
 # PHASE2_SL — stop-loss % during Phase 2 scoring.
@@ -1633,7 +1591,7 @@ PHASE2_USE_GPU = True
 PHASE2_NUMBA_ENABLED = True
 
 # PHASE2_INIT_STRATEGY — initial population construction.
-#   "stratified_sparse" → biased toward valid condition counts (recommended).
+#   "stratified_sparse" → samples valid sparse condition counts (recommended).
 #   "legacy"            → older uniform random init.
 PHASE2_INIT_STRATEGY = "stratified_sparse"
 
@@ -1641,18 +1599,6 @@ PHASE2_INIT_STRATEGY = "stratified_sparse"
 #   Shift toward first fraction → more random sparse rules.
 #   Shift toward second → more archive-biased / structured seeds.
 PHASE2_INIT_STRATUM_FRACTIONS = (0.4, 0.6)
-
-# PHASE2_INIT_SOFTMAX_TEMP — temperature for weighted feature activation in init.
-#   Higher → more uniform random feature picks.
-#   Lower  → strongly favor high-MI features in initial conditions.
-PHASE2_INIT_SOFTMAX_TEMP = 2.0
-
-PHASE2_INIT_SCORE_EPS = 1e-6
-
-# PHASE2_INIT_UNIFORM_MIX — probability of uniform random gene vs structured init.
-#   Higher → more random chromosomes in initial population.
-#   Lower  → more MI-guided structured rules at gen 0.
-PHASE2_INIT_UNIFORM_MIX = 0.1
 
 # PHASE2_MUTATION_RATE — per-gene mutation probability.
 #   Higher → more exploration, noisier convergence, better escape local optima.
@@ -2361,7 +2307,7 @@ def _scale_count_gate_from_rows(
 def _effective_reference_rows(reference_rows: int | None) -> int:
     """Return the default full Phase 2 exposure for a row-count gate."""
     if reference_rows is None:
-        return int(PHASE1_SAMPLING_TOTAL)
+        return int(PHASE2_SAMPLING_TOTAL)
     return int(reference_rows)
 
 
@@ -2744,15 +2690,19 @@ def validate_config(
     _config_check(min_notional > 0.0,
                   "MIN_POSITION_NOTIONAL must be positive")
 
-    _config_check(int(PHASE1_TOP_K_FEATURES) >= int(MAX_CONDITIONS),
-                  "PHASE1_TOP_K_FEATURES must cover MAX_CONDITIONS")
-    _config_check(0.0 < float(PHASE1_MAX_FEATURE_OVERLAP) <= 1.0,
-                  "PHASE1_MAX_FEATURE_OVERLAP must be in (0, 1]")
-    _config_check(1 <= int(PHASE1_SIGN_CONSISTENCY_MIN_FOLDS)
-                  <= int(PHASE1_STATIONARITY_FOLDS),
-                  "Phase 1 sign-consistency folds must fit stationarity folds")
-    _config_check(int(PHASE1_SAMPLING_TOTAL) > 0,
-                  "PHASE1_SAMPLING_TOTAL must be positive")
+    _config_check(
+        len(RULE_ALLOWED_FF_FEATURES) == 18
+        and len(set(RULE_ALLOWED_FF_FEATURES)) == 18
+        and all(
+            isinstance(name, str) and name.startswith("ff_")
+            for name in RULE_ALLOWED_FF_FEATURES
+        ),
+        "RULE_ALLOWED_FF_FEATURES must contain 18 unique ff_* names",
+    )
+    _config_check(0.0 <= float(RULE_DISPERSION_THRESHOLD) < 1.0,
+                  "RULE_DISPERSION_THRESHOLD must be in [0, 1)")
+    _config_check(int(PHASE2_SAMPLING_TOTAL) > 0,
+                  "PHASE2_SAMPLING_TOTAL must be positive")
     _config_check(int(PHASE2_VAL_SIM_INTERVAL) >= 1,
                   "PHASE2_VAL_SIM_INTERVAL must be positive")
 
@@ -3075,7 +3025,7 @@ def validate_config(
 
     if n_rows is not None:
         _config_check(int(n_rows) > 0, "n_rows must be positive")
-    estimated_rows = int(PHASE1_SAMPLING_TOTAL)
+    estimated_rows = int(PHASE2_SAMPLING_TOTAL)
     if n_rows is not None:
         estimated_rows = min(estimated_rows, int(n_rows))
     if n_symbols is not None:
@@ -3097,7 +3047,7 @@ def effective_config_snapshot(
     """Return resolved values and derived constraints for audit/reporting."""
 
     validate_config(n_rows=n_rows, n_symbols=n_symbols)
-    estimated_rows = int(PHASE1_SAMPLING_TOTAL)
+    estimated_rows = int(PHASE2_SAMPLING_TOTAL)
     if n_rows is not None:
         estimated_rows = min(estimated_rows, int(n_rows))
     if n_symbols is not None:
@@ -3154,6 +3104,12 @@ def effective_config_snapshot(
             "report_bootstrap_block_length": int(REPORT_BOOTSTRAP_BLOCK_LENGTH),
         },
         "context": context_contract(),
+        "rule_features": {
+            "allowed_ff_features": list(RULE_ALLOWED_FF_FEATURES),
+            "allowed_ff_feature_count": len(RULE_ALLOWED_FF_FEATURES),
+            "exclude_raw_ohlcv": bool(RULE_EXCLUDE_RAW_OHLCV),
+            "dispersion_threshold": float(RULE_DISPERSION_THRESHOLD),
+        },
         "mtf": {
             "max_folds": int(MTF_MAX_FOLDS),
             "min_folds": int(MTF_MIN_FOLDS),
@@ -3186,7 +3142,7 @@ def effective_config_snapshot(
             "stage_a_generations": int(PHASE2_STAGE_A_GENERATIONS),
             "stage_b_generations": int(PHASE2_STAGE_B_GENERATIONS),
             "two_stage_enabled": bool(PHASE2_TWO_STAGE_ENABLED),
-            "sampling_total": int(PHASE1_SAMPLING_TOTAL),
+            "sampling_total": int(PHASE2_SAMPLING_TOTAL),
             "estimated_effective_rows": estimated_rows,
             "min_trade_support": int(MIN_TRADE_SUPPORT),
             "min_trade_pool_floor": int(MIN_TRADE_POOL_FLOOR),
@@ -3204,7 +3160,6 @@ def effective_config_snapshot(
             "symbol_gene_dont_care_prob": float(PHASE2_SYMBOL_GENE_DONT_CARE_PROB),
             "expectancy_lcb_z": float(PHASE2_EXPECTANCY_LCB_Z),
             "expected_shortfall_q": float(PHASE2_EXPECTED_SHORTFALL_Q),
-            "phase1_disabled": bool(PHASE1_DISABLED),
             "monthly_min_trades": int(PHASE2_MONTHLY_MIN_TRADES),
             "monthly_min_active_ratio": float(PHASE2_MONTHLY_MIN_ACTIVE_RATIO),
             "monthly_max_bearish_ratio": float(PHASE2_MONTHLY_MAX_BEARISH_RATIO),

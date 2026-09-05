@@ -25,8 +25,11 @@ def test_search_space_contains_only_live_active_config_keys() -> None:
         assert not key.startswith("test_")
 
 
-def test_disabled_phase1_parameter_is_not_sampled() -> None:
-    assert "PHASE1_TOP_K_FEATURES" not in search._active_search_space()
+def test_rule_catalog_parameters_are_not_sampled() -> None:
+    assert not any(
+        name.startswith("RULE_")
+        for name in search._active_search_space()
+    )
 
 
 def test_trial_sampling_derives_coherent_stage_budgets() -> None:

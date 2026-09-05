@@ -793,13 +793,13 @@ class Reporter:
     def write_spearman_correlation_report(
         self,
         datasets_by_split: dict,
-        selected_features: list,
+        rule_features: list,
         direction: str,
         output_dir: str | None = None,
     ) -> str:
         """Write a Spearman correlation report between each feature and forward returns.
 
-        For each selected feature, computes the Spearman correlation with
+        For each frozen rule feature, computes the Spearman correlation with
         ``label_close_288`` independently on each split (train, validation,
         test) after dropping NaN-paired rows.
 
@@ -808,7 +808,7 @@ class Reporter:
         datasets_by_split:
             Dict with keys ``"train"``, ``"validation"``, ``"test"`` mapping
             to ``pd.DataFrame | None``.
-        selected_features:
+        rule_features:
             List of dicts with at least a ``"name"`` key identifying the
             feature column name.
         direction:
@@ -848,7 +848,7 @@ class Reporter:
 
         # Step 4 — Compute Spearman correlation for each feature × split
         rows = []
-        for feat in selected_features:
+        for feat in rule_features:
             feat_name = feat["name"]
             corr_values: dict[str, float] = {}
 
@@ -1090,14 +1090,14 @@ class Reporter:
         self,
         trade_logs_by_split: dict,
         rule_set: list,
-        selected_features: list,
+        rule_features: list,
         datasets_by_split: dict,
         direction: str,
         output_dir: str | None = None,
     ) -> list[str]:
         """Write feature-stratified performance metrics to CSV files (one per split).
 
-        For each split, for each selected feature, for each unique fuzzy value
+        For each split, for each frozen rule feature, for each unique fuzzy value
         in that feature's column, computes performance metrics for the subset
         of trades whose entry candle has that fuzzy value.
 
@@ -1112,7 +1112,7 @@ class Reporter:
             to ``pd.DataFrame | None``.
         rule_set:
             List of rule dicts (used for context; not directly used in computation).
-        selected_features:
+        rule_features:
             List of dicts with at least a ``"name"`` key identifying the
             feature column name and a ``"mode"`` key (positive/signed/...).
         datasets_by_split:
@@ -1199,7 +1199,7 @@ class Reporter:
 
             # Step 5 — Iterate over features
             rows: list[dict] = []
-            for feat in selected_features:
+            for feat in rule_features:
                 feat_name = feat["name"]
                 feat_mode = feat.get("mode", "positive")
 
@@ -1295,7 +1295,7 @@ class Reporter:
     def write_generalization_diagnostics(
         self,
         metrics_by_split: dict,
-        selected_features: list,
+        rule_features: list,
         datasets_by_split: dict,
         direction: str,
         output_dir: str | None = None,
@@ -1306,7 +1306,7 @@ class Reporter:
           - split-level return/profit-factor/trade summaries
           - return decay and sign-flip checks across splits
           - per-split symbol concentration (HHI + top symbol share)
-          - feature-bucket concentration for selected features
+          - feature-bucket concentration for frozen rule features
         """
         reports_dir = output_dir if output_dir is not None else _REPORTS_DIR
         out_path = os.path.join(
@@ -1377,7 +1377,7 @@ class Reporter:
                 feature_concentration[split] = {}
                 continue
             split_fc: dict[str, dict[str, float | str | int]] = {}
-            for feat in selected_features:
+            for feat in rule_features:
                 feat_name = feat.get("name")
                 feat_mode = feat.get("mode", "positive")
                 if not feat_name or feat_name not in ds.columns:

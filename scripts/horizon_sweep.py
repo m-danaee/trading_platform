@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run a train-only Phase 1 plus single-feature horizon diagnostic.
+"""Run a train-only rule-feature catalog plus single-feature horizon diagnostic.
 
 This is a research harness.  It changes the in-process horizon contract for
 one run, rebuilds labels and exact barriers from raw OHLCV, and writes one
@@ -38,8 +38,7 @@ from gpu_fuzzy_trader.features.fuzzy_scaling import (
     apply_fuzzy_feature_scaling,
     fit_fuzzy_feature_scaling,
 )
-from gpu_fuzzy_trader.features.selector import Feature_Selector
-from gpu_fuzzy_trader.features import selector as selector_module
+from gpu_fuzzy_trader.features.catalog import build_rule_feature_specs
 
 
 LOGGER = logging.getLogger("horizon_sweep")
@@ -68,30 +67,10 @@ def _configure_horizon(horizon: int, output_dir: Path) -> None:
     labels_module.TAIL_DROP_ROWS = horizon
     loader_module.TAIL_DROP_ROWS = horizon
 
-    # Phase 1 persists a diagnostic artifact.  Keep it below this horizon's
-    # directory instead of touching the user's existing outputs.
-    selector_module._LONG_PATH = str(output_dir / "selected_features_long.json")
-    selector_module._SHORT_PATH = str(output_dir / "selected_features_short.json")
-    selector_module._DIRECTION_PATHS = {
-        "long": selector_module._LONG_PATH,
-        "short": selector_module._SHORT_PATH,
-    }
-
-
 def _split_frame(frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Build the current 65/35 holdout without persisting shared artifacts."""
     train, validation = _holdout_embargo_split(frame)
     return train.reset_index(drop=True), validation.reset_index(drop=True)
-
-
-def _feature_columns(frame: pd.DataFrame) -> list[str]:
-    """Return the rule-facing feature columns supplied by the raw tape."""
-    return [
-        str(column)
-        for column in frame.columns
-        if str(column).startswith("ff_")
-        and pd.api.types.is_numeric_dtype(frame[column])
-    ]
 
 
 def _label_balance(
@@ -185,39 +164,15 @@ def _state_records(
     return records
 
 
-def _best_key(record: dict) -> tuple[float, float, int, float]:
-    """Select by train return, then PF, then support, then lower drawdown."""
-    return (
-        float(record["train"]["total_return_pct"]),
-        float(record["train"]["profit_factor"]),
-        int(record["train"]["executed_trades"]),
-        -float(record["train"]["max_drawdown_pct"]),
-    )
-
-
-def _best_pf_key(record: dict) -> tuple[float, float, int, float]:
-    """Return a support-aware PF key for a secondary diagnostic winner."""
-    train = record["train"]
-    support = int(train["executed_trades"])
-    if support < 10:
-        return (-float("inf"), -float("inf"), support, 0.0)
-    return (
-        float(train["profit_factor"]),
-        float(train["total_return_pct"]),
-        support,
-        -float(train["max_drawdown_pct"]),
-    )
-
-
 def _evaluate_direction(
     frames: dict[str, pd.DataFrame],
-    selected: list[dict],
+    feature_specs: list[dict],
     direction: str,
     horizon: int,
 ) -> dict:
-    """Evaluate selected features and choose the winner on train only."""
+    """Evaluate every catalog feature state without ranking or selection."""
     candidates: list[dict] = []
-    for feature in selected:
+    for feature in feature_specs:
         name = str(feature["name"])
         state_rows: dict[str, dict] = {}
         for split_name, frame in frames.items():
@@ -244,25 +199,17 @@ def _evaluate_direction(
     if not candidates:
         return {
             "direction": direction,
-            "selected_feature_count": len(selected),
+            "rule_feature_count": len(feature_specs),
             "candidates": 0,
             "status": "no_evaluable_feature_states",
         }
 
-    winner = max(candidates, key=_best_key)
-    pf_winner = max(candidates, key=_best_pf_key)
-    # Retain a small train-ranked table.  It makes a single winner less
-    # misleading and still keeps the report easy to inspect.
-    train_ranked = sorted(candidates, key=_best_key, reverse=True)[:10]
-
     return {
         "direction": direction,
-        "selected_feature_count": len(selected),
-        "candidates": len(candidates),
-        "selection_rule": "highest train total_return_pct, then train PF, trades, lower DD",
-        "best_by_train_return": winner,
-        "best_by_train_pf_min10_trades": pf_winner,
-        "train_ranked": train_ranked,
+        "rule_feature_count": len(feature_specs),
+        "feature_state_count": len(candidates),
+        "feature_states": candidates,
+        "status": "reported",
     }
 
 
@@ -295,23 +242,22 @@ def run_horizon(horizon: int, root: Path, train_path: Path, test_path: Path) -> 
         apply_fuzzy_feature_scaling(frame, scaling)
 
     LOGGER.info(
-        "H=%d: rows train=%d validation=%d test=%d; running train-only Phase 1",
+        "H=%d: rows train=%d validation=%d test=%d; building rule catalog",
         horizon, len(train), len(validation), len(test),
     )
-    phase1 = Feature_Selector().run(train, val_df=None)
+    feature_specs = build_rule_feature_specs(train)
     frames = {"train": train, "validation": validation, "test": test}
 
     direction_reports: dict[str, dict] = {}
     for direction in ("long", "short"):
-        selected = phase1.get(direction, [])
         direction_reports[direction] = _evaluate_direction(
-            frames, selected, direction, int(horizon),
+            frames, feature_specs, direction, int(horizon),
         )
         LOGGER.info(
             "H=%d %s: evaluated %d single-feature states",
             horizon,
             direction,
-            direction_reports[direction].get("candidates", 0),
+            direction_reports[direction].get("feature_state_count", 0),
         )
 
     report = {
@@ -324,7 +270,8 @@ def run_horizon(horizon: int, root: Path, train_path: Path, test_path: Path) -> 
             "holdout_train_fraction": float(cfg.HOLDOUT_TRAIN_FRACTION),
             "embargo_candles": int(cfg.HOLDOUT_EMBARGO_CANDLES),
             "validation_is_full_post_embargo": True,
-            "phase1_uses_validation": False,
+            "rule_catalog_uses_validation": False,
+            "rule_catalog_uses_target_ranking": False,
             "phase2_run": False,
             "tp_pct": TP,
             "sl_pct": SL,
@@ -347,10 +294,7 @@ def run_horizon(horizon: int, root: Path, train_path: Path, test_path: Path) -> 
             }
             for direction in ("long", "short")
         },
-        "phase1": {
-            direction: [dict(item) for item in phase1.get(direction, [])]
-            for direction in ("long", "short")
-        },
+        "rule_features": [dict(item) for item in feature_specs],
         "directions": direction_reports,
         "elapsed_seconds": float(time.monotonic() - started),
     }
@@ -363,28 +307,12 @@ def run_horizon(horizon: int, root: Path, train_path: Path, test_path: Path) -> 
 
 def _compact_row(report: dict, direction: str) -> dict:
     direction_report = report.get("directions", {}).get(direction, {})
-    winner = direction_report.get("best_by_train_return")
-    if not winner:
-        return {
-            "horizon": report.get("horizon_candles"),
-            "direction": direction,
-            "status": direction_report.get("status", "unknown"),
-        }
     return {
-        "horizon": report["horizon_candles"],
+        "horizon": report.get("horizon_candles"),
         "direction": direction,
-        "feature": winner["feature"],
-        "mode": winner["mode"],
-        "condition": winner["condition"],
-        "train_return_pct": winner["train"]["total_return_pct"],
-        "train_pf": winner["train"]["profit_factor"],
-        "train_trades": winner["train"]["executed_trades"],
-        "validation_return_pct": winner["validation"]["total_return_pct"],
-        "validation_pf": winner["validation"]["profit_factor"],
-        "validation_trades": winner["validation"]["executed_trades"],
-        "test_return_pct": winner["test"]["total_return_pct"],
-        "test_pf": winner["test"]["profit_factor"],
-        "test_trades": winner["test"]["executed_trades"],
+        "rule_feature_count": direction_report.get("rule_feature_count", 0),
+        "feature_state_count": direction_report.get("feature_state_count", 0),
+        "status": direction_report.get("status", "unknown"),
     }
 
 

@@ -35,7 +35,7 @@ def _resolve_reference_rows(
         island_rows = int(getattr(island_hyperparams, "n_rows", 0))
         if island_rows > 0:
             return island_rows
-    return max(1, int(_cfg.PHASE1_SAMPLING_TOTAL))
+    return max(1, int(_cfg.PHASE2_SAMPLING_TOTAL))
 
 
 @lru_cache(maxsize=32)

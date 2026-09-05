@@ -3197,7 +3197,7 @@ class TestIslandAwareTradeFloor:
         }
 
         # With no island, the 500-row slice scales the 25-trade floor against
-        # the configured Phase 1 reference exposure.  The absolute floor is
+        # the configured Phase 2 reference exposure. The absolute floor is
         # five, so 20 trades no longer trigger the low-count penalty.
         objectives, _ = compute_phase2_objectives_from_metrics(
             chrom, dont_cares, metrics, [],
@@ -3908,7 +3908,7 @@ def test_finalize_island_passes_full_admission_context(
         fake_evolution,
     )
     monkeypatch.setattr(
-        "gpu_fuzzy_trader.phases.phase2_init.build_feature_sampling_probs",
+        "gpu_fuzzy_trader.phases.phase2_init.build_uniform_feature_probs",
         lambda feature_infos: {},
     )
     monkeypatch.setattr(

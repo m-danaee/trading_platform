@@ -1,14 +1,14 @@
 {
   "artifact_sha256": {
-    "train": "50d8b170eee6d4f961d679f829985aab99388ec92e44e5fd24c12c53a29e31bb",
-    "validation": "6cd541f7831a1beb9167d90bd4a7bda0f64e0f5603001a1fd00ff51540718a2d",
-    "validation_fitness": "f1b5d8ccac945eed9d2d063268606974e5a9abcf3cae4d19a5483322e0289004",
-    "validation_selection": "e191ffe6d3bf7ca2893906bd1adaa1a3cbc1af3c0d1158cad74835885ddbce09"
+    "train": "85acc3b0e192e42768a08753b8653399faa7f7735d5eedbc790b91aa3b6df573",
+    "validation": "efa011a890f8e38e7397bee1c3c57fdb08842595cc37066aee53e174b0bb5fe5",
+    "validation_fitness": "f11b36a6922ee48de32649e01b29c1a6c1779b0a655c0f3e995124f083124bcc",
+    "validation_selection": "18056dfa42f75cae931c1873bed2d9f380dbcc26ef50410701c7f39e0e28623d"
   },
   "embargo_candles": 96,
   "holdout_train_fraction": 0.65,
   "purge_candles": 96,
   "reference_rows": 140160,
   "schema_version": 1,
-  "source_sha256": "2345051b9313fb7bc0e74b2ea50c82d7c047110ec912357a439f6aaa963d6f82"
+  "source_sha256": "b1e1b8b29000dee8d6e1142685feee03577440796e44d87296a3b5c3dc65ce48"
 }

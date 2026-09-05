@@ -137,13 +137,13 @@ def test_context_coverage_preflight_stops_zero_direction_before_phase2(
     orch._load_and_split_data = MagicMock(return_value=(frame, frame))
     orch._validate_active_configuration = MagicMock()
     orch._validation_scoring_frames = MagicMock(return_value=(frame, frame))
-    orch._run_phase1 = MagicMock()
+    orch._build_rule_feature_catalog = MagicMock()
     orch._run_phase2 = MagicMock()
 
     with pytest.raises(RuntimeError, match="validation_fitness/short"):
         orch.run(force=True)
 
-    orch._run_phase1.assert_not_called()
+    orch._build_rule_feature_catalog.assert_not_called()
     orch._run_phase2.assert_not_called()
 
 
@@ -209,20 +209,23 @@ def test_context_preflight_blocks_only_unsupported_direction(monkeypatch) -> Non
     assert report["direction_failures"]["short"] == []
 
 
-def test_phase2_skips_context_blocked_direction(tmp_path) -> None:
+def test_phase2_skips_context_blocked_directions(tmp_path) -> None:
     frame = _context_frame(rows=200)
     orchestrator = Pipeline_Orchestrator(output_dir=str(tmp_path))
 
     pools = orchestrator._run_phase2(
         frame,
-        {"long": [{"phase2_rule_id": "blocked"}], "short": []},
+        [{"name": "feature", "mode": "positive"}],
         force=True,
         val_df=frame,
-        blocked_directions=frozenset({"long"}),
+        blocked_directions=frozenset({"long", "short"}),
     )
 
     assert pools == {"long": [], "short": []}
     assert orchestrator._phase2_status["long"]["reason"] == (
+        "context_support_preflight"
+    )
+    assert orchestrator._phase2_status["short"]["reason"] == (
         "context_support_preflight"
     )
 
@@ -274,7 +277,7 @@ def test_phase2_regenerates_legacy_pool_before_generator_can_merge_it(
     with pipeline._temporary_output_paths(str(tmp_path)):
         pools = orch._run_phase2(
             frame,
-            {"long": [{"name": "feature", "mode": "positive"}], "short": []},
+            [{"name": "feature", "mode": "positive"}],
             force=False,
             val_df=frame,
         )
@@ -300,58 +303,22 @@ def test_full_run_cleanup_removes_phase2_resume_sidecars(tmp_path) -> None:
     assert all(not path.exists() for path in sidecars)
 
 
-def test_standalone_phase1_loader_rejects_unproven_artifacts(tmp_path) -> None:
-    """A disk artifact is not a Phase 2 prerequisite without current inputs."""
-    stale = _frame()
-    stale.loc[0, "feature"] += 1.0
-    orch = Pipeline_Orchestrator(output_dir=str(tmp_path))
+def test_rule_catalog_ignores_legacy_feature_artifacts(tmp_path) -> None:
+    """Old feature JSON files are neither read nor changed by the catalog."""
+    artifacts = [
+        tmp_path / "selected_features_long.json",
+        tmp_path / "selected_features_short.json",
+    ]
+    for path in artifacts:
+        path.write_text("not valid json", encoding="utf-8")
 
+    orchestrator = Pipeline_Orchestrator(output_dir=str(tmp_path))
     with pipeline._temporary_output_paths(str(tmp_path)):
-        for direction, path in pipeline._selector_module._DIRECTION_PATHS.items():
-            artifact_path = Path(path)
-            artifact_path.parent.mkdir(parents=True, exist_ok=True)
-            artifact_path.write_text(
-                json.dumps({
-                    "direction": direction,
-                    "features": [{
-                        "name": "feature",
-                        "mode": "positive",
-                        "score": 0.5,
-                    }],
-                    "phase1_disabled": bool(pipeline._cfg.PHASE1_DISABLED),
-                    "phase1_input_identity": (
-                        pipeline._selector_module._phase1_input_identity(stale)
-                    ),
-                }),
-                encoding="utf-8",
-            )
+        orchestrator._begin_run("full", clear_derived=False, clear_phase2=True)
+        specs = orchestrator._build_rule_feature_catalog(_frame())
 
-        with pytest.raises(FileNotFoundError, match="matching current Phase 1 input"):
-            orch._load_phase1_outputs()
-        with pytest.raises(FileNotFoundError, match="matching current Phase 1 input"):
-            orch._load_phase1_outputs(_frame())
-
-        current_identity = pipeline._selector_module._phase1_input_identity(
-            _frame())
-        for direction, path in pipeline._selector_module._DIRECTION_PATHS.items():
-            Path(path).write_text(
-                json.dumps({
-                    "direction": direction,
-                    "features": [{
-                        "name": "feature",
-                        "mode": "positive",
-                        "score": 0.5,
-                    }],
-                    "phase1_disabled": bool(pipeline._cfg.PHASE1_DISABLED),
-                    "phase1_input_identity": current_identity,
-                }),
-                encoding="utf-8",
-            )
-
-        assert orch._load_phase1_outputs(_frame()) == {
-            "long": [{"name": "feature", "mode": "positive", "score": 0.5}],
-            "short": [{"name": "feature", "mode": "positive", "score": 0.5}],
-        }
+    assert [spec["name"] for spec in specs] == ["feature"]
+    assert all(path.read_text(encoding="utf-8") == "not valid json" for path in artifacts)
 
 
 def test_standalone_phase2_loader_rejects_unproven_artifacts(tmp_path) -> None:
@@ -385,7 +352,7 @@ def test_standalone_phase2_loader_rejects_unproven_artifacts(tmp_path) -> None:
         }
 
         pools = orch._load_phase2_outputs(
-            _frame(), _frame(), {"long": [], "short": []},
+            _frame(), _frame(), [],
         )
         assert pools == {"long": [], "short": []}
         assert {
@@ -397,19 +364,19 @@ def test_standalone_phase2_loader_rejects_unproven_artifacts(tmp_path) -> None:
         }
 
         current = _frame()
-        phase1_result = {"long": [], "short": []}
+        feature_specs = orch._build_rule_feature_catalog(current)
         for direction in ("long", "short"):
             identity = pipeline._phase2_resume_identity(
                 current,
                 current,
-                phase1_result[direction],
+                feature_specs,
                 direction,
                 orch._cv_folds,
             )
             pipeline.Rule_Pool_Generator.write_pool_resume_identity(
                 direction, identity,
             )
-        pools = orch._load_phase2_outputs(current, current, phase1_result)
+        pools = orch._load_phase2_outputs(current, current, feature_specs)
 
     assert pools == {"long": pool, "short": pool}
     assert {
@@ -486,10 +453,9 @@ def test_current_run_oos_directions_follow_accepted_phase2_pool(tmp_path) -> Non
     orch._load_and_split_data = MagicMock(return_value=(frame, frame))
     orch._validate_active_configuration = MagicMock()
     orch._validation_scoring_frames = MagicMock(return_value=(frame, frame))
-    orch._run_phase1 = MagicMock(return_value={
-        "long": [{"name": "feature", "mode": "positive"}],
-        "short": [{"name": "feature", "mode": "positive"}],
-    })
+    orch._build_rule_feature_catalog = MagicMock(return_value=[
+        {"name": "feature", "mode": "positive"},
+    ])
     orch._run_phase2 = MagicMock(return_value={
         "long": [{"phase2_rule_id": "long-rule"}],
         "short": [],
@@ -539,7 +505,9 @@ def test_phase3_and_phase4_are_rb_compatibility_aliases(tmp_path) -> None:
     orch._load_and_split_data = MagicMock(return_value=(frame, frame))
     orch._validate_active_configuration = MagicMock()
     orch._validation_scoring_frames = MagicMock(return_value=(frame, frame))
-    orch._load_phase1_outputs = MagicMock(return_value={"long": [], "short": []})
+    orch._build_rule_feature_catalog = MagicMock(return_value=[
+        {"name": "feature", "mode": "positive"},
+    ])
     orch._load_phase2_outputs = MagicMock(return_value={"long": [], "short": []})
     orch._release_between_phases = MagicMock()
     orch._run_rb_governor = MagicMock(return_value=rb_result)
@@ -556,6 +524,14 @@ def test_phase3_and_phase4_are_rb_compatibility_aliases(tmp_path) -> None:
     assert orch._run_rb_governor.call_count == 2
 
 
+def test_regular_phase1_is_rejected(tmp_path) -> None:
+    """The deleted regular feature phase cannot be dispatched through the API."""
+    orchestrator = Pipeline_Orchestrator(output_dir=str(tmp_path))
+
+    with pytest.raises(ValueError, match="one of 2, 3, 4, or 5"):
+        orchestrator.run_phase(1)
+
+
 def test_standalone_mtf_phase2_persists_lwc_archive(tmp_path, monkeypatch) -> None:
     """A later standalone MTF RB phase must see the Phase 2 LWC rules."""
     frame = _frame(rows=20)
@@ -569,8 +545,10 @@ def test_standalone_mtf_phase2_persists_lwc_archive(tmp_path, monkeypatch) -> No
     orch.run_phase1_mwc = MagicMock(return_value=[])
     orch._build_mtf_lwc_training_frame = MagicMock(return_value=frame)
     orch._build_mtf_lwc_validation_frame = MagicMock(return_value=frame)
-    orch._mask_train_df_for_phase1 = MagicMock(return_value=frame)
-    orch._load_phase1_outputs = MagicMock(return_value={"long": [], "short": []})
+    orch._build_rule_feature_catalog = MagicMock(return_value=[
+        {"name": "feature", "mode": "positive"},
+    ])
+    orch._mask_train_df_for_rule_catalog = MagicMock(return_value=frame)
     orch._run_phase2 = MagicMock(return_value={
         "long": [{"conditions": ["[feature] > 0"], "coverage": 0.1}],
         "short": [],

@@ -538,7 +538,7 @@ def sample_df_for_phase2(
 ) -> pd.DataFrame:
     """Resolve Phase 2 row budget then sample with aligned symbol windows."""
     budget = int(
-        total_rows if total_rows is not None else _cfg.PHASE1_SAMPLING_TOTAL)
+        total_rows if total_rows is not None else _cfg.PHASE2_SAMPLING_TOTAL)
     capped = _resolve_sample_total_rows(df, budget, forbidden_ranges)
     return _sample_df(
         df,
@@ -1479,12 +1479,12 @@ def _init_population(
     Initialise a population of chromosomes.
 
     *init_strategy* ``"stratified_sparse"`` (default from config) enforces
-    ``MIN_CONDITIONS``–``MAX_CONDITIONS`` active genes via Phase 1–guided strata.
+    ``MIN_CONDITIONS``–``MAX_CONDITIONS`` active genes via uniform strata.
     ``"legacy"`` uses independent per-gene *dont_care_prob* sampling.
     """
     from gpu_fuzzy_trader.phases.phase2_init import (
         assign_strata_to_indices,
-        build_feature_sampling_probs,
+        build_uniform_feature_probs,
         pick_active_count,
         repair_active_count,
         sample_sparse_chromosome,
@@ -1594,7 +1594,7 @@ def _init_population(
             sample_sparse_slots_chromosome,
         )
         if feature_probs is None:
-            feature_probs = build_feature_sampling_probs(feature_infos)
+            feature_probs = build_uniform_feature_probs(feature_infos)
         for i in np.where(~seeded_mask)[0]:
             if rng.random() < dont_care_prob:
                 population[i] = empty_slots()
@@ -1607,7 +1607,7 @@ def _init_population(
         return population
 
     if feature_probs is None:
-        feature_probs = build_feature_sampling_probs(feature_infos)
+        feature_probs = build_uniform_feature_probs(feature_infos)
 
     fresh_indices = np.where(~seeded_mask)[0]
 
@@ -2740,7 +2740,7 @@ def _filter_compatible_previous_pool(
     feature_infos: list[dict],
 ) -> list[dict]:
     """
-    Keep only previous pool entries compatible with current feature selection.
+    Keep only previous pool entries compatible with the current rule catalog.
 
     Compatibility rules:
       - chromosome length matches current feature count
@@ -3146,8 +3146,8 @@ class Rule_Pool_Generator:
     train_df : pd.DataFrame
         Training split DataFrame (already prepared by Data_Loader + Data_Splitter).
     feature_infos : list[dict]
-        Output of Feature_Selector.select_features(): list of
-        {"name": str, "mode": str, "score": float}.
+        Deterministic train-only rule-feature catalog: list of
+        {"name": str, "mode": str}.
     direction : str
         "long" or "short".
     pop_size : int, optional
@@ -3737,10 +3737,10 @@ class Rule_Pool_Generator:
             )
 
         from gpu_fuzzy_trader.phases.phase2_init import (
-            build_feature_sampling_probs,
+            build_uniform_feature_probs,
         )
 
-        feature_probs = build_feature_sampling_probs(self.feature_infos)
+        feature_probs = build_uniform_feature_probs(self.feature_infos)
         coverage_report: dict[str, Any] = {}
 
         progress_tag = "Phase 2 [%s] NSGA-III" % self.direction
@@ -4191,7 +4191,7 @@ class Rule_Pool_Generator:
             extract_deployable_migrants,
             run_phase2_evolution_epoch,
         )
-        from gpu_fuzzy_trader.phases.phase2_init import build_feature_sampling_probs
+        from gpu_fuzzy_trader.phases.phase2_init import build_uniform_feature_probs
 
         requested_epoch_gens = int(
             n_generations if n_generations is not None
@@ -4245,7 +4245,7 @@ class Rule_Pool_Generator:
                 }
 
         rng = self._rng
-        feature_probs = build_feature_sampling_probs(self.feature_infos)
+        feature_probs = build_uniform_feature_probs(self.feature_infos)
         tag = f"Phase 2 [{self.direction}]"
 
         refresh_objectives_on_resume = (
@@ -4283,11 +4283,11 @@ class Rule_Pool_Generator:
     def finalize_island(self) -> list[dict]:
         """Build, filter, and persist the final pool."""
         from gpu_fuzzy_trader.evolution.evox_runner import run_phase2_evolution
-        from gpu_fuzzy_trader.phases.phase2_init import build_feature_sampling_probs
+        from gpu_fuzzy_trader.phases.phase2_init import build_uniform_feature_probs
 
         self._ensure_engines()
         rng = self._rng
-        feature_probs = build_feature_sampling_probs(self.feature_infos)
+        feature_probs = build_uniform_feature_probs(self.feature_infos)
         tag = f"Phase 2 [{self.direction}] finalize"
         admission_context = self._pool_admission_context()
         coverage_report: dict[str, Any] = {}

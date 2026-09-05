@@ -7,7 +7,7 @@ import pandas as pd
 from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader.phases.phase2_init import (
     assign_strata_to_indices,
-    build_feature_sampling_probs,
+    build_uniform_feature_probs,
     pick_active_count,
     repair_active_count,
     sample_sparse_chromosome,
@@ -20,20 +20,23 @@ from gpu_fuzzy_trader.phases.phase2_rule_pool import (
 from gpu_fuzzy_trader.run_pipeline import Pipeline_Orchestrator
 
 
-def _feature_infos_with_scores(names_scores: list[tuple[str, float]]) -> list[dict]:
+def _feature_specs(names: list[str]) -> list[dict]:
     return [
-        {"name": n, "mode": "positive", "score": s}
-        for n, s in names_scores
+        {"name": name, "mode": "positive"}
+        for name in names
     ]
 
 
 class TestPhase2InitHelpers:
-    def test_build_feature_sampling_probs_sums_to_one(self):
-        fi = _feature_infos_with_scores([("a", 1.0), ("b", 0.01), ("c", 0.0)])
-        p = build_feature_sampling_probs(fi)
+    def test_uniform_feature_probs_ignore_feature_metadata_scores(self):
+        fi = [
+            {"name": "a", "mode": "positive", "score": 100.0},
+            {"name": "b", "mode": "positive", "score": 0.01},
+            {"name": "c", "mode": "positive"},
+        ]
+        p = build_uniform_feature_probs(fi)
         assert p.shape == (3,)
-        assert abs(p.sum() - 1.0) < 1e-9
-        assert p[0] > p[1] > p[2]
+        assert np.array_equal(p, np.full(3, 1 / 3))
 
     def test_pick_active_count_in_bounds(self):
         rng = np.random.default_rng(0)
@@ -44,13 +47,10 @@ class TestPhase2InitHelpers:
 
 class TestStratifiedInitPopulation:
     def test_all_chromosomes_respect_condition_bounds(self):
-        fi = _feature_infos_with_scores([
-            (f"f{i}", float(i + 1)) for i in range(12)
-        ])
+        fi = _feature_specs([f"f{i}" for i in range(12)])
         fi[0] = {
             "name": "amihud_illiquidity_20",
             "mode": "positive",
-            "score": 0.5,
         }
         dc = _get_dont_cares(fi)
         rng = np.random.default_rng(42)
@@ -61,15 +61,15 @@ class TestStratifiedInitPopulation:
             active = _count_active_conditions(row, dc)
             assert _cfg.MIN_CONDITIONS <= active <= _cfg.MAX_CONDITIONS
 
-    def test_elite_stratum_uses_feature_probs(self):
-        fi = _feature_infos_with_scores([
-            ("high_score", 1.0),
-            ("low_score", 0.01),
-            ("mid_score", 0.1),
-            ("tiny_score", 0.001),
+    def test_sparse_sample_respects_condition_bounds(self):
+        fi = _feature_specs([
+            "first_feature",
+            "second_feature",
+            "third_feature",
+            "fourth_feature",
         ])
         dont_cares = _get_dont_cares(fi)
-        probs = build_feature_sampling_probs(fi)
+        probs = build_uniform_feature_probs(fi)
         rng = np.random.default_rng(0)
         active_counts: list[int] = []
         for _ in range(50):
@@ -81,9 +81,7 @@ class TestStratifiedInitPopulation:
                    _cfg.MAX_CONDITIONS for c in active_counts)
 
     def test_repair_active_count(self):
-        fi = _feature_infos_with_scores([
-            ("a", 1.0), ("b", 0.5), ("c", 0.1), ("d", 0.05),
-        ])
+        fi = _feature_specs(["a", "b", "c", "d"])
         dont_cares = _get_dont_cares(fi)
         chrom = dont_cares.copy()
         chrom[0] = 0
@@ -91,7 +89,7 @@ class TestStratifiedInitPopulation:
         chrom[2] = 2
         rng = np.random.default_rng(1)
         repaired = repair_active_count(
-            chrom, fi, dont_cares, rng, build_feature_sampling_probs(fi),
+            chrom, fi, dont_cares, rng, build_uniform_feature_probs(fi),
         )
         assert _cfg.MIN_CONDITIONS <= _count_active_conditions(
             repaired, dont_cares,
@@ -107,16 +105,30 @@ class TestStratifiedInitPopulation:
         assert labels.count("elite") + labels.count("explorer") == 10
 
 
-class TestPruneSplitsAfterPhase1:
-    def test_phase1_keep_feature_names_only_selected_features(self):
-        phase1 = {
-            "long": [{"name": "feat_a", "mode": "positive", "score": 1.0}],
-            "short": [{"name": "feat_b", "mode": "positive", "score": 0.5}],
-        }
-        names = Pipeline_Orchestrator._phase1_keep_feature_names(phase1)
+class TestPruneSplitsToRuleFeatures:
+    def test_catalog_builder_returns_one_train_only_feature_set(self):
+        orchestrator = object.__new__(Pipeline_Orchestrator)
+        orchestrator._cv_folds = None
+        frame = pd.DataFrame({
+            "datetime": pd.date_range("2024-01-01", periods=4, freq="5min"),
+            "symbol": ["A"] * 4,
+            "label_open_next": [100.0, 101.0, 102.0, 103.0],
+            "binary_signal": [0.0, 1.0, 0.0, 1.0],
+        })
+
+        assert orchestrator._build_rule_feature_catalog(frame) == [
+            {"name": "binary_signal", "mode": "binary"},
+        ]
+
+    def test_rule_feature_names_keep_catalog_features(self):
+        feature_specs = [
+            {"name": "feat_a", "mode": "positive"},
+            {"name": "feat_b", "mode": "positive"},
+        ]
+        names = Pipeline_Orchestrator._rule_feature_names(feature_specs)
         assert names == ["feat_a", "feat_b"]
 
-    def test_prune_splits_drops_unselected_feature_columns(self):
+    def test_prune_splits_drops_non_catalog_feature_columns(self):
         rng = np.random.default_rng(0)
         n = 20
         cols = {
@@ -133,12 +145,9 @@ class TestPruneSplitsAfterPhase1:
         }
         train_df = pd.DataFrame(cols)
         val_df = train_df.copy()
-        phase1 = {
-            "long": [{"name": "feat_a", "mode": "positive", "score": 1.0}],
-            "short": [],
-        }
-        pruned_train, pruned_val = Pipeline_Orchestrator._prune_splits_after_phase1(
-            train_df, val_df, phase1,
+        feature_specs = [{"name": "feat_a", "mode": "positive"}]
+        pruned_train, pruned_val = Pipeline_Orchestrator._prune_splits_to_rule_features(
+            train_df, val_df, feature_specs,
         )
         assert "feat_a" in pruned_train.columns
         assert "realized_vol_20" not in pruned_train.columns

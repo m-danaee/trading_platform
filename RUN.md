@@ -21,7 +21,7 @@ requirements: `jax[cuda12]==0.10.1` on Colab T4 and
 The runtime uses a hybrid policy tuned for a 6-GiB RTX 4050 and an 8-core
 host:
 
-- Phase 1 feature transforms, dataframe preparation, exact rule-set scoring,
+- Rule-feature catalog construction, dataframe preparation, exact rule-set scoring,
   RB risk tuning, and Phase 5 evaluation stay on CPU.
 - Phase 2 uses the optimized CPU batch evaluator for the default large
   (~90k-bar) train window. This avoids a slower full-window GPU scan on this
@@ -50,13 +50,12 @@ storage; the notebook syncs results and the Phase 2 archive back to Drive.
 .venv/bin/python -m gpu_fuzzy_trader.run_pipeline
 .venv/bin/python -m gpu_fuzzy_trader.run_pipeline --output outputs/
 .venv/bin/python -m gpu_fuzzy_trader.run_pipeline --resume
-.venv/bin/python -m gpu_fuzzy_trader.run_pipeline --phase 1
 .venv/bin/python -m gpu_fuzzy_trader.run_pipeline --phase 2
 .venv/bin/python -m gpu_fuzzy_trader.run_pipeline --phase 5
 ```
 
-The production order is data preparation, Phase 1 feature selection,
-independent symbol-specialist Phase 2 rule-pool evolution, RB Governor
+The production order is data preparation, deterministic train-only rule-feature
+cataloging, independent symbol-specialist Phase 2 rule-pool evolution, RB Governor
 selection/capital sizing, and Phase 5 evaluation. TP/SL and horizon are part of
 the immutable strategy identity; production RB does not rescue a candidate by
 changing its exit geometry. Phase 5 reports the consumed
@@ -98,7 +97,7 @@ performance.
 
 ## Data and evaluator
 
-- `data/train_new.csv` feeds Phase 1 and Phase 2. Its OHLCV columns are used
+- `data/train_new.csv` feeds the rule-feature catalog and Phase 2. Its OHLCV columns are used
   to derive the forward labels required by the backtest.
 - Validation fitness and selection windows feed Phase 2 and RB only.
 - RB reserves the final 25% of the validation-selection window as an inner
@@ -117,6 +116,9 @@ performance.
 - The CSV `ff_*` indicators are supplied inputs. This repository does not
   recreate them. Audit their generator for causal, as-of-bar construction
   before using them in a release.
+- The active supplied-feature contract is `config.RULE_ALLOWED_FF_FEATURES`.
+  The raw train/test tapes contain 18 `ff_*` columns; other `ff_*` names are
+  excluded from the rule-feature catalog.
 - `evaluator_v5.ipynb` is read-only and is the final evaluation authority.
 
 The checked-in `train_new.csv` and `test_new.csv` profile contains the balanced

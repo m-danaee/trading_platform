@@ -6,14 +6,14 @@ Top-level orchestrator for the GPU-Fuzzy Trading Pipeline.
 Execution order:
   1. Create output directories (outputs/, outputs/reports/)
   2. Load and prepare data (Data_Loader + Data_Splitter)
-  3. Phase 1: Feature_Selector
+  3. Build the deterministic rule-feature catalog from train data
   4. Phase 2: Rule_Pool_Generator for both directions
   5. RB Governor: unified selection + risk tuning
   6. Phase 5: OOS_Evaluator (always runs)
 
-Default CLI (``python -m gpu_fuzzy_trader.run_pipeline``) always re-runs Phase 1,
-Phase 2, and the RB Governor.
-Pass ``--resume`` to skip phases whose on-disk outputs are already valid.
+Default CLI (``python -m gpu_fuzzy_trader.run_pipeline``) always rebuilds the
+rule-feature catalog, Phase 2, and the RB Governor.
+Pass ``--resume`` to reuse valid Phase 2 artifacts.
 
 Logging:
   - Log start time, end time, and elapsed duration for each phase.
@@ -52,12 +52,11 @@ from gpu_fuzzy_trader import config as _cfg
 from gpu_fuzzy_trader import rb_governor as _rb_governor_module
 from gpu_fuzzy_trader.data.loader import Data_Loader, validate_context_columns
 from gpu_fuzzy_trader.data.splitter import Data_Splitter, load_cached_split_if_fresh
-from gpu_fuzzy_trader.features import selector as _selector_module
+from gpu_fuzzy_trader.features.catalog import build_rule_feature_specs
 from gpu_fuzzy_trader.features.fuzzy_scaling import (
     apply_fuzzy_feature_scaling,
     fit_fuzzy_feature_scaling,
 )
-from gpu_fuzzy_trader.features.selector import Feature_Selector
 from gpu_fuzzy_trader.mtf import (
     DEFAULT_MIN_EVIDENCE_STRENGTH,
     DEFAULT_RETENTION_FLOOR,
@@ -324,13 +323,9 @@ def _temporary_output_paths(output_dir: str | None):
         "cfg_mtf_archive_paths": _cfg.MTF_ARCHIVE_PATHS.copy(),
         "cfg_mtf_manifest_path": _cfg.MTF_MANIFEST_PATH,
         "pipeline_log_path": _PIPELINE_LOG_PATH,
-        "selector_long": _selector_module._LONG_PATH,
-        "selector_short": _selector_module._SHORT_PATH,
-        "selector_paths": _selector_module._DIRECTION_PATHS,
         "phase2_pool_paths": _phase2_module._POOL_PATHS.copy(),
         "phase2_history_paths": _phase2_module._HISTORY_PATHS.copy(),
         "phase5_strategy_paths": _phase5_module._STRATEGY_PATHS,
-        "phase5_feature_paths": _phase5_module._FEATURE_PATHS,
         "phase5_report_paths": _phase5_module._REPORT_PATHS,
         "reporter_reports_dir": _reporter_module._REPORTS_DIR,
     }
@@ -359,17 +354,6 @@ def _temporary_output_paths(output_dir: str | None):
         }
         _cfg.MTF_MANIFEST_PATH = os.path.join(output_root, "mtf_manifest.json")
 
-        _selector_module._LONG_PATH = os.path.join(
-            output_root, "selected_features_long.json"
-        )
-        _selector_module._SHORT_PATH = os.path.join(
-            output_root, "selected_features_short.json"
-        )
-        _selector_module._DIRECTION_PATHS = {
-            "long": _selector_module._LONG_PATH,
-            "short": _selector_module._SHORT_PATH,
-        }
-
         # Update phase2 module's cached paths
         _phase2_module._POOL_PATHS = _cfg.PHASE2_POOL_PATHS.copy()
         _phase2_module._HISTORY_PATHS = _cfg.PHASE2_HISTORY_PATHS.copy()
@@ -377,10 +361,6 @@ def _temporary_output_paths(output_dir: str | None):
         _phase5_module._STRATEGY_PATHS = {
             "long": os.path.join(output_root, "long.json"),
             "short": os.path.join(output_root, "short.json"),
-        }
-        _phase5_module._FEATURE_PATHS = {
-            "long": os.path.join(output_root, "selected_features_long.json"),
-            "short": os.path.join(output_root, "selected_features_short.json"),
         }
         _phase5_module._REPORT_PATHS = {
             "long": os.path.join(reports_root, "test_long_report.json"),
@@ -415,13 +395,9 @@ def _temporary_output_paths(output_dir: str | None):
         _cfg.MTF_ARCHIVE_PATHS = previous_state["cfg_mtf_archive_paths"]
         _cfg.MTF_MANIFEST_PATH = previous_state["cfg_mtf_manifest_path"]
         _PIPELINE_LOG_PATH = previous_state["pipeline_log_path"]
-        _selector_module._LONG_PATH = previous_state["selector_long"]
-        _selector_module._SHORT_PATH = previous_state["selector_short"]
-        _selector_module._DIRECTION_PATHS = previous_state["selector_paths"]
         _phase2_module._POOL_PATHS = previous_state["phase2_pool_paths"]
         _phase2_module._HISTORY_PATHS = previous_state["phase2_history_paths"]
         _phase5_module._STRATEGY_PATHS = previous_state["phase5_strategy_paths"]
-        _phase5_module._FEATURE_PATHS = previous_state["phase5_feature_paths"]
         _phase5_module._REPORT_PATHS = previous_state["phase5_report_paths"]
         _reporter_module._REPORTS_DIR = previous_state["reporter_reports_dir"]
 
@@ -435,16 +411,19 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-_PHASE2_RESUME_IDENTITY_VERSION = 1
+_PHASE2_RESUME_IDENTITY_VERSION = 2
 _PHASE2_RESUME_CODE_PATHS = (
     "run_pipeline.py",
     "backtest/cpu_engine.py",
     "backtest/gpu_engine.py",
     "evolution/evox_runner.py",
+    "features/detector.py",
     "phases/phase2_rule_pool.py",
+    "phases/phase2_init.py",
     "phases/phase2_sparse_encoding.py",
     "phases/phase2_support.py",
     "phases/rule_identity.py",
+    "features/catalog.py",
     "validation/fold_gates.py",
     "mtf/cross_fitting.py",
 )
@@ -533,11 +512,11 @@ def _phase2_cv_structure(cv_folds: list | None) -> list[dict[str, Any]]:
 def _phase2_resume_identity(
     train_df: pd.DataFrame,
     val_df: pd.DataFrame | None,
-    feature_infos: list[dict],
+    feature_specs: list[dict],
     direction: str,
     cv_folds: list | None,
 ) -> str:
-    """Bind reusable Phase 2 pools to data, selection, config, and code."""
+    """Bind reusable Phase 2 pools to data, rule specs, config, and code."""
     package_root = Path(__file__).resolve().parent
     config_snapshot = {
         name: _identity_value(getattr(_cfg, name))
@@ -550,7 +529,7 @@ def _phase2_resume_identity(
         "direction": direction,
         "train": _phase2_frame_identity(train_df),
         "validation": _phase2_frame_identity(val_df),
-        "feature_infos": _identity_value(feature_infos),
+        "feature_specs": _identity_value(feature_specs),
         "cv_structure": _phase2_cv_structure(cv_folds),
         "context_contract_digest": _cfg.context_contract_digest(),
         "config": config_snapshot,
@@ -1002,10 +981,11 @@ def _log_pipeline_config() -> None:
     )
 
     logger.info(
-        "Pipeline config: PHASE1 top_k=%d | "
+        "Pipeline config: rule_features=%d dispersion=%.2f | "
         + phase2_fmt
         + " | RB Governor=canonical | %s",
-        _cfg.PHASE1_TOP_K_FEATURES,
+        len(_cfg.RULE_ALLOWED_FF_FEATURES),
+        _cfg.RULE_DISPERSION_THRESHOLD,
         *phase2_args,
         debug_suffix,
     )
@@ -1121,15 +1101,6 @@ def _print_run_summary(results: dict[str, Any], phase: int | None, log_path: str
                 )
         else:
             print(f"  No OOS results (check {log_path} for details)")
-        return
-
-    if phase == 1:
-        phase_result = results.get("phase1", {})
-        print(
-            "  Phase 1 selected features: "
-            f"long={len(phase_result.get('long', []))}, "
-            f"short={len(phase_result.get('short', []))}"
-        )
         return
 
     if phase == 2:
@@ -1270,13 +1241,6 @@ class Pipeline_Orchestrator:
                 )
                 archive_path.unlink(missing_ok=True)
             (output_root / "mtf_manifest.json").unlink(missing_ok=True)
-            if mode == "full":
-                for name in (
-                    "selected_features_long.json",
-                    "selected_features_short.json",
-                ):
-                    (output_root / name).unlink(missing_ok=True)
-
         run_manifest = {
             "run_id": self._run_id,
             "mode": self._run_mode,
@@ -1412,26 +1376,23 @@ class Pipeline_Orchestrator:
                 )
 
                 # ------------------------------------------------------------------
-                # Phase 1: Feature Selection
+                # Rule-feature catalog
                 # ------------------------------------------------------------------
-                phase1_train_df = self._mask_train_df_for_phase1(train_df)
-                phase1_result = self._run_phase1(
-                    phase1_train_df, force=force, val_df=None,
-                )
-                results["phase1"] = phase1_result
-                train_df, val_df = self._prune_splits_after_phase1(
-                    train_df, val_df, phase1_result)
-                val_fitness_df, val_selection_df = self._prune_splits_after_phase1(
-                    val_fitness_df, val_selection_df, phase1_result)
-                self._cv_folds = self._prune_cv_folds_after_phase1(
-                    self._cv_folds, phase1_result)
+                feature_specs = self._build_rule_feature_catalog(train_df)
+                results["rule_features"] = feature_specs
+                train_df, val_df = self._prune_splits_to_rule_features(
+                    train_df, val_df, feature_specs)
+                val_fitness_df, val_selection_df = self._prune_splits_to_rule_features(
+                    val_fitness_df, val_selection_df, feature_specs)
+                self._cv_folds = self._prune_cv_folds_to_rule_features(
+                    self._cv_folds, feature_specs)
 
                 # ------------------------------------------------------------------
                 # Phase 2: Rule Pool Generation
                 # ------------------------------------------------------------------
                 phase2_result = self._run_phase2(
                     train_df,
-                    phase1_result,
+                    feature_specs,
                     force=force,
                     val_df=val_fitness_df,
                     blocked_directions=blocked_directions,
@@ -1461,7 +1422,6 @@ class Pipeline_Orchestrator:
                     rb_result,
                 )
                 trial_counters = self._trial_counters(
-                    phase1_result,
                     phase2_result,
                     rb_result,
                 )
@@ -1513,13 +1473,10 @@ class Pipeline_Orchestrator:
 
     def run_from_phase2(self, force: bool = True) -> dict:
         """
-        Run Phase 2, the RB Governor, and Phase 5 using Phase 1 artifacts
-        already on disk.
+        Run Phase 2, the RB Governor, and Phase 5 from the current train data.
 
-        Expects ``selected_features_{long,short}.json`` under this run's output
-        directory.  The artifacts must match the current masked training input
-        and Phase 1 contract; stale or copied artifacts fail closed.  Does not
-        re-run feature selection.
+        The deterministic rule-feature catalog is rebuilt from the current
+        train split. Saved legacy feature JSON files are neither read nor changed.
 
         Parameters
         ----------
@@ -1529,7 +1486,7 @@ class Pipeline_Orchestrator:
         Returns
         -------
         dict
-            Keys: ``data``, ``phase1`` (loaded paths only), ``phase2`` … ``phase5``.
+            Keys: ``data``, ``rule_features``, ``phase2`` … ``phase5``.
         """
         with _temporary_output_paths(self._output_dir), self._run_identity_guard():
             logger.info("=" * 60)
@@ -1593,19 +1550,18 @@ class Pipeline_Orchestrator:
                     context_report.get("blocked_directions", [])
                 )
 
-                phase1_train_df = self._mask_train_df_for_phase1(train_df)
-                phase1_result = self._load_phase1_outputs(phase1_train_df)
-                results["phase1"] = phase1_result
-                train_df, val_df = self._prune_splits_after_phase1(
-                    train_df, val_df, phase1_result)
-                val_fitness_df, val_selection_df = self._prune_splits_after_phase1(
-                    val_fitness_df, val_selection_df, phase1_result)
-                self._cv_folds = self._prune_cv_folds_after_phase1(
-                    self._cv_folds, phase1_result)
+                feature_specs = self._build_rule_feature_catalog(train_df)
+                results["rule_features"] = feature_specs
+                train_df, val_df = self._prune_splits_to_rule_features(
+                    train_df, val_df, feature_specs)
+                val_fitness_df, val_selection_df = self._prune_splits_to_rule_features(
+                    val_fitness_df, val_selection_df, feature_specs)
+                self._cv_folds = self._prune_cv_folds_to_rule_features(
+                    self._cv_folds, feature_specs)
 
                 phase2_result = self._run_phase2(
                     train_df,
-                    phase1_result,
+                    feature_specs,
                     force=force,
                     val_df=val_fitness_df,
                     blocked_directions=blocked_directions,
@@ -1633,7 +1589,6 @@ class Pipeline_Orchestrator:
                     rb_result,
                 )
                 trial_counters = self._trial_counters(
-                    phase1_result,
                     phase2_result,
                     rb_result,
                 )
@@ -1686,9 +1641,9 @@ class Pipeline_Orchestrator:
         The selected phase is forced to re-run even if its outputs already
         exist. Earlier phases are not auto-run.
         """
-        if phase not in {1, 2, 3, 4, 5}:
+        if phase not in {2, 3, 4, 5}:
             raise ValueError(
-                "phase must be one of 1, 2, 3, 4, or 5; "
+                "phase must be one of 2, 3, 4, or 5; "
                 f"got {phase!r}"
             )
 
@@ -1709,44 +1664,7 @@ class Pipeline_Orchestrator:
             )
             results["run_id"] = self._run_id
 
-            if phase == 1:
-                train_df, val_df = self._load_and_split_data()
-                self._validate_active_configuration(train_df)
-                results["data"] = {
-                    "train_rows": len(train_df),
-                    "val_rows": len(val_df),
-                }
-                if self._should_use_mtf_pipeline(train_df):
-                    mtf_folds = build_master_temporal_folds(
-                        train_df,
-                        n_folds=int(_cfg.MTF_MAX_FOLDS),
-                        embargo_minutes=discovery_purge_minutes("hwc"),
-                    )
-                    hwc_rules = self.run_phase1_hwc(
-                        train_df, folds=mtf_folds, force=True)
-                    mwc_rules = self.run_phase1_mwc(
-                        train_df, hwc_rules=hwc_rules, folds=mtf_folds, force=True)
-                    hwc_discovery = getattr(self, "_mtf_hwc_discovery", None)
-                    mwc_discovery = getattr(self, "_mtf_mwc_discovery", None)
-                    lwc_train_scored = self._build_mtf_lwc_training_frame(
-                        train_df, hwc_discovery, mwc_discovery)
-                    oof_avail = lwc_train_scored["_mtf_oof_available"].fillna(
-                        False).astype(bool)
-                    lwc_train_df = lwc_train_scored.loc[oof_avail].reset_index(
-                        drop=True)
-                    phase1_train_df = self._mask_train_df_for_phase1(
-                        lwc_train_df)
-                    results["phase1"] = self._run_phase1(
-                        phase1_train_df, force=True, val_df=None)
-                    results["mtf_hwc"] = hwc_rules
-                    results["mtf_mwc"] = mwc_rules
-                else:
-                    phase1_train_df = self._mask_train_df_for_phase1(train_df)
-                    results["phase1"] = self._run_phase1(
-                        phase1_train_df, force=True, val_df=None,
-                    )
-
-            elif phase == 2:
+            if phase == 2:
                 train_df, val_df = self._load_and_split_data()
                 self._validate_active_configuration(train_df)
                 if self._should_use_mtf_pipeline(train_df):
@@ -1771,20 +1689,24 @@ class Pipeline_Orchestrator:
                         False).astype(bool)
                     lwc_train_scored = lwc_train_scored_all.loc[oof_available].reset_index(
                         drop=True)
-                    phase1_train_df = self._mask_train_df_for_phase1(
+                    feature_specs = self._build_rule_feature_catalog(
                         lwc_train_scored)
-                    try:
-                        phase1_result = self._load_phase1_outputs(
-                            phase1_train_df)
-                    except Exception:
-                        phase1_result = self._run_phase1(
-                            phase1_train_df, force=False, val_df=lwc_val_fitness_scored)
+                    results["rule_features"] = feature_specs
+                    lwc_search_df = self._mask_train_df_for_rule_catalog(
+                        lwc_train_scored)
+                    lwc_search_df, lwc_val_fitness_scored = (
+                        self._prune_splits_to_rule_features(
+                            lwc_search_df,
+                            lwc_val_fitness_scored,
+                            feature_specs,
+                        )
+                    )
                     # Use the public Phase 2 wrapper here.  Besides running
                     # the LWC pool, it persists the archive required by a
                     # later standalone Phase 3/4 MTF run.
                     results["phase2"] = self.run_phase2(
-                        phase1_train_df,
-                        phase1_result,
+                        lwc_search_df,
+                        feature_specs,
                         force=True,
                         val_df=lwc_val_fitness_scored,
                         blocked_directions=frozenset(),
@@ -1815,17 +1737,17 @@ class Pipeline_Orchestrator:
                     blocked_directions = frozenset(
                         context_report.get("blocked_directions", [])
                     )
-                    phase1_train_df = self._mask_train_df_for_phase1(train_df)
-                    phase1_result = self._load_phase1_outputs(phase1_train_df)
-                    train_df, val_df = self._prune_splits_after_phase1(
-                        train_df, val_df, phase1_result)
-                    val_fitness_df, val_selection_df = self._prune_splits_after_phase1(
-                        val_fitness_df, val_selection_df, phase1_result)
-                    self._cv_folds = self._prune_cv_folds_after_phase1(
-                        self._cv_folds, phase1_result)
+                    feature_specs = self._build_rule_feature_catalog(train_df)
+                    results["rule_features"] = feature_specs
+                    train_df, val_df = self._prune_splits_to_rule_features(
+                        train_df, val_df, feature_specs)
+                    val_fitness_df, val_selection_df = self._prune_splits_to_rule_features(
+                        val_fitness_df, val_selection_df, feature_specs)
+                    self._cv_folds = self._prune_cv_folds_to_rule_features(
+                        self._cv_folds, feature_specs)
                     results["phase2"] = self._run_phase2(
                         train_df,
-                        phase1_result,
+                        feature_specs,
                         force=True,
                         val_df=val_fitness_df,
                         blocked_directions=blocked_directions,
@@ -1878,16 +1800,16 @@ class Pipeline_Orchestrator:
                 else:
                     val_fitness_df, val_selection_df = self._validation_scoring_frames(
                         val_df)
-                    phase1_train_df = self._mask_train_df_for_phase1(train_df)
-                    phase1_result = self._load_phase1_outputs(phase1_train_df)
-                    train_df, val_df = self._prune_splits_after_phase1(
-                        train_df, val_df, phase1_result)
-                    val_fitness_df, val_selection_df = self._prune_splits_after_phase1(
-                        val_fitness_df, val_selection_df, phase1_result)
-                    self._cv_folds = self._prune_cv_folds_after_phase1(
-                        self._cv_folds, phase1_result)
+                    feature_specs = self._build_rule_feature_catalog(train_df)
+                    results["rule_features"] = feature_specs
+                    train_df, val_df = self._prune_splits_to_rule_features(
+                        train_df, val_df, feature_specs)
+                    val_fitness_df, val_selection_df = self._prune_splits_to_rule_features(
+                        val_fitness_df, val_selection_df, feature_specs)
+                    self._cv_folds = self._prune_cv_folds_to_rule_features(
+                        self._cv_folds, feature_specs)
                     phase2_result = self._load_phase2_outputs(
-                        train_df, val_fitness_df, phase1_result,
+                        train_df, val_fitness_df, feature_specs,
                     )
                     self._release_between_phases("RB Governor")
                     rb_result = self._run_rb_governor(
@@ -1993,7 +1915,6 @@ class Pipeline_Orchestrator:
 
     @staticmethod
     def _trial_counters(
-        phase1: dict[str, Any] | None = None,
         phase2: dict[str, Any] | None = None,
         rb: dict[str, Any] | None = None,
     ) -> dict[str, int]:
@@ -2003,10 +1924,6 @@ class Pipeline_Orchestrator:
         They are kept separate so DSR does not silently reuse a rough artifact
         size estimate when the ledger is available.
         """
-        feature_alternatives = sum(
-            len(value) for value in (phase1 or {}).values()
-            if isinstance(value, list)
-        )
         rules_tested = sum(
             len(value) for value in (phase2 or {}).values()
             if isinstance(value, list)
@@ -2018,7 +1935,7 @@ class Pipeline_Orchestrator:
         if rb:
             hyperparameter_configs += 1
         return {
-            "feature_alternatives": int(feature_alternatives),
+            "feature_alternatives": 0,
             "rules_tested": int(rules_tested),
             "hyperparameter_configs": int(hyperparameter_configs),
             "selection_candidates": int(selection_candidates),
@@ -2193,7 +2110,6 @@ class Pipeline_Orchestrator:
             if hasattr(_cfg, key)
         }
         trial_counters = self._trial_counters(
-            results.get("phase1"),
             phase2,
             rb,
         )
@@ -2460,20 +2376,25 @@ class Pipeline_Orchestrator:
 
         # Keep the existing NSGA-III/plateau LWC search as the execution-rule
         # generator. It receives only causal OOF HWC/MWC score features.
-        phase1_train_df = self._mask_train_df_for_phase1(lwc_train_scored)
-        lwc_phase1 = self._run_phase1(
-            phase1_train_df,
-            force=force,
-            val_df=lwc_val_fitness_scored,
+        lwc_feature_specs = self._build_rule_feature_catalog(lwc_train_scored)
+        lwc_train_df = self._mask_train_df_for_rule_catalog(lwc_train_scored)
+        lwc_train_df, lwc_val_fitness_scored = self._prune_splits_to_rule_features(
+            lwc_train_df,
+            lwc_val_fitness_scored,
+            lwc_feature_specs,
+        )
+        self._cv_folds = self._prune_cv_folds_to_rule_features(
+            self._cv_folds,
+            lwc_feature_specs,
         )
         lwc_rules = self._run_phase2(
-            phase1_train_df,
-            lwc_phase1,
+            lwc_train_df,
+            lwc_feature_specs,
             force=force,
             val_df=lwc_val_fitness_scored,
             blocked_directions=frozenset(),
         )
-        self._mtf_lwc_phase1 = lwc_phase1
+        self._mtf_lwc_rule_features = lwc_feature_specs
 
         candidates = self.run_mtf_composition(
             lwc_rules=lwc_rules,
@@ -2553,7 +2474,6 @@ class Pipeline_Orchestrator:
             rb_result,
         )
         trial_counters = self._trial_counters(
-            lwc_phase1,
             lwc_rules,
             rb_result,
         )
@@ -2575,7 +2495,7 @@ class Pipeline_Orchestrator:
                 "source_contract": "raw_ohlcv_15m",
                 "timezone": "UTC",
             },
-            "phase1": lwc_phase1,
+            "rule_features": lwc_feature_specs,
             "phase2": lwc_rules,
             "mtf_hwc": hwc_rules,
             "mtf_mwc": mwc_rules,
@@ -2636,20 +2556,22 @@ class Pipeline_Orchestrator:
             lwc_val_fitness_scored,
         )
 
-        phase1_train_df = self._mask_train_df_for_phase1(lwc_train_scored)
-        try:
-            lwc_phase1 = self._load_phase1_outputs(phase1_train_df)
-        except Exception:
-            lwc_phase1 = self._run_phase1(
-                phase1_train_df,
-                force=False,
-                val_df=lwc_val_fitness_scored,
-            )
-        self._mtf_lwc_phase1 = lwc_phase1
+        lwc_feature_specs = self._build_rule_feature_catalog(lwc_train_scored)
+        lwc_train_df = self._mask_train_df_for_rule_catalog(lwc_train_scored)
+        lwc_train_df, lwc_val_fitness_scored = self._prune_splits_to_rule_features(
+            lwc_train_df,
+            lwc_val_fitness_scored,
+            lwc_feature_specs,
+        )
+        self._cv_folds = self._prune_cv_folds_to_rule_features(
+            self._cv_folds,
+            lwc_feature_specs,
+        )
+        self._mtf_lwc_rule_features = lwc_feature_specs
 
         lwc_rules = self._run_phase2(
-            phase1_train_df,
-            lwc_phase1,
+            lwc_train_df,
+            lwc_feature_specs,
             force=force,
             val_df=lwc_val_fitness_scored,
             blocked_directions=frozenset(),
@@ -2733,7 +2655,6 @@ class Pipeline_Orchestrator:
             rb_result,
         )
         trial_counters = self._trial_counters(
-            lwc_phase1,
             lwc_rules,
             rb_result,
         )
@@ -2755,7 +2676,7 @@ class Pipeline_Orchestrator:
                 "source_contract": "raw_ohlcv_15m",
                 "timezone": "UTC",
             },
-            "phase1": lwc_phase1,
+            "rule_features": lwc_feature_specs,
             "phase2": lwc_rules,
             "mtf_hwc": hwc_rules,
             "mtf_mwc": mwc_rules,
@@ -3081,45 +3002,18 @@ class Pipeline_Orchestrator:
             }
         return summary
 
-    def _load_phase1_outputs(
-        self,
-        train_df: pd.DataFrame | None = None,
-        val_df: pd.DataFrame | None = None,
-    ) -> dict[str, list[dict]]:
-        """Load Phase 1 outputs only when they match current inputs."""
-        if train_df is None:
-            raise FileNotFoundError(
-                "Phase 2 requires Phase 1 outputs matching current Phase 1 input; "
-                "rerun Phase 1."
-            )
-
-        try:
-            result = Feature_Selector.skip_if_valid(train_df, val_df=val_df)
-        except ValueError as exc:
-            raise FileNotFoundError(
-                "Phase 2 requires valid Phase 1 outputs matching current "
-                "Phase 1 input; rerun Phase 1."
-            ) from exc
-
-        if result is None:
-            raise FileNotFoundError(
-                "Phase 2 requires Phase 1 outputs matching current Phase 1 input; "
-                "rerun Phase 1."
-            )
-        return result
-
     def _load_phase2_outputs(
         self,
         train_df: pd.DataFrame | None = None,
         val_df: pd.DataFrame | None = None,
-        phase1_result: dict[str, list[dict]] | None = None,
+        feature_specs: list[dict] | None = None,
     ) -> dict[str, list[dict]]:
         """Load Phase 2 pools only when they match current prerequisites."""
         result: dict[str, list[dict]] = {}
         missing: list[str] = []
         self._phase2_status = {}
 
-        if train_df is None or phase1_result is None:
+        if train_df is None or feature_specs is None:
             logger.warning(
                 "RB Governor will fail closed: Phase 2 input identity is unavailable"
             )
@@ -3129,7 +3023,7 @@ class Pipeline_Orchestrator:
                     "status": "error",
                     "reason": "phase2_identity_unavailable",
                     "detail": (
-                        "Phase 3/4 requires current Phase 1 outputs and "
+                        "Phase 3/4 requires the current rule-feature catalog and "
                         "current Phase 2 input frames"
                     ),
                     "pool_size": 0,
@@ -3140,7 +3034,7 @@ class Pipeline_Orchestrator:
             expected_identity = _phase2_resume_identity(
                 train_df,
                 val_df,
-                phase1_result.get(direction, []),
+                feature_specs,
                 direction,
                 self._cv_folds,
             )
@@ -3389,34 +3283,41 @@ class Pipeline_Orchestrator:
         return scoped_train, scoped_val
 
     @staticmethod
-    def _phase1_keep_feature_names(
-        phase1_result: dict[str, list[dict]],
+    def _rule_feature_names(
+        feature_specs: list[dict],
     ) -> list[str]:
-        """Selected fuzzy features for Phase 2."""
+        """Return unique catalog feature names that remain valid rule inputs."""
+        allowed_ff = getattr(_cfg, "RULE_ALLOWED_FF_FEATURES", None)
         names: list[str] = []
-        for direction in ("long", "short"):
-            for fi in phase1_result.get(direction, []):
-                n = fi.get("name")
-                if n and n not in names:
-                    names.append(n)
+        for feature_spec in feature_specs:
+            name = feature_spec.get("name")
+            if (
+                name
+                and str(name).startswith("ff_")
+                and allowed_ff is not None
+                and name not in allowed_ff
+            ):
+                continue
+            if name and name not in names:
+                names.append(name)
         return names
 
     @staticmethod
-    def _prune_splits_after_phase1(
+    def _prune_splits_to_rule_features(
         train_df: pd.DataFrame,
         val_df: pd.DataFrame | None,
-        phase1_result: dict[str, list[dict]],
+        feature_specs: list[dict],
     ) -> tuple[pd.DataFrame, pd.DataFrame | None]:
-        """Drop unused feature columns from train/val splits to reduce RAM."""
+        """Drop non-catalog feature columns from train/val splits to reduce RAM."""
         from gpu_fuzzy_trader.backtest.df_slim import prune_train_columns
 
-        names = Pipeline_Orchestrator._phase1_keep_feature_names(phase1_result)
+        names = Pipeline_Orchestrator._rule_feature_names(feature_specs)
         if not names:
             return train_df, val_df
 
         pruned_train = prune_train_columns(train_df, names)
         logger.info(
-            "Pruned train_df columns after Phase 1: %d -> %d columns",
+            "Pruned train_df columns to rule catalog: %d -> %d columns",
             len(train_df.columns),
             len(pruned_train.columns),
         )
@@ -3424,21 +3325,21 @@ class Pipeline_Orchestrator:
         if val_df is not None:
             pruned_val = prune_train_columns(val_df, names)
             logger.info(
-                "Pruned val_df columns after Phase 1: %d -> %d columns",
+                "Pruned val_df columns to rule catalog: %d -> %d columns",
                 len(val_df.columns),
                 len(pruned_val.columns),
             )
         from gpu_fuzzy_trader._memory import log_memory_rss
 
-        log_memory_rss("after Phase 1 column prune")
+        log_memory_rss("after rule catalog column prune")
         return pruned_train, pruned_val
 
     @staticmethod
-    def _prune_cv_folds_after_phase1(
+    def _prune_cv_folds_to_rule_features(
         cv_folds: list | None,
-        phase1_result: dict[str, list[dict]],
+        feature_specs: list[dict],
     ) -> list | None:
-        """Drop unused feature columns from CV fold DataFrames after Phase 1."""
+        """Drop non-catalog feature columns from CV fold DataFrames."""
         if not cv_folds:
             return cv_folds
 
@@ -3446,7 +3347,7 @@ class Pipeline_Orchestrator:
 
         from gpu_fuzzy_trader.backtest.df_slim import prune_train_columns
 
-        names = Pipeline_Orchestrator._phase1_keep_feature_names(phase1_result)
+        names = Pipeline_Orchestrator._rule_feature_names(feature_specs)
         if not names:
             return cv_folds
 
@@ -3464,28 +3365,28 @@ class Pipeline_Orchestrator:
                 )
             )
         logger.info(
-            "Pruned cv_folds columns after Phase 1 (%d folds)",
+            "Pruned cv_folds columns to rule catalog (%d folds)",
             len(pruned),
         )
         return pruned
 
     @staticmethod
-    def _prune_train_df_after_phase1(
+    def _prune_train_df_to_rule_features(
         train_df: pd.DataFrame,
-        phase1_result: dict[str, list[dict]],
+        feature_specs: list[dict],
     ) -> pd.DataFrame:
-        """Drop unused feature columns from train split (legacy single-split API)."""
-        pruned_train, _ = Pipeline_Orchestrator._prune_splits_after_phase1(
-            train_df, None, phase1_result,
+        """Drop non-catalog feature columns from a single train split."""
+        pruned_train, _ = Pipeline_Orchestrator._prune_splits_to_rule_features(
+            train_df, None, feature_specs,
         )
         return pruned_train
 
     # ------------------------------------------------------------------
-    # Phase 1
+    # Rule-feature catalog
     # ------------------------------------------------------------------
 
-    def _mask_train_df_for_phase1(self, train_df: pd.DataFrame) -> pd.DataFrame:
-        """Return the canonical holdout training frame without legacy CV masking."""
+    def _mask_train_df_for_rule_catalog(self, train_df: pd.DataFrame) -> pd.DataFrame:
+        """Return the train-only frame used to derive rule-feature modes."""
         if not self._cv_folds or train_df.empty:
             return train_df
         if "_symbol_bar_index" not in train_df.columns:
@@ -3507,74 +3408,25 @@ class Pipeline_Orchestrator:
             safe &= ~((bar_index >= start) & (bar_index <= end))
         masked = train_df.loc[safe].reset_index(drop=True)
         logger.info(
-            "Phase 1: masked train_df to safe fold region (%d -> %d rows)",
+            "Rule catalog: masked train_df to safe fold region (%d -> %d rows)",
             len(train_df),
             len(masked),
         )
         return masked
 
-    def _run_phase1(
+    def _build_rule_feature_catalog(
         self,
         train_df: pd.DataFrame,
-        force: bool = False,
-        val_df: pd.DataFrame | None = None,
-    ) -> dict[str, list[dict]]:
-        """
-        Run Phase 1 (Feature Selection) or skip if valid outputs exist.
-
-        Returns
-        -------
-        dict[str, list[dict]]
-            {"long": [...], "short": [...]}
-        """
-        phase_name = "Phase 1: Feature Selection"
-        start_ts = _now_iso()
-        t0 = time.monotonic()
-
-        if not force:
-            existing = Feature_Selector.skip_if_valid(train_df, val_df=val_df)
-            if existing is not None:
-                long_path = os.path.join(
-                    _cfg.OUTPUTS_DIR, "selected_features_long.json")
-                short_path = os.path.join(
-                    _cfg.OUTPUTS_DIR, "selected_features_short.json")
-                logger.info(
-                    "Skipping %s: valid outputs at %s and %s (%d long, %d short features). "
-                    "Delete those files to force Phase 1 to recompute.",
-                    phase_name, long_path, short_path,
-                    len(existing.get("long", [])),
-                    len(existing.get("short", [])),
-                )
-                elapsed = time.monotonic() - t0
-                _log_phase_entry(
-                    self._log_path, phase_name, start_ts, _now_iso(),
-                    elapsed, skipped=True,
-                    result_summary={
-                        "long_features": len(existing.get("long", [])),
-                        "short_features": len(existing.get("short", [])),
-                    },
-                )
-                return existing
-
-        # Run Phase 1
-        logger.info("Running %s …", phase_name)
-        try:
-            selector = Feature_Selector()
-            result = selector.run(train_df, val_df=val_df)
-        except Exception as exc:
-            logger.error("Phase 1 failed: %s", exc, exc_info=True)
-            raise
-
-        elapsed = time.monotonic() - t0
-        _log_phase_entry(
-            self._log_path, phase_name, start_ts, _now_iso(),
-            elapsed, skipped=False,
-            result_summary={
-                "long_features": len(result.get("long", [])),
-                "short_features": len(result.get("short", [])),
-            },
+    ) -> list[dict[str, str]]:
+        """Build one deterministic train-only feature set for both directions."""
+        catalog_train_df = self._mask_train_df_for_rule_catalog(train_df)
+        feature_specs = build_rule_feature_specs(catalog_train_df)
+        logger.info(
+            "Rule catalog built from %d train rows: %d features",
+            len(catalog_train_df),
+            len(feature_specs),
         )
-        return result
+        return feature_specs
 
     # ------------------------------------------------------------------
     # Phase 2
@@ -3583,7 +3435,7 @@ class Pipeline_Orchestrator:
     def _run_phase2(
         self,
         train_df: pd.DataFrame,
-        phase1_result: dict[str, list[dict]],
+        feature_specs: list[dict],
         force: bool = False,
         val_df: pd.DataFrame | None = None,
         blocked_directions: frozenset[str] | None = None,
@@ -3633,9 +3485,9 @@ class Pipeline_Orchestrator:
                 )
                 continue
 
-            # Bind a resumed pool to the exact selected features, split data,
+            # Bind a resumed pool to the exact rule-feature catalog, split data,
             # CV boundaries, configuration, and evaluator code used today.
-            feature_infos = phase1_result.get(direction, [])
+            feature_infos = feature_specs
             resume_identity = _phase2_resume_identity(
                 train_df,
                 val_df,
@@ -3693,20 +3545,20 @@ class Pipeline_Orchestrator:
 
             if not feature_infos:
                 logger.warning(
-                    "Phase 2 [%s]: no features from Phase 1; skipping direction.",
+                    "Phase 2 [%s]: rule catalog has no features; skipping direction.",
                     direction,
                 )
                 pools[direction] = []
                 self._phase2_status[direction] = {
                     "status": "empty",
-                    "reason": "no_phase1_features",
+                    "reason": "no_rule_features",
                     "pool_size": 0,
                 }
                 continue
 
             # Run Phase 2 for this direction
             logger.info(
-                "Running %s … (%d features from Phase 1)",
+                "Running %s … (%d rule features)",
                 dir_phase_name, len(feature_infos),
             )
             try:
@@ -4487,17 +4339,17 @@ class Pipeline_Orchestrator:
     def run_phase2(
         self,
         train_df: pd.DataFrame,
-        phase1_result: dict[str, list[dict]] | None = None,
+        feature_specs: list[dict] | None = None,
         force: bool = False,
         val_df: pd.DataFrame | None = None,
         blocked_directions: frozenset[str] | None = None,
     ) -> dict:
         """Run Phase 2 (LWC Rule Pool Generation) and persist LWC archive."""
-        if phase1_result is None:
-            phase1_result = {"long": [], "short": []}
+        if feature_specs is None:
+            feature_specs = self._build_rule_feature_catalog(train_df)
         res = self._run_phase2(
             train_df=train_df,
-            phase1_result=phase1_result,
+            feature_specs=feature_specs,
             force=force,
             val_df=val_df,
             blocked_directions=blocked_directions,
@@ -4782,7 +4634,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--phase",
         type=int,
-        choices=(1, 2, 3, 4, 5),
+        choices=(2, 3, 4, 5),
         default=None,
         help=(
             "Run one phase instead of the full pipeline. "
@@ -4792,14 +4644,14 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--resume",
         action="store_true",
-        help="Reuse valid Phase 1/2 artifacts when available (default: full rerun).",
+        help="Reuse valid Phase 2 artifacts when available (default: full rerun).",
     )
     parser.add_argument(
         "--from-phase",
         type=int,
         choices=(2,),
         default=None,
-        help="Start at phase 2 (requires Phase 1 outputs in --output).",
+        help="Start at Phase 2 and rebuild the train-only rule-feature catalog.",
     )
 
     args = parser.parse_args([] if argv is None else argv)

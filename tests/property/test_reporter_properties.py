@@ -37,8 +37,8 @@ dataset_with_features
 datasets_by_split
     dict with keys "train", "validation", "test" → pd.DataFrame or None
 
-selected_features
-    list of dicts: {"name": str, "mode": str, "score": float}
+rule_features
+    list of dicts: {"name": str, "mode": str}
 """
 
 from __future__ import annotations
@@ -400,7 +400,7 @@ def stratification_scenario_strategy(
     dict[str, pd.DataFrame | None],
 ]:
     """
-    Generate a (trade_logs_by_split, selected_features, datasets_by_split)
+    Generate a (trade_logs_by_split, rule_features, datasets_by_split)
     tuple where Entry_Index values in each trade log are within the bounds
     of the corresponding dataset.
 
@@ -408,8 +408,8 @@ def stratification_scenario_strategy(
     -------
     trade_logs_by_split
         dict with keys "train", "validation", "test" → pd.DataFrame or None
-    selected_features
-        list of dicts with keys "name", "mode", "score"
+    rule_features
+        list of dicts with keys "name", "mode"
     datasets_by_split
         dict with keys "train", "validation", "test" → pd.DataFrame or None
 
@@ -422,19 +422,11 @@ def stratification_scenario_strategy(
     n_features = draw(st.integers(min_value=1, max_value=4))
     feature_names = [f"feat_{chr(ord('a') + i)}" for i in range(n_features)]
 
-    # Build selected_features list
-    selected_features = []
+    # Build rule-feature metadata.
+    rule_features = []
     for feat_name in feature_names:
         mode = draw(st.sampled_from(_FEATURE_MODES))
-        score = draw(
-            st.floats(
-                min_value=0.0,
-                max_value=1.0,
-                allow_nan=False,
-                allow_infinity=False,
-            )
-        )
-        selected_features.append({"name": feat_name, "mode": mode, "score": score})
+        rule_features.append({"name": feat_name, "mode": mode})
 
     # Decide which splits are present (at least one must be non-None)
     split_present = draw(
@@ -471,7 +463,7 @@ def stratification_scenario_strategy(
         )
         trade_logs_by_split[split] = trade_log
 
-    return trade_logs_by_split, selected_features, datasets_by_split
+    return trade_logs_by_split, rule_features, datasets_by_split
 
 
 # ---------------------------------------------------------------------------
@@ -796,11 +788,11 @@ def test_property_8_distribution_equity_skips_empty(logs, tmp_path):
 @prop_settings(max_examples=200, suppress_health_check=[HealthCheck.too_slow, HealthCheck.large_base_example, HealthCheck.function_scoped_fixture])
 def test_property_9_stratification_metric_correctness(scenario, tmp_path):
     from gpu_fuzzy_trader import config as _cfg
-    trade_logs_by_split, selected_features, datasets_by_split = scenario
+    trade_logs_by_split, rule_features, datasets_by_split = scenario
     reporter = Reporter()
 
     result = reporter.write_feature_stratified_performance(
-        trade_logs_by_split, [], selected_features, datasets_by_split,
+        trade_logs_by_split, [], rule_features, datasets_by_split,
         "long", output_dir=str(tmp_path)
     )
 

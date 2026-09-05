@@ -98,7 +98,7 @@ class TestResetPlateau:
             mock_evolution,
         )
         monkeypatch.setattr(
-            "gpu_fuzzy_trader.phases.phase2_init.build_feature_sampling_probs",
+            "gpu_fuzzy_trader.phases.phase2_init.build_uniform_feature_probs",
             lambda *a, **kw: np.array([0.5, 0.5]),
         )
 
@@ -125,7 +125,7 @@ class TestResetPlateau:
             mock_evolution,
         )
         monkeypatch.setattr(
-            "gpu_fuzzy_trader.phases.phase2_init.build_feature_sampling_probs",
+            "gpu_fuzzy_trader.phases.phase2_init.build_uniform_feature_probs",
             lambda *a, **kw: np.array([0.5, 0.5]),
         )
         monkeypatch.setattr(
@@ -156,7 +156,7 @@ class TestResetPlateau:
             mock_evolution,
         )
         monkeypatch.setattr(
-            "gpu_fuzzy_trader.phases.phase2_init.build_feature_sampling_probs",
+            "gpu_fuzzy_trader.phases.phase2_init.build_uniform_feature_probs",
             lambda *a, **kw: np.array([0.5, 0.5]),
         )
 
@@ -188,7 +188,7 @@ class TestIslandGenerationsDone:
             mock_evolution,
         )
         monkeypatch.setattr(
-            "gpu_fuzzy_trader.phases.phase2_init.build_feature_sampling_probs",
+            "gpu_fuzzy_trader.phases.phase2_init.build_uniform_feature_probs",
             lambda *a, **kw: np.array([0.5, 0.5]),
         )
 
@@ -211,7 +211,7 @@ class TestIslandGenerationsDone:
             mock_evolution,
         )
         monkeypatch.setattr(
-            "gpu_fuzzy_trader.phases.phase2_init.build_feature_sampling_probs",
+            "gpu_fuzzy_trader.phases.phase2_init.build_uniform_feature_probs",
             lambda *a, **kw: np.array([0.5, 0.5]),
         )
 
@@ -237,7 +237,7 @@ class TestIslandGenerationsDone:
             mock_evolution,
         )
         monkeypatch.setattr(
-            "gpu_fuzzy_trader.phases.phase2_init.build_feature_sampling_probs",
+            "gpu_fuzzy_trader.phases.phase2_init.build_uniform_feature_probs",
             lambda *a, **kw: np.array([0.5, 0.5]),
         )
         monkeypatch.setattr(

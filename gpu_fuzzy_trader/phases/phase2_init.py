@@ -13,43 +13,11 @@ from gpu_fuzzy_trader import config as _cfg
 Stratum = Literal["elite", "explorer"]
 
 
-def build_feature_sampling_probs(
-    feature_infos: list[dict],
-    *,
-    temp: float | None = None,
-    eps: float | None = None,
-    mix_uniform: float | None = None,
-) -> np.ndarray:
-    """Softmax Phase 1 scores with optional uniform floor (length K)."""
-    if not feature_infos:
+def build_uniform_feature_probs(feature_specs: list[dict]) -> np.ndarray:
+    """Return equal feature probabilities without using feature scores."""
+    if not feature_specs:
         return np.array([], dtype=np.float64)
-
-    temp = _cfg.PHASE2_INIT_SOFTMAX_TEMP if temp is None else temp
-    eps = _cfg.PHASE2_INIT_SCORE_EPS if eps is None else eps
-    mix_uniform = _cfg.PHASE2_INIT_UNIFORM_MIX if mix_uniform is None else mix_uniform
-
-    scores = np.array(
-        [max(float(fi.get("score", 0.0)), eps) for fi in feature_infos],
-        dtype=np.float64,
-    )
-    if temp <= 0:
-        probs = np.zeros(len(scores), dtype=np.float64)
-        probs[int(np.argmax(scores))] = 1.0
-    else:
-        scaled = scores / temp
-        scaled -= np.max(scaled)
-        exp_s = np.exp(scaled)
-        probs = exp_s / exp_s.sum()
-
-    k = len(probs)
-    if mix_uniform > 0 and k > 0:
-        probs = (1.0 - mix_uniform) * probs + mix_uniform / k
-
-    probs = np.maximum(probs, 0.0)
-    total = probs.sum()
-    if total <= 0:
-        return np.ones(k, dtype=np.float64) / k
-    return probs / total
+    return np.full(len(feature_specs), 1.0 / len(feature_specs), dtype=np.float64)
 
 
 def _sample_indices_without_replacement(

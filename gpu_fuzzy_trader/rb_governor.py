@@ -1944,7 +1944,8 @@ def _univariate_baseline_pool(
     Evolution is deliberately biased toward 4–5 condition rules. This compact
     complement enumerates only the fuzzy modes already exposed by the current
     Phase-2 pool, so it cannot introduce raw columns or a representation not
-    selected in Phase 1.  A generalist pass is emitted first, followed by the
+    admitted by the deterministic rule-feature catalog. A generalist pass is
+    emitted first, followed by the
     symbol-specialized pass.  This ordering ensures the bounded budget cannot
     truncate a late-but-useful condition such as a momentum state merely
     because early alphabetical features consumed all slots.  Every candidate
@@ -1993,10 +1994,10 @@ def _univariate_baseline_pool(
             else:
                 possible_modes[feature] = supported
 
-    # Phase-2 chromosomes are sparse: a feature can be selected in Phase 1
+    # Phase-2 chromosomes are sparse: a catalog feature can be inactive in
     # yet never appear as an active gene in the retained pool.  Recover its
     # evaluator mode from the already-pruned train frame so the deterministic
-    # complement remains a true Phase-1 feature search rather than a random
+    # complement remains tied to the train-only rule-feature catalog rather than a random
     # pool-dependent subset.  This is train-frame metadata only; validation and
     # test values are never inspected to choose the mode.
     try:
@@ -2005,9 +2006,16 @@ def _univariate_baseline_pool(
         for frame in frames:
             if not isinstance(frame, pd.DataFrame):
                 continue
+            allowed_ff = getattr(_cfg, "RULE_ALLOWED_FF_FEATURES", None)
             feature_cols = [
                 name for name in frame.columns
-                if str(name).startswith("ff_")
+                if (
+                    str(name).startswith("ff_")
+                    and (
+                        allowed_ff is None
+                        or str(name) in allowed_ff
+                    )
+                )
             ]
             if not feature_cols:
                 continue

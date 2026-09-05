@@ -49,17 +49,15 @@ class ResearchProfile:
     rb_monthly_min_profitable_ratio: float
     rb_monthly_max_bearish_ratio: float
     rb_cost_stress: bool
-    phase1_disabled: bool
-    phase1_dispersion_threshold: float
-    phase1_top_k_features: int
-    phase1_stationarity_folds: int
-    phase1_min_abs_corr: float
+    rule_exclude_raw_ohlcv: bool
+    rule_dispersion_threshold: float
+    rule_allowed_ff_features: tuple[str, ...]
     rb_multi_symbol_release: bool
 
     @classmethod
     def from_config(cls, config: Any) -> "ResearchProfile":
         return cls(
-            schema_version=4,
+            schema_version=5,
             phase2_tp=float(config.PHASE2_TP),
             phase2_sl=float(config.PHASE2_SL),
             phase2_min_conditions=int(config.MIN_CONDITIONS),
@@ -85,13 +83,9 @@ class ResearchProfile:
                 config.RB_MONTHLY_MAX_BEARISH_RATIO
             ),
             rb_cost_stress=bool(config.RB_COST_STRESS_ENABLED),
-            phase1_disabled=bool(config.PHASE1_DISABLED),
-            phase1_dispersion_threshold=float(config.PHASE1_DISPERSION_THRESHOLD),
-            phase1_top_k_features=int(config.PHASE1_TOP_K_FEATURES),
-            phase1_stationarity_folds=int(config.PHASE1_STATIONARITY_FOLDS),
-            phase1_min_abs_corr=float(
-                config.PHASE1_SIGN_CONSISTENCY_MIN_ABS_CORR
-            ),
+            rule_exclude_raw_ohlcv=bool(config.RULE_EXCLUDE_RAW_OHLCV),
+            rule_dispersion_threshold=float(config.RULE_DISPERSION_THRESHOLD),
+            rule_allowed_ff_features=tuple(config.RULE_ALLOWED_FF_FEATURES),
             rb_multi_symbol_release=bool(config.RB_MULTI_SYMBOL_RELEASE),
         )
 

@@ -30,7 +30,6 @@ from gpu_fuzzy_trader import config as _cfg
 # Independent, live configuration parameters.  Stage B totals are
 # derived in sample_trial_params() so every trial satisfies validate_config().
 SEARCH_SPACE: dict[str, list[Any]] = {
-    "PHASE1_TOP_K_FEATURES": [10, 15, 20, 25, 30],
     "MIN_TRADE_SUPPORT": [30, 45, 60, 90, 120],
     "MIN_TRADE_POOL_FLOOR": [8, 12, 15, 20, 25],
     "PHASE2_MAX_DRAWDOWN_GATE": [12.0, 18.0, 25.0, 30.0],
@@ -69,8 +68,6 @@ _TAIL_ARTIFACTS: tuple[str, ...] = (
 def _active_search_space() -> dict[str, list[Any]]:
     """Return only parameters that affect the active pipeline."""
     space = dict(SEARCH_SPACE)
-    if bool(getattr(_cfg, "PHASE1_DISABLED", False)):
-        space.pop("PHASE1_TOP_K_FEATURES", None)
     if _fast_mode:
         space = {
             key: values
@@ -239,8 +236,6 @@ def compute_score(metrics: dict[str, float]) -> float:
 
 
 _FAST_MODE_COPY_FILES: tuple[str, ...] = (
-    "selected_features_long.json",
-    "selected_features_short.json",
     "phase2_long_pool.json",
     "phase2_short_pool.json",
     "phase2_long_history.json",
@@ -249,7 +244,7 @@ _FAST_MODE_COPY_FILES: tuple[str, ...] = (
 
 
 
-def _copy_phase1_2_outputs(src_dir: str, dst_dir: str) -> None:
+def _copy_phase2_outputs(src_dir: str, dst_dir: str) -> None:
     for filename in _FAST_MODE_COPY_FILES:
         source = os.path.join(src_dir, filename)
         target = os.path.join(dst_dir, filename)
@@ -263,13 +258,13 @@ def run_pipeline_for_trial(
     debug_mode: bool,
     baseline_outputs_dir: str = "outputs",
 ) -> dict:
-    """Run one isolated trial; fast mode only reuses Phase 1/2 artifacts."""
+    """Run one isolated trial; fast mode only reuses Phase 2 artifacts."""
 
     os.makedirs(output_dir, exist_ok=True)
     if debug_mode:
         _cfg.DEBUG_SYMBOL_SCOPE_ENABLED = True
     if fast_mode:
-        _copy_phase1_2_outputs(baseline_outputs_dir, output_dir)
+        _copy_phase2_outputs(baseline_outputs_dir, output_dir)
 
     from gpu_fuzzy_trader.run_pipeline import Pipeline_Orchestrator
 

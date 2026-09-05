@@ -55,7 +55,7 @@ def prop_settings(
     }
     if deadline is ...:
         if _LOW_MEMORY:
-            # Feature-selection properties legitimately exceed Hypothesis's
+            # Feature-report properties legitimately exceed Hypothesis's
             # 200 ms default while NumPy/Numba warm up on constrained hosts.
             settings_kwargs["deadline"] = None
     else:

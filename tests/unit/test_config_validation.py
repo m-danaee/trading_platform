@@ -23,7 +23,8 @@ def test_default_config_snapshot_is_valid_and_reports_effective_budgets() -> Non
     assert snapshot["phase2"]["effective_min_profitable_symbols"] == 2
     assert snapshot["phase2"]["effective_f3_objective"] == "profit_factor"
     assert snapshot["phase2"]["joint_train_val"] is False
-    assert snapshot["phase2"]["phase1_disabled"] is False
+    assert snapshot["rule_features"]["allowed_ff_feature_count"] == 18
+    assert snapshot["rule_features"]["dispersion_threshold"] == 0.95
     assert snapshot["gates"]["rb_min_valid_trades"] <= snapshot["gates"]["rb_ruleset_min_valid_trades"]
 
 

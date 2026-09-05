@@ -13,8 +13,11 @@ def test_new_config_parameters_exist():
     assert hasattr(c, 'DEBUG_SYMBOL_SCOPE_ENABLED')
     assert c.DEBUG_SYMBOL == "BTCUSDT"
     assert hasattr(c, 'DEBUG_SYMBOL_COUNT')
-    assert c.PHASE1_REQUIRE_SIGN_CONSISTENCY is True
-    assert c.PHASE1_SIGN_CONSISTENCY_MIN_FOLDS == 4
+    assert len(c.RULE_ALLOWED_FF_FEATURES) == 18
+    assert len(set(c.RULE_ALLOWED_FF_FEATURES)) == 18
+    assert c.RULE_EXCLUDE_RAW_OHLCV is True
+    assert c.RULE_DISPERSION_THRESHOLD == 0.95
+    assert c.PHASE2_SAMPLING_TOTAL == 701_000
     assert c.PHASE2_REQUIRE_LAST_FOLD_POSITIVE is False
     assert c.PHASE2_SCAN_UNROLL == 32
     assert c.RB_MIN_RULES == 1
@@ -32,4 +35,3 @@ def test_default_pipeline_inputs_are_raw_sources():
     assert c.TEST_CSV_PATH == c.RAW_TEST_CSV_PATH
     assert c.RAW_TRAIN_CSV_PATH.endswith("train_new.csv")
     assert c.RAW_TEST_CSV_PATH.endswith("test_new.csv")
-

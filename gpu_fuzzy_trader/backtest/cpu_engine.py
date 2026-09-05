@@ -1794,11 +1794,12 @@ class CPUBacktestEngine:
         if not hasattr(self, "_data_matrix"):
             from gpu_fuzzy_trader.backtest.gpu_engine import _build_data_matrix, _MODE_NUM_CLASSES
             # Chromosome positions are defined by the ordered feature list
-            # supplied by Phase 1.  Preserve that order here so the exact CPU
+            # supplied by the deterministic rule-feature catalog. Preserve that
+            # order here so the exact CPU
             # admission evaluator interprets a dense chromosome identically
             # to GPUBacktestEngine and decode_chromosome.  Alphabetizing the
             # keys silently remaps genes to different columns whenever Phase
-            # 1 ranks features in a non-alphabetical order.
+            # catalog order is not alphabetical.
             self._feature_names = list(self.feature_modes.keys())
             self._data_matrix = _build_data_matrix(self.df, self._feature_names, self.feature_modes)
             self._dont_cares = np.array(

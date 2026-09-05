@@ -172,7 +172,7 @@ class TestSampleDfForPhase2:
         df = _make_multi_sym_df(n_rows_per_sym=200, n_symbols=4)
         expected = _sample_df(
             df,
-            _resolve_sample_total_rows(df, cfg.PHASE1_SAMPLING_TOTAL),
+            _resolve_sample_total_rows(df, cfg.PHASE2_SAMPLING_TOTAL),
             random_state=42,
         )
         actual = sample_df_for_phase2(df, random_state=42)

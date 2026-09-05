@@ -394,14 +394,14 @@ class TestMonthlyGateDataSource:
             "gpu_fuzzy_trader.phases.phase2_rule_pool.Rule_Pool_Generator._ensure_engines",
             lambda self: None,
         )
-        # run_phase2_evolution and build_feature_sampling_probs are imported
+        # run_phase2_evolution and build_uniform_feature_probs are imported
         # locally inside finalize_island — patch at their source modules
         monkeypatch.setattr(
             "gpu_fuzzy_trader.evolution.evox_runner.run_phase2_evolution",
             lambda **kw: (POOL_THREE, {"metrics": {}}),
         )
         monkeypatch.setattr(
-            "gpu_fuzzy_trader.phases.phase2_init.build_feature_sampling_probs",
+            "gpu_fuzzy_trader.phases.phase2_init.build_uniform_feature_probs",
             lambda feature_infos: {},
         )
         monkeypatch.setattr(
@@ -524,7 +524,7 @@ class TestMonthlyGateDataSource:
             lambda **kw: (POOL_THREE, {"metrics": {}}),
         )
         monkeypatch.setattr(
-            "gpu_fuzzy_trader.phases.phase2_init.build_feature_sampling_probs",
+            "gpu_fuzzy_trader.phases.phase2_init.build_uniform_feature_probs",
             lambda feature_infos: {},
         )
         monkeypatch.setattr(

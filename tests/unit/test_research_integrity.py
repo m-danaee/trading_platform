@@ -98,7 +98,8 @@ def test_nested_folds_purge_label_horizon():
 
 def test_research_profile_is_stable_and_versioned():
     profile = ResearchProfile.from_config(_cfg)
-    assert profile.schema_version == 4
+    assert profile.schema_version == 5
     assert len(profile.profile_id) == 20
     assert profile.rb_risk_optimize_exits is False
-    assert profile.phase1_disabled is False
+    assert profile.rule_exclude_raw_ohlcv is True
+    assert profile.rule_allowed_ff_features == _cfg.RULE_ALLOWED_FF_FEATURES
